@@ -205,6 +205,8 @@ private:
     void generateLike(ResolvedLikeExpr* expr);
     void generateIsNull(ResolvedIsNullExpr* expr);
     void generateArray(ResolvedArrayExpr* expr);
+    void generateExtract(ResolvedExtractExpr* expr);
+    void generateAlterElement(ResolvedAlterElementExpr* expr);
 
     // ==========================================================================
     // Clause Generation

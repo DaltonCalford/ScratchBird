@@ -33,6 +33,33 @@ All multi-byte integers are in **network byte order** (big-endian).
 
 ## Connection Startup
 
+### 0. SSL/GSSENC Requests (Optional, No Type Byte)
+
+Before sending `StartupMessage`, a client can request transport encryption:
+
+```c
+struct SSLRequest {
+    int32 length = 8;          // Always 8
+    int32 ssl_code = 80877103; // 0x04D2162F
+};
+
+struct GSSENCRequest {
+    int32 length = 8;          // Always 8
+    int32 gss_code = 80877104; // 0x04D21630
+};
+```
+
+Server response is a single byte:
+- For SSLRequest: 'S' (0x53) = start TLS, 'N' (0x4E) = refuse.
+- For GSSENCRequest: 'G' (0x47) = start GSSAPI encryption, 'N' (0x4E) = refuse.
+
+If the server responds with `S` or `G`, perform the respective handshake, then send the normal `StartupMessage` on the encrypted channel.
+If the server responds with `N`, send `StartupMessage` in plaintext (or try the other request type).
+
+Security note (per upstream guidance): read exactly one byte before handing the socket to TLS/GSSAPI; if additional bytes are available, treat as protocol violation. If the server sends an `ErrorResponse` to SSL/GSSENC, do **not** surface it to the user (server identity is not yet authenticated); close and reconnect without SSL/GSSENC if desired.
+
+For GSSENC, the token exchange uses `Int32` length prefixes (network order) followed by token bytes. After the GSSAPI context is established, each wrapped message is sent as `Int32 length` + wrapped bytes; the server will not accept wrapped packets larger than 16kB, so clients must segment accordingly.
+
 ### 1. Startup Message (No Type Byte)
 
 The first message from client has no type byte:
@@ -68,22 +95,7 @@ struct StartupMessage {
 00                    // Final terminator
 ```
 
-### 2. SSL Request (Optional)
-
-Before StartupMessage, client can request SSL:
-
-```c
-struct SSLRequest {
-    int32 length = 8;      // Always 8
-    int32 ssl_code = 80877103;  // Magic number (0x04D2162F)
-};
-```
-
-Server responds with single byte:
-- 'S' (0x53): SSL supported, start TLS handshake
-- 'N' (0x4E): SSL not supported
-
-### 3. Authentication
+### 2. Authentication and Startup Response
 
 Server responds with authentication request:
 
@@ -107,6 +119,26 @@ struct AuthenticationRequest {
     int32 length;          // Message length
     int32 auth_type;       // Authentication type
     char  auth_data[];     // Type-specific data
+};
+```
+
+After successful authentication (`AuthenticationOk`), the backend typically sends:
+- `ParameterStatus` (runtime parameter key/value pairs, multiple messages)
+- `BackendKeyData` (PID and secret key for cancellation)
+- `ReadyForQuery` (transaction status)
+
+If the server does not understand some startup parameters, it may send `NegotiateProtocolVersion` (type 'v') before proceeding.
+
+### 3. CancelRequest (Out-of-band)
+
+Cancellation is sent on a separate TCP connection (no SSL/GSSENC unless you explicitly negotiate it):
+
+```c
+struct CancelRequest {
+    int32 length = 16;
+    int32 cancel_code = 80877102;  // 0x04D2162E
+    int32 process_id;              // From BackendKeyData
+    int32 secret_key;              // From BackendKeyData
 };
 ```
 
@@ -229,6 +261,7 @@ struct SASLInitialResponse {
 #define MSG_NO_DATA             'n'  // No data
 #define MSG_NOTICE              'N'  // Notice
 #define MSG_NOTIFICATION        'A'  // Async notification
+#define MSG_NEGOTIATE_VERSION   'v'  // NegotiateProtocolVersion
 #define MSG_PARAMETER_DESC      't'  // Parameter description
 #define MSG_PARAMETER_STATUS    'S'  // Parameter status
 #define MSG_PARSE_COMPLETE      '1'  // Parse complete
@@ -316,6 +349,45 @@ struct ReadyForQuery {
 };
 ```
 
+#### ParameterStatus
+```c
+struct ParameterStatus {
+    char  type = 'S';
+    int32 length;
+    char  name[];          // Null-terminated
+    char  value[];         // Null-terminated
+};
+```
+
+#### BackendKeyData
+```c
+struct BackendKeyData {
+    char  type = 'K';
+    int32 length = 12;
+    int32 process_id;
+    int32 secret_key;
+};
+```
+
+#### NegotiateProtocolVersion
+```c
+struct NegotiateProtocolVersion {
+    char  type = 'v';
+    int32 length;
+    int32 newest_minor;    // Newest minor version supported for major version
+    int32 num_options;
+    char  option_name[];   // Repeated null-terminated option names
+};
+```
+
+#### EmptyQueryResponse
+```c
+struct EmptyQueryResponse {
+    char  type = 'I';
+    int32 length = 4;
+};
+```
+
 ## Extended Query Protocol
 
 ### Parse Message
@@ -366,8 +438,71 @@ struct Execute {
 struct Describe {
     char  type = 'D';
     int32 length;
-    char  type;           // 'S' = statement, 'P' = portal
+    char  describe_type;  // 'S' = statement, 'P' = portal
     char  name[];         // Statement or portal name
+};
+```
+
+### Close Message
+```c
+struct Close {
+    char  type = 'C';
+    int32 length;
+    char  close_type;     // 'S' = statement, 'P' = portal
+    char  name[];         // Statement or portal name
+};
+```
+
+### Flush / Sync / Terminate
+```c
+struct Flush {
+    char  type = 'H';
+    int32 length = 4;
+};
+
+struct Sync {
+    char  type = 'S';
+    int32 length = 4;
+};
+
+struct Terminate {
+    char  type = 'X';
+    int32 length = 4;
+};
+```
+
+### Extended-Query Response Messages
+```c
+struct ParseComplete {
+    char  type = '1';
+    int32 length = 4;
+};
+
+struct BindComplete {
+    char  type = '2';
+    int32 length = 4;
+};
+
+struct CloseComplete {
+    char  type = '3';
+    int32 length = 4;
+};
+
+struct NoData {
+    char  type = 'n';
+    int32 length = 4;
+};
+
+struct PortalSuspended {
+    char  type = 's';
+    int32 length = 4;
+};
+
+struct ParameterDescription {
+    char  type = 't';
+    int32 length;
+    int16 num_params;
+    int32 param_type_oids[];  // num_params entries
 };
 ```
 
@@ -503,7 +638,7 @@ Example Error Message:
 ## Data Type Encodings
 
 ### Text Format
-All values are transmitted as ASCII strings.
+All values are transmitted as strings in the client encoding (typically UTF-8). The string length is provided by the surrounding `DataRow` field length.
 
 ### Binary Format
 
@@ -521,16 +656,16 @@ double   FLOAT8;       // 8 bytes (IEEE 754)
 uint8_t  BOOL;         // 0 = false, 1 = true
 
 // Variable-length types
+// In a DataRow, the length is carried by the column length field.
 struct Text {
-    int32 length;      // Does not include itself
-    char  data[];
+    char  data[];      // Exactly "column length" bytes
 };
 
 // Numeric/Decimal
 struct Numeric {
     int16 ndigits;     // Number of digits
     int16 weight;      // Weight of first digit
-    int16 sign;        // 0x0000 = positive, 0x4000 = negative
+    int16 sign;        // 0x0000=positive, 0x4000=negative, 0xC000=NaN
     int16 dscale;      // Display scale
     int16 digits[];    // Base-10000 digits
 };
@@ -598,6 +733,8 @@ struct BackendKeyData {
 };
 ```
 
+The CancelRequest has no type byte. It can be sent on a plaintext connection or after SSL/GSSENC negotiation (send SSLRequest/GSSENCRequest, complete encryption handshake, then send CancelRequest directly).
+
 ## Streaming Replication Protocol
 
 ### Replication Commands (via Simple Query)
@@ -617,6 +754,13 @@ TIMELINE_HISTORY 2
 ```
 
 ### WAL Data Messages
+
+In streaming replication, `CopyBothResponse` is used and **all** replication traffic is carried inside `CopyData` (type 'd') messages. The first byte of the `CopyData` payload is a submessage type:
+- 'w' = XLogData (primary → standby)
+- 'k' = PrimaryKeepAlive (primary → standby)
+- 'r' = StandbyStatusUpdate (standby → primary)
+
+The remaining bytes are the submessage payload as defined below.
 
 ```c
 struct XLogData {
@@ -680,6 +824,23 @@ struct StandbyStatusUpdate {
     └─────┬──────┘          │
           │ Complete        │
           └─────────────────┘
+```
+
+## Example: Handshake (Trust Auth)
+
+Client StartupMessage (user=bob, database=test):
+```
+00 00 00 20 00 03 00 00
+75 73 65 72 00 62 6f 62 00
+64 61 74 61 62 61 73 65 00 74 65 73 74 00
+00
+```
+
+Server AuthenticationOk + BackendKeyData + ReadyForQuery:
+```
+52 00 00 00 08 00 00 00 00
+4b 00 00 00 0c 00 00 04 d2 00 00 16 2e
+5a 00 00 00 05 49
 ```
 
 ## Complete Example: SELECT Query

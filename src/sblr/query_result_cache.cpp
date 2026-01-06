@@ -390,9 +390,13 @@ size_t QueryResultCache::estimateResultSize(const CachedResultSet& result) const
             if (!value.isNull()) {
                 switch (value.type()) {
                     case core::DataType::VARCHAR:
-                    case core::DataType::TEXT:
-                    case core::DataType::CHAR:
                         size += value.getVarchar().size();
+                        break;
+                    case core::DataType::TEXT:
+                        size += value.getText().size();
+                        break;
+                    case core::DataType::CHAR:
+                        size += value.getChar().size();
                         break;
                     case core::DataType::BINARY:
                     case core::DataType::UUID:

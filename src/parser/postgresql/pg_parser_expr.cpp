@@ -6,6 +6,7 @@
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/sblr/extract_element_catalog.h"
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -524,6 +525,16 @@ void Parser::parsePrimaryExpr() {
         return;
     }
 
+    if (matchKeyword(TokenType::KW_EXTRACT)) {
+        parseExtractExpr();
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_ALTER_ELEMENT)) {
+        parseAlterElementExpr();
+        return;
+    }
+
     // ARRAY constructor
     if (check(TokenType::KW_ARRAY)) {
         parseArrayConstructor();
@@ -583,6 +594,7 @@ void Parser::parsePrimaryExpr() {
         isNonReservedKeyword(current_token_.type)) {
         std::string name = parseIdentifier();
         int parts = 1;
+        std::string column = name;
 
         // Check for function call
         if (match(TokenType::LEFT_PAREN)) {
@@ -591,18 +603,16 @@ void Parser::parsePrimaryExpr() {
         }
 
         // Check for qualified name (table.column or schema.table.column)
-        std::string full_name = name;
         while (match(TokenType::DOT)) {
             if (parts >= 3) {
                 error("PostgreSQL column references must be schema.table.column");
             }
-            full_name += ".";
-            full_name += parseIdentifier();
+            column = parseIdentifier();
             parts++;
         }
 
         emit(sblr::Opcode::COLUMN_REF);
-        emitString(full_name);
+        emitString(column);
         return;
     }
 
@@ -897,19 +907,107 @@ void Parser::parseCastExpr() {
     consumeKeyword(TokenType::KW_AS, "Expected AS");
 
     PgDataType type = parseDataType();
+    core::CastFormat cast_format = core::CastFormat::DEFAULT;
+    // CAST ... USING <format> (see docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md)
+    if (matchKeyword(TokenType::KW_USING)) {
+        std::string fmt = parseIdentifier();
+        std::transform(fmt.begin(), fmt.end(), fmt.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (fmt == "hex" || fmt == "hexadecimal") {
+            cast_format = core::CastFormat::HEX;
+        } else if (fmt == "base64") {
+            cast_format = core::CastFormat::BASE64;
+        } else if (fmt == "escape") {
+            cast_format = core::CastFormat::ESCAPE;
+        } else {
+            error("Unknown CAST USING format: " + fmt);
+        }
+    }
     emit(sblr::Opcode::EXPR_CAST);
     emitByte(0);  // try_cast = false
-    emit(typeToOpcode(type.kind));
-    if (type.length > 0) {
-        emitU32(type.length);
-    }
-    if (type.precision > 0) {
-        emitU32(type.precision);
-        emitU32(type.scale);
-    }
-    emitByte(static_cast<uint8_t>(core::CastFormat::DEFAULT));
+    emitTypeDefinition(type);
+    emitByte(static_cast<uint8_t>(cast_format));
 
     consume(TokenType::RIGHT_PAREN, "Expected )");
+}
+
+void Parser::parseExtractExpr() {
+    consume(TokenType::LEFT_PAREN, "Expected ( after EXTRACT");
+    uint8_t arg_count = 0;
+    sblr::ExtractField field = parseElementSelector(arg_count);
+    consumeKeyword(TokenType::KW_FROM, "Expected FROM in EXTRACT expression");
+    parseExpression();
+    consume(TokenType::RIGHT_PAREN, "Expected ) after EXTRACT");
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_EXTRACT));
+    emitByte(static_cast<uint8_t>(field));
+    emitByte(arg_count);
+}
+
+void Parser::parseAlterElementExpr() {
+    consume(TokenType::LEFT_PAREN, "Expected ( after ALTER_ELEMENT");
+    uint8_t arg_count = 0;
+    sblr::ExtractField field = parseElementSelector(arg_count);
+    consumeKeyword(TokenType::KW_IN, "Expected IN in ALTER_ELEMENT expression");
+    parseExpression();
+    consumeKeyword(TokenType::KW_TO, "Expected TO in ALTER_ELEMENT expression");
+    parseExpression();
+    consume(TokenType::RIGHT_PAREN, "Expected ) after ALTER_ELEMENT");
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_ELEMENT));
+    emitByte(static_cast<uint8_t>(field));
+    emitByte(arg_count);
+}
+
+sblr::ExtractField Parser::parseElementSelector(uint8_t& arg_count) {
+    arg_count = 0;
+
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING) ||
+        check(TokenType::ESCAPE_STRING)) {
+        std::string_view path = lexer_.stringPool().get(current_token_.value.string_id);
+        emit(sblr::Opcode::LITERAL_STRING);
+        emitString(path);
+        advance();
+        arg_count = 1;
+        return sblr::ExtractField::PATH;
+    }
+
+    if (check(TokenType::INTEGER_LITERAL) || check(TokenType::PLUS) ||
+        check(TokenType::MINUS) || check(TokenType::LEFT_PAREN)) {
+        parseExpression();
+        arg_count = 1;
+        return sblr::ExtractField::ELEMENT;
+    }
+
+    std::string name = parseIdentifier();
+    bool has_args = false;
+
+    if (match(TokenType::LEFT_PAREN)) {
+        has_args = true;
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                parseExpression();
+                arg_count++;
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ) after element selector arguments");
+    }
+
+    auto resolved = sblr::resolveExtractFieldName(name);
+    if (!resolved) {
+        if (has_args) {
+            error("Unknown EXTRACT element: " + name);
+            return sblr::ExtractField::VALUE;
+        }
+        emit(sblr::Opcode::LITERAL_STRING);
+        emitString(name);
+        arg_count = 1;
+        return sblr::ExtractField::FIELD;
+    }
+
+    return *resolved;
 }
 
 void Parser::parseArrayConstructor() {
@@ -956,14 +1054,7 @@ void Parser::parseTypeCast() {
     PgDataType type = parseDataType();
     emit(sblr::Opcode::EXPR_CAST);
     emitByte(0);  // try_cast = false
-    emit(typeToOpcode(type.kind));
-    if (type.length > 0) {
-        emitU32(type.length);
-    }
-    if (type.precision > 0) {
-        emitU32(type.precision);
-        emitU32(type.scale);
-    }
+    emitTypeDefinition(type);
     emitByte(static_cast<uint8_t>(core::CastFormat::DEFAULT));
 }
 

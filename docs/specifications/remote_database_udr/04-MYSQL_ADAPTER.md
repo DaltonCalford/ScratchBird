@@ -24,6 +24,10 @@ MySQL uses a packet-based protocol with sequence numbers:
 └────────────────────────────────────────┘
 ```
 
+Notes:
+- Maximum payload length is `0xFFFFFF`; larger payloads are split across multiple packets.
+- Sequence numbers increment per packet and reset to 0 at the start of each command/response exchange.
+
 ### 2.2 Command Types
 
 ```cpp
@@ -58,6 +62,8 @@ namespace mysql_responses {
     constexpr uint8_t EOF_PACKET     = 0xFE;
     constexpr uint8_t ERR_PACKET     = 0xFF;
     constexpr uint8_t LOCAL_INFILE   = 0xFB;
+    constexpr uint8_t AUTH_SWITCH    = 0xFE;
+    constexpr uint8_t AUTH_MORE_DATA = 0x01;
 }
 ```
 
@@ -237,6 +243,12 @@ Result<void> MySQLAdapter::connect(
     return {};
 }
 ```
+
+Handshake handling requirements:
+- If `CLIENT_SSL` is requested and the server advertises SSL, send `SSLRequest` (the 32-byte prefix of HandshakeResponse41) and perform TLS before sending the full response.
+- Support `AuthSwitchRequest` (0xFE) and `AuthMoreData` (0x01) during authentication, including `caching_sha2_password` and `sha256_password` flows.
+- Distinguish EOF vs OK when `CLIENT_DEPRECATE_EOF` is set.
+- Handle `LOCAL_INFILE` (0xFB) during `COM_QUERY` if enabled.
 
 ### 4.2 Handshake Handling
 

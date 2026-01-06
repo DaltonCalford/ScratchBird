@@ -1035,6 +1035,7 @@ static double estimateColumnWidthFromType(uint16_t data_type, uint32_t type_prec
         case 11: return 8.0;   // FLOAT64
         case 12: return 16.0;  // DECIMAL (varies, assume 16)
         case 13: return 8.0;   // MONEY
+        case 14: return 16.0;  // UINT128
 
         // String types (20-29)
         case 20: return type_precision > 0 ? static_cast<double>(type_precision) : 16.0;  // CHAR

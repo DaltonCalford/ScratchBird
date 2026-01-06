@@ -66,6 +66,10 @@ These extended opcodes are reserved and MUST keep their values:
 - EXT_VALIDATE_DOMAIN_VALUE   = 0x020B
 - EXT_APPLY_QUALITY_PIPELINE  = 0x020C
 - EXT_CHECK_GLOBAL_UNIQUENESS = 0x020D
+- EXT_EXPR_NOT            = 0x0210
+- EXT_EXPR_IS_NULL        = 0x0211
+- EXT_SAVEPOINT_BEGIN     = 0x0212
+- EXT_SAVEPOINT_END       = 0x0213
 
 ## Array Extended Opcodes (Low Range)
 - EXT_ARRAY_SUBSCRIPT = 0x0025

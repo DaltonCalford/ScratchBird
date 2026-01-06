@@ -1,340 +1,330 @@
 #include <gtest/gtest.h>
+#include <limits>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "scratchbird/core/typed_value.h"
+#include "scratchbird/core/type_extractor.h"
+#include "scratchbird/core/range.h"
+#include "scratchbird/core/network.h"
+#include "scratchbird/core/tsvector.h"
+#include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/types.h"
-#include "scratchbird/core/array.h"
-using namespace scratchbird::core;
-using namespace scratchbird::sblr;
+#include "scratchbird/sblr/extract_element_ops.h"
+#include "scratchbird/sblr/opcodes.h"
 
-/**
- * Test fixture for EXTRACT function
- *
- * Tests the EXTRACT(field FROM value) SQL function across all supported data types:
- * - DATE: year, month, day, dow, doy, quarter, epoch
- * - TIME: hour, minute, second, microsecond, millisecond, epoch
- * - TIMESTAMP: all date+time fields, quarter, epoch
- * - INTERVAL: year, month, day, hour, minute, second, microsecond, millisecond, epoch
- * - UUID: version, variant, timestamp
- * - ARRAY: cardinality, ndims, lower, upper
- * - POINT: x, y, srid
- */
-class ExtractTest : public ::testing::Test {};
+using scratchbird::core::TypedValue;
+using scratchbird::core::TypeExtractor;
+using scratchbird::sblr::ExtractField;
 
-// ===== DATE EXTRACTION TESTS =====
+namespace
+{
+    constexpr int64_t kMicrosPerSecond = 1000000LL;
+    constexpr int64_t kSecondsPerDay = 86400LL;
+    constexpr int64_t kMicrosPerDay = kSecondsPerDay * kMicrosPerSecond;
 
-TEST_F(ExtractTest, DATE_ExtractYear) {
-    // Create a DATE value: 2025-11-19
-    auto date = TypedValue::makeDate(20411); // Days since epoch for 2025-11-19
+    TypedValue ExtractChecked(const TypedValue& source,
+                              ExtractField field,
+                              const std::vector<TypedValue>& args = {})
+    {
+        TypedValue out = TypedValue::makeNull();
+        std::string err;
+        bool ok = scratchbird::sblr::extractElement(source, field, args, &out, &err);
+        EXPECT_TRUE(ok) << err;
+        return out;
+    }
 
-    // We can't use executeExtract directly since we need to test at a lower level
-    // For now, let's test the TypeExtractor functions directly
-    int32_t year = TypeExtractor::extractYear(20411);
-    EXPECT_EQ(year, 2025);
+    TypedValue AlterChecked(const TypedValue& source,
+                            ExtractField field,
+                            const std::vector<TypedValue>& args,
+                            const TypedValue& new_value)
+    {
+        TypedValue out = TypedValue::makeNull();
+        std::string err;
+        bool ok = scratchbird::sblr::alterElement(source, field, args, new_value, &out, &err);
+        EXPECT_TRUE(ok) << err;
+        return out;
+    }
+
+    std::vector<uint8_t> makeUint128Bytes(scratchbird::core::uint128_t value)
+    {
+        std::vector<uint8_t> bytes(16);
+        for (int i = 0; i < 16; ++i)
+        {
+            bytes[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xFF);
+        }
+        return bytes;
+    }
 }
 
-TEST_F(ExtractTest, DATE_ExtractMonth) {
-    // 2025-11-19
-    int32_t month = TypeExtractor::extractMonth(20411);
-    EXPECT_EQ(month, 11);
+TEST(ExtractElementTest, DateIsoWeekAndTimezone)
+{
+    int64_t days = TypeExtractor::ymdToDays(2024, 1, 1); // Monday
+    TypedValue date = TypedValue::makeDate(days, -5 * 3600);
+
+    EXPECT_EQ(ExtractChecked(date, ExtractField::YEAR).getInt32(), 2024);
+    EXPECT_EQ(ExtractChecked(date, ExtractField::ISO_WEEK).getInt32(), 1);
+    EXPECT_EQ(ExtractChecked(date, ExtractField::ISO_DOW).getInt32(), 1);
+    EXPECT_EQ(ExtractChecked(date, ExtractField::TIMEZONE_HOUR).getInt32(), -5);
 }
 
-TEST_F(ExtractTest, DATE_ExtractDay) {
-    // 2025-11-19
-    int32_t day = TypeExtractor::extractDay(20411);
-    EXPECT_EQ(day, 19);
+TEST(AlterElementTest, DateInvalidLeapYearChange)
+{
+    int64_t days = TypeExtractor::ymdToDays(2024, 2, 29);
+    TypedValue date = TypedValue::makeDate(days, 0);
+
+    TypedValue out = TypedValue::makeNull();
+    std::string err;
+    bool ok = scratchbird::sblr::alterElement(date, ExtractField::YEAR, {},
+                                              TypedValue::makeInt32(2023), &out, &err);
+    EXPECT_FALSE(ok);
+    EXPECT_FALSE(err.empty());
 }
 
-TEST_F(ExtractTest, DATE_ExtractDayOfWeek) {
-    // 2025-11-19 is a Wednesday (3)
-    int32_t dow = TypeExtractor::extractDayOfWeek(20411);
-    EXPECT_GE(dow, 0);
-    EXPECT_LE(dow, 6);
+TEST(AlterElementTest, TimestampTimezoneKeepsLocal)
+{
+    int64_t days = TypeExtractor::ymdToDays(2024, 1, 2);
+    int64_t local_micros = days * kMicrosPerDay +
+                           (3 * 3600 + 4 * 60 + 5) * kMicrosPerSecond;
+    int32_t offset = 2 * 3600;
+    int64_t utc_micros = local_micros - static_cast<int64_t>(offset) * kMicrosPerSecond;
+
+    TypedValue ts = TypedValue::makeTimestamp(utc_micros, offset);
+    TypedValue updated = AlterChecked(ts, ExtractField::TIMEZONE_HOUR, {},
+                                      TypedValue::makeInt32(5));
+
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::HOUR).getInt32(), 3);
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::TIMEZONE_HOUR).getInt32(), 5);
 }
 
-TEST_F(ExtractTest, DATE_ExtractDayOfYear) {
-    // 2025-11-19 is day 323 of 2025
-    int32_t doy = TypeExtractor::extractDayOfYear(20411);
-    EXPECT_GE(doy, 1);
-    EXPECT_LE(doy, 366);
+TEST(ExtractElementTest, IntervalTotals)
+{
+    scratchbird::core::Interval interval(14, 3,
+                                         5 * 3600 * kMicrosPerSecond + 12 * kMicrosPerSecond);
+    TypedValue value = TypedValue::makeInterval(interval);
+
+    EXPECT_EQ(ExtractChecked(value, ExtractField::TOTAL_MONTHS).getInt32(), 14);
+    EXPECT_EQ(ExtractChecked(value, ExtractField::TOTAL_DAYS).getInt64(), 3);
+
+    double time_seconds = 5.0 * 3600.0 + 12.0;
+    EXPECT_NEAR(ExtractChecked(value, ExtractField::TOTAL_SECONDS).getFloat64(), time_seconds, 0.001);
+
+    double epoch_seconds = 14.0 * 30.0 * 86400.0 + 3.0 * 86400.0 + time_seconds;
+    EXPECT_NEAR(ExtractChecked(value, ExtractField::EPOCH).getFloat64(), epoch_seconds, 0.001);
 }
 
-// ===== TIME EXTRACTION TESTS =====
+TEST(ExtractElementTest, Int128HiLo)
+{
+    scratchbird::core::uint128_t value =
+        (static_cast<scratchbird::core::uint128_t>(0x1122334455667788ULL) << 64) |
+        0x99AABBCCDDEEFF00ULL;
 
-TEST_F(ExtractTest, TIME_ExtractHour) {
-    // 14:30:45.123456 = 14*3600*1000000 + 30*60*1000000 + 45*1000000 + 123456
-    int64_t time_us = 52245123456LL;
-    int32_t hour = TypeExtractor::extractHour(time_us);
-    EXPECT_EQ(hour, 14);
+    TypedValue tv = TypedValue::makeInt128(makeUint128Bytes(value));
+
+    EXPECT_EQ(ExtractChecked(tv, ExtractField::HI64).getUInt64(), 0x1122334455667788ULL);
+    EXPECT_EQ(ExtractChecked(tv, ExtractField::LO64).getUInt64(), 0x99AABBCCDDEEFF00ULL);
 }
 
-TEST_F(ExtractTest, TIME_ExtractMinute) {
-    int64_t time_us = 52245123456LL; // 14:30:45.123456
-    int32_t minute = TypeExtractor::extractMinute(time_us);
-    EXPECT_EQ(minute, 30);
+TEST(ExtractElementTest, FloatFlags)
+{
+    TypedValue nan_val = TypedValue::makeFloat64(std::numeric_limits<double>::quiet_NaN());
+    TypedValue inf_val = TypedValue::makeFloat64(std::numeric_limits<double>::infinity());
+
+    EXPECT_TRUE(ExtractChecked(nan_val, ExtractField::IS_NAN).getBool());
+    EXPECT_TRUE(ExtractChecked(inf_val, ExtractField::IS_INF).getBool());
 }
 
-TEST_F(ExtractTest, TIME_ExtractSecond) {
-    int64_t time_us = 52245123456LL; // 14:30:45.123456
-    int32_t second = TypeExtractor::extractSecond(time_us);
-    EXPECT_EQ(second, 45);
+TEST(ExtractElementTest, DecimalUnscaled)
+{
+    scratchbird::core::int128_t unscaled = 123456;
+    TypedValue dec = TypedValue::makeDecimal(unscaled, 10, 2);
+    TypedValue out = ExtractChecked(dec, ExtractField::UNSCALED);
+
+    EXPECT_EQ(static_cast<int64_t>(out.getInt128()), 123456);
 }
 
-TEST_F(ExtractTest, TIME_ExtractMicrosecond) {
-    int64_t time_us = 52245123456LL; // 14:30:45.123456
-    int32_t microsecond = TypeExtractor::extractMicrosecond(time_us);
-    EXPECT_EQ(microsecond, 123456);
+TEST(ExtractElementTest, MoneyMajorMinor)
+{
+    TypedValue money = TypedValue::makeMoney(123456);
+    EXPECT_EQ(ExtractChecked(money, ExtractField::MAJOR).getInt64(), 12);
+    EXPECT_EQ(ExtractChecked(money, ExtractField::MINOR).getInt32(), 3456);
 }
 
-// ===== TIMESTAMP EXTRACTION TESTS =====
+TEST(ExtractElementTest, StringLengths)
+{
+    TypedValue ch = TypedValue::makeChar("ABC   ");
+    TypedValue text = TypedValue::makeText("Hello");
 
-TEST_F(ExtractTest, TIMESTAMP_ExtractYear) {
-    // 2025-11-19 14:30:45 = days * 86400000000 + time_microseconds
-    int64_t ts = 20411LL * 86400000000LL + 52245000000LL;
-    int32_t year = TypeExtractor::extractTimestampYear(ts);
-    EXPECT_EQ(year, 2025);
+    EXPECT_EQ(ExtractChecked(ch, ExtractField::TRIMMED_LENGTH).getInt32(), 3);
+    EXPECT_EQ(ExtractChecked(text, ExtractField::CHAR_LENGTH).getInt32(), 5);
+    EXPECT_EQ(ExtractChecked(text, ExtractField::OCTET_LENGTH).getInt32(), 5);
 }
 
-TEST_F(ExtractTest, TIMESTAMP_ExtractMonth) {
-    int64_t ts = 20411LL * 86400000000LL + 52245000000LL;
-    int32_t month = TypeExtractor::extractTimestampMonth(ts);
-    EXPECT_EQ(month, 11);
+TEST(ExtractAlterElementTest, JsonPath)
+{
+    TypedValue json = TypedValue::makeJSON("{\"a\":{\"b\":[1,2]}}");
+    TypedValue path = TypedValue::makeText("$.a.b[1]");
+
+    EXPECT_EQ(ExtractChecked(json, ExtractField::PATH, {path}).toString(), "2");
+
+    TypedValue updated = AlterChecked(json, ExtractField::PATH, {path},
+                                      TypedValue::makeInt32(7));
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::PATH, {path}).toString(), "7");
 }
 
-TEST_F(ExtractTest, TIMESTAMP_ExtractDay) {
-    int64_t ts = 20411LL * 86400000000LL + 52245000000LL;
-    int32_t day = TypeExtractor::extractTimestampDay(ts);
-    EXPECT_EQ(day, 19);
+#ifdef HAVE_LIBXML2
+TEST(ExtractElementTest, XmlPath)
+{
+    TypedValue xml = TypedValue::makeXML("<root a=\"1\"><child>2</child></root>");
+    TypedValue path = TypedValue::makeText("//child");
+    TypedValue out = ExtractChecked(xml, ExtractField::PATH, {path});
+
+    EXPECT_NE(out.toString().find("child"), std::string::npos);
+}
+#endif
+
+TEST(ExtractAlterElementTest, BinaryByteAndLength)
+{
+    std::vector<uint8_t> data = {0x0F, 0x00, 0xFF};
+    TypedValue bin = TypedValue::makeBinary(data);
+
+    EXPECT_EQ(ExtractChecked(bin, ExtractField::LENGTH).getInt32(), 3);
+    EXPECT_EQ(ExtractChecked(bin, ExtractField::BYTE, {TypedValue::makeInt32(2)}).getUInt8(), 0xFF);
+
+    TypedValue updated = AlterChecked(bin, ExtractField::BYTE, {TypedValue::makeInt32(1)},
+                                      TypedValue::makeInt32(0x7F));
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::BYTE, {TypedValue::makeInt32(1)}).getUInt8(), 0x7F);
 }
 
-TEST_F(ExtractTest, TIMESTAMP_ExtractHour) {
-    int64_t ts = 20411LL * 86400000000LL + 52245000000LL;
-    int32_t hour = TypeExtractor::extractTimestampHour(ts);
-    EXPECT_EQ(hour, 14);
+TEST(ExtractElementTest, VectorMetrics)
+{
+    TypedValue vec = TypedValue::makeVector({1.0f, 2.0f, 3.0f});
+    EXPECT_EQ(ExtractChecked(vec, ExtractField::DIMENSION).getInt32(), 3);
+
+    TypedValue dot = ExtractChecked(vec, ExtractField::DOT,
+                                    {TypedValue::makeVector({2.0f, 0.5f, -1.0f})});
+    EXPECT_NEAR(dot.getFloat64(), 1.0 * 2.0 + 2.0 * 0.5 + 3.0 * -1.0, 1e-6);
 }
 
-TEST_F(ExtractTest, TIMESTAMP_ExtractMinute) {
-    int64_t ts = 20411LL * 86400000000LL + 52245000000LL;
-    int32_t minute = TypeExtractor::extractTimestampMinute(ts);
-    EXPECT_EQ(minute, 30);
+TEST(AlterElementTest, ArrayElementUpdate)
+{
+    TypedValue arr = TypedValue::makeArray({TypedValue::makeInt32(10), TypedValue::makeInt32(20)});
+
+    EXPECT_EQ(ExtractChecked(arr, ExtractField::ELEMENT, {TypedValue::makeInt32(2)}).getInt32(), 20);
+
+    TypedValue updated = AlterChecked(arr, ExtractField::ELEMENT, {TypedValue::makeInt32(1)},
+                                      TypedValue::makeInt32(99));
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::ELEMENT, {TypedValue::makeInt32(1)}).getInt32(), 99);
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::LOWER).getInt32(), 1);
 }
 
-TEST_F(ExtractTest, TIMESTAMP_ExtractSecond) {
-    int64_t ts = 20411LL * 86400000000LL + 52245000000LL;
-    int32_t second = TypeExtractor::extractTimestampSecond(ts);
-    EXPECT_EQ(second, 45);
+TEST(AlterElementTest, CompositeFieldUpdate)
+{
+    std::vector<std::string> names = {"id", "city"};
+    std::vector<TypedValue> values = {TypedValue::makeInt32(1), TypedValue::makeText("Boston")};
+    TypedValue comp = TypedValue::makeComposite(names, values);
+
+    EXPECT_EQ(ExtractChecked(comp, ExtractField::FIELD, {TypedValue::makeText("city")}).getText(), "Boston");
+
+    TypedValue updated = AlterChecked(comp, ExtractField::FIELD, {TypedValue::makeInt32(1)},
+                                      TypedValue::makeInt32(42));
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::FIELD, {TypedValue::makeText("id")}).getInt32(), 42);
 }
 
-TEST_F(ExtractTest, TIMESTAMP_ExtractMicrosecond) {
-    int64_t ts = 20411LL * 86400000000LL + 52245123456LL;
-    int32_t microsecond = TypeExtractor::extractTimestampMicrosecond(ts);
-    EXPECT_EQ(microsecond, 123456);
+TEST(AlterElementTest, VariantDatatype)
+{
+    TypedValue var = TypedValue::makeVariant(TypedValue::makeInt32(5));
+    EXPECT_EQ(ExtractChecked(var, ExtractField::DATATYPE).getInt32(),
+              static_cast<int32_t>(scratchbird::core::DataType::INT32));
+
+    TypedValue updated = AlterChecked(var, ExtractField::DATATYPE, {},
+                                      TypedValue::makeInt32(static_cast<int32_t>(scratchbird::core::DataType::TEXT)));
+
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::DATATYPE).getInt32(),
+              static_cast<int32_t>(scratchbird::core::DataType::TEXT));
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::VALUE).getText(), "5");
 }
 
-// ===== INTERVAL EXTRACTION TESTS =====
-
-TEST_F(ExtractTest, INTERVAL_ExtractYear) {
-    // Interval: 2 years, 3 months = 27 months total
-    Interval interval(27, 0, 0);
-    int32_t year = interval.months / 12;
-    EXPECT_EQ(year, 2);
-}
-
-TEST_F(ExtractTest, INTERVAL_ExtractMonth) {
-    // Interval: 2 years, 3 months = 27 months total
-    Interval interval(27, 0, 0);
-    int32_t month = interval.months % 12;
-    EXPECT_EQ(month, 3);
-}
-
-TEST_F(ExtractTest, INTERVAL_ExtractDay) {
-    // Interval: 45 days
-    Interval interval(0, 45, 0);
-    EXPECT_EQ(interval.days, 45);
-}
-
-TEST_F(ExtractTest, INTERVAL_ExtractHour) {
-    // Interval: 5 hours = 5 * 3600 * 1000000 microseconds
-    Interval interval(0, 0, 5LL * 3600 * 1000000);
-    int64_t hours = interval.microseconds / 3600000000LL;
-    EXPECT_EQ(hours, 5);
-}
-
-TEST_F(ExtractTest, INTERVAL_ExtractMinute) {
-    // Interval: 1 hour 30 minutes = 90 minutes total
-    Interval interval(0, 0, 90LL * 60 * 1000000);
-    int64_t total_minutes = interval.microseconds / 60000000LL;
-    int32_t minutes = static_cast<int32_t>(total_minutes % 60);
-    EXPECT_EQ(minutes, 30);
-}
-
-TEST_F(ExtractTest, INTERVAL_ExtractSecond) {
-    // Interval: 1 minute 45 seconds
-    Interval interval(0, 0, 105LL * 1000000);
-    int64_t total_seconds = interval.microseconds / 1000000LL;
-    int32_t seconds = static_cast<int32_t>(total_seconds % 60);
-    EXPECT_EQ(seconds, 45);
-}
-
-TEST_F(ExtractTest, INTERVAL_NegativeValues) {
-    // Interval: -6 months, -10 days, -2 hours
-    Interval interval(-6, -10, -2LL * 3600 * 1000000);
-    EXPECT_EQ(interval.months, -6);
-    EXPECT_EQ(interval.days, -10);
-    EXPECT_LT(interval.microseconds, 0);
-}
-
-// ===== UUID EXTRACTION TESTS =====
-
-TEST_F(ExtractTest, UUID_ExtractVersion) {
-    // Create a UUIDv4 (random UUID)
-    std::vector<uint8_t> uuid = {
-        0x12, 0x34, 0x56, 0x78,  // time_low
-        0x9a, 0xbc,              // time_mid
-        0x4d, 0xef,              // time_hi_and_version (0x4xxx for v4)
-        0x89, 0xab,              // clock_seq
-        0xcd, 0xef, 0x01, 0x23, 0x45, 0x67  // node
+TEST(ExtractElementTest, TSVectorLexemes)
+{
+    std::vector<scratchbird::core::Lexeme> lexemes = {
+        scratchbird::core::Lexeme("dog", {2}),
+        scratchbird::core::Lexeme("cat", {1})
     };
+    scratchbird::core::TSVector vec(lexemes);
+    TypedValue tv = TypedValue::makeTSVector(vec);
 
-    int32_t version = TypeExtractor::extractUUIDVersion(uuid);
-    EXPECT_EQ(version, 4);
+    TypedValue lex_out = ExtractChecked(tv, ExtractField::LEXEMES);
+    const auto &lex_array = lex_out.getArray();
+    ASSERT_EQ(lex_array.size(), 2u);
+    EXPECT_EQ(lex_array[0].getText(), "cat");
+    EXPECT_EQ(lex_array[1].getText(), "dog");
+    EXPECT_EQ(ExtractChecked(tv, ExtractField::SIZE).getInt32(), 2);
 }
 
-TEST_F(ExtractTest, UUID_ExtractVariant) {
-    // Standard UUID has variant 1 (10xx in bits 6-7 of byte 8)
-    std::vector<uint8_t> uuid = {
-        0x12, 0x34, 0x56, 0x78,
-        0x9a, 0xbc,
-        0x4d, 0xef,
-        0x89, 0xab,  // 0x89 = 10001001, variant bits = 10
-        0xcd, 0xef, 0x01, 0x23, 0x45, 0x67
-    };
+TEST(ExtractElementTest, TSQueryRootOp)
+{
+    auto query = scratchbird::core::TSQuery::fromString("cat & dog");
+    ASSERT_TRUE(query.has_value());
+    auto query_ptr = std::make_shared<scratchbird::core::TSQuery>(std::move(*query));
+    TypedValue tv = TypedValue::makeTSQuery(query_ptr);
 
-    int32_t variant = TypeExtractor::extractUUIDVariant(uuid);
-    EXPECT_GE(variant, 0);
-    EXPECT_LE(variant, 2);
+    EXPECT_EQ(ExtractChecked(tv, ExtractField::ROOT_OP).getText(), "AND");
 }
 
-// ===== ARRAY EXTRACTION TESTS =====
+TEST(AlterElementTest, RangeUpperUpdate)
+{
+    scratchbird::core::Range<int32_t> range(1, 10, true, false);
+    TypedValue tv = TypedValue::makeInt4Range(range);
 
-TEST_F(ExtractTest, ARRAY_ExtractCardinality) {
-    // Create an array with 5 elements
-    std::vector<int32_t> values = {1, 2, 3, 4, 5};
-    std::vector<size_t> dimensions = {5};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
+    EXPECT_EQ(ExtractChecked(tv, ExtractField::LOWER).getInt32(), 1);
+    EXPECT_EQ(ExtractChecked(tv, ExtractField::UPPER).getInt32(), 10);
 
-    EXPECT_EQ(arr->getTotalElements(), 5);
+    TypedValue updated = AlterChecked(tv, ExtractField::UPPER, {}, TypedValue::makeInt32(12));
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::UPPER).getInt32(), 12);
+
+    TypedValue emptied = AlterChecked(tv, ExtractField::ISEMPTY, {}, TypedValue::makeBool(true));
+    EXPECT_TRUE(ExtractChecked(emptied, ExtractField::ISEMPTY).getBool());
 }
 
-TEST_F(ExtractTest, ARRAY_ExtractNDims) {
-    // Create a 2D array: {{1,2,3}, {4,5,6}}
-    std::vector<int32_t> values = {1, 2, 3, 4, 5, 6};
-    std::vector<size_t> dimensions = {2, 3};  // 2 rows, 3 columns
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
+TEST(ExtractAlterElementTest, InetNetwork)
+{
+    auto inet_opt = scratchbird::core::InetAddr::fromString("192.168.1.10/24");
+    ASSERT_TRUE(inet_opt.has_value());
+    TypedValue inet = TypedValue::makeInet(*inet_opt);
 
-    EXPECT_EQ(arr->getRank(), 2);
+    EXPECT_EQ(ExtractChecked(inet, ExtractField::NETMASK).getInt32(), 24);
+    EXPECT_EQ(ExtractChecked(inet, ExtractField::NETWORK).getInet().toString(), "192.168.1.0/24");
+
+    TypedValue updated = AlterChecked(inet, ExtractField::ADDRESS, {},
+                                      TypedValue::makeText("192.168.1.20"));
+    EXPECT_EQ(ExtractChecked(updated, ExtractField::ADDRESS).getText(), "192.168.1.20");
 }
 
-TEST_F(ExtractTest, ARRAY_ExtractDimensions) {
-    std::vector<int32_t> values = {1, 2, 3, 4, 5, 6, 7, 8};
-    std::vector<size_t> dimensions = {2, 4};  // 2 rows, 4 columns
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
+TEST(ExtractElementTest, MacAddrFlags)
+{
+    scratchbird::core::MacAddr mac(0x08, 0x00, 0x2B, 0x01, 0x02, 0x03);
+    TypedValue value = TypedValue::makeMacAddr(mac);
 
-    auto dims = arr->getDimensions();
-    EXPECT_EQ(dims.size(), 2);
-    EXPECT_EQ(dims[0], 2);
-    EXPECT_EQ(dims[1], 4);
+    TypedValue oui = ExtractChecked(value, ExtractField::OUI);
+    const auto &bytes = oui.getBinary();
+    ASSERT_EQ(bytes.size(), 3u);
+    EXPECT_EQ(bytes[0], 0x08);
+    EXPECT_FALSE(ExtractChecked(value, ExtractField::IS_LOCAL).getBool());
 }
 
-TEST_F(ExtractTest, ARRAY_Empty) {
-    std::vector<int32_t> values;
-    std::vector<size_t> dimensions = {0};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
+TEST(AlterElementTest, PointUpdate)
+{
+    scratchbird::core::Point pt;
+    pt.x = 1.5;
+    pt.y = -2.0;
+    pt.srid = 4326;
+    TypedValue value = TypedValue::makePoint(pt);
 
-    EXPECT_EQ(arr->getTotalElements(), 0);
-    EXPECT_TRUE(arr->isEmpty());
-}
+    EXPECT_DOUBLE_EQ(ExtractChecked(value, ExtractField::X).getFloat64(), 1.5);
 
-// ===== POINT EXTRACTION TESTS =====
-
-TEST_F(ExtractTest, POINT_ExtractX) {
-    Point point(10.5, 20.3, 4326);
-    EXPECT_DOUBLE_EQ(point.x, 10.5);
-}
-
-TEST_F(ExtractTest, POINT_ExtractY) {
-    Point point(10.5, 20.3, 4326);
-    EXPECT_DOUBLE_EQ(point.y, 20.3);
-}
-
-TEST_F(ExtractTest, POINT_ExtractSRID) {
-    Point point(10.5, 20.3, 4326);  // SRID 4326 = WGS 84
-    EXPECT_EQ(point.srid, 4326);
-}
-
-TEST_F(ExtractTest, POINT_DefaultSRID) {
-    Point point(1.0, 2.0);  // No SRID specified
-    EXPECT_EQ(point.srid, 0);  // Default is 0 (undefined)
-}
-
-TEST_F(ExtractTest, POINT_NegativeCoordinates) {
-    Point point(-122.4194, 37.7749, 4326);  // San Francisco
-    EXPECT_DOUBLE_EQ(point.x, -122.4194);
-    EXPECT_DOUBLE_EQ(point.y, 37.7749);
-}
-
-// ===== EDGE CASES =====
-
-TEST_F(ExtractTest, DATE_EpochZero) {
-    // Day 0 = 1970-01-01
-    int32_t year = TypeExtractor::extractYear(0);
-    EXPECT_EQ(year, 1970);
-    int32_t month = TypeExtractor::extractMonth(0);
-    EXPECT_EQ(month, 1);
-    int32_t day = TypeExtractor::extractDay(0);
-    EXPECT_EQ(day, 1);
-}
-
-TEST_F(ExtractTest, TIME_Midnight) {
-    // 00:00:00.000000
-    int32_t hour = TypeExtractor::extractHour(0);
-    EXPECT_EQ(hour, 0);
-    int32_t minute = TypeExtractor::extractMinute(0);
-    EXPECT_EQ(minute, 0);
-    int32_t second = TypeExtractor::extractSecond(0);
-    EXPECT_EQ(second, 0);
-}
-
-TEST_F(ExtractTest, TIME_LastMicrosecondOfDay) {
-    // 23:59:59.999999
-    int64_t time_us = 86399999999LL;
-    int32_t hour = TypeExtractor::extractHour(time_us);
-    EXPECT_EQ(hour, 23);
-    int32_t minute = TypeExtractor::extractMinute(time_us);
-    EXPECT_EQ(minute, 59);
-    int32_t second = TypeExtractor::extractSecond(time_us);
-    EXPECT_EQ(second, 59);
-}
-
-TEST_F(ExtractTest, INTERVAL_ZeroInterval) {
-    Interval interval(0, 0, 0);
-    EXPECT_EQ(interval.months, 0);
-    EXPECT_EQ(interval.days, 0);
-    EXPECT_EQ(interval.microseconds, 0);
-}
-
-TEST_F(ExtractTest, ARRAY_SingleElement) {
-    std::vector<int32_t> values = {42};
-    std::vector<size_t> dimensions = {1};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
-
-    EXPECT_EQ(arr->getTotalElements(), 1);
-    EXPECT_EQ(arr->getRank(), 1);
-}
-
-TEST_F(ExtractTest, ARRAY_3D) {
-    // 3D array: 2x3x4 = 24 elements
-    std::vector<int32_t> values(24, 1);
-    std::vector<size_t> dimensions = {2, 3, 4};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
-
-    EXPECT_EQ(arr->getTotalElements(), 24);
-    EXPECT_EQ(arr->getRank(), 3);
+    TypedValue updated = AlterChecked(value, ExtractField::X, {},
+                                      TypedValue::makeFloat64(2.5));
+    EXPECT_DOUBLE_EQ(ExtractChecked(updated, ExtractField::X).getFloat64(), 2.5);
 }

@@ -34,6 +34,9 @@ beta_requirements/
 └── builds/                     # Build requirements (already exists)
 ```
 
+Related specification roots (outside `beta_requirements/`):
+- `../udr_connectors/` - Engine UDR connectors for external resources
+
 ---
 
 ## 1. Programming Language Drivers
@@ -337,6 +340,24 @@ beta_requirements/
 - Health check endpoints
 - Graceful shutdown support
 - Configuration via environment variables
+
+---
+
+## 9. UDR Connectors (Engine Plugins)
+
+**Directory:** `../udr_connectors/`
+
+These connectors provide engine-side access to external resources without
+vendor-provided drivers, and are required for migration and passthrough use
+cases.
+
+| Connector | Directory | Description | Priority |
+|-----------|-----------|-------------|----------|
+| **Local Files** | `local_files_udr/` | CSV/JSON local file access (no network) | P0 |
+| **Local Scripts** | `local_scripts_udr/` | Local script execution for data access (no network) | P0 |
+| **PostgreSQL** | `postgresql_udr/` | PostgreSQL wire protocol client UDR | P0 |
+| **MySQL/MariaDB** | `mysql_udr/` | MySQL wire protocol client UDR | P0 |
+| **Firebird** | `firebird_udr/` | Firebird wire protocol client UDR | P0 |
 
 ---
 

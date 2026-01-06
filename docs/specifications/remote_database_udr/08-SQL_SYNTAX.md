@@ -425,6 +425,24 @@ SELECT /*+ USE_CURSOR */ * FROM very_large_table;
 SELECT /*+ TIMEOUT(60000) */ * FROM slow_remote_query;
 ```
 
+### 5.4 Pass-through Execution (sys.*)
+
+Pass-through routines execute raw SQL or stored routines on the remote server.
+These require `allow_passthrough = true` on the server definition.
+
+```sql
+-- Execute DDL/DML directly on the remote server
+CALL sys.remote_exec('legacy_pg', 'CREATE TABLE tmp(id int)');
+CALL sys.remote_exec('legacy_pg', 'INSERT INTO tmp(id) VALUES (1)');
+
+-- Query remote data directly
+SELECT * FROM sys.remote_query('legacy_pg', 'SELECT id, name FROM users')
+AS t(id INT, name TEXT);
+
+-- Call a remote stored routine
+CALL sys.remote_call('legacy_pg', 'refresh_materialized_view', '{"name":"mv"}');
+```
+
 ---
 
 ## 6. Administrative Commands

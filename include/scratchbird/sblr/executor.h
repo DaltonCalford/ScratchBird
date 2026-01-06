@@ -226,6 +226,19 @@ namespace scratchbird
                                     core::ErrorContext* ctx = nullptr) -> core::Status override;
 
         private:
+            auto callFunctionByInfo(const core::CatalogManager::FunctionInfo& function_info,
+                                    const std::vector<Value>& args,
+                                    Value& result_out,
+                                    core::ErrorContext* ctx = nullptr) -> core::Status;
+            auto callFunctionById(const core::ID& function_id,
+                                  const std::vector<Value>& args,
+                                  Value& result_out,
+                                  core::ErrorContext* ctx = nullptr) -> core::Status;
+            auto callUDRFunctionById(const core::ID& udr_id,
+                                     const std::vector<Value>& args,
+                                     Value& result_out,
+                                     core::ErrorContext* ctx = nullptr) -> core::Status;
+
             core::Database *db_;
             core::CharsetManager charset_manager_;
             core::TimezoneManager timezone_manager_;
@@ -260,6 +273,10 @@ namespace scratchbird
             // Bound parameters for placeholders (prepared statements)
             std::vector<std::string> parameter_values_;
             std::vector<bool> parameter_nulls_;
+
+            // BLR savepoint scope tracking (implicit savepoints)
+            std::vector<std::string> blr_savepoint_stack_;
+            uint64_t blr_savepoint_counter_ = 0;
 
             // Grouping context for ROLLUP/CUBE/GROUPING SETS (Phase 3: Advanced Grouping)
             size_t current_grouping_set_index_ = 0;
@@ -300,6 +317,7 @@ namespace scratchbird
             std::string readString16();
             core::ObjectPath readObjectPath();
             core::ID readId();
+            core::DataType readDataTypeWithModifiers(uint32_t& precision_out, uint32_t& scale_out);
             void readDependencies(std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
             core::Status resolveSchemaIdForName(const std::string& schema_path,
                                                 core::ID& schema_id_out,
@@ -413,6 +431,11 @@ namespace scratchbird
             void executePrepareTransaction();
             void executeCommitPrepared();
             void executeRollbackPrepared();
+            void executeSavepoint();
+            void executeReleaseSavepoint();
+            void executeRollbackToSavepoint();
+            void executeBlrSavepointBegin();
+            void executeBlrSavepointEnd();
 
             // Set operations (UNION, INTERSECT, EXCEPT)
             void executeUnionAll();         // UNION ALL - concatenate with duplicates
@@ -1000,6 +1023,7 @@ namespace scratchbird
 
             // Extraction function
             void executeExtract();       // EXTRACT(field FROM value)
+            void executeAlterElement();  // ALTER_ELEMENT(selector IN value TO new_value)
 
             // Index Operation Executors (November 19, 2025)
             // These methods execute index operations from bytecode

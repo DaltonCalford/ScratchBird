@@ -2,16 +2,16 @@
 
 Firebird-style MGA database engine with multi-dialect wire compatibility (Firebird, MySQL, PostgreSQL) and the ScratchBird SBLR execution layer.
 
-**Current Phase:** Alpha (completing) - Planning & specification phase for Beta
+**Current Phase:** Alpha (completion) - Parser alignment + executor gap closure; Beta planning docs ready
 
 ## Status
 
 - **Alpha 1:** ✅ Complete (Core Storage, MGA, Indexes)
 - **Alpha 2:** ✅ Complete (Parser V2, Multi-Dialect Support)
 - **Alpha 3:** ✅ Complete (Network/Service Mode, Dependency Integrity, Security Infrastructure)
-- **Alpha (Current):** 🚧 Completing final plans (Plan 04 at 60%)
+- **Alpha (Current):** 🚧 Parser alignment + audit repairs (Plan 04 in progress)
 - **Beta Planning:** 📋 **Specification Complete** - 16 comprehensive cluster specifications (~13,000 lines) ready for pre-beta
-- **Tests:** `ctest --output-on-failure` - 98.7% pass rate (1,329/1,348 passing)
+- **Tests:** `ctest --test-dir build` - 100% pass (2,007/2,007), 42 skipped (network/socket gating)
 
 ###  Recent Milestones (January 2026)
 
@@ -19,7 +19,7 @@ Firebird-style MGA database engine with multi-dialect wire compatibility (Firebi
 - ✅ **Plan 02** (UUID Resolution/Rename/Move) - Complete
 - ✅ **Plan 03** (Security Context/Auth/Audit) - Complete
 - ✅ **Plan 03B** (Domain Infrastructure) - Complete
-- 🚧 **Plan 04** (Domain DDL Parsers) - 60% Complete
+- 🚧 **Plan 04** (Emulated parser alignment + DDL gaps) - In Progress
 - ✅ **Compatibility Test Suite** - 113 files with ~22,000 comprehensive tests
 - 🎉 **Beta Cluster Specifications** - Complete suite (16 docs, 12,794 lines)
 
@@ -45,10 +45,10 @@ ctest --output-on-failure -C Debug --test-dir build
 
 # ScratchBird Project Statistics
 
-**Generated:** 2026-01-02
+**Generated:** 2026-01-06
 **Project Start:** July 10, 2025
-**Latest Commit:** January 2, 2026
-**Project Age:** ~5.8 months
+**Latest Commit:** January 6, 2026
+**Project Age:** ~5.9 months
 **Current Phase:** **Alpha (completing)** → Pre-Beta (specifications ready)
 
 ---
@@ -59,7 +59,7 @@ ctest --output-on-failure -C Debug --test-dir build
 | ------------------------------ | --------------------------------------------- |
 | **Total Lines of Code**        | **606,000+** (+23,000 since December)         |
 | **Total Files**                | **980+** (+16 cluster specs)                  |
-| **Total Tests**                | **25,000+ test cases** (1,348 CTest + 22,000+)|
+| **Total Tests**                | **25,000+ test cases** (2,007 CTest + 22,000+)|
 | **Total Commits**              | **1,635+** (+113 since December)              |
 | **Contributors**               | **7**                                         |
 | **Documentation Files**        | **1,270+** (+20 cluster/security specs)       |
@@ -167,11 +167,9 @@ Each test file contains:
 
 ### CTest Suite
 
-- **Total CTest Tests:** 1,348
-- **Passing:** 1,329 (98.7%)
-- **Failed:** 1 (build artifact issue)
-- **Timed Out:** 4 (deadlock investigation)
-- **Not Built:** 12 (intentionally disabled)
+- **Total CTest Tests:** 2,007
+- **Passing:** 2,007 (100%)
+- **Skipped:** 42 (network/socket gating)
 - **Test Categories:** 11 (unit, integration, benchmark, stress, sql, etc.)
 
 ### Test Coverage by Category

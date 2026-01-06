@@ -212,19 +212,31 @@ void Parser::synchronize() {
 // ============================================================================
 
 void Parser::emit(sblr::Opcode op) {
+    if (!emit_enabled_) {
+        return;
+    }
     bytecode_.push_back(static_cast<uint8_t>(op));
 }
 
 void Parser::emitByte(uint8_t byte) {
+    if (!emit_enabled_) {
+        return;
+    }
     bytecode_.push_back(byte);
 }
 
 void Parser::emitU16(uint16_t val) {
+    if (!emit_enabled_) {
+        return;
+    }
     bytecode_.push_back(val & 0xFF);
     bytecode_.push_back((val >> 8) & 0xFF);
 }
 
 void Parser::emitU32(uint32_t val) {
+    if (!emit_enabled_) {
+        return;
+    }
     bytecode_.push_back(val & 0xFF);
     bytecode_.push_back((val >> 8) & 0xFF);
     bytecode_.push_back((val >> 16) & 0xFF);
@@ -232,6 +244,9 @@ void Parser::emitU32(uint32_t val) {
 }
 
 void Parser::emitU64(uint64_t val) {
+    if (!emit_enabled_) {
+        return;
+    }
     for (int i = 0; i < 8; i++) {
         bytecode_.push_back((val >> (i * 8)) & 0xFF);
     }
@@ -242,12 +257,18 @@ void Parser::emitI64(int64_t val) {
 }
 
 void Parser::emitF64(double val) {
+    if (!emit_enabled_) {
+        return;
+    }
     uint64_t bits;
     std::memcpy(&bits, &val, sizeof(bits));
     emitU64(bits);
 }
 
 void Parser::emitString(std::string_view str) {
+    if (!emit_enabled_) {
+        return;
+    }
     emitU32(static_cast<uint32_t>(str.size()));
     for (char c : str) {
         bytecode_.push_back(static_cast<uint8_t>(c));
@@ -526,6 +547,37 @@ sblr::Opcode Parser::typeToOpcode(PgDataType::Kind kind) {
             return sblr::Opcode::TYPE_JSON;
         default:
             return sblr::Opcode::TYPE_VARCHAR;  // Default fallback
+    }
+}
+
+void Parser::emitTypeDefinition(const PgDataType& type) {
+    // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md for SBLR type encoding.
+    if (type.kind == PgDataType::Kind::INT128 ||
+        type.kind == PgDataType::Kind::UINT128) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(
+            type.kind == PgDataType::Kind::INT128
+                ? sblr::ExtendedOpcode::EXT_TYPE_INT128
+                : sblr::ExtendedOpcode::EXT_TYPE_UINT128));
+        return;
+    }
+
+    emit(typeToOpcode(type.kind));
+    switch (type.kind) {
+        case PgDataType::Kind::CHAR:
+        case PgDataType::Kind::VARCHAR:
+        case PgDataType::Kind::BIT:
+        case PgDataType::Kind::VARBIT:
+            emitU32(type.length > 0 ? static_cast<uint32_t>(type.length) : 255);
+            break;
+        case PgDataType::Kind::DECIMAL:
+        case PgDataType::Kind::NUMERIC:
+        case PgDataType::Kind::MONEY:
+            emitU32(type.precision > 0 ? static_cast<uint32_t>(type.precision) : 18);
+            emitU32(static_cast<uint32_t>(type.scale));
+            break;
+        default:
+            break;
     }
 }
 

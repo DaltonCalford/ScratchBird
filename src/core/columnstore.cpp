@@ -37,6 +37,7 @@ static inline size_t getDataTypeSize(DataType type)
     case DataType::FLOAT64:
         return 8;
     case DataType::INT128:
+    case DataType::UINT128:
         return 16;
     default:
         return 0;  // Variable-length types
@@ -634,6 +635,7 @@ Status ColumnstoreIndex::compressRLE(const ColumnSegment &segment,
         value_size = 8;
         break;
     case DataType::INT128:
+    case DataType::UINT128:
         value_size = 16;
         break;
     default:
@@ -749,6 +751,7 @@ Status ColumnstoreIndex::decompressRLE(const std::vector<uint8_t> &compressed,
         value_size = 8;
         break;
     case DataType::INT128:
+    case DataType::UINT128:
         value_size = 16;
         break;
     default:

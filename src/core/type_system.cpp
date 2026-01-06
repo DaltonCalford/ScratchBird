@@ -16,6 +16,7 @@ namespace scratchbird::core
             case DataType::UINT16: return "UINT16";
             case DataType::UINT32: return "UINT32";
             case DataType::UINT64: return "UINT64";
+            case DataType::UINT128: return "UINT128";
             case DataType::FLOAT32: return "FLOAT32";
             case DataType::FLOAT64: return "FLOAT64";
             case DataType::DECIMAL: return "DECIMAL";
@@ -73,8 +74,8 @@ namespace scratchbird::core
         if (from == DataType::NULL_TYPE) return true;
 
         // Numeric types are generally convertible to each other
-        bool from_numeric = (from >= DataType::INT8 && from <= DataType::MONEY);
-        bool to_numeric = (to >= DataType::INT8 && to <= DataType::MONEY);
+        bool from_numeric = (from >= DataType::INT8 && from <= DataType::UINT128);
+        bool to_numeric = (to >= DataType::INT8 && to <= DataType::UINT128);
         if (from_numeric && to_numeric) return true;
 
         // String types are convertible to each other

@@ -20,7 +20,8 @@ namespace scratchbird::core
         AGGREGATE,
         COALESCE,
         NULLIF,
-        EXTRACT
+        EXTRACT,
+        ALTER_ELEMENT
     };
 
     class Expression
@@ -295,13 +296,56 @@ namespace scratchbird::core
         {
         }
 
+        ExtractExpr(uint8_t field_id, std::string field_name,
+                    std::vector<std::unique_ptr<Expression>> args,
+                    std::unique_ptr<Expression> source)
+            : Expression(ExprKind::EXTRACT),
+              field_id_(field_id),
+              field_name_(std::move(field_name)),
+              args_(std::move(args)),
+              source_(std::move(source))
+        {
+        }
+
         uint8_t fieldId() const { return field_id_; }
         const std::string &fieldName() const { return field_name_; }
+        const std::vector<std::unique_ptr<Expression>> &args() const { return args_; }
         Expression *source() const { return source_.get(); }
 
     private:
         uint8_t field_id_ = 0;
         std::string field_name_;
+        std::vector<std::unique_ptr<Expression>> args_;
         std::unique_ptr<Expression> source_;
+    };
+
+    class AlterElementExpr : public Expression
+    {
+    public:
+        AlterElementExpr(uint8_t field_id, std::string field_name,
+                         std::vector<std::unique_ptr<Expression>> args,
+                         std::unique_ptr<Expression> source,
+                         std::unique_ptr<Expression> new_value)
+            : Expression(ExprKind::ALTER_ELEMENT),
+              field_id_(field_id),
+              field_name_(std::move(field_name)),
+              args_(std::move(args)),
+              source_(std::move(source)),
+              new_value_(std::move(new_value))
+        {
+        }
+
+        uint8_t fieldId() const { return field_id_; }
+        const std::string &fieldName() const { return field_name_; }
+        const std::vector<std::unique_ptr<Expression>> &args() const { return args_; }
+        Expression *source() const { return source_.get(); }
+        Expression *newValue() const { return new_value_.get(); }
+
+    private:
+        uint8_t field_id_ = 0;
+        std::string field_name_;
+        std::vector<std::unique_ptr<Expression>> args_;
+        std::unique_ptr<Expression> source_;
+        std::unique_ptr<Expression> new_value_;
     };
 } // namespace scratchbird::core

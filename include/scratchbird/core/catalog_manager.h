@@ -3491,6 +3491,8 @@ public:
 
         auto getFunction(const std::string &name, FunctionInfo &info_out,
                         ErrorContext *ctx = nullptr) -> Status;
+        auto getFunctionById(const ID& function_id, FunctionInfo& info_out,
+                             ErrorContext* ctx = nullptr) -> Status;
         auto getProcedure(const std::string &name, ProcedureInfo &info_out,
                          ErrorContext *ctx = nullptr) -> Status;
 
@@ -3819,8 +3821,7 @@ public:
         auto rollbackPageMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
                                   ErrorContext *ctx = nullptr) -> Status;
 
-        // Catalog page layout - using higher page numbers to avoid conflict
-        // with existing system catalog on page 1
+        // Catalog page layout - use higher page numbers (page 1 reserved for FSM).
         static constexpr uint32_t CATALOG_ROOT_PAGE = 3;
         static constexpr uint32_t SCHEMAS_TABLE_PAGE = 4;
         static constexpr uint32_t TABLES_TABLE_PAGE = 5;

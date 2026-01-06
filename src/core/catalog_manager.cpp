@@ -12195,6 +12195,24 @@ auto CatalogManager::getFunction(const std::string &name, FunctionInfo &info_out
     return Status::OK;
 }
 
+auto CatalogManager::getFunctionById(const ID& function_id, FunctionInfo& info_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    for (const auto& entry : functions_)
+    {
+        if (entry.second.function_id == function_id)
+        {
+            info_out = entry.second;
+            return Status::OK;
+        }
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Function not found");
+    return Status::NOT_FOUND;
+}
+
 auto CatalogManager::getProcedure(const std::string &name, ProcedureInfo &info_out,
                                   ErrorContext *ctx) -> Status
 {
@@ -15680,6 +15698,28 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
         compatible = true;
     }
     else if (old_type == DataType::INT64 && new_type == DataType::INT128)
+    {
+        compatible = true;
+    }
+    // Unsigned widening: UINT8→UINT16→UINT32→UINT64→UINT128
+    else if (old_type == DataType::UINT8 &&
+             (new_type == DataType::UINT16 || new_type == DataType::UINT32 ||
+              new_type == DataType::UINT64 || new_type == DataType::UINT128))
+    {
+        compatible = true;
+    }
+    else if (old_type == DataType::UINT16 &&
+             (new_type == DataType::UINT32 || new_type == DataType::UINT64 ||
+              new_type == DataType::UINT128))
+    {
+        compatible = true;
+    }
+    else if (old_type == DataType::UINT32 &&
+             (new_type == DataType::UINT64 || new_type == DataType::UINT128))
+    {
+        compatible = true;
+    }
+    else if (old_type == DataType::UINT64 && new_type == DataType::UINT128)
     {
         compatible = true;
     }

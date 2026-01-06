@@ -63,6 +63,10 @@ namespace scratchbird::optimizer
             return matchExtract(static_cast<const ExtractExpr *>(query_expr),
                                static_cast<const ExtractExpr *>(index_expr));
 
+        case ExprKind::ALTER_ELEMENT:
+            return matchAlterElement(static_cast<const AlterElementExpr *>(query_expr),
+                                    static_cast<const AlterElementExpr *>(index_expr));
+
         default:
             return false;
         }
@@ -366,7 +370,47 @@ namespace scratchbird::optimizer
             return false;
         }
 
+        const auto &q_args = q->args();
+        const auto &i_args = i->args();
+        if (q_args.size() != i_args.size())
+        {
+            return false;
+        }
+        for (size_t idx = 0; idx < q_args.size(); idx++)
+        {
+            if (!matches(q_args[idx].get(), i_args[idx].get()))
+            {
+                return false;
+            }
+        }
+
         return matches(q->source(), i->source());
+    }
+
+    bool ExpressionMatcher::matchAlterElement(const AlterElementExpr *q,
+                                              const AlterElementExpr *i)
+    {
+        if (q->fieldId() != i->fieldId())
+        {
+            return false;
+        }
+
+        const auto &q_args = q->args();
+        const auto &i_args = i->args();
+        if (q_args.size() != i_args.size())
+        {
+            return false;
+        }
+        for (size_t idx = 0; idx < q_args.size(); idx++)
+        {
+            if (!matches(q_args[idx].get(), i_args[idx].get()))
+            {
+                return false;
+            }
+        }
+
+        return matches(q->source(), i->source()) &&
+               matches(q->newValue(), i->newValue());
     }
 
     // ========================================================================

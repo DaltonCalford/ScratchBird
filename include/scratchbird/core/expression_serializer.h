@@ -81,6 +81,7 @@ namespace scratchbird::core
         static void serializeCoalesce(const CoalesceExpr *expr, std::vector<uint8_t> &buffer);
         static void serializeNullIf(const NullIfExpr *expr, std::vector<uint8_t> &buffer);
         static void serializeExtract(const ExtractExpr *expr, std::vector<uint8_t> &buffer);
+        static void serializeAlterElement(const AlterElementExpr *expr, std::vector<uint8_t> &buffer);
 
         // Type-specific deserialization
         static std::unique_ptr<Expression> deserializeLiteral(const uint8_t *&ptr, const uint8_t *end);
@@ -93,6 +94,7 @@ namespace scratchbird::core
         static std::unique_ptr<Expression> deserializeCoalesce(const uint8_t *&ptr, const uint8_t *end);
         static std::unique_ptr<Expression> deserializeNullIf(const uint8_t *&ptr, const uint8_t *end);
         static std::unique_ptr<Expression> deserializeExtract(const uint8_t *&ptr, const uint8_t *end);
+        static std::unique_ptr<Expression> deserializeAlterElement(const uint8_t *&ptr, const uint8_t *end);
 
         // Node type enum for serialization
         enum class SerializedNodeType : uint8_t
@@ -107,6 +109,7 @@ namespace scratchbird::core
             COALESCE = 8,
             NULLIF = 9,
             EXTRACT = 10,
+            ALTER_ELEMENT = 11,
             // Note: Subqueries not supported in expression indexes (PostgreSQL limitation)
         };
 

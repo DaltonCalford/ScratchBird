@@ -84,6 +84,45 @@ EXCEPTION
 END;  
 $$;
 
+## System Procedures (Built-in)
+
+ScratchBird provides built-in procedures under the `sys` schema for pass-through
+execution via UDR connectors. These procedures are installed by the engine and
+cannot be redefined.
+
+### sys.remote_exec
+
+CREATE PROCEDURE sys.remote_exec(  
+    server_name TEXT,  
+    sql_text TEXT,  
+    params_json JSON DEFAULT NULL,  
+    options_json JSON DEFAULT NULL  
+)  
+LANGUAGE internal  
+SECURITY INVOKER;
+
+### sys.remote_call
+
+CREATE PROCEDURE sys.remote_call(  
+    server_name TEXT,  
+    routine_name TEXT,  
+    params_json JSON DEFAULT NULL,  
+    options_json JSON DEFAULT NULL  
+)  
+LANGUAGE internal  
+SECURITY INVOKER;
+
+**Options (options_json):**
+- timeout_ms
+- transaction_mode (auto, join, new)
+- read_only (true/false)
+- fetch_size
+
+**Examples:**
+
+CALL sys.remote_exec('legacy_pg', 'CREATE TABLE tmp(id int)');
+CALL sys.remote_call('legacy_pg', 'rebuild_indexes', '{"schema":"public"}');
+
 ## **ALTER PROCEDURE**
 
 Modifies the properties of an existing procedure. The signature (name and parameter types) cannot be changed without using CREATE OR REPLACE.

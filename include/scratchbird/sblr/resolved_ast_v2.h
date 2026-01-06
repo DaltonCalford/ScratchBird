@@ -87,12 +87,21 @@ struct ResolvedColumnRef {
 // Forward declaration for return type
 struct ResolvedType;
 
+enum class FunctionKind : uint8_t
+{
+    BUILTIN,
+    FUNCTION,
+    PROCEDURE,
+    UDR,
+};
+
 struct ResolvedFunctionRef {
     ID function_uuid;                   // UUID of function in catalog (zero for built-in)
     StringPool::StringId function_name; // Function name
     bool is_builtin = true;             // True for system functions
     bool is_aggregate = false;          // True for aggregate functions
     bool is_window = false;             // True for window functions
+    FunctionKind kind = FunctionKind::BUILTIN; // Function kind for catalog dispatch
     ResolvedType* return_type = nullptr; // Return type (owned by arena)
 };
 
@@ -243,6 +252,32 @@ struct ResolvedCast : public ResolvedExpression {
     ResolvedType target_type;
     core::CastFormat format = core::CastFormat::DEFAULT;
     bool implicit = false;  // True if inserted by semantic analyzer
+};
+
+/**
+ * Resolved element selector for EXTRACT/ALTER_ELEMENT
+ */
+struct ResolvedElementSelector {
+    uint8_t field_id = 0;
+    StringPool::StringId field_name = StringPool::INVALID_ID;
+    std::vector<ResolvedExpression*> args;
+};
+
+/**
+ * Resolved EXTRACT expression
+ */
+struct ResolvedExtractExpr : public ResolvedExpression {
+    ResolvedElementSelector selector;
+    ResolvedExpression* source = nullptr;
+};
+
+/**
+ * Resolved ALTER_ELEMENT expression
+ */
+struct ResolvedAlterElementExpr : public ResolvedExpression {
+    ResolvedElementSelector selector;
+    ResolvedExpression* source = nullptr;
+    ResolvedExpression* new_value = nullptr;
 };
 
 /**
@@ -645,14 +680,17 @@ struct ResolvedCreateIndexStmt : public ResolvedStatement {
     bool if_not_exists = false;
     bool concurrent = false;
 
+    StringPool::StringId table_path = StringPool::INVALID_ID;
     ID table_uuid;
     std::vector<uint32_t> column_indexes;
     std::vector<bool> column_desc;  // DESC for each column
+    std::vector<StringPool::StringId> column_names;
 
     StringPool::StringId index_method;  // btree, hash, gin, etc.
     ResolvedExpression* where_clause = nullptr;  // Partial index
 
     uint16_t tablespace_id = 0;
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
 };
 
 /**

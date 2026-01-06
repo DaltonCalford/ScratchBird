@@ -7,6 +7,15 @@
 
 ---
 
+
+## ScratchBird V2 Scope (Native Protocol Only)
+
+- Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.
+- Default port: 3092.
+- TLS 1.3 required.
+- Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
+
+
 ## Overview
 
 Python is the most critical driver to develop, used by over half of developers worldwide. It is the lingua franca of data science, machine learning, and modern web development.
@@ -20,13 +29,26 @@ Python is the most critical driver to develop, used by over half of developers w
 - NumPy array integration (for vector operations)
 - Jupyter notebook compatibility
 
+## Usage examples
+
+```python
+import scratchbird
+
+conn = scratchbird.connect(host="localhost", database="db", user="user", password="pass")
+cur = conn.cursor()
+cur.execute("select 1 as one")
+
+cur.execute("select * from widgets where id = :id", {"id": 42})
+rows = cur.fetchall()
+```
+
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] [SPECIFICATION.md](SPECIFICATION.md) - Detailed technical specification
   - PEP 249 compliance details
   - API surface area
   - Connection pooling
@@ -34,7 +56,7 @@ Python is the most critical driver to develop, used by over half of developers w
   - Error handling
   - Type mappings (Python ↔ ScratchBird)
 
-- [ ] **IMPLEMENTATION_PLAN.md** - Development roadmap
+- [x] [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
   - Milestone 1: Basic DB-API 2.0 connectivity
   - Milestone 2: SQLAlchemy dialect
   - Milestone 3: Async support
@@ -42,32 +64,36 @@ Python is the most critical driver to develop, used by over half of developers w
   - Resource requirements
   - Timeline estimates
 
-- [ ] **TESTING_CRITERIA.md** - Test requirements
+- [x] [TESTING_CRITERIA.md](TESTING_CRITERIA.md) - Test requirements
   - DB-API 2.0 compliance test suite
   - SQLAlchemy test suite compatibility
   - Performance benchmarks vs psycopg2
   - Integration tests with Pandas, Jupyter
   - Vector operation tests with NumPy
 
-- [ ] **COMPATIBILITY_MATRIX.md** - Version support
+- [x] [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md) - Version support
   - Python versions (3.8, 3.9, 3.10, 3.11, 3.12)
   - SQLAlchemy versions (1.4.x, 2.0.x)
   - Pandas versions
   - Operating systems (Linux, macOS, Windows)
 
-- [ ] **MIGRATION_GUIDE.md** - Migration from other drivers
+- [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other drivers
   - From psycopg2 (PostgreSQL)
   - From mysql-connector-python
   - From firebirdsql
   - Code examples and gotchas
 
-- [ ] **API_REFERENCE.md** - Complete API documentation
+- [x] [API_REFERENCE.md](API_REFERENCE.md) - Complete API documentation
   - Connection class
   - Cursor class
   - Type objects
   - Module constants
   - Exceptions
   - Connection pool API
+
+### Shared References
+
+- [../DRIVER_BASELINE_SPEC.md](../DRIVER_BASELINE_SPEC.md) - Shared V2 driver requirements.
 
 ### Examples Directory
 

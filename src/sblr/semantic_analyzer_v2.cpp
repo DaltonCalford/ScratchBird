@@ -8,6 +8,8 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/domain_manager.h"
+#include "scratchbird/parser/schema_path_v2.h"
+#include "scratchbird/sblr/extract_element_catalog.h"
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -15,6 +17,12 @@
 #include <unordered_set>
 
 namespace scratchbird::parser::v2 {
+using scratchbird::sblr::ElementArgSpec;
+using scratchbird::sblr::ExtractField;
+using scratchbird::sblr::extractFieldArgSpec;
+using scratchbird::sblr::extractFieldToString;
+using scratchbird::sblr::resolveExtractFieldName;
+
 namespace {
 core::CatalogManager::ObjectType toCatalogObjectType(DdlObjectType type) {
     return static_cast<core::CatalogManager::ObjectType>(static_cast<uint8_t>(type));
@@ -78,6 +86,790 @@ bool typesEquivalent(const ResolvedType& a, const ResolvedType& b) {
 constexpr int32_t kDefaultVarcharLength = 255;
 constexpr int32_t kDefaultDecimalPrecision = 18;
 constexpr int32_t kDefaultDecimalScale = 0;
+
+struct ElementInfo
+{
+    bool allowed = false;
+    bool writable = false;
+    ResolvedType type;
+};
+
+ResolvedType makeSimpleType(DataType type, bool nullable)
+{
+    ResolvedType out;
+    out.data_type = type;
+    out.is_nullable = nullable;
+    return out;
+}
+
+ResolvedType makeTimeType(bool nullable, bool with_time_zone)
+{
+    ResolvedType out;
+    out.data_type = DataType::TIME;
+    out.is_nullable = nullable;
+    out.with_time_zone = with_time_zone;
+    return out;
+}
+
+ResolvedType makeTimestampType(bool nullable, bool with_time_zone)
+{
+    ResolvedType out;
+    out.data_type = DataType::TIMESTAMP;
+    out.is_nullable = nullable;
+    out.with_time_zone = with_time_zone;
+    return out;
+}
+
+ResolvedType makeArrayType(bool nullable)
+{
+    ResolvedType out;
+    out.data_type = DataType::ARRAY;
+    out.is_nullable = nullable;
+    out.is_array = true;
+    return out;
+}
+
+ElementInfo resolveElementInfo(const ResolvedType& source, ExtractField field)
+{
+    ElementInfo info;
+    info.type = makeSimpleType(DataType::UNKNOWN, source.is_nullable);
+
+    auto allow = [&](const ResolvedType& type, bool writable) {
+        info.allowed = true;
+        info.writable = writable;
+        info.type = type;
+    };
+
+    auto allowSimple = [&](DataType type, bool writable) {
+        allow(makeSimpleType(type, source.is_nullable), writable);
+    };
+
+    switch (source.data_type)
+    {
+        case DataType::UNKNOWN:
+        case DataType::NULL_TYPE:
+            if (field == ExtractField::VALUE)
+            {
+                allow(source, false);
+            }
+            return info;
+
+        case DataType::DATE:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::YEAR:
+                case ExtractField::MONTH:
+                case ExtractField::DAY:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::DOW:
+                case ExtractField::DOY:
+                case ExtractField::QUARTER:
+                case ExtractField::WEEK:
+                case ExtractField::ISO_WEEK:
+                case ExtractField::ISO_YEAR:
+                case ExtractField::ISO_DOW:
+                case ExtractField::CENTURY:
+                case ExtractField::DECADE:
+                case ExtractField::MILLENNIUM:
+                case ExtractField::EPOCH:
+                    allowSimple(DataType::INT32, false);
+                    if (field == ExtractField::EPOCH)
+                    {
+                        allowSimple(DataType::INT64, false);
+                    }
+                    break;
+                case ExtractField::TIMEZONE:
+                case ExtractField::TZ_OFFSET:
+                case ExtractField::TIMEZONE_HOUR:
+                case ExtractField::TIMEZONE_MINUTE:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::TIME:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::HOUR:
+                case ExtractField::MINUTE:
+                case ExtractField::SECOND:
+                case ExtractField::MILLISECOND:
+                case ExtractField::MICROSECOND:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::HOUR12:
+                case ExtractField::EPOCH:
+                    allowSimple(field == ExtractField::EPOCH ? DataType::INT64 : DataType::INT32,
+                                false);
+                    break;
+                case ExtractField::TIMEZONE:
+                case ExtractField::TZ_OFFSET:
+                case ExtractField::TIMEZONE_HOUR:
+                case ExtractField::TIMEZONE_MINUTE:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::TIMESTAMP:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::YEAR:
+                case ExtractField::MONTH:
+                case ExtractField::DAY:
+                case ExtractField::HOUR:
+                case ExtractField::MINUTE:
+                case ExtractField::SECOND:
+                case ExtractField::MILLISECOND:
+                case ExtractField::MICROSECOND:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::DOW:
+                case ExtractField::DOY:
+                case ExtractField::QUARTER:
+                case ExtractField::WEEK:
+                case ExtractField::ISO_WEEK:
+                case ExtractField::ISO_YEAR:
+                case ExtractField::ISO_DOW:
+                case ExtractField::CENTURY:
+                case ExtractField::DECADE:
+                case ExtractField::MILLENNIUM:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::EPOCH:
+                    allowSimple(DataType::INT64, false);
+                    break;
+                case ExtractField::TIMEZONE:
+                case ExtractField::TZ_OFFSET:
+                case ExtractField::TIMEZONE_HOUR:
+                case ExtractField::TIMEZONE_MINUTE:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::INTERVAL:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::YEAR:
+                case ExtractField::MONTH:
+                case ExtractField::DAY:
+                case ExtractField::HOUR:
+                case ExtractField::MINUTE:
+                case ExtractField::SECOND:
+                case ExtractField::MILLISECOND:
+                case ExtractField::MICROSECOND:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::TOTAL_MONTHS:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::TOTAL_DAYS:
+                    allowSimple(DataType::INT64, false);
+                    break;
+                case ExtractField::TOTAL_SECONDS:
+                case ExtractField::EPOCH:
+                    allowSimple(DataType::FLOAT64, false);
+                    break;
+                case ExtractField::SIGN:
+                    allowSimple(DataType::INT8, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::INT8:
+        case DataType::INT16:
+        case DataType::INT32:
+        case DataType::INT64:
+        case DataType::INT128:
+        case DataType::UINT8:
+        case DataType::UINT16:
+        case DataType::UINT32:
+        case DataType::UINT64:
+        case DataType::UINT128:
+        {
+            bool is_128 = (source.data_type == DataType::INT128 || source.data_type == DataType::UINT128);
+            auto byte_width = [&]() -> int32_t {
+                switch (source.data_type)
+                {
+                    case DataType::INT8: return 1;
+                    case DataType::INT16: return 2;
+                    case DataType::INT32: return 4;
+                    case DataType::INT64: return 8;
+                    case DataType::INT128: return 16;
+                    case DataType::UINT8: return 1;
+                    case DataType::UINT16: return 2;
+                    case DataType::UINT32: return 4;
+                    case DataType::UINT64: return 8;
+                    case DataType::UINT128: return 16;
+                    default: return 0;
+                }
+            };
+
+            switch (field)
+            {
+                case ExtractField::VALUE:
+                    allow(source, true);
+                    break;
+                case ExtractField::SIGN:
+                    allowSimple(DataType::INT8, false);
+                    break;
+                case ExtractField::ABS:
+                    allow(source, false);
+                    break;
+                case ExtractField::BYTES:
+                    allowSimple(DataType::INT16, false);
+                    break;
+                case ExtractField::BITS:
+                    allowSimple(DataType::INT16, false);
+                    break;
+                case ExtractField::HI64:
+                case ExtractField::LO64:
+                    if (is_128)
+                    {
+                        allowSimple(DataType::UINT64, false);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            (void)byte_width;
+            return info;
+        }
+
+        case DataType::FLOAT32:
+        case DataType::FLOAT64:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::SIGN: allowSimple(DataType::INT8, false); break;
+                case ExtractField::EXPONENT: allowSimple(DataType::INT32, false); break;
+                case ExtractField::MANTISSA: allowSimple(DataType::INT64, false); break;
+                case ExtractField::IS_NAN:
+                case ExtractField::IS_INF:
+                    allowSimple(DataType::BOOLEAN, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::DECIMAL:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::PRECISION:
+                case ExtractField::SCALE:
+                    allowSimple(DataType::INT16, false);
+                    break;
+                case ExtractField::UNSCALED:
+                    allowSimple(DataType::INT128, true);
+                    break;
+                case ExtractField::SIGN:
+                    allowSimple(DataType::INT8, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::MONEY:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::SCALE: allowSimple(DataType::INT8, false); break;
+                case ExtractField::MAJOR: allowSimple(DataType::INT64, false); break;
+                case ExtractField::MINOR: allowSimple(DataType::INT32, false); break;
+                case ExtractField::SIGN: allowSimple(DataType::INT8, false); break;
+                default: break;
+            }
+            return info;
+        }
+
+        case DataType::BOOLEAN:
+        {
+            if (field == ExtractField::VALUE)
+            {
+                allow(source, true);
+            }
+            return info;
+        }
+
+        case DataType::CHAR:
+        case DataType::VARCHAR:
+        case DataType::TEXT:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::CHAR_LENGTH:
+                case ExtractField::OCTET_LENGTH:
+                case ExtractField::CODEPOINT_LENGTH:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::TRIMMED_LENGTH:
+                    if (source.data_type == DataType::CHAR)
+                    {
+                        allowSimple(DataType::INT32, false);
+                    }
+                    break;
+                default: break;
+            }
+            return info;
+        }
+
+        case DataType::JSON:
+        case DataType::JSONB:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::PATH: allow(source, true); break;
+                case ExtractField::TYPE: allowSimple(DataType::TEXT, false); break;
+                case ExtractField::KEYS: allow(makeArrayType(source.is_nullable), false); break;
+                default: break;
+            }
+            return info;
+        }
+
+        case DataType::XML:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::PATH: allow(source, true); break;
+                case ExtractField::ATTRIBUTES:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                default: break;
+            }
+            return info;
+        }
+
+        case DataType::BINARY:
+        case DataType::VARBINARY:
+        case DataType::BLOB:
+        case DataType::BYTEA:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::LENGTH: allowSimple(DataType::INT32, false); break;
+                case ExtractField::BYTE:
+                case ExtractField::BIT:
+                    allowSimple(DataType::UINT8, true);
+                    break;
+                case ExtractField::SLICE: allow(source, true); break;
+                case ExtractField::DIGEST: allowSimple(DataType::BINARY, false); break;
+                default: break;
+            }
+            return info;
+        }
+
+        case DataType::VECTOR:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::DIMENSION: allowSimple(DataType::INT32, false); break;
+                case ExtractField::ELEMENT: allowSimple(DataType::FLOAT32, true); break;
+                case ExtractField::NORM_L2:
+                case ExtractField::DOT:
+                    allowSimple(DataType::FLOAT64, false);
+                    break;
+                default: break;
+            }
+            return info;
+        }
+
+        case DataType::UUID:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::BYTES: allowSimple(DataType::BINARY, true); break;
+                case ExtractField::VERSION:
+                case ExtractField::VARIANT:
+                case ExtractField::CLOCK_SEQ:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::TIMESTAMP:
+                    allowSimple(DataType::INT64, false);
+                    break;
+                case ExtractField::NODE:
+                    allowSimple(DataType::TEXT, false);
+                    break;
+                case ExtractField::TIME_LOW:
+                    allowSimple(DataType::UINT32, false);
+                    break;
+                case ExtractField::TIME_MID:
+                case ExtractField::TIME_HIGH:
+                    allowSimple(DataType::UINT16, false);
+                    break;
+                case ExtractField::RAND_A:
+                    allowSimple(DataType::UINT32, false);
+                    break;
+                case ExtractField::RAND_B:
+                    allowSimple(DataType::BINARY, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::POINT:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::X:
+                case ExtractField::Y:
+                    allowSimple(DataType::FLOAT64, true);
+                    break;
+                case ExtractField::SRID:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::BBOX:
+                    allowSimple(DataType::POLYGON, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::LINESTRING:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::SRID:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::NUM_POINTS:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::POINTS:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                case ExtractField::START_POINT:
+                case ExtractField::END_POINT:
+                    allowSimple(DataType::POINT, false);
+                    break;
+                case ExtractField::LENGTH:
+                    allowSimple(DataType::FLOAT64, false);
+                    break;
+                case ExtractField::BBOX:
+                    allowSimple(DataType::POLYGON, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::POLYGON:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::SRID:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::NUM_RINGS:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::EXTERIOR_RING:
+                    allowSimple(DataType::LINESTRING, false);
+                    break;
+                case ExtractField::RINGS:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                case ExtractField::AREA:
+                    allowSimple(DataType::FLOAT64, false);
+                    break;
+                case ExtractField::BBOX:
+                    allowSimple(DataType::POLYGON, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::MULTIPOINT:
+        case DataType::MULTILINESTRING:
+        case DataType::MULTIPOLYGON:
+        case DataType::GEOMETRYCOLLECTION:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::SRID:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                case ExtractField::NUM_GEOMETRIES:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::GEOMETRIES:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                case ExtractField::BBOX:
+                    allowSimple(DataType::POLYGON, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::ARRAY:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::ELEMENT:
+                    allowSimple(DataType::VARIANT, true);
+                    break;
+                case ExtractField::CARDINALITY:
+                case ExtractField::NDIMS:
+                case ExtractField::LOWER:
+                case ExtractField::UPPER:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::DIMS:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::COMPOSITE:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::FIELD:
+                    allowSimple(DataType::VARIANT, true);
+                    break;
+                case ExtractField::FIELD_NAMES:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                case ExtractField::CARDINALITY:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::VARIANT:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE:
+                    allow(source, true);
+                    break;
+                case ExtractField::DATATYPE:
+                    allowSimple(DataType::INT32, true);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::TSVECTOR:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::LEXEMES:
+                case ExtractField::POSITIONS:
+                case ExtractField::WEIGHTS:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                case ExtractField::SIZE:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                case ExtractField::HAS_LEXEME:
+                    allowSimple(DataType::BOOLEAN, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::TSQUERY:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::ROOT_OP:
+                    allowSimple(DataType::TEXT, false);
+                    break;
+                case ExtractField::TERMS:
+                case ExtractField::OPERATORS:
+                    allow(makeArrayType(source.is_nullable), false);
+                    break;
+                case ExtractField::PHRASE_DISTANCE:
+                case ExtractField::NODES:
+                    allowSimple(DataType::INT32, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::INT4RANGE:
+        case DataType::INT8RANGE:
+        case DataType::NUMRANGE:
+        case DataType::DATERANGE:
+        case DataType::TSRANGE:
+        case DataType::TSTZRANGE:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::LOWER:
+                case ExtractField::UPPER:
+                case ExtractField::LOWER_VALUE:
+                case ExtractField::UPPER_VALUE:
+                {
+                    if (source.data_type == DataType::INT4RANGE)
+                    {
+                        allowSimple(DataType::INT32, true);
+                    }
+                    else if (source.data_type == DataType::INT8RANGE)
+                    {
+                        allowSimple(DataType::INT64, true);
+                    }
+                    else if (source.data_type == DataType::NUMRANGE)
+                    {
+                        allowSimple(DataType::FLOAT64, true);
+                    }
+                    else if (source.data_type == DataType::DATERANGE)
+                    {
+                        allowSimple(DataType::DATE, true);
+                    }
+                    else if (source.data_type == DataType::TSRANGE)
+                    {
+                        allow(makeTimestampType(source.is_nullable, false), true);
+                    }
+                    else if (source.data_type == DataType::TSTZRANGE)
+                    {
+                        allow(makeTimestampType(source.is_nullable, true), true);
+                    }
+                    break;
+                }
+                case ExtractField::LOWER_INC:
+                case ExtractField::UPPER_INC:
+                case ExtractField::LOWER_INF:
+                case ExtractField::UPPER_INF:
+                case ExtractField::ISEMPTY:
+                    allowSimple(DataType::BOOLEAN, true);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::INET:
+        case DataType::CIDR:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::FAMILY:
+                case ExtractField::NETMASK:
+                    allowSimple(DataType::INT32, field == ExtractField::NETMASK);
+                    break;
+                case ExtractField::ADDRESS:
+                    allowSimple(DataType::TEXT, true);
+                    break;
+                case ExtractField::NETWORK:
+                case ExtractField::NETMASK_ADDR:
+                case ExtractField::HOSTMASK:
+                    allow(source, false);
+                    break;
+                case ExtractField::BROADCAST:
+                    if (source.data_type == DataType::INET)
+                    {
+                        allow(source, false);
+                    }
+                    break;
+                case ExtractField::IS_IPV4:
+                case ExtractField::IS_IPV6:
+                    allowSimple(DataType::BOOLEAN, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        case DataType::MACADDR:
+        case DataType::MACADDR8:
+        {
+            switch (field)
+            {
+                case ExtractField::VALUE: allow(source, true); break;
+                case ExtractField::BYTES:
+                case ExtractField::OUI:
+                case ExtractField::VENDOR:
+                case ExtractField::NIC:
+                    allowSimple(DataType::BINARY, true);
+                    break;
+                case ExtractField::TRUNC:
+                    allowSimple(DataType::BINARY, false);
+                    break;
+                case ExtractField::IS_MULTICAST:
+                case ExtractField::IS_LOCAL:
+                    allowSimple(DataType::BOOLEAN, false);
+                    break;
+                default:
+                    break;
+            }
+            return info;
+        }
+
+        default:
+            return info;
+    }
+}
 constexpr size_t kMaxDomainInheritanceDepth = 10;
 
 core::DomainType toCoreDomainType(DomainKind kind) {
@@ -317,6 +1109,7 @@ bool isNumericType(DataType type) {
         case DataType::UINT16:
         case DataType::UINT32:
         case DataType::UINT64:
+        case DataType::UINT128:
         case DataType::FLOAT32:
         case DataType::FLOAT64:
         case DataType::DECIMAL:
@@ -1629,11 +2422,13 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     ref.function_uuid = ID{};  // Zero UUID for built-in
     ref.function_name = path.components.back();
     ref.is_builtin = true;
+    ref.kind = FunctionKind::BUILTIN;
 
     // Create return type in arena
     auto* ret_type = arena_.create<ResolvedType>();
 
     // Determine function type and return type based on name
+    // Spec: docs/specifications/INTERNAL_FUNCTIONS.md
     std::transform(func_name.begin(), func_name.end(), func_name.begin(), ::tolower);
 
     // Aggregate functions
@@ -1641,10 +2436,12 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         func_name == "min" || func_name == "max" ||
         func_name == "stddev" || func_name == "stddev_samp" || func_name == "stddev_pop" ||
         func_name == "variance" || func_name == "var_samp" || func_name == "var_pop" ||
-        func_name == "corr" || func_name == "covar_pop") {
+        func_name == "corr" || func_name == "covar_pop" || func_name == "array_agg") {
         ref.is_aggregate = true;
 
-        if (func_name == "count") {
+        if (func_name == "array_agg") {
+            ret_type->data_type = DataType::JSON;
+        } else if (func_name == "count") {
             ret_type->data_type = DataType::INT64;
         } else if (func_name == "avg" || func_name == "stddev" ||
                    func_name == "stddev_samp" || func_name == "stddev_pop" ||
@@ -1678,7 +2475,7 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
 
     if (func_name == "concat" || func_name == "concat_ws") {
         ret_type->data_type = DataType::VARCHAR;
-        ret_type->is_nullable = false;
+        ret_type->is_nullable = true;
         ref.return_type = ret_type;
         return ref;
     }
@@ -1694,6 +2491,7 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     // Date/time functions
     if (func_name == "now" || func_name == "current_timestamp") {
         ret_type->data_type = DataType::TIMESTAMP;
+        ret_type->with_time_zone = true;
         ret_type->is_nullable = false;
         ref.return_type = ret_type;
         return ref;
@@ -1708,7 +2506,59 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
 
     if (func_name == "current_time") {
         ret_type->data_type = DataType::TIME;
+        ret_type->with_time_zone = true;
         ret_type->is_nullable = false;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "date_add" || func_name == "date_sub") {
+        if (!arg_types.empty()) {
+            *ret_type = arg_types[0];
+        } else {
+            ret_type->data_type = DataType::TIMESTAMP;
+        }
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "date_diff" || func_name == "datediff") {
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    // Spatial functions
+    if (func_name == "st_point") {
+        ret_type->data_type = DataType::POINT;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "st_makeline") {
+        ret_type->data_type = DataType::LINESTRING;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "st_makepolygon") {
+        ret_type->data_type = DataType::POLYGON;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "st_astext" || func_name == "st_asbinary" ||
+        func_name == "st_geometrytype") {
+        ret_type->data_type = DataType::TEXT;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "st_isvalid") {
+        ret_type->data_type = DataType::BOOLEAN;
+        ret_type->is_nullable = true;
         ref.return_type = ret_type;
         return ref;
     }
@@ -1760,10 +2610,16 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     // JSON functions
     if (func_name == "json_extract" || func_name == "json_set" ||
         func_name == "json_insert" || func_name == "json_remove" ||
-        func_name == "json_object" || func_name == "json_array" ||
-        func_name == "jsonb_extract_path" || func_name == "jsonb_build_object" ||
-        func_name == "jsonb_build_array" || func_name == "jsonb_set") {
+        func_name == "json_object" || func_name == "json_array") {
         ret_type->data_type = DataType::JSON;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "jsonb_extract_path" || func_name == "jsonb_build_object" ||
+        func_name == "jsonb_build_array" || func_name == "jsonb_set") {
+        ret_type->data_type = DataType::JSONB;
         ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
         ref.return_type = ret_type;
         return ref;
@@ -1801,6 +2657,7 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     if (catalog_.getFunction(func_name, fi, &ctx) == Status::OK) {
         ref.function_uuid = fi.function_id;
         ref.is_builtin = false;
+        ref.kind = FunctionKind::FUNCTION;
         ret_type->data_type = fi.return_type;
         ret_type->precision = static_cast<int32_t>(fi.return_type_precision);
         ret_type->scale = static_cast<int32_t>(fi.return_type_scale);
@@ -1814,21 +2671,19 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
 
     core::CatalogManager::ProcedureInfo pi;
     if (catalog_.getProcedure(func_name, pi, &ctx) == Status::OK) {
-        ref.function_uuid = pi.procedure_id;
-        ref.is_builtin = false;
-        ret_type->data_type = DataType::UNKNOWN;
-        ret_type->is_nullable = true;
-        ref.return_type = ret_type;
-        if (current_result_) {
-            current_result_->addDependency(pi.procedure_id, core::CatalogManager::ObjectType::PROCEDURE);
-        }
-        return ref;
+        error(span, "Procedures cannot be used in expressions: " + func_name);
+        return std::nullopt;
     }
 
     core::CatalogManager::UDRInfo ui;
     if (catalog_.getUDRByName(current_schema_, func_name, ui, &ctx) == Status::OK) {
+        if (ui.udr_type != core::CatalogManager::UDRType::FUNCTION) {
+            error(span, "UDR is not a function: " + func_name);
+            return std::nullopt;
+        }
         ref.function_uuid = ui.udr_id;
         ref.is_builtin = false;
+        ref.kind = FunctionKind::UDR;
         ret_type->data_type = DataType::UNKNOWN;
         ret_type->is_nullable = true;
         ref.return_type = ret_type;
@@ -1838,11 +2693,8 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
-    // Unknown function - return UNKNOWN type
-    ret_type->data_type = DataType::UNKNOWN;
-    ref.return_type = ret_type;
-    warning(span, "Unknown function: " + func_name + " - assuming returns UNKNOWN type");
-    return ref;
+    error(span, "Unknown function: " + func_name);
+    return std::nullopt;
 }
 
 // =============================================================================
@@ -1989,10 +2841,12 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
             }
 
             ResolvedType result;
+            DataType json_type = (left.data_type == DataType::JSONB) ? DataType::JSONB
+                                                                     : DataType::JSON;
             result.data_type = (op == BinaryOp::JSON_EXTRACT_TEXT ||
                                 op == BinaryOp::JSON_HASH_EXTRACT_TEXT)
                                    ? DataType::TEXT
-                                   : DataType::JSON;
+                                   : json_type;
             result.is_nullable = left.is_nullable || right.is_nullable;
             return result;
         }
@@ -2335,6 +3189,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
         return nullptr;
     }
     resolved->table_uuid = table_ref->table_uuid;
+    resolved->table_path = internString(schemaPathToString(stmt->table_path, string_pool_));
+
+    if (stmt->has_tablespace) {
+        resolved->tablespace_name = internString(schemaPathToString(stmt->tablespace, string_pool_));
+    }
+
+    if (!stmt->include_columns.empty()) {
+        error(stmt->span, "INCLUDE columns are not supported for CREATE INDEX yet");
+        return nullptr;
+    }
 
     // Map index type to string
     switch (stmt->index_type) {
@@ -2355,32 +3219,25 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
                 if (table_ref->columns[i].name == idx_col.column) {
                     resolved->column_indexes.push_back(i);
                     resolved->column_desc.push_back(!idx_col.ascending);
+                    resolved->column_names.push_back(table_ref->columns[i].name);
                     found = true;
                     break;
                 }
             }
             if (!found) {
                 error(stmt->span, "Index column not found: " + std::string(getString(idx_col.column)));
+                return nullptr;
             }
         } else if (idx_col.expr) {
-            // Expression index - we'd need to store the expression
-            // For now, just note it's an expression index
-            warning(stmt->span, "Expression indexes not fully supported yet");
+            error(stmt->span, "Expression indexes are not supported yet");
+            return nullptr;
         }
     }
 
     // Analyze WHERE clause for partial index
     if (stmt->where_clause) {
-        // Push table scope for WHERE analysis
-        pushScope();
-        ResolutionScope::TableEntry entry;
-        entry.table_uuid = table_ref->table_uuid;
-        entry.columns = table_ref->columns;
-        currentScope().addTable(entry);
-
-        resolved->where_clause = analyzeExpression(stmt->where_clause);
-
-        popScope();
+        error(stmt->span, "Partial indexes are not supported yet");
+        return nullptr;
     }
 
     return resolved;
@@ -3806,6 +4663,10 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeExpression(Expression* expr) {
             return analyzeFunctionCall(static_cast<FunctionCallExpr*>(expr));
         case ASTKind::CastExpr:
             return analyzeCast(static_cast<CastExpr*>(expr));
+        case ASTKind::ExtractExpr:
+            return analyzeExtract(static_cast<ExtractExpr*>(expr));
+        case ASTKind::AlterElementExpr:
+            return analyzeAlterElement(static_cast<AlterElementExpr*>(expr));
         case ASTKind::CaseExpr:
             return analyzeCase(static_cast<CaseExpr*>(expr));
         case ASTKind::SubqueryExpr:
@@ -4050,6 +4911,178 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeCast(CastExpr* expr) {
     resolved->format = resolveCastFormat(expr);
     resolved->implicit = false;
 
+    return resolved;
+}
+
+ResolvedExpression* SemanticAnalyzerV2::analyzeExtract(ExtractExpr* expr) {
+    auto* source = analyzeExpression(expr->source);
+    if (!source) {
+        return nullptr;
+    }
+
+    ExtractField field = ExtractField::VALUE;
+    ResolvedElementSelector selector;
+
+    auto makeStringLiteral = [&](StringPool::StringId id) -> ResolvedExpression* {
+        auto* literal = arena_.create<ResolvedLiteral>();
+        literal->span = expr->span;
+        literal->literal_type = LiteralType::STRING;
+        literal->string_value = id;
+        literal->type.data_type = DataType::VARCHAR;
+        literal->type.is_nullable = false;
+        return literal;
+    };
+
+    if (expr->selector.kind == ElementSelector::Kind::STRING_LITERAL) {
+        field = ExtractField::PATH;
+        selector.args.push_back(makeStringLiteral(expr->selector.string_literal));
+    } else if (expr->selector.kind == ElementSelector::Kind::INTEGER_EXPR) {
+        field = ExtractField::ELEMENT;
+        auto* arg = analyzeExpression(expr->selector.expr);
+        if (!arg) {
+            return nullptr;
+        }
+        selector.args.push_back(arg);
+    } else {
+        selector.field_name = expr->selector.identifier;
+        std::string_view field_name = getString(expr->selector.identifier);
+        auto resolved = resolveExtractFieldName(field_name);
+        if (!resolved.has_value()) {
+            if (!expr->selector.args.empty()) {
+                error(expr->span, "Unknown EXTRACT element: " + std::string(field_name));
+                return nullptr;
+            }
+            field = ExtractField::FIELD;
+            selector.args.push_back(makeStringLiteral(expr->selector.identifier));
+        } else {
+            field = resolved.value();
+            for (auto* arg_expr : expr->selector.args) {
+                auto* arg = analyzeExpression(arg_expr);
+                if (!arg) {
+                    return nullptr;
+                }
+                selector.args.push_back(arg);
+            }
+        }
+    }
+
+    ElementArgSpec arg_spec = extractFieldArgSpec(field);
+    if (selector.args.size() < arg_spec.min_args ||
+        selector.args.size() > arg_spec.max_args) {
+        error(expr->span, "Invalid argument count for EXTRACT(" +
+                              std::string(extractFieldToString(field)) + ")");
+        return nullptr;
+    }
+
+    ElementInfo info = resolveElementInfo(source->type, field);
+    if (!info.allowed) {
+        error(expr->span, "Element '" + std::string(extractFieldToString(field)) +
+                              "' not valid for type " +
+                              std::string(core::TypeSystem::getTypeName(source->type.data_type)));
+        return nullptr;
+    }
+
+    selector.field_id = static_cast<uint8_t>(field);
+
+    auto* resolved = arena_.create<ResolvedExtractExpr>();
+    resolved->span = expr->span;
+    resolved->selector = selector;
+    resolved->source = source;
+    resolved->type = info.type;
+    return resolved;
+}
+
+ResolvedExpression* SemanticAnalyzerV2::analyzeAlterElement(AlterElementExpr* expr) {
+    auto* source = analyzeExpression(expr->source);
+    if (!source) {
+        return nullptr;
+    }
+
+    auto* new_value = analyzeExpression(expr->new_value);
+    if (!new_value) {
+        return nullptr;
+    }
+
+    ExtractField field = ExtractField::VALUE;
+    ResolvedElementSelector selector;
+
+    auto makeStringLiteral = [&](StringPool::StringId id) -> ResolvedExpression* {
+        auto* literal = arena_.create<ResolvedLiteral>();
+        literal->span = expr->span;
+        literal->literal_type = LiteralType::STRING;
+        literal->string_value = id;
+        literal->type.data_type = DataType::VARCHAR;
+        literal->type.is_nullable = false;
+        return literal;
+    };
+
+    if (expr->selector.kind == ElementSelector::Kind::STRING_LITERAL) {
+        field = ExtractField::PATH;
+        selector.args.push_back(makeStringLiteral(expr->selector.string_literal));
+    } else if (expr->selector.kind == ElementSelector::Kind::INTEGER_EXPR) {
+        field = ExtractField::ELEMENT;
+        auto* arg = analyzeExpression(expr->selector.expr);
+        if (!arg) {
+            return nullptr;
+        }
+        selector.args.push_back(arg);
+    } else {
+        selector.field_name = expr->selector.identifier;
+        std::string_view field_name = getString(expr->selector.identifier);
+        auto resolved = resolveExtractFieldName(field_name);
+        if (!resolved.has_value()) {
+            if (!expr->selector.args.empty()) {
+                error(expr->span, "Unknown ALTER_ELEMENT element: " + std::string(field_name));
+                return nullptr;
+            }
+            field = ExtractField::FIELD;
+            selector.args.push_back(makeStringLiteral(expr->selector.identifier));
+        } else {
+            field = resolved.value();
+            for (auto* arg_expr : expr->selector.args) {
+                auto* arg = analyzeExpression(arg_expr);
+                if (!arg) {
+                    return nullptr;
+                }
+                selector.args.push_back(arg);
+            }
+        }
+    }
+
+    ElementArgSpec arg_spec = extractFieldArgSpec(field);
+    if (selector.args.size() < arg_spec.min_args ||
+        selector.args.size() > arg_spec.max_args) {
+        error(expr->span, "Invalid argument count for ALTER_ELEMENT(" +
+                              std::string(extractFieldToString(field)) + ")");
+        return nullptr;
+    }
+
+    ElementInfo info = resolveElementInfo(source->type, field);
+    if (!info.allowed) {
+        error(expr->span, "Element '" + std::string(extractFieldToString(field)) +
+                              "' not valid for type " +
+                              std::string(core::TypeSystem::getTypeName(source->type.data_type)));
+        return nullptr;
+    }
+    if (!info.writable) {
+        error(expr->span, "Element '" + std::string(extractFieldToString(field)) +
+                              "' is read-only");
+        return nullptr;
+    }
+
+    if (info.type.data_type != DataType::UNKNOWN &&
+        info.type.data_type != DataType::VARIANT) {
+        new_value = insertImplicitCast(new_value, info.type);
+    }
+
+    selector.field_id = static_cast<uint8_t>(field);
+
+    auto* resolved = arena_.create<ResolvedAlterElementExpr>();
+    resolved->span = expr->span;
+    resolved->selector = selector;
+    resolved->source = source;
+    resolved->new_value = new_value;
+    resolved->type = source->type;
     return resolved;
 }
 
@@ -4846,6 +5879,10 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
             resolved.data_type = DataType::INT16;
         } else if (name_str == "bigint" || name_str == "int64") {
             resolved.data_type = DataType::INT64;
+        } else if (name_str == "int128") {
+            resolved.data_type = DataType::INT128;
+        } else if (name_str == "uint128" || name_str == "unsigned int128") {
+            resolved.data_type = DataType::UINT128;
         } else if (name_str == "float" || name_str == "real" || name_str == "float32") {
             resolved.data_type = DataType::FLOAT32;
         } else if (name_str == "double" || name_str == "double precision" || name_str == "float64") {
@@ -4934,7 +5971,7 @@ core::CastFormat SemanticAnalyzerV2::resolveCastFormat(const CastExpr* expr) {
     std::transform(fmt.begin(), fmt.end(), fmt.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    if (fmt == "hex") {
+    if (fmt == "hex" || fmt == "hexadecimal") {
         return core::CastFormat::HEX;
     }
     if (fmt == "base64") {

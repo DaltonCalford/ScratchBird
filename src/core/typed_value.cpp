@@ -7,7 +7,9 @@
 #include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/timezone.h"
+#include "scratchbird/core/utf8_utils.h"
 #include "scratchbird/spatial/wkt_parser.h"
+#include <nlohmann/json.hpp>
 #include <cstring>
 #include <cmath>
 #include <limits>
@@ -81,6 +83,14 @@ namespace scratchbird::core
             for (size_t i = 0; i < bytes; ++i)
             {
                 out.push_back(static_cast<uint8_t>((uvalue >> (i * 8)) & 0xFF));
+            }
+        }
+
+        void appendUint128(std::vector<uint8_t> &out, uint128_t value, size_t bytes)
+        {
+            for (size_t i = 0; i < bytes; ++i)
+            {
+                out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
             }
         }
 
@@ -205,6 +215,25 @@ namespace scratchbird::core
             return true;
         }
 
+        bool readUint128(const std::vector<uint8_t> &data, size_t &offset, size_t bytes,
+                         uint128_t &value)
+        {
+            if (bytes == 0 || bytes > 16 || offset + bytes > data.size())
+            {
+                return false;
+            }
+
+            uint128_t uvalue = 0;
+            for (size_t i = 0; i < bytes; ++i)
+            {
+                uvalue |= (static_cast<uint128_t>(data[offset + i]) << (i * 8));
+            }
+
+            value = uvalue;
+            offset += bytes;
+            return true;
+        }
+
         size_t decimalStorageSize(uint8_t precision)
         {
             if (precision <= 2)
@@ -267,6 +296,69 @@ namespace scratchbird::core
             return quotient;
         }
 
+        using Json = nlohmann::json;
+        using OrderedJson = nlohmann::ordered_json;
+
+        OrderedJson canonicalizeJson(const Json& input)
+        {
+            if (input.is_object())
+            {
+                OrderedJson obj = OrderedJson::object();
+                std::vector<std::string> keys;
+                keys.reserve(input.size());
+                for (auto it = input.begin(); it != input.end(); ++it)
+                {
+                    keys.push_back(it.key());
+                }
+                std::sort(keys.begin(), keys.end());
+                for (const auto& key : keys)
+                {
+                    obj[key] = canonicalizeJson(input.at(key));
+                }
+                return obj;
+            }
+            if (input.is_array())
+            {
+                OrderedJson arr = OrderedJson::array();
+                for (const auto& elem : input)
+                {
+                    arr.push_back(canonicalizeJson(elem));
+                }
+                return arr;
+            }
+            return input;
+        }
+
+        bool encodeJsonb(const std::string& text, std::vector<uint8_t>& out, ErrorContext* ctx)
+        {
+            try
+            {
+                Json parsed = Json::parse(text);
+                OrderedJson canonical = canonicalizeJson(parsed);
+                out = OrderedJson::to_cbor(canonical);
+                return true;
+            }
+            catch (...)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION, "Invalid JSONB text");
+                return false;
+            }
+        }
+
+        bool decodeJsonb(const std::vector<uint8_t>& data, std::string& out)
+        {
+            try
+            {
+                Json parsed = Json::from_cbor(data);
+                out = parsed.dump();
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
         bool isStringLike(DataType type)
         {
             return type == DataType::CHAR || type == DataType::VARCHAR ||
@@ -287,13 +379,14 @@ namespace scratchbird::core
                    type == DataType::INT32 || type == DataType::INT64 ||
                    type == DataType::INT128 || type == DataType::UINT8 ||
                    type == DataType::UINT16 || type == DataType::UINT32 ||
-                   type == DataType::UINT64;
+                   type == DataType::UINT64 || type == DataType::UINT128;
         }
 
         bool isUnsignedType(DataType type)
         {
             return type == DataType::UINT8 || type == DataType::UINT16 ||
-                   type == DataType::UINT32 || type == DataType::UINT64;
+                   type == DataType::UINT32 || type == DataType::UINT64 ||
+                   type == DataType::UINT128;
         }
 
         bool isFloatType(DataType type)
@@ -400,7 +493,8 @@ namespace scratchbird::core
         }
 
         bool parseIntegerString(const std::string &text, bool allow_signed,
-                                int128_t &value_out, ErrorContext *ctx)
+                                int128_t &value_out, ErrorContext *ctx,
+                                CastFormat format)
         {
             std::string trimmed = trimAscii(text);
             if (trimmed.empty())
@@ -429,6 +523,23 @@ namespace scratchbird::core
                 return false;
             }
 
+            int base = 10;
+            if (format == CastFormat::HEX)
+            {
+                base = 16;
+                if (end - begin >= 2 && begin[0] == '0' &&
+                    (begin[1] == 'x' || begin[1] == 'X'))
+                {
+                    begin += 2;
+                }
+            }
+            else if (end - begin >= 2 && begin[0] == '0' &&
+                     (begin[1] == 'x' || begin[1] == 'X'))
+            {
+                base = 16;
+                begin += 2;
+            }
+
             if (begin == end)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
@@ -437,27 +548,153 @@ namespace scratchbird::core
             }
 
             uint128_t value = 0;
-            uint128_t limit = allow_signed ? ((uint128_t{1} << 127) - 1) : ~uint128_t{0};
+            uint128_t limit = allow_signed
+                                  ? (negative ? (uint128_t{1} << 127)
+                                              : ((uint128_t{1} << 127) - 1))
+                                  : ~uint128_t{0};
 
             for (const char *ptr = begin; ptr < end; ++ptr)
             {
-                if (*ptr < '0' || *ptr > '9')
+                int digit = -1;
+                if (*ptr >= '0' && *ptr <= '9')
+                {
+                    digit = *ptr - '0';
+                }
+                else if (base == 16)
+                {
+                    if (*ptr >= 'a' && *ptr <= 'f')
+                    {
+                        digit = *ptr - 'a' + 10;
+                    }
+                    else if (*ptr >= 'A' && *ptr <= 'F')
+                    {
+                        digit = *ptr - 'A' + 10;
+                    }
+                }
+
+                if (digit < 0 || digit >= base)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
                                       "Invalid numeric format");
                     return false;
                 }
-                int digit = *ptr - '0';
-                if (value > (limit - static_cast<uint128_t>(digit)) / 10)
+                if (value > (limit - static_cast<uint128_t>(digit)) /
+                                static_cast<uint128_t>(base))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                       "Numeric value out of range");
                     return false;
                 }
-                value = value * 10 + static_cast<uint128_t>(digit);
+                value = value * static_cast<uint128_t>(base) +
+                        static_cast<uint128_t>(digit);
             }
 
-            value_out = negative ? -static_cast<int128_t>(value) : static_cast<int128_t>(value);
+            if (negative)
+            {
+                if (value == (uint128_t{1} << 127))
+                {
+                    value_out = std::numeric_limits<int128_t>::min();
+                }
+                else
+                {
+                    value_out = -static_cast<int128_t>(value);
+                }
+            }
+            else
+            {
+                value_out = static_cast<int128_t>(value);
+            }
+            return true;
+        }
+
+        bool parseUnsignedIntegerString(const std::string &text, uint128_t &value_out,
+                                        ErrorContext *ctx, CastFormat format)
+        {
+            std::string trimmed = trimAscii(text);
+            if (trimmed.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Empty string is not a number");
+                return false;
+            }
+
+            const char *begin = trimmed.data();
+            const char *end = trimmed.data() + trimmed.size();
+            if (*begin == '+' || *begin == '-')
+            {
+                if (*begin == '-')
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "Negative value not allowed for unsigned type");
+                    return false;
+                }
+                ++begin;
+            }
+
+            int base = 10;
+            if (format == CastFormat::HEX)
+            {
+                base = 16;
+                if (end - begin >= 2 && begin[0] == '0' &&
+                    (begin[1] == 'x' || begin[1] == 'X'))
+                {
+                    begin += 2;
+                }
+            }
+            else if (end - begin >= 2 && begin[0] == '0' &&
+                     (begin[1] == 'x' || begin[1] == 'X'))
+            {
+                base = 16;
+                begin += 2;
+            }
+
+            if (begin == end)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Invalid numeric format");
+                return false;
+            }
+
+            uint128_t value = 0;
+            uint128_t limit = ~uint128_t{0};
+
+            for (const char *ptr = begin; ptr < end; ++ptr)
+            {
+                int digit = -1;
+                if (*ptr >= '0' && *ptr <= '9')
+                {
+                    digit = *ptr - '0';
+                }
+                else if (base == 16)
+                {
+                    if (*ptr >= 'a' && *ptr <= 'f')
+                    {
+                        digit = *ptr - 'a' + 10;
+                    }
+                    else if (*ptr >= 'A' && *ptr <= 'F')
+                    {
+                        digit = *ptr - 'A' + 10;
+                    }
+                }
+
+                if (digit < 0 || digit >= base)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid numeric format");
+                    return false;
+                }
+                if (value > (limit - static_cast<uint128_t>(digit)) /
+                                static_cast<uint128_t>(base))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "Numeric value out of range");
+                    return false;
+                }
+                value = value * static_cast<uint128_t>(base) +
+                        static_cast<uint128_t>(digit);
+            }
+
+            value_out = value;
             return true;
         }
 
@@ -552,17 +789,26 @@ namespace scratchbird::core
             return true;
         }
 
-        int32_t defaultDateTimeDeciMs()
+        int64_t defaultDateTimeMicros()
         {
             Config &cfg = Config::getInstance();
             std::string default_time = cfg.getString("server.time", "date_default_time",
                                                      "00:00:00");
-            int32_t deci_ms = FirebirdDateTime::parseTime(default_time);
-            if (deci_ms < 0)
+            int hour = 0;
+            int minute = 0;
+            int second = 0;
+            int micros = 0;
+            ErrorContext ctx;
+            if (!parseTimeParts(default_time, hour, minute, second, micros, &ctx) ||
+                hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+                second < 0 || second > 59)
             {
-                deci_ms = 0;
+                return 0;
             }
-            return deci_ms;
+            return (static_cast<int64_t>(hour) * 3600 +
+                    static_cast<int64_t>(minute) * 60 +
+                    static_cast<int64_t>(second)) * 1000000 +
+                   micros;
         }
 
         std::string int128ToString(int128_t value)
@@ -573,8 +819,23 @@ namespace scratchbird::core
             }
 
             bool negative = value < 0;
-            uint128_t uvalue = negative ? static_cast<uint128_t>(-value)
-                                         : static_cast<uint128_t>(value);
+            uint128_t uvalue = 0;
+            if (negative)
+            {
+                if (value == std::numeric_limits<int128_t>::min())
+                {
+                    uvalue = uint128_t{1} << 127;
+                }
+                else
+                {
+                    uvalue = static_cast<uint128_t>(-value);
+                }
+            }
+            else
+            {
+                uvalue = static_cast<uint128_t>(value);
+            }
+
             std::string result;
             while (uvalue > 0)
             {
@@ -590,6 +851,71 @@ namespace scratchbird::core
             return result;
         }
 
+        std::string uint128ToString(uint128_t value)
+        {
+            if (value == 0)
+            {
+                return "0";
+            }
+
+            std::string result;
+            while (value > 0)
+            {
+                uint8_t digit = static_cast<uint8_t>(value % 10);
+                result.push_back(static_cast<char>('0' + digit));
+                value /= 10;
+            }
+            std::reverse(result.begin(), result.end());
+            return result;
+        }
+
+        std::string uint128ToHex(uint128_t value)
+        {
+            if (value == 0)
+            {
+                return "0";
+            }
+            static const char kHexDigits[] = "0123456789abcdef";
+            std::string result;
+            while (value > 0)
+            {
+                uint8_t digit = static_cast<uint8_t>(value & 0x0F);
+                result.push_back(kHexDigits[digit]);
+                value >>= 4;
+            }
+            std::reverse(result.begin(), result.end());
+            return result;
+        }
+
+        std::string formatSignedHex(int128_t value)
+        {
+            bool negative = value < 0;
+            uint128_t magnitude = 0;
+            if (negative)
+            {
+                if (value == std::numeric_limits<int128_t>::min())
+                {
+                    magnitude = uint128_t{1} << 127;
+                }
+                else
+                {
+                    magnitude = static_cast<uint128_t>(-value);
+                }
+            }
+            else
+            {
+                magnitude = static_cast<uint128_t>(value);
+            }
+
+            std::string hex = uint128ToHex(magnitude);
+            return (negative ? "-0x" : "0x") + hex;
+        }
+
+        std::string formatUnsignedHex(uint128_t value)
+        {
+            return "0x" + uint128ToHex(value);
+        }
+
         std::string encodeHex(const std::vector<uint8_t> &data)
         {
             static const char kHexDigits[] = "0123456789abcdef";
@@ -601,6 +927,65 @@ namespace scratchbird::core
                 out.push_back(kHexDigits[byte & 0x0F]);
             }
             return out;
+        }
+
+        std::string formatFloat(double value, int precision)
+        {
+            if (std::isnan(value))
+            {
+                return "nan";
+            }
+            if (!std::isfinite(value))
+            {
+                return value < 0.0 ? "-inf" : "inf";
+            }
+            std::ostringstream oss;
+            oss.setf(std::ios::fmtflags(0), std::ios::floatfield);
+            oss << std::setprecision(precision) << value;
+            return oss.str();
+        }
+
+        std::string formatTimeMicros(int hour, int minute, int second, int microseconds)
+        {
+            std::ostringstream oss;
+            oss << std::setfill('0') << std::setw(2) << hour << ":"
+                << std::setw(2) << minute << ":"
+                << std::setw(2) << second;
+            if (microseconds != 0)
+            {
+                std::ostringstream frac_stream;
+                frac_stream << std::setfill('0') << std::setw(6) << microseconds;
+                std::string frac = frac_stream.str();
+                while (!frac.empty() && frac.back() == '0')
+                {
+                    frac.pop_back();
+                }
+                if (!frac.empty())
+                {
+                    oss << "." << frac;
+                }
+            }
+            return oss.str();
+        }
+
+        TimezoneManager& timezoneManager()
+        {
+            static thread_local TimezoneManager manager;
+            return manager;
+        }
+
+        int32_t resolveTimezoneOffsetSeconds(uint16_t timezone_id, int64_t local_micros)
+        {
+            auto &manager = timezoneManager();
+            TimezoneOffset offset = manager.getOffset(timezone_id, local_micros);
+            int64_t gmt_guess = local_micros -
+                                static_cast<int64_t>(offset.offset_minutes) * 60 * 1000000;
+            TimezoneOffset refined = manager.getOffset(timezone_id, gmt_guess);
+            if (refined.offset_minutes != offset.offset_minutes)
+            {
+                offset = refined;
+            }
+            return static_cast<int32_t>(offset.offset_minutes) * 60;
         }
 
         bool decodeHex(const std::string &text, std::vector<uint8_t> &out, ErrorContext *ctx)
@@ -1047,6 +1432,22 @@ namespace scratchbird::core
         return tv;
     }
 
+    TypedValue TypedValue::makeInt8(int8_t value)
+    {
+        TypedValue tv(DataType::INT8);
+        tv.is_null_ = false;
+        tv.data_.int8_val = value;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeInt16(int16_t value)
+    {
+        TypedValue tv(DataType::INT16);
+        tv.is_null_ = false;
+        tv.data_.int16_val = value;
+        return tv;
+    }
+
     TypedValue TypedValue::makeUInt8(uint8_t value)
     {
         TypedValue tv(DataType::UINT8);
@@ -1076,6 +1477,14 @@ namespace scratchbird::core
         TypedValue tv(DataType::UINT64);
         tv.is_null_ = false;
         tv.data_.uint64_val = value;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeUInt128(const std::vector<uint8_t>& value)
+    {
+        TypedValue tv(DataType::UINT128);
+        tv.is_null_ = false;
+        tv.binary_data_ = value;
         return tv;
     }
 
@@ -1127,9 +1536,57 @@ namespace scratchbird::core
         return tv;
     }
 
+    TypedValue TypedValue::makeJSONB(const std::vector<uint8_t>& value)
+    {
+        TypedValue tv(DataType::JSONB);
+        tv.is_null_ = false;
+        tv.binary_data_ = value;
+        return tv;
+    }
+
     TypedValue TypedValue::makeChar(const std::string& value)
     {
         TypedValue tv(DataType::CHAR);
+        tv.is_null_ = false;
+        tv.string_data_ = value;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeBinary(const std::vector<uint8_t>& value)
+    {
+        TypedValue tv(DataType::BINARY);
+        tv.is_null_ = false;
+        tv.binary_data_ = value;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeVarbinary(const std::vector<uint8_t>& value)
+    {
+        TypedValue tv(DataType::VARBINARY);
+        tv.is_null_ = false;
+        tv.binary_data_ = value;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeBlob(const std::vector<uint8_t>& value)
+    {
+        TypedValue tv(DataType::BLOB);
+        tv.is_null_ = false;
+        tv.binary_data_ = value;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeBytea(const std::vector<uint8_t>& value)
+    {
+        TypedValue tv(DataType::BYTEA);
+        tv.is_null_ = false;
+        tv.binary_data_ = value;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeXML(const std::string& value)
+    {
+        TypedValue tv(DataType::XML);
         tv.is_null_ = false;
         tv.string_data_ = value;
         return tv;
@@ -1393,7 +1850,8 @@ namespace scratchbird::core
         // Store field names in string_data as a serialized format
         std::string names_str;
         for (const auto& name : field_names) {
-            names_str += name + "\0";
+            names_str.append(name);
+            names_str.push_back('\0');
         }
         tv.string_data_ = names_str;
         return tv;
@@ -1797,6 +2255,48 @@ namespace scratchbird::core
         return binary_data_;
     }
 
+    int128_t TypedValue::getInt128() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::INT128) {
+            throw std::runtime_error("Type mismatch: expected INT128");
+        }
+        if (binary_data_.size() != 16) {
+            throw std::runtime_error("INT128 storage size invalid");
+        }
+        size_t offset = 0;
+        int128_t value = 0;
+        std::vector<uint8_t> bytes = binary_data_;
+        if (!readInt128(bytes, offset, 16, value)) {
+            throw std::runtime_error("INT128 decode failed");
+        }
+        return value;
+    }
+
+    uint128_t TypedValue::getUInt128() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::UINT128) {
+            throw std::runtime_error("Type mismatch: expected UINT128");
+        }
+        if (binary_data_.size() != 16) {
+            throw std::runtime_error("UINT128 storage size invalid");
+        }
+        size_t offset = 0;
+        uint128_t value = 0;
+        std::vector<uint8_t> bytes = binary_data_;
+        if (!readUint128(bytes, offset, 16, value)) {
+            throw std::runtime_error("UINT128 decode failed");
+        }
+        return value;
+    }
+
     const std::vector<uint8_t>& TypedValue::getBinary() const
     {
         if (is_null_) {
@@ -1811,6 +2311,8 @@ namespace scratchbird::core
             case DataType::BYTEA:
             case DataType::UUID:
             case DataType::INT128:
+            case DataType::UINT128:
+            case DataType::JSONB:
             case DataType::VECTOR:
                 return binary_data_;
             default:
@@ -1885,6 +2387,134 @@ namespace scratchbird::core
         return *complex_data_->array;
     }
 
+    const Range<int32_t>& TypedValue::getInt4Range() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::INT4RANGE) {
+            throw std::runtime_error("Type mismatch: expected INT4RANGE");
+        }
+        if (!complex_data_ || !complex_data_->range_data) {
+            throw std::runtime_error("Complex data not initialized");
+        }
+        return *std::static_pointer_cast<Range<int32_t>>(complex_data_->range_data);
+    }
+
+    const Range<int64_t>& TypedValue::getInt8Range() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::INT8RANGE) {
+            throw std::runtime_error("Type mismatch: expected INT8RANGE");
+        }
+        if (!complex_data_ || !complex_data_->range_data) {
+            throw std::runtime_error("Complex data not initialized");
+        }
+        return *std::static_pointer_cast<Range<int64_t>>(complex_data_->range_data);
+    }
+
+    const Range<double>& TypedValue::getNumRange() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::NUMRANGE) {
+            throw std::runtime_error("Type mismatch: expected NUMRANGE");
+        }
+        if (!complex_data_ || !complex_data_->range_data) {
+            throw std::runtime_error("Complex data not initialized");
+        }
+        return *std::static_pointer_cast<Range<double>>(complex_data_->range_data);
+    }
+
+    const std::vector<TypedValue>& TypedValue::getCompositeValues() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::COMPOSITE) {
+            throw std::runtime_error("Type mismatch: expected COMPOSITE");
+        }
+        if (!complex_data_ || !complex_data_->array) {
+            throw std::runtime_error("Complex data not initialized");
+        }
+        return *complex_data_->array;
+    }
+
+    std::vector<std::string> TypedValue::getCompositeFieldNames() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::COMPOSITE) {
+            throw std::runtime_error("Type mismatch: expected COMPOSITE");
+        }
+        std::vector<std::string> names;
+        if (string_data_.empty()) {
+            return names;
+        }
+        size_t start = 0;
+        while (start < string_data_.size()) {
+            size_t end = string_data_.find('\0', start);
+            if (end == std::string::npos) {
+                end = string_data_.size();
+            }
+            if (end > start) {
+                names.emplace_back(string_data_.substr(start, end - start));
+            } else {
+                names.emplace_back("");
+            }
+            start = end + 1;
+        }
+        return names;
+    }
+
+    const TypedValue& TypedValue::getVariantValue() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        if (type_ != DataType::VARIANT) {
+            throw std::runtime_error("Type mismatch: expected VARIANT");
+        }
+        if (!complex_data_ || !complex_data_->array || complex_data_->array->empty()) {
+            throw std::runtime_error("Variant payload not initialized");
+        }
+        const auto& payload = *complex_data_->array;
+        if (payload.size() >= 2 && payload[0].type() == DataType::INT32) {
+            return payload[1];
+        }
+        return payload[0];
+    }
+
+    std::optional<DataType> TypedValue::getVariantTag() const
+    {
+        if (is_null_) {
+            return std::nullopt;
+        }
+        ensureDecrypted();
+        if (type_ != DataType::VARIANT) {
+            throw std::runtime_error("Type mismatch: expected VARIANT");
+        }
+        if (!complex_data_ || !complex_data_->array || complex_data_->array->empty()) {
+            throw std::runtime_error("Variant payload not initialized");
+        }
+        const auto& payload = *complex_data_->array;
+        if (payload.size() >= 2 && payload[0].type() == DataType::INT32) {
+            int32_t type_code = payload[0].getInt32();
+            return static_cast<DataType>(type_code);
+        }
+        return std::nullopt;
+    }
+
     // toString method
     std::string TypedValue::toString() const
     {
@@ -1911,9 +2541,11 @@ namespace scratchbird::core
             case DataType::UINT64:
                 return std::to_string(data_.uint64_val);
             case DataType::FLOAT32:
-                return std::to_string(data_.float32_val);
+                return formatFloat(static_cast<double>(data_.float32_val),
+                                   std::numeric_limits<float>::max_digits10);
             case DataType::FLOAT64:
-                return std::to_string(data_.float64_val);
+                return formatFloat(data_.float64_val,
+                                   std::numeric_limits<double>::max_digits10);
             case DataType::DECIMAL:
             {
                 uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
@@ -1931,20 +2563,34 @@ namespace scratchbird::core
             case DataType::TEXT:
             case DataType::CHAR:
             case DataType::JSON:
-            case DataType::JSONB:
             case DataType::XML:
                 return string_data_;
+            case DataType::JSONB:
+            {
+                if (binary_data_.empty())
+                {
+                    return string_data_;
+                }
+                std::string decoded;
+                if (!decodeJsonb(binary_data_, decoded))
+                {
+                    return string_data_;
+                }
+                return decoded;
+            }
             case DataType::DATE:
             {
                 int64_t days = data_.int64_val;
                 int32_t offset = timezone_offset_seconds_;
-                int32_t default_deci_ms = defaultDateTimeDeciMs();
-                int64_t utc_seconds = days * FirebirdDateTime::SECONDS_PER_DAY +
-                                      (default_deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND);
-                int64_t local_seconds = utc_seconds + offset;
-                int32_t mjd_date = 0;
-                int32_t deci_ms_time = 0;
-                FirebirdDateTime::unixToFirebird(local_seconds, mjd_date, deci_ms_time);
+                int64_t default_micros = defaultDateTimeMicros();
+                int64_t day_micros =
+                    static_cast<int64_t>(FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+                int64_t adjust = floorDiv(default_micros -
+                                              static_cast<int64_t>(offset) * 1000000,
+                                          day_micros);
+                int64_t local_days = days - adjust;
+                int32_t mjd_date =
+                    static_cast<int32_t>(local_days + FirebirdDateTime::UNIX_EPOCH_MJD);
                 std::string result = FirebirdDateTime::formatDate(mjd_date);
                 if (offset != 0)
                 {
@@ -1964,9 +2610,17 @@ namespace scratchbird::core
                 {
                     local_micros += micros_per_day;
                 }
-                int32_t deci_ms = static_cast<int32_t>(local_micros / 100);
-                bool include_fraction = (local_micros % 1000000) != 0;
-                std::string result = FirebirdDateTime::formatTime(deci_ms, include_fraction);
+                int64_t total_seconds = local_micros / 1000000;
+                int32_t micro_remainder = static_cast<int32_t>(local_micros % 1000000);
+                if (micro_remainder < 0)
+                {
+                    micro_remainder += 1000000;
+                    total_seconds -= 1;
+                }
+                int hour = static_cast<int>(total_seconds / 3600);
+                int minute = static_cast<int>((total_seconds / 60) % 60);
+                int second = static_cast<int>(total_seconds % 60);
+                std::string result = formatTimeMicros(hour, minute, second, micro_remainder);
                 if (offset != 0)
                 {
                     result += formatOffsetSeconds(offset);
@@ -1978,20 +2632,28 @@ namespace scratchbird::core
                 int64_t utc_micros = data_.int64_val;
                 int32_t offset = timezone_offset_seconds_;
                 int64_t local_micros = utc_micros + static_cast<int64_t>(offset) * 1000000;
-                int64_t unix_seconds = local_micros / 1000000;
-                int64_t micro_remainder = local_micros % 1000000;
+                int64_t total_seconds = floorDiv(local_micros, 1000000);
+                int64_t micro_remainder = local_micros - total_seconds * 1000000;
                 if (micro_remainder < 0)
                 {
                     micro_remainder += 1000000;
-                    unix_seconds -= 1;
+                    total_seconds -= 1;
                 }
-                int32_t mjd_date = 0;
-                int32_t deci_ms_time = 0;
-                FirebirdDateTime::unixToFirebird(unix_seconds, mjd_date, deci_ms_time);
-                deci_ms_time += static_cast<int32_t>(micro_remainder / 100);
-                bool include_fraction = micro_remainder != 0;
-                std::string result = FirebirdDateTime::formatTimestamp(mjd_date, deci_ms_time,
-                                                                       include_fraction);
+                int64_t days = floorDiv(total_seconds, FirebirdDateTime::SECONDS_PER_DAY);
+                int64_t seconds_of_day = total_seconds -
+                                         days * FirebirdDateTime::SECONDS_PER_DAY;
+                if (seconds_of_day < 0)
+                {
+                    seconds_of_day += FirebirdDateTime::SECONDS_PER_DAY;
+                    days -= 1;
+                }
+                int hour = static_cast<int>(seconds_of_day / 3600);
+                int minute = static_cast<int>((seconds_of_day / 60) % 60);
+                int second = static_cast<int>(seconds_of_day % 60);
+                int32_t mjd_date = static_cast<int32_t>(days + FirebirdDateTime::UNIX_EPOCH_MJD);
+                std::string result = FirebirdDateTime::formatDate(mjd_date) + " " +
+                                     formatTimeMicros(hour, minute, second,
+                                                      static_cast<int32_t>(micro_remainder));
                 if (offset != 0)
                 {
                     result += formatOffsetSeconds(offset);
@@ -2017,6 +2679,21 @@ namespace scratchbird::core
                     return "<INT128>";
                 }
                 return int128ToString(value);
+            }
+            case DataType::UINT128:
+            {
+                if (binary_data_.size() != 16)
+                {
+                    return "<UINT128>";
+                }
+                uint128_t value = 0;
+                size_t offset = 0;
+                std::vector<uint8_t> bytes = binary_data_;
+                if (!readUint128(bytes, offset, 16, value))
+                {
+                    return "<UINT128>";
+                }
+                return uint128ToString(value);
             }
             case DataType::BINARY:
             case DataType::VARBINARY:
@@ -2507,10 +3184,26 @@ namespace scratchbird::core
         // Compare by type
         switch (type_)
         {
+            case DataType::INT8:
+                return data_.int8_val == other.data_.int8_val;
+            case DataType::INT16:
+                return data_.int16_val == other.data_.int16_val;
             case DataType::INT32:
                 return data_.int32_val == other.data_.int32_val;
             case DataType::INT64:
                 return data_.int64_val == other.data_.int64_val;
+            case DataType::INT128:
+                return binary_data_ == other.binary_data_;
+            case DataType::UINT8:
+                return data_.uint8_val == other.data_.uint8_val;
+            case DataType::UINT16:
+                return data_.uint16_val == other.data_.uint16_val;
+            case DataType::UINT32:
+                return data_.uint32_val == other.data_.uint32_val;
+            case DataType::UINT64:
+                return data_.uint64_val == other.data_.uint64_val;
+            case DataType::UINT128:
+                return binary_data_ == other.binary_data_;
             case DataType::FLOAT32:
                 return data_.float32_val == other.data_.float32_val;
             case DataType::FLOAT64:
@@ -2583,10 +3276,50 @@ namespace scratchbird::core
         // Compare by type
         switch (type_)
         {
+            case DataType::INT8:
+                return data_.int8_val < other.data_.int8_val;
+            case DataType::INT16:
+                return data_.int16_val < other.data_.int16_val;
             case DataType::INT32:
                 return data_.int32_val < other.data_.int32_val;
             case DataType::INT64:
                 return data_.int64_val < other.data_.int64_val;
+            case DataType::INT128:
+            {
+                size_t offset = 0;
+                int128_t left_val = 0;
+                int128_t right_val = 0;
+                std::vector<uint8_t> left_bytes = binary_data_;
+                std::vector<uint8_t> right_bytes = other.binary_data_;
+                if (!readInt128(left_bytes, offset, 16, left_val) ||
+                    !readInt128(right_bytes, offset = 0, 16, right_val))
+                {
+                    throw std::runtime_error("INT128 decode failed");
+                }
+                return left_val < right_val;
+            }
+            case DataType::UINT8:
+                return data_.uint8_val < other.data_.uint8_val;
+            case DataType::UINT16:
+                return data_.uint16_val < other.data_.uint16_val;
+            case DataType::UINT32:
+                return data_.uint32_val < other.data_.uint32_val;
+            case DataType::UINT64:
+                return data_.uint64_val < other.data_.uint64_val;
+            case DataType::UINT128:
+            {
+                size_t offset = 0;
+                uint128_t left_val = 0;
+                uint128_t right_val = 0;
+                std::vector<uint8_t> left_bytes = binary_data_;
+                std::vector<uint8_t> right_bytes = other.binary_data_;
+                if (!readUint128(left_bytes, offset, 16, left_val) ||
+                    !readUint128(right_bytes, offset = 0, 16, right_val))
+                {
+                    throw std::runtime_error("UINT128 decode failed");
+                }
+                return left_val < right_val;
+            }
             case DataType::FLOAT32:
                 return data_.float32_val < other.data_.float32_val;
             case DataType::FLOAT64:
@@ -2749,10 +3482,26 @@ namespace scratchbird::core
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::JSON:
-            case DataType::JSONB:
             case DataType::XML:
             {
                 Status status = appendLengthPrefixedString(string_data_);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                break;
+            }
+            case DataType::JSONB:
+            {
+                std::vector<uint8_t> payload = binary_data_;
+                if (payload.empty() && !string_data_.empty())
+                {
+                    if (!encodeJsonb(string_data_, payload, ctx))
+                    {
+                        return Status::INVALID_TEXT_REPRESENTATION;
+                    }
+                }
+                Status status = appendLengthPrefixedBinary(payload);
                 if (status != Status::OK)
                 {
                     return status;
@@ -2815,42 +3564,25 @@ namespace scratchbird::core
             case DataType::TIME:
             {
                 int64_t micros = data_.int64_val;
-                int64_t deci_ms64 = micros / 100;
-                if (deci_ms64 < std::numeric_limits<int32_t>::min() ||
-                    deci_ms64 > std::numeric_limits<int32_t>::max())
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_FIELD_OVERFLOW, "TIME out of range");
-                    return Status::DATETIME_FIELD_OVERFLOW;
-                }
-                appendInt32(out, static_cast<int32_t>(deci_ms64));
+                appendInt64(out, micros);
                 appendInt32(out, timezone_offset_seconds_);
                 break;
             }
             case DataType::TIMESTAMP:
             {
                 int64_t micros = data_.int64_val;
-                int64_t unix_seconds = micros / 1000000;
-                int64_t micro_remainder = micros % 1000000;
-                if (micro_remainder < 0)
-                {
-                    micro_remainder += 1000000;
-                    unix_seconds -= 1;
-                }
-                int32_t mjd_date = 0;
-                int32_t deci_ms_time = 0;
-                FirebirdDateTime::unixToFirebird(unix_seconds, mjd_date, deci_ms_time);
-                deci_ms_time += static_cast<int32_t>(micro_remainder / 100);
-                appendInt32(out, mjd_date);
-                appendInt32(out, deci_ms_time);
+                appendInt64(out, micros);
                 appendInt32(out, timezone_offset_seconds_);
                 break;
             }
             case DataType::UUID:
             case DataType::INT128:
+            case DataType::UINT128:
             {
                 if (binary_data_.size() != 16)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Expected 16 bytes for UUID/INT128");
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Expected 16 bytes for UUID/INT128/UINT128");
                     return Status::INVALID_ARGUMENT;
                 }
                 out.insert(out.end(), binary_data_.begin(), binary_data_.end());
@@ -3453,10 +4185,18 @@ namespace scratchbird::core
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::JSON:
-            case DataType::JSONB:
             case DataType::XML:
             {
                 status = readLengthPrefixedString(string_data_);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                break;
+            }
+            case DataType::JSONB:
+            {
+                status = readLengthPrefixedBinary(binary_data_);
                 if (status != Status::OK)
                 {
                     return status;
@@ -3499,38 +4239,29 @@ namespace scratchbird::core
             }
             case DataType::TIME:
             {
-                int32_t deci_ms = 0;
+                int64_t micros = 0;
                 int32_t offset_seconds = 0;
-                if (!readInt32(data, offset, deci_ms) ||
+                if (!readInt64(data, offset, micros) ||
                     !readInt32(data, offset, offset_seconds))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIME payload");
                     return Status::DATA_CORRUPTED;
                 }
-                data_.int64_val = static_cast<int64_t>(deci_ms) * 100;
+                data_.int64_val = micros;
                 timezone_offset_seconds_ = offset_seconds;
                 break;
             }
             case DataType::TIMESTAMP:
             {
-                int32_t mjd = 0;
-                int32_t deci_ms = 0;
+                int64_t micros = 0;
                 int32_t offset_seconds = 0;
-                if (!readInt32(data, offset, mjd) ||
-                    !readInt32(data, offset, deci_ms) ||
+                if (!readInt64(data, offset, micros) ||
                     !readInt32(data, offset, offset_seconds))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIMESTAMP payload");
                     return Status::DATA_CORRUPTED;
                 }
-                int32_t seconds_of_day = deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND;
-                int32_t fraction_deci = deci_ms % FirebirdDateTime::DECI_MS_PER_SECOND;
-                int64_t unix_seconds =
-                    (static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD) *
-                        FirebirdDateTime::SECONDS_PER_DAY +
-                    seconds_of_day;
-                data_.int64_val = unix_seconds * 1000000 +
-                                  static_cast<int64_t>(fraction_deci) * 100;
+                data_.int64_val = micros;
                 timezone_offset_seconds_ = offset_seconds;
                 break;
             }
@@ -3548,10 +4279,12 @@ namespace scratchbird::core
             }
             case DataType::UUID:
             case DataType::INT128:
+            case DataType::UINT128:
             {
                 if (data.size() != 16)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid UUID/INT128 payload size");
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid UUID/INT128/UINT128 payload size");
                     return Status::DATA_CORRUPTED;
                 }
                 binary_data_.assign(data.begin(), data.end());
@@ -4225,6 +4958,17 @@ namespace scratchbird::core
         if (target == DataType::NULL_TYPE)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot convert to NULL type");
+            if (ctx)
+            {
+                ctx->violating_value = is_null_
+                                           ? "NULL"
+                                           : (is_encrypted_ ? "<encrypted>" : toString());
+                if (ctx->message.find("target") == std::string::npos ||
+                    ctx->message.find("value") == std::string::npos)
+                {
+                    ctx->message += " (value: '" + ctx->violating_value + "', target: NULL)";
+                }
+            }
             return Status::INVALID_ARGUMENT;
         }
 
@@ -4242,29 +4986,116 @@ namespace scratchbird::core
 
         ensureDecrypted();
 
+        std::string target_name = TypeSystem::getTypeName(target);
+        std::string source_value;
+        bool source_ready = false;
+        auto getSourceValue = [&]() -> const std::string&
+        {
+            if (!source_ready)
+            {
+                source_value = toString();
+                source_ready = true;
+            }
+            return source_value;
+        };
+
+        auto wrapStatus = [&](Status status) -> Status
+        {
+            if (status != Status::OK && ctx)
+            {
+                if (ctx->violating_value.empty())
+                {
+                    ctx->violating_value = getSourceValue();
+                }
+                if (ctx->hint.empty())
+                {
+                    ctx->hint = "target type: " + target_name;
+                }
+                if (!ctx->message.empty())
+                {
+                    if (ctx->message.find("target") == std::string::npos ||
+                        ctx->message.find("value") == std::string::npos)
+                    {
+                        ctx->message += " (value: '" + getSourceValue() + "', target: " +
+                                        target_name + ")";
+                    }
+                }
+                else
+                {
+                    ctx->message = "Failed to cast value '" + getSourceValue() + "' to " +
+                                   target_name;
+                    ctx->code = status;
+                    ctx->sqlstate = statusToSQLState(status);
+                }
+            }
+            return status;
+        };
+
         auto setStringResult = [&](DataType string_type, const std::string& value) -> Status
         {
+            std::string adjusted = value;
             if ((string_type == DataType::CHAR || string_type == DataType::VARCHAR) &&
-                target_type.precision > 0 &&
-                value.size() > target_type.precision)
+                target_type.precision > 0)
             {
-                SET_ERROR_CONTEXT(ctx, Status::STRING_DATA_RIGHT_TRUNCATION,
-                                  "String value exceeds target length");
-                return Status::STRING_DATA_RIGHT_TRUNCATION;
+                size_t char_count = UTF8Utils::countCharacters(adjusted);
+                if (!adjusted.empty() && char_count == 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Invalid UTF-8 sequence");
+                    return wrapStatus(Status::INVALID_ARGUMENT);
+                }
+                if (char_count > target_type.precision)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::STRING_DATA_RIGHT_TRUNCATION,
+                                      "String value exceeds target length");
+                    return wrapStatus(Status::STRING_DATA_RIGHT_TRUNCATION);
+                }
+                if (string_type == DataType::CHAR && char_count < target_type.precision)
+                {
+                    adjusted.append(target_type.precision - char_count, ' ');
+                }
             }
 
             result_out = TypedValue(string_type);
             result_out.is_null_ = false;
-            result_out.string_data_ = value;
+            result_out.string_data_ = adjusted;
             return Status::OK;
         };
 
         auto setBinaryResult = [&](DataType binary_type, const std::vector<uint8_t>& data) -> Status
         {
+            std::vector<uint8_t> adjusted = data;
+            if (binary_type == DataType::BINARY && target_type.precision > 0)
+            {
+                if (adjusted.size() > target_type.precision)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::STRING_DATA_RIGHT_TRUNCATION,
+                                      "Binary value exceeds target length");
+                    return wrapStatus(Status::STRING_DATA_RIGHT_TRUNCATION);
+                }
+                if (adjusted.size() < target_type.precision)
+                {
+                    adjusted.resize(target_type.precision, 0x00);
+                }
+            }
+            else if (binary_type == DataType::VARBINARY && target_type.precision > 0)
+            {
+                if (adjusted.size() > target_type.precision)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::STRING_DATA_RIGHT_TRUNCATION,
+                                      "Binary value exceeds target length");
+                    return wrapStatus(Status::STRING_DATA_RIGHT_TRUNCATION);
+                }
+            }
             result_out = TypedValue(binary_type);
             result_out.is_null_ = false;
-            result_out.binary_data_ = data;
+            result_out.binary_data_ = std::move(adjusted);
             return Status::OK;
+        };
+
+        auto stringValueForParse = [&]() -> std::string
+        {
+            return (type_ == DataType::JSONB) ? toString() : string_data_;
         };
 
         auto normalized_format = (format == CastFormat::DEFAULT) ? CastFormat::HEX : format;
@@ -4286,7 +5117,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Invalid DECIMAL precision/scale");
-                    return Status::INVALID_ARGUMENT;
+                    return wrapStatus(Status::INVALID_ARGUMENT);
                 }
 
                 Decimal current(decimal_unscaled_,
@@ -4299,7 +5130,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                       "DECIMAL value out of range");
-                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                 }
                 result_out = makeDecimal(adjusted.unscaledValue(), precision, scale);
                 return Status::OK;
@@ -4308,6 +5139,10 @@ namespace scratchbird::core
             if (target == DataType::CHAR || target == DataType::VARCHAR)
             {
                 return setStringResult(target, string_data_);
+            }
+            if (target == DataType::BINARY || target == DataType::VARBINARY)
+            {
+                return setBinaryResult(target, binary_data_);
             }
 
             result_out = *this;
@@ -4318,7 +5153,7 @@ namespace scratchbird::core
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
                               (input + " is not a number").c_str());
-            return Status::INVALID_TEXT_REPRESENTATION;
+            return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
         };
 
         auto readInt128Value = [&](int128_t& out_value) -> bool
@@ -4338,13 +5173,39 @@ namespace scratchbird::core
             return true;
         };
 
+        auto readUInt128Value = [&](uint128_t& out_value) -> bool
+        {
+            if (binary_data_.size() != 16)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "UINT128 storage size invalid");
+                return false;
+            }
+            size_t offset = 0;
+            std::vector<uint8_t> bytes = binary_data_;
+            if (!readUint128(bytes, offset, 16, out_value))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "UINT128 decode failed");
+                return false;
+            }
+            return true;
+        };
+
+        auto setUnsigned128Result = [&](uint128_t value) -> Status
+        {
+            result_out = TypedValue(DataType::UINT128);
+            result_out.is_null_ = false;
+            result_out.binary_data_.clear();
+            appendUint128(result_out.binary_data_, value, 16);
+            return Status::OK;
+        };
+
         auto setIntegerResult = [&](DataType int_type, int128_t value) -> Status
         {
             if (isUnsignedType(int_type) && value < 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                   "Negative value for unsigned type");
-                return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
             }
 
             switch (int_type)
@@ -4355,7 +5216,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "INT8 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(DataType::INT8);
                     result_out.is_null_ = false;
@@ -4367,7 +5228,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "INT16 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(DataType::INT16);
                     result_out.is_null_ = false;
@@ -4379,7 +5240,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "INT32 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(DataType::INT32);
                     result_out.is_null_ = false;
@@ -4392,7 +5253,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "INT64 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(int_type == DataType::MONEY ? DataType::MONEY
                                                                         : DataType::INT64);
@@ -4401,18 +5262,18 @@ namespace scratchbird::core
                     return Status::OK;
                 case DataType::INT128:
                 {
-                    uint8_t precision = DECIMAL_MAX_PRECISION;
-                    int128_t max_abs = POWERS_OF_10[precision] - 1;
-                    if (value > max_abs || value < -max_abs)
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
-                                          "INT128 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
-                    }
                     result_out = TypedValue(DataType::INT128);
                     result_out.is_null_ = false;
                     result_out.binary_data_.clear();
                     appendInt128(result_out.binary_data_, value, 16);
+                    return Status::OK;
+                }
+                case DataType::UINT128:
+                {
+                    result_out = TypedValue(DataType::UINT128);
+                    result_out.is_null_ = false;
+                    result_out.binary_data_.clear();
+                    appendUint128(result_out.binary_data_, static_cast<uint128_t>(value), 16);
                     return Status::OK;
                 }
                 case DataType::UINT8:
@@ -4421,7 +5282,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "UINT8 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(DataType::UINT8);
                     result_out.is_null_ = false;
@@ -4433,7 +5294,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "UINT16 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(DataType::UINT16);
                     result_out.is_null_ = false;
@@ -4445,7 +5306,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "UINT32 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(DataType::UINT32);
                     result_out.is_null_ = false;
@@ -4457,7 +5318,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "UINT64 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = TypedValue(DataType::UINT64);
                     result_out.is_null_ = false;
@@ -4468,20 +5329,53 @@ namespace scratchbird::core
             }
 
             SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH, "Unsupported integer target");
-            return Status::DATATYPE_MISMATCH;
+            return wrapStatus(Status::DATATYPE_MISMATCH);
         };
 
         switch (target)
         {
+            case DataType::JSONB:
+            {
+                if (type_ == DataType::JSONB)
+                {
+                    result_out = *this;
+                    return Status::OK;
+                }
+
+                std::string text;
+                if (isStringLike(type_))
+                {
+                    text = stringValueForParse();
+                }
+                else if (isBinaryLike(type_) || type_ == DataType::UUID || type_ == DataType::INT128 ||
+                         type_ == DataType::UINT128)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert binary type to JSONB");
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
+                }
+                else
+                {
+                    text = toString();
+                }
+
+                std::vector<uint8_t> encoded;
+                if (!encodeJsonb(text, encoded, ctx))
+                {
+                    return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
+                }
+
+                result_out = makeJSONB(encoded);
+                return Status::OK;
+            }
             case DataType::CHAR:
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::JSON:
-            case DataType::JSONB:
             case DataType::XML:
             {
                 std::string value;
-                if (isBinaryLike(type_) || type_ == DataType::UUID || type_ == DataType::INT128)
+                if (isBinaryLike(type_))
                 {
                     const std::vector<uint8_t>& data = getBinary();
                     switch (normalized_format)
@@ -4498,7 +5392,58 @@ namespace scratchbird::core
                         default:
                             SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
                                               "Unsupported binary cast format");
-                            return Status::NOT_SUPPORTED;
+                            return wrapStatus(Status::NOT_SUPPORTED);
+                    }
+                }
+                else if (isIntegerType(type_))
+                {
+                    if (format == CastFormat::HEX)
+                    {
+                        if (type_ == DataType::INT128)
+                        {
+                            int128_t val = 0;
+                            if (!readInt128Value(val))
+                            {
+                                return wrapStatus(Status::INVALID_ARGUMENT);
+                            }
+                            value = formatSignedHex(val);
+                        }
+                        else if (type_ == DataType::UINT128)
+                        {
+                            uint128_t val = 0;
+                            if (!readUInt128Value(val))
+                            {
+                                return wrapStatus(Status::INVALID_ARGUMENT);
+                            }
+                            value = formatUnsignedHex(val);
+                        }
+                        else if (isUnsignedType(type_))
+                        {
+                            uint128_t val = 0;
+                            switch (type_)
+                            {
+                                case DataType::UINT8: val = data_.uint8_val; break;
+                                case DataType::UINT16: val = data_.uint16_val; break;
+                                case DataType::UINT32: val = data_.uint32_val; break;
+                                case DataType::UINT64: val = data_.uint64_val; break;
+                                default: break;
+                            }
+                            value = formatUnsignedHex(val);
+                        }
+                        else
+                        {
+                            value = formatSignedHex(static_cast<int128_t>(toInt64()));
+                        }
+                    }
+                    else if (format == CastFormat::DEFAULT)
+                    {
+                        value = toString();
+                    }
+                    else
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                                          "Unsupported numeric cast format");
+                        return wrapStatus(Status::NOT_SUPPORTED);
                     }
                 }
                 else
@@ -4514,7 +5459,8 @@ namespace scratchbird::core
             case DataType::BYTEA:
             case DataType::VECTOR:
             {
-                if (isBinaryLike(type_) || type_ == DataType::UUID || type_ == DataType::INT128)
+                if (isBinaryLike(type_) || type_ == DataType::UUID || type_ == DataType::INT128 ||
+                    type_ == DataType::UINT128 || type_ == DataType::JSONB)
                 {
                     return setBinaryResult(target, getBinary());
                 }
@@ -4522,7 +5468,7 @@ namespace scratchbird::core
                 if (isStringLike(type_))
                 {
                     std::vector<uint8_t> data;
-                    std::string text = string_data_;
+                    std::string text = stringValueForParse();
                     bool ok = false;
                     switch (normalized_format)
                     {
@@ -4538,18 +5484,18 @@ namespace scratchbird::core
                         default:
                             SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
                                               "Unsupported binary cast format");
-                            return Status::NOT_SUPPORTED;
+                            return wrapStatus(Status::NOT_SUPPORTED);
                     }
                     if (!ok)
                     {
-                        return Status::INVALID_TEXT_REPRESENTATION;
+                        return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
                     }
                     return setBinaryResult(target, data);
                 }
 
                 SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                   "Cannot convert to binary type");
-                return Status::DATATYPE_MISMATCH;
+                return wrapStatus(Status::DATATYPE_MISMATCH);
             }
             case DataType::UUID:
             {
@@ -4562,26 +5508,27 @@ namespace scratchbird::core
                 std::vector<uint8_t> uuid_bytes;
                 if (isStringLike(type_))
                 {
-                    if (!parseUuidString(string_data_, uuid_bytes, ctx))
+                    if (!parseUuidString(stringValueForParse(), uuid_bytes, ctx))
                     {
-                        return Status::INVALID_TEXT_REPRESENTATION;
+                        return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
                     }
                 }
-                else if (isBinaryLike(type_) || type_ == DataType::INT128)
+                else if (isBinaryLike(type_) || type_ == DataType::INT128 ||
+                         type_ == DataType::UINT128)
                 {
                     uuid_bytes = getBinary();
                     if (uuid_bytes.size() != 16)
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
                                           "UUID requires 16 bytes");
-                        return Status::INVALID_TEXT_REPRESENTATION;
+                        return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
                     }
                 }
                 else
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                       "Cannot convert to UUID");
-                    return Status::DATATYPE_MISMATCH;
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
                 }
 
                 result_out = makeUUID(uuid_bytes);
@@ -4613,7 +5560,16 @@ namespace scratchbird::core
                         int128_t val = 0;
                         if (!readInt128Value(val))
                         {
-                            return Status::INVALID_ARGUMENT;
+                            return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                        value = val != 0;
+                    }
+                    else if (type_ == DataType::UINT128)
+                    {
+                        uint128_t val = 0;
+                        if (!readUInt128Value(val))
+                        {
+                            return wrapStatus(Status::INVALID_ARGUMENT);
                         }
                         value = val != 0;
                     }
@@ -4631,7 +5587,7 @@ namespace scratchbird::core
                 }
                 else if (isStringLike(type_))
                 {
-                    std::string text = trimAscii(string_data_);
+                    std::string text = trimAscii(stringValueForParse());
                     std::string lower;
                     lower.reserve(text.size());
                     for (char ch : text)
@@ -4650,18 +5606,161 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
                                           (text + " is not a boolean").c_str());
-                        return Status::INVALID_TEXT_REPRESENTATION;
+                        return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
                     }
                 }
                 else
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                       "Cannot convert to BOOLEAN");
-                    return Status::DATATYPE_MISMATCH;
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
                 }
 
                 result_out = makeBool(value);
                 return Status::OK;
+            }
+            case DataType::UINT128:
+            {
+                if (type_ == DataType::UINT128)
+                {
+                    result_out = *this;
+                    return Status::OK;
+                }
+
+                uint128_t value = 0;
+                if (type_ == DataType::INT128)
+                {
+                    int128_t signed_val = 0;
+                    if (!readInt128Value(signed_val))
+                    {
+                        return wrapStatus(Status::INVALID_ARGUMENT);
+                    }
+                    if (signed_val < 0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Negative value for UINT128");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    value = static_cast<uint128_t>(signed_val);
+                }
+                else if (isUnsignedType(type_))
+                {
+                    switch (type_)
+                    {
+                        case DataType::UINT8: value = data_.uint8_val; break;
+                        case DataType::UINT16: value = data_.uint16_val; break;
+                        case DataType::UINT32: value = data_.uint32_val; break;
+                        case DataType::UINT64: value = data_.uint64_val; break;
+                        default: break;
+                    }
+                }
+                else if (isIntegerType(type_))
+                {
+                    int128_t signed_val = 0;
+                    if (type_ == DataType::INT128)
+                    {
+                        if (!readInt128Value(signed_val))
+                        {
+                            return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                    }
+                    else
+                    {
+                        signed_val = toInt64();
+                    }
+                    if (signed_val < 0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Negative value for UINT128");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    value = static_cast<uint128_t>(signed_val);
+                }
+                else if (type_ == DataType::DECIMAL)
+                {
+                    Decimal dec(decimal_unscaled_,
+                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                        : decimal_precision_,
+                                decimal_scale_);
+                    int128_t dec_val = dec.unscaledValue();
+                    if (dec.scale() > 0)
+                    {
+                        dec_val /= POWERS_OF_10[dec.scale()];
+                    }
+                    if (dec_val < 0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Negative value for UINT128");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    value = static_cast<uint128_t>(dec_val);
+                }
+                else if (type_ == DataType::MONEY)
+                {
+                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, 4);
+                    int128_t money_val = static_cast<int128_t>(dec.toInt64());
+                    if (money_val < 0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Negative value for UINT128");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    value = static_cast<uint128_t>(money_val);
+                }
+                else if (isFloatType(type_))
+                {
+                    double val = (type_ == DataType::FLOAT32)
+                                     ? static_cast<double>(data_.float32_val)
+                                     : data_.float64_val;
+                    if (!std::isfinite(val))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Float is not finite");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    if (val < 0.0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Negative value for UINT128");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    long double max_uint128 = static_cast<long double>(~uint128_t{0});
+                    if (static_cast<long double>(val) > max_uint128)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "UINT128 value out of range");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    value = static_cast<uint128_t>(val);
+                }
+                else if (type_ == DataType::BOOLEAN)
+                {
+                    value = data_.bool_val ? 1u : 0u;
+                }
+                else if (isStringLike(type_))
+                {
+                    if (format == CastFormat::BASE64 || format == CastFormat::ESCAPE)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                                          "Unsupported numeric cast format");
+                        return wrapStatus(Status::NOT_SUPPORTED);
+                    }
+                    std::string text = trimAscii(stringValueForParse());
+                    uint128_t parsed = 0;
+                    if (!parseUnsignedIntegerString(text, parsed, ctx, format))
+                    {
+                        return setInvalidNumber(text);
+                    }
+                    value = parsed;
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert to UINT128");
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
+                }
+
+                return setUnsigned128Result(value);
             }
             case DataType::INT8:
             case DataType::INT16:
@@ -4680,8 +5779,24 @@ namespace scratchbird::core
                     {
                         if (!readInt128Value(value))
                         {
-                            return Status::INVALID_ARGUMENT;
+                            return wrapStatus(Status::INVALID_ARGUMENT);
                         }
+                    }
+                    else if (type_ == DataType::UINT128)
+                    {
+                        uint128_t val = 0;
+                        if (!readUInt128Value(val))
+                        {
+                            return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                        uint128_t max_signed = (uint128_t{1} << 127) - 1;
+                        if (val > max_signed)
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                              "UINT128 value out of range");
+                            return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                        }
+                        value = static_cast<int128_t>(val);
                     }
                     else if (isUnsignedType(type_))
                     {
@@ -4705,7 +5820,12 @@ namespace scratchbird::core
                                 decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
                                                         : decimal_precision_,
                                 decimal_scale_);
-                    value = static_cast<int128_t>(dec.toInt64());
+                    int128_t dec_val = dec.unscaledValue();
+                    if (dec.scale() > 0)
+                    {
+                        dec_val /= POWERS_OF_10[dec.scale()];
+                    }
+                    value = dec_val;
                 }
                 else if (type_ == DataType::MONEY)
                 {
@@ -4721,7 +5841,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "Float is not finite");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     value = static_cast<int128_t>(val);
                 }
@@ -4731,10 +5851,16 @@ namespace scratchbird::core
                 }
                 else if (isStringLike(type_))
                 {
+                    if (format == CastFormat::BASE64 || format == CastFormat::ESCAPE)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                                          "Unsupported numeric cast format");
+                        return wrapStatus(Status::NOT_SUPPORTED);
+                    }
                     int128_t parsed = 0;
-                    std::string text = trimAscii(string_data_);
+                    std::string text = trimAscii(stringValueForParse());
                     bool allow_signed = !isUnsignedType(target);
-                    if (!parseIntegerString(text, allow_signed, parsed, ctx))
+                    if (!parseIntegerString(text, allow_signed, parsed, ctx, format))
                     {
                         return setInvalidNumber(text);
                     }
@@ -4744,7 +5870,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                       "Cannot convert to integer type");
-                    return Status::DATATYPE_MISMATCH;
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
                 }
 
                 return setIntegerResult(target, value);
@@ -4753,6 +5879,7 @@ namespace scratchbird::core
             case DataType::FLOAT64:
             {
                 double value = 0.0;
+                bool source_is_float = isFloatType(type_);
                 if (isFloatType(type_))
                 {
                     value = (type_ == DataType::FLOAT32)
@@ -4766,7 +5893,16 @@ namespace scratchbird::core
                         int128_t val = 0;
                         if (!readInt128Value(val))
                         {
-                            return Status::INVALID_ARGUMENT;
+                            return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                        value = static_cast<double>(val);
+                    }
+                    else if (type_ == DataType::UINT128)
+                    {
+                        uint128_t val = 0;
+                        if (!readUInt128Value(val))
+                        {
+                            return wrapStatus(Status::INVALID_ARGUMENT);
                         }
                         value = static_cast<double>(val);
                     }
@@ -4805,7 +5941,7 @@ namespace scratchbird::core
                 }
                 else if (isStringLike(type_))
                 {
-                    std::string text = trimAscii(string_data_);
+                    std::string text = trimAscii(stringValueForParse());
                     if (!parseFloatingString(text, value, ctx))
                     {
                         return setInvalidNumber(text);
@@ -4815,14 +5951,26 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                       "Cannot convert to float");
-                    return Status::DATATYPE_MISMATCH;
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
                 }
 
                 if (!std::isfinite(value))
                 {
+                    if (source_is_float)
+                    {
+                        if (target == DataType::FLOAT32)
+                        {
+                            result_out = makeFloat32(static_cast<float>(value));
+                        }
+                        else
+                        {
+                            result_out = makeFloat64(value);
+                        }
+                        return Status::OK;
+                    }
                     SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                       "Float is not finite");
-                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                 }
 
                 if (target == DataType::FLOAT32)
@@ -4831,7 +5979,7 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "FLOAT32 value out of range");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     result_out = makeFloat32(static_cast<float>(value));
                 }
@@ -4851,7 +5999,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Invalid DECIMAL precision/scale");
-                    return Status::INVALID_ARGUMENT;
+                    return wrapStatus(Status::INVALID_ARGUMENT);
                 }
 
                 Decimal dec;
@@ -4874,8 +6022,24 @@ namespace scratchbird::core
                     {
                         if (!readInt128Value(int_val))
                         {
-                            return Status::INVALID_ARGUMENT;
+                            return wrapStatus(Status::INVALID_ARGUMENT);
                         }
+                    }
+                    else if (type_ == DataType::UINT128)
+                    {
+                        uint128_t val = 0;
+                        if (!readUInt128Value(val))
+                        {
+                            return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                        uint128_t max_signed = (uint128_t{1} << 127) - 1;
+                        if (val > max_signed)
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                              "UINT128 value out of range");
+                            return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                        }
+                        int_val = static_cast<int128_t>(val);
                     }
                     else if (isUnsignedType(type_))
                     {
@@ -4909,13 +6073,13 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "Float is not finite");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     dec = Decimal(val, precision, scale);
                 }
                 else if (isStringLike(type_))
                 {
-                    std::string text = trimAscii(string_data_);
+                    std::string text = trimAscii(stringValueForParse());
                     Status status = Decimal::parseWithError(text, precision, scale, &dec, ctx);
                     if (status != Status::OK)
                     {
@@ -4926,7 +6090,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                       "Cannot convert to DECIMAL");
-                    return Status::DATATYPE_MISMATCH;
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
                 }
 
                 int128_t max_abs = POWERS_OF_10[precision] - 1;
@@ -4934,7 +6098,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                       "DECIMAL value out of range");
-                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                 }
 
                 result_out = makeDecimal(dec.unscaledValue(), precision, scale);
@@ -4963,8 +6127,24 @@ namespace scratchbird::core
                     {
                         if (!readInt128Value(int_val))
                         {
-                            return Status::INVALID_ARGUMENT;
+                            return wrapStatus(Status::INVALID_ARGUMENT);
                         }
+                    }
+                    else if (type_ == DataType::UINT128)
+                    {
+                        uint128_t val = 0;
+                        if (!readUInt128Value(val))
+                        {
+                            return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                        uint128_t max_signed = (uint128_t{1} << 127) - 1;
+                        if (val > max_signed)
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                              "UINT128 value out of range");
+                            return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                        }
+                        int_val = static_cast<int128_t>(val);
                     }
                     else if (isUnsignedType(type_))
                     {
@@ -4997,13 +6177,13 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                           "Float is not finite");
-                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
                     money = Decimal(val, 19, 4);
                 }
                 else if (isStringLike(type_))
                 {
-                    std::string text = trimAscii(string_data_);
+                    std::string text = trimAscii(stringValueForParse());
                     Status status = Decimal::parseWithError(text, 19, 4, &money, ctx);
                     if (status != Status::OK)
                     {
@@ -5014,7 +6194,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                       "Cannot convert to MONEY");
-                    return Status::DATATYPE_MISMATCH;
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
                 }
 
                 if (money.unscaledValue() < std::numeric_limits<int64_t>::min() ||
@@ -5022,7 +6202,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
                                       "MONEY value out of range");
-                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                 }
 
                 result_out = TypedValue(DataType::MONEY);
@@ -5034,33 +6214,64 @@ namespace scratchbird::core
             case DataType::TIME:
             case DataType::TIMESTAMP:
             {
+                auto resolve_target_offset = [&](int64_t utc_micros) -> int32_t
+                {
+                    if (!target_type.with_timezone && target_type.timezone_hint == 0)
+                    {
+                        return 0;
+                    }
+
+                    if (target_type.timezone_hint != 0)
+                    {
+                        uint16_t tz_id = target_type.timezone_hint;
+                        TimezoneOffset offset = timezoneManager().getOffset(tz_id, utc_micros);
+                        return static_cast<int32_t>(offset.offset_minutes) * 60;
+                    }
+
+                    if (timezone_offset_seconds_ != 0)
+                    {
+                        return timezone_offset_seconds_;
+                    }
+
+                    uint16_t tz_id = timezoneManager().getDefaultTimezone();
+                    TimezoneOffset offset = timezoneManager().getOffset(tz_id, utc_micros);
+                    return static_cast<int32_t>(offset.offset_minutes) * 60;
+                };
+
                 if (type_ == DataType::DATE && target == DataType::TIMESTAMP)
                 {
-                    int32_t default_deci_ms = defaultDateTimeDeciMs();
-                    int64_t utc_seconds = data_.int64_val * FirebirdDateTime::SECONDS_PER_DAY +
-                                          (default_deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND);
-                    int64_t micros = utc_seconds * 1000000;
-                    result_out = makeTimestamp(micros, timezone_offset_seconds_);
+                    int64_t default_micros = defaultDateTimeMicros();
+                    int64_t micros = data_.int64_val * FirebirdDateTime::SECONDS_PER_DAY *
+                                         1000000 +
+                                     default_micros;
+                    int32_t target_offset = resolve_target_offset(micros);
+                    result_out = makeTimestamp(micros, target_offset);
                     return Status::OK;
                 }
                 if (type_ == DataType::TIME && target == DataType::TIMESTAMP)
                 {
-                    result_out = makeTimestamp(data_.int64_val, timezone_offset_seconds_);
+                    int64_t micros = data_.int64_val;
+                    int32_t target_offset = resolve_target_offset(micros);
+                    result_out = makeTimestamp(micros, target_offset);
                     return Status::OK;
                 }
                 if (type_ == DataType::TIMESTAMP && target == DataType::DATE)
                 {
-                    int64_t local_micros = data_.int64_val +
-                                           static_cast<int64_t>(timezone_offset_seconds_) * 1000000;
+                    int64_t utc_micros = data_.int64_val;
+                    int32_t target_offset = resolve_target_offset(utc_micros);
+                    int64_t local_micros = utc_micros +
+                                           static_cast<int64_t>(target_offset) * 1000000;
                     int64_t local_seconds = local_micros / 1000000;
                     int64_t days = floorDiv(local_seconds, FirebirdDateTime::SECONDS_PER_DAY);
-                    result_out = makeDate(days, timezone_offset_seconds_);
+                    result_out = makeDate(days, target_offset);
                     return Status::OK;
                 }
                 if (type_ == DataType::TIMESTAMP && target == DataType::TIME)
                 {
-                    int64_t local_micros = data_.int64_val +
-                                           static_cast<int64_t>(timezone_offset_seconds_) * 1000000;
+                    int64_t utc_micros = data_.int64_val;
+                    int32_t target_offset = resolve_target_offset(utc_micros);
+                    int64_t local_micros = utc_micros +
+                                           static_cast<int64_t>(target_offset) * 1000000;
                     int64_t micros_per_day =
                         static_cast<int64_t>(FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
                     int64_t time_micros = local_micros % micros_per_day;
@@ -5068,7 +6279,7 @@ namespace scratchbird::core
                     {
                         time_micros += micros_per_day;
                     }
-                    result_out = makeTime(time_micros, timezone_offset_seconds_);
+                    result_out = makeTime(time_micros, target_offset);
                     return Status::OK;
                 }
 
@@ -5076,7 +6287,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
                                       "Temporal cast expects string input");
-                    return Status::DATATYPE_MISMATCH;
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
                 }
 
                 std::string base;
@@ -5096,9 +6307,10 @@ namespace scratchbird::core
                     min_pos = 16;
                 }
 
-                if (!parseOffsetSuffix(string_data_, min_pos, base, offset_seconds, has_offset, ctx))
+                std::string input = stringValueForParse();
+                if (!parseOffsetSuffix(input, min_pos, base, offset_seconds, has_offset, ctx))
                 {
-                    return Status::INVALID_DATETIME_FORMAT;
+                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                 }
 
                 if (target == DataType::DATE)
@@ -5110,19 +6322,29 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
                                           "Invalid DATE format");
-                        return Status::INVALID_DATETIME_FORMAT;
+                        return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                     }
                     int32_t mjd = FirebirdDateTime::dateToMJD(year, month, day);
                     int64_t days = static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD;
-                    int32_t default_deci_ms = defaultDateTimeDeciMs();
-                    int64_t utc_seconds = days * FirebirdDateTime::SECONDS_PER_DAY +
-                                          (default_deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND);
-                    if (has_offset)
+                    int64_t default_micros = defaultDateTimeMicros();
+                    int64_t local_micros = days * FirebirdDateTime::SECONDS_PER_DAY *
+                                               1000000 +
+                                           default_micros;
+                    bool use_timezone = target_type.with_timezone ||
+                                        target_type.timezone_hint != 0;
+                    if (!has_offset && use_timezone)
                     {
-                        utc_seconds -= offset_seconds;
+                        uint16_t tz_id = target_type.timezone_hint != 0
+                                             ? target_type.timezone_hint
+                                             : timezoneManager().getDefaultTimezone();
+                        offset_seconds = resolveTimezoneOffsetSeconds(tz_id, local_micros);
                     }
-                    int64_t utc_days = floorDiv(utc_seconds, FirebirdDateTime::SECONDS_PER_DAY);
-                    result_out = makeDate(utc_days, has_offset ? offset_seconds : 0);
+                    int64_t utc_micros = local_micros -
+                                         static_cast<int64_t>(offset_seconds) * 1000000;
+                    int64_t utc_days = floorDiv(utc_micros / 1000000,
+                                                FirebirdDateTime::SECONDS_PER_DAY);
+                    int32_t stored_offset = (has_offset || use_timezone) ? offset_seconds : 0;
+                    result_out = makeDate(utc_days, stored_offset);
                     return Status::OK;
                 }
 
@@ -5134,19 +6356,28 @@ namespace scratchbird::core
                     int micros = 0;
                     if (!parseTimeParts(base, hour, minute, second, micros, ctx))
                     {
-                        return Status::INVALID_DATETIME_FORMAT;
+                        return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                     }
                     if (minute < 0 || minute > 59 || second < 0 || second > 59 ||
                         hour < 0 || hour > 23)
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
                                           "Invalid TIME value");
-                        return Status::INVALID_DATETIME_FORMAT;
+                        return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                     }
                     int64_t local_micros = (static_cast<int64_t>(hour) * 3600 +
                                             static_cast<int64_t>(minute) * 60 +
                                             static_cast<int64_t>(second)) * 1000000 +
                                            micros;
+                    bool use_timezone = target_type.with_timezone ||
+                                        target_type.timezone_hint != 0;
+                    if (!has_offset && use_timezone)
+                    {
+                        uint16_t tz_id = target_type.timezone_hint != 0
+                                             ? target_type.timezone_hint
+                                             : timezoneManager().getDefaultTimezone();
+                        offset_seconds = resolveTimezoneOffsetSeconds(tz_id, local_micros);
+                    }
                     int64_t utc_micros = local_micros -
                                          static_cast<int64_t>(offset_seconds) * 1000000;
                     int64_t micros_per_day =
@@ -5156,7 +6387,8 @@ namespace scratchbird::core
                     {
                         utc_micros += micros_per_day;
                     }
-                    result_out = makeTime(utc_micros, has_offset ? offset_seconds : 0);
+                    int32_t stored_offset = (has_offset || use_timezone) ? offset_seconds : 0;
+                    result_out = makeTime(utc_micros, stored_offset);
                     return Status::OK;
                 }
 
@@ -5170,7 +6402,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
                                       "Invalid TIMESTAMP format");
-                    return Status::INVALID_DATETIME_FORMAT;
+                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                 }
                 std::string date_part = base.substr(0, sep_pos);
                 std::string time_part = base.substr(sep_pos + 1);
@@ -5182,7 +6414,7 @@ namespace scratchbird::core
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
                                       "Invalid TIMESTAMP date");
-                    return Status::INVALID_DATETIME_FORMAT;
+                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                 }
                 int hour = 0;
                 int minute = 0;
@@ -5190,14 +6422,14 @@ namespace scratchbird::core
                 int micros = 0;
                 if (!parseTimeParts(time_part, hour, minute, second, micros, ctx))
                 {
-                    return Status::INVALID_DATETIME_FORMAT;
+                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                 }
                 if (minute < 0 || minute > 59 || second < 0 || second > 59 ||
                     hour < 0 || hour > 23)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
                                       "Invalid TIMESTAMP time");
-                    return Status::INVALID_DATETIME_FORMAT;
+                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
                 }
 
                 int32_t mjd = FirebirdDateTime::dateToMJD(year, month, day);
@@ -5205,9 +6437,19 @@ namespace scratchbird::core
                 int64_t local_micros = (days * FirebirdDateTime::SECONDS_PER_DAY +
                                         (hour * 3600 + minute * 60 + second)) * 1000000 +
                                        micros;
+                bool use_timezone = target_type.with_timezone ||
+                                    target_type.timezone_hint != 0;
+                if (!has_offset && use_timezone)
+                {
+                    uint16_t tz_id = target_type.timezone_hint != 0
+                                         ? target_type.timezone_hint
+                                         : timezoneManager().getDefaultTimezone();
+                    offset_seconds = resolveTimezoneOffsetSeconds(tz_id, local_micros);
+                }
                 int64_t utc_micros = local_micros -
                                      static_cast<int64_t>(offset_seconds) * 1000000;
-                result_out = makeTimestamp(utc_micros, has_offset ? offset_seconds : 0);
+                int32_t stored_offset = (has_offset || use_timezone) ? offset_seconds : 0;
+                result_out = makeTimestamp(utc_micros, stored_offset);
                 return Status::OK;
             }
             default:
@@ -5215,7 +6457,7 @@ namespace scratchbird::core
         }
 
         SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH, "Unsupported type conversion");
-        return Status::DATATYPE_MISMATCH;
+        return wrapStatus(Status::DATATYPE_MISMATCH);
     }
 
     TypedValue TypedValue::convertTo(DataType target_type) const

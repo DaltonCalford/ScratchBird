@@ -21,7 +21,6 @@ namespace scratchbird::core
     {
         size_t len = (family == AddressFamily::IPv4) ? 4 : 16;
         std::memcpy(address_.data(), addr, len);
-        applyNetmask();
     }
 
     std::optional<InetAddr> InetAddr::fromString(const std::string &str)

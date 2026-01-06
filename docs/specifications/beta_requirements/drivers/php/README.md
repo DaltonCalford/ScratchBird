@@ -7,6 +7,15 @@
 
 ---
 
+
+## ScratchBird V2 Scope (Native Protocol Only)
+
+- Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.
+- Default port: 3092.
+- TLS 1.3 required.
+- Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
+
+
 ## Overview
 
 PHP powers approximately 80% of all websites and is the foundation for WordPress (43% of all websites), making it absolutely critical for ScratchBird market adoption. A PDO driver with mysqli compatibility is essential for the entire PHP web ecosystem.
@@ -21,13 +30,24 @@ PHP powers approximately 80% of all websites and is the foundation for WordPress
 - Error handling with exceptions
 - WordPress compatibility verification
 
+## Usage examples
+
+```php
+$pdo = new PDO("scratchbird:host=localhost;port=3092;dbname=db", "user", "pass");
+$pdo->query("select 1 as one");
+
+$stmt = $pdo->prepare("select * from widgets where id = :id");
+$stmt->execute([":id" => 42]);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+```
+
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] [SPECIFICATION.md](SPECIFICATION.md) - Detailed technical specification
   - PDO driver interface implementation
   - mysqli compatibility layer
   - Connection management and pooling
@@ -36,7 +56,7 @@ PHP powers approximately 80% of all websites and is the foundation for WordPress
   - Error handling (exceptions and error codes)
   - Transaction and savepoint support
 
-- [ ] **IMPLEMENTATION_PLAN.md** - Development roadmap
+- [x] [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
   - Milestone 1: PDO driver core (connection, query, prepare)
   - Milestone 2: mysqli compatibility layer
   - Milestone 3: WordPress compatibility testing
@@ -45,7 +65,7 @@ PHP powers approximately 80% of all websites and is the foundation for WordPress
   - Resource requirements
   - Timeline estimates
 
-- [ ] **TESTING_CRITERIA.md** - Test requirements
+- [x] [TESTING_CRITERIA.md](TESTING_CRITERIA.md) - Test requirements
   - PDO compliance tests
   - mysqli compatibility tests
   - WordPress installation and operation tests
@@ -54,7 +74,7 @@ PHP powers approximately 80% of all websites and is the foundation for WordPress
   - Memory leak tests (long-running processes)
   - Concurrent connection tests
 
-- [ ] **COMPATIBILITY_MATRIX.md** - Version support
+- [x] [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md) - Version support
   - PHP versions (7.4, 8.0, 8.1, 8.2, 8.3)
   - PDO versions and extensions
   - Web servers (Apache, Nginx, PHP-FPM)
@@ -62,7 +82,7 @@ PHP powers approximately 80% of all websites and is the foundation for WordPress
   - CMSes (WordPress 5.x, 6.x, Drupal, Joomla)
   - Operating systems (Linux, Windows, macOS)
 
-- [ ] **MIGRATION_GUIDE.md** - Migration from other drivers
+- [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other drivers
   - From PDO_PGSQL (PostgreSQL)
   - From PDO_MYSQL / mysqli
   - From pdo_firebird
@@ -70,12 +90,16 @@ PHP powers approximately 80% of all websites and is the foundation for WordPress
   - Connection string changes
   - Configuration differences
 
-- [ ] **API_REFERENCE.md** - Complete API documentation
+- [x] [API_REFERENCE.md](API_REFERENCE.md) - Complete API documentation
   - PDO class extensions
   - PDOStatement class
   - mysqli compatibility classes
   - Error classes and constants
   - Configuration options
+
+### Shared References
+
+- [../DRIVER_BASELINE_SPEC.md](../DRIVER_BASELINE_SPEC.md) - Shared V2 driver requirements.
 
 ### Examples Directory
 
@@ -118,7 +142,7 @@ Example PDO usage:
 <?php
 // Basic PDO connection
 try {
-    $dsn = 'scratchbird:host=localhost;port=5432;dbname=mydb';
+    $dsn = 'scratchbird:host=localhost;port=3092;dbname=mydb';
     $pdo = new PDO($dsn, 'myuser', 'mypassword', [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -179,7 +203,7 @@ Example WordPress wp-config.php:
 define('DB_NAME', 'wordpress_db');
 define('DB_USER', 'wp_user');
 define('DB_PASSWORD', 'wp_password');
-define('DB_HOST', 'localhost:5432');
+define('DB_HOST', 'localhost:3092');
 define('DB_CHARSET', 'utf8mb4');
 define('DB_COLLATE', '');
 
@@ -242,7 +266,7 @@ return [
         'scratchbird' => [
             'driver' => 'scratchbird',
             'host' => env('DB_HOST', 'localhost'),
-            'port' => env('DB_PORT', '5432'),
+            'port' => env('DB_PORT', '3092'),
             'database' => env('DB_DATABASE', 'laravel'),
             'username' => env('DB_USERNAME', 'forge'),
             'password' => env('DB_PASSWORD', ''),
@@ -260,7 +284,7 @@ return [
 // .env file
 DB_CONNECTION=scratchbird
 DB_HOST=localhost
-DB_PORT=5432
+DB_PORT=3092
 DB_DATABASE=laravel_app
 DB_USERNAME=laravel_user
 DB_PASSWORD=secret
@@ -304,7 +328,7 @@ Example mysqli compatibility:
 ```php
 <?php
 // mysqli object-oriented interface
-$mysqli = new mysqli_scratchbird('localhost', 'myuser', 'mypass', 'mydb', 5432);
+$mysqli = new mysqli_scratchbird('localhost', 'myuser', 'mypass', 'mydb', 3092);
 
 if ($mysqli->connect_error) {
     die('Connect Error: ' . $mysqli->connect_error);
@@ -353,11 +377,11 @@ PDO::registerDriver('scratchbird', PDO_ScratchBird::class);
 ### DSN (Data Source Name) Format
 
 ```
-scratchbird:host=localhost;port=5432;dbname=mydb
+scratchbird:host=localhost;port=3092;dbname=mydb
 
 Parameters:
   host         - Database host (default: localhost)
-  port         - Database port (default: 5432)
+  port         - Database port (default: 3092)
   dbname       - Database name (required)
   charset      - Character set (default: utf8)
   sslmode      - SSL mode (disable, allow, prefer, require)
@@ -365,7 +389,7 @@ Parameters:
   options      - Additional connection options
 
 Examples:
-  scratchbird:host=localhost;port=5432;dbname=mydb
+  scratchbird:host=localhost;port=3092;dbname=mydb
   scratchbird:host=db.example.com;dbname=production;sslmode=require
   scratchbird:host=localhost;dbname=test;charset=utf8mb4
 ```

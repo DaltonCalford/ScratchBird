@@ -15,6 +15,17 @@ The FDW system is comprised of three core DDL objects that work together to esta
 
 This document details the lifecycle (CREATE, ALTER, DROP) for these objects.
 
+## **Pass-through Execution (sys.\*)**
+
+Foreign data wrappers can be paired with the built-in sys passthrough routines
+to run raw SQL or stored routine calls against a configured foreign server.
+
+- `sys.remote_exec` and `sys.remote_call` are defined in `DDL_PROCEDURES.md`
+- `sys.remote_query` is defined in `DDL_FUNCTIONS.md`
+
+These routines are used by UDR connector plugins to allow controlled DDL/DML/PSQL
+execution on remote databases during migration or operational passthrough.
+
 ## **2\. Foreign Data Wrappers**
 
 A Foreign Data Wrapper is the underlying plugin or driver that knows how to communicate with a specific type of remote data source. These are typically managed by administrators.

@@ -7,6 +7,15 @@
 
 ---
 
+
+## ScratchBird V2 Scope (Native Protocol Only)
+
+- Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.
+- Default port: 3092.
+- TLS 1.3 required.
+- Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
+
+
 ## Overview
 
 Pascal/Delphi has a large and established developer base, particularly in the Firebird ecosystem. Since ScratchBird implements Firebird's MGA transaction model, providing excellent Delphi/Lazarus/FreePascal support is critical for attracting Firebird users and enabling seamless migration.
@@ -30,13 +39,32 @@ Pascal/Delphi has a large and established developer base, particularly in the Fi
 - Array field support
 - Native Delphi types (TDateTime, Currency, etc.)
 
+## Usage examples
+
+```pascal
+FDConnection.Params.Values['DriverID'] := 'Scratchbird';
+FDConnection.Params.Values['Server'] := 'localhost';
+FDConnection.Params.Values['Port'] := '3092';
+FDConnection.Params.Values['Database'] := 'db';
+FDConnection.Params.Values['User_Name'] := 'user';
+FDConnection.Params.Values['Password'] := 'pass';
+FDConnection.Open;
+
+FDQuery.SQL.Text := 'select 1 as one';
+FDQuery.Open;
+
+FDQuery.SQL.Text := 'select * from widgets where id = :id';
+FDQuery.ParamByName('id').AsInteger := 42;
+FDQuery.Open;
+```
+
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] [SPECIFICATION.md](SPECIFICATION.md) - Detailed technical specification
   - FireDAC driver implementation
   - IBX compatibility layer
   - Zeos driver adapter
@@ -47,7 +75,7 @@ Pascal/Delphi has a large and established developer base, particularly in the Fi
   - Event notifications (Firebird events equivalent)
   - Blob and array handling
 
-- [ ] **IMPLEMENTATION_PLAN.md** - Development roadmap
+- [x] [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
   - Milestone 1: FireDAC driver (Delphi 10.4+)
   - Milestone 2: IBX compatibility layer
   - Milestone 3: Zeos components support
@@ -57,7 +85,7 @@ Pascal/Delphi has a large and established developer base, particularly in the Fi
   - Resource requirements
   - Timeline estimates
 
-- [ ] **TESTING_CRITERIA.md** - Test requirements
+- [x] [TESTING_CRITERIA.md](TESTING_CRITERIA.md) - Test requirements
   - FireDAC compliance tests
   - IBX compatibility tests
   - Zeos component tests
@@ -67,7 +95,7 @@ Pascal/Delphi has a large and established developer base, particularly in the Fi
   - Transaction isolation tests (Firebird MGA compatibility)
   - Multi-generational architecture verification
 
-- [ ] **COMPATIBILITY_MATRIX.md** - Version support
+- [x] [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md) - Version support
   - Delphi versions (7, XE-XE8, 10.x, 11 Alexandria, 12 Athens)
   - FreePascal versions (3.0, 3.2, 3.4)
   - Lazarus versions (2.x, 3.x)
@@ -75,7 +103,7 @@ Pascal/Delphi has a large and established developer base, particularly in the Fi
   - Operating systems (Windows, Linux, macOS)
   - Architectures (32-bit, 64-bit)
 
-- [ ] **MIGRATION_GUIDE.md** - Migration from Firebird
+- [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from Firebird
   - From Firebird + FireDAC
   - From Firebird + IBX
   - From Firebird + Zeos
@@ -86,13 +114,17 @@ Pascal/Delphi has a large and established developer base, particularly in the Fi
   - SQL dialect differences
   - Transaction isolation mapping
 
-- [ ] **API_REFERENCE.md** - Complete API documentation
+- [x] [API_REFERENCE.md](API_REFERENCE.md) - Complete API documentation
   - FireDAC connection parameters
   - IBX component properties
   - Zeos connection settings
   - SQLdb configuration
   - Event handling
   - Blob streaming API
+
+### Shared References
+
+- [../DRIVER_BASELINE_SPEC.md](../DRIVER_BASELINE_SPEC.md) - Shared V2 driver requirements.
 
 ### Examples Directory
 
@@ -156,7 +188,7 @@ begin
     // Connection parameters
     Connection.DriverName := 'ScratchBird';
     Connection.Params.Values['Server'] := 'localhost';
-    Connection.Params.Values['Port'] := '5432';
+    Connection.Params.Values['Port'] := '3092';
     Connection.Params.Values['Database'] := 'mydb';
     Connection.Params.Values['User_Name'] := 'myuser';
     Connection.Params.Values['Password'] := 'mypass';
@@ -232,7 +264,7 @@ uses
 procedure TDataModule1.DataModuleCreate(Sender: TObject);
 begin
   // IBDatabase configuration (IBX-compatible)
-  IBDatabase1.DatabaseName := 'localhost/5432:mydb';
+  IBDatabase1.DatabaseName := 'localhost/3092:mydb';
   IBDatabase1.Params.Values['user_name'] := 'myuser';
   IBDatabase1.Params.Values['password'] := 'mypass';
   IBDatabase1.Params.Values['sql_dialect'] := '3';
@@ -290,7 +322,7 @@ procedure TForm1.FormCreate(Sender: TObject);
 begin
   ZConnection1.Protocol := 'scratchbird';
   ZConnection1.HostName := 'localhost';
-  ZConnection1.Port := 5432;
+  ZConnection1.Port := 3092;
   ZConnection1.Database := 'mydb';
   ZConnection1.User := 'myuser';
   ZConnection1.Password := 'mypass';
@@ -370,7 +402,7 @@ implementation
 function TFirebirdMigrator.ConvertConnectionString(const FirebirdConnStr: string): string;
 begin
   // Convert Firebird connection string to ScratchBird format
-  // Example: 'localhost:C:\data\mydb.fdb' → 'localhost:5432:mydb'
+  // Example: 'localhost:C:\data\mydb.fdb' → 'localhost:3092:mydb'
   Result := ...;
 end;
 

@@ -33,6 +33,9 @@ struct xdr_opaque {
 };
 ```
 
+Firebird protocol structs use `CSTRING`/`CSTRING_CONST`, which are encoded on the wire as XDR strings:
+`uint32 length` followed by that many bytes, padded to a 4-byte boundary (no terminating null).
+
 ### XDR Padding Rule
 ```c
 #define XDR_ALIGN(n) (((n) + 3) & ~3)  // Round up to 4-byte boundary
@@ -43,17 +46,16 @@ size_t xdr_string_size(const char* str) {
 }
 ```
 
-## Packet Structure
+## Packet Encoding and Framing
 
-### Basic Packet Format
+Firebird packets are XDR-encoded `PACKET` unions. The first field is always the
+operation code (`P_OP`), encoded as a 32-bit XDR enum. There is **no universal
+length field** in the protocol itself; the transport reads/writes the XDR stream
+in chunks and the XDR decoder determines message boundaries.
 
-```c
-struct WirePacket {
-    uint32_t operation;   // Operation code (big-endian)
-    uint32_t length;      // Payload length (not including header)
-    uint8_t  data[];      // Operation-specific data
-};
-```
+Large logical packets may be sent in partial mode; in that case, the receiver
+may observe `op_partial` and must continue reading until a complete packet is
+assembled.
 
 ## Operation Codes
 
@@ -165,22 +167,208 @@ enum WireOp {
     op_abort_aux_connection = 95, // Abort auxiliary connection
     op_crypt             = 96,   // Encryption
     op_crypt_key_callback = 97,  // Encryption key callback
-    op_cond_accept       = 98    // Conditional accept
+    op_cond_accept       = 98,   // Conditional accept
+
+    // Batch/replication extensions (protocol 17+)
+    op_batch_create      = 99,
+    op_batch_msg         = 100,
+    op_batch_exec        = 101,
+    op_batch_rls         = 102,
+    op_batch_cs          = 103,
+    op_batch_regblob     = 104,
+    op_batch_blob_stream = 105,
+    op_batch_set_bpb     = 106,
+    op_repl_data         = 107,
+    op_repl_req          = 108,
+    op_batch_cancel      = 109,
+    op_batch_sync        = 110,
+    op_info_batch        = 111,
+    op_fetch_scroll      = 112,
+    op_info_cursor       = 113,
+    op_inline_blob       = 114
 };
 ```
+
+Notes:
+- `op_protocol`, `op_credit`, and `op_continuation` are legacy/unused in modern Firebird.
+- Protocol 17+ adds batch/replication opcodes (99-114) described below.
+
+## Batch and Replication Extensions (Protocol 17+)
+
+### Batch DSQL Operations
+
+```c
+// Create batch interface for a prepared statement (op_batch_create)
+typedef struct p_batch_create
+{
+    OBJCT         p_batch_statement;   // Statement object id
+    CSTRING_CONST p_batch_blr;         // BLR describing input messages
+    ULONG         p_batch_msglen;      // Explicit message length
+    CSTRING_CONST p_batch_pb;          // Batch parameters block
+} P_BATCH_CREATE;
+
+// Add messages to batch (op_batch_msg)
+typedef struct p_batch_msg
+{
+    OBJCT  p_batch_statement;          // Statement object id
+    ULONG  p_batch_messages;           // Number of messages in this packet
+    CSTRING p_batch_data;              // Packed message stream (xdr_packed_message, no length prefix on wire)
+} P_BATCH_MSG;
+
+// Execute batch (op_batch_exec)
+typedef struct p_batch_exec
+{
+    OBJCT p_batch_statement;           // Statement object id
+    OBJCT p_batch_transaction;         // Transaction object id
+} P_BATCH_EXEC;
+
+// Batch completion state (op_batch_cs)
+typedef struct p_batch_cs
+{
+    OBJCT p_batch_statement;           // Statement object id
+    ULONG p_batch_reccount;            // Total records
+    ULONG p_batch_updates;             // Update counters count
+    ULONG p_batch_vectors;             // Record+status pairs count
+    ULONG p_batch_errors;              // Error record numbers count
+} P_BATCH_CS;
+
+// BLOB stream portion in batch (op_batch_blob_stream)
+typedef struct p_batch_blob
+{
+    OBJCT   p_batch_statement;         // Statement object id
+    CSTRING p_batch_blob_data;         // Blob stream bytes (see below)
+} P_BATCH_BLOB;
+
+// Register existing blob in batch (op_batch_regblob)
+typedef struct p_batch_regblob
+{
+    OBJCT p_batch_statement;           // Statement object id
+    SQUAD p_batch_exist_id;            // Existing blob id
+    SQUAD p_batch_blob_id;             // New blob id
+} P_BATCH_REGBLOB;
+
+// Set default BPB for batch blobs (op_batch_set_bpb)
+typedef struct p_batch_setbpb
+{
+    OBJCT         p_batch_statement;   // Statement object id
+    CSTRING_CONST p_batch_blob_bpb;    // BPB bytes
+} P_BATCH_SETBPB;
+```
+
+**Batch opcodes and payloads**
+- `op_batch_create` → `P_BATCH_CREATE`
+- `op_batch_msg` → `P_BATCH_MSG`
+- `op_batch_exec` → `P_BATCH_EXEC`
+- `op_batch_cs` → `P_BATCH_CS` + additional data (see below)
+- `op_batch_blob_stream` → `P_BATCH_BLOB` (xdr_blob_stream encoding)
+- `op_batch_regblob` → `P_BATCH_REGBLOB`
+- `op_batch_set_bpb` → `P_BATCH_SETBPB`
+- `op_batch_rls` → `P_RLSE` (release batch/statement object)
+- `op_batch_cancel` → `P_RLSE` (cancel batch/statement object)
+- `op_batch_sync` → no payload
+- `op_info_batch` → `P_INFO` (same structure as other info ops)
+
+`op_batch_rls`, `op_batch_cancel`, and `op_release` use `P_RLSE` with the target statement/batch object id.
+
+**Batch parameters block (`p_batch_pb`)**
+- `p_batch_pb` is a `WideTagged` clumplet buffer.
+- Format: `version:byte` followed by repeated clumplets:
+  - `tag:byte`, `length:uint32 (LE)`, `value[length]`
+- Note: the outer XDR `CSTRING` length is big-endian; clumplet lengths are little-endian inside the buffer.
+- `version` = `IBatch::VERSION1` (1).
+- Tags and values (stored as 32-bit integers unless noted):
+  - `TAG_MULTIERROR` (1): 0/1, enable multi-error reporting.
+  - `TAG_RECORD_COUNTS` (2): 0/1, include record counts in completion state.
+  - `TAG_BUFFER_BYTES_SIZE` (3): buffer size in bytes.
+  - `TAG_BLOB_POLICY` (4): blob policy enum:
+    - `BLOB_NONE` (0)
+    - `BLOB_ID_ENGINE` (1)
+    - `BLOB_ID_USER` (2)
+    - `BLOB_STREAM` (3)
+  - `TAG_DETAILED_ERRORS` (5): 0/1, include detailed error vectors.
+- `IBatch::BLOB_SEGHDR_ALIGN` = 2 (segment header alignment).
+
+**Batch info items (`op_info_batch`)**
+- `INF_BUFFER_BYTES_SIZE` (10)
+- `INF_DATA_BYTES_SIZE` (11)
+- `INF_BLOBS_BYTES_SIZE` (12)
+- `INF_BLOB_ALIGNMENT` (13)
+- `INF_BLOB_HEADER` (14)
+
+**Packed batch messages (`op_batch_msg`)**
+- `p_batch_data` is a stream of `p_batch_messages` packed messages, back-to-back, with no length prefix.
+- Each message uses `xdr_packed_message`: a null bitmap (`(field_count + 7) / 8` bytes, XDR-padded to 4) followed by XDR-encoded values for non-NULL fields.
+- The client buffer uses `p_batch_msglen` and aligned size (`FB_ALIGN(fmt_length, FB_ALIGNMENT)`), but the on-wire length per message depends on NULLs and variable-length fields.
+
+**Batch completion state (`op_batch_cs`)**
+After the fixed header fields, the payload includes:
+1. `p_batch_updates` signed 32-bit update counts.
+2. `p_batch_vectors` pairs of: `ULONG record_num` + status vector (xdr_status_vector).
+3. `p_batch_errors` `ULONG record_num` entries for errors without a status vector.
+
+**Batch blob stream (`op_batch_blob_stream`)**
+`p_batch_blob_data` is encoded via `xdr_blob_stream`:
+- Starts with `ULONG stream_len`, then `stream_len` bytes.
+- Stream is aligned to `BatchStream.alignment` (from statement).
+- Each blob begins with a header aligned to `alignment`:
+  - `ISC_QUAD batch_blob_id`
+  - `ULONG blob_size`
+  - `ULONG bpb_size`
+- BPB bytes follow (length `bpb_size`), then blob data.
+- If segmented, blob data is split into segments:
+  - Each segment starts with `USHORT segment_length` aligned to `IBatch::BLOB_SEGHDR_ALIGN`.
+  - `segment_length` is encoded via `xdr_u_short` (4-byte XDR) even though it represents a 16-bit length.
+- Stream may end mid-header; the remainder carries to the next `op_batch_blob_stream`.
+
+### Replication Operations
+
+```c
+typedef struct p_replicate
+{
+    OBJCT         p_repl_database;   // Database object id
+    CSTRING_CONST p_repl_data;       // Replication data (opaque)
+} P_REPLICATE;
+```
+
+- `op_repl_data` → `P_REPLICATE` (implemented in protocol.cpp)
+- `op_repl_req` → reserved; when used, it follows `P_REPLICATE` layout in protocol.h
+
+### Inline BLOB Transfer
+
+```c
+typedef struct p_inline_blob
+{
+    OBJCT         p_tran_id;     // Transaction id
+    SQUAD         p_blob_id;     // Blob id
+    CSTRING       p_blob_info;   // Blob info (xdr_response)
+    RemBlobBuffer* p_blob_data;  // Blob data (xdr_blobBuffer)
+} P_INLINE_BLOB;
+```
+
+`op_inline_blob` embeds small blobs in a single packet. The blob data is encoded as:
+`Int32 length` + data bytes, padded to 4-byte boundary.
 
 ## Connection Phase
 
 ### 1. Initial Connect
 
 ```c
-struct op_connect_packet {
-    uint32_t op_code = op_connect;  // 1
-    uint32_t op_version;             // Protocol version
-    uint32_t op_architecture;        // Client architecture
-    xdr_string op_file_name;         // Database path
-    uint32_t op_count;               // User data count
-    xdr_opaque op_user_id;           // User identification
+// Encoded as PACKET with p_operation = op_connect and p_cnct payload.
+struct P_CNCT {
+    uint16  p_cnct_operation;    // Unused (0)
+    uint16  p_cnct_cversion;     // CONNECT_VERSION3
+    P_ARCH  p_cnct_client;       // Client architecture
+    CSTRING_CONST p_cnct_file;   // Database path
+    uint16  p_cnct_count;        // Number of protocol versions
+    CSTRING_CONST p_cnct_user_id;// User identification block (TLV)
+
+    struct p_cnct_repeat {
+        uint16 p_cnct_version;      // Protocol version (10-13)
+        P_ARCH p_cnct_architecture; // Architecture
+        uint16 p_cnct_min_type;     // Minimum type (unused)
+        uint16 p_cnct_max_type;     // Maximum type
+        uint16 p_cnct_weight;       // Preference weight
+    } p_cnct_versions[];
 };
 
 // Protocol versions
@@ -193,60 +381,79 @@ struct op_connect_packet {
 #define ARCH_GENERIC         1  // Generic
 #define ARCH_INTEL_X86       30 // Intel x86
 #define ARCH_AMD_X64         31 // AMD x64
-```
 
-Example Connect Packet:
-```
-00 00 00 01        // op_connect
-00 00 00 0D        // Protocol version 13
-00 00 00 1E        // Architecture (x86)
-00 00 00 0C        // Database path length (12)
-2F 74 6D 70 2F 74 65 73 74 2E 66 64 62  // "/tmp/test.fdb"
-00 00              // Padding to 4-byte boundary
-00 00 00 02        // User data count
-
-// User data block
-00 00 00 01        // CNCT_user (user name)
-00 00 00 08        // Length
-53 59 53 44 42 41 00 00  // "SYSDBA" + padding
-
-00 00 00 04        // CNCT_host (host name)
-00 00 00 09        // Length
-6C 6F 63 61 6C 68 6F 73 74 00 00 00  // "localhost" + padding
+// User identification TLV items (p_cnct_user_id)
+// Format: <type:byte><length:byte><data...>
+#define CNCT_user           1   // User name
+#define CNCT_passwd         2   // Password
+#define CNCT_host           4   // Host name
+#define CNCT_specific_data  7   // Plugin-specific data
+#define CNCT_plugin_name    8   // Plugin name
+#define CNCT_login          9   // DPB-style user name
+#define CNCT_plugin_list    10  // Client-supported auth plugins
+#define CNCT_client_crypt   11  // Client encryption plugin
 ```
 
 ### 2. Accept Response
 
 ```c
-struct op_accept_packet {
-    uint32_t op_code = op_accept;   // 3
-    uint32_t op_version;             // Accepted protocol version
-    uint32_t op_architecture;        // Server architecture
-    uint32_t op_type;                // Accept type
+// op_accept -> P_ACPT
+struct P_ACPT {
+    uint16 p_acpt_version;       // Protocol version
+    P_ARCH p_acpt_architecture;  // Architecture
+    uint16 p_acpt_type;          // Minimum type
 };
 
-struct op_accept_data {
-    uint32_t p_acpt_version;        // Protocol version
-    uint32_t p_acpt_architecture;    // Architecture
-    uint32_t p_acpt_type;           // Database type
-    
-    // Authentication data
-    uint32_t p_acpt_authenticated;  // Authentication status
-    xdr_string p_acpt_plugin_name;  // Auth plugin name
-    xdr_opaque p_acpt_auth_data;    // Auth data
-    uint32_t p_acpt_auth_block_size; // Auth block size
+// op_accept_data / op_cond_accept -> P_ACPD
+struct P_ACPD : public P_ACPT {
+    CSTRING p_acpt_data;         // Returned auth data
+    CSTRING p_acpt_plugin;       // Plugin to continue with
+    uint16  p_acpt_authenticated;// 1 if auth complete
+    CSTRING p_acpt_keys;         // Keys known to server
 };
+```
+
+Servers may respond with:
+- `op_accept` (basic accept)
+- `op_accept_data` (accept with authentication data)
+- `op_cond_accept` (accept and request further authentication before attach)
+
+### 2.1 Example Handshake (Hex)
+
+Client `op_connect` (P_CNCT) with user SYSDBA/masterkey, DB `test.fdb`, protocol 13:
+```
+00 00 00 01  // op_connect
+00 00 00 00  // p_cnct_operation
+00 00 00 03  // CONNECT_VERSION3
+00 00 00 01  // ARCH_GENERIC
+00 00 00 08  // file length
+74 65 73 74 2e 66 64 62  // "test.fdb"
+00 00 00 01  // protocol count
+00 00 00 13  // user_id length
+01 06 53 59 53 44 42 41 02 09 6d 61 73 74 65 72 6b 65 79 00  // TLV + pad
+00 00 00 0d  // protocol version 13
+00 00 00 01  // ARCH_GENERIC
+00 00 00 00  // min_type
+00 00 00 05  // max_type (ptype_lazy_send)
+00 00 00 01  // weight
+```
+
+Server `op_accept` (P_ACPT):
+```
+00 00 00 03  // op_accept
+00 00 00 0d  // protocol version 13
+00 00 00 01  // ARCH_GENERIC
+00 00 00 05  // ptype_lazy_send
 ```
 
 ### 3. Database Attachment
 
 ```c
-struct op_attach_packet {
-    uint32_t op_code = op_attach;   // 19
-    uint32_t op_object;              // Database object ID (0 for new)
-    xdr_string op_file_name;         // Database path
-    uint32_t op_dpb_length;          // DPB length
-    uint8_t op_dpb[];                // Database Parameter Block
+// op_attach / op_create -> P_ATCH
+struct P_ATCH {
+    OBJCT         p_atch_database;  // Database object id (0 for new)
+    CSTRING_CONST p_atch_file;      // Database path
+    CSTRING_CONST p_atch_dpb;       // Database Parameter Block (DPB)
 };
 
 // Database Parameter Block (DPB) items
@@ -261,6 +468,8 @@ struct op_attach_packet {
 #define isc_dpb_auth_plugin_name 119
 #define isc_dpb_auth_plugin_list 120
 ```
+
+DPB format: `byte version` followed by repeated items: `byte item`, `byte length`, `value[length]`.
 
 Example DPB Construction:
 ```c
@@ -316,6 +525,22 @@ struct srp_server_public {
 // 5. Client verifies M2
 ```
 
+Authentication data is delivered during connection setup via `op_accept_data` / `op_cond_accept`
+and continued with `op_cont_auth` until the server indicates completion.
+
+### Authentication Continuation (op_cont_auth)
+
+Authentication plugins exchange additional data using `op_cont_auth`:
+
+```c
+struct P_AUTH_CONT {
+    CSTRING p_data;   // Plugin-specific data
+    CSTRING p_name;   // Plugin name
+    CSTRING p_list;   // Plugin list
+    CSTRING p_keys;   // Keys available on server
+};
+```
+
 ### Legacy Authentication
 
 ```c
@@ -338,44 +563,52 @@ void encrypt_password(const char* password, const char* key, char* result) {
 ### 1. Allocate Statement
 
 ```c
-struct op_allocate_statement_packet {
-    uint32_t op_code = op_allocate_statement;  // 62
-    uint32_t op_database;    // Database handle
-};
+// op_allocate_statement uses P_RLSE with p_rlse_object = database handle
+typedef struct p_rlse
+{
+    OBJCT p_rlse_object;  // Database object id
+} P_RLSE;
 
-// Response
-struct op_response {
-    uint32_t op_code = op_response;  // 9
-    uint32_t op_handle;      // Statement handle
-    uint64_t op_object_id;   // Object ID
-    uint32_t op_length;      // Buffer length
-    uint8_t op_buffer[];     // Response data
-    
-    // Status vector
-    uint32_t op_status_vector[];  // ISC status codes
+// Response (op_response -> P_RESP)
+struct P_RESP {
+    OBJCT   p_resp_object;  // Object id
+    SQUAD   p_resp_blob_id; // Blob id (if applicable)
+    CSTRING p_resp_data;    // Response data (XDR string)
+    // Followed by status vector (isc_arg_* ... isc_arg_end)
 };
 ```
 
-### 2. Prepare Statement
+### 2. Prepare Statement / Execute Immediate (P_SQLST)
 
+`op_prepare_statement`, `op_exec_immediate`, and `op_exec_immediate2` use `P_SQLST`
+(defined below). On-wire field order is:
+
+**op_prepare_statement / op_exec_immediate**
+1. `p_sqlst_transaction` (xdr_short)
+2. `p_sqlst_statement` (xdr_short) — for `op_exec_immediate`, this is 0
+3. `p_sqlst_SQL_dialect` (xdr_short)
+4. `p_sqlst_SQL_str` (xdr_cstring_const)
+5. `p_sqlst_items` (xdr_cstring_const)
+6. `p_sqlst_buffer_length` (xdr_long)
+7. `p_sqlst_flags` (xdr_short) — only if protocol >= `PROTOCOL_PREPARE_FLAG`
+
+**op_exec_immediate2**
+1. `p_sqlst_blr` (xdr_sql_blr)
+2. `p_sqlst_message_number` (xdr_short)
+3. `p_sqlst_messages` (xdr_short)
+4. If `p_sqlst_messages` > 0, `xdr_sql_message`
+5. `p_sqlst_out_blr` (xdr_sql_blr)
+6. `p_sqlst_out_message_number` (xdr_short)
+7. `p_sqlst_inline_blob_size` (xdr_u_long) — only if protocol >= `PROTOCOL_INLINE_BLOB`
+8. Then the same fields as `op_exec_immediate` (transaction, statement, dialect, SQL, items, buffer length, optional flags)
+
+Describe items:
 ```c
-struct op_prepare_statement_packet {
-    uint32_t op_code = op_prepare_statement;  // 68
-    uint32_t op_transaction; // Transaction handle
-    uint32_t op_statement;   // Statement handle
-    uint32_t op_dialect;     // SQL dialect
-    xdr_string op_query;     // SQL query
-    uint32_t op_buffer_length; // Describe buffer length
-    uint8_t op_buffer[];     // Describe items
-};
-
-// Describe items
 #define isc_info_sql_stmt_type    21
 #define isc_info_sql_get_plan     22
 #define isc_info_sql_records      23
 #define isc_info_sql_batch_fetch  24
 
-// Statement types
 #define isc_info_sql_stmt_select         1
 #define isc_info_sql_stmt_insert         2
 #define isc_info_sql_stmt_update         3
@@ -384,57 +617,140 @@ struct op_prepare_statement_packet {
 #define isc_info_sql_stmt_exec_procedure 8
 ```
 
-### 3. Execute Statement
+### 2.1 Protocol-Accurate DSQL Structures (protocol.h)
+
+These are the exact wire-level structures used by the DSQL opcodes.
 
 ```c
-struct op_execute_packet {
-    uint32_t op_code = op_execute;  // 63
-    uint32_t op_statement;   // Statement handle
-    uint32_t op_transaction; // Transaction handle
-    
-    // Input parameters
-    uint32_t op_format;      // Message format
-    uint32_t op_length;      // Parameters length
-    uint8_t op_parameters[]; // Parameter data
+// Statement flags
+#define STMT_NO_BATCH       2
+#define STMT_DEFER_EXECUTE  4
+
+enum P_FETCH {
+    fetch_next      = 0,
+    fetch_prior     = 1,
+    fetch_first     = 2,
+    fetch_last      = 3,
+    fetch_absolute  = 4,
+    fetch_relative  = 5
 };
 
-struct op_execute2_packet {
-    uint32_t op_code = op_execute2;  // 76
-    uint32_t op_statement;
-    uint32_t op_transaction;
-    
-    // Input parameters
-    uint32_t op_in_format;
-    uint32_t op_in_length;
-    uint8_t op_in_parameters[];
-    
-    // Output parameters
-    uint32_t op_out_format;
-    uint32_t op_out_length;
-};
+typedef struct p_sqlst
+{
+    OBJCT         p_sqlst_transaction;       // Transaction object
+    OBJCT         p_sqlst_statement;         // Statement object
+    USHORT        p_sqlst_SQL_dialect;       // SQL dialect
+    CSTRING_CONST p_sqlst_SQL_str;           // SQL string
+    ULONG         p_sqlst_buffer_length;     // Target buffer length
+    CSTRING_CONST p_sqlst_items;             // Describe items
+    CSTRING       p_sqlst_blr;               // BLR describing input message
+    USHORT        p_sqlst_message_number;
+    USHORT        p_sqlst_messages;          // Message count
+    CSTRING       p_sqlst_out_blr;           // BLR describing output message
+    USHORT        p_sqlst_out_message_number;
+    USHORT        p_sqlst_flags;             // Prepare flags
+    ULONG         p_sqlst_inline_blob_size;  // Max inline blob size
+} P_SQLST;
+
+typedef struct p_sqldata
+{
+    OBJCT   p_sqldata_statement;        // Statement object
+    OBJCT   p_sqldata_transaction;      // Transaction object
+    CSTRING p_sqldata_blr;              // BLR describing input message
+    USHORT  p_sqldata_message_number;
+    USHORT  p_sqldata_messages;         // Message count
+    CSTRING p_sqldata_out_blr;          // BLR describing output message
+    USHORT  p_sqldata_out_message_number;
+    ULONG   p_sqldata_status;           // EOF status
+    ULONG   p_sqldata_timeout;          // Statement timeout
+    ULONG   p_sqldata_cursor_flags;     // Cursor flags
+    P_FETCH p_sqldata_fetch_op;         // Fetch operation
+    SLONG   p_sqldata_fetch_pos;        // Fetch position
+    ULONG   p_sqldata_inline_blob_size; // Max inline blob size
+} P_SQLDATA;
+
+typedef struct p_sqlfree
+{
+    OBJCT  p_sqlfree_statement;  // Statement object
+    USHORT p_sqlfree_option;     // Option
+} P_SQLFREE;
+
+typedef struct p_sqlcur
+{
+    OBJCT         p_sqlcur_statement;    // Statement object
+    CSTRING_CONST p_sqlcur_cursor_name;  // Cursor name
+    USHORT        p_sqlcur_type;         // Cursor type
+} P_SQLCUR;
 ```
 
-### 4. Fetch Rows
+Wire mapping:
+- `op_prepare_statement` → `P_SQLST`
+- `op_execute`, `op_execute2`, `op_fetch`, `op_fetch_scroll`, `op_fetch_response`, `op_sql_response` → `P_SQLDATA`
+- `op_free_statement` → `P_SQLFREE`
+- `op_set_cursor` → `P_SQLCUR`
+
+`p_sqlst_inline_blob_size` and `p_sqldata_inline_blob_size` set the maximum size of blobs that can be sent via `op_inline_blob`.
+
+### 3. Execute / Fetch (P_SQLDATA)
+
+`op_execute`, `op_execute2`, `op_fetch`, `op_fetch_scroll`, `op_fetch_response`,
+and `op_sql_response` use `P_SQLDATA` (defined below). On-wire field order is:
+
+**op_execute**
+1. `p_sqldata_statement` (xdr_short)
+2. `p_sqldata_transaction` (xdr_short)
+3. `p_sqldata_blr` (xdr_sql_blr)
+4. `p_sqldata_message_number` (xdr_short)
+5. `p_sqldata_messages` (xdr_short)
+6. If `p_sqldata_messages` > 0, `xdr_sql_message`
+7. `p_sqldata_timeout` (xdr_u_long) — only if protocol >= `PROTOCOL_STMT_TOUT`
+8. `p_sqldata_cursor_flags` (xdr_u_long) — only if protocol >= `PROTOCOL_FETCH_SCROLL`
+9. `p_sqldata_inline_blob_size` (xdr_u_long) — only if protocol >= `PROTOCOL_INLINE_BLOB`
+
+**op_execute2**
+1. Same as `op_execute`
+2. `p_sqldata_out_blr` (xdr_sql_blr)
+3. `p_sqldata_out_message_number` (xdr_short)
+4. Optional fields (timeout/cursor/inline) as above
+
+**op_fetch**
+1. `p_sqldata_statement` (xdr_short)
+2. `p_sqldata_blr` (xdr_sql_blr) — output format; may be empty to reuse cached format
+3. `p_sqldata_message_number` (xdr_short)
+4. `p_sqldata_messages` (xdr_short) — fetch count
+
+**op_fetch_scroll**
+1. Same as `op_fetch`
+2. `p_sqldata_fetch_op` (xdr_short)
+3. `p_sqldata_fetch_pos` (xdr_long)
+
+**op_fetch_response**
+1. `p_sqldata_status` (xdr_long) — 0=data, 100=EOF
+2. `p_sqldata_messages` (xdr_short)
+3. If `p_sqldata_messages` > 0, `xdr_sql_message` (row data)
+
+**op_sql_response**
+1. `p_sqldata_messages` (xdr_short)
+2. If `p_sqldata_messages` > 0, `xdr_sql_message`
+
+`xdr_sql_blr` is an XDR `CSTRING` (32-bit length + data + 4-byte padding).
+`xdr_sql_message` is encoded inline using `xdr_packed_message` (protocol 13+)
+or `xdr_message` (older), with no length prefix; XDR alignment applies to each field.
+
+### 5. Info Requests (P_INFO)
+
+Used by `op_info_database`, `op_info_request`, `op_info_transaction`, `op_info_blob`,
+`op_info_sql`, `op_info_batch`, and `op_info_cursor`:
 
 ```c
-struct op_fetch_packet {
-    uint32_t op_code = op_fetch;  // 65
-    uint32_t op_statement;   // Statement handle
-    uint32_t op_format;      // Message format
-    uint32_t op_count;       // Number of rows to fetch
-};
-
-struct op_fetch_response {
-    uint32_t op_code = op_fetch_response;  // 66
-    uint32_t op_status;      // 0 = data, 100 = no more data
-    uint32_t op_count;       // Number of rows
-    
-    // For each row
-    struct fetch_row {
-        uint32_t length;     // Row data length
-        uint8_t data[];      // Row data (formatted)
-    } rows[];
-};
+typedef struct p_info
+{
+    OBJCT         p_info_object;        // Object id
+    USHORT        p_info_incarnation;   // Object incarnation
+    CSTRING_CONST p_info_items;         // Info items (request)
+    CSTRING_CONST p_info_recv_items;    // Info items (service only)
+    ULONG         p_info_buffer_length; // Target buffer length
+} P_INFO;
 ```
 
 ## Data Representation
@@ -626,6 +942,8 @@ struct op_transaction_packet {
 #define isc_tpb_no_auto_undo     20  // No auto undo
 ```
 
+TPB format: `byte version` followed by a sequence of item bytes (some items are followed by additional length/value bytes, per Firebird docs).
+
 Example TPB:
 ```c
 uint8_t* build_tpb() {
@@ -769,52 +1087,208 @@ struct compressed_packet {
 ```
 Client → Server:
 00 00 00 3E        // op_allocate_statement (62)
-00 00 00 01        // Database handle
+00 00 00 01        // p_rlse_object = database handle
 
 Server → Client:
 00 00 00 09        // op_response
-00 00 00 01        // Statement handle
-00 00 00 00 00 00 00 00  // Object ID
-00 00 00 00        // Buffer length
-00 00 00 00        // Status: success
+00 00 00 01        // p_resp_object = statement handle
+00 00 00 00 00 00 00 00  // p_resp_blob_id
+00 00 00 00        // p_resp_data length
+00 00 00 00        // status vector (isc_arg_end)
 ```
 
 ### 2. Prepare Statement
 ```
 Client → Server:
 00 00 00 44        // op_prepare_statement (68)
-00 00 00 01        // Transaction handle
-00 00 00 01        // Statement handle
-00 00 00 03        // SQL dialect 3
-00 00 00 13        // Query length
-53 45 4C 45 43 54 20 2A 20 46 52 4F 4D 20 75 73 65 72 73 00  // "SELECT * FROM users"
-00                 // Padding
-00 00 00 00        // Buffer length
+00 00 00 01        // p_sqlst_transaction
+00 00 00 01        // p_sqlst_statement
+00 00 00 03        // p_sqlst_SQL_dialect
+00 00 00 13        // SQL length
+53 45 4C 45 43 54 20 2A 20 46 52 4F 4D 20 75 73 65 72 73  // "SELECT * FROM users"
+00                 // Padding (XDR to 4-byte boundary)
+00 00 00 02        // p_sqlst_items length
+15 01              // isc_info_sql_stmt_type, isc_info_end
+00 00              // Padding
+00 00 00 20        // p_sqlst_buffer_length (32 bytes)
 ```
 
 ### 3. Execute Statement
 ```
 Client → Server:
 00 00 00 3F        // op_execute (63)
-00 00 00 01        // Statement handle
-00 00 00 01        // Transaction handle
-00 00 00 00        // Format
-00 00 00 00        // Parameters length
+00 00 00 01        // p_sqldata_statement
+00 00 00 01        // p_sqldata_transaction
+00 00 00 00        // p_sqldata_blr length (0 = reuse cached input format)
+00 00 00 00        // p_sqldata_message_number
+00 00 00 00        // p_sqldata_messages (no input messages)
 ```
 
 ### 4. Fetch Rows
 ```
 Client → Server:
 00 00 00 41        // op_fetch (65)
-00 00 00 01        // Statement handle
-00 00 00 00        // Format
-00 00 00 64        // Fetch 100 rows
+00 00 00 01        // p_sqldata_statement
+00 00 00 00        // p_sqldata_blr length (0 = reuse cached output format)
+00 00 00 00        // p_sqldata_message_number
+00 00 00 64        // p_sqldata_messages (fetch 100 rows)
 
 Server → Client:
 00 00 00 42        // op_fetch_response (66)
-00 00 00 00        // Status: data available
-00 00 00 03        // 3 rows returned
-// Row data follows...
+00 00 00 64        // p_sqldata_status = 100 (EOF)
+00 00 00 00        // p_sqldata_messages (no rows)
+```
+
+### Example: Simple Query (op_exec_immediate)
+
+Client `op_exec_immediate` with SQL `SELECT 1 FROM RDB$DATABASE`:
+```
+00 00 00 40  // op_exec_immediate
+00 00 00 01  // p_sqlst_transaction
+00 00 00 00  // p_sqlst_statement (0 for immediate)
+00 00 00 03  // p_sqlst_SQL_dialect
+00 00 00 1a  // SQL length
+53 45 4c 45 43 54 20 31 20 46 52 4f 4d 20 52 44 42 24 44 41 54 41 42 41 53 45  // "SELECT 1 FROM RDB$DATABASE"
+00 00        // Padding (XDR)
+00 00 00 00  // p_sqlst_items length
+00 00 00 00  // p_sqlst_buffer_length
+```
+
+Server `op_response` success (empty status vector):
+```
+00 00 00 09  // op_response
+00 00 00 00  // p_resp_object
+00 00 00 00 00 00 00 00  // p_resp_blob_id
+00 00 00 00  // p_resp_data length
+00 00 00 00  // isc_arg_end
+```
+
+### Example: Batch Operations (Hex)
+
+Assume protocol 17+, statement id `5`, transaction id `3`, and a statement with
+one nullable INTEGER input parameter (message length = 6, aligned length = 8).
+
+Client `op_batch_create`:
+```
+00 00 00 63  // op_batch_create
+00 00 00 05  // p_batch_statement
+00 00 00 0c  // p_batch_blr length (12)
+05 02 04 00 02 00 08 00 07 00 ff 4c  // BLR: msg 0, count=2 (field + null), blr_long, blr_short
+00 00 00 06  // p_batch_msglen (IMessageMetadata::getMessageLength)
+00 00 00 1c  // p_batch_pb length
+01           // IBatch::VERSION1
+02 04 00 00 00 01 00 00 00  // TAG_RECORD_COUNTS = 1
+01 04 00 00 00 01 00 00 00  // TAG_MULTIERROR = 1
+04 04 00 00 00 03 00 00 00  // TAG_BLOB_POLICY = BLOB_STREAM
+```
+
+Client `op_batch_msg`:
+```
+00 00 00 64  // op_batch_msg
+00 00 00 05  // p_batch_statement
+00 00 00 03  // p_batch_messages (3 executions)
+00 00 00 00  // msg[0] null bitmap (1 byte + XDR padding)
+00 00 00 2a  // msg[0] param value (INT32, XDR)
+00 00 00 00  // msg[1] null bitmap (1 byte + XDR padding)
+00 00 00 07  // msg[1] param value (INT32, XDR)
+01 00 00 00  // msg[2] null bitmap (bit0 set => NULL; no value bytes follow)
+```
+
+Packed VARCHAR example (separate statement id `6`, one nullable VARCHAR(5) input):
+```
+BLR (nullable VARCHAR(5)):
+05 02 04 00 02 00 25 05 00 07 00 ff 4c
+
+Client `op_batch_msg`:
+00 00 00 64  // op_batch_msg
+00 00 00 06  // p_batch_statement
+00 00 00 02  // p_batch_messages (2 executions)
+00 00 00 00  // msg[0] null bitmap (not null)
+00 00 00 02  // msg[0] varchar length (xdr_short)
+68 69 00 00  // msg[0] "hi" + XDR padding
+01 00 00 00  // msg[1] null bitmap (bit0 set => NULL; no length/value follow)
+```
+
+Client `op_batch_blob_stream` (alignment = 4, one unsegmented blob, id high=0 low=1, data = DE AD BE EF):
+```
+00 00 00 69  // op_batch_blob_stream
+00 00 00 05  // p_batch_statement
+00 00 00 14  // stream_len (20 bytes)
+00 00 00 00 00 00 00 01  // batch_blob_id (ISC_QUAD: high=0, low=1)
+00 00 00 04  // blob_size
+00 00 00 00  // bpb_size
+de ad be ef  // blob data (4 bytes)
+```
+
+Client `op_batch_blob_stream` (segmented, alignment = 4, BPB sets segmented):
+```
+00 00 00 69  // op_batch_blob_stream
+00 00 00 05  // p_batch_statement
+00 00 00 20  // stream_len (32 bytes, internal stream length)
+00 00 00 00 00 00 00 02  // batch_blob_id (ISC_QUAD: high=0, low=2)
+00 00 00 0c  // blob_size (12 bytes: 2+3+1+2+4)
+00 00 00 04  // bpb_size
+01 03 01 00  // BPB: version1, isc_bpb_type, len=1, segmented=0
+00 00 00 03  // seg[0] length (xdr_u_short)
+61 62 63     // seg[0] data "abc"
+00           // padding to BLOB_SEGHDR_ALIGN=2
+00 00 00 04  // seg[1] length (xdr_u_short)
+77 78 79 7a  // seg[1] data "wxyz"
+```
+Note: `stream_len` counts internal bytes (segment headers are 2 bytes); XDR encodes
+segment lengths as 4-byte `xdr_u_short` values on the wire.
+
+Client `op_batch_exec`:
+```
+00 00 00 65  // op_batch_exec
+00 00 00 05  // p_batch_statement
+00 00 00 03  // p_batch_transaction
+```
+
+Server `op_batch_cs` (3 updates, no errors):
+```
+00 00 00 67  // op_batch_cs
+00 00 00 05  // p_batch_statement
+00 00 00 03  // p_batch_reccount
+00 00 00 03  // p_batch_updates
+00 00 00 00  // p_batch_vectors
+00 00 00 00  // p_batch_errors
+00 00 00 01  // update count for record 0
+00 00 00 01  // update count for record 1
+00 00 00 01  // update count for record 2
+```
+
+Client `op_info_batch`:
+```
+00 00 00 6f  // op_info_batch
+00 00 00 05  // p_info_object (statement/batch id)
+00 00 00 00  // p_info_incarnation
+00 00 00 04  // p_info_items length
+0a 0b 0d 01  // INF_BUFFER_BYTES_SIZE, INF_DATA_BYTES_SIZE, INF_BLOB_ALIGNMENT, isc_info_end
+00 00 00 80  // p_info_buffer_length (128)
+```
+
+Server `op_response` (batch info):
+```
+00 00 00 09  // op_response
+00 00 00 05  // p_resp_object (statement/batch id)
+00 00 00 00 00 00 00 00  // p_resp_blob_id
+00 00 00 16  // p_resp_data length (22)
+0a 04 00 00 00 01 00  // INF_BUFFER_BYTES_SIZE = 65536
+0b 04 00 18 00 00 00  // INF_DATA_BYTES_SIZE = 24
+0d 04 00 04 00 00 00  // INF_BLOB_ALIGNMENT = 4
+01                    // isc_info_end
+00 00                 // Padding (XDR)
+00 00 00 00           // isc_arg_end
+```
+
+Server `op_response` (for `op_batch_blob_stream` success):
+```
+00 00 00 09  // op_response
+00 00 00 00  // p_resp_object
+00 00 00 00 00 00 00 00  // p_resp_blob_id
+00 00 00 00  // p_resp_data length
+00 00 00 00  // isc_arg_end
 ```
 
 ## Security Considerations
@@ -841,3 +1315,4 @@ Server → Client:
 - Firebird Wire Protocol Documentation
 - XDR Specification (RFC 1832)
 - Wireshark Firebird Dissector
+- ScratchBird BLR to SBLR mapping: ScratchBird/docs/specifications/FIREBIRD_BLR_TO_SBLR_MAPPING.md

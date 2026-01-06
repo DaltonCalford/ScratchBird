@@ -26,7 +26,7 @@ namespace scratchbird::core
     {
         UNKNOWN = 0,
 
-        // Numeric types (1-9)
+        // Numeric types (1-14)
         INT8 = 1,     // 1-byte signed integer (-128 to 127)
         INT16 = 2,    // 2-byte signed integer (alias: SMALLINT)
         INT32 = 3,    // 4-byte signed integer (alias: INTEGER, INT)
@@ -40,6 +40,7 @@ namespace scratchbird::core
         FLOAT64 = 11, // 8-byte IEEE 754 double (alias: DOUBLE)
         DECIMAL = 12, // Fixed-precision decimal (precision, scale)
         MONEY = 13,   // Fixed-precision currency type
+        UINT128 = 14, // 16-byte unsigned integer
 
         // String types (20-29)
         CHAR = 20,    // Fixed-length string (padded with spaces)

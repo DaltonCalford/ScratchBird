@@ -377,7 +377,11 @@ void QueryCompilerV2::collectDependencies(ResolvedStatement* stmt,
         if (!expr) return;
         if (auto* fn = dynamic_cast<ResolvedFunctionCall*>(expr)) {
             if (!isZeroUuid(fn->function.function_uuid)) {
-                add(fn->function.function_uuid, core::CatalogManager::ObjectType::FUNCTION);
+                core::CatalogManager::ObjectType obj_type = core::CatalogManager::ObjectType::FUNCTION;
+                if (fn->function.kind == FunctionKind::UDR) {
+                    obj_type = core::CatalogManager::ObjectType::UDR;
+                }
+                add(fn->function.function_uuid, obj_type);
             } else {
                 std::string fname = toString(pool, fn->function.function_name);
                 addFunctionByName(fname);

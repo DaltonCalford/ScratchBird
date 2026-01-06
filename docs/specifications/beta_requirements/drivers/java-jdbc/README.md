@@ -7,6 +7,15 @@
 
 ---
 
+
+## ScratchBird V2 Scope (Native Protocol Only)
+
+- Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.
+- Default port: 3092.
+- TLS 1.3 required.
+- Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
+
+
 ## Overview
 
 Java remains dominant in enterprise software, with JDBC (Java Database Connectivity) being the standard database access API. A JDBC 4.2+ compliant driver is essential for ScratchBird enterprise adoption and integration with the Java ecosystem.
@@ -22,13 +31,27 @@ Java remains dominant in enterprise software, with JDBC (Java Database Connectiv
 - Metadata introspection (DatabaseMetaData, ResultSetMetaData)
 - SSL/TLS support
 
+## Usage examples
+
+```java
+Connection conn = DriverManager.getConnection(
+    "scratchbird://user:pass@localhost:3092/db");
+Statement st = conn.createStatement();
+ResultSet rs = st.executeQuery("select 1 as one");
+
+PreparedStatement ps = conn.prepareStatement(
+    "select * from widgets where id = $1");
+ps.setInt(1, 42);
+ResultSet rows = ps.executeQuery();
+```
+
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] [SPECIFICATION.md](SPECIFICATION.md) - Detailed technical specification
   - JDBC 4.2 compliance matrix
   - Driver architecture (Type 4 pure Java)
   - Connection lifecycle management
@@ -38,7 +61,7 @@ Java remains dominant in enterprise software, with JDBC (Java Database Connectiv
   - Type mappings (Java ↔ SQL ↔ ScratchBird)
   - Exception hierarchy
 
-- [ ] **IMPLEMENTATION_PLAN.md** - Development roadmap
+- [x] [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
   - Milestone 1: Basic JDBC connectivity (Connection, Statement, ResultSet)
   - Milestone 2: PreparedStatement and batch execution
   - Milestone 3: Transaction management and savepoints
@@ -48,7 +71,7 @@ Java remains dominant in enterprise software, with JDBC (Java Database Connectiv
   - Resource requirements
   - Timeline estimates
 
-- [ ] **TESTING_CRITERIA.md** - Test requirements
+- [x] [TESTING_CRITERIA.md](TESTING_CRITERIA.md) - Test requirements
   - JDBC TCK (Technology Compatibility Kit) compliance
   - Hibernate test suite compatibility
   - Performance benchmarks vs PostgreSQL JDBC driver
@@ -56,7 +79,7 @@ Java remains dominant in enterprise software, with JDBC (Java Database Connectiv
   - Concurrency and thread safety tests
   - Memory leak tests (long-running applications)
 
-- [ ] **COMPATIBILITY_MATRIX.md** - Version support
+- [x] [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md) - Version support
   - Java versions (8, 11, 17 LTS, 21 LTS)
   - JDBC versions (4.2, 4.3)
   - Application servers (Tomcat, Jetty, WildFly, WebSphere)
@@ -64,7 +87,7 @@ Java remains dominant in enterprise software, with JDBC (Java Database Connectiv
   - ORMs (Hibernate 5.x, 6.x, MyBatis, jOOQ)
   - Build tools (Maven, Gradle)
 
-- [ ] **MIGRATION_GUIDE.md** - Migration from other drivers
+- [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other drivers
   - From PostgreSQL JDBC driver (org.postgresql.Driver)
   - From MySQL Connector/J (com.mysql.cj.jdbc.Driver)
   - From Oracle JDBC driver
@@ -72,13 +95,17 @@ Java remains dominant in enterprise software, with JDBC (Java Database Connectiv
   - Connection string format changes
   - Configuration differences
 
-- [ ] **API_REFERENCE.md** - Complete API documentation (JavaDoc)
+- [x] [API_REFERENCE.md](API_REFERENCE.md) - Complete API documentation (JavaDoc)
   - Driver class
   - Connection class
   - Statement classes
   - ResultSet class
   - DataSource implementation
   - Exception classes
+
+### Shared References
+
+- [../DRIVER_BASELINE_SPEC.md](../DRIVER_BASELINE_SPEC.md) - Shared V2 driver requirements.
 
 ### Examples Directory
 
@@ -216,7 +243,7 @@ public class ScratchBirdAutoConfiguration {
 }
 
 // application.properties
-spring.datasource.url=jdbc:scratchbird://localhost:5432/mydb
+spring.datasource.url=jdbc:scratchbird://localhost:3092/mydb
 spring.datasource.username=myuser
 spring.datasource.password=mypassword
 spring.datasource.driver-class-name=org.scratchbird.jdbc.Driver
@@ -231,7 +258,7 @@ import java.sql.*;
 
 public class BasicExample {
     public static void main(String[] args) {
-        String url = "jdbc:scratchbird://localhost:5432/mydb";
+        String url = "jdbc:scratchbird://localhost:3092/mydb";
         String user = "myuser";
         String password = "mypassword";
 
@@ -305,7 +332,7 @@ import com.zaxxer.hikari.HikariDataSource;
 public class ConnectionPoolExample {
     public static void main(String[] args) {
         HikariConfig config = new HikariConfig();
-        config.setJdbcUrl("jdbc:scratchbird://localhost:5432/mydb");
+        config.setJdbcUrl("jdbc:scratchbird://localhost:3092/mydb");
         config.setUsername("myuser");
         config.setPassword("mypassword");
         config.setDriverClassName("org.scratchbird.jdbc.Driver");
@@ -410,9 +437,9 @@ public class Driver implements java.sql.Driver {
 jdbc:scratchbird://[host]:[port]/[database][?property1=value1[&property2=value2]...]
 
 Examples:
-  jdbc:scratchbird://localhost:5432/mydb
+  jdbc:scratchbird://localhost:3092/mydb
   jdbc:scratchbird://localhost/mydb?user=admin&password=secret
-  jdbc:scratchbird://db.example.com:5432/production?ssl=true&connectTimeout=10
+  jdbc:scratchbird://db.example.com:3092/production?ssl=true&connectTimeout=10
 ```
 
 ### Supported Connection Properties

@@ -359,15 +359,21 @@ namespace scratchbird::core
                 break;
             }
             case DataType::DATE:
-            case DataType::TIME:
                 if (!skipBytes(size, offset, sizeof(int32_t) * 2))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DATE/TIME payload");
                     return Status::DATA_CORRUPTED;
                 }
                 break;
+            case DataType::TIME:
+                if (!skipBytes(size, offset, sizeof(int64_t) + sizeof(int32_t)))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIME payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                break;
             case DataType::TIMESTAMP:
-                if (!skipBytes(size, offset, sizeof(int32_t) * 3))
+                if (!skipBytes(size, offset, sizeof(int64_t) + sizeof(int32_t)))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIMESTAMP payload");
                     return Status::DATA_CORRUPTED;
@@ -375,9 +381,11 @@ namespace scratchbird::core
                 break;
             case DataType::UUID:
             case DataType::INT128:
+            case DataType::UINT128:
                 if (!skipBytes(size, offset, 16))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid UUID/INT128 payload");
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid UUID/INT128/UINT128 payload");
                     return Status::DATA_CORRUPTED;
                 }
                 break;

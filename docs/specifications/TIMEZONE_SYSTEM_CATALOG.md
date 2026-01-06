@@ -14,6 +14,7 @@ ScratchBird implements a comprehensive timezone system with a persistent, updata
 - All `TIMESTAMP` values are stored as **microseconds since Unix epoch in GMT**
 - No timezone conversion happens during storage
 - Comparisons are always in GMT (no conversion overhead)
+- Original input offset seconds is preserved in the payload for round-trip formatting
 
 ### 2. **Display Hints**
 - Column-level `timezone_hint` specifies display timezone
@@ -321,12 +322,13 @@ Steps:
   1. Parse datetime components
   2. Parse timezone offset or name
   3. Convert to GMT: local_time - offset
-  4. Store as int64_t microseconds since epoch
+  4. Store as int64_t microseconds since epoch (UTC)
+  5. Store original offset seconds for round-trip display
 ```
 
 #### 3. **Timestamp Formatting**
 ```
-Input: GMT microseconds (e.g., 1728054600000000)
+Input: GMT microseconds (e.g., 1728054600000000) + stored offset seconds
 Steps:
   1. Get display timezone from column hint or connection
   2. Look up timezone offset from catalog
@@ -356,8 +358,8 @@ SELECT timestamp_col AT TIME ZONE 'America/New_York';
 #### Timestamp Encoding
 ```
 Type: TIMESTAMP
-Encoding: int64_t (8 bytes, little-endian)
-Value: Microseconds since Unix epoch (GMT)
+Encoding: int64_t (8 bytes, little-endian) + int32_t offset_seconds (4 bytes)
+Value: Microseconds since Unix epoch (UTC), plus original input offset seconds
 Metadata: with_timezone flag, timezone_hint (uint16_t)
 ```
 

@@ -1475,6 +1475,18 @@ void MySqlAdapter::mapStatusToMySqlError(uint32_t status,
             error_code = 1205;  // ER_LOCK_WAIT_TIMEOUT
             sqlstate = "HY000";
             break;
+        case core::Status::DATETIME_FIELD_OVERFLOW:
+            error_code = mysql::ErrorCode::UNKNOWN_ERROR;
+            sqlstate = "22008";
+            break;
+        case core::Status::INVALID_DATETIME_FORMAT:
+            error_code = mysql::ErrorCode::UNKNOWN_ERROR;
+            sqlstate = "22007";
+            break;
+        case core::Status::DATATYPE_MISMATCH:
+            error_code = mysql::ErrorCode::UNKNOWN_ERROR;
+            sqlstate = "42804";
+            break;
         case core::Status::DEADLOCK:
             error_code = 1213;  // ER_LOCK_DEADLOCK
             sqlstate = "40001";

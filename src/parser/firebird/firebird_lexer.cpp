@@ -9,6 +9,7 @@
 #include <cstring>
 #include <algorithm>
 #include <charconv>
+#include <limits>
 
 namespace scratchbird::parser::firebird {
 
@@ -184,6 +185,7 @@ void Lexer::initKeywordTables() {
         {"ADMIN", TokenType::KW_ADMIN},
         {"ALL", TokenType::KW_ALL},
         {"ALTER", TokenType::KW_ALTER},
+        {"ALTER_ELEMENT", TokenType::KW_ALTER_ELEMENT},
         {"AND", TokenType::KW_AND},
         {"ANY", TokenType::KW_ANY},
         {"AS", TokenType::KW_AS},
@@ -271,6 +273,7 @@ void Lexer::initKeywordTables() {
         {"INSERTING", TokenType::KW_INSERTING},
         {"INT", TokenType::KW_INT},
         {"INT128", TokenType::KW_INT128},
+        {"UINT128", TokenType::KW_UINT128},
         {"INTEGER", TokenType::KW_INTEGER},
         {"INTO", TokenType::KW_INTO},
         {"IS", TokenType::KW_IS},
@@ -909,6 +912,30 @@ Token Lexer::scanNumber() {
     SourceLocation start = currentLocation();
     size_t startPos = pos_;
 
+    if (current() == '0' && (peek() == 'x' || peek() == 'X')) {
+        advance(); // 0
+        advance(); // x
+        if (!std::isxdigit(static_cast<unsigned char>(current()))) {
+            return makeError("Invalid integer number");
+        }
+        while (!atEnd() && std::isxdigit(static_cast<unsigned char>(current()))) {
+            advance();
+        }
+        std::string_view text = input_.substr(startPos, pos_ - startPos);
+        uint64_t value = 0;
+        const char* begin = text.data() + 2;
+        const char* end = text.data() + text.size();
+        auto result = std::from_chars(begin, end, value, 16);
+        if (result.ec != std::errc() || result.ptr != end) {
+            return makeError("Invalid integer number");
+        }
+        if (value > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            return makeError("Integer literal out of range");
+        }
+        return Token::makeInteger(start, static_cast<uint32_t>(text.size()),
+                                  static_cast<int64_t>(value));
+    }
+
     // Scan integer part
     while (!atEnd() && std::isdigit(current())) {
         advance();
@@ -1354,6 +1381,7 @@ const char* tokenTypeToString(TokenType type) {
         case TokenType::KW_DELETE: return "DELETE";
         case TokenType::KW_CREATE: return "CREATE";
         case TokenType::KW_ALTER: return "ALTER";
+        case TokenType::KW_ALTER_ELEMENT: return "ALTER_ELEMENT";
         case TokenType::KW_DROP: return "DROP";
         case TokenType::KW_TABLE: return "TABLE";
         case TokenType::KW_INDEX: return "INDEX";

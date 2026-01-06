@@ -331,6 +331,8 @@ private:
     ResolvedExpression* analyzeUnaryExpr(UnaryExpr* expr);
     ResolvedExpression* analyzeFunctionCall(FunctionCallExpr* expr);
     ResolvedExpression* analyzeCast(CastExpr* expr);
+    ResolvedExpression* analyzeExtract(ExtractExpr* expr);
+    ResolvedExpression* analyzeAlterElement(AlterElementExpr* expr);
     ResolvedExpression* analyzeCase(CaseExpr* expr);
     ResolvedExpression* analyzeSubquery(SubqueryExpr* expr);
     ResolvedExpression* analyzeExists(ExistsExpr* expr);

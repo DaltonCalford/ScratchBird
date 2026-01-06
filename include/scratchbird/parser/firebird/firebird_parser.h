@@ -240,6 +240,8 @@ private:
     Expression* parseFunctionCall(const SchemaPath& name);
     Expression* parseCaseExpression();
     Expression* parseCastExpression();
+    Expression* parseExtractExpression();
+    Expression* parseAlterElementExpression();
     Expression* parseSubqueryExpression();
     Expression* parseExistsExpression();
     Expression* parseInExpression(Expression* left);
@@ -247,6 +249,7 @@ private:
     Expression* parseLikeExpression(Expression* left, LikeMatchKind kind);
     Expression* parseIsNullExpression(Expression* left);
     Expression* parseArrayExpression();
+    ElementSelector parseElementSelector();
     WindowSpec* parseWindowSpec();
     void parseWindowFrame(WindowSpec* spec);
     FrameBoundType parseWindowFrameBound(Expression** value_out);

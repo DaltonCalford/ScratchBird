@@ -1899,8 +1899,13 @@ void PostgresqlAdapter::mapStatusToSqlstate(uint32_t status, std::string& sqlsta
             sqlstate = "22P02";
             break;
         case core::Status::DATETIME_FIELD_OVERFLOW:
+            sqlstate = "22008";
+            break;
         case core::Status::INVALID_DATETIME_FORMAT:
             sqlstate = "22007";
+            break;
+        case core::Status::DATATYPE_MISMATCH:
+            sqlstate = "42804";
             break;
         case core::Status::NOT_IMPLEMENTED:
         case core::Status::NOT_SUPPORTED:

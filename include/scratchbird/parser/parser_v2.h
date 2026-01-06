@@ -284,6 +284,9 @@ private:
     Expression* parsePrimaryExpr();
     Expression* parseLiteral();
     Expression* parseFunctionCall(SchemaPath path);
+    Expression* parseExtractExpr();
+    Expression* parseAlterElementExpr();
+    ElementSelector parseElementSelector();
     Expression* parseParenExpr();
     Expression* parseCastExpr();
     Expression* parseCaseExpr();

@@ -90,6 +90,38 @@ BEGIN
 END;  
 $$ LANGUAGE plpgsql;
 
+## System Functions (Built-in)
+
+ScratchBird provides built-in functions under the `sys` schema for pass-through
+query execution via UDR connectors. These functions are installed by the engine
+and cannot be redefined.
+
+### sys.remote_query
+
+CREATE FUNCTION sys.remote_query(  
+    server_name TEXT,  
+    sql_text TEXT,  
+    params_json JSON DEFAULT NULL,  
+    options_json JSON DEFAULT NULL  
+)  
+RETURNS SETOF RECORD  
+LANGUAGE internal  
+SECURITY INVOKER  
+VOLATILE;
+
+**Options (options_json):**
+- timeout_ms
+- transaction_mode (auto, join, new)
+- read_only (true/false)
+- fetch_size
+
+**Examples:**
+
+SELECT * FROM sys.remote_query('legacy_pg', 'SELECT id, name FROM users');
+
+SELECT * FROM sys.remote_query('legacy_pg', 'SELECT id, name FROM users')
+AS t(id INT, name TEXT);
+
 ## **ALTER FUNCTION**
 
 Modifies the properties of an existing function. Note that the function signature (name and parameter types) cannot be changed; you must CREATE OR REPLACE to do that.

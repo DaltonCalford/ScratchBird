@@ -132,6 +132,9 @@ namespace scratchbird::sblr
                                       const std::vector<TypedValue> &row);
         TypedValue evaluateCoalesce(const CoalesceExpr *expr, const std::vector<TypedValue> &row);
         TypedValue evaluateNullIf(const NullIfExpr *expr, const std::vector<TypedValue> &row);
+        TypedValue evaluateExtract(const ExtractExpr *expr, const std::vector<TypedValue> &row);
+        TypedValue evaluateAlterElement(const AlterElementExpr *expr,
+                                        const std::vector<TypedValue> &row);
 
         // Helper methods
         TypedValue castValue(const TypedValue &value, const TypeInfo& target_type,

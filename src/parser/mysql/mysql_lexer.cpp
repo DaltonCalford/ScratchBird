@@ -123,9 +123,11 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"FALSE", TokenType::KW_FALSE},
         {"EXISTS", TokenType::KW_EXISTS},
         {"CAST", TokenType::KW_CAST},
+        {"EXTRACT", TokenType::KW_EXTRACT},
         {"CONVERT", TokenType::KW_CONVERT},
         {"AS", TokenType::KW_AS},
         {"ESCAPE", TokenType::KW_ESCAPE},
+        {"ALTER_ELEMENT", TokenType::KW_ALTER_ELEMENT},
 
         // DML keywords
         {"INTO", TokenType::KW_INTO},
@@ -199,6 +201,8 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"INT", TokenType::KW_INT},
         {"INTEGER", TokenType::KW_INTEGER},
         {"BIGINT", TokenType::KW_BIGINT},
+        {"INT128", TokenType::KW_INT128},
+        {"UINT128", TokenType::KW_UINT128},
         {"FLOAT", TokenType::KW_FLOAT},
         {"DOUBLE", TokenType::KW_DOUBLE},
         {"REAL", TokenType::KW_REAL},

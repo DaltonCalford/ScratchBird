@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
 
 namespace scratchbird::parser::postgresql {
@@ -18,174 +19,274 @@ void Parser::parseSelectStmt() {
     emit(sblr::Opcode::SELECT);
 
     // Handle SELECT modifiers
-    bool is_distinct = false;
     if (matchKeyword(TokenType::KW_DISTINCT)) {
-        is_distinct = true;
-        // Handle DISTINCT ON (expr, ...)
         if (matchKeyword(TokenType::KW_ON)) {
             consume(TokenType::LEFT_PAREN, "Expected (");
-            // Parse DISTINCT ON expressions
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t count_pos = bytecode_.size();
-            emitU32(0);
-            uint32_t count = 0;
+            bool prev_emit = emit_enabled_;
+            emit_enabled_ = false;
             do {
                 parseExpression();
-                count++;
             } while (match(TokenType::COMMA));
-            sblr::writeInt32(&bytecode_[count_pos], count);
-            emit(sblr::Opcode::END_LIST);
+            emit_enabled_ = prev_emit;
             consume(TokenType::RIGHT_PAREN, "Expected )");
         }
     } else {
         matchKeyword(TokenType::KW_ALL);  // Optional, default
     }
 
-    // Emit DISTINCT flag
-    emitByte(is_distinct ? 1 : 0);
+    std::vector<SelectItem> items;
+    parseSelectList(items);
 
-    // Parse select list
-    parseSelectList();
+    bool has_from = false;
+    std::string table_path;
 
-    // FROM clause (optional in PostgreSQL for constant expressions)
     if (matchKeyword(TokenType::KW_FROM)) {
-        parseFromClause();
-    } else {
-        // No FROM - emit null table ref
-        emitU32(0);  // 0 tables
+        if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+            has_from = true;
+            std::string schema;
+            std::string table = parseIdentifier();
+            if (match(TokenType::DOT)) {
+                schema = table;
+                table = parseIdentifier();
+            }
+            resolveTableName(schema, table);
+            table_path = schema.empty() ? table : schema + "/" + table;
+
+            if (matchKeyword(TokenType::KW_AS)) {
+                parseIdentifier();
+            } else if ((check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) &&
+                       !check(TokenType::KW_WHERE) && !check(TokenType::KW_GROUP) &&
+                       !check(TokenType::KW_HAVING) && !check(TokenType::KW_ORDER) &&
+                       !check(TokenType::KW_LIMIT) && !check(TokenType::KW_JOIN) &&
+                       !check(TokenType::KW_LEFT) && !check(TokenType::KW_RIGHT) &&
+                       !check(TokenType::KW_INNER) && !check(TokenType::KW_CROSS) &&
+                       !check(TokenType::KW_FULL) && !check(TokenType::KW_NATURAL) &&
+                       !check(TokenType::KW_OFFSET)) {
+                parseIdentifier();
+            }
+
+            auto is_join_token = [](TokenType type) {
+                return type == TokenType::KW_JOIN || type == TokenType::KW_LEFT ||
+                       type == TokenType::KW_RIGHT || type == TokenType::KW_INNER ||
+                       type == TokenType::KW_CROSS || type == TokenType::KW_NATURAL ||
+                       type == TokenType::KW_FULL;
+            };
+            auto is_from_terminator = [](TokenType type) {
+                return type == TokenType::KW_WHERE || type == TokenType::KW_GROUP ||
+                       type == TokenType::KW_HAVING || type == TokenType::KW_ORDER ||
+                       type == TokenType::KW_LIMIT || type == TokenType::KW_OFFSET ||
+                       type == TokenType::KW_WINDOW || type == TokenType::KW_FETCH ||
+                       type == TokenType::KW_FOR || type == TokenType::KW_UNION ||
+                       type == TokenType::KW_EXCEPT || type == TokenType::KW_INTERSECT;
+            };
+
+            if (check(TokenType::COMMA) || is_join_token(current_token_.type)) {
+                int depth = 0;
+                while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+                    if (depth == 0 && is_from_terminator(current_token_.type)) {
+                        break;
+                    }
+                    if (match(TokenType::LEFT_PAREN)) {
+                        depth++;
+                        continue;
+                    }
+                    if (match(TokenType::RIGHT_PAREN)) {
+                        if (depth > 0) {
+                            depth--;
+                        }
+                        continue;
+                    }
+                    advance();
+                }
+            }
+        } else {
+            bool prev_emit = emit_enabled_;
+            emit_enabled_ = false;
+            parseFromClause();
+            emit_enabled_ = prev_emit;
+        }
     }
 
-    // WHERE clause
+    if (emit_enabled_) {
+        emit(sblr::Opcode::BEGIN_LIST);
+        size_t count_pos = bytecode_.size();
+        emitU32(0);
+
+        uint32_t emit_count = 0;
+
+        if (has_from) {
+            bool has_star = false;
+            std::vector<const SelectItem*> columns;
+            for (const auto& item : items) {
+                if (item.kind == SelectItem::Kind::Star) {
+                    has_star = true;
+                } else if (item.kind == SelectItem::Kind::Column) {
+                    columns.push_back(&item);
+                }
+            }
+
+            if (has_star || columns.empty()) {
+                emit(sblr::Opcode::SELECT_STAR);
+                emit_count = 1;
+            } else {
+                for (const auto* item : columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(item->column_name);
+                    if (!item->alias.empty() && item->alias != item->column_name) {
+                        emit(sblr::Opcode::COLUMN_REF);
+                        emitString("");
+                        emitString(item->alias);
+                    }
+                    emit_count++;
+                }
+            }
+        } else {
+            for (const auto& item : items) {
+                if (item.kind == SelectItem::Kind::Star) {
+                    continue;
+                }
+                bytecode_.insert(bytecode_.end(),
+                                 item.expr_bytecode.begin(),
+                                 item.expr_bytecode.end());
+                if (!item.alias.empty()) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(item.alias);
+                }
+                emit_count++;
+            }
+
+            if (emit_count == 0) {
+                emit(sblr::Opcode::LITERAL_NULL);
+                emit_count = 1;
+            }
+        }
+
+        sblr::writeInt32(&bytecode_[count_pos], emit_count);
+        emit(sblr::Opcode::END_LIST);
+
+        emit(sblr::Opcode::TABLE_REF);
+        emitString(has_from ? table_path : "");
+    }
+
     if (matchKeyword(TokenType::KW_WHERE)) {
         parseWhereClause();
-    } else {
-        emit(sblr::Opcode::LITERAL_NULL);  // No WHERE
     }
 
-    // GROUP BY clause
     if (matchKeyword(TokenType::KW_GROUP)) {
         consumeKeyword(TokenType::KW_BY, "Expected BY after GROUP");
         parseGroupByClause();
-    } else {
-        emitU32(0);  // 0 group by columns
     }
 
-    // HAVING clause
     if (matchKeyword(TokenType::KW_HAVING)) {
         parseHavingClause();
-    } else {
-        emit(sblr::Opcode::LITERAL_NULL);  // No HAVING
     }
 
-    // WINDOW clause (named window definitions)
     if (matchKeyword(TokenType::KW_WINDOW)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseWindowClause();
+        emit_enabled_ = prev_emit;
     }
 
-    // ORDER BY clause
     if (matchKeyword(TokenType::KW_ORDER)) {
         consumeKeyword(TokenType::KW_BY, "Expected BY after ORDER");
         parseOrderByClause();
-    } else {
-        emitU32(0);  // 0 order by columns
     }
 
-    // LIMIT clause
-    if (matchKeyword(TokenType::KW_LIMIT)) {
-        parseLimitClause();
-    } else {
-        emit(sblr::Opcode::LITERAL_NULL);  // No LIMIT
+    bool limit_parsed = false;
+    bool offset_parsed = false;
+    bool progress = true;
+    while (progress) {
+        progress = false;
+        if (!limit_parsed && matchKeyword(TokenType::KW_LIMIT)) {
+            parseLimitClause();
+            limit_parsed = true;
+            progress = true;
+        }
+        if (!offset_parsed && matchKeyword(TokenType::KW_OFFSET)) {
+            parseOffsetClause();
+            offset_parsed = true;
+            progress = true;
+        }
     }
 
-    // OFFSET clause (can appear before or after LIMIT)
-    if (matchKeyword(TokenType::KW_OFFSET)) {
-        parseOffsetClause();
-    }
-
-    // FETCH clause (SQL:2008 syntax)
     if (matchKeyword(TokenType::KW_FETCH)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseFetchClause();
+        emit_enabled_ = prev_emit;
     }
 
-    // FOR clause (FOR UPDATE, FOR SHARE, etc.)
     if (matchKeyword(TokenType::KW_FOR)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseForClause();
+        emit_enabled_ = prev_emit;
     }
 }
 
-void Parser::parseSelectList() {
-    emit(sblr::Opcode::BEGIN_LIST);
-
-    // Count position for patching
-    size_t count_pos = bytecode_.size();
-    emitU32(0);  // Placeholder for count
-
-    uint32_t count = 0;
+void Parser::parseSelectList(std::vector<SelectItem>& items) {
+    auto decode_simple_column = [](const std::vector<uint8_t>& expr_bytes, std::string& column_out) {
+        if (expr_bytes.empty()) {
+            return false;
+        }
+        size_t pc = 0;
+        if (expr_bytes[pc++] != static_cast<uint8_t>(sblr::Opcode::COLUMN_REF)) {
+            return false;
+        }
+        if (pc + 4 > expr_bytes.size()) {
+            return false;
+        }
+        uint32_t len = sblr::readInt32(&expr_bytes[pc]);
+        pc += 4;
+        if (pc + len != expr_bytes.size()) {
+            return false;
+        }
+        column_out.assign(reinterpret_cast<const char*>(expr_bytes.data() + pc), len);
+        return true;
+    };
 
     if (match(TokenType::STAR)) {
-        // SELECT *
-        emit(sblr::Opcode::SELECT_STAR);
-        count = 1;
-    } else {
-        do {
-            // Check for table.* syntax
-            if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
-                std::string first = parseIdentifier();
-                if (match(TokenType::DOT)) {
-                    if (match(TokenType::STAR)) {
-                        // table.*
-                        emit(sblr::Opcode::EXTENDED_OPCODE);
-                        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SELECT_TABLE_STAR));
-                        emitString(first);
-                        count++;
-                        continue;
-                    }
-                    // table.column - put back and parse as expression
-                    // Actually we need to reconstruct the column reference
-                    emit(sblr::Opcode::COLUMN_REF);
-                    std::string col = parseIdentifier();
-                    emitString(first + "." + col);
-                    parsePostfixTail();
-                } else if (match(TokenType::LEFT_PAREN)) {
-                    // Function call
-                    parseFunctionCall(first);
-                    parsePostfixTail();
-                } else {
-                    // Simple column reference
-                    emit(sblr::Opcode::COLUMN_REF);
-                    emitString(first);
-                    parsePostfixTail();
-                }
-            } else {
-                parseExpression();
-            }
-
-            // Optional alias
-            std::string alias;
-            if (matchKeyword(TokenType::KW_AS)) {
-                alias = parseIdentifier();
-            } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
-                alias = parseIdentifier();
-            }
-
-            // Emit alias (empty string if none)
-            emitString(alias);
-
-            count++;
-        } while (match(TokenType::COMMA));
+        SelectItem item;
+        item.kind = SelectItem::Kind::Star;
+        items.push_back(std::move(item));
+        return;
     }
 
-    // Patch the count
-    sblr::writeInt32(&bytecode_[count_pos], count);
+    do {
+        SelectItem item;
+        if (match(TokenType::STAR)) {
+            item.kind = SelectItem::Kind::Star;
+        } else {
+            item.expr_bytecode = captureExpressionBytecode();
+            std::string column_name;
+            if (decode_simple_column(item.expr_bytecode, column_name)) {
+                item.kind = SelectItem::Kind::Column;
+                item.column_name = column_name;
+            } else {
+                item.kind = SelectItem::Kind::Expression;
+            }
+        }
 
-    emit(sblr::Opcode::END_LIST);
+        if (matchKeyword(TokenType::KW_AS)) {
+            item.alias = parseIdentifier();
+        } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+            item.alias = parseIdentifier();
+        }
+
+        items.push_back(std::move(item));
+    } while (match(TokenType::COMMA));
 }
 
 void Parser::parseFromClause() {
-    emit(sblr::Opcode::BEGIN_LIST);
+    bool emit_now = emit_enabled_;
+    size_t count_pos = 0;
 
-    size_t count_pos = bytecode_.size();
-    emitU32(0);  // Placeholder
+    if (emit_now) {
+        emit(sblr::Opcode::BEGIN_LIST);
+        count_pos = bytecode_.size();
+        emitU32(0);  // Placeholder
+    }
 
     uint32_t count = 0;
 
@@ -247,11 +348,15 @@ void Parser::parseFromClause() {
 
     } while (match(TokenType::COMMA));
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
+    if (emit_now) {
+        sblr::writeInt32(&bytecode_[count_pos], count);
+        emit(sblr::Opcode::END_LIST);
+    }
 }
 
 void Parser::parseJoinClause() {
+    bool emit_now = emit_enabled_;
+
     while (check(TokenType::KW_JOIN) || check(TokenType::KW_LEFT) ||
            check(TokenType::KW_RIGHT) || check(TokenType::KW_INNER) ||
            check(TokenType::KW_CROSS) || check(TokenType::KW_NATURAL) ||
@@ -316,20 +421,27 @@ void Parser::parseJoinClause() {
                 parseExpression();
             } else if (matchKeyword(TokenType::KW_USING)) {
                 consume(TokenType::LEFT_PAREN, "Expected ( after USING");
-                emit(sblr::Opcode::BEGIN_LIST);
-                size_t using_count_pos = bytecode_.size();
-                emitU32(0);
+                size_t using_count_pos = 0;
+                if (emit_now) {
+                    emit(sblr::Opcode::BEGIN_LIST);
+                    using_count_pos = bytecode_.size();
+                    emitU32(0);
+                }
                 uint32_t using_count = 0;
 
                 do {
                     std::string col = parseIdentifier();
-                    emit(sblr::Opcode::COLUMN_REF);
-                    emitString(col);
+                    if (emit_now) {
+                        emit(sblr::Opcode::COLUMN_REF);
+                        emitString(col);
+                    }
                     using_count++;
                 } while (match(TokenType::COMMA));
 
-                sblr::writeInt32(&bytecode_[using_count_pos], using_count);
-                emit(sblr::Opcode::END_LIST);
+                if (emit_now) {
+                    sblr::writeInt32(&bytecode_[using_count_pos], using_count);
+                    emit(sblr::Opcode::END_LIST);
+                }
                 consume(TokenType::RIGHT_PAREN, "Expected ) after USING columns");
             }
         }
@@ -342,64 +454,53 @@ void Parser::parseWhereClause() {
 }
 
 void Parser::parseGroupByClause() {
-    emit(sblr::Opcode::GROUP_BY);
-    emit(sblr::Opcode::BEGIN_LIST);
-
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
-
-    uint32_t count = 0;
-
-    // Check for ROLLUP, CUBE, GROUPING SETS
-    if (matchKeyword(TokenType::KW_ROLLUP)) {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GROUP_ROLLUP));
-        consume(TokenType::LEFT_PAREN, "Expected (");
+    if (!emit_enabled_) {
         do {
             parseExpression();
-            count++;
         } while (match(TokenType::COMMA));
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-    } else if (matchKeyword(TokenType::KW_CUBE)) {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GROUP_CUBE));
-        consume(TokenType::LEFT_PAREN, "Expected (");
-        do {
-            parseExpression();
-            count++;
-        } while (match(TokenType::COMMA));
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-    } else if (matchKeyword(TokenType::KW_GROUPING)) {
-        if (matchKeyword(TokenType::KW_SETS)) {
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GROUP_GROUPING_SETS));
+        return;
+    }
+
+    if (check(TokenType::KW_ROLLUP) || check(TokenType::KW_CUBE) ||
+        check(TokenType::KW_GROUPING)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
+        if (matchKeyword(TokenType::KW_ROLLUP) || matchKeyword(TokenType::KW_CUBE)) {
             consume(TokenType::LEFT_PAREN, "Expected (");
-            // Parse grouping sets
+            do {
+                parseExpression();
+            } while (match(TokenType::COMMA));
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        } else if (matchKeyword(TokenType::KW_GROUPING)) {
+            matchKeyword(TokenType::KW_SETS);
+            consume(TokenType::LEFT_PAREN, "Expected (");
             do {
                 if (match(TokenType::LEFT_PAREN)) {
-                    // Nested set
                     do {
                         parseExpression();
-                        count++;
                     } while (match(TokenType::COMMA));
                     consume(TokenType::RIGHT_PAREN, "Expected )");
                 } else {
                     parseExpression();
-                    count++;
                 }
             } while (match(TokenType::COMMA));
             consume(TokenType::RIGHT_PAREN, "Expected )");
         }
-    } else {
-        // Regular GROUP BY
-        do {
-            parseExpression();
-            count++;
-        } while (match(TokenType::COMMA));
+        emit_enabled_ = prev_emit;
+        return;
     }
 
+    emit(sblr::Opcode::GROUP_BY);
+    size_t count_pos = bytecode_.size();
+    emitU32(0);
+
+    uint32_t count = 0;
+    do {
+        parseExpression();
+        count++;
+    } while (match(TokenType::COMMA));
+
     sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
 }
 
 void Parser::parseHavingClause() {
@@ -507,68 +608,96 @@ void Parser::parseFrameBound() {
 }
 
 void Parser::parseOrderByClause() {
-    emit(sblr::Opcode::ORDER_BY);
-    emit(sblr::Opcode::BEGIN_LIST);
+    struct SortKey {
+        std::string column;
+        bool descending = false;
+        bool nulls_first = false;
+        bool nulls_specified = false;
+    };
 
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
+    std::vector<SortKey> keys;
 
-    uint32_t count = 0;
     do {
-        emit(sblr::Opcode::SORT_KEY);
-        parseExpression();
+        SortKey key;
+        std::vector<uint8_t> expr = captureExpressionBytecode();
+        std::string column_name;
 
-        // Direction
-        if (matchKeyword(TokenType::KW_DESC)) {
-            emit(sblr::Opcode::SORT_DESC);
-        } else {
-            matchKeyword(TokenType::KW_ASC);  // Optional
-            emit(sblr::Opcode::SORT_ASC);
-        }
-
-        // NULLS FIRST/LAST
-        if (matchKeyword(TokenType::KW_NULLS)) {
-            if (matchKeyword(TokenType::KW_FIRST)) {
-                emit(sblr::Opcode::NULLS_FIRST);
-            } else if (matchKeyword(TokenType::KW_LAST)) {
-                emit(sblr::Opcode::NULLS_LAST);
+        if (!expr.empty() &&
+            expr[0] == static_cast<uint8_t>(sblr::Opcode::COLUMN_REF) &&
+            expr.size() >= 5) {
+            uint32_t len = sblr::readInt32(&expr[1]);
+            if (1 + 4 + len == expr.size()) {
+                column_name.assign(reinterpret_cast<const char*>(expr.data() + 5), len);
+                key.column = column_name;
             }
         }
 
-        count++;
+        if (matchKeyword(TokenType::KW_DESC)) {
+            key.descending = true;
+        } else {
+            matchKeyword(TokenType::KW_ASC);
+        }
+
+        if (matchKeyword(TokenType::KW_NULLS)) {
+            key.nulls_specified = true;
+            if (matchKeyword(TokenType::KW_FIRST)) {
+                key.nulls_first = true;
+            } else if (matchKeyword(TokenType::KW_LAST)) {
+                key.nulls_first = false;
+            }
+        }
+
+        if (!key.column.empty()) {
+            keys.push_back(key);
+        }
     } while (match(TokenType::COMMA));
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
-}
+    if (keys.empty()) {
+        return;
+    }
 
-void Parser::parseLimitClause() {
-    emit(sblr::Opcode::LIMIT);
+    emit(sblr::Opcode::ORDER_BY);
+    emitU32(static_cast<uint32_t>(keys.size()));
 
-    if (matchKeyword(TokenType::KW_ALL)) {
-        // LIMIT ALL means no limit
-        emit(sblr::Opcode::LITERAL_NULL);
-    } else {
-        // Parse limit value
-        if (check(TokenType::INTEGER_LITERAL)) {
-            emit(sblr::Opcode::LITERAL_INT64);
-            emitI64(current_token_.value.int_value);
-            advance();
-        } else {
-            parseExpression();
+    for (const auto& key : keys) {
+        emit(sblr::Opcode::SORT_KEY);
+        emit(sblr::Opcode::COLUMN_REF);
+        emitString(key.column);
+        emit(key.descending ? sblr::Opcode::SORT_DESC : sblr::Opcode::SORT_ASC);
+        if (key.nulls_specified) {
+            emit(key.nulls_first ? sblr::Opcode::NULLS_FIRST : sblr::Opcode::NULLS_LAST);
         }
     }
 }
 
-void Parser::parseOffsetClause() {
-    emit(sblr::Opcode::OFFSET);
+void Parser::parseLimitClause() {
+    if (matchKeyword(TokenType::KW_ALL)) {
+        return;
+    }
 
     if (check(TokenType::INTEGER_LITERAL)) {
-        emit(sblr::Opcode::LITERAL_INT64);
+        emit(sblr::Opcode::LIMIT);
+        emitI64(current_token_.value.int_value);
+        advance();
+        return;
+    }
+
+    bool prev_emit = emit_enabled_;
+    emit_enabled_ = false;
+    parseExpression();
+    emit_enabled_ = prev_emit;
+}
+
+void Parser::parseOffsetClause() {
+    if (check(TokenType::INTEGER_LITERAL)) {
+        emit(sblr::Opcode::OFFSET);
         emitI64(current_token_.value.int_value);
         advance();
     } else {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseExpression();
+        emit_enabled_ = prev_emit;
     }
 
     // Optional ROW/ROWS
@@ -579,20 +708,35 @@ void Parser::parseFetchClause() {
     // FETCH FIRST/NEXT n ROW(S) ONLY
     matchKeyword(TokenType::KW_FIRST) || matchKeyword(TokenType::KW_NEXT);
 
-    emit(sblr::Opcode::LIMIT);
-
     if (check(TokenType::INTEGER_LITERAL)) {
-        emit(sblr::Opcode::LITERAL_INT64);
+        emit(sblr::Opcode::LIMIT);
         emitI64(current_token_.value.int_value);
         advance();
     } else {
-        // Default to 1
-        emit(sblr::Opcode::LITERAL_INT64);
+        emit(sblr::Opcode::LIMIT);
         emitI64(1);
     }
 
     matchKeyword(TokenType::KW_ROW) || matchKeyword(TokenType::KW_ROWS);
     matchKeyword(TokenType::KW_ONLY);
+}
+
+std::vector<uint8_t> Parser::captureExpressionBytecode() {
+    std::vector<uint8_t> saved;
+    saved.swap(bytecode_);
+
+    bool saved_emit = emit_enabled_;
+    emit_enabled_ = true;
+
+    bytecode_.clear();
+    parseExpression();
+
+    std::vector<uint8_t> expr;
+    expr.swap(bytecode_);
+
+    bytecode_.swap(saved);
+    emit_enabled_ = saved_emit;
+    return expr;
 }
 
 void Parser::parseForClause() {
@@ -649,90 +793,158 @@ void Parser::parseInsertStmt() {
     }
     resolveTableName(schema, table);
 
+    std::string table_path = schema.empty() ? table : schema + "/" + table;
     emit(sblr::Opcode::TABLE_REF);
-    emitString(schema + "/" + table);
+    emitString(table_path);
 
-    // Optional alias
-    std::string alias;
     if (matchKeyword(TokenType::KW_AS)) {
-        alias = parseIdentifier();
+        parseIdentifier();
     }
-    emitString(alias);
 
-    // Column list (optional)
+    std::vector<std::string> columns;
+    bool has_column_list = false;
     if (match(TokenType::LEFT_PAREN)) {
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t count = 0;
-
+        has_column_list = true;
         do {
-            std::string col = parseIdentifier();
-            emit(sblr::Opcode::COLUMN_REF);
-            emitString(col);
-            count++;
+            columns.push_back(parseIdentifier());
         } while (match(TokenType::COMMA));
-
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
         consume(TokenType::RIGHT_PAREN, "Expected )");
-    } else {
-        emitU32(0);  // No column list
     }
 
-    // VALUES, SELECT, or DEFAULT VALUES
-    if (matchKeyword(TokenType::KW_DEFAULT)) {
-        consumeKeyword(TokenType::KW_VALUES, "Expected VALUES");
-        emitByte(1);  // DEFAULT VALUES flag
-    } else if (matchKeyword(TokenType::KW_VALUES)) {
-        emitByte(0);  // VALUES clause
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t rows_count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t rows_count = 0;
-
-        do {
-            consume(TokenType::LEFT_PAREN, "Expected (");
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t values_count_pos = bytecode_.size();
-            emitU32(0);
-            uint32_t values_count = 0;
-
-            do {
-                if (matchKeyword(TokenType::KW_DEFAULT)) {
-                    emit(sblr::Opcode::DEFAULT_VALUE);
+    if (!has_column_list) {
+        auto split_components = [](const std::string& path) {
+            std::vector<std::string> parts;
+            std::string current;
+            for (char ch : path) {
+                if (ch == '/' || ch == '.') {
+                    if (!current.empty()) {
+                        parts.push_back(current);
+                        current.clear();
+                    }
                 } else {
-                    parseExpression();
+                    current.push_back(ch);
                 }
-                values_count++;
-            } while (match(TokenType::COMMA));
+            }
+            if (!current.empty()) {
+                parts.push_back(current);
+            }
+            return parts;
+        };
 
-            sblr::writeInt32(&bytecode_[values_count_pos], values_count);
-            emit(sblr::Opcode::END_LIST);
-            consume(TokenType::RIGHT_PAREN, "Expected )");
-            rows_count++;
-        } while (match(TokenType::COMMA));
+        if (db_) {
+            core::ObjectPath path;
+            path.components = split_components(schema);
+            path.components.push_back(table);
+            path.type = schema.empty() ? core::PathType::UNQUALIFIED : core::PathType::ABSOLUTE;
 
-        sblr::writeInt32(&bytecode_[rows_count_pos], rows_count);
-        emit(sblr::Opcode::END_LIST);
-    } else if (check(TokenType::KW_SELECT)) {
-        emitByte(2);  // SELECT subquery
-        parseSelectStmt();
+            core::CatalogManager::ResolveOptions opts;
+            core::CatalogManager::ObjectType resolved_type;
+            core::ID table_id;
+            core::ErrorContext ctx;
+            if (db_->catalog_manager()->resolveObjectPath(path,
+                                                         core::CatalogManager::ObjectType::TABLE,
+                                                         opts, table_id, resolved_type, &ctx) == core::Status::OK) {
+                std::vector<core::CatalogManager::ColumnInfo> cols;
+                if (db_->catalog_manager()->getColumns(table_id, cols, &ctx) == core::Status::OK) {
+                    for (const auto& col : cols) {
+                        columns.push_back(col.column_name);
+                    }
+                }
+            }
+        }
     }
 
-    // ON CONFLICT clause (PostgreSQL upsert)
+    struct InsertValue {
+        bool is_default = false;
+        std::vector<uint8_t> expr;
+    };
+    std::vector<InsertValue> values;
+
+    if (matchKeyword(TokenType::KW_DEFAULT)) {
+        matchKeyword(TokenType::KW_VALUES);
+    } else if (matchKeyword(TokenType::KW_VALUES)) {
+        consume(TokenType::LEFT_PAREN, "Expected (");
+        do {
+            InsertValue val;
+            if (matchKeyword(TokenType::KW_DEFAULT)) {
+                val.is_default = true;
+            } else {
+                val.expr = captureExpressionBytecode();
+            }
+            values.push_back(std::move(val));
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+
+        while (match(TokenType::COMMA)) {
+            consume(TokenType::LEFT_PAREN, "Expected (");
+            int depth = 1;
+            while (depth > 0 && !check(TokenType::END_OF_FILE)) {
+                if (match(TokenType::LEFT_PAREN)) {
+                    depth++;
+                } else if (match(TokenType::RIGHT_PAREN)) {
+                    depth--;
+                } else {
+                    advance();
+                }
+            }
+        }
+    } else if (check(TokenType::KW_SELECT)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
+        parseSelectStmt();
+        emit_enabled_ = prev_emit;
+    }
+
+    std::vector<std::string> emit_columns;
+    std::vector<std::vector<uint8_t>> emit_values;
+
+    if (!columns.empty() && !values.empty()) {
+        size_t pair_count = std::min(columns.size(), values.size());
+        for (size_t i = 0; i < pair_count; ++i) {
+            if (values[i].is_default) {
+                continue;
+            }
+            emit_columns.push_back(columns[i]);
+            emit_values.push_back(values[i].expr);
+        }
+    }
+
+    emit(sblr::Opcode::BEGIN_LIST);
+    emitU32(static_cast<uint32_t>(emit_columns.size()));
+    for (const auto& col : emit_columns) {
+        emit(sblr::Opcode::COLUMN_REF);
+        emitString(col);
+    }
+    emit(sblr::Opcode::END_LIST);
+
+    emit(sblr::Opcode::BEGIN_LIST);
+    emitU32(static_cast<uint32_t>(emit_values.size()));
+    for (const auto& expr : emit_values) {
+        if (emit_enabled_) {
+            bytecode_.insert(bytecode_.end(), expr.begin(), expr.end());
+        }
+    }
+    emit(sblr::Opcode::END_LIST);
+
     if (matchKeyword(TokenType::KW_ON)) {
         consumeKeyword(TokenType::KW_CONFLICT, "Expected CONFLICT");
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseOnConflictClause();
+        emit_enabled_ = prev_emit;
     }
 
-    // RETURNING clause
     if (matchKeyword(TokenType::KW_RETURNING)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseReturningClause();
+        emit_enabled_ = prev_emit;
     }
 }
 
 void Parser::parseOnConflictClause() {
+    bool emit_now = emit_enabled_;
+
     emit(sblr::Opcode::EXTENDED_OPCODE);
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT));
 
@@ -741,20 +953,27 @@ void Parser::parseOnConflictClause() {
         // Column list
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_COLUMN));
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
+        size_t count_pos = 0;
+        if (emit_now) {
+            emit(sblr::Opcode::BEGIN_LIST);
+            count_pos = bytecode_.size();
+            emitU32(0);
+        }
         uint32_t count = 0;
 
         do {
             std::string col = parseIdentifier();
-            emit(sblr::Opcode::COLUMN_REF);
-            emitString(col);
+            if (emit_now) {
+                emit(sblr::Opcode::COLUMN_REF);
+                emitString(col);
+            }
             count++;
         } while (match(TokenType::COMMA));
 
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
+        if (emit_now) {
+            sblr::writeInt32(&bytecode_[count_pos], count);
+            emit(sblr::Opcode::END_LIST);
+        }
         consume(TokenType::RIGHT_PAREN, "Expected )");
 
         // Optional WHERE for partial index
@@ -783,22 +1002,29 @@ void Parser::parseOnConflictClause() {
         consumeKeyword(TokenType::KW_SET, "Expected SET");
 
         // Parse SET assignments
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
+        size_t count_pos = 0;
+        if (emit_now) {
+            emit(sblr::Opcode::BEGIN_LIST);
+            count_pos = bytecode_.size();
+            emitU32(0);
+        }
         uint32_t count = 0;
 
         do {
             std::string col = parseIdentifier();
             consume(TokenType::EQUAL, "Expected =");
-            emit(sblr::Opcode::ASSIGNMENT);
-            emitString(col);
+            if (emit_now) {
+                emit(sblr::Opcode::ASSIGNMENT);
+                emitString(col);
+            }
             parseExpression();
             count++;
         } while (match(TokenType::COMMA));
 
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
+        if (emit_now) {
+            sblr::writeInt32(&bytecode_[count_pos], count);
+            emit(sblr::Opcode::END_LIST);
+        }
 
         // WHERE clause for UPDATE
         if (matchKeyword(TokenType::KW_WHERE)) {
@@ -809,29 +1035,57 @@ void Parser::parseOnConflictClause() {
 }
 
 void Parser::parseReturningClause() {
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RETURNING));
+    std::vector<std::string> columns;
+    bool can_emit = true;
+
+    auto decode_simple_column = [](const std::vector<uint8_t>& expr_bytes, std::string& column_out) {
+        if (expr_bytes.empty()) {
+            return false;
+        }
+        size_t pc = 0;
+        if (expr_bytes[pc++] != static_cast<uint8_t>(sblr::Opcode::COLUMN_REF)) {
+            return false;
+        }
+        if (pc + 4 > expr_bytes.size()) {
+            return false;
+        }
+        uint32_t len = sblr::readInt32(&expr_bytes[pc]);
+        pc += 4;
+        if (pc + len != expr_bytes.size()) {
+            return false;
+        }
+        column_out.assign(reinterpret_cast<const char*>(expr_bytes.data() + pc), len);
+        return true;
+    };
 
     if (match(TokenType::STAR)) {
-        emit(sblr::Opcode::SELECT_STAR);
+        can_emit = false;
     } else {
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t count = 0;
-
         do {
-            parseExpression();
-            std::string alias;
-            if (matchKeyword(TokenType::KW_AS)) {
-                alias = parseIdentifier();
+            std::vector<uint8_t> expr = captureExpressionBytecode();
+            std::string col;
+            if (decode_simple_column(expr, col)) {
+                columns.push_back(col);
+            } else {
+                can_emit = false;
             }
-            emitString(alias);
-            count++;
+            if (matchKeyword(TokenType::KW_AS)) {
+                parseIdentifier();
+            } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+                parseIdentifier();
+            }
         } while (match(TokenType::COMMA));
+    }
 
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
+    if (!emit_enabled_ || !can_emit || columns.empty()) {
+        return;
+    }
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RETURNING));
+    emitU32(static_cast<uint32_t>(columns.size()));
+    for (const auto& col : columns) {
+        emitString(col);
     }
 }
 
@@ -854,16 +1108,13 @@ void Parser::parseUpdateStmt() {
     resolveTableName(schema, table);
 
     emit(sblr::Opcode::TABLE_REF);
-    emitString(schema + "/" + table);
+    emitString(schema.empty() ? table : schema + "/" + table);
 
-    // Optional alias
-    std::string alias;
     if (matchKeyword(TokenType::KW_AS)) {
-        alias = parseIdentifier();
+        parseIdentifier();
     } else if (check(TokenType::IDENTIFIER) && !check(TokenType::KW_SET)) {
-        alias = parseIdentifier();
+        parseIdentifier();
     }
-    emitString(alias);
 
     // SET clause
     consumeKeyword(TokenType::KW_SET, "Expected SET");
@@ -888,6 +1139,7 @@ void Parser::parseUpdateStmt() {
             size_t i = 0;
             do {
                 emit(sblr::Opcode::ASSIGNMENT);
+                emit(sblr::Opcode::COLUMN_REF);
                 emitString(cols[i++]);
                 parseExpression();
                 count++;
@@ -897,6 +1149,7 @@ void Parser::parseUpdateStmt() {
             std::string col = parseIdentifier();
             consume(TokenType::EQUAL, "Expected =");
             emit(sblr::Opcode::ASSIGNMENT);
+            emit(sblr::Opcode::COLUMN_REF);
             emitString(col);
             parseExpression();
             count++;
@@ -908,14 +1161,15 @@ void Parser::parseUpdateStmt() {
 
     // FROM clause (PostgreSQL extension)
     if (matchKeyword(TokenType::KW_FROM)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseFromClause();
+        emit_enabled_ = prev_emit;
     }
 
     // WHERE clause
     if (matchKeyword(TokenType::KW_WHERE)) {
         parseWhereClause();
-    } else {
-        emit(sblr::Opcode::LITERAL_NULL);
     }
 
     // RETURNING clause
@@ -944,28 +1198,26 @@ void Parser::parseDeleteStmt() {
     resolveTableName(schema, table);
 
     emit(sblr::Opcode::TABLE_REF);
-    emitString(schema + "/" + table);
+    emitString(schema.empty() ? table : schema + "/" + table);
 
-    // Optional alias
-    std::string alias;
     if (matchKeyword(TokenType::KW_AS)) {
-        alias = parseIdentifier();
+        parseIdentifier();
     } else if (check(TokenType::IDENTIFIER) && !check(TokenType::KW_WHERE) &&
                !check(TokenType::KW_USING) && !check(TokenType::KW_RETURNING)) {
-        alias = parseIdentifier();
+        parseIdentifier();
     }
-    emitString(alias);
 
     // USING clause (PostgreSQL extension)
     if (matchKeyword(TokenType::KW_USING)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseFromClause();
+        emit_enabled_ = prev_emit;
     }
 
     // WHERE clause
     if (matchKeyword(TokenType::KW_WHERE)) {
         parseWhereClause();
-    } else {
-        emit(sblr::Opcode::LITERAL_NULL);
     }
 
     // RETURNING clause

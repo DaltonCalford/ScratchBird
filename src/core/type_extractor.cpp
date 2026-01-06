@@ -1,5 +1,6 @@
 #include "scratchbird/core/type_extractor.h"
 #include <ctime>
+#include <cstdlib>
 
 namespace scratchbird::core
 {
@@ -84,6 +85,122 @@ namespace scratchbird::core
     {
         int32_t month = extractMonth(days);
         return (month - 1) / 3 + 1;
+    }
+
+    bool TypeExtractor::isLeapYear(int32_t year)
+    {
+        return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    }
+
+    int64_t TypeExtractor::ymdToDays(int32_t year, int32_t month, int32_t day)
+    {
+        // Howard Hinnant's days_from_civil algorithm.
+        year -= (month <= 2);
+        const int64_t era = (year >= 0 ? year : year - 399) / 400;
+        const uint32_t yoe = static_cast<uint32_t>(year - era * 400);
+        const uint32_t doy =
+            (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + static_cast<uint32_t>(day) - 1;
+        const uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
+    }
+
+    int32_t TypeExtractor::extractWeek(int64_t days)
+    {
+        int32_t year = 0;
+        int32_t month = 0;
+        int32_t day = 0;
+        daysToYMD(days, year, month, day);
+        int32_t jan1_dow = extractDayOfWeek(ymdToDays(year, 1, 1)); // 0=Sunday
+        int64_t first_sunday = ymdToDays(year, 1, 1) - jan1_dow;
+        int64_t week = (days - first_sunday) / 7 + 1;
+        return static_cast<int32_t>(week);
+    }
+
+    int32_t TypeExtractor::extractISODayOfWeek(int64_t days)
+    {
+        int32_t dow = extractDayOfWeek(days); // 0=Sunday
+        return (dow == 0) ? 7 : dow;
+    }
+
+    int32_t TypeExtractor::isoWeeksInYear(int32_t year)
+    {
+        int64_t dec31_days = ymdToDays(year, 12, 31);
+        int32_t dow = extractDayOfWeek(dec31_days); // 0=Sunday
+        return (dow == 4 || (isLeapYear(year) && dow == 5)) ? 53 : 52;
+    }
+
+    int32_t TypeExtractor::extractISOWeek(int64_t days)
+    {
+        int32_t year = 0;
+        int32_t month = 0;
+        int32_t day = 0;
+        daysToYMD(days, year, month, day);
+        int32_t doy = extractDayOfYear(days);
+        int32_t dow = extractISODayOfWeek(days); // 1=Mon..7=Sun
+        int32_t week = (doy - dow + 10) / 7;
+        if (week < 1) {
+            return isoWeeksInYear(year - 1);
+        }
+        int32_t weeks_in_year = isoWeeksInYear(year);
+        if (week > weeks_in_year) {
+            return 1;
+        }
+        return week;
+    }
+
+    int32_t TypeExtractor::extractISOYear(int64_t days)
+    {
+        int32_t year = 0;
+        int32_t month = 0;
+        int32_t day = 0;
+        daysToYMD(days, year, month, day);
+        int32_t doy = extractDayOfYear(days);
+        int32_t dow = extractISODayOfWeek(days); // 1=Mon..7=Sun
+        int32_t week = (doy - dow + 10) / 7;
+        if (week < 1) {
+            return year - 1;
+        }
+        int32_t weeks_in_year = isoWeeksInYear(year);
+        if (week > weeks_in_year) {
+            return year + 1;
+        }
+        return year;
+    }
+
+    int32_t TypeExtractor::extractCentury(int64_t days)
+    {
+        int32_t year = 0;
+        int32_t month = 0;
+        int32_t day = 0;
+        daysToYMD(days, year, month, day);
+        if (year > 0) {
+            return (year + 99) / 100;
+        }
+        return -((std::abs(year) + 99) / 100);
+    }
+
+    int32_t TypeExtractor::extractDecade(int64_t days)
+    {
+        int32_t year = 0;
+        int32_t month = 0;
+        int32_t day = 0;
+        daysToYMD(days, year, month, day);
+        if (year >= 0) {
+            return year / 10;
+        }
+        return -((std::abs(year) + 9) / 10);
+    }
+
+    int32_t TypeExtractor::extractMillennium(int64_t days)
+    {
+        int32_t year = 0;
+        int32_t month = 0;
+        int32_t day = 0;
+        daysToYMD(days, year, month, day);
+        if (year > 0) {
+            return (year + 999) / 1000;
+        }
+        return -((std::abs(year) + 999) / 1000);
     }
 
     // Time extraction

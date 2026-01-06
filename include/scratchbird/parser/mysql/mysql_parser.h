@@ -77,7 +77,7 @@ private:
 struct MySQLDataType {
     enum class Kind {
         // Integer types
-        TINYINT, SMALLINT, MEDIUMINT, INT, BIGINT,
+        TINYINT, SMALLINT, MEDIUMINT, INT, BIGINT, INT128, UINT128,
         // Floating point
         FLOAT, DOUBLE, DECIMAL,
         // String types
@@ -115,9 +115,23 @@ struct ColumnDef {
     bool unique = false;
     bool auto_increment = false;
     bool has_default = false;
+    enum class DefaultLiteralType {
+        NONE,
+        NULL_VALUE,
+        STRING,
+        INT,
+        FLOAT
+    };
+    DefaultLiteralType default_literal_type = DefaultLiteralType::NONE;
+    int64_t default_int_value = 0;
+    double default_float_value = 0.0;
     std::string default_value;
     bool default_is_null = false;
     bool default_is_expr = false;
+    std::vector<uint8_t> default_expr_bytecode;
+    bool is_generated = false;
+    bool generated_stored = true;
+    std::vector<uint8_t> generated_expr_bytecode;
     std::string comment;
 };
 
@@ -312,6 +326,7 @@ private:
     std::vector<uint8_t> bytecode_;
     std::vector<ParseError> errors_;
     uint32_t next_placeholder_index_ = 1;
+    bool emit_enabled_ = true;
 
     // Token management
     void advance();
@@ -335,6 +350,7 @@ private:
     void emitI64(int64_t val);
     void emitF64(double val);
     void emitString(std::string_view str);
+    void emitTypeDefinition(const MySQLDataType& type);
 
     // Statement parsing
     void parseStatementInternal();
@@ -373,8 +389,20 @@ private:
     IndexDef parseIndexDef();
     ForeignKeyDef parseForeignKeyDef();
 
+    struct SelectItem {
+        enum class Kind {
+            Star,
+            Column,
+            Expression
+        };
+        Kind kind = Kind::Expression;
+        std::string column_name;
+        std::vector<uint8_t> expr_bytecode;
+        std::string alias;
+    };
+
     // DML clause parsing
-    void parseSelectList();
+    void parseSelectList(std::vector<SelectItem>& items);
     void parseFromClause();
     void parseWhereClause();
     void parseGroupByClause();
@@ -400,6 +428,9 @@ private:
     void parseFunctionCall(const std::string& name);
     void parseCaseExpr();
     void parseCastExpr();
+    void parseExtractExpr();
+    void parseAlterElementExpr();
+    sblr::ExtractField parseElementSelector(uint8_t& arg_count);
     void parseSubquery();
 
     // Table reference parsing
@@ -413,6 +444,7 @@ private:
     std::string parseIdentifier();
     std::string parseQualifiedName();
     void resolveTableName(std::string& schema, std::string& table);
+    std::vector<uint8_t> captureExpressionBytecode();
 };
 
 } // namespace scratchbird::parser::mysql

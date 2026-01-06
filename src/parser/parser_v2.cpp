@@ -3590,6 +3590,14 @@ Expression* Parser::parsePrimaryExpr() {
         return parseLiteral();
     }
 
+    if (matchContextual("EXTRACT")) {
+        return parseExtractExpr();
+    }
+
+    if (matchContextual("ALTER_ELEMENT")) {
+        return parseAlterElementExpr();
+    }
+
     // CAST expression
     if (match(TokenType::KW_CAST)) {
         return parseCastExpr();
@@ -3780,6 +3788,65 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
     expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
 
     return expr;
+}
+
+Expression* Parser::parseExtractExpr() {
+    // Spec: docs/specifications/EXTRACT_AND_ALTER_ELEMENT.md
+    auto* expr = arena_.create<ExtractExpr>();
+    expect(TokenType::LEFT_PAREN, "Expected '(' after EXTRACT");
+    expr->selector = parseElementSelector();
+    expect(TokenType::KW_FROM, "Expected FROM in EXTRACT expression");
+    expr->source = parseExpression();
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after EXTRACT expression");
+    return expr;
+}
+
+Expression* Parser::parseAlterElementExpr() {
+    // Spec: docs/specifications/EXTRACT_AND_ALTER_ELEMENT.md
+    auto* expr = arena_.create<AlterElementExpr>();
+    expect(TokenType::LEFT_PAREN, "Expected '(' after ALTER_ELEMENT");
+    expr->selector = parseElementSelector();
+    expect(TokenType::KW_IN, "Expected IN in ALTER_ELEMENT expression");
+    expr->source = parseExpression();
+    expectContextual("TO", "Expected TO in ALTER_ELEMENT expression");
+    expr->new_value = parseExpression();
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after ALTER_ELEMENT expression");
+    return expr;
+}
+
+ElementSelector Parser::parseElementSelector() {
+    ElementSelector selector;
+
+    if (check(TokenType::STRING_LITERAL)) {
+        selector.kind = ElementSelector::Kind::STRING_LITERAL;
+        selector.string_literal = current().value.string_id;
+        advance();
+        return selector;
+    }
+
+    if (check(TokenType::INTEGER_LITERAL) || check(TokenType::PLUS) ||
+        check(TokenType::MINUS) || check(TokenType::LEFT_PAREN)) {
+        selector.kind = ElementSelector::Kind::INTEGER_EXPR;
+        selector.expr = parseExpression();
+        return selector;
+    }
+
+    if (isIdentifier()) {
+        selector.kind = ElementSelector::Kind::IDENTIFIER;
+        selector.identifier = expectIdentifier("Expected element identifier");
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do {
+                    selector.args.push_back(parseExpression());
+                } while (match(TokenType::COMMA));
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after element selector arguments");
+        }
+        return selector;
+    }
+
+    error("Expected element selector");
+    return selector;
 }
 
 Expression* Parser::parseParenExpr() {

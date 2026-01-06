@@ -51,16 +51,24 @@ namespace scratchbird::core
         static TypedValue makeNull(DataType type = DataType::NULL_TYPE);
         static TypedValue makeInt32(int32_t value);
         static TypedValue makeInt64(int64_t value);
+        static TypedValue makeInt8(int8_t value);
+        static TypedValue makeInt16(int16_t value);
         static TypedValue makeUInt8(uint8_t value);
         static TypedValue makeUInt16(uint16_t value);
         static TypedValue makeUInt32(uint32_t value);
         static TypedValue makeUInt64(uint64_t value);
+        static TypedValue makeUInt128(const std::vector<uint8_t>& value);
         static TypedValue makeFloat32(float value);
         static TypedValue makeFloat64(double value);
         static TypedValue makeBool(bool value);
         static TypedValue makeVarchar(const std::string& value);
         static TypedValue makeText(const std::string& value);
         static TypedValue makeChar(const std::string& value);
+        static TypedValue makeBinary(const std::vector<uint8_t>& value);
+        static TypedValue makeVarbinary(const std::vector<uint8_t>& value);
+        static TypedValue makeBlob(const std::vector<uint8_t>& value);
+        static TypedValue makeBytea(const std::vector<uint8_t>& value);
+        static TypedValue makeXML(const std::string& value);
         static TypedValue makeDecimal(int128_t unscaled_value, uint8_t precision, uint8_t scale);
 
         // Factory methods for spatial types
@@ -165,8 +173,17 @@ namespace scratchbird::core
         // Getters for other types
         const std::vector<uint8_t>& getUUID() const;
         const std::vector<uint8_t>& getBinary() const;
+        int128_t getInt128() const;
+        uint128_t getUInt128() const;
         const Interval& getInterval() const;
         const std::vector<TypedValue>& getArray() const;
+        const Range<int32_t>& getInt4Range() const;
+        const Range<int64_t>& getInt8Range() const;
+        const Range<double>& getNumRange() const;
+        const std::vector<TypedValue>& getCompositeValues() const;
+        std::vector<std::string> getCompositeFieldNames() const;
+        const TypedValue& getVariantValue() const;
+        std::optional<DataType> getVariantTag() const;
         int128_t getDecimalUnscaled() const { return decimal_unscaled_; }
         uint8_t getDecimalPrecision() const { return decimal_precision_; }
         uint8_t getDecimalScale() const { return decimal_scale_; }
@@ -182,10 +199,13 @@ namespace scratchbird::core
                 case DataType::INT16: return static_cast<int64_t>(data_.int16_val);
                 case DataType::INT32: return static_cast<int64_t>(data_.int32_val);
                 case DataType::INT64: return data_.int64_val;
+                case DataType::MONEY: return data_.int64_val;
+                case DataType::INT128: return static_cast<int64_t>(getInt128());
                 case DataType::UINT8: return static_cast<int64_t>(data_.uint8_val);
                 case DataType::UINT16: return static_cast<int64_t>(data_.uint16_val);
                 case DataType::UINT32: return static_cast<int64_t>(data_.uint32_val);
                 case DataType::UINT64: return static_cast<int64_t>(data_.uint64_val);
+                case DataType::UINT128: return static_cast<int64_t>(getUInt128());
                 case DataType::BOOLEAN: return data_.bool_val ? 1 : 0;
                 case DataType::FLOAT32: return static_cast<int64_t>(data_.float32_val);
                 case DataType::FLOAT64: return static_cast<int64_t>(data_.float64_val);
@@ -199,9 +219,13 @@ namespace scratchbird::core
                 case DataType::INT16: return static_cast<int32_t>(data_.int16_val);
                 case DataType::INT32: return data_.int32_val;
                 case DataType::INT64: return static_cast<int32_t>(data_.int64_val);
+                case DataType::MONEY: return static_cast<int32_t>(data_.int64_val);
+                case DataType::INT128: return static_cast<int32_t>(getInt128());
                 case DataType::UINT8: return static_cast<int32_t>(data_.uint8_val);
                 case DataType::UINT16: return static_cast<int32_t>(data_.uint16_val);
                 case DataType::UINT32: return static_cast<int32_t>(data_.uint32_val);
+                case DataType::UINT64: return static_cast<int32_t>(data_.uint64_val);
+                case DataType::UINT128: return static_cast<int32_t>(getUInt128());
                 case DataType::FLOAT32: return static_cast<int32_t>(data_.float32_val);
                 case DataType::FLOAT64: return static_cast<int32_t>(data_.float64_val);
                 default: return getInt32();
@@ -214,10 +238,12 @@ namespace scratchbird::core
                 case DataType::INT16: return static_cast<double>(data_.int16_val);
                 case DataType::INT32: return static_cast<double>(data_.int32_val);
                 case DataType::INT64: return static_cast<double>(data_.int64_val);
+                case DataType::INT128: return static_cast<double>(getInt128());
                 case DataType::UINT8: return static_cast<double>(data_.uint8_val);
                 case DataType::UINT16: return static_cast<double>(data_.uint16_val);
                 case DataType::UINT32: return static_cast<double>(data_.uint32_val);
                 case DataType::UINT64: return static_cast<double>(data_.uint64_val);
+                case DataType::UINT128: return static_cast<double>(getUInt128());
                 case DataType::FLOAT32: return static_cast<double>(data_.float32_val);
                 case DataType::FLOAT64: return data_.float64_val;
                 case DataType::DECIMAL: return std::stod(toString());
@@ -239,9 +265,8 @@ namespace scratchbird::core
         std::string toText() const { return getText(); }
         bool getBoolean() const { return getBool(); }  // Alternative alias
         bool equals(const TypedValue& other) const { return *this == other; }
-        static TypedValue makeInt8(int8_t value) { return makeInt32(value); }
-        static TypedValue makeInt16(int16_t value) { return makeInt32(value); }
         static TypedValue makeJSON(const std::string& value);
+        static TypedValue makeJSONB(const std::vector<uint8_t>& value);
 
         // Encryption support
         bool isEncrypted() const { return is_encrypted_; }

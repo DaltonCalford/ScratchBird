@@ -45,6 +45,7 @@ This section defines the abstract language and its features, independent of the 
     * [DDL\_USER\_DEFINED\_RESOURCES.md](DDL_USER_DEFINED_RESOURCES.md)  
     * [DDL\_FOREIGN\_DATA.md](DDL_FOREIGN_DATA.md)  
 * [**03\_TYPES\_AND\_DOMAINS.md**](03_TYPES_AND_DOMAINS.md): A cornerstone document detailing the complete type system, from primitive types to the advanced, rule-based DOMAIN object and the polymorphic VARIANT type.  
+* [**EXTRACT\_AND\_ALTER\_ELEMENT.md**](EXTRACT_AND_ALTER_ELEMENT.md): Component access and update semantics for EXTRACT and ALTER_ELEMENT across all supported types.  
 * [**04\_DML\_STATEMENTS\_OVERVIEW.md**](04_DML_STATEMENTS_OVERVIEW.md): An index and overview of all Data Manipulation Language (DML) commands used to query and modify data.  
   * **Detailed DML Command Documents:**  
     * [DML\_SELECT.md](DML_SELECT.md)  

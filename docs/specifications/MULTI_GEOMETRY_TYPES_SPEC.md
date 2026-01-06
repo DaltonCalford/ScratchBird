@@ -9,12 +9,13 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Type Definitions](#type-definitions)
-3. [WKB Binary Format](#wkb-binary-format)
-4. [C++ Structure Specifications](#c-structure-specifications)
-5. [TypedValue Integration](#typedvalue-integration)
-6. [Validation Rules](#validation-rules)
-7. [PostgreSQL Compatibility](#postgresql-compatibility)
+2. [ScratchBird Canonical Encoding (Alpha)](#scratchbird-canonical-encoding-alpha)
+3. [Type Definitions](#type-definitions)
+4. [WKB Binary Format](#wkb-binary-format)
+5. [C++ Structure Specifications](#c-structure-specifications)
+6. [TypedValue Integration](#typedvalue-integration)
+7. [Validation Rules](#validation-rules)
+8. [PostgreSQL Compatibility](#postgresql-compatibility)
 
 ---
 
@@ -41,6 +42,17 @@ Geometry
 - **SQL/MM Part 3** - Extended spatial specification
 - **PostGIS** - PostgreSQL spatial extension (de facto standard)
 - **ISO 19125** - Geographic information Simple feature access
+
+---
+
+## ScratchBird Canonical Encoding (Alpha)
+
+ScratchBird stores spatial values using the canonical `TypedValue::serializePlainValue` encoding, not WKB. This provides a consistent on-disk format across all spatial types.
+
+**Key points:**
+- Multi-geometry values are stored as structured payloads (SRID + counts + point lists), not OGC WKB bytes.
+- `GEOMETRYCOLLECTION` stores nested geometry payloads with type tags and length prefixes.
+- WKB is a target for interchange and client compatibility, but it is not the storage format.
 
 ---
 
@@ -197,6 +209,8 @@ GEOMETRYCOLLECTION EMPTY
 ---
 
 ## WKB Binary Format
+
+WKB is the external interchange format for spatial values. ScratchBird does not store WKB on disk; it stores canonical TypedValue payloads (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`).
 
 All multi-geometry types use the OGC Well-Known Binary (WKB) format.
 
@@ -552,56 +566,20 @@ struct GeometryCollection {
 
 ## TypedValue Integration
 
-### Variant Type Addition
+TypedValue integration is implemented in core.
 
-Add to `TypedValue::VariantType` in types.h (line ~419):
+**Factory methods (implemented):**
+- `makePoint`, `makeLineString`, `makePolygon`
+- `makeMultiPoint`, `makeMultiLineString`, `makeMultiPolygon`
+- `makeGeometryCollection`
 
-```cpp
-using VariantType =
-    std::variant<std::monostate,
-                 // ... existing types ...
-                 Point,
-                 LineString,
-                 Polygon,
-                 MultiPoint,          // ADD
-                 MultiLineString,     // ADD
-                 MultiPolygon,        // ADD
-                 GeometryCollection,  // ADD
-                 // ... rest of types ...
-                 >;
-```
+**Storage model:**
+- Spatial values are stored in `TypedValue::spatial_data_`.
+- `GEOMETRYCOLLECTION` stores nested `TypedValue` payloads with type tags and length prefixes.
 
-### Factory Methods
-
-Add to TypedValue class:
-
-```cpp
-// Multi-geometry factory methods
-static TypedValue makeMultiPoint(const MultiPoint& v);
-static TypedValue makeMultiPoint(std::vector<Point> points);
-static TypedValue makeMultiPoint(std::vector<Point> points, int32_t srid);
-
-static TypedValue makeMultiLineString(const MultiLineString& v);
-static TypedValue makeMultiLineString(std::vector<LineString> lines);
-static TypedValue makeMultiLineString(std::vector<LineString> lines, int32_t srid);
-
-static TypedValue makeMultiPolygon(const MultiPolygon& v);
-static TypedValue makeMultiPolygon(std::vector<Polygon> polygons);
-static TypedValue makeMultiPolygon(std::vector<Polygon> polygons, int32_t srid);
-
-static TypedValue makeGeometryCollection(const GeometryCollection& v);
-static TypedValue makeGeometryCollection(std::vector<std::shared_ptr<TypedValue>> geoms);
-static TypedValue makeGeometryCollection(std::vector<std::shared_ptr<TypedValue>> geoms, int32_t srid);
-```
-
-### Getter Methods
-
-```cpp
-MultiPoint getMultiPoint() const;
-MultiLineString getMultiLineString() const;
-MultiPolygon getMultiPolygon() const;
-const GeometryCollection& getGeometryCollection() const;
-```
+**Serialization:**
+- Uses `TypedValue::serializePlainValue` with canonical layouts (SRID + counts + point lists).
+- WKT formatting is supported for `toString`; WKB conversion remains an interchange feature.
 
 ---
 
@@ -720,7 +698,7 @@ For each type, implement tests for:
 6. ✓ SRID preservation
 7. ✓ Comparison operators
 8. ✓ Invalid data detection
-9. ✓ WKB format compliance
+9. ✓ WKB format compliance (interchange layer)
 10. ✓ PostGIS interoperability
 
 ---
@@ -737,4 +715,4 @@ For each type, implement tests for:
 
 **Document Version:** 1.0
 **Last Updated:** November 18, 2025
-**Status:** Ready for Implementation
+**Status:** Partially Implemented (canonical encoding in place; WKB interoperability pending)

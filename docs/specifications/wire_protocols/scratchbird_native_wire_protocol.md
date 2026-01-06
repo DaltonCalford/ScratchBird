@@ -266,6 +266,30 @@ struct MessageHeader {
 
 ---
 
+### 4.4 Payload Conventions
+
+- **Endianness**: all multi-byte integer fields are little-endian.
+- **Variable-length fields**: unless explicitly documented as null-terminated, variable-length values are encoded as `uint32 length` followed by `length` bytes (no implicit null).
+- **Header length**: `MessageHeader.length` is the payload size **only** (excludes header). It includes any compression header and any appended checksum.
+- **Empty payloads**: messages with no payload set `length = 0`.
+
+### 4.5 Fragmentation, Sequencing, and Checksums
+
+**Fragmentation**
+- A logical message may be split across multiple frames.
+- All fragments carry the same `msg_type` and `sequence`.
+- Intermediate fragments set `MSG_FLAG_CONTINUED`; the final fragment sets `MSG_FLAG_FINAL`.
+- `length` is the payload length **per fragment**.
+
+**Sequencing**
+- Client increments `sequence` per request message (per attachment).
+- Server echoes the same `sequence` in all response messages tied to that request.
+- Asynchronous messages (NOTIFICATION, NOTICE, PARAMETER_STATUS) use `sequence = 0`.
+
+**Checksum**
+- If `MSG_FLAG_CHECKSUM` is set, append a 4-byte CRC32C (Castagnoli, polynomial 0x1EDC6F41, init 0xFFFFFFFF, final XOR 0xFFFFFFFF).
+- CRC is computed over the payload bytes **as transmitted**, excluding the checksum itself.
+
 ## 5. Authentication Protocol
 
 ### 5.1 Authentication Flow
@@ -306,7 +330,7 @@ struct StartupMessage {
 
     // Protocol version requested
     uint8_t  protocol_major;   // 1
-    uint8_t  protocol_minor;   // 0
+    uint8_t  protocol_minor;   // 1
     uint16_t reserved;
 
     // Feature flags requested
@@ -332,6 +356,24 @@ struct StartupMessage {
 #define FEATURE_SAVEPOINTS      (1ULL << 9)   // Savepoint support
 #define FEATURE_2PC             (1ULL << 10)  // Two-phase commit
 #define FEATURE_CHECKSUMS       (1ULL << 11)  // Message checksums
+```
+
+### 5.2.1 NEGOTIATE_VERSION Message
+
+Server response when the requested protocol/features differ:
+
+```c
+struct NegotiateVersion {
+    MessageHeader header;  // msg_type = 0x56
+
+    uint8_t  accepted_major;
+    uint8_t  accepted_minor;
+    uint16_t reserved;
+
+    uint64_t accepted_features;  // Bitset of features enabled by server
+    uint32_t max_message_size;   // Server max payload size in bytes
+    uint32_t reserved2;
+};
 ```
 
 ### 5.3 AUTH_REQUEST Message
@@ -400,7 +442,36 @@ struct AuthResponse {
 };
 ```
 
-### 5.5 SCRAM-SHA-256 Implementation
+### 5.5 AUTH_CONTINUE Message
+
+```c
+struct AuthContinue {
+    MessageHeader header;  // msg_type = 0x42
+
+    uint8_t  auth_method;  // Same codes as AUTH_REQUEST
+    uint8_t  auth_stage;   // 0=challenge,1=success,2=error (method-specific)
+    uint16_t reserved;
+
+    uint32_t data_length;
+    uint8_t  data[];       // Method-specific payload
+};
+```
+
+### 5.6 AUTH_OK Message
+
+```c
+struct AuthOk {
+    MessageHeader header;  // msg_type = 0x41
+
+    uint8_t  session_id[16];
+    uint32_t server_info_length;
+    uint8_t  server_info[];   // UTF-8 JSON (server_version, cluster_id, etc.)
+};
+```
+
+`AUTH_OK` is the first message to carry the non-zero `attachment_id` and `txn_id` assigned by the server in the header.
+
+### 5.7 SCRAM-SHA-256 Implementation
 
 The SCRAM-SHA-256 implementation follows RFC 7677 with ScratchBird extensions:
 
@@ -533,6 +604,35 @@ Database A                                Database B
     │  {encrypted with session_key}           │
 ```
 
+### 6.3.1 CLUSTER_AUTH Message
+
+```c
+struct ClusterAuthMessage {
+    MessageHeader header;  // msg_type = 0x1D
+
+    uint8_t  source_db_id[16];
+    uint8_t  target_db_id[16];
+
+    uint32_t context_length;
+    uint8_t  context[];        // UTF-8 JSON (query_context, roles, etc.)
+
+    uint32_t signature_length;
+    uint8_t  signature[];      // Signature over context using source_db key
+};
+```
+
+### 6.3.2 CLUSTER_AUTH_OK Message
+
+```c
+struct ClusterAuthOkMessage {
+    MessageHeader header;  // msg_type = 0x5E
+
+    uint8_t  session_key_id[16];
+    uint32_t permissions_length;
+    uint8_t  permissions[];   // UTF-8 JSON list of permissions
+};
+```
+
 ### 6.4 Session Key Derivation
 
 Session keys provide forward secrecy for inter-database communication:
@@ -617,6 +717,17 @@ struct QueryMessage {
 #define QUERY_FLAG_NO_CACHE         0x20  // Don't use query cache
 ```
 
+### 7.1.1 CANCEL Message
+
+```c
+struct CancelMessage {
+    MessageHeader header;  // msg_type = 0x0B
+
+    uint32_t cancel_type;   // 0=current, 1=by_sequence
+    uint32_t target_sequence; // Only if cancel_type==1
+};
+```
+
 ### 7.2 Simple Query Response
 
 ```
@@ -681,6 +792,54 @@ struct DataRow {
 };
 ```
 
+### 7.5 COPY Protocol Messages
+
+```c
+struct CopyInResponse {
+    MessageHeader header;  // msg_type = 0x51
+
+    uint8_t  format;       // 0=text, 1=binary
+    uint8_t  reserved;
+    uint16_t num_columns;
+    uint16_t column_formats[];  // num_columns entries (0=text,1=binary)
+};
+
+struct CopyOutResponse {
+    MessageHeader header;  // msg_type = 0x52
+
+    uint8_t  format;
+    uint8_t  reserved;
+    uint16_t num_columns;
+    uint16_t column_formats[];
+};
+
+struct CopyBothResponse {
+    MessageHeader header;  // msg_type = 0x53
+
+    uint8_t  format;
+    uint8_t  reserved;
+    uint16_t num_columns;
+    uint16_t column_formats[];
+};
+
+struct CopyData {
+    MessageHeader header;  // msg_type = 0x0D
+    uint8_t data[];        // Raw COPY stream (length = header.length)
+};
+
+struct CopyDone {
+    MessageHeader header;  // msg_type = 0x0E
+    // No payload
+};
+
+struct CopyFail {
+    MessageHeader header;  // msg_type = 0x0F
+
+    uint32_t error_length;
+    char     error[];
+};
+```
+
 ---
 
 ## 8. Result Protocol
@@ -722,7 +881,44 @@ struct CommandComplete {
 #define CMD_MERGE        19
 ```
 
-### 8.2 QUERY_PLAN Message (Optional)
+### 8.2 READY Message
+
+```c
+struct ReadyMessage {
+    MessageHeader header;  // msg_type = 0x43
+
+    uint8_t  status;       // 0=idle,1=active,2=error
+    uint8_t  reserved[3];
+    uint64_t txn_id;
+    uint64_t visibility_epoch;
+};
+```
+
+### 8.3 PARAMETER_STATUS Message
+
+```c
+struct ParameterStatus {
+    MessageHeader header;  // msg_type = 0x4F
+
+    uint32_t name_length;
+    char     name[];
+    uint32_t value_length;
+    char     value[];
+};
+```
+
+### 8.4 Header-Only Result Messages
+
+These messages carry no payload (`length = 0`):
+
+- `EMPTY_QUERY` (0x47)
+- `NO_DATA` (0x4E)
+- `PORTAL_SUSPENDED` (0x4D)
+- `PARSE_COMPLETE` (0x4A)
+- `BIND_COMPLETE` (0x4B)
+- `CLOSE_COMPLETE` (0x4C)
+
+### 8.5 QUERY_PLAN Message (Optional)
 
 When `QUERY_FLAG_INCLUDE_PLAN` is set:
 
@@ -743,7 +939,7 @@ struct QueryPlan {
 };
 ```
 
-### 8.3 SBLR_COMPILED Message (Optional)
+### 8.6 SBLR_COMPILED Message (Optional)
 
 When `QUERY_FLAG_RETURN_SBLR` is set:
 
@@ -761,6 +957,20 @@ struct SblrCompiled {
 ```
 
 **Version requirement**: Clients must send `sblr_version = 2`. Earlier versions are rejected.
+
+### 8.7 FUNCTION_RESULT Message
+
+```c
+struct FunctionResult {
+    MessageHeader header;  // msg_type = 0x55
+
+    uint32_t type_oid;
+    uint8_t  format;        // 0=text, 1=binary
+    uint8_t  reserved[3];
+    int32_t  length;        // -1 for NULL
+    uint8_t  data[];        // Result value
+};
+```
 
 ---
 
@@ -853,7 +1063,74 @@ struct BindMessage {
 };
 ```
 
-### 9.4 SBLR_EXECUTE Message
+### 9.4 DESCRIBE Message
+
+```c
+struct DescribeMessage {
+    MessageHeader header;  // msg_type = 0x06
+
+    uint8_t  describe_type;    // 'S' = statement, 'P' = portal
+    uint8_t  reserved[3];
+
+    uint32_t name_length;
+    char     name[];
+};
+```
+
+### 9.5 EXECUTE Message
+
+```c
+struct ExecuteMessage {
+    MessageHeader header;  // msg_type = 0x07
+
+    uint32_t portal_name_length;
+    char     portal_name[];  // Empty for unnamed
+
+    uint32_t max_rows;        // 0 = unlimited
+};
+```
+
+### 9.6 CLOSE Message
+
+```c
+struct CloseMessage {
+    MessageHeader header;  // msg_type = 0x08
+
+    uint8_t  close_type;      // 'S' = statement, 'P' = portal
+    uint8_t  reserved[3];
+
+    uint32_t name_length;
+    char     name[];
+};
+```
+
+### 9.7 SYNC / FLUSH Messages
+
+```c
+struct SyncMessage {
+    MessageHeader header;  // msg_type = 0x09
+    // No payload
+};
+
+struct FlushMessage {
+    MessageHeader header;  // msg_type = 0x0A
+    // No payload
+};
+```
+
+### 9.8 PARAMETER_DESCRIPTION Message
+
+```c
+struct ParameterDescription {
+    MessageHeader header;  // msg_type = 0x50
+
+    uint16_t num_params;
+    uint16_t reserved;
+    uint32_t param_type_oids[];  // num_params entries
+};
+```
+
+### 9.9 SBLR_EXECUTE Message
 
 Execute pre-compiled SBLR bytecode (skip parsing):
 
@@ -1150,6 +1427,19 @@ struct TxnStatusMessage {
 };
 ```
 
+### 11.3 Session Options
+
+```c
+struct SetOptionMessage {
+    MessageHeader header;  // msg_type = 0x1C
+
+    uint32_t name_length;
+    char     name[];
+    uint32_t value_length;
+    char     value[];
+};
+```
+
 ---
 
 ## 12. Streaming Protocol
@@ -1209,6 +1499,35 @@ Client                                    Server
    │  {total_rows: 1000000}                  │
 ```
 
+### 12.3 STREAM_READY / STREAM_DATA / STREAM_END Messages
+
+```c
+struct StreamReady {
+    MessageHeader header;  // msg_type = 0x59
+
+    uint64_t stream_id;
+    uint64_t total_rows;     // 0 if unknown
+    uint64_t estimated_bytes;
+};
+
+struct StreamData {
+    MessageHeader header;  // msg_type = 0x5A
+
+    uint64_t stream_id;
+    uint32_t chunk_rows;
+    uint32_t chunk_bytes;
+    uint8_t  data[];        // Packed DATA_ROW frames or binary COPY rows
+};
+
+struct StreamEnd {
+    MessageHeader header;  // msg_type = 0x5B
+
+    uint64_t stream_id;
+    uint64_t total_rows;
+    uint64_t total_bytes;
+};
+```
+
 ---
 
 ## 13. Notification Protocol
@@ -1234,6 +1553,17 @@ struct SubscribeMessage {
 #define SUB_TYPE_QUERY      2   // Query result change (materialized view refresh)
 ```
 
+### 13.1.1 UNSUBSCRIBE Message
+
+```c
+struct UnsubscribeMessage {
+    MessageHeader header;  // msg_type = 0x12
+
+    uint32_t channel_length;
+    char     channel[];
+};
+```
+
 ### 13.2 NOTIFICATION Message
 
 ```c
@@ -1251,6 +1581,38 @@ struct NotificationMessage {
     // For table change notifications:
     uint8_t  change_type;     // 'I'=insert, 'U'=update, 'D'=delete
     uint64_t row_id;          // Affected row (if applicable)
+};
+```
+
+### 13.3 Keepalive Messages
+
+```c
+struct PingMessage {
+    MessageHeader header;  // msg_type = 0x1B
+    uint64_t client_time_us;
+};
+
+struct PongMessage {
+    MessageHeader header;  // msg_type = 0x5D
+    uint64_t server_time_us;
+};
+
+struct HeartbeatMessage {
+    MessageHeader header;  // msg_type = 0x80
+    uint64_t monotonic_us;
+};
+```
+
+### 13.4 EXTENSION Message
+
+```c
+struct ExtensionMessage {
+    MessageHeader header;  // msg_type = 0x81
+
+    uint32_t extension_id;
+    uint16_t extension_version;
+    uint16_t reserved;
+    uint8_t  data[];        // Extension-specific payload
 };
 ```
 
@@ -1289,6 +1651,19 @@ struct ErrorMessage {
     // 'R' = Routine (source function)
 
     char fields[];
+};
+```
+
+### 14.1.1 NOTICE Message
+
+```c
+struct NoticeMessage {
+    MessageHeader header;  // msg_type = 0x49
+
+    uint8_t  severity;     // 0=INFO,1=NOTICE,2=WARNING
+    uint8_t  reserved[3];
+    uint32_t message_length;
+    char     message[];    // UTF-8 text
 };
 ```
 
@@ -1872,6 +2247,78 @@ send_message(ssl, &sync);
 ```
 
 ---
+
+## 20. Hex-Level Examples
+
+### 20.1 Handshake (STARTUP + AUTH)
+
+```
+// STARTUP (client -> server), features=COMPRESSION|STREAMING, user=alice, database=testdb
+50 57 42 53 01 01 01 00 28 00 00 00 01 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+01 01 00 00 03 00 00 00 00 00 00 00
+75 73 65 72 00 61 6c 69 63 65 00 64 61 74 61 62 61 73 65 00 74 65 73 74 64 62 00 00
+
+// AUTH_REQUEST (server -> client), AUTH_PASSWORD, salt=01..10
+50 57 42 53 01 01 40 00 14 00 00 00 01 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+01 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+
+// AUTH_RESPONSE (client -> server), password="secret"
+50 57 42 53 01 01 02 00 06 00 00 00 01 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+73 65 63 72 65 74
+
+// AUTH_OK (server -> client), attachment_id=01..10, txn_id=1, server_info={"server_version":"1.1"}
+50 57 42 53 01 01 41 00 2c 00 00 00 01 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+01 00 00 00 00 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+18 00 00 00 7b 22 73 65 72 76 65 72 5f 76 65 72 73 69 6f 6e 22 3a 22 31 2e 31 22 7d
+
+// READY (server -> client), status=idle, txn_id=1, visibility_epoch=1
+50 57 42 53 01 01 43 00 14 00 00 00 01 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+01 00 00 00 00 00 00 00
+00 00 00 00 01 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00
+```
+
+### 20.2 Simple Query (SELECT 1)
+
+```
+// QUERY (client -> server), "SELECT 1"
+50 57 42 53 01 01 03 00 15 00 00 00 02 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+01 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 53 45 4c 45 43 54 20 31 00
+
+// ROW_DESCRIPTION (server -> client), one int4 column named "one"
+50 57 42 53 01 01 44 00 1f 00 00 00 02 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+01 00 00 00 00 00 00 00
+01 00 00 00 03 00 00 00 6f 6e 65 00 00 00 00 00 00 17 00 00 00 04 00 ff ff ff ff 01 00 00 00
+
+// DATA_ROW (server -> client), value=1
+50 57 42 53 01 01 45 00 0d 00 00 00 02 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+01 00 00 00 00 00 00 00
+01 00 01 00 00 04 00 00 00 01 00 00 00
+
+// COMMAND_COMPLETE (server -> client), SELECT 1
+50 57 42 53 01 01 46 00 1d 00 00 00 02 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+01 00 00 00 00 00 00 00
+01 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 53 45 4c 45 43 54 20 31 00
+
+// READY (server -> client)
+50 57 42 53 01 01 43 00 14 00 00 00 02 00 00 00
+01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+01 00 00 00 00 00 00 00
+00 00 00 00 01 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00
+```
 
 ## Appendix A: Protocol Version History
 

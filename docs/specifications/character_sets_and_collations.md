@@ -194,6 +194,7 @@ UTF-8 strings are stored as variable-length byte sequences:
 - Maximum byte length = N × max_bytes_per_char
 - For UTF-8: `VARCHAR(100)` can store up to 400 bytes (100 chars × 4 bytes)
 - Actual byte length stored in tuple header
+- Canonical encoding uses a uint32 byte-length prefix; CHAR(n) values are padded to fixed length, VARCHAR/TEXT keep actual length
 
 ### String Length Calculation
 

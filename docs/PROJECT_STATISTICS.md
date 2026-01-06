@@ -1,9 +1,9 @@
 # ScratchBird Project Statistics
 
-**Generated:** 2025-12-28
+**Generated:** 2026-01-06
 **Project Start:** July 10, 2025
-**Latest Commit:** December 27, 2025
-**Project Age:** ~5.5 months
+**Latest Commit:** January 6, 2026
+**Project Age:** ~5.9 months
 
 ---
 
@@ -13,7 +13,7 @@
 |--------|-------|
 | **Total Lines of Code** | **519,842** |
 | **Total Files** | **854** |
-| **Total Tests** | **3,023 test cases** (1,348 CTest tests) |
+| **Total Tests** | **25,000+ test cases** (2,007 CTest + 22,000+ compat) |
 | **Total Commits** | **1,511** |
 | **Contributors** | **7** |
 | **Documentation Files** | **1,202** |
@@ -87,9 +87,11 @@
 | **Benchmark Tests** | - | 92 | ~5,000 |
 | **Total** | **294** | **3,023** | **108,326** |
 
-### CTest Suite
+### CTest Suite (2026-01-06)
 
-- **Total CTest Tests:** 1,348
+- **Total CTest Tests:** 2,007
+- **Passed:** 2,007 (100%)
+- **Skipped:** 42 (network/socket gating, protocol/session pre-reqs)
 - **Test Executables:** Multiple test runners
 - **Test Categories:** 11 (unit, integration, benchmark, stress, manual, sql, standalone, tsan, helgrind, deprecated)
 
@@ -105,12 +107,12 @@
 | ThreadSanitizer Tests | - | ⚠️ Conditional |
 | Helgrind Tests | - | ⚠️ Conditional |
 
-### Recent Test Results (2025-12-27)
+### Recent Test Results (2026-01-06)
 
-- **Passed:** 1,329 (98.7%)
-- **Failed:** 1 (build artifact issue)
-- **Timed Out:** 4 (deadlock investigation needed)
-- **Not Built:** 12 (intentionally disabled)
+- **Passed:** 2,007 (100%)
+- **Failed:** 0
+- **Timed Out:** 0
+- **Skipped:** 42 (network/socket gating, protocol/session pre-reqs)
 
 ---
 

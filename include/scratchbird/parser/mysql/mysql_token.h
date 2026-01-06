@@ -163,9 +163,11 @@ enum class TokenType : uint16_t {
     KW_FALSE,
     KW_EXISTS,
     KW_CAST,
+    KW_EXTRACT,
     KW_CONVERT,
     KW_AS,
     KW_ESCAPE,
+    KW_ALTER_ELEMENT,
 
     // DML keywords
     KW_INTO,
@@ -239,6 +241,8 @@ enum class TokenType : uint16_t {
     KW_INT,
     KW_INTEGER,
     KW_BIGINT,
+    KW_INT128,
+    KW_UINT128,
     KW_FLOAT,
     KW_DOUBLE,
     KW_REAL,

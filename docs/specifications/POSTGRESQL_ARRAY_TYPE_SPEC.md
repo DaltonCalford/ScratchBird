@@ -9,13 +9,14 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [PostgreSQL Array Fundamentals](#postgresql-array-fundamentals)
-3. [Binary Storage Format](#binary-storage-format)
-4. [C++ Structure Specifications](#c-structure-specifications)
-5. [TypedValue Integration](#typedvalue-integration)
-6. [Serialization Implementation](#serialization-implementation)
-7. [SQL Syntax and Operations](#sql-syntax-and-operations)
-8. [Validation and Constraints](#validation-and-constraints)
+2. [ScratchBird Canonical Encoding (Alpha)](#scratchbird-canonical-encoding-alpha)
+3. [PostgreSQL Array Fundamentals](#postgresql-array-fundamentals)
+4. [Binary Storage Format](#binary-storage-format)
+5. [C++ Structure Specifications](#c-structure-specifications)
+6. [TypedValue Integration](#typedvalue-integration)
+7. [Serialization Implementation](#serialization-implementation)
+8. [SQL Syntax and Operations](#sql-syntax-and-operations)
+9. [Validation and Constraints](#validation-and-constraints)
 
 ---
 
@@ -38,13 +39,30 @@ PostgreSQL arrays are multidimensional collections of elements of a single type.
 - ✅ `Array::encode()` and `Array::decode()` methods
 - ✅ Element types: INT32, INT64, FLOAT32, FLOAT64, STRING, BOOL
 - ✅ Multi-dimensional indexing and slicing
+- ✅ `TypedValue` ARRAY encoding via canonical plain-value serialization
 
 **Missing:**
-- ❌ TypedValue integration (not in std::variant)
-- ❌ TypeSerializer integration
-- ❌ Factory methods (makeArray, getArray)
-- ❌ SQL syntax support for array literals
+- ❌ PostgreSQL ArrayType binary layout on disk (dimensions/lower bounds/null bitmap)
+- ❌ SQL syntax support for array literals and constructors
 - ❌ Subscript operators in SQL
+- ❌ Element-type enforcement and dimension/bounds validation
+
+---
+
+## ScratchBird Canonical Encoding (Alpha)
+
+ScratchBird currently uses a simplified, typed element list for ARRAY storage and does **not** persist the PostgreSQL ArrayType binary layout.
+
+**Canonical encoding (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`):**
+- uint32 element_count
+- per element: uint8 is_null, uint16 type_code, uint32 payload_len, payload_bytes
+
+**Notes:**
+- Dimensions and lower bounds are not stored.
+- Arrays are effectively 1-D in storage; multi-dimensional semantics are a future enhancement.
+- Element type is not enforced at storage time; each element carries its own type code.
+
+This document remains the **target** for PostgreSQL compatibility, but on-disk compatibility is not yet implemented.
 
 ---
 

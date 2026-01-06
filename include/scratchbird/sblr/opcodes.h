@@ -974,6 +974,13 @@ namespace scratchbird
             EXT_FUNC_OBJ_DESCRIPTION = 0x0301,  // OBJ_DESCRIPTION(oid, catalog_name)
             EXT_FUNC_COL_DESCRIPTION = 0x0302,  // COL_DESCRIPTION(rel_oid, attnum)
             EXT_FUNC_SHOBJ_DESCRIPTION = 0x0303,  // SHOBJ_DESCRIPTION(oid, catalog_name)
+            EXT_FUNC_LTRIM = 0x0310,  // LTRIM(str)
+            EXT_FUNC_RTRIM = 0x0311,  // RTRIM(str)
+            EXT_FUNC_CONCAT = 0x0312,  // CONCAT(arg1, ...)
+            EXT_FUNC_CONCAT_WS = 0x0313,  // CONCAT_WS(sep, arg1, ...)
+            EXT_FUNC_CURRENT_TIME = 0x0314,  // CURRENT_TIME()
+            EXT_EXPR_FUNCTION_CALL = 0x0315,  // Expression-level stored/UDR function call
+            EXT_ALTER_ELEMENT = 0x0316,  // ALTER_ELEMENT(element IN value TO new_value)
             EXT_CREATE_DB_TRIGGER = 0x6D,  // CREATE TRIGGER (database trigger)
             EXT_DROP_DB_TRIGGER = 0x6E,  // DROP TRIGGER (database trigger)
             EXT_FIRE_DB_TRIGGER = 0x6F,  // Internal: Fire database trigger
@@ -1039,6 +1046,9 @@ namespace scratchbird
             EXT_TS_RANK = 0xAA,  // TS_RANK(tsvector, tsquery) - relevance ranking
             EXT_TYPE_TSVECTOR = 0xAB,  // TSVECTOR data type marker
             EXT_TYPE_TSQUERY = 0xAC,  // TSQUERY data type marker
+            // Extended scalar type markers (0x0400+ range)
+            EXT_TYPE_INT128 = 0x0400,  // INT128 data type marker
+            EXT_TYPE_UINT128 = 0x0401,  // UINT128 data type marker
             EXT_TO_TSVECTOR = 0xAD,  // TO_TSVECTOR(config, text) - text to tsvector
             EXT_TO_TSQUERY = 0xAE,  // TO_TSQUERY(config, query) - query to tsquery
             EXT_PLAINTO_TSQUERY = 0xAF,  // PLAINTO_TSQUERY(config, text) - plain text to query
@@ -1286,6 +1296,12 @@ namespace scratchbird
             EXT_VALIDATE_DOMAIN_VALUE = 0x020B,  // Custom validation
             EXT_APPLY_QUALITY_PIPELINE = 0x020C,  // Quality pipeline
             EXT_CHECK_GLOBAL_UNIQUENESS = 0x020D,  // Global uniqueness
+
+            // BLR compatibility (Firebird mapping)
+            EXT_EXPR_NOT = 0x0210,  // NOT (unary predicate)
+            EXT_EXPR_IS_NULL = 0x0211,  // IS NULL predicate
+            EXT_SAVEPOINT_BEGIN = 0x0212,  // Savepoint scope begin (blr_start_savepoint)
+            EXT_SAVEPOINT_END = 0x0213,  // Savepoint scope end (blr_end_savepoint)
         };
 
         enum class AlterSchemaAction : uint8_t
@@ -1427,11 +1443,22 @@ namespace scratchbird
             DOW = 0x08,             // Day of week (0=Sunday, 6=Saturday)
             DOY = 0x09,             // Day of year (1-366)
             QUARTER = 0x0A,         // Quarter (1-4)
-            WEEK = 0x0B,            // ISO week number (1-53)
+            WEEK = 0x0B,            // Week of year (Sunday-based)
             EPOCH = 0x0C,           // Seconds since Unix epoch (int64/double)
-            TIMEZONE = 0x0D,        // Timezone name (varchar) for TIMESTAMPTZ
+            TIMEZONE = 0x0D,        // Timezone offset seconds (alias of TZ_OFFSET)
             TIMEZONE_HOUR = 0x0E,   // Timezone offset hours
             TIMEZONE_MINUTE = 0x0F, // Timezone offset minutes
+            TZ_OFFSET = 0x10,       // Timezone offset seconds
+            ISO_WEEK = 0x11,        // ISO week number (1-53)
+            ISO_YEAR = 0x12,        // ISO week-based year
+            ISO_DOW = 0x13,         // ISO day of week (1=Mon..7=Sun)
+            CENTURY = 0x14,         // Century
+            DECADE = 0x15,          // Decade
+            MILLENNIUM = 0x16,      // Millennium
+            HOUR12 = 0x17,          // 12-hour clock hour (1-12)
+            TOTAL_MONTHS = 0x18,    // Interval total months
+            TOTAL_DAYS = 0x19,      // Interval total days
+            TOTAL_SECONDS = 0x1A,   // Interval total seconds
 
             // UUID fields (0x20-0x2F)
             VERSION = 0x20,         // UUID version (1-7)
@@ -1439,15 +1466,28 @@ namespace scratchbird
             TIMESTAMP = 0x22,       // UUID timestamp (v1/v7, microseconds since epoch)
             NODE = 0x23,            // UUID node (v1, MAC address as varchar)
             CLOCK_SEQ = 0x24,       // UUID clock sequence (v1, int32)
+            TIME_LOW = 0x25,        // UUID time_low (v1)
+            TIME_MID = 0x26,        // UUID time_mid (v1)
+            TIME_HIGH = 0x27,       // UUID time_high_and_version (v1)
+            RAND_A = 0x28,          // UUID v7 rand_a
+            RAND_B = 0x29,          // UUID v7 rand_b
 
             // Network fields (0x30-0x3F) - INET, CIDR, MACADDR
             FAMILY = 0x30,          // IP address family (4=IPv4, 6=IPv6)
             NETMASK = 0x31,         // Network mask bits (0-32 for IPv4, 0-128 for IPv6)
-            ADDRESS = 0x32,         // IP address without netmask (varchar)
+            ADDRESS = 0x32,         // IP address without netmask (text)
             NETWORK = 0x33,         // Network address (host bits zeroed)
             BROADCAST = 0x34,       // Broadcast address (host bits set to 1)
             HOSTMASK = 0x35,        // Host mask (inverse of netmask)
-            VENDOR = 0x36,          // MAC address vendor OUI (first 3 bytes as hex)
+            VENDOR = 0x36,          // MAC address vendor OUI (alias of OUI)
+            NETMASK_ADDR = 0x37,    // Netmask as address
+            IS_IPV4 = 0x38,         // Is IPv4
+            IS_IPV6 = 0x39,         // Is IPv6
+            OUI = 0x3A,             // MAC OUI (first 3 bytes)
+            NIC = 0x3B,             // MAC NIC (remaining bytes)
+            IS_MULTICAST = 0x3C,    // MAC multicast flag
+            IS_LOCAL = 0x3D,        // MAC local/administered flag
+            TRUNC = 0x3E,           // MAC truncation (manufacturer ID)
 
             // Spatial fields (0x40-0x4F) - POINT, LINESTRING, POLYGON, etc.
             X = 0x40,               // POINT x coordinate (longitude)
@@ -1460,6 +1500,12 @@ namespace scratchbird
             EXTERIOR_RING = 0x47,   // POLYGON exterior ring (linestring)
             NUM_INTERIOR_RINGS = 0x48, // POLYGON interior ring count
             NUM_GEOMETRIES = 0x49,  // Multi-geometry geometry count
+            BBOX = 0x4A,            // Bounding box polygon
+            POINTS = 0x4B,          // POINTS array (linestring)
+            RINGS = 0x4C,           // RINGS array (polygon)
+            AREA = 0x4D,            // Polygon area
+            GEOMETRIES = 0x4E,      // GEOMETRIES array (multi/collection)
+            LENGTH = 0x4F,          // Length (linestring or binary)
 
             // Array fields (0x50-0x5F)
             CARDINALITY = 0x50,     // Total number of elements
@@ -1467,6 +1513,7 @@ namespace scratchbird
             DIMS = 0x52,            // Array of dimension sizes
             LOWER = 0x53,           // Lower bound of first dimension (always 1)
             UPPER = 0x54,           // Upper bound of first dimension
+            ELEMENT = 0x55,         // Array/vector element access
 
             // Range fields (0x60-0x6F) - INT4RANGE, INT8RANGE, DATERANGE, TSRANGE, etc.
             LOWER_VALUE = 0x60,     // Range lower bound value
@@ -1476,6 +1523,52 @@ namespace scratchbird
             LOWER_INF = 0x64,       // Lower bound infinite/unbounded (bool)
             UPPER_INF = 0x65,       // Upper bound infinite/unbounded (bool)
             ISEMPTY = 0x66,         // Range is empty (bool)
+
+            // Generic elements (0x70+)
+            VALUE = 0x70,           // Raw value
+            SIGN = 0x71,            // Sign (-1/0/1)
+            ABS = 0x72,             // Absolute value
+            BYTES = 0x73,           // Byte width / binary bytes
+            BITS = 0x74,            // Bit width
+            HI64 = 0x75,            // High 64 bits (int128/uint128)
+            LO64 = 0x76,            // Low 64 bits (int128/uint128)
+            EXPONENT = 0x77,        // Float exponent
+            MANTISSA = 0x78,        // Float mantissa
+            IS_NAN = 0x79,          // Float NaN
+            IS_INF = 0x7A,          // Float infinity
+            PRECISION = 0x7B,       // Decimal precision
+            SCALE = 0x7C,           // Decimal scale
+            UNSCALED = 0x7D,        // Decimal unscaled value
+            MAJOR = 0x7E,           // Money major units
+            MINOR = 0x7F,           // Money minor units
+            CHAR_LENGTH = 0x80,     // Character length
+            OCTET_LENGTH = 0x81,    // Byte length
+            CODEPOINT_LENGTH = 0x82,// Unicode codepoint length
+            TRIMMED_LENGTH = 0x83,  // Trimmed length (CHAR)
+            TYPE = 0x84,            // JSON type
+            KEYS = 0x85,            // JSON object keys
+            PATH = 0x86,            // JSON/XML path
+            ATTRIBUTES = 0x87,      // XML attributes
+            BYTE = 0x88,            // Binary byte access
+            BIT = 0x89,             // Binary bit access
+            SLICE = 0x8A,           // Binary slice
+            DIGEST = 0x8B,          // Binary digest
+            DIMENSION = 0x8C,       // Vector dimension
+            NORM_L2 = 0x8D,         // Vector L2 norm
+            DOT = 0x8E,             // Vector dot product
+            FIELD = 0x8F,           // Composite field access
+            FIELD_NAMES = 0x90,     // Composite field names
+            DATATYPE = 0x91,        // Variant datatype
+            LEXEMES = 0x92,         // TSVECTOR lexemes
+            POSITIONS = 0x93,       // TSVECTOR positions
+            WEIGHTS = 0x94,         // TSVECTOR weights
+            SIZE = 0x95,            // TSVECTOR/TSQUERY size
+            HAS_LEXEME = 0x96,      // TSVECTOR has lexeme
+            ROOT_OP = 0x97,         // TSQUERY root operator
+            TERMS = 0x98,           // TSQUERY terms
+            OPERATORS = 0x99,       // TSQUERY operators
+            PHRASE_DISTANCE = 0x9A,// TSQUERY phrase distance
+            NODES = 0x9B,           // TSQUERY node count
         };
 
         // SBLR Version

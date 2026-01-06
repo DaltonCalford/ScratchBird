@@ -122,8 +122,12 @@ void collectDependenciesFromExpression(ResolvedExpression* expr,
     } else if (auto* unary = dynamic_cast<ResolvedUnaryExpr*>(expr)) {
         collectDependenciesFromExpression(unary->operand, deps, seen);
     } else if (auto* fn = dynamic_cast<ResolvedFunctionCall*>(expr)) {
-        if (!isZeroUuid(fn->function.function_uuid) && !fn->function.is_builtin) {
-            addDependency(deps, seen, fn->function.function_uuid, ObjectType::FUNCTION);
+        if (!isZeroUuid(fn->function.function_uuid)) {
+            ObjectType obj_type = ObjectType::FUNCTION;
+            if (fn->function.kind == FunctionKind::UDR) {
+                obj_type = ObjectType::UDR;
+            }
+            addDependency(deps, seen, fn->function.function_uuid, obj_type);
         }
         for (auto* arg : fn->arguments) {
             collectDependenciesFromExpression(arg, deps, seen);
@@ -761,39 +765,53 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
 void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::CREATE_INDEX);
 
-    // Write flags
-    uint8_t flags = 0;
-    if (stmt->unique) flags |= 0x01;
-    if (stmt->if_not_exists) flags |= 0x02;
-    if (stmt->concurrent) flags |= 0x04;
-    current_result_->writeByte(flags);
-
-    // Write index name
     writeStringId(stmt->index_name);
 
-    // Write table UUID
-    current_result_->writeUUID(stmt->table_uuid);
-
-    // Write index method
-    writeStringId(stmt->index_method);
-
-    // Write column count and details
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->column_indexes.size()));
-    for (size_t i = 0; i < stmt->column_indexes.size(); ++i) {
-        current_result_->writeInt32(stmt->column_indexes[i]);
-        current_result_->writeByte(stmt->column_desc[i] ? 1 : 0);
-    }
-
-    // Write WHERE clause for partial index
-    if (stmt->where_clause) {
-        current_result_->writeByte(1);  // Has WHERE
-        generateExpression(stmt->where_clause);
+    if (stmt->table_path != StringPool::INVALID_ID) {
+        writeStringId(stmt->table_path);
     } else {
-        current_result_->writeByte(0);  // No WHERE
+        current_result_->writeString("");
     }
 
-    // Write tablespace ID
-    current_result_->writeInt16(stmt->tablespace_id);
+    current_result_->writeByte(stmt->unique ? 1 : 0);
+
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->column_names.size()));
+    for (const auto& col_name : stmt->column_names) {
+        writeStringId(col_name);
+    }
+
+    if (stmt->tablespace_name != StringPool::INVALID_ID) {
+        writeStringId(stmt->tablespace_name);
+    } else {
+        current_result_->writeString("");
+    }
+
+    uint8_t index_type = 0xFF;
+    std::string_view method = getString(stmt->index_method);
+    if (!method.empty()) {
+        std::string lower(method);
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (lower == "btree") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BTREE);
+        } else if (lower == "hash") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::HASH);
+        } else if (lower == "gin") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::GIN);
+        } else if (lower == "gist") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::GIST);
+        } else if (lower == "brin") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BRIN);
+        } else if (lower == "spgist") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::SPGIST);
+        } else if (lower == "bitmap") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BITMAP);
+        }
+    }
+
+    current_result_->writeByte(index_type);
+    current_result_->writeByte(0);
+    current_result_->writeByte(0);
 }
 
 void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
@@ -1842,6 +1860,10 @@ void BytecodeGeneratorV2::generateExpression(ResolvedExpression* expr) {
         generateIsNull(is_null);
     } else if (auto* arr = dynamic_cast<ResolvedArrayExpr*>(expr)) {
         generateArray(arr);
+    } else if (auto* extract = dynamic_cast<ResolvedExtractExpr*>(expr)) {
+        generateExtract(extract);
+    } else if (auto* alter = dynamic_cast<ResolvedAlterElementExpr*>(expr)) {
+        generateAlterElement(alter);
     } else {
         current_result_->addError("Unknown expression type for bytecode generation");
     }
@@ -1902,6 +1924,12 @@ void BytecodeGeneratorV2::generateBinaryExpr(ResolvedBinaryExpr* expr) {
     // Generate operands first (postfix notation)
     generateExpression(expr->left);
     generateExpression(expr->right);
+
+    if (expr->op == BinaryOp::CONCAT) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_CONCAT);
+        current_result_->writeByte(2);
+        return;
+    }
 
     if (expr->op == BinaryOp::REGEX_MATCH) {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_REGEX_MATCH);
@@ -1980,6 +2008,7 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         current_result_->writeByte(static_cast<uint8_t>(arg_count));
     };
 
+    // Spec: docs/specifications/INTERNAL_FUNCTIONS.md
     std::string func_name(getString(expr->function.function_name));
     std::transform(func_name.begin(), func_name.end(), func_name.begin(),
                    [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -2020,6 +2049,19 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         return;
     }
 
+    if (!expr->function.is_builtin) {
+        if (expr->function.kind == FunctionKind::PROCEDURE) {
+            current_result_->addError("Procedures cannot be used in expressions");
+            return;
+        }
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_EXPR_FUNCTION_CALL);
+        current_result_->writeByte(static_cast<uint8_t>(expr->function.kind));
+        current_result_->writeUUID(expr->function.function_uuid);
+        write_arg_count();
+        return;
+    }
+
     // Built-in functions
     // String functions
     if (func_name == "LENGTH" || func_name == "LEN") {
@@ -2033,6 +2075,12 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         write_arg_count();
     } else if (func_name == "TRIM") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_TRIM);
+        write_arg_count();
+    } else if (func_name == "LTRIM") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_LTRIM);
+        write_arg_count();
+    } else if (func_name == "RTRIM") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_RTRIM);
         write_arg_count();
     } else if (func_name == "SUBSTRING" || func_name == "SUBSTR") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_SUBSTRING);
@@ -2048,6 +2096,12 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         write_arg_count();
     } else if (func_name == "COLLATE") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_COLLATE);
+        write_arg_count();
+    } else if (func_name == "CONCAT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_CONCAT);
+        write_arg_count();
+    } else if (func_name == "CONCAT_WS") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_CONCAT_WS);
         write_arg_count();
     } else if (func_name == "FORMAT_TYPE") {
         current_result_->writeExtendedOpcode(
@@ -2073,6 +2127,10 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     } else if (func_name == "CURRENT_DATE") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_CURRENT_DATE);
         write_arg_count();
+    } else if (func_name == "CURRENT_TIME") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_CURRENT_TIME);
+        write_arg_count();
     } else if (func_name == "DATE_ADD") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_DATE_ADD);
         write_arg_count();
@@ -2081,6 +2139,29 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         write_arg_count();
     } else if (func_name == "DATE_DIFF" || func_name == "DATEDIFF") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_DATE_DIFF);
+        write_arg_count();
+    }
+    // Spatial functions
+    else if (func_name == "ST_POINT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ST_POINT);
+        write_arg_count();
+    } else if (func_name == "ST_MAKELINE") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ST_MAKELINE);
+        write_arg_count();
+    } else if (func_name == "ST_MAKEPOLYGON") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ST_MAKEPOLYGON);
+        write_arg_count();
+    } else if (func_name == "ST_ASTEXT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ST_ASTEXT);
+        write_arg_count();
+    } else if (func_name == "ST_ASBINARY") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ST_ASBINARY);
+        write_arg_count();
+    } else if (func_name == "ST_GEOMETRYTYPE") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ST_GEOMETRYTYPE);
+        write_arg_count();
+    } else if (func_name == "ST_ISVALID") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ST_ISVALID);
         write_arg_count();
     }
     // Math functions
@@ -2254,8 +2335,7 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     }
     // Generic function call
     else {
-        writeStringId(expr->function.function_name);
-        current_result_->writeInt32(static_cast<uint32_t>(expr->arguments.size()));
+        current_result_->addError("Unsupported built-in function: " + func_name);
     }
 }
 
@@ -2457,6 +2537,49 @@ void BytecodeGeneratorV2::generateArray(ResolvedArrayExpr* expr) {
     }
 }
 
+void BytecodeGeneratorV2::generateExtract(ResolvedExtractExpr* expr) {
+    if (!expr) {
+        current_result_->addError("EXTRACT expression is null");
+        return;
+    }
+
+    // Emit selector arguments first (postfix), then source.
+    for (auto* arg : expr->selector.args) {
+        generateExpression(arg);
+    }
+    generateExpression(expr->source);
+
+    if (expr->selector.args.size() > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("EXTRACT argument count exceeds byte limit");
+    }
+
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_EXTRACT);
+    current_result_->writeByte(expr->selector.field_id);
+    current_result_->writeByte(static_cast<uint8_t>(expr->selector.args.size()));
+}
+
+void BytecodeGeneratorV2::generateAlterElement(ResolvedAlterElementExpr* expr) {
+    if (!expr) {
+        current_result_->addError("ALTER_ELEMENT expression is null");
+        return;
+    }
+
+    // Emit selector arguments first, then source, then new value.
+    for (auto* arg : expr->selector.args) {
+        generateExpression(arg);
+    }
+    generateExpression(expr->source);
+    generateExpression(expr->new_value);
+
+    if (expr->selector.args.size() > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("ALTER_ELEMENT argument count exceeds byte limit");
+    }
+
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ALTER_ELEMENT);
+    current_result_->writeByte(expr->selector.field_id);
+    current_result_->writeByte(static_cast<uint8_t>(expr->selector.args.size()));
+}
+
 // =============================================================================
 // Clause Generation
 // =============================================================================
@@ -2591,6 +2714,16 @@ void BytecodeGeneratorV2::generateLimitOffset(ResolvedExpression* limit, Resolve
 // =============================================================================
 
 void BytecodeGeneratorV2::generateDataType(const ResolvedType& type) {
+    // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md for SBLR type encoding.
+    if (type.data_type == DataType::INT128 || type.data_type == DataType::UINT128) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeExtendedOpcode(
+            type.data_type == DataType::INT128
+                ? sblr::ExtendedOpcode::EXT_TYPE_INT128
+                : sblr::ExtendedOpcode::EXT_TYPE_UINT128);
+        return;
+    }
+
     current_result_->writeOpcode(dataTypeToOpcode(type.data_type));
 
     // Write type modifiers based on type

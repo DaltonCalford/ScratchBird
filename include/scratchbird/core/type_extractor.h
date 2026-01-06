@@ -22,6 +22,14 @@ namespace scratchbird::core
         static int32_t extractDayOfWeek(int64_t days);  // 0=Sunday, 6=Saturday
         static int32_t extractDayOfYear(int64_t days);  // 1-366
         static int32_t extractQuarter(int64_t days);    // 1-4
+        static int32_t extractWeek(int64_t days);       // Sunday-based week number
+        static int32_t extractISOWeek(int64_t days);    // ISO week number
+        static int32_t extractISOYear(int64_t days);    // ISO week-based year
+        static int32_t extractISODayOfWeek(int64_t days); // 1=Mon..7=Sun
+        static int32_t extractCentury(int64_t days);
+        static int32_t extractDecade(int64_t days);
+        static int32_t extractMillennium(int64_t days);
+        static int64_t ymdToDays(int32_t year, int32_t month, int32_t day);
 
         // Time extraction (from microseconds)
         static int32_t extractHour(int64_t microseconds);
@@ -47,6 +55,8 @@ namespace scratchbird::core
     private:
         // Helper: Convert days since epoch to year/month/day
         static void daysToYMD(int64_t days, int32_t& year, int32_t& month, int32_t& day);
+        static bool isLeapYear(int32_t year);
+        static int32_t isoWeeksInYear(int32_t year);
     };
 
 } // namespace scratchbird::core

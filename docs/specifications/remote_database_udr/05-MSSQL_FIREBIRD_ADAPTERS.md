@@ -538,7 +538,7 @@ The Firebird adapter implements the `IProtocolAdapter` interface for connecting 
 
 ### 2.2 Firebird Wire Protocol
 
-Firebird uses XDR encoding for wire communication:
+Firebird uses XDR encoding for wire communication; packets are XDR-encoded `PACKET` unions with `p_operation` first (32-bit enum), followed by op-specific fields. There is no fixed length field at the protocol layer.
 
 ```
 ┌────────────────────────────────────────┐
@@ -556,34 +556,58 @@ namespace fb_operations {
     constexpr int32_t op_connect        = 1;
     constexpr int32_t op_accept         = 3;
     constexpr int32_t op_reject         = 4;
+    constexpr int32_t op_accept_data    = 94;
+    constexpr int32_t op_cond_accept    = 98;
     constexpr int32_t op_attach         = 19;
     constexpr int32_t op_create         = 20;
     constexpr int32_t op_detach         = 21;
-    constexpr int32_t op_compile        = 22;  // Prepare
-    constexpr int32_t op_start          = 23;  // Start transaction
+    constexpr int32_t op_compile        = 22;
+    constexpr int32_t op_start          = 23;
     constexpr int32_t op_start_and_send = 24;
     constexpr int32_t op_send           = 25;
     constexpr int32_t op_receive        = 26;
-    constexpr int32_t op_execute        = 28;
-    constexpr int32_t op_commit         = 29;
-    constexpr int32_t op_rollback       = 30;
+    constexpr int32_t op_release        = 28;
+    constexpr int32_t op_transaction    = 29;
+    constexpr int32_t op_commit         = 30;
+    constexpr int32_t op_rollback       = 31;
     constexpr int32_t op_commit_retaining = 50;
-    constexpr int32_t op_prepare        = 51;
     constexpr int32_t op_info_database  = 40;
     constexpr int32_t op_info_transaction = 42;
-    constexpr int32_t op_info_sql       = 62;
-    constexpr int32_t op_free_statement = 62;
-    constexpr int32_t op_allocate_statement = 65;
-    constexpr int32_t op_execute2       = 76;
-    constexpr int32_t op_exec_immediate2 = 78;
+    constexpr int32_t op_info_sql       = 70;
+    constexpr int32_t op_allocate_statement = 62;
+    constexpr int32_t op_prepare_statement = 68;
+    constexpr int32_t op_execute        = 63;
+    constexpr int32_t op_exec_immediate = 64;
     constexpr int32_t op_fetch          = 65;
     constexpr int32_t op_fetch_response = 66;
-    constexpr int32_t op_crypt          = 100;
-    constexpr int32_t op_crypt_key_callback = 101;
+    constexpr int32_t op_free_statement = 67;
+    constexpr int32_t op_exec_immediate2 = 75;
+    constexpr int32_t op_execute2       = 76;
+    constexpr int32_t op_sql_response   = 78;
+    constexpr int32_t op_crypt          = 96;
+    constexpr int32_t op_crypt_key_callback = 97;
+    constexpr int32_t op_cont_auth      = 92;
+
+    // Protocol 17+ batch/replication opcodes (for completeness)
+    constexpr int32_t op_batch_create   = 99;
+    constexpr int32_t op_batch_msg      = 100;
+    constexpr int32_t op_batch_exec     = 101;
+    constexpr int32_t op_batch_rls      = 102;
+    constexpr int32_t op_batch_cs       = 103;
+    constexpr int32_t op_batch_regblob  = 104;
+    constexpr int32_t op_batch_blob_stream = 105;
+    constexpr int32_t op_batch_set_bpb  = 106;
+    constexpr int32_t op_repl_data      = 107;
+    constexpr int32_t op_repl_req       = 108;
+    constexpr int32_t op_batch_cancel   = 109;
+    constexpr int32_t op_batch_sync     = 110;
+    constexpr int32_t op_info_batch     = 111;
+    constexpr int32_t op_fetch_scroll   = 112;
+    constexpr int32_t op_info_cursor    = 113;
+    constexpr int32_t op_inline_blob    = 114;
 
     // Response codes
     constexpr int32_t op_response       = 9;
-    constexpr int32_t op_sql_response   = 78;
 }
 ```
 
@@ -719,31 +743,33 @@ Result<void> FirebirdAdapter::connect(
 Result<void> FirebirdAdapter::doConnect(const ServerDefinition& server) {
     std::vector<uint8_t> params;
 
-    // Operation: op_connect
-    writeXdrInt32(params, 0);  // Connect operation
+    // P_CNCT header
+    writeXdrInt32(params, 0);  // p_cnct_operation (unused)
+    writeXdrInt32(params, 3);  // CONNECT_VERSION3
+    writeXdrInt32(params, 1);  // ARCH_GENERIC
 
-    // Protocol version
-    writeXdrInt32(params, 1);  // Version count
-
-    // Protocol: PROTOCOL_VERSION13
-    writeXdrInt32(params, 13);  // Version
-    writeXdrInt32(params, 1);   // Architecture
-    writeXdrInt32(params, 5);   // Min type
-    writeXdrInt32(params, 5);   // Max type
-    writeXdrInt32(params, 2);   // Preference weight
-
-    // User identification (client info)
-    std::string user_id;
-    user_id.push_back(1);  // CNCT_user
-    user_id += "SYSDBA";
-    user_id.push_back(0);
-    writeXdrString(params, user_id);
-
-    // Database path
+    // p_cnct_file (database path)
     writeXdrString(params, server.database);
 
-    // Protocols
-    writeXdrInt32(params, 1);  // Protocol count
+    // p_cnct_count
+    writeXdrInt32(params, 1);  // One protocol entry
+
+    // p_cnct_user_id TLV block
+    std::vector<uint8_t> user_id;
+    user_id.push_back(1);  // CNCT_user
+    user_id.push_back(mapping.remote_user.size());
+    user_id.insert(user_id.end(), mapping.remote_user.begin(), mapping.remote_user.end());
+    user_id.push_back(2);  // CNCT_passwd
+    user_id.push_back(mapping.remote_password.size());
+    user_id.insert(user_id.end(), mapping.remote_password.begin(), mapping.remote_password.end());
+    writeXdrOpaque(params, user_id);
+
+    // p_cnct_versions[0]
+    writeXdrInt32(params, 13); // PROTOCOL_VERSION13
+    writeXdrInt32(params, 1);  // ARCH_GENERIC
+    writeXdrInt32(params, 0);  // min_type (unused)
+    writeXdrInt32(params, 5);  // max_type (ptype_lazy_send)
+    writeXdrInt32(params, 1);  // weight
 
     auto result = sendOperation(fb_operations::op_connect, params);
     if (!result) return result;
@@ -756,7 +782,9 @@ Result<void> FirebirdAdapter::doConnect(const ServerDefinition& server) {
                      "Connection rejected by server");
     }
 
-    if (response->first == fb_operations::op_accept) {
+    if (response->first == fb_operations::op_accept ||
+        response->first == fb_operations::op_accept_data ||
+        response->first == fb_operations::op_cond_accept) {
         size_t offset = 0;
         protocol_version_ = readXdrInt32(response->second, offset);
         accept_type_ = readXdrInt32(response->second, offset);
@@ -773,7 +801,8 @@ Result<void> FirebirdAdapter::doAttach(
 {
     std::vector<uint8_t> params;
 
-    // Database path
+    // P_ATCH: database handle (0 for new), file name, DPB
+    writeXdrInt32(params, 0);
     writeXdrString(params, server.database);
 
     // DPB (Database Parameter Block)
@@ -791,7 +820,7 @@ Result<void> FirebirdAdapter::doAttach(
     dpb.insert(dpb.end(), mapping.remote_password.begin(), mapping.remote_password.end());
 
     // Character set
-    dpb.push_back(48);  // isc_dpb_lc_ctype
+    dpb.push_back(68);  // isc_dpb_charset
     std::string charset = "UTF8";
     dpb.push_back(charset.size());
     dpb.insert(dpb.end(), charset.begin(), charset.end());
@@ -821,6 +850,10 @@ Result<void> FirebirdAdapter::doAttach(
     return {};
 }
 ```
+
+Authentication notes:
+- Servers may use `op_accept_data` / `op_cond_accept` with plugin data; follow up with `op_cont_auth` exchanges until authentication completes.
+- If wire encryption is negotiated (`op_crypt` / `op_crypt_key_callback`), wrap all subsequent traffic per the negotiated plugin.
 
 ---
 
@@ -1078,6 +1111,12 @@ private:
     // Cluster PKI authentication for federated queries
 };
 ```
+
+Protocol notes:
+- Handshake uses `STARTUP` → `AUTH_REQUEST`/`AUTH_RESPONSE` → `AUTH_OK` → `READY`.
+- After `AUTH_OK`, every message must carry non-zero `attachment_id` and `txn_id` in the header.
+- If `MSG_FLAG_CHECKSUM` is set, validate CRC32C as specified in `scratchbird_native_wire_protocol.md`.
+- Support `NEGOTIATE_VERSION` and `PARAMETER_STATUS` during startup before `READY`.
 
 ### 3.2 Advantages of Native Adapter
 

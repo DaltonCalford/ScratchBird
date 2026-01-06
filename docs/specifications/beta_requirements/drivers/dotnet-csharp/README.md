@@ -7,6 +7,15 @@
 
 ---
 
+
+## ScratchBird V2 Scope (Native Protocol Only)
+
+- Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.
+- Default port: 3092.
+- TLS 1.3 required.
+- Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
+
+
 ## Overview
 
 C# and .NET are dominant in Windows enterprise environments and growing in cross-platform scenarios with .NET 6+. An ADO.NET compliant data provider is essential for ScratchBird adoption in Microsoft-centric organizations.
@@ -21,13 +30,33 @@ C# and .NET are dominant in Windows enterprise environments and growing in cross
 - Strong naming and assembly signing
 - Source Link support for debugging
 
+## Usage examples
+
+```csharp
+using var conn = new ScratchbirdConnection(
+    "Host=localhost;Port=3092;Database=db;Username=user;Password=pass");
+conn.Open();
+
+using var cmd = conn.CreateCommand();
+cmd.CommandText = "select 1 as one";
+using var reader = cmd.ExecuteReader();
+
+using var prep = conn.CreateCommand();
+prep.CommandText = "select * from widgets where id = $1";
+var p = prep.CreateParameter();
+p.ParameterName = "$1";
+p.Value = 42;
+prep.Parameters.Add(p);
+using var rows = prep.ExecuteReader();
+```
+
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] [SPECIFICATION.md](SPECIFICATION.md) - Detailed technical specification
   - ADO.NET provider model compliance
   - DbConnection, DbCommand, DbDataReader implementation
   - DbProviderFactory implementation
@@ -37,7 +66,7 @@ C# and .NET are dominant in Windows enterprise environments and growing in cross
   - Parameter binding and SQL injection prevention
   - Async/await patterns
 
-- [ ] **IMPLEMENTATION_PLAN.md** - Development roadmap
+- [x] [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
   - Milestone 1: Core ADO.NET provider (Connection, Command, DataReader)
   - Milestone 2: Entity Framework Core provider
   - Milestone 3: Bulk copy and performance optimization
@@ -46,7 +75,7 @@ C# and .NET are dominant in Windows enterprise environments and growing in cross
   - Resource requirements
   - Timeline estimates
 
-- [ ] **TESTING_CRITERIA.md** - Test requirements
+- [x] [TESTING_CRITERIA.md](TESTING_CRITERIA.md) - Test requirements
   - ADO.NET compliance tests
   - Entity Framework Core test suite compatibility
   - Performance benchmarks vs Npgsql (.NET PostgreSQL driver)
@@ -55,7 +84,7 @@ C# and .NET are dominant in Windows enterprise environments and growing in cross
   - Thread safety and concurrent access tests
   - Memory leak tests
 
-- [ ] **COMPATIBILITY_MATRIX.md** - Version support
+- [x] [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md) - Version support
   - .NET versions (.NET Framework 4.6.2+, .NET Core 3.1, .NET 5, 6, 7, 8)
   - .NET Standard 2.0, 2.1
   - Entity Framework versions (EF6, EF Core 6, 7, 8)
@@ -63,7 +92,7 @@ C# and .NET are dominant in Windows enterprise environments and growing in cross
   - Visual Studio versions (2019, 2022)
   - Rider IDE compatibility
 
-- [ ] **MIGRATION_GUIDE.md** - Migration from other providers
+- [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other providers
   - From Npgsql (PostgreSQL .NET provider)
   - From MySql.Data / MySqlConnector
   - From System.Data.SqlClient (SQL Server)
@@ -71,7 +100,7 @@ C# and .NET are dominant in Windows enterprise environments and growing in cross
   - Connection string migration
   - Code changes required
 
-- [ ] **API_REFERENCE.md** - Complete API documentation (XML docs)
+- [x] [API_REFERENCE.md](API_REFERENCE.md) - Complete API documentation (XML docs)
   - ScratchBirdConnection
   - ScratchBirdCommand
   - ScratchBirdDataReader
@@ -79,6 +108,10 @@ C# and .NET are dominant in Windows enterprise environments and growing in cross
   - ScratchBirdTransaction
   - ScratchBirdConnectionStringBuilder
   - Exception classes
+
+### Shared References
+
+- [../DRIVER_BASELINE_SPEC.md](../DRIVER_BASELINE_SPEC.md) - Shared V2 driver requirements.
 
 ### Examples Directory
 
@@ -129,7 +162,7 @@ public class ApplicationDbContext : DbContext
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         optionsBuilder.UseScratchBird(
-            "Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypass"
+            "Host=localhost;Port=3092;Database=mydb;Username=myuser;Password=mypass"
         );
     }
 
@@ -222,7 +255,7 @@ app.Run();
 // appsettings.json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypass"
+    "DefaultConnection": "Host=localhost;Port=3092;Database=mydb;Username=myuser;Password=mypass"
   },
   "Logging": {
     "LogLevel": {
@@ -246,7 +279,7 @@ public class BasicExample
 {
     public static async Task Main()
     {
-        string connectionString = "Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypass";
+        string connectionString = "Host=localhost;Port=3092;Database=mydb;Username=myuser;Password=mypass";
 
         using (var connection = new ScratchBirdConnection(connectionString))
         {
@@ -452,7 +485,7 @@ namespace ScratchBird.Data
     public sealed class ScratchBirdConnectionStringBuilder : DbConnectionStringBuilder
     {
         public string Host { get; set; }
-        public int Port { get; set; } = 5432;
+        public int Port { get; set; } = 3092;
         public string Database { get; set; }
         public string Username { get; set; }
         public string Password { get; set; }
@@ -474,7 +507,7 @@ namespace ScratchBird.Data
 ### Example Connection Strings
 
 ```
-Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypass
+Host=localhost;Port=3092;Database=mydb;Username=myuser;Password=mypass
 Server=localhost;Database=mydb;User Id=myuser;Password=mypass;SSL Mode=Require
 Host=localhost;Database=mydb;Integrated Security=true
 ```

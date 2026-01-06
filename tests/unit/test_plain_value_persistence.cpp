@@ -75,6 +75,12 @@ TEST(PlainValuePersistenceTest, RoundTrip_Primitives)
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     };
     expectPlainRoundTrip(TypedValue::makeInt128(int128_bytes));
+
+    std::vector<uint8_t> uint128_bytes = {
+        0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88,
+        0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00
+    };
+    expectPlainRoundTrip(TypedValue::makeUInt128(uint128_bytes));
 }
 
 TEST(PlainValuePersistenceTest, RoundTrip_TemporalUuidBinary)
@@ -174,21 +180,43 @@ TEST(TypeCastTest, StringTemporalUuidBinary)
     auto date_text = convertToType(date_val, TypeInfo(DataType::VARCHAR));
     EXPECT_EQ(date_text.getVarchar(), "2024-03-15");
 
+    auto date_tz_val = convertToType(TypedValue::makeVarchar("2024-03-15+02:30"),
+                                     TypeInfo(DataType::DATE));
+    auto date_tz_text = convertToType(date_tz_val, TypeInfo(DataType::VARCHAR));
+    EXPECT_EQ(date_tz_text.getVarchar(), "2024-03-15+02:30");
+
     auto time_val = convertToType(TypedValue::makeVarchar("09:30:45"),
                                   TypeInfo(DataType::TIME));
     auto time_text = convertToType(time_val, TypeInfo(DataType::VARCHAR));
     EXPECT_EQ(time_text.getVarchar(), "09:30:45");
+
+    auto time_tz_val = convertToType(TypedValue::makeVarchar("09:30:45.123456-04:00"),
+                                     TypeInfo(DataType::TIME));
+    auto time_tz_text = convertToType(time_tz_val, TypeInfo(DataType::VARCHAR));
+    EXPECT_EQ(time_tz_text.getVarchar(), "09:30:45.123456-04:00");
 
     auto ts_val = convertToType(TypedValue::makeVarchar("2024-03-15 10:30:00"),
                                 TypeInfo(DataType::TIMESTAMP));
     auto ts_text = convertToType(ts_val, TypeInfo(DataType::VARCHAR));
     EXPECT_EQ(ts_text.getVarchar(), "2024-03-15 10:30:00");
 
+    auto ts_tz_val = convertToType(
+        TypedValue::makeVarchar("2024-03-15 10:30:00.654321+05:30"),
+        TypeInfo(DataType::TIMESTAMP));
+    auto ts_tz_text = convertToType(ts_tz_val, TypeInfo(DataType::VARCHAR));
+    EXPECT_EQ(ts_tz_text.getVarchar(), "2024-03-15 10:30:00.654321+05:30");
+
     auto uuid_val = convertToType(
         TypedValue::makeVarchar("00112233-4455-6677-8899-aabbccddeeff"),
         TypeInfo(DataType::UUID));
     auto uuid_text = convertToType(uuid_val, TypeInfo(DataType::VARCHAR));
     EXPECT_EQ(uuid_text.getVarchar(), "00112233-4455-6677-8899-aabbccddeeff");
+
+    auto uuid_raw_val = convertToType(
+        TypedValue::makeVarchar("00112233445566778899aabbccddeeff"),
+        TypeInfo(DataType::UUID));
+    auto uuid_raw_text = convertToType(uuid_raw_val, TypeInfo(DataType::VARCHAR));
+    EXPECT_EQ(uuid_raw_text.getVarchar(), "00112233-4455-6677-8899-aabbccddeeff");
 
     auto base64_blob = convertToType(TypedValue::makeVarchar("SGVsbG8="),
                                      TypeInfo(DataType::BLOB),
@@ -203,4 +231,54 @@ TEST(TypeCastTest, StringTemporalUuidBinary)
     auto escape_text = convertToType(escape_blob, TypeInfo(DataType::VARCHAR),
                                      CastFormat::ESCAPE);
     EXPECT_EQ(escape_text.getVarchar(), "\\001");
+
+    auto prefixed_hex = convertToType(TypedValue::makeVarchar("0x48656c6c6f"),
+                                      TypeInfo(DataType::BLOB),
+                                      CastFormat::HEX);
+    auto prefixed_hex_text = convertToType(prefixed_hex, TypeInfo(DataType::VARCHAR),
+                                           CastFormat::HEX);
+    EXPECT_EQ(prefixed_hex_text.getVarchar(), "48656c6c6f");
+
+    auto backslash_hex = convertToType(TypedValue::makeVarchar("\\x48656c6c6f"),
+                                       TypeInfo(DataType::BLOB),
+                                       CastFormat::HEX);
+    auto backslash_hex_text = convertToType(backslash_hex, TypeInfo(DataType::VARCHAR),
+                                            CastFormat::HEX);
+    EXPECT_EQ(backslash_hex_text.getVarchar(), "48656c6c6f");
+}
+
+TEST(TypeCastTest, IntegerHexAndUint128RoundTrip)
+{
+    auto int_val = TypedValue::makeInt64(255);
+    auto int_hex = convertToType(int_val, TypeInfo(DataType::VARCHAR), CastFormat::HEX);
+    EXPECT_EQ(int_hex.getVarchar(), "0xff");
+
+    auto int_back = convertToType(int_hex, TypeInfo(DataType::INT64));
+    EXPECT_EQ(int_back.getInt64(), 255);
+
+    auto uint_hex_val = convertToType(TypedValue::makeVarchar("0x7b"),
+                                      TypeInfo(DataType::UINT64));
+    EXPECT_EQ(uint_hex_val.getUInt64(), 123);
+
+    auto max_u128_text = TypedValue::makeVarchar(
+        "340282366920938463463374607431768211455");
+    auto u128_val = convertToType(max_u128_text, TypeInfo(DataType::UINT128));
+    auto u128_text = convertToType(u128_val, TypeInfo(DataType::VARCHAR));
+    EXPECT_EQ(u128_text.getVarchar(), "340282366920938463463374607431768211455");
+
+    auto u128_hex = convertToType(u128_val, TypeInfo(DataType::VARCHAR), CastFormat::HEX);
+    EXPECT_EQ(u128_hex.getVarchar(), "0xffffffffffffffffffffffffffffffff");
+}
+
+TEST(TypeCastTest, FloatStringRoundTrip)
+{
+    auto f32_val = TypedValue::makeFloat32(1.234567f);
+    auto f32_text = convertToType(f32_val, TypeInfo(DataType::VARCHAR));
+    auto f32_back = convertToType(f32_text, TypeInfo(DataType::FLOAT32));
+    EXPECT_FLOAT_EQ(f32_back.getFloat32(), f32_val.getFloat32());
+
+    auto f64_val = TypedValue::makeFloat64(1.23456789012345);
+    auto f64_text = convertToType(f64_val, TypeInfo(DataType::VARCHAR));
+    auto f64_back = convertToType(f64_text, TypeInfo(DataType::FLOAT64));
+    EXPECT_DOUBLE_EQ(f64_back.getFloat64(), f64_val.getFloat64());
 }

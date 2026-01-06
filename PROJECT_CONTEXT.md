@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
-**Phase:** Alpha 3 (in progress)  
-**Focus:** Finish Alpha 3 hardening (dependency lifecycle, triggers/packages, search path, RLS/masking, MGA with optional locks, dialect parity) and follow `docs/planning/ALPHA_NEXT_STEPS.md` as the current work list.
+**Phase:** Alpha completion (Plan 04 in progress)  
+**Focus:** Emulated parser bytecode alignment, executor gap closure, and audit 16–23 repairs; follow `docs/planning/PLAN_AUDIT_16_23_REPAIR.md` plus the latest alignment status in `docs/planning/PLAN_04_PARSER_BYTECODE_ALIGNMENT_PROGRESS.md`.
 
 ## Key Architecture Notes for AI
 - **MGA (Firebird model):** Snapshot by default; readers/writers non-blocking. No WAL for recovery; WAL planned in Beta only for logging/ETL/replication. Backups: transaction-isolated logical dump; shadow/live page copy.  
@@ -12,11 +12,11 @@
 - **Locks:** Default MGA non-blocking; explicit “WITH LOCK” enables row/table locks; add deadlock/timeout handling.  
 - **Triggers:** Before/after for DB/table (SELECT support TBD); ordered by smallint; ensure runtime hooks.  
 
-## Current Work (see `docs/planning/ALPHA_NEXT_STEPS.md`)
-- Dependency integrity (create/alter/drop) across all object types.
-- Package resolution/visibility; search path enforcement; RLS/masking.
+## Current Work (see `docs/planning/PLAN_AUDIT_16_23_REPAIR.md`)
+- Emulated parser alignment to v1 SBLR (MySQL/PostgreSQL DML done; Firebird DDL/DML pending).
+- Document and close executor gaps surfaced by parser alignment (ON CONFLICT/RETURNING/UPDATE FROM/DELETE USING, SELECT DISTINCT, etc.).
 - Dialect parity and adapter e2e tests (Firebird → MySQL → PostgreSQL order); no ScratchBird fallback.
-- Tests and runtime wiring for triggers, locks, and dependency blocking.
+- Listener/parser binaries + protocol conformance test harnesses (Plan 06–08).
 
 ## Pointers
 - Next steps: `docs/planning/ALPHA_NEXT_STEPS.md`

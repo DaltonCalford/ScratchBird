@@ -860,6 +860,14 @@ Expression* Parser::parsePrimaryExpression() {
         return parseCastExpression();
     }
 
+    if (matchKeyword(TokenType::KW_EXTRACT)) {
+        return parseExtractExpression();
+    }
+
+    if (matchKeyword(TokenType::KW_ALTER_ELEMENT)) {
+        return parseAlterElementExpression();
+    }
+
     // EXISTS subquery
     if (matchKeyword(TokenType::KW_EXISTS)) {
         return parseExistsExpression();
@@ -1135,9 +1143,70 @@ Expression* Parser::parseCastExpression() {
     expr->expr = parseExpression();
     consume(TokenType::KW_AS, "Expected AS in CAST expression");
     expr->target_type = parseTypeName();
+    // CAST ... USING <format> (see docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md)
+    if (matchKeyword(TokenType::KW_USING)) {
+        expr->format = parseIdentifier();
+    }
     consume(TokenType::RIGHT_PAREN, "Expected ')' after CAST");
 
     return expr;
+}
+
+Expression* Parser::parseExtractExpression() {
+    auto* expr = allocate<ast::ExtractExpr>();
+    consume(TokenType::LEFT_PAREN, "Expected '(' after EXTRACT");
+    expr->selector = parseElementSelector();
+    consume(TokenType::KW_FROM, "Expected FROM in EXTRACT expression");
+    expr->source = parseExpression();
+    consume(TokenType::RIGHT_PAREN, "Expected ')' after EXTRACT expression");
+    return expr;
+}
+
+Expression* Parser::parseAlterElementExpression() {
+    auto* expr = allocate<ast::AlterElementExpr>();
+    consume(TokenType::LEFT_PAREN, "Expected '(' after ALTER_ELEMENT");
+    expr->selector = parseElementSelector();
+    consume(TokenType::KW_IN, "Expected IN in ALTER_ELEMENT expression");
+    expr->source = parseExpression();
+    consume(TokenType::KW_TO, "Expected TO in ALTER_ELEMENT expression");
+    expr->new_value = parseExpression();
+    consume(TokenType::RIGHT_PAREN, "Expected ')' after ALTER_ELEMENT expression");
+    return expr;
+}
+
+ElementSelector Parser::parseElementSelector() {
+    ElementSelector selector;
+
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        selector.kind = ElementSelector::Kind::STRING_LITERAL;
+        selector.string_literal = internFromLexer(current_token_.value.string_id);
+        advance();
+        return selector;
+    }
+
+    if (check(TokenType::INTEGER_LITERAL) || check(TokenType::PLUS) ||
+        check(TokenType::MINUS) || check(TokenType::LEFT_PAREN)) {
+        selector.kind = ElementSelector::Kind::INTEGER_EXPR;
+        selector.expr = parseExpression();
+        return selector;
+    }
+
+    if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+        selector.kind = ElementSelector::Kind::IDENTIFIER;
+        selector.identifier = parseIdentifier();
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do {
+                    selector.args.push_back(parseExpression());
+                } while (match(TokenType::COMMA));
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ')' after element selector arguments");
+        }
+        return selector;
+    }
+
+    error("Expected element selector");
+    return selector;
 }
 
 Expression* Parser::parseSubqueryExpression() {
@@ -1335,6 +1404,7 @@ bool Parser::isFirebirdTypeName() const {
         case TokenType::KW_BLOB:
         // Firebird-specific types
         case TokenType::KW_INT128:
+        case TokenType::KW_UINT128:
         case TokenType::KW_DECFLOAT:
         case TokenType::KW_VARBINARY:
             return true;
@@ -1367,6 +1437,10 @@ ast::TypeName Parser::parseFirebirdType() {
 
         case TokenType::KW_INT128:
             type.name = string_pool_.intern("INT128");
+            advance();
+            break;
+        case TokenType::KW_UINT128:
+            type.name = string_pool_.intern("UINT128");
             advance();
             break;
 

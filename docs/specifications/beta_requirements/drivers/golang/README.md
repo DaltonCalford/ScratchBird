@@ -7,6 +7,15 @@
 
 ---
 
+
+## ScratchBird V2 Scope (Native Protocol Only)
+
+- Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.
+- Default port: 3092.
+- TLS 1.3 required.
+- Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
+
+
 ## Overview
 
 Go has rapidly grown in popularity for cloud-native development, microservices, and infrastructure tooling. A database/sql compliant driver is essential for ScratchBird adoption in modern distributed systems and cloud infrastructure.
@@ -21,13 +30,26 @@ Go has rapidly grown in popularity for cloud-native development, microservices, 
 - go mod module support
 - Comprehensive error handling with error wrapping
 
+## Usage examples
+
+```go
+db, _ := sql.Open("scratchbird", "scratchbird://user:pass@localhost:3092/db")
+defer db.Close()
+
+_ = db.QueryRow("select 1 as one")
+
+stmt, _ := db.Prepare("select * from widgets where id = $1")
+rows, _ := stmt.Query(42)
+_ = rows
+```
+
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] [SPECIFICATION.md](SPECIFICATION.md) - Detailed technical specification
   - database/sql.Driver interface implementation
   - Connection lifecycle and pooling
   - Prepared statements and query execution
@@ -36,7 +58,7 @@ Go has rapidly grown in popularity for cloud-native development, microservices, 
   - Error types and handling
   - Connection string format (DSN)
 
-- [ ] **IMPLEMENTATION_PLAN.md** - Development roadmap
+- [x] [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
   - Milestone 1: Basic driver.Driver implementation
   - Milestone 2: Prepared statements and query optimization
   - Milestone 3: Context support and cancellation
@@ -45,7 +67,7 @@ Go has rapidly grown in popularity for cloud-native development, microservices, 
   - Resource requirements
   - Timeline estimates
 
-- [ ] **TESTING_CRITERIA.md** - Test requirements
+- [x] [TESTING_CRITERIA.md](TESTING_CRITERIA.md) - Test requirements
   - database/sql compliance tests
   - Integration tests with real database
   - Performance benchmarks vs pgx (PostgreSQL Go driver)
@@ -54,14 +76,14 @@ Go has rapidly grown in popularity for cloud-native development, microservices, 
   - Memory leak tests
   - Fuzzing tests for query parser
 
-- [ ] **COMPATIBILITY_MATRIX.md** - Version support
+- [x] [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md) - Version support
   - Go versions (1.19, 1.20, 1.21, 1.22+)
   - Operating systems (Linux, macOS, Windows)
   - Architectures (amd64, arm64, 386, arm)
   - ORM compatibility (GORM, sqlx, ent)
   - Build tools (go mod, go build)
 
-- [ ] **MIGRATION_GUIDE.md** - Migration from other drivers
+- [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other drivers
   - From lib/pq (PostgreSQL driver)
   - From pgx (high-performance PostgreSQL driver)
   - From go-sql-driver/mysql
@@ -69,7 +91,7 @@ Go has rapidly grown in popularity for cloud-native development, microservices, 
   - DSN format changes
   - Code migration examples
 
-- [ ] **API_REFERENCE.md** - Complete API documentation (GoDoc)
+- [x] [API_REFERENCE.md](API_REFERENCE.md) - Complete API documentation (GoDoc)
   - Driver type
   - Conn type
   - Stmt type
@@ -77,6 +99,10 @@ Go has rapidly grown in popularity for cloud-native development, microservices, 
   - Tx type
   - Error types
   - Helper functions
+
+### Shared References
+
+- [../DRIVER_BASELINE_SPEC.md](../DRIVER_BASELINE_SPEC.md) - Shared V2 driver requirements.
 
 ### Examples Directory
 
@@ -130,7 +156,7 @@ import (
 
 func main() {
     // Open database connection
-    db, err := sql.Open("scratchbird", "host=localhost port=5432 dbname=mydb user=myuser password=mypass")
+    db, err := sql.Open("scratchbird", "host=localhost port=3092 dbname=mydb user=myuser password=mypass")
     if err != nil {
         log.Fatal(err)
     }
@@ -246,7 +272,7 @@ type Post struct {
 }
 
 func main() {
-    dsn := "host=localhost port=5432 dbname=mydb user=myuser password=mypass"
+    dsn := "host=localhost port=3092 dbname=mydb user=myuser password=mypass"
     db, err := gorm.Open(scratchbird.Open(dsn), &gorm.Config{})
     if err != nil {
         panic(err)
@@ -299,7 +325,7 @@ type User struct {
 }
 
 func main() {
-    db, err := sqlx.Connect("scratchbird", "host=localhost port=5432 dbname=mydb user=myuser password=mypass")
+    db, err := sqlx.Connect("scratchbird", "host=localhost port=3092 dbname=mydb user=myuser password=mypass")
     if err != nil {
         panic(err)
     }
@@ -405,11 +431,11 @@ func (d *Driver) OpenConnector(dsn string) (driver.Connector, error) {
 ### DSN (Data Source Name) Format
 
 ```
-host=localhost port=5432 dbname=mydb user=myuser password=mypass sslmode=require
+host=localhost port=3092 dbname=mydb user=myuser password=mypass sslmode=require
 
 Query parameters:
   host         - Database host (default: localhost)
-  port         - Database port (default: 5432)
+  port         - Database port (default: 3092)
   dbname       - Database name (required)
   user         - Username (required)
   password     - Password
@@ -420,7 +446,7 @@ Query parameters:
   application_name - Application name for logging
 
 Alternative URL format:
-  scratchbird://user:password@localhost:5432/mydb?sslmode=require
+  scratchbird://user:password@localhost:3092/mydb?sslmode=require
 ```
 
 ### Connection Interface

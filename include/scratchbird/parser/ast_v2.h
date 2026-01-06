@@ -137,6 +137,8 @@ enum class ASTKind : uint16_t {
     UnaryExpr,
     FunctionCallExpr,
     CastExpr,
+    ExtractExpr,
+    AlterElementExpr,
     CaseExpr,
     SubqueryExpr,
     ExistsExpr,
@@ -1577,6 +1579,48 @@ public:
     std::optional<StringPool::StringId> format;
 };
 
+/**
+ * Element selector for EXTRACT/ALTER_ELEMENT
+ */
+struct ElementSelector {
+    enum class Kind : uint8_t {
+        IDENTIFIER,
+        STRING_LITERAL,
+        INTEGER_EXPR
+    };
+
+    Kind kind = Kind::IDENTIFIER;
+    StringPool::StringId identifier = StringPool::INVALID_ID;
+    std::vector<Expression*> args;
+    StringPool::StringId string_literal = StringPool::INVALID_ID;
+    Expression* expr = nullptr;
+};
+
+/**
+ * EXTRACT expression
+ */
+class ExtractExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::ExtractExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    ElementSelector selector;
+    Expression* source = nullptr;
+};
+
+/**
+ * ALTER_ELEMENT expression
+ */
+class AlterElementExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::AlterElementExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    ElementSelector selector;
+    Expression* source = nullptr;
+    Expression* new_value = nullptr;
+};
+
 // =============================================================================
 // DML Supporting Structures
 // =============================================================================
@@ -2524,6 +2568,8 @@ public:
     virtual void visit(UnaryExpr* expr) = 0;
     virtual void visit(FunctionCallExpr* expr) = 0;
     virtual void visit(CastExpr* expr) = 0;
+    virtual void visit(ExtractExpr* expr) = 0;
+    virtual void visit(AlterElementExpr* expr) = 0;
     virtual void visit(CaseExpr* expr) = 0;
     virtual void visit(SubqueryExpr* expr) = 0;
     virtual void visit(ExistsExpr* expr) = 0;

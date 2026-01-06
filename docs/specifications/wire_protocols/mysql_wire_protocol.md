@@ -30,6 +30,15 @@ struct MySQLPacket {
 };
 ```
 
+### Packet Framing and Sequencing
+
+- The maximum payload length per packet is `0xFFFFFF` (16,777,215 bytes).
+- If a logical payload exceeds this size, it is split across multiple packets:
+  - Each packet has `length == 0xFFFFFF`, except the final packet which is `< 0xFFFFFF`.
+  - The receiver must concatenate payloads in order to reconstruct the logical message.
+- `sequence_id` starts at `0` for the first packet of each command phase (including the initial handshake) and increments by 1 for each subsequent packet in that phase (wrapping at 255).
+
+
 ### Length Encoding
 
 MySQL uses length-encoded integers (also called packed integers):
@@ -39,6 +48,8 @@ MySQL uses length-encoded integers (also called packed integers):
 if (value < 0xFB) {
     // 1 byte: value as-is
     uint8 value;
+} else if (value == 0xFB) {
+    // NULL (only valid for length-encoded values)
 } else if (value < 0x10000) {
     // 3 bytes: 0xFC followed by 2-byte value
     uint8  marker = 0xFC;
@@ -71,14 +82,17 @@ struct HandshakeV10 {
     uint8  character_set;        // Server character set
     uint16 status_flags;         // Server status
     uint16 capability_flags_2;   // Upper 2 bytes of capability flags
-    uint8  auth_plugin_data_len; // Length of auth data (usually 21)
+    uint8  auth_plugin_data_len; // Total auth data length (0 if no CLIENT_PLUGIN_AUTH)
     uint8  reserved[10];         // All 0x00
     
     // If capabilities & CLIENT_SECURE_CONNECTION
-    uint8  auth_plugin_data_2[]; // Rest of auth data (max 13 bytes)
+    uint8  auth_plugin_data_2[]; // Rest of auth data (len = max(12, auth_plugin_data_len - 9))
     
     // If capabilities & CLIENT_PLUGIN_AUTH
     char   auth_plugin_name[];   // Null-terminated plugin name
+
+    // MariaDB-specific: if CLIENT_MYSQL is not set, a 3rd 32-bit capabilities
+    // word may appear after the 10-byte reserved block.
 };
 ```
 
@@ -101,9 +115,30 @@ ff 81          // Capability flags upper
 70 61 73 73 77 6f 72 64 00              // "password\0"
 ```
 
+##### Example Handshake Flow (Client Response + OK)
+
+Client HandshakeResponse41 (user=root, plugin=mysql_native_password, password=secret):
+```
+50 00 00 01  // packet header (length=0x50, seq=1)
+00 82 08 00  // capability flags (CLIENT_PROTOCOL_41|CLIENT_SECURE_CONNECTION|CLIENT_PLUGIN_AUTH)
+00 00 00 01  // max packet size
+21           // character set
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  // reserved
+72 6f 6f 74 00  // "root\0"
+14 28 44 15 90 67 42 85 e7 d0 3c ae 7a f2 37 50 47 97 f7 0e 91  // auth response (20 bytes)
+6d 79 73 71 6c 5f 6e 61 74 69 76 65 5f 70 61 73 73 77 6f 72 64 00  // "mysql_native_password\0"
+```
+
+Server OK packet:
+```
+07 00 00 02 00 00 00 02 00 00
+```
+
 ### 2. Client Authentication
 
 #### Client → Server: Handshake Response (Protocol::HandshakeResponse)
+
+If `CLIENT_SSL` is set in the response capabilities, the client **first** sends an `SSLRequest` packet (same layout as the first part of `HandshakeResponse41`, without username/auth/database/plugin/attributes), performs the TLS handshake, then sends the full `HandshakeResponse41` over the encrypted channel.
 
 ```c
 struct HandshakeResponse41 {
@@ -193,18 +228,47 @@ uint8_t* scramble_native_password(const char* password, const uint8_t* salt) {
 
 #### Caching SHA2 Password (caching_sha2_password)
 
-```c
-// More secure authentication using SHA256
-// Fast auth: SHA256(password) XOR SHA256(SHA256(SHA256(password)) + salt)
-// Full auth: Requires SSL or RSA key exchange
+Caching SHA-256 authentication is plugin-driven and may require multiple rounds:
 
-struct CachingSha2Response {
-    uint8 status;  // 0x03 = fast auth ok, 0x04 = need full auth
-    
-    // If status == 0x04
-    uint8 auth_method;  // 0x02 = request public key, 0x04 = fast auth
+**Initial auth response (in HandshakeResponse41 or AuthSwitchResponse):**
+```
+scramble = XOR(SHA256(password),
+               SHA256(seed || SHA256(SHA256(password))))
+```
+
+**Server fast-auth result (AuthMoreData):**
+- 0x03 = success, authentication complete
+- 0x04 = continue full authentication
+
+**Full auth when `0x04` returned:**
+- If the connection is encrypted (TLS), client sends cleartext password (null-terminated).
+- Otherwise:
+  1) Client sends `0x02` to request server RSA public key.
+  2) Server responds with `0x01` + public key bytes.
+  3) Client sends RSA-encrypted password (`RSA_PKCS1_OAEP_PADDING`) over `XOR(password, seed)`.
+
+#### SHA256 Password (sha256_password)
+
+Flow is the same as full auth above, except the public key request byte is `0x01`.
+
+#### Authentication Switch / More Data Packets
+
+```c
+struct AuthSwitchRequest {
+    uint8 header = 0xFE;
+    char  plugin_name[];  // Null-terminated
+    uint8 plugin_data[];  // EOF-length
+};
+
+struct AuthMoreData {
+    uint8 header = 0x01;
+    uint8 data[];         // EOF-length
 };
 ```
+
+If the server sends plugin data starting with `0x00`, `0xFE`, or `0xFF`, it may prepend `0x01` to escape it. Clients must ignore the optional leading `0x01` when present.
+
+Client response to `AuthSwitchRequest` is the raw auth response data for the named plugin (payload only, length-encoded by the packet header).
 
 ## Command Phase
 
@@ -268,11 +332,14 @@ The server responds with one of:
 - OK Packet
 - Error Packet
 - Result Set
+- Local Infile Request (0xFB) for `LOAD DATA LOCAL INFILE`
+
+When the server sends `0xFB` as the first byte of the payload, the packet is a Local Infile Request. The client must send the file contents as raw data packets, then a zero-length packet to terminate.
 
 ##### OK Packet
 ```c
 struct OKPacket {
-    uint8  header;          // 0x00 or 0xFE (if < MySQL 5.7.5)
+    uint8  header;          // 0x00, or 0xFE if CLIENT_DEPRECATE_EOF is set
     lenenc affected_rows;   // Number of affected rows
     lenenc last_insert_id;  // Last INSERT id
     
@@ -359,6 +426,8 @@ struct EOFPacket {
 };
 ```
 
+EOF packets are only used when `CLIENT_DEPRECATE_EOF` is **not** set. An EOF packet is identified by `header == 0xFE` **and** payload length `< 9` bytes (to disambiguate from OK packets that may also use 0xFE).
+
 4. **Row Data Packets**
 ```c
 struct TextResultRow {
@@ -391,6 +460,7 @@ struct ComStmtPrepareOK {
     // Followed by:
     // - Parameter definitions (if num_params > 0)
     // - Column definitions (if num_columns > 0)
+    // - EOF/OK terminators depending on CLIENT_DEPRECATE_EOF
 };
 ```
 
@@ -438,7 +508,7 @@ struct String {
 
 // Date/Time types
 struct MYSQL_TIME {
-    uint8  length;      // 0, 4, 7, or 11
+    uint8  length;      // 0, 4 (date), 7 (datetime), or 11 (datetime with micros)
     uint16 year;        // If length >= 4
     uint8  month;       // If length >= 4
     uint8  day;         // If length >= 4
@@ -453,7 +523,7 @@ struct MYSQL_TIME {
 ```c
 struct BinaryResultRow {
     uint8  header = 0x00;   // Binary row marker
-    uint8  null_bitmap[(column_count + 7 + 2) / 8];
+    uint8  null_bitmap[(column_count + 7 + 2) / 8]; // 2-bit offset, then 1 bit per column
     // Followed by non-NULL column values in binary format
     uint8  column_values[];
 };
@@ -473,8 +543,11 @@ struct SSLRequest {
 };
 ```
 
+The SSLRequest is the same as the initial fixed-length portion of `HandshakeResponse41` (no username/auth/database/plugin/attrs). It uses the next `sequence_id` after the server handshake (typically 1).
+
 2. After sending SSL request, client initiates TLS handshake
-3. All subsequent communication is encrypted
+3. Client then sends the full `HandshakeResponse41` over TLS (sequence_id continues)
+4. All subsequent communication is encrypted
 
 ## Compression Protocol
 
@@ -488,6 +561,8 @@ struct CompressedPacket {
     uint8     compressed_payload[]; // zlib compressed data
 };
 ```
+
+If `uncompressed_length` is 0, the payload is uncompressed and can be treated as normal packets.
 
 ## Replication Protocol
 

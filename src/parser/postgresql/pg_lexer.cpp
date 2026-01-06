@@ -9,6 +9,8 @@
 #include <cctype>
 #include <cstring>
 #include <stdexcept>
+#include <charconv>
+#include <limits>
 
 namespace scratchbird::parser::postgresql {
 
@@ -184,6 +186,8 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"int", TokenType::KW_INT},
         {"integer", TokenType::KW_INTEGER},
         {"bigint", TokenType::KW_BIGINT},
+        {"int128", TokenType::KW_INT128},
+        {"uint128", TokenType::KW_UINT128},
         {"real", TokenType::KW_REAL},
         {"double", TokenType::KW_DOUBLE},
         {"precision", TokenType::KW_PRECISION},
@@ -387,6 +391,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"owned", TokenType::KW_OWNED},
         {"none", TokenType::KW_NONE},
         {"extract", TokenType::KW_EXTRACT},
+        {"alter_element", TokenType::KW_ALTER_ELEMENT},
         {"position", TokenType::KW_POSITION},
         {"substring", TokenType::KW_SUBSTRING},
         {"trim", TokenType::KW_TRIM},
@@ -644,6 +649,31 @@ Token Lexer::scanNumber() {
     SourceLocation start_loc = location_;
     size_t start_pos = current_;
     bool is_float = false;
+
+    if (peek_char() == '0' && (peek_char_ahead(1) == 'x' || peek_char_ahead(1) == 'X')) {
+        advance();  // 0
+        advance();  // x
+        if (!isHexDigit(peek_char())) {
+            return makeError("Invalid integer number");
+        }
+        while (!isAtEnd() && isHexDigit(peek_char())) {
+            advance();
+        }
+        size_t len = current_ - start_pos;
+        std::string_view text = input_.substr(start_pos, len);
+        uint64_t value = 0;
+        const char* begin = text.data() + 2;
+        const char* end = text.data() + text.size();
+        auto result = std::from_chars(begin, end, value, 16);
+        if (result.ec != std::errc() || result.ptr != end) {
+            return makeError("Invalid integer number");
+        }
+        if (value > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            return makeError("Integer literal out of range");
+        }
+        return Token::makeInteger(start_loc, static_cast<uint32_t>(len),
+                                  static_cast<int64_t>(value));
+    }
 
     // Integer part
     while (!isAtEnd() && isDigit(peek_char())) {

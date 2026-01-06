@@ -76,7 +76,7 @@ private:
 struct PgDataType {
     enum class Kind {
         // Integer types
-        SMALLINT, INTEGER, BIGINT,
+        SMALLINT, INTEGER, BIGINT, INT128, UINT128,
         // Floating point
         REAL, DOUBLE_PRECISION, DECIMAL, NUMERIC, MONEY,
         // Serial types (pseudo-types for auto-increment)
@@ -134,11 +134,22 @@ struct ColumnDef {
     bool unique = false;
     bool not_null = false;
     bool has_default = false;
+    enum class DefaultLiteralType {
+        NONE,
+        NULL_VALUE,
+        STRING,
+        INT,
+        FLOAT
+    };
+    DefaultLiteralType default_literal_type = DefaultLiteralType::NONE;
+    int64_t default_int_value = 0;
+    double default_float_value = 0.0;
     std::string default_value;
     bool default_is_null = false;
     bool default_is_expr = false;
+    std::vector<uint8_t> default_expr_bytecode;
     bool is_generated = false;
-    std::string generated_expr;
+    std::vector<uint8_t> generated_expr_bytecode;
     bool generated_stored = true;  // STORED vs VIRTUAL
     bool is_identity = false;
     bool identity_always = true;   // ALWAYS vs BY DEFAULT
@@ -226,6 +237,8 @@ private:
     Token current_token_;
     std::vector<uint8_t> bytecode_;
     std::vector<ParseError> errors_;
+    bool emit_enabled_ = true;
+    bool pending_index_unique_ = false;
 
     // Token management
     void advance();
@@ -249,6 +262,7 @@ private:
     void emitI64(int64_t val);
     void emitF64(double val);
     void emitString(std::string_view str);
+    void emitTypeDefinition(const PgDataType& type);
 
     // Statement parsing
     void parseStatementInternal();
@@ -295,8 +309,20 @@ private:
     IndexDef parseIndexDef();
     ForeignKeyDef parseForeignKeyDef();
 
+    struct SelectItem {
+        enum class Kind {
+            Star,
+            Column,
+            Expression
+        };
+        Kind kind = Kind::Expression;
+        std::string column_name;
+        std::vector<uint8_t> expr_bytecode;
+        std::string alias;
+    };
+
     // DML clause parsing
-    void parseSelectList();
+    void parseSelectList(std::vector<SelectItem>& items);
     void parseFromClause();
     void parseJoinClause();
     void parseWhereClause();
@@ -337,6 +363,9 @@ private:
     void parseFunctionCall(const std::string& name);
     void parseCaseExpr();
     void parseCastExpr();
+    void parseExtractExpr();
+    void parseAlterElementExpr();
+    sblr::ExtractField parseElementSelector(uint8_t& arg_count);
     void parseArrayConstructor();
     void parseSubquery();
     void parseTypeCast();  // For :: operator
@@ -348,6 +377,7 @@ private:
     std::string parseIdentifier();
     std::string parseQualifiedName();
     void resolveTableName(std::string& schema, std::string& table);
+    std::vector<uint8_t> captureExpressionBytecode();
     bool isNonReservedKeyword(TokenType type) const;
 };
 

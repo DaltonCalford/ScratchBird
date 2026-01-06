@@ -106,6 +106,8 @@ void BinaryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void UnaryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void FunctionCallExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CastExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExtractExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterElementExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CaseExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void SubqueryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ExistsExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }

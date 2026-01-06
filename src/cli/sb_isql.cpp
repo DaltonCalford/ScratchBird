@@ -24,6 +24,7 @@
  *   -v, --verbose            Verbose mode
  *   -h, --help               Show this help
  *   --version                Show version
+ *   --schema-tree            Print schema tree and exit
  *
  * SET Commands (Firebird ISQL compatible):
  *   SET BAIL [ON|OFF]        Stop on first error
@@ -63,11 +64,13 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 #include <cstring>
 #include <cstdlib>
 #include <chrono>
 #include <iomanip>
 #include <algorithm>
+#include <cctype>
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
@@ -102,6 +105,7 @@ struct IsqlConfig {
     bool quiet = false;            // -q: no welcome
     bool echo = false;             // -e: echo commands
     bool verbose = false;          // -v: verbose
+    bool schema_tree = false;      // --schema-tree: print schema tree and exit
 
     // Runtime settings
     bool timing = false;           // \timing
@@ -2842,6 +2846,7 @@ void printUsage(const char* program) {
     std::cout << "  -e, --echo                Echo commands before execution\n";
     std::cout << "  -b, --bail                Stop on first error (Firebird compatible)\n";
     std::cout << "  -v, --verbose             Verbose mode\n";
+    std::cout << "      --schema-tree         Print schema tree and exit\n";
     std::cout << "  -a, --extract-all         Extract DDL for all objects (Firebird compatible)\n";
     std::cout << "  -x, --extract             Extract DDL (no data)\n";
     std::cout << "  -ex, --extract-db         Extract DDL with CREATE DATABASE\n";
@@ -2958,6 +2963,8 @@ bool parseArgs(int argc, char* argv[]) {
             g_config.bail = true;
         } else if (arg == "-v" || arg == "--verbose") {
             g_config.verbose = true;
+        } else if (arg == "--schema-tree") {
+            g_config.schema_tree = true;
         } else if (arg == "-a" || arg == "--extract-all") {
             g_config.ddl_mode = IsqlConfig::DDLMode::EXTRACT_ALL;
         } else if (arg == "-x" || arg == "--extract") {
@@ -2987,6 +2994,143 @@ bool parseArgs(int argc, char* argv[]) {
         }
     }
 
+    return true;
+}
+
+// =============================================================================
+// Schema tree output
+// =============================================================================
+
+namespace {
+struct SchemaTreeNode {
+    std::map<std::string, std::unique_ptr<SchemaTreeNode>> children;
+    std::vector<std::pair<std::string, std::string>> objects;  // (type, name)
+};
+
+std::vector<std::string> splitSchemaPath(const std::string& path) {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char ch : path) {
+        if (ch == '.' || ch == '/') {
+            if (!current.empty()) {
+                parts.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        parts.push_back(current);
+    }
+    return parts;
+}
+
+std::string formatObjectLabel(const std::string& type) {
+    std::string label = type;
+    std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    std::replace(label.begin(), label.end(), '_', ' ');
+    return label;
+}
+
+void ensureSchemaPath(SchemaTreeNode& root, const std::string& path) {
+    SchemaTreeNode* node = &root;
+    for (const auto& part : splitSchemaPath(path)) {
+        if (part.empty()) {
+            continue;
+        }
+        auto& child = node->children[part];
+        if (!child) {
+            child = std::make_unique<SchemaTreeNode>();
+        }
+        node = child.get();
+    }
+}
+
+void addObjectToTree(SchemaTreeNode& root,
+                     const std::string& object_type,
+                     const std::string& schema_path,
+                     const std::string& object_name) {
+    if (object_type == "SCHEMA") {
+        std::string full_path = schema_path;
+        if (!object_name.empty()) {
+            if (!full_path.empty()) {
+                full_path.push_back('.');
+            }
+            full_path += object_name;
+        }
+        ensureSchemaPath(root, full_path);
+        return;
+    }
+    if (object_type == "COLUMN") {
+        return;
+    }
+
+    SchemaTreeNode* node = &root;
+    for (const auto& part : splitSchemaPath(schema_path)) {
+        if (part.empty()) {
+            continue;
+        }
+        auto& child = node->children[part];
+        if (!child) {
+            child = std::make_unique<SchemaTreeNode>();
+        }
+        node = child.get();
+    }
+
+    node->objects.emplace_back(formatObjectLabel(object_type), object_name);
+}
+
+void printSchemaTreeNode(const SchemaTreeNode& node, size_t indent) {
+    auto& out = getOutput();
+    std::string padding(indent, ' ');
+
+    for (const auto& entry : node.children) {
+        out << padding << entry.first << "\n";
+        printSchemaTreeNode(*entry.second, indent + 4);
+    }
+
+    if (!node.objects.empty()) {
+        std::vector<std::pair<std::string, std::string>> objects = node.objects;
+        std::sort(objects.begin(), objects.end(),
+                  [](const auto& a, const auto& b) { return a.second < b.second; });
+        for (const auto& obj : objects) {
+            out << padding << "(" << obj.first << ") " << obj.second << "\n";
+        }
+    }
+}
+}  // namespace
+
+static bool outputSchemaTree() {
+    if (!g_connection || !g_connection->isConnected()) {
+        std::cerr << "Error: Not connected to database\n";
+        return false;
+    }
+
+    ResultSet results;
+    core::ErrorContext ctx;
+    core::Status status = g_connection->executeQuery(
+        "SELECT object_type, schema_path, object_name FROM sys.catalog.object_resolver",
+        &results, &ctx);
+    if (status != core::Status::OK) {
+        std::cerr << "Error: " << ctx.message << "\n";
+        return false;
+    }
+
+    SchemaTreeNode root;
+    while (results.next()) {
+        std::string object_type = results.isNull(0) ? "" : results.getString(0);
+        std::string schema_path = results.isNull(1) ? "" : results.getString(1);
+        std::string object_name = results.isNull(2) ? "" : results.getString(2);
+
+        addObjectToTree(root, object_type, schema_path, object_name);
+    }
+
+    auto& out = getOutput();
+    out << "(root/database)\n";
+    printSchemaTreeNode(root, 4);
     return true;
 }
 
@@ -3052,8 +3196,13 @@ int main(int argc, char* argv[]) {
 
     int result = 0;
 
+    if (g_config.schema_tree) {
+        if (!outputSchemaTree()) {
+            result = 1;
+        }
+    }
     // DDL Extraction mode (-a, -x, -ex)
-    if (g_config.ddl_mode != IsqlConfig::DDLMode::NONE) {
+    else if (g_config.ddl_mode != IsqlConfig::DDLMode::NONE) {
         bool include_create_db = (g_config.ddl_mode == IsqlConfig::DDLMode::EXTRACT_EX);
         if (!extractDDL(include_create_db)) {
             result = 1;

@@ -1038,6 +1038,17 @@ UPPERCASE    Terminal (keyword)
   | <decimal_literal>
   | <float_literal>
 
+<integer_literal> ::=
+    <decimal_integer_literal>
+  | <hex_integer_literal>
+
+<decimal_integer_literal> ::=
+    <digit> { <digit> }
+
+<hex_integer_literal> ::=
+    '0x' <hex_digit> { <hex_digit> }
+  | '0X' <hex_digit> { <hex_digit> }
+
 <string_literal> ::=
     '\'' { <character> } '\''
   | '"' { <character> } '"'
@@ -1053,6 +1064,11 @@ UPPERCASE    Terminal (keyword)
 <uuid_literal> ::=
     UUID '\'' <uuid_string> '\''
   | '\'' <uuid_string> '\'' '::' UUID
+
+<hex_digit> ::=
+    <digit>
+  | 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
+  | 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
 ```
 
 ### 11.1 Operators
@@ -1119,10 +1135,13 @@ UPPERCASE    Terminal (keyword)
     END
 
 <cast_expression> ::=
-    CAST '(' <expression> AS <data_type> ')'
+    CAST '(' <expression> AS <data_type> [ USING <cast_format> ] ')'
   | <expression> '::' <data_type>
   | CONVERT '(' <expression> ',' <data_type> ')'
   | CONVERT '(' <expression> USING <conversion_name> ')'
+
+<cast_format> ::=
+    HEX | HEXADECIMAL | BASE64 | ESCAPE
 
 <array_expression> ::=
     ARRAY '[' [ <expression_list> ] ']'
@@ -1487,7 +1506,7 @@ Categories include:
 - Aggregate functions (COUNT, SUM, AVG, MIN, MAX, etc.)
 - Window functions (ROW_NUMBER, RANK, DENSE_RANK, etc.)
 - String functions (CONCAT, SUBSTRING, TRIM, etc.)
-- Date/Time functions (CURRENT_DATE, EXTRACT, DATE_ADD, etc.)
+- Date/Time functions (CURRENT_DATE, EXTRACT, ALTER_ELEMENT, DATE_ADD, etc.)
 - Mathematical functions (ABS, ROUND, POWER, etc.)
 - UUID functions (gen_uuid_v7, uuid_to_string, etc.)
 - JSON functions (JSON_EXTRACT, JSON_ARRAY, etc.)

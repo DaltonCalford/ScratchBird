@@ -1338,6 +1338,52 @@ namespace scratchbird::core
         return s;
     }
 
+    void ConnectionContext::applyStagedSecurityContext()
+    {
+        if (!security_context_staged_)
+        {
+            return;
+        }
+
+        if (pending_user_change_)
+        {
+            current_user_id_ = pending_user_id_;
+            is_superuser_ = pending_is_superuser_;
+            std::memset(&active_role_id_, 0, sizeof(active_role_id_));
+            pending_user_change_ = false;
+        }
+
+        if (pending_role_change_)
+        {
+            active_role_id_ = pending_role_id_;
+            pending_role_change_ = false;
+        }
+
+        if (pending_session_change_)
+        {
+            session_id_ = pending_session_id_;
+            authkey_id_ = pending_authkey_id_;
+            emulation_mode_ = pending_emulation_mode_.empty()
+                                  ? emulation_mode_
+                                  : pending_emulation_mode_;
+            policy_epoch_global_ = pending_policy_epoch_global_;
+            policy_epoch_table_ = pending_policy_epoch_table_;
+            pending_session_change_ = false;
+            pending_emulation_mode_.clear();
+            Status s = ProcArrayManager::setSessionId(proc_id_, session_id_, nullptr);
+            if (s != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to set staged session id in ProcArray for proc_id %u",
+                            proc_id_);
+            }
+        }
+
+        security_context_staged_ = false;
+
+        LOG_DEBUG(TRANSACTION, "Applied staged security context changes: proc_id=%u", proc_id_);
+    }
+
     void ConnectionContext::applyStagedSettings()
     {
         if (settings_staged_)
@@ -1355,46 +1401,7 @@ namespace scratchbird::core
                       lock_timeout_seconds_, static_cast<int>(read_committed_mode_));
         }
 
-        if (security_context_staged_)
-        {
-            if (pending_user_change_)
-            {
-                current_user_id_ = pending_user_id_;
-                is_superuser_ = pending_is_superuser_;
-                std::memset(&active_role_id_, 0, sizeof(active_role_id_));
-                pending_user_change_ = false;
-            }
-
-            if (pending_role_change_)
-            {
-                active_role_id_ = pending_role_id_;
-                pending_role_change_ = false;
-            }
-
-            if (pending_session_change_)
-            {
-                session_id_ = pending_session_id_;
-                authkey_id_ = pending_authkey_id_;
-                emulation_mode_ = pending_emulation_mode_.empty()
-                                      ? emulation_mode_
-                                      : pending_emulation_mode_;
-                policy_epoch_global_ = pending_policy_epoch_global_;
-                policy_epoch_table_ = pending_policy_epoch_table_;
-                pending_session_change_ = false;
-                pending_emulation_mode_.clear();
-                Status s = ProcArrayManager::setSessionId(proc_id_, session_id_, nullptr);
-                if (s != Status::OK)
-                {
-                    LOG_WARNING(TRANSACTION,
-                                "Failed to set staged session id in ProcArray for proc_id %u",
-                                proc_id_);
-                }
-            }
-
-            security_context_staged_ = false;
-
-            LOG_DEBUG(TRANSACTION, "Applied staged security context changes: proc_id=%u", proc_id_);
-        }
+        applyStagedSecurityContext();
     }
 
     // FIREBIRD MGA: No snapshot creation needed

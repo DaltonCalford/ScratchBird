@@ -164,9 +164,11 @@ void Parser::parseCreateStmt() {
     if (matchKeyword(TokenType::KW_TABLE)) {
         parseCreateTable();
     } else if (matchKeyword(TokenType::KW_INDEX)) {
+        pending_index_unique_ = false;
         parseCreateIndex();
     } else if (matchKeyword(TokenType::KW_UNIQUE)) {
         consumeKeyword(TokenType::KW_INDEX, "Expected INDEX");
+        pending_index_unique_ = true;
         parseCreateIndex();
     } else if (matchKeyword(TokenType::KW_VIEW)) {
         parseCreateView();
@@ -229,7 +231,7 @@ void Parser::parseCreateTable() {
         consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
         if_not_exists = true;
     }
-    emitByte(if_not_exists ? 1 : 0);
+    (void)if_not_exists;
 
     // Table name
     std::string schema;
@@ -250,8 +252,11 @@ void Parser::parseCreateTable() {
     size_t count_pos = bytecode_.size();
     emitU32(0);
     uint32_t count = 0;
+    std::vector<ForeignKeyDef> pending_fks;
+    std::string tablespace_name;
 
     do {
+        bool emitted_entry = false;
         // Check for table-level constraint
         if (check(TokenType::KW_PRIMARY) || check(TokenType::KW_UNIQUE) ||
             check(TokenType::KW_FOREIGN) || check(TokenType::KW_CHECK) ||
@@ -265,68 +270,28 @@ void Parser::parseCreateTable() {
 
             if (matchKeyword(TokenType::KW_PRIMARY)) {
                 consumeKeyword(TokenType::KW_KEY, "Expected KEY");
-                emit(sblr::Opcode::PRIMARY_KEY);
-                emitString(constraint_name);
-
                 consume(TokenType::LEFT_PAREN, "Expected (");
-                emit(sblr::Opcode::BEGIN_LIST);
-                size_t pk_count_pos = bytecode_.size();
-                emitU32(0);
-                uint32_t pk_count = 0;
                 do {
-                    std::string col = parseIdentifier();
-                    emit(sblr::Opcode::COLUMN_REF);
-                    emitString(col);
-                    pk_count++;
+                    parseIdentifier();
                 } while (match(TokenType::COMMA));
-                sblr::writeInt32(&bytecode_[pk_count_pos], pk_count);
-                emit(sblr::Opcode::END_LIST);
                 consume(TokenType::RIGHT_PAREN, "Expected )");
             } else if (matchKeyword(TokenType::KW_UNIQUE)) {
-                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
-                emitString(constraint_name);
-
                 consume(TokenType::LEFT_PAREN, "Expected (");
-                emit(sblr::Opcode::BEGIN_LIST);
-                size_t uq_count_pos = bytecode_.size();
-                emitU32(0);
-                uint32_t uq_count = 0;
                 do {
-                    std::string col = parseIdentifier();
-                    emit(sblr::Opcode::COLUMN_REF);
-                    emitString(col);
-                    uq_count++;
+                    parseIdentifier();
                 } while (match(TokenType::COMMA));
-                sblr::writeInt32(&bytecode_[uq_count_pos], uq_count);
-                emit(sblr::Opcode::END_LIST);
                 consume(TokenType::RIGHT_PAREN, "Expected )");
             } else if (matchKeyword(TokenType::KW_FOREIGN)) {
                 consumeKeyword(TokenType::KW_KEY, "Expected KEY");
                 ForeignKeyDef fk = parseForeignKeyDef();
                 fk.name = constraint_name;
-
-                emit(sblr::Opcode::TABLE_FK);
-                emitString(fk.name);
-                emit(sblr::Opcode::BEGIN_LIST);
-                emitU32(static_cast<uint32_t>(fk.columns.size()));
-                for (const auto& col : fk.columns) {
-                    emit(sblr::Opcode::COLUMN_REF);
-                    emitString(col);
-                }
-                emit(sblr::Opcode::END_LIST);
-                emitString(fk.ref_table);
-                emit(sblr::Opcode::BEGIN_LIST);
-                emitU32(static_cast<uint32_t>(fk.ref_columns.size()));
-                for (const auto& col : fk.ref_columns) {
-                    emit(sblr::Opcode::COLUMN_REF);
-                    emitString(col);
-                }
-                emit(sblr::Opcode::END_LIST);
+                pending_fks.push_back(std::move(fk));
             } else if (matchKeyword(TokenType::KW_CHECK)) {
-                emit(sblr::Opcode::CHECK_CONSTRAINT);
-                emitString(constraint_name);
                 consume(TokenType::LEFT_PAREN, "Expected (");
+                bool prev_emit = emit_enabled_;
+                emit_enabled_ = false;
                 parseExpression();
+                emit_enabled_ = prev_emit;
                 consume(TokenType::RIGHT_PAREN, "Expected )");
             }
         } else {
@@ -334,47 +299,72 @@ void Parser::parseCreateTable() {
             ColumnDef col = parseColumnDef();
 
             emit(sblr::Opcode::COLUMN_DEF);
+            emit(sblr::Opcode::COLUMN_REF);
+            emitString("");
             emitString(col.name);
-            emit(typeToOpcode(col.type.kind));
-            if (col.type.length > 0) {
-                emitU32(col.type.length);
-            }
-            if (col.type.precision > 0) {
-                emitU16(col.type.precision);
-                emitU16(col.type.scale);
-            }
+            emitTypeDefinition(col.type);
 
             // Constraints
             if (col.not_null) {
                 emit(sblr::Opcode::NOT_NULL);
             }
-            if (col.primary_key) {
-                emit(sblr::Opcode::PRIMARY_KEY);
-                emitString("");
-            }
-            if (col.unique) {
-                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
-                emitString("");
-            }
             if (col.has_default) {
                 emit(sblr::Opcode::DEFAULT_VALUE);
-                if (col.default_is_null) {
-                    emit(sblr::Opcode::LITERAL_NULL);
+                size_t len_pos = bytecode_.size();
+                emitU32(0);
+                size_t expr_start = bytecode_.size();
+                if (col.default_is_expr && !col.default_expr_bytecode.empty()) {
+                    if (emit_enabled_) {
+                        bytecode_.insert(bytecode_.end(),
+                                         col.default_expr_bytecode.begin(),
+                                         col.default_expr_bytecode.end());
+                    }
                 } else {
-                    emitString(col.default_value);
+                    switch (col.default_literal_type) {
+                        case ColumnDef::DefaultLiteralType::NULL_VALUE:
+                            emit(sblr::Opcode::LITERAL_NULL);
+                            break;
+                        case ColumnDef::DefaultLiteralType::STRING:
+                            emit(sblr::Opcode::LITERAL_STRING);
+                            emitString(col.default_value);
+                            break;
+                        case ColumnDef::DefaultLiteralType::INT:
+                            emit(sblr::Opcode::LITERAL_INT64);
+                            emitI64(col.default_int_value);
+                            break;
+                        case ColumnDef::DefaultLiteralType::FLOAT:
+                            emit(sblr::Opcode::LITERAL_DOUBLE);
+                            emitF64(col.default_float_value);
+                            break;
+                        case ColumnDef::DefaultLiteralType::NONE:
+                            emit(sblr::Opcode::LITERAL_NULL);
+                            break;
+                    }
                 }
+                uint32_t expr_len = static_cast<uint32_t>(bytecode_.size() - expr_start);
+                sblr::writeInt32(&bytecode_[len_pos], expr_len);
             }
             if (col.is_identity) {
                 emit(sblr::Opcode::IDENTITY_COLUMN);
                 emitByte(col.identity_always ? 1 : 0);
             }
             if (col.is_generated) {
-                emit(sblr::Opcode::GENERATED_COLUMN);
-                emitString(col.generated_expr);
-                emitByte(col.generated_stored ? 1 : 0);
+                if (!col.generated_expr_bytecode.empty()) {
+                    emit(sblr::Opcode::GENERATED_COLUMN);
+                    emitByte(col.generated_stored ? 1 : 2);
+                    emitU32(static_cast<uint32_t>(col.generated_expr_bytecode.size()));
+                    if (emit_enabled_) {
+                        bytecode_.insert(bytecode_.end(),
+                                         col.generated_expr_bytecode.begin(),
+                                         col.generated_expr_bytecode.end());
+                    }
+                }
             }
+            emitted_entry = true;
         }
-        count++;
+        if (emitted_entry) {
+            count++;
+        }
     } while (match(TokenType::COMMA));
 
     sblr::writeInt32(&bytecode_[count_pos], count);
@@ -389,7 +379,10 @@ void Parser::parseCreateTable() {
         while (!check(TokenType::RIGHT_PAREN)) {
             parseIdentifier();  // option name
             if (match(TokenType::EQUAL)) {
-                parseExpression();  // option value
+                bool prev_emit = emit_enabled_;
+                emit_enabled_ = false;
+                parseExpression();
+                emit_enabled_ = prev_emit;
             }
             if (!match(TokenType::COMMA)) break;
         }
@@ -398,14 +391,57 @@ void Parser::parseCreateTable() {
 
     // TABLESPACE
     if (matchKeyword(TokenType::KW_TABLESPACE)) {
-        parseIdentifier();  // tablespace name
+        tablespace_name = parseIdentifier();
     }
+
+    for (const auto& fk : pending_fks) {
+        if (fk.columns.size() > 255 || fk.ref_columns.size() > 255) {
+            error("Foreign key has too many columns");
+            continue;
+        }
+        emit(sblr::Opcode::TABLE_FK);
+        emitByte(static_cast<uint8_t>(fk.columns.size()));
+        for (const auto& col : fk.columns) {
+            emitString(col);
+        }
+        emitString(fk.ref_table);
+        emitByte(static_cast<uint8_t>(fk.ref_columns.size()));
+        for (const auto& col : fk.ref_columns) {
+            emitString(col);
+        }
+        emitString(fk.on_delete.empty() ? "NO ACTION" : fk.on_delete);
+        emitString(fk.on_update.empty() ? "NO ACTION" : fk.on_update);
+        emitString(fk.name);
+        uint8_t deferrable_flags = 0;
+        if (fk.deferrable) {
+            deferrable_flags |= 0x01;
+        }
+        if (fk.initially_deferred) {
+            deferrable_flags |= 0x02;
+        }
+        emitByte(deferrable_flags);
+    }
+
+    emitString(tablespace_name);
 }
 
 ColumnDef Parser::parseColumnDef() {
     ColumnDef col;
     col.name = parseIdentifier();
     col.type = parseDataType();
+
+    auto skip_parenthesized = [&]() {
+        int depth = 1;
+        while (depth > 0 && !check(TokenType::END_OF_FILE)) {
+            if (match(TokenType::LEFT_PAREN)) {
+                depth++;
+            } else if (match(TokenType::RIGHT_PAREN)) {
+                depth--;
+            } else {
+                advance();
+            }
+        }
+    };
 
     // Parse column constraints
     while (true) {
@@ -423,11 +459,35 @@ ColumnDef Parser::parseColumnDef() {
             col.has_default = true;
             if (matchKeyword(TokenType::KW_NULL)) {
                 col.default_is_null = true;
-            } else {
-                // For now, just capture the expression as a string
+                col.default_literal_type = ColumnDef::DefaultLiteralType::NULL_VALUE;
+            } else if (check(TokenType::STRING_LITERAL) || check(TokenType::INTEGER_LITERAL) ||
+                       check(TokenType::FLOAT_LITERAL)) {
+                if (check(TokenType::STRING_LITERAL)) {
+                    col.default_value = std::string(lexer_.stringPool().get(current_token_.value.string_id));
+                    col.default_literal_type = ColumnDef::DefaultLiteralType::STRING;
+                } else if (check(TokenType::INTEGER_LITERAL)) {
+                    col.default_value = std::to_string(current_token_.value.int_value);
+                    col.default_int_value = current_token_.value.int_value;
+                    col.default_literal_type = ColumnDef::DefaultLiteralType::INT;
+                } else {
+                    col.default_value = std::to_string(current_token_.value.float_value);
+                    col.default_float_value = current_token_.value.float_value;
+                    col.default_literal_type = ColumnDef::DefaultLiteralType::FLOAT;
+                }
+                advance();
+            } else if (matchKeyword(TokenType::KW_TRUE)) {
+                col.default_int_value = 1;
+                col.default_literal_type = ColumnDef::DefaultLiteralType::INT;
+            } else if (matchKeyword(TokenType::KW_FALSE)) {
+                col.default_int_value = 0;
+                col.default_literal_type = ColumnDef::DefaultLiteralType::INT;
+            } else if (match(TokenType::LEFT_PAREN)) {
                 col.default_is_expr = true;
-                // We'd need to capture the expression text here
-                parseExpression();  // Parse but don't capture
+                col.default_expr_bytecode = captureExpressionBytecode();
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            } else {
+                col.default_is_expr = true;
+                col.default_expr_bytecode = captureExpressionBytecode();
             }
         } else if (matchKeyword(TokenType::KW_GENERATED)) {
             col.is_generated = true;
@@ -444,8 +504,7 @@ ColumnDef Parser::parseColumnDef() {
                 col.is_generated = false;
             } else {
                 consume(TokenType::LEFT_PAREN, "Expected (");
-                // Capture expression - for now parse and discard
-                parseExpression();
+                col.generated_expr_bytecode = captureExpressionBytecode();
                 consume(TokenType::RIGHT_PAREN, "Expected )");
                 if (matchKeyword(TokenType::KW_STORED)) {
                     col.generated_stored = true;
@@ -455,7 +514,10 @@ ColumnDef Parser::parseColumnDef() {
             }
         } else if (matchKeyword(TokenType::KW_CHECK)) {
             consume(TokenType::LEFT_PAREN, "Expected (");
-            parseExpression();  // Check constraint
+            bool prev_emit = emit_enabled_;
+            emit_enabled_ = false;
+            parseExpression();
+            emit_enabled_ = prev_emit;
             consume(TokenType::RIGHT_PAREN, "Expected )");
         } else if (matchKeyword(TokenType::KW_REFERENCES)) {
             // Inline foreign key
@@ -498,6 +560,10 @@ PgDataType Parser::parseDataType() {
         type.kind = PgDataType::Kind::INTEGER;
     } else if (matchKeyword(TokenType::KW_BIGINT) || matchKeyword(TokenType::KW_INT8)) {
         type.kind = PgDataType::Kind::BIGINT;
+    } else if (matchKeyword(TokenType::KW_INT128)) {
+        type.kind = PgDataType::Kind::INT128;
+    } else if (matchKeyword(TokenType::KW_UINT128)) {
+        type.kind = PgDataType::Kind::UINT128;
     } else if (matchKeyword(TokenType::KW_REAL) || matchKeyword(TokenType::KW_FLOAT4)) {
         type.kind = PgDataType::Kind::REAL;
     } else if (matchKeyword(TokenType::KW_DOUBLE)) {
@@ -751,27 +817,23 @@ ForeignKeyDef Parser::parseForeignKeyDef() {
 // ============================================================================
 
 void Parser::parseCreateIndex() {
-    emit(sblr::Opcode::CREATE_INDEX);
+    bool unique = pending_index_unique_;
+    pending_index_unique_ = false;
 
     // CONCURRENTLY
-    bool concurrent = matchKeyword(TokenType::KW_CONCURRENTLY);
-    emitByte(concurrent ? 1 : 0);
+    matchKeyword(TokenType::KW_CONCURRENTLY);
 
     // IF NOT EXISTS
-    bool if_not_exists = false;
     if (matchKeyword(TokenType::KW_IF)) {
         consumeKeyword(TokenType::KW_NOT, "Expected NOT");
         consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
-        if_not_exists = true;
     }
-    emitByte(if_not_exists ? 1 : 0);
 
     // Index name (optional for inline definitions)
     std::string index_name;
     if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
         index_name = parseIdentifier();
     }
-    emitString(index_name);
 
     consumeKeyword(TokenType::KW_ON, "Expected ON");
 
@@ -783,99 +845,115 @@ void Parser::parseCreateIndex() {
         table = parseIdentifier();
     }
     resolveTableName(schema, table);
-    emit(sblr::Opcode::TABLE_REF);
-    emitString(schema + "/" + table);
+    std::string table_path = schema + "/" + table;
 
     // USING method
-    uint8_t method = 0;  // Default BTREE
+    uint8_t index_type = 0xFF;
     if (matchKeyword(TokenType::KW_USING)) {
         std::string method_name = parseIdentifier();
         std::transform(method_name.begin(), method_name.end(), method_name.begin(), ::tolower);
-        if (method_name == "btree") method = 0;
-        else if (method_name == "hash") method = 1;
-        else if (method_name == "gin") method = 2;
-        else if (method_name == "gist") method = 3;
-        else if (method_name == "spgist") method = 4;
-        else if (method_name == "brin") method = 5;
+        if (method_name == "btree") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BTREE);
+        } else if (method_name == "hash") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::HASH);
+        } else if (method_name == "gin") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::GIN);
+        } else if (method_name == "gist") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::GIST);
+        } else if (method_name == "spgist") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::SPGIST);
+        } else if (method_name == "brin") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BRIN);
+        }
     }
-    emitByte(method);
 
     // Column list
     consume(TokenType::LEFT_PAREN, "Expected (");
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t count = 0;
+    std::vector<std::string> columns;
+    bool has_expressions = false;
 
     do {
-        // Column or expression
         if (match(TokenType::LEFT_PAREN)) {
-            // Expression index
+            has_expressions = true;
+            bool prev_emit = emit_enabled_;
+            emit_enabled_ = false;
             parseExpression();
+            emit_enabled_ = prev_emit;
             consume(TokenType::RIGHT_PAREN, "Expected )");
         } else {
-            std::string col = parseIdentifier();
-            emit(sblr::Opcode::COLUMN_REF);
-            emitString(col);
+            columns.push_back(parseIdentifier());
         }
 
-        // Collation
         if (matchKeyword(TokenType::KW_COLLATE)) {
             parseIdentifier();
         }
 
-        // Operator class
-        if (check(TokenType::IDENTIFIER) && !check(TokenType::KW_ASC) &&
-            !check(TokenType::KW_DESC) && !check(TokenType::KW_NULLS)) {
-            parseIdentifier();
+        if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+            parseIdentifier();  // Operator class
         }
 
-        // ASC/DESC
         if (matchKeyword(TokenType::KW_DESC)) {
-            emit(sblr::Opcode::SORT_DESC);
+            // DESC
         } else {
             matchKeyword(TokenType::KW_ASC);
-            emit(sblr::Opcode::SORT_ASC);
         }
 
-        // NULLS FIRST/LAST
         if (matchKeyword(TokenType::KW_NULLS)) {
-            if (matchKeyword(TokenType::KW_FIRST)) {
-                emit(sblr::Opcode::NULLS_FIRST);
-            } else if (matchKeyword(TokenType::KW_LAST)) {
-                emit(sblr::Opcode::NULLS_LAST);
-            }
+            matchKeyword(TokenType::KW_FIRST) || matchKeyword(TokenType::KW_LAST);
         }
-
-        count++;
     } while (match(TokenType::COMMA));
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
-    // INCLUDE columns
+    bool has_include = false;
     if (matchKeyword(TokenType::KW_INCLUDE)) {
+        has_include = true;
         consume(TokenType::LEFT_PAREN, "Expected (");
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t inc_count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t inc_count = 0;
         do {
-            std::string col = parseIdentifier();
-            emit(sblr::Opcode::COLUMN_REF);
-            emitString(col);
-            inc_count++;
+            parseIdentifier();
         } while (match(TokenType::COMMA));
-        sblr::writeInt32(&bytecode_[inc_count_pos], inc_count);
-        emit(sblr::Opcode::END_LIST);
         consume(TokenType::RIGHT_PAREN, "Expected )");
     }
 
-    // WHERE clause (partial index)
+    bool has_predicate = false;
+    std::vector<uint8_t> predicate_bytecode;
     if (matchKeyword(TokenType::KW_WHERE)) {
-        emit(sblr::Opcode::WHERE_CLAUSE);
-        parseExpression();
+        has_predicate = true;
+        predicate_bytecode = captureExpressionBytecode();
+    }
+
+    std::string tablespace_name;
+    if (matchKeyword(TokenType::KW_TABLESPACE)) {
+        tablespace_name = parseIdentifier();
+    }
+
+    if (has_expressions) {
+        error("PostgreSQL expression indexes are not supported in v1 bytecode yet");
+    }
+    if (has_include) {
+        error("PostgreSQL INCLUDE indexes are not supported in v1 bytecode yet");
+    }
+
+    emit(sblr::Opcode::CREATE_INDEX);
+    emitString(index_name);
+    emitString(table_path);
+    emitByte(unique ? 1 : 0);
+    emitU32(static_cast<uint32_t>(columns.size()));
+    for (const auto& col : columns) {
+        emitString(col);
+    }
+    emitString(tablespace_name);
+    emitByte(index_type);
+    emitByte(0);
+    emitByte(has_predicate ? 1 : 0);
+    if (has_predicate) {
+        emitU32(static_cast<uint32_t>(predicate_bytecode.size()));
+        if (emit_enabled_) {
+            bytecode_.insert(bytecode_.end(),
+                             predicate_bytecode.begin(),
+                             predicate_bytecode.end());
+        }
+        emitString("");
     }
 }
 
@@ -1524,19 +1602,7 @@ void Parser::parseCreateType() {
 
     auto emit_type_ref = [&](const PgDataType& type) {
         emitByte(0);  // base type ref
-        emit(typeToOpcode(type.kind));
-        if (type.kind == PgDataType::Kind::VARCHAR ||
-            type.kind == PgDataType::Kind::CHAR) {
-            uint32_t length = type.length > 0 ? static_cast<uint32_t>(type.length) : 255;
-            emitU32(length);
-        } else if (type.kind == PgDataType::Kind::DECIMAL ||
-                   type.kind == PgDataType::Kind::NUMERIC ||
-                   type.kind == PgDataType::Kind::MONEY) {
-            uint32_t precision = type.precision > 0 ? static_cast<uint32_t>(type.precision) : 18;
-            uint32_t scale = type.scale > 0 ? static_cast<uint32_t>(type.scale) : 0;
-            emitU32(precision);
-            emitU32(scale);
-        }
+        emitTypeDefinition(type);
     };
 
     if (matchKeyword(TokenType::KW_ENUM)) {
@@ -1688,6 +1754,8 @@ void Parser::parseCreateDomain() {
         case PgDataType::Kind::SERIAL:
         case PgDataType::Kind::SMALLSERIAL:
         case PgDataType::Kind::BIGINT:
+        case PgDataType::Kind::INT128:
+        case PgDataType::Kind::UINT128:
         case PgDataType::Kind::BIGSERIAL:
         case PgDataType::Kind::REAL:
         case PgDataType::Kind::DOUBLE_PRECISION:
@@ -1716,19 +1784,7 @@ void Parser::parseCreateDomain() {
         error("CREATE DOMAIN base type is not supported in PostgreSQL parser");
     }
 
-    emit(typeToOpcode(base_type.kind));
-    if (base_type.kind == PgDataType::Kind::VARCHAR ||
-        base_type.kind == PgDataType::Kind::CHAR) {
-        uint32_t length = base_type.length > 0 ? static_cast<uint32_t>(base_type.length) : 255;
-        emitU32(length);
-    } else if (base_type.kind == PgDataType::Kind::DECIMAL ||
-               base_type.kind == PgDataType::Kind::NUMERIC ||
-               base_type.kind == PgDataType::Kind::MONEY) {
-        uint32_t precision = base_type.precision > 0 ? static_cast<uint32_t>(base_type.precision) : 18;
-        uint32_t scale = base_type.scale > 0 ? static_cast<uint32_t>(base_type.scale) : 0;
-        emitU32(precision);
-        emitU32(scale);
-    }
+    emitTypeDefinition(base_type);
 
     bool nullable = true;
     std::string default_value;
@@ -2166,14 +2222,14 @@ void Parser::parseAlterStmt() {
                     ColumnDef col = parseColumnDef();
                     emit(sblr::Opcode::COLUMN_DEF);
                     emitString(col.name);
-                    emit(typeToOpcode(col.type.kind));
+                    emitTypeDefinition(col.type);
                 } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
                     parseIdentifier();  // constraint name
                 } else {
                     ColumnDef col = parseColumnDef();
                     emit(sblr::Opcode::COLUMN_DEF);
                     emitString(col.name);
-                    emit(typeToOpcode(col.type.kind));
+                    emitTypeDefinition(col.type);
                 }
             } else if (matchKeyword(TokenType::KW_DROP)) {
                 if (matchKeyword(TokenType::KW_COLUMN)) {

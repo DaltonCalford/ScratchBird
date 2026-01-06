@@ -22,6 +22,12 @@ ScratchBird supports a wide range of standard SQL data types.
 | **Special** | UUID, JSON, JSONB, XML | Specialized types for universally unique identifiers and semi-structured documents. |
 | **Arrays** | datatype\[\] | A one-dimensional or multi-dimensional array of any other data type (e.g., INTEGER\[\], VARCHAR(10)\[\]). |
 
+### **2.1. Implementation Notes (Alpha)**
+- **Fixed-length semantics:** CHAR(n) and BINARY(n) are fixed-length types. Values shorter than n are padded (CHAR uses spaces, BINARY uses 0x00). Overlength values raise an error (no silent truncation).
+- **JSONB storage:** In Alpha, JSONB is stored as canonical text (same encoding as JSON). Binary JSON is a future optimization.
+- **Arrays:** SQL arrays are defined as homogeneous and may be multi-dimensional, but the current on-disk encoding is a typed element list (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`). Dimension/bounds enforcement is a planned enhancement.
+- **Domains:** Domain values are stored using the base type's canonical encoding. Domain constraints, security, and quality rules are enforced by the DomainManager at write/read time.
+
 ## **3\. The DOMAIN Concept**
 
 A DOMAIN allows you to create a custom data type based on a primitive type, but with a specific set of rules and behaviors.
@@ -77,6 +83,7 @@ INSERT INTO customers (id, address) VALUES (
 \-- Access fields using dot notation or EXTRACT  
 SELECT address.city FROM customers;  
 SELECT EXTRACT(city FROM address) FROM customers;
+SELECT ALTER_ELEMENT(FIELD('city') IN address TO 'Boston') FROM customers;
 
 ### **4.2. Enum Domains**
 

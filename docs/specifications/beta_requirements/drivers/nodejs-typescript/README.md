@@ -7,6 +7,15 @@
 
 ---
 
+
+## ScratchBird V2 Scope (Native Protocol Only)
+
+- Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.
+- Default port: 3092.
+- TLS 1.3 required.
+- Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
+
+
 ## Overview
 
 JavaScript/TypeScript is the most-used programming language globally. A native Node.js driver with full TypeScript support is critical for ScratchBird adoption in modern web development.
@@ -20,13 +29,25 @@ JavaScript/TypeScript is the most-used programming language globally. A native N
 - Zero native dependencies (pure JavaScript preferred)
 - Browser-compatible client (optional, for edge computing)
 
+## Usage examples
+
+```ts
+const client = new Client("scratchbird://user:pass@localhost:3092/db");
+await client.connect();
+
+await client.query("select 1 as one");
+
+await client.prepare("by_id", "select * from widgets where id = $1");
+const rows = await client.execute("by_id", [42]);
+```
+
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] [SPECIFICATION.md](SPECIFICATION.md) - Detailed technical specification
   - API surface area (connection, query, transaction)
   - Type definitions for all methods
   - Error handling and error types
@@ -34,7 +55,7 @@ JavaScript/TypeScript is the most-used programming language globally. A native N
   - Connection pooling architecture
   - Stream API design
 
-- [ ] **IMPLEMENTATION_PLAN.md** - Development roadmap
+- [x] [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development roadmap
   - Milestone 1: Basic connection and query (CommonJS)
   - Milestone 2: TypeScript types and ESM support
   - Milestone 3: Connection pooling
@@ -43,7 +64,7 @@ JavaScript/TypeScript is the most-used programming language globally. A native N
   - Resource requirements
   - Timeline estimates
 
-- [ ] **TESTING_CRITERIA.md** - Test requirements
+- [x] [TESTING_CRITERIA.md](TESTING_CRITERIA.md) - Test requirements
   - Unit tests for all API methods
   - Integration tests with real database
   - Performance benchmarks vs pg (node-postgres)
@@ -51,27 +72,31 @@ JavaScript/TypeScript is the most-used programming language globally. A native N
   - TypeScript compilation tests
   - Browser compatibility tests (if applicable)
 
-- [ ] **COMPATIBILITY_MATRIX.md** - Version support
+- [x] [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md) - Version support
   - Node.js versions (16 LTS, 18 LTS, 20 LTS, 21+)
   - TypeScript versions (4.5+, 5.0+)
   - Package managers (npm, yarn, pnpm, bun)
   - Runtimes (Node.js, Deno, Bun)
   - Operating systems (Linux, macOS, Windows)
 
-- [ ] **MIGRATION_GUIDE.md** - Migration from other drivers
+- [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other drivers
   - From pg (node-postgres/PostgreSQL)
   - From mysql2
   - From better-sqlite3
   - From node-firebird
   - Code examples and gotchas
 
-- [ ] **API_REFERENCE.md** - Complete API documentation
+- [x] [API_REFERENCE.md](API_REFERENCE.md) - Complete API documentation
   - Client class
   - Pool class
   - Connection class
   - Query result types
   - Error classes
   - Type converters
+
+### Shared References
+
+- [../DRIVER_BASELINE_SPEC.md](../DRIVER_BASELINE_SPEC.md) - Shared V2 driver requirements.
 
 ### Examples Directory
 
@@ -153,7 +178,7 @@ import { Client, Pool } from 'scratchbird';
 // Simple client usage
 const client = new Client({
   host: 'localhost',
-  port: 5432,
+  port: 3092,
   database: 'mydb',
   user: 'myuser',
   password: 'mypassword'
@@ -173,7 +198,7 @@ await client.end();
 // Connection pool usage (recommended for production)
 const pool = new Pool({
   host: 'localhost',
-  port: 5432,
+  port: 3092,
   database: 'mydb',
   user: 'myuser',
   password: 'mypassword',
@@ -307,7 +332,7 @@ interface ClientConfig {
   user?: string;
   password?: string;
   ssl?: boolean | TLSConnectionOptions;
-  connectionString?: string; // e.g., "scratchbird://user:pass@host:5432/db"
+  connectionString?: string; // e.g., "scratchbird://user:pass@host:3092/db"
   connectionTimeoutMillis?: number;
   keepAlive?: boolean;
   statement_timeout?: number;
@@ -431,7 +456,7 @@ Benchmark against pg (node-postgres) driver:
 ### Runtime Dependencies
 
 Minimal dependencies preferred (ideally zero for core driver):
-- (Optional) `pg-protocol` - if reusing PostgreSQL wire protocol
+- SBWP native protocol only (no pg-protocol dependency).
 - (Optional) Type conversion libraries
 
 ### Development Dependencies

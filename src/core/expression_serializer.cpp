@@ -213,6 +213,11 @@ namespace scratchbird::core
             serializeExtract(static_cast<const ExtractExpr *>(expr), buffer);
             break;
 
+        case ExprKind::ALTER_ELEMENT:
+            writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::ALTER_ELEMENT));
+            serializeAlterElement(static_cast<const AlterElementExpr *>(expr), buffer);
+            break;
+
         default:
             throw std::runtime_error("Unsupported expression type for serialization");
         }
@@ -351,10 +356,36 @@ namespace scratchbird::core
     void ExpressionSerializer::serializeExtract(const ExtractExpr *expr,
                                                 std::vector<uint8_t> &buffer)
     {
+        uint8_t flags = expr->args().empty() ? 0 : 0x01;
+        writeU8(buffer, flags);
+        writeU8(buffer, expr->fieldId());
+        writeString(buffer, expr->fieldName());
+        if (flags & 0x01)
+        {
+            const auto &args = expr->args();
+            writeU8(buffer, static_cast<uint8_t>(args.size()));
+            for (const auto &arg : args)
+            {
+                serializeNode(arg.get(), buffer);
+            }
+        }
+        serializeNode(expr->source(), buffer);
+    }
+
+    void ExpressionSerializer::serializeAlterElement(const AlterElementExpr *expr,
+                                                     std::vector<uint8_t> &buffer)
+    {
         writeU8(buffer, 0);
         writeU8(buffer, expr->fieldId());
         writeString(buffer, expr->fieldName());
+        const auto &args = expr->args();
+        writeU8(buffer, static_cast<uint8_t>(args.size()));
+        for (const auto &arg : args)
+        {
+            serializeNode(arg.get(), buffer);
+        }
         serializeNode(expr->source(), buffer);
+        serializeNode(expr->newValue(), buffer);
     }
 
     // ========================================================================
@@ -439,6 +470,9 @@ namespace scratchbird::core
 
         case SerializedNodeType::EXTRACT:
             return deserializeExtract(ptr, end);
+
+        case SerializedNodeType::ALTER_ELEMENT:
+            return deserializeAlterElement(ptr, end);
 
         default:
             throw std::runtime_error("Unknown expression node type");
@@ -593,12 +627,44 @@ namespace scratchbird::core
 
     std::unique_ptr<Expression> ExpressionSerializer::deserializeExtract(const uint8_t *&ptr, const uint8_t *end)
     {
+        uint8_t flags = readU8(ptr, end);
+
+        uint8_t field_id = readU8(ptr, end);
+        std::string field_name = readString(ptr, end);
+        std::vector<std::unique_ptr<Expression>> args;
+        if (flags & 0x01)
+        {
+            uint8_t arg_count = readU8(ptr, end);
+            args.reserve(arg_count);
+            for (uint8_t i = 0; i < arg_count; i++)
+            {
+                args.push_back(deserializeNode(ptr, end));
+            }
+        }
+        auto source = deserializeNode(ptr, end);
+        return std::make_unique<ExtractExpr>(field_id, std::move(field_name),
+                                             std::move(args), std::move(source));
+    }
+
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeAlterElement(const uint8_t *&ptr,
+                                                                              const uint8_t *end)
+    {
         readU8(ptr, end); // flags
 
         uint8_t field_id = readU8(ptr, end);
         std::string field_name = readString(ptr, end);
+        uint8_t arg_count = readU8(ptr, end);
+        std::vector<std::unique_ptr<Expression>> args;
+        args.reserve(arg_count);
+        for (uint8_t i = 0; i < arg_count; i++)
+        {
+            args.push_back(deserializeNode(ptr, end));
+        }
         auto source = deserializeNode(ptr, end);
-        return std::make_unique<ExtractExpr>(field_id, std::move(field_name), std::move(source));
+        auto new_value = deserializeNode(ptr, end);
+        return std::make_unique<AlterElementExpr>(field_id, std::move(field_name),
+                                                  std::move(args), std::move(source),
+                                                  std::move(new_value));
     }
 
 } // namespace scratchbird::core

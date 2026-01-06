@@ -24,6 +24,8 @@ The PostgreSQL wire protocol uses a message-based format:
 └──────────────────────────────────────┘
 ```
 
+Startup messages may be preceded by SSLRequest or GSSENCRequest. If the server replies with an ErrorResponse to those requests, close the connection and retry without encryption (do not surface the error to users).
+
 ### 2.2 Message Types
 
 ```cpp
@@ -59,6 +61,7 @@ namespace pg_messages {
     constexpr char NOTICE_RESPONSE = 'N';
     constexpr char NOTIFICATION_RESPONSE = 'A';
     constexpr char NO_DATA = 'n';
+    constexpr char NEGOTIATE_VERSION = 'v';
     constexpr char PARAMETER_DESCRIPTION = 't';
     constexpr char PARAMETER_STATUS = 'S';
     constexpr char PARSE_COMPLETE = '1';
@@ -219,16 +222,29 @@ Result<void> PostgreSQLAdapter::connect(
                      "Failed to connect to " + server.host);
     }
 
-    // 4. TLS handshake if required
+    // 4. SSL/GSSENC negotiation if required
     if (server.use_ssl) {
-        auto tls_result = initiateTLS(server);
-        if (!tls_result) {
+        auto ssl_result = sendSSLRequest();
+        if (!ssl_result) {
             close(socket_fd_);
-            return tls_result.error();
+            return ssl_result.error();
+        }
+
+        // Server returns single byte 'S' or 'N'
+        if (ssl_result.value() == 'S') {
+            auto tls_result = initiateTLS(server);
+            if (!tls_result) {
+                close(socket_fd_);
+                return tls_result.error();
+            }
+        } else if (ssl_result.value() != 'N') {
+            close(socket_fd_);
+            return Error(remote_sqlstate::PROTOCOL_ERROR,
+                         "Unexpected SSLRequest response");
         }
     }
 
-    // 5. Send startup message
+    // 5. Send startup message (over TLS if enabled)
     state_ = ConnectionState::AUTHENTICATING;
     auto startup_result = sendStartupMessage(server, mapping);
     if (!startup_result) {
@@ -254,6 +270,11 @@ Result<void> PostgreSQLAdapter::connect(
     return {};
 }
 ```
+
+Startup handling requirements:
+- Accept `NegotiateProtocolVersion` ('v') before authentication completes.
+- Capture `ParameterStatus` values and `BackendKeyData` for cancellation.
+- `ReadyForQuery` marks the end of the startup/auth sequence.
 
 ### 4.2 Startup Message Format
 

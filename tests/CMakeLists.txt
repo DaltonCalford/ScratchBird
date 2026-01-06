@@ -101,7 +101,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_utf8_utils.cpp$")  # Phase 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_window_functions.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_charset_loader.cpp$")  # Missing algorithm header and private method access
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_constraints_crud.cpp$")  # API incompatibilities
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_extract.cpp$")  # TypeExtractor API changes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_multi_geometry.cpp$")  # TypedValue API changes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_stored_code_dependencies.cpp$")  # Duplicate of test_code_dependencies.cpp
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_new_integer_types.cpp$")  # API incompatibilities
@@ -1740,5 +1739,9 @@ foreach(target_name ${SCRATCHBIRD_TEST_TARGETS})
     endif()
 endforeach()
 if(SCRATCHBIRD_TEST_BINARY_TARGETS)
-    add_custom_target(scratchbird_test_binaries DEPENDS ${SCRATCHBIRD_TEST_BINARY_TARGETS})
+    add_custom_target(scratchbird_test_binaries ALL DEPENDS ${SCRATCHBIRD_TEST_BINARY_TARGETS})
+endif()
+
+if(TARGET scratchbird_test_binaries)
+    set_property(TARGET scratchbird_test_binaries PROPERTY FOLDER "tests")
 endif()

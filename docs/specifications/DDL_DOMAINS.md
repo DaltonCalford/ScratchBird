@@ -4,6 +4,11 @@
 
 A domain in ScratchBird is a user-defined data type with a name, an underlying primitive type, and a set of optional constraints, rules, and behaviors. Domains are a powerful feature for centralizing data validation and business logic. When a domain is used for a column or variable, it inherits all the properties of the domain, ensuring consistency and integrity throughout the database.
 
+### **Storage and Encoding Notes (Alpha)**
+- Domain values are stored using the **base type's canonical encoding** (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`). Domains do not introduce a new on-disk type tag.
+- Domain constraints, normalization, masking, and encryption are enforced by the DomainManager at write/read time.
+- Encrypted domain values store the same canonical plaintext payload inside the encrypted record.
+
 ## **CREATE DOMAIN**
 
 Defines a new domain.

@@ -15,6 +15,15 @@
 
 ---
 
+## Related Specs
+
+- [Component Model and Responsibilities](COMPONENT_MODEL_AND_RESPONSIBILITIES.md)
+
+Reuse artifacts: [Component Model Diagrams](../diagrams/component_model_diagrams.md),
+[Component Responsibility Matrix](../diagrams/component_responsibility_matrix.md).
+
+---
+
 ## Overview
 
 The Y-Valve (PLANNED) is ScratchBird's universal connection router and protocol abstraction layer. Unlike Firebird's Y-Valve (which simply routes between embedded/server modes), ScratchBird's Y-Valve is a sophisticated multi-protocol router that:

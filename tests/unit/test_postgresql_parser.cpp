@@ -303,7 +303,7 @@ TEST_F(PostgreSQLParserTest, PlaceholderEmitsExtendedOpcode) {
 }
 
 TEST_F(PostgreSQLParserTest, ArraySubscriptEmitsExtendedOpcode) {
-    Parser parser("SELECT data[1] FROM items");
+    Parser parser("SELECT data[1]");
     auto result = parser.parseStatement();
     ASSERT_TRUE(result.success()) << "Failed to parse array subscript";
     EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_ARRAY_SUBSCRIPT));

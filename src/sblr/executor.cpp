@@ -3,6 +3,7 @@
 #include <chrono>
 #include <optional>
 #include "scratchbird/parser/shared_types.h"
+#include "scratchbird/sblr/resolved_ast_v2.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
 #define SCRATCHBIRD_WITH_COMPILER 1
 #endif
@@ -17,7 +18,10 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/charset.h"
+#include "scratchbird/core/config.h"
+#include "scratchbird/core/firebird_datetime.h"
 #include "scratchbird/core/timezone.h"
+#include "scratchbird/core/utf8_utils.h"
 #include "scratchbird/core/array.h"  // For ARRAY extraction
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
@@ -41,6 +45,7 @@
 #include "scratchbird/core/ts_operations.h"
 #include "scratchbird/core/expression_serializer.h"
 #include "scratchbird/core/quality_pipeline.h"
+#include "scratchbird/sblr/extract_element_ops.h"  // Spec: docs/specifications/EXTRACT_AND_ALTER_ELEMENT.md
 #include "scratchbird/sblr/expression_evaluator.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
@@ -87,6 +92,7 @@
 #endif
 
 using json = nlohmann::json;
+using OrderedJson = nlohmann::ordered_json;
 
 namespace scratchbird
 {
@@ -121,6 +127,104 @@ namespace scratchbird
                                        const core::CatalogManager::ColumnInfo& column,
                                        core::TypedValue& value,
                                        core::ErrorContext* ctx);
+            core::DataType convertDataType(Opcode type_opcode, uint32_t precision = 0)
+            {
+                (void)precision;
+                switch (type_opcode)
+                {
+                    // Integer types
+                    case Opcode::TYPE_INT8:
+                        return core::DataType::INT8;
+                    case Opcode::TYPE_INT16:
+                        return core::DataType::INT16;
+                    case Opcode::TYPE_INTEGER:
+                        return core::DataType::INT32;
+                    case Opcode::TYPE_BIGINT:
+                        return core::DataType::INT64;
+
+                    // Floating point types
+                    case Opcode::TYPE_FLOAT32:
+                        return core::DataType::FLOAT32;
+                    case Opcode::TYPE_DOUBLE:
+                        return core::DataType::FLOAT64;
+
+                    // Boolean
+                    case Opcode::TYPE_BOOLEAN:
+                        return core::DataType::BOOLEAN;
+
+                    // String types
+                    case Opcode::TYPE_CHAR:
+                        return core::DataType::CHAR;
+                    case Opcode::TYPE_VARCHAR:
+                        return core::DataType::VARCHAR;
+                    case Opcode::TYPE_TEXT:
+                        return core::DataType::TEXT;
+
+                    // Date/Time types
+                    case Opcode::TYPE_DATE:
+                        return core::DataType::DATE;
+                    case Opcode::TYPE_TIME:
+                        return core::DataType::TIME;
+                    case Opcode::TYPE_TIMESTAMP:
+                        return core::DataType::TIMESTAMP;
+
+                    // Binary types
+                    case Opcode::TYPE_BINARY:
+                        return core::DataType::BINARY;
+                    case Opcode::TYPE_VARBINARY:
+                        return core::DataType::VARBINARY;
+                    case Opcode::TYPE_BLOB:
+                        return core::DataType::BLOB;
+                    case Opcode::TYPE_BYTEA:
+                        return core::DataType::BYTEA;
+
+                    // Other types
+                    case Opcode::TYPE_UUID:
+                        return core::DataType::UUID;
+                    case Opcode::TYPE_DECIMAL:
+                        return core::DataType::DECIMAL;
+                    case Opcode::TYPE_JSON:
+                        return core::DataType::JSON;
+
+                    default:
+                        throw std::runtime_error("Unknown data type opcode");
+                }
+            }
+
+            core::DataType convertExtendedDataType(uint16_t ext_opcode)
+            {
+                switch (static_cast<ExtendedOpcode>(ext_opcode))
+                {
+                    case ExtendedOpcode::EXT_TYPE_INT128:
+                        return core::DataType::INT128;
+                    case ExtendedOpcode::EXT_TYPE_UINT128:
+                        return core::DataType::UINT128;
+                    case ExtendedOpcode::EXT_TYPE_POINT:
+                        return core::DataType::POINT;
+                    case ExtendedOpcode::EXT_TYPE_LINESTRING:
+                        return core::DataType::LINESTRING;
+                    case ExtendedOpcode::EXT_TYPE_POLYGON:
+                        return core::DataType::POLYGON;
+                    case ExtendedOpcode::EXT_TYPE_TSVECTOR:
+                        return core::DataType::TSVECTOR;
+                    case ExtendedOpcode::EXT_TYPE_TSQUERY:
+                        return core::DataType::TSQUERY;
+                    case ExtendedOpcode::EXT_TYPE_INT4RANGE:
+                        return core::DataType::INT4RANGE;
+                    case ExtendedOpcode::EXT_TYPE_INT8RANGE:
+                        return core::DataType::INT8RANGE;
+                    case ExtendedOpcode::EXT_TYPE_NUMRANGE:
+                        return core::DataType::NUMRANGE;
+                    case ExtendedOpcode::EXT_TYPE_DATERANGE:
+                        return core::DataType::DATERANGE;
+                    case ExtendedOpcode::EXT_TYPE_TSRANGE:
+                        return core::DataType::TSRANGE;
+                    case ExtendedOpcode::EXT_TYPE_TSTZRANGE:
+                        return core::DataType::TSTZRANGE;
+                    default:
+                        throw std::runtime_error("Unknown extended data type opcode");
+                }
+            }
 
             enum class ColumnEncryptionState
             {
@@ -371,10 +475,24 @@ namespace scratchbird
         // This handles INT32, INT64, FLOAT32, FLOAT64 without throwing
         static double coerceToDouble(const core::TypedValue& val) {
             switch (val.type()) {
+                case core::DataType::INT8:
+                case core::DataType::INT16:
                 case core::DataType::INT32:
                     return static_cast<double>(val.getInt32());
                 case core::DataType::INT64:
                     return static_cast<double>(val.getInt64());
+                case core::DataType::INT128:
+                    return static_cast<double>(val.getInt128());
+                case core::DataType::UINT8:
+                    return static_cast<double>(val.getUInt8());
+                case core::DataType::UINT16:
+                    return static_cast<double>(val.getUInt16());
+                case core::DataType::UINT32:
+                    return static_cast<double>(val.getUInt32());
+                case core::DataType::UINT64:
+                    return static_cast<double>(val.getUInt64());
+                case core::DataType::UINT128:
+                    return static_cast<double>(val.getUInt128());
                 case core::DataType::FLOAT32:
                     return static_cast<double>(val.getFloat32());
                 case core::DataType::FLOAT64:
@@ -390,6 +508,305 @@ namespace scratchbird
                     throw std::runtime_error("Type mismatch: expected numeric type, got " +
                                              std::to_string(static_cast<int>(val.type())));
             }
+        }
+
+        static bool isSignedIntegerType(core::DataType type) {
+            switch (type) {
+                case core::DataType::INT8:
+                case core::DataType::INT16:
+                case core::DataType::INT32:
+                case core::DataType::INT64:
+                case core::DataType::INT128:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool isUnsignedIntegerType(core::DataType type) {
+            switch (type) {
+                case core::DataType::UINT8:
+                case core::DataType::UINT16:
+                case core::DataType::UINT32:
+                case core::DataType::UINT64:
+                case core::DataType::UINT128:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool isIntegerType(core::DataType type) {
+            return isSignedIntegerType(type) || isUnsignedIntegerType(type);
+        }
+
+        static core::int128_t toSigned128(const core::TypedValue& value) {
+            if (value.type() == core::DataType::INT128) {
+                return value.getInt128();
+            }
+            return static_cast<core::int128_t>(value.getInt64());
+        }
+
+        static bool tryGetUnsigned128(const core::TypedValue& value, core::uint128_t& out) {
+            switch (value.type()) {
+                case core::DataType::UINT8:
+                    out = value.getUInt8();
+                    return true;
+                case core::DataType::UINT16:
+                    out = value.getUInt16();
+                    return true;
+                case core::DataType::UINT32:
+                    out = value.getUInt32();
+                    return true;
+                case core::DataType::UINT64:
+                    out = value.getUInt64();
+                    return true;
+                case core::DataType::UINT128:
+                    out = value.getUInt128();
+                    return true;
+                case core::DataType::INT128: {
+                    core::int128_t signed_val = value.getInt128();
+                    if (signed_val < 0) {
+                        return false;
+                    }
+                    out = static_cast<core::uint128_t>(signed_val);
+                    return true;
+                }
+                case core::DataType::INT8:
+                case core::DataType::INT16:
+                case core::DataType::INT32:
+                case core::DataType::INT64: {
+                    int64_t signed_val = value.getInt64();
+                    if (signed_val < 0) {
+                        return false;
+                    }
+                    out = static_cast<core::uint128_t>(signed_val);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        template <typename T>
+        static bool safeAdd128(T a, T b, T* result) {
+#if defined(__GNUC__) || defined(__clang__)
+            return !__builtin_add_overflow(a, b, result);
+#else
+            *result = a + b;
+            return true;
+#endif
+        }
+
+        template <typename T>
+        static bool safeSubtract128(T a, T b, T* result) {
+#if defined(__GNUC__) || defined(__clang__)
+            return !__builtin_sub_overflow(a, b, result);
+#else
+            *result = a - b;
+            return true;
+#endif
+        }
+
+        template <typename T>
+        static bool safeMultiply128(T a, T b, T* result) {
+#if defined(__GNUC__) || defined(__clang__)
+            return !__builtin_mul_overflow(a, b, result);
+#else
+            *result = a * b;
+            return true;
+#endif
+        }
+
+        static core::int128_t int128MinValue() {
+            return static_cast<core::int128_t>(core::uint128_t{1} << 127);
+        }
+
+        static bool safeDivide128(core::int128_t a, core::int128_t b, core::int128_t* result) {
+            if (b == 0) {
+                return false;
+            }
+            if (a == int128MinValue() && b == -1) {
+                return false;
+            }
+            *result = a / b;
+            return true;
+        }
+
+        static bool safeModulo128(core::int128_t a, core::int128_t b, core::int128_t* result) {
+            if (b == 0) {
+                return false;
+            }
+            if (a == int128MinValue() && b == -1) {
+                *result = 0;
+                return true;
+            }
+            *result = a % b;
+            return true;
+        }
+
+        static bool safeDivide128(core::uint128_t a, core::uint128_t b, core::uint128_t* result) {
+            if (b == 0) {
+                return false;
+            }
+            *result = a / b;
+            return true;
+        }
+
+        static bool safeModulo128(core::uint128_t a, core::uint128_t b, core::uint128_t* result) {
+            if (b == 0) {
+                return false;
+            }
+            *result = a % b;
+            return true;
+        }
+
+        static core::TypedValue makeInt128Value(core::int128_t value) {
+            std::vector<uint8_t> bytes(16);
+            core::uint128_t uvalue = static_cast<core::uint128_t>(value);
+            for (size_t i = 0; i < 16; ++i) {
+                bytes[i] = static_cast<uint8_t>(uvalue & 0xFF);
+                uvalue >>= 8;
+            }
+            return core::TypedValue::makeInt128(bytes);
+        }
+
+        static core::TypedValue makeUInt128Value(core::uint128_t value) {
+            std::vector<uint8_t> bytes(16);
+            core::uint128_t uvalue = value;
+            for (size_t i = 0; i < 16; ++i) {
+                bytes[i] = static_cast<uint8_t>(uvalue & 0xFF);
+                uvalue >>= 8;
+            }
+            return core::TypedValue::makeUInt128(bytes);
+        }
+
+        static int compareIntegerValues(const core::TypedValue& left,
+                                        const core::TypedValue& right) {
+            const bool left_unsigned = isUnsignedIntegerType(left.type());
+            const bool right_unsigned = isUnsignedIntegerType(right.type());
+
+            if (left_unsigned || right_unsigned) {
+                core::int128_t left_signed = 0;
+                core::int128_t right_signed = 0;
+                bool left_negative = false;
+                bool right_negative = false;
+
+                if (!left_unsigned) {
+                    left_signed = toSigned128(left);
+                    left_negative = left_signed < 0;
+                }
+                if (!right_unsigned) {
+                    right_signed = toSigned128(right);
+                    right_negative = right_signed < 0;
+                }
+
+                if (left_negative && !right_negative) {
+                    return -1;
+                }
+                if (right_negative && !left_negative) {
+                    return 1;
+                }
+                if (left_negative && right_negative) {
+                    if (left_signed < right_signed) {
+                        return -1;
+                    }
+                    if (left_signed > right_signed) {
+                        return 1;
+                    }
+                    return 0;
+                }
+
+                core::uint128_t lhs = 0;
+                core::uint128_t rhs = 0;
+                if (!tryGetUnsigned128(left, lhs) || !tryGetUnsigned128(right, rhs)) {
+                    return 0;
+                }
+                if (lhs < rhs) {
+                    return -1;
+                }
+                if (lhs > rhs) {
+                    return 1;
+                }
+                return 0;
+            }
+
+            core::int128_t lhs = toSigned128(left);
+            core::int128_t rhs = toSigned128(right);
+            if (lhs < rhs) {
+                return -1;
+            }
+            if (lhs > rhs) {
+                return 1;
+            }
+            return 0;
+        }
+
+        static int64_t floorDiv(int64_t value, int64_t divisor) {
+            int64_t quotient = value / divisor;
+            int64_t remainder = value % divisor;
+            if (remainder != 0 && ((remainder > 0) != (divisor > 0))) {
+                --quotient;
+            }
+            return quotient;
+        }
+
+        static int64_t defaultDateTimeMicros() {
+            core::Config &cfg = core::Config::getInstance();
+            std::string default_time = cfg.getString("server.time", "date_default_time",
+                                                     "00:00:00");
+            int hour = 0;
+            int minute = 0;
+            int second = 0;
+            int micros = 0;
+            std::string time_part = default_time;
+            std::string frac_part;
+            size_t dot_pos = default_time.find('.');
+            if (dot_pos != std::string::npos)
+            {
+                time_part = default_time.substr(0, dot_pos);
+                frac_part = default_time.substr(dot_pos + 1);
+            }
+            int parsed = std::sscanf(time_part.c_str(), "%d:%d:%d", &hour, &minute, &second);
+            if (parsed < 2)
+            {
+                return 0;
+            }
+            if (parsed == 2)
+            {
+                second = 0;
+            }
+            if (!frac_part.empty())
+            {
+                if (frac_part.size() > 6)
+                {
+                    return 0;
+                }
+                int frac_value = 0;
+                for (char ch : frac_part)
+                {
+                    if (ch < '0' || ch > '9')
+                    {
+                        return 0;
+                    }
+                    frac_value = frac_value * 10 + (ch - '0');
+                }
+                int scale = 6 - static_cast<int>(frac_part.size());
+                for (int i = 0; i < scale; ++i)
+                {
+                    frac_value *= 10;
+                }
+                micros = frac_value;
+            }
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+                second < 0 || second > 59)
+            {
+                return 0;
+            }
+            return (static_cast<int64_t>(hour) * 3600 +
+                    static_cast<int64_t>(minute) * 60 +
+                    static_cast<int64_t>(second)) * 1000000 +
+                   micros;
         }
 
         // ===== SQL LIKE Pattern Matching Helper =====
@@ -552,6 +969,48 @@ namespace scratchbird
             return current;
         }
 
+        static OrderedJson canonicalizeJson(const json& input) {
+            if (input.is_object()) {
+                OrderedJson obj = OrderedJson::object();
+                std::vector<std::string> keys;
+                keys.reserve(input.size());
+                for (auto it = input.begin(); it != input.end(); ++it) {
+                    keys.push_back(it.key());
+                }
+                std::sort(keys.begin(), keys.end());
+                for (const auto& key : keys) {
+                    obj[key] = canonicalizeJson(input.at(key));
+                }
+                return obj;
+            }
+            if (input.is_array()) {
+                OrderedJson arr = OrderedJson::array();
+                for (const auto& elem : input) {
+                    arr.push_back(canonicalizeJson(elem));
+                }
+                return arr;
+            }
+            return input;
+        }
+
+        static Value jsonToValue(const json& j, core::DataType output_type) {
+            if (j.is_null()) {
+                return Value::makeNull();
+            }
+
+            if (output_type == core::DataType::TEXT) {
+                return Value::makeText(j.dump());
+            }
+
+            if (output_type == core::DataType::JSONB) {
+                OrderedJson canonical = canonicalizeJson(j);
+                std::vector<uint8_t> encoded = OrderedJson::to_cbor(canonical);
+                return Value::makeJSONB(encoded);
+            }
+
+            return Value::makeJSON(j.dump());
+        }
+
         // Convert Value to json
         static json valueToJSON(const Value& val) {
             if (val.isNull()) {
@@ -591,24 +1050,16 @@ namespace scratchbird
                         return json();
                     }
 
+                case core::DataType::JSONB:
+                    try {
+                        return json::parse(val.toString());
+                    } catch (...) {
+                        return json();
+                    }
+
                 default:
                     // For other types, convert to string
                     return json(val.toString());
-            }
-        }
-
-        // Convert json to Value
-        static Value jsonToValue(const json& j, bool as_text = false) {
-            if (j.is_null()) {
-                return Value::makeNull();
-            }
-
-            if (as_text) {
-                // Return as text string
-                return Value::makeText(j.dump());
-            } else {
-                // Return as JSON type
-                return Value::makeJSON(j.dump());
             }
         }
 
@@ -832,6 +1283,8 @@ namespace scratchbird
 
             // Clear stack efficiently by replacing with empty stack
             stack_ = std::stack<Value>();
+            blr_savepoint_stack_.clear();
+            blr_savepoint_counter_ = 0;
 
             current_table_.clear();
             current_columns_.clear();
@@ -873,6 +1326,28 @@ namespace scratchbird
 
             try
             {
+                if (conn_ctx && conn_ctx->hasStagedSecurityContext())
+                {
+                    if (conn_ctx->autocommitMode() && !conn_ctx->autocommitSuspended())
+                    {
+                        core::ErrorContext pre_err;
+                        auto status = conn_ctx->commit(&pre_err);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to apply pending security context";
+                            if (!pre_err.message.empty())
+                            {
+                                err_msg += ": " + pre_err.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                    }
+                    else
+                    {
+                        conn_ctx->applyStagedSecurityContext();
+                    }
+                }
+
                 // Check version
                 if (readByte() != static_cast<uint8_t>(Opcode::VERSION))
                 {
@@ -1063,7 +1538,9 @@ namespace scratchbird
                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_PREPARED) ||
                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT) ||
                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RELEASE_SAVEPOINT) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT))
+                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT) ||
+                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_BEGIN) ||
+                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_END))
                         {
                             is_txn_control = true;
                         }
@@ -1831,6 +2308,31 @@ namespace scratchbird
                             executeRollbackPrepared();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT))
+                        {
+                            executeSavepoint();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RELEASE_SAVEPOINT))
+                        {
+                            executeReleaseSavepoint();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT))
+                        {
+                            executeRollbackToSavepoint();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_BEGIN))
+                        {
+                            executeBlrSavepointBegin();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_END))
+                        {
+                            executeBlrSavepointEnd();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_POLICY))
                         {
                             executeCreatePolicy();
@@ -1850,133 +2352,133 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_TABLES))
                         {
                             executeShowTables();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DATABASES))
                         {
                             executeShowDatabases();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_COLUMNS))
                         {
                             executeShowColumns();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_INDEXES))
                         {
                             executeShowIndexes();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_CREATE_TABLE))
                         {
                             executeShowCreateTable();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DESCRIBE_TABLE))
                         {
                             executeDescribeTable();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         // ===== Extended SHOW Commands (Firebird ISQL compatibility) =====
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_TABLE))
                         {
                             executeShowTable();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_INDEX))
                         {
                             executeShowIndex();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_TRIGGER))
                         {
                             executeShowTrigger();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_PROCEDURE))
                         {
                             executeShowProcedure();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_FUNCTION))
                         {
                             executeShowFunction();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_VIEW))
                         {
                             executeShowView();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DOMAIN))
                         {
                             executeShowDomain();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_GENERATOR))
                         {
                             executeShowGenerator();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SCHEMA))
                         {
                             executeShowSchema();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_ROLE))
                         {
                             executeShowRole();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_GRANTS))
                         {
                             executeShowGrants();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_CHECKS))
                         {
                             executeShowChecks();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_COLLATIONS))
                         {
                             executeShowCollations();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_COMMENTS))
                         {
                             executeShowComments();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DEPENDENCIES))
                         {
                             executeShowDependencies();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_PACKAGE))
                         {
                             executeShowPackage();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SYSTEM))
                         {
                             executeShowSystem();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SQL_DIALECT))
                         {
                             executeShowSqlDialect();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_VERSION))
                         {
                             executeShowVersion();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DATABASE))
                         {
                             executeShowDatabase();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         // ===== Session SET Commands (Firebird ISQL compatibility) =====
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_SQL_DIALECT))
@@ -1998,32 +2500,32 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SCHEMA_PATH))
                         {
                             executeShowSchemaPath();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SCHEMA_TREE))
                         {
                             executeShowSchemaTree();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SEARCH_PATH))
                         {
                             executeShowSearchPath();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_LOCATION))
                         {
                             executeShowLocation();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_RESOLVED))
                         {
                             executeShowResolved();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_OBJECTS))
                         {
                             executeShowObjects();
-                            result = ExecutionResult();
+                            result = ExecutionResult(std::move(current_result_set_));
                         }
                         else
                         {
@@ -2111,6 +2613,36 @@ namespace scratchbird
             uint32_t value = sblr::readInt32(&bytecode_[pc_]);
             pc_ += 4;
             return value;
+        }
+
+        core::DataType Executor::readDataTypeWithModifiers(uint32_t& precision_out,
+                                                           uint32_t& scale_out)
+        {
+            precision_out = 0;
+            scale_out = 0;
+
+            Opcode type_op = static_cast<Opcode>(readByte());
+            if (type_op == Opcode::EXTENDED_OPCODE)
+            {
+                uint16_t ext_op = readExtendedOpcode();
+                return convertExtendedDataType(ext_op);
+            }
+
+            switch (type_op)
+            {
+                case Opcode::TYPE_VARCHAR:
+                case Opcode::TYPE_CHAR:
+                    precision_out = readInt32();
+                    break;
+                case Opcode::TYPE_DECIMAL:
+                    precision_out = readInt32();
+                    scale_out = readInt32();
+                    break;
+                default:
+                    break;
+            }
+
+            return convertDataType(type_op, precision_out);
         }
 
         uint64_t Executor::readInt64()
@@ -3121,70 +3653,6 @@ namespace scratchbird
             return Value::makeVarchar(raw);
         }
 
-        // Helper: Convert parser::DataType to core::DataType
-        static core::DataType convertDataType(Opcode type_opcode, uint32_t precision = 0)
-        {
-            switch (type_opcode)
-            {
-                // Integer types
-                case Opcode::TYPE_INT8:
-                    return core::DataType::INT8;
-                case Opcode::TYPE_INT16:
-                    return core::DataType::INT16;
-                case Opcode::TYPE_INTEGER:
-                    return core::DataType::INT32;
-                case Opcode::TYPE_BIGINT:
-                    return core::DataType::INT64;
-
-                // Floating point types
-                case Opcode::TYPE_FLOAT32:
-                    return core::DataType::FLOAT32;
-                case Opcode::TYPE_DOUBLE:
-                    return core::DataType::FLOAT64;
-
-                // Boolean
-                case Opcode::TYPE_BOOLEAN:
-                    return core::DataType::BOOLEAN;
-
-                // String types
-                case Opcode::TYPE_CHAR:
-                    return core::DataType::CHAR;
-                case Opcode::TYPE_VARCHAR:
-                    return core::DataType::VARCHAR;
-                case Opcode::TYPE_TEXT:
-                    return core::DataType::TEXT;
-
-                // Date/Time types
-                case Opcode::TYPE_DATE:
-                    return core::DataType::DATE;
-                case Opcode::TYPE_TIME:
-                    return core::DataType::TIME;
-                case Opcode::TYPE_TIMESTAMP:
-                    return core::DataType::TIMESTAMP;
-
-                // Binary types
-                case Opcode::TYPE_BINARY:
-                    return core::DataType::BINARY;
-                case Opcode::TYPE_VARBINARY:
-                    return core::DataType::VARBINARY;
-                case Opcode::TYPE_BLOB:
-                    return core::DataType::BLOB;
-                case Opcode::TYPE_BYTEA:
-                    return core::DataType::BYTEA;
-
-                // Other types
-                case Opcode::TYPE_UUID:
-                    return core::DataType::UUID;
-                case Opcode::TYPE_DECIMAL:
-                    return core::DataType::DECIMAL;
-                case Opcode::TYPE_JSON:
-                    return core::DataType::JSON;
-
-                default:
-                    throw std::runtime_error("Unknown data type opcode");
-            }
-        }
-
         void Executor::executeCreateTable()
         {
             // Read TABLE_REF opcode
@@ -3237,28 +3705,9 @@ namespace scratchbird
                 std::string col_name = readString();
 
                 // Read data type
-                Opcode type_op = static_cast<Opcode>(readByte());
                 uint32_t precision = 0;
                 uint32_t scale = 0;
-
-                // Read type modifiers based on type (must match bytecode generator output)
-                switch (type_op) {
-                    case Opcode::TYPE_VARCHAR:
-                    case Opcode::TYPE_CHAR:
-                        // String types have length modifier
-                        precision = readInt32();
-                        break;
-                    case Opcode::TYPE_DECIMAL:
-                        // DECIMAL has precision and scale
-                        precision = readInt32();
-                        scale = readInt32();
-                        break;
-                    default:
-                        // No modifiers for other types
-                        break;
-                }
-
-                core::DataType col_type = convertDataType(type_op, precision);
+                core::DataType col_type = readDataTypeWithModifiers(precision, scale);
                 (void)scale;  // Scale stored in catalog metadata, not used in DataType enum
 
                 // Check for NOT_NULL constraint
@@ -3818,6 +4267,7 @@ namespace scratchbird
             // 3. Deserialize expressions and predicate
             auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
             auto predicate_unique = std::unique_ptr<core::Expression>();
+            bool predicate_is_sblr = false;
 
             // Create raw pointer vectors for evaluator (will be cleaned up automatically)
             std::vector<core::Expression *> expressions;
@@ -3836,10 +4286,17 @@ namespace scratchbird
 
             if (index_info.is_partial_index)
             {
-                predicate_unique = core::ExpressionSerializer::deserialize(
-                    index_info.predicate_data.data(),
-                    index_info.predicate_data.size());
-                predicate = predicate_unique.get();
+                try
+                {
+                    predicate_unique = core::ExpressionSerializer::deserialize(
+                        index_info.predicate_data.data(),
+                        index_info.predicate_data.size());
+                    predicate = predicate_unique.get();
+                }
+                catch (...)
+                {
+                    predicate_is_sblr = true;
+                }
             }
 
             // 4. Create expression evaluator
@@ -3887,23 +4344,30 @@ namespace scratchbird
                 }
 
                 // Check predicate (if partial index)
-                if (predicate)
+                if (index_info.is_partial_index)
                 {
-                    try
+                    bool matches = true;
+                    if (predicate_is_sblr)
                     {
-                        index_stats_.predicate_evaluations++;  // Task 17 MGA Phase 2.2
-                        bool matches = evaluator.evaluatePredicate(predicate, row_values);
-                        if (!matches)
+                        matches = evaluatePolicyExpression(index_info.predicate_data, row_values, columns);
+                    }
+                    else if (predicate)
+                    {
+                        try
                         {
-                            rows_skipped++;
-                            continue; // Skip row not matching WHERE clause
+                            index_stats_.predicate_evaluations++;  // Task 17 MGA Phase 2.2
+                            matches = evaluator.evaluatePredicate(predicate, row_values);
+                        }
+                        catch (...)
+                        {
+                            matches = false;
                         }
                     }
-                    catch (const std::exception &e)
+
+                    if (!matches)
                     {
-                        // Predicate evaluation error - skip row
                         rows_skipped++;
-                        continue;
+                        continue; // Skip row not matching WHERE clause
                     }
                 }
 
@@ -4096,6 +4560,7 @@ namespace scratchbird
                 // Deserialize expression/predicate (only if needed)
                 auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
                 auto predicate_unique = std::unique_ptr<core::Expression>();
+                bool predicate_is_sblr = false;
 
                 // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<core::Expression *> expressions;
@@ -4114,10 +4579,17 @@ namespace scratchbird
 
                 if (index_info.is_partial_index)
                 {
-                    predicate_unique = core::ExpressionSerializer::deserialize(
-                        index_info.predicate_data.data(),
-                        index_info.predicate_data.size());
-                    predicate = predicate_unique.get();
+                    try
+                    {
+                        predicate_unique = core::ExpressionSerializer::deserialize(
+                            index_info.predicate_data.data(),
+                            index_info.predicate_data.size());
+                        predicate = predicate_unique.get();
+                    }
+                    catch (...)
+                    {
+                        predicate_is_sblr = true;
+                    }
                 }
 
                 // Create evaluator
@@ -4125,21 +4597,29 @@ namespace scratchbird
                 ExpressionEvaluator evaluator(all_columns, db_, xid);
 
                 // Check predicate
-                if (predicate)
+                if (index_info.is_partial_index)
                 {
-                    try
+                    bool matches = true;
+                    if (predicate_is_sblr)
                     {
-                        index_stats_.predicate_evaluations++;  // Task 17 MGA Phase 2.2
-                        bool matches = evaluator.evaluatePredicate(predicate, row_values);
-                        if (!matches)
+                        matches = evaluatePolicyExpression(index_info.predicate_data, row_values, all_columns);
+                    }
+                    else if (predicate)
+                    {
+                        try
                         {
-                            // Row doesn't match filter - skip this index (cleanup automatic)
-                            continue;
+                            index_stats_.predicate_evaluations++;  // Task 17 MGA Phase 2.2
+                            matches = evaluator.evaluatePredicate(predicate, row_values);
+                        }
+                        catch (...)
+                        {
+                            matches = false;
                         }
                     }
-                    catch (...)
+
+                    if (!matches)
                     {
-                        // Error evaluating - skip (cleanup automatic)
+                        // Row doesn't match filter - skip this index (cleanup automatic)
                         continue;
                     }
                 }
@@ -4235,6 +4715,7 @@ namespace scratchbird
 
                 auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
                 auto predicate_unique = std::unique_ptr<core::Expression>();
+                bool predicate_is_sblr = false;
 
                 // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<core::Expression *> expressions;
@@ -4253,10 +4734,17 @@ namespace scratchbird
 
                 if (index_info.is_partial_index)
                 {
-                    predicate_unique = core::ExpressionSerializer::deserialize(
-                        index_info.predicate_data.data(),
-                        index_info.predicate_data.size());
-                    predicate = predicate_unique.get();
+                    try
+                    {
+                        predicate_unique = core::ExpressionSerializer::deserialize(
+                            index_info.predicate_data.data(),
+                            index_info.predicate_data.size());
+                        predicate = predicate_unique.get();
+                    }
+                    catch (...)
+                    {
+                        predicate_is_sblr = true;
+                    }
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
@@ -4265,17 +4753,25 @@ namespace scratchbird
                 // Check predicate for both old and new
                 bool in_old = true, in_new = true;
 
-                if (predicate)
+                if (index_info.is_partial_index)
                 {
-                    try
+                    if (predicate_is_sblr)
                     {
-                        in_old = evaluator.evaluatePredicate(predicate, old_values);
-                        in_new = evaluator.evaluatePredicate(predicate, new_values);
+                        in_old = evaluatePolicyExpression(index_info.predicate_data, old_values, all_columns);
+                        in_new = evaluatePolicyExpression(index_info.predicate_data, new_values, all_columns);
                     }
-                    catch (...)
+                    else if (predicate)
                     {
-                        // Error - assume not in index
-                        in_old = in_new = false;
+                        try
+                        {
+                            in_old = evaluator.evaluatePredicate(predicate, old_values);
+                            in_new = evaluator.evaluatePredicate(predicate, new_values);
+                        }
+                        catch (...)
+                        {
+                            // Error - assume not in index
+                            in_old = in_new = false;
+                        }
                     }
                 }
 
@@ -4435,6 +4931,7 @@ namespace scratchbird
 
                 auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
                 auto predicate_unique = std::unique_ptr<core::Expression>();
+                bool predicate_is_sblr = false;
 
                 // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<core::Expression *> expressions;
@@ -4453,10 +4950,17 @@ namespace scratchbird
 
                 if (index_info.is_partial_index)
                 {
-                    predicate_unique = core::ExpressionSerializer::deserialize(
-                        index_info.predicate_data.data(),
-                        index_info.predicate_data.size());
-                    predicate = predicate_unique.get();
+                    try
+                    {
+                        predicate_unique = core::ExpressionSerializer::deserialize(
+                            index_info.predicate_data.data(),
+                            index_info.predicate_data.size());
+                        predicate = predicate_unique.get();
+                    }
+                    catch (...)
+                    {
+                        predicate_is_sblr = true;
+                    }
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
@@ -4464,15 +4968,22 @@ namespace scratchbird
 
                 // Check if row was in index
                 bool in_index = true;
-                if (predicate)
+                if (index_info.is_partial_index)
                 {
-                    try
+                    if (predicate_is_sblr)
                     {
-                        in_index = evaluator.evaluatePredicate(predicate, row_values);
+                        in_index = evaluatePolicyExpression(index_info.predicate_data, row_values, all_columns);
                     }
-                    catch (...)
+                    else if (predicate)
                     {
-                        in_index = false;
+                        try
+                        {
+                            in_index = evaluator.evaluatePredicate(predicate, row_values);
+                        }
+                        catch (...)
+                        {
+                            in_index = false;
+                        }
                     }
                 }
 
@@ -5567,25 +6078,9 @@ namespace scratchbird
 
             auto read_base_type = [&]() -> core::DomainTypeRef {
                 core::DomainTypeRef ref;
-                Opcode type_op = static_cast<Opcode>(readByte());
                 uint32_t precision = 0;
                 uint32_t scale = 0;
-
-                switch (type_op)
-                {
-                    case Opcode::TYPE_VARCHAR:
-                    case Opcode::TYPE_CHAR:
-                        precision = readInt32();
-                        break;
-                    case Opcode::TYPE_DECIMAL:
-                        precision = readInt32();
-                        scale = readInt32();
-                        break;
-                    default:
-                        break;
-                }
-
-                ref.type = convertDataType(type_op, precision);
+                ref.type = readDataTypeWithModifiers(precision, scale);
                 ref.precision = precision;
                 ref.scale = scale;
                 return ref;
@@ -10266,14 +10761,40 @@ namespace scratchbird
                     break;
 
                 case AggFunc::MIN:
-                    if (count == 0 || val.toDouble() < result.toDouble())
+                    if (count == 0)
+                    {
                         result = val;
+                    }
+                    else if (isIntegerType(val.type()) && isIntegerType(result.type()))
+                    {
+                        if (compareIntegerValues(val, result) < 0)
+                        {
+                            result = val;
+                        }
+                    }
+                    else if (val.toDouble() < result.toDouble())
+                    {
+                        result = val;
+                    }
                     count++;
                     break;
 
                 case AggFunc::MAX:
-                    if (count == 0 || val.toDouble() > result.toDouble())
+                    if (count == 0)
+                    {
                         result = val;
+                    }
+                    else if (isIntegerType(val.type()) && isIntegerType(result.type()))
+                    {
+                        if (compareIntegerValues(val, result) > 0)
+                        {
+                            result = val;
+                        }
+                    }
+                    else if (val.toDouble() > result.toDouble())
+                    {
+                        result = val;
+                    }
                     count++;
                     break;
 
@@ -12901,7 +13422,11 @@ namespace scratchbird
                     {
                         readByte();
                         Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
+                        if (type_op == Opcode::EXTENDED_OPCODE)
+                        {
+                            pc_ += 2;
+                        }
+                        else if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
                         {
                             pc_ += 4;
                         }
@@ -13219,7 +13744,11 @@ namespace scratchbird
                     {
                         readByte();
                         Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
+                        if (type_op == Opcode::EXTENDED_OPCODE)
+                        {
+                            pc_ += 2;
+                        }
+                        else if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
                         {
                             pc_ += 4;
                         }
@@ -13752,7 +14281,11 @@ namespace scratchbird
                         readByte();
                         // Read and skip type opcode
                         Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
+                        if (type_op == Opcode::EXTENDED_OPCODE)
+                        {
+                            pc_ += 2; // Skip extended opcode
+                        }
+                        else if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
                         {
                             pc_ += 4; // Skip precision
                         }
@@ -14968,6 +15501,140 @@ namespace scratchbird
             }
         }
 
+        void Executor::executeSavepoint()
+        {
+            std::string name = readString();
+            if (name.empty())
+            {
+                error("SAVEPOINT requires a name");
+            }
+
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx->createSavepoint(name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "SAVEPOINT failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeReleaseSavepoint()
+        {
+            std::string name = readString();
+            if (name.empty())
+            {
+                error("RELEASE SAVEPOINT requires a name");
+            }
+
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx->releaseSavepoint(name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "RELEASE SAVEPOINT failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeRollbackToSavepoint()
+        {
+            std::string name = readString();
+            if (name.empty())
+            {
+                error("ROLLBACK TO SAVEPOINT requires a name");
+            }
+
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx->rollbackToSavepoint(name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "ROLLBACK TO SAVEPOINT failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeBlrSavepointBegin()
+        {
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            std::string name = "blr_sp_" + std::to_string(++blr_savepoint_counter_);
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx->createSavepoint(name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "BLR savepoint begin failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            blr_savepoint_stack_.push_back(name);
+        }
+
+        void Executor::executeBlrSavepointEnd()
+        {
+            if (blr_savepoint_stack_.empty())
+            {
+                error("BLR savepoint end without matching begin");
+            }
+
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            std::string name = blr_savepoint_stack_.back();
+            blr_savepoint_stack_.pop_back();
+
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx->releaseSavepoint(name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "BLR savepoint end failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
         void Executor::executeCreateTrigger()
         {
             // Wave 2: Trigger Executor Implementation
@@ -15541,27 +16208,12 @@ namespace scratchbird
                     bool is_try_cast = readByte() != 0;
 
                     // Read target type
-                    Opcode type_op = static_cast<Opcode>(readByte());
                     uint32_t precision = 0;
                     uint32_t scale = 0;
-                    switch (type_op)
-                    {
-                        case Opcode::TYPE_VARCHAR:
-                        case Opcode::TYPE_CHAR:
-                            precision = readInt32();
-                            break;
-                        case Opcode::TYPE_DECIMAL:
-                            precision = readInt32();
-                            scale = readInt32();
-                            break;
-                        default:
-                            break;
-                    }
-
                     core::DataType target_type = core::DataType::UNKNOWN;
                     try
                     {
-                        target_type = convertDataType(type_op, precision);
+                        target_type = readDataTypeWithModifiers(precision, scale);
                     }
                     catch (const std::exception&)
                     {
@@ -15980,12 +16632,35 @@ namespace scratchbird
                     }
                     else
                     {
-                        // Treat date as Unix timestamp (seconds since epoch)
-                        // Add days * 86400 seconds
-                        int64_t timestamp = date_val.toInt64();
-                        int64_t days = days_val.toInt64();
-                        int64_t result = timestamp + (days * 86400);
-                        push(Value::makeInt64(result));
+                        int64_t days = static_cast<int64_t>(coerceToDouble(days_val));
+                        const int64_t micros_per_day =
+                            static_cast<int64_t>(core::FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+
+                        if (date_val.type() == core::DataType::DATE)
+                        {
+                            int64_t result_days = date_val.getDate() + days;
+                            push(Value::makeDate(result_days, date_val.getTimezoneOffsetSeconds()));
+                        }
+                        else if (date_val.type() == core::DataType::TIMESTAMP)
+                        {
+                            int64_t result_micros = date_val.getTimestamp() + days * micros_per_day;
+                            push(Value::makeTimestamp(result_micros,
+                                                      date_val.getTimezoneOffsetSeconds()));
+                        }
+                        else if (date_val.type() == core::DataType::TIME)
+                        {
+                            int64_t result_micros = date_val.getTime() + days * micros_per_day;
+                            result_micros %= micros_per_day;
+                            if (result_micros < 0)
+                            {
+                                result_micros += micros_per_day;
+                            }
+                            push(Value::makeTime(result_micros, date_val.getTimezoneOffsetSeconds()));
+                        }
+                        else
+                        {
+                            error("DATE_ADD expects DATE, TIME, or TIMESTAMP input");
+                        }
                     }
                     break;
                 }
@@ -16007,10 +16682,35 @@ namespace scratchbird
                     }
                     else
                     {
-                        int64_t timestamp = date_val.toInt64();
-                        int64_t days = days_val.toInt64();
-                        int64_t result = timestamp - (days * 86400);
-                        push(Value::makeInt64(result));
+                        int64_t days = static_cast<int64_t>(coerceToDouble(days_val));
+                        const int64_t micros_per_day =
+                            static_cast<int64_t>(core::FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+
+                        if (date_val.type() == core::DataType::DATE)
+                        {
+                            int64_t result_days = date_val.getDate() - days;
+                            push(Value::makeDate(result_days, date_val.getTimezoneOffsetSeconds()));
+                        }
+                        else if (date_val.type() == core::DataType::TIMESTAMP)
+                        {
+                            int64_t result_micros = date_val.getTimestamp() - days * micros_per_day;
+                            push(Value::makeTimestamp(result_micros,
+                                                      date_val.getTimezoneOffsetSeconds()));
+                        }
+                        else if (date_val.type() == core::DataType::TIME)
+                        {
+                            int64_t result_micros = date_val.getTime() - days * micros_per_day;
+                            result_micros %= micros_per_day;
+                            if (result_micros < 0)
+                            {
+                                result_micros += micros_per_day;
+                            }
+                            push(Value::makeTime(result_micros, date_val.getTimezoneOffsetSeconds()));
+                        }
+                        else
+                        {
+                            error("DATE_SUB expects DATE, TIME, or TIMESTAMP input");
+                        }
                     }
                     break;
                 }
@@ -16032,9 +16732,36 @@ namespace scratchbird
                     }
                     else
                     {
-                        int64_t timestamp1 = date1_val.toInt64();
-                        int64_t timestamp2 = date2_val.toInt64();
-                        int64_t diff_days = (timestamp1 - timestamp2) / 86400;
+                        auto to_days = [&](const Value& input) -> int64_t {
+                            if (input.type() == core::DataType::DATE)
+                            {
+                                return input.getDate();
+                            }
+                            if (input.type() == core::DataType::TIMESTAMP)
+                            {
+                                core::TypeInfo target(core::DataType::DATE);
+                                Value date_value;
+                                core::ErrorContext ctx;
+                                if (input.convertTo(target, date_value,
+                                                    core::CastFormat::DEFAULT, &ctx) != core::Status::OK)
+                                {
+                                    std::string msg = "DATE_DIFF failed to convert timestamp";
+                                    if (!ctx.message.empty())
+                                    {
+                                        msg += ": " + ctx.message;
+                                    }
+                                    error(msg);
+                                }
+                                return date_value.getDate();
+                            }
+
+                            error("DATE_DIFF expects DATE or TIMESTAMP input");
+                            return 0;
+                        };
+
+                        int64_t days1 = to_days(date1_val);
+                        int64_t days2 = to_days(date2_val);
+                        int64_t diff_days = days1 - days2;
                         push(Value::makeInt64(diff_days));
                     }
                     break;
@@ -16048,20 +16775,23 @@ namespace scratchbird
                         error("NOW expects 0 arguments");
                     }
 
-                    // Return current Unix timestamp
+                    // Return current timestamp (UTC micros) with connection offset
                     auto now = std::chrono::system_clock::now();
-                    auto timestamp =
-                        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
-                            .count();
-                    push(Value::makeInt64(timestamp));
+                    auto gmt_micros =
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            now.time_since_epoch()).count();
+                    uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                         : timezone_manager_.getDefaultTimezone();
+                    core::TimezoneOffset offset = timezone_manager_.getOffset(
+                        tz_id, static_cast<int64_t>(gmt_micros));
+                    int32_t offset_seconds = offset.offset_minutes * 60;
+                    push(Value::makeTimestamp(static_cast<int64_t>(gmt_micros), offset_seconds));
                     break;
                 }
 
                 case Opcode::FUNC_AT_TIME_ZONE:
                 {
                     // timestamp AT TIME ZONE timezone_id
-                    // Converts GMT timestamp to specified timezone for display
-                    // Returns formatted string in target timezone
                     uint8_t arg_count = readByte();
                     if (arg_count != 2)
                     {
@@ -16077,13 +16807,32 @@ namespace scratchbird
                     }
                     else
                     {
-                        int64_t gmt_microseconds = timestamp_val.toInt64();
-                        uint16_t timezone_id = static_cast<uint16_t>(tz_val.toInt64());
+                        Value ts_value = timestamp_val;
+                        if (ts_value.type() != core::DataType::TIMESTAMP)
+                        {
+                            core::TypeInfo target(core::DataType::TIMESTAMP);
+                            core::ErrorContext ctx;
+                            Value converted;
+                            if (ts_value.convertTo(target, converted,
+                                                   core::CastFormat::DEFAULT, &ctx) != core::Status::OK)
+                            {
+                                std::string msg = "AT TIME ZONE failed to convert timestamp";
+                                if (!ctx.message.empty())
+                                {
+                                    msg += ": " + ctx.message;
+                                }
+                                error(msg);
+                            }
+                            ts_value = converted;
+                        }
 
-                        // Format timestamp in target timezone
-                        std::string result =
-                            timezone_manager_.formatTimestamp(gmt_microseconds, timezone_id, true);
-                        push(Value::makeVarchar(result));
+                        int64_t gmt_microseconds = ts_value.getTimestamp();
+                        uint16_t timezone_id = static_cast<uint16_t>(tz_val.toInt64());
+                        core::TimezoneOffset offset =
+                            timezone_manager_.getOffset(timezone_id, gmt_microseconds);
+                        int32_t offset_seconds = offset.offset_minutes * 60;
+
+                        push(Value::makeTimestamp(gmt_microseconds, offset_seconds));
                     }
                     break;
                 }
@@ -16096,14 +16845,25 @@ namespace scratchbird
                         error("CURRENT_DATE expects 0 arguments");
                     }
 
-                    // Return current date as Unix timestamp (midnight)
+                    // Return current date with configured default time and connection offset
                     auto now = std::chrono::system_clock::now();
-                    auto timestamp =
-                        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
-                            .count();
-                    // Round down to midnight
-                    timestamp = (timestamp / 86400) * 86400;
-                    push(Value::makeInt64(timestamp));
+                    auto gmt_micros =
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            now.time_since_epoch()).count();
+                    uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                         : timezone_manager_.getDefaultTimezone();
+                    core::TimezoneOffset offset = timezone_manager_.getOffset(
+                        tz_id, static_cast<int64_t>(gmt_micros));
+                    int32_t offset_seconds = offset.offset_minutes * 60;
+
+                    int64_t local_seconds = floorDiv(gmt_micros +
+                                                     static_cast<int64_t>(offset_seconds) * 1000000,
+                                                     1000000);
+                    int64_t default_micros = defaultDateTimeMicros();
+                    int64_t default_seconds = default_micros / 1000000;
+                    int64_t days = floorDiv(local_seconds - default_seconds,
+                                             core::FirebirdDateTime::SECONDS_PER_DAY);
+                    push(Value::makeDate(days, offset_seconds));
                     break;
                 }
 
@@ -16135,17 +16895,17 @@ namespace scratchbird
                             std::vector<std::string> path_components = parseJSONPath(path.toString());
                             json result = extractJSONValue(j, path_components);
 
-                            // Return based on operator type
+                            core::DataType output_type = core::DataType::JSON;
+                            if (json_data.type() == core::DataType::JSONB)
+                            {
+                                output_type = core::DataType::JSONB;
+                            }
                             if (op == Opcode::JSON_DOUBLE_ARROW)
                             {
-                                // ->> returns text
-                                push(jsonToValue(result, true));
+                                output_type = core::DataType::TEXT;
                             }
-                            else
-                            {
-                                // -> and JSON_EXTRACT return JSON
-                                push(jsonToValue(result, false));
-                            }
+
+                            push(jsonToValue(result, output_type));
                         } catch (const json::exception& e) {
                             // Invalid JSON, return null
                             push(Value::makeNull());
@@ -16184,8 +16944,8 @@ namespace scratchbird
                             // Extract value using path components
                             json result = extractJSONValue(j, path_components);
 
-                            // Return as JSON
-                            push(jsonToValue(result, false));
+                            // Return as JSONB
+                            push(jsonToValue(result, core::DataType::JSONB));
                         } catch (const json::exception& e) {
                             // Invalid JSON, return null
                             push(Value::makeNull());
@@ -16239,17 +16999,17 @@ namespace scratchbird
                             // Extract value using path components
                             json result = extractJSONValue(j, path_components);
 
-                            // Return based on operator type
+                            core::DataType output_type = core::DataType::JSON;
+                            if (json_data.type() == core::DataType::JSONB)
+                            {
+                                output_type = core::DataType::JSONB;
+                            }
                             if (op == Opcode::JSON_HASH_DOUBLE_ARROW)
                             {
-                                // #>> returns text
-                                push(jsonToValue(result, true));
+                                output_type = core::DataType::TEXT;
                             }
-                            else
-                            {
-                                // #> returns JSON
-                                push(jsonToValue(result, false));
-                            }
+
+                            push(jsonToValue(result, output_type));
                         } catch (const json::exception& e) {
                             // Invalid JSON, return null
                             push(Value::makeNull());
@@ -16287,8 +17047,10 @@ namespace scratchbird
                         obj[key_str] = val_json;
                     }
 
-                    // Return as JSON
-                    push(Value::makeJSON(obj.dump()));
+                    core::DataType output_type =
+                        (op == Opcode::JSONB_BUILD_OBJECT) ? core::DataType::JSONB
+                                                           : core::DataType::JSON;
+                    push(jsonToValue(obj, output_type));
                     break;
                 }
 
@@ -16313,8 +17075,10 @@ namespace scratchbird
                         arr.push_back(valueToJSON(elem));
                     }
 
-                    // Return as JSON
-                    push(Value::makeJSON(arr.dump()));
+                    core::DataType output_type =
+                        (op == Opcode::JSONB_BUILD_ARRAY) ? core::DataType::JSONB
+                                                          : core::DataType::JSON;
+                    push(jsonToValue(arr, output_type));
                     break;
                 }
 
@@ -16388,8 +17152,10 @@ namespace scratchbird
                                 }
                             }
 
-                            // Return modified JSON
-                            push(Value::makeJSON(j.dump()));
+                            core::DataType output_type =
+                                (op == Opcode::JSONB_SET) ? core::DataType::JSONB
+                                                          : core::DataType::JSON;
+                            push(jsonToValue(j, output_type));
                         } catch (const json::exception& e) {
                             // Invalid JSON, return original
                             push(json_data);
@@ -16891,6 +17657,23 @@ namespace scratchbird
                             push(Value::makeBoolean(result));
                         }
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_NOT))
+                    {
+                        Value operand = pop();
+                        if (operand.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            push(Value::makeBoolean(!operand.toBoolean()));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_IS_NULL))
+                    {
+                        Value operand = pop();
+                        push(Value::makeBoolean(operand.isNull()));
+                    }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LIKE_ESCAPE) ||
                              ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE))
                     {
@@ -16926,6 +17709,49 @@ namespace scratchbird
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_LOAD))
                     {
                         executeVarLoad();
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_FUNCTION_CALL))
+                    {
+                        uint8_t kind_byte = readByte();
+                        core::ID function_id = readId();
+                        uint8_t arg_count = readByte();
+
+                        std::vector<Value> args;
+                        args.reserve(arg_count);
+                        for (uint8_t i = 0; i < arg_count; ++i)
+                        {
+                            args.push_back(pop());
+                        }
+                        std::reverse(args.begin(), args.end());
+
+                        Value result;
+                        core::ErrorContext ctx;
+                        auto kind = static_cast<parser::v2::FunctionKind>(kind_byte);
+                        core::Status status = core::Status::OK;
+                        if (kind == parser::v2::FunctionKind::FUNCTION)
+                        {
+                            status = callFunctionById(function_id, args, result, &ctx);
+                        }
+                        else if (kind == parser::v2::FunctionKind::UDR)
+                        {
+                            status = callUDRFunctionById(function_id, args, result, &ctx);
+                        }
+                        else
+                        {
+                            error("Unsupported function kind in expression call");
+                        }
+
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Function call failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+
+                        push(result);
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_DOMAIN_CONSTRAINT))
                     {
@@ -20673,6 +21499,160 @@ namespace scratchbird
                             push(Value::makeText(str));
                         }
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LTRIM))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("LTRIM expects 1 argument");
+                        }
+
+                        Value text = pop();
+                        if (text.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            size_t start = 0;
+                            while (start < str.length() &&
+                                   std::isspace(static_cast<unsigned char>(str[start])))
+                            {
+                                start++;
+                            }
+                            push(Value::makeVarchar(str.substr(start)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_RTRIM))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("RTRIM expects 1 argument");
+                        }
+
+                        Value text = pop();
+                        if (text.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            size_t end = str.length();
+                            while (end > 0 &&
+                                   std::isspace(static_cast<unsigned char>(str[end - 1])))
+                            {
+                                end--;
+                            }
+                            push(Value::makeVarchar(str.substr(0, end)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CONCAT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1)
+                        {
+                            error("CONCAT expects at least 1 argument");
+                        }
+
+                        std::vector<Value> args;
+                        args.reserve(arg_count);
+                        for (uint8_t i = 0; i < arg_count; ++i)
+                        {
+                            args.push_back(pop());
+                        }
+
+                        bool saw_null = false;
+                        std::string result;
+                        for (auto it = args.rbegin(); it != args.rend(); ++it)
+                        {
+                            if (it->isNull())
+                            {
+                                saw_null = true;
+                                break;
+                            }
+                            result += it->toString();
+                        }
+
+                        if (saw_null)
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            push(Value::makeVarchar(result));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CONCAT_WS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 2)
+                        {
+                            error("CONCAT_WS expects at least 2 arguments");
+                        }
+
+                        std::vector<Value> args;
+                        args.reserve(arg_count);
+                        for (uint8_t i = 0; i < arg_count; ++i)
+                        {
+                            args.push_back(pop());
+                        }
+
+                        auto it = args.rbegin();
+                        Value sep_val = *it;
+                        if (sep_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string sep = sep_val.toString();
+                            std::string result;
+                            bool first = true;
+                            for (++it; it != args.rend(); ++it)
+                            {
+                                if (it->isNull())
+                                {
+                                    continue;
+                                }
+                                if (!first)
+                                {
+                                    result += sep;
+                                }
+                                result += it->toString();
+                                first = false;
+                            }
+                            push(Value::makeVarchar(result));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_TIME))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 0)
+                        {
+                            error("CURRENT_TIME expects 0 arguments");
+                        }
+
+                        auto now = std::chrono::system_clock::now();
+                        auto gmt_micros =
+                            std::chrono::duration_cast<std::chrono::microseconds>(
+                                now.time_since_epoch()).count();
+                        uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                             : timezone_manager_.getDefaultTimezone();
+                        core::TimezoneOffset offset = timezone_manager_.getOffset(
+                            tz_id, static_cast<int64_t>(gmt_micros));
+                        int32_t offset_seconds = offset.offset_minutes * 60;
+                        int64_t micros_per_day =
+                            static_cast<int64_t>(core::FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+                        int64_t utc_time_micros = gmt_micros % micros_per_day;
+                        if (utc_time_micros < 0)
+                        {
+                            utc_time_micros += micros_per_day;
+                        }
+                        push(Value::makeTime(utc_time_micros, offset_seconds));
+                    }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LPAD))
                     {
                         // LPAD(str, length [, fill])
@@ -22745,6 +23725,10 @@ namespace scratchbird
                     {
                         executeExtract();
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_ELEMENT))
+                    {
+                        executeAlterElement();
+                    }
                     // Index operation opcodes (November 19, 2025)
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_INSERT))
                     {
@@ -22892,6 +23876,7 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ENCODE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ENCRYPT_DOMAIN_VALUE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_EXTRACT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_ELEMENT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ABS),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ACOS),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ACOSH),
@@ -22904,9 +23889,12 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ATANH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CBRT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CEIL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CONCAT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CONCAT_WS),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COS),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COSH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_TIME),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_DEGREES),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_EXP),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_FORMAT_TYPE),
@@ -22915,11 +23903,13 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG10),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG2),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LTRIM),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_MOD),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_OBJ_DESCRIPTION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_PI),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_POWER),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_RADIANS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_RTRIM),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ROUND),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SHOBJ_DESCRIPTION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SIGN),
@@ -22929,6 +23919,7 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TAN),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TANH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TRUNC),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_FUNCTION_CALL),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_GET_BIT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_GET_BYTE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_GIN_INSERT),
@@ -22942,6 +23933,8 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SEARCH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_INITCAP),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_IN_LIST),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_NOT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_IS_NULL),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_NULL_SAFE_EQ),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_LIKE_ESCAPE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE),
@@ -23191,6 +24184,91 @@ namespace scratchbird
                 return;
             }
 
+            const bool use_integer128 = isIntegerType(left.type()) && isIntegerType(right.type()) &&
+                                        (left.type() == core::DataType::INT128 ||
+                                         right.type() == core::DataType::INT128 ||
+                                         isUnsignedIntegerType(left.type()) ||
+                                         isUnsignedIntegerType(right.type()));
+
+            auto eval_integer128 = [&](Opcode opcode) -> Value {
+                const bool use_unsigned = isUnsignedIntegerType(left.type()) ||
+                                          isUnsignedIntegerType(right.type());
+                if (use_unsigned) {
+                    core::uint128_t lhs = 0;
+                    core::uint128_t rhs = 0;
+                    if (!tryGetUnsigned128(left, lhs) || !tryGetUnsigned128(right, rhs)) {
+                        error("Negative value in unsigned arithmetic");
+                    }
+                    core::uint128_t result = 0;
+                    switch (opcode)
+                    {
+                        case Opcode::EXPR_ADD:
+                            if (!safeAdd128(lhs, rhs, &result)) {
+                                error("Integer overflow in addition");
+                            }
+                            break;
+                        case Opcode::EXPR_SUBTRACT:
+                            if (!safeSubtract128(lhs, rhs, &result)) {
+                                error("Integer overflow in subtraction");
+                            }
+                            break;
+                        case Opcode::EXPR_MULTIPLY:
+                            if (!safeMultiply128(lhs, rhs, &result)) {
+                                error("Integer overflow in multiplication");
+                            }
+                            break;
+                        case Opcode::EXPR_DIVIDE:
+                            if (!safeDivide128(lhs, rhs, &result)) {
+                                error("Division by zero");
+                            }
+                            break;
+                        case Opcode::EXPR_MODULO:
+                            if (!safeModulo128(lhs, rhs, &result)) {
+                                error("Modulo by zero");
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                    return makeUInt128Value(result);
+                }
+
+                core::int128_t lhs = toSigned128(left);
+                core::int128_t rhs = toSigned128(right);
+                core::int128_t result = 0;
+                switch (opcode)
+                {
+                    case Opcode::EXPR_ADD:
+                        if (!safeAdd128(lhs, rhs, &result)) {
+                            error("Integer overflow in addition");
+                        }
+                        break;
+                    case Opcode::EXPR_SUBTRACT:
+                        if (!safeSubtract128(lhs, rhs, &result)) {
+                            error("Integer overflow in subtraction");
+                        }
+                        break;
+                    case Opcode::EXPR_MULTIPLY:
+                        if (!safeMultiply128(lhs, rhs, &result)) {
+                            error("Integer overflow in multiplication");
+                        }
+                        break;
+                    case Opcode::EXPR_DIVIDE:
+                        if (!safeDivide128(lhs, rhs, &result)) {
+                            error("Division by zero or integer overflow");
+                        }
+                        break;
+                    case Opcode::EXPR_MODULO:
+                        if (!safeModulo128(lhs, rhs, &result)) {
+                            error("Modulo by zero");
+                        }
+                        break;
+                    default:
+                        break;
+                }
+                return makeInt128Value(result);
+            };
+
             switch (op)
             {
                 case Opcode::EXPR_ADD:
@@ -23200,6 +24278,8 @@ namespace scratchbird
                         left.type() == core::DataType::FLOAT32 ||
                         right.type() == core::DataType::FLOAT32)
                         push(Value::makeFloat64(coerceToDouble(left) + coerceToDouble(right)));
+                    else if (use_integer128)
+                        push(eval_integer128(op));
                     else
                         push(Value::makeInt64(left.toInt64() + right.toInt64()));
                     break;
@@ -23211,6 +24291,8 @@ namespace scratchbird
                         left.type() == core::DataType::FLOAT32 ||
                         right.type() == core::DataType::FLOAT32)
                         push(Value::makeFloat64(coerceToDouble(left) - coerceToDouble(right)));
+                    else if (use_integer128)
+                        push(eval_integer128(op));
                     else
                         push(Value::makeInt64(left.toInt64() - right.toInt64()));
                     break;
@@ -23222,6 +24304,8 @@ namespace scratchbird
                         left.type() == core::DataType::FLOAT32 ||
                         right.type() == core::DataType::FLOAT32)
                         push(Value::makeFloat64(coerceToDouble(left) * coerceToDouble(right)));
+                    else if (use_integer128)
+                        push(eval_integer128(op));
                     else
                         push(Value::makeInt64(left.toInt64() * right.toInt64()));
                     break;
@@ -23236,12 +24320,19 @@ namespace scratchbird
                         left.type() == core::DataType::FLOAT32 ||
                         right.type() == core::DataType::FLOAT32)
                         push(Value::makeFloat64(coerceToDouble(left) / right_val));
+                    else if (use_integer128)
+                        push(eval_integer128(op));
                     else
                         push(Value::makeInt64(left.toInt64() / right.toInt64()));
                     break;
                 }
                 case Opcode::EXPR_MODULO:
                 {
+                    if (use_integer128)
+                    {
+                        push(eval_integer128(op));
+                        break;
+                    }
                     if (right.toInt64() == 0)
                         error("Modulo by zero");
                     push(Value::makeInt64(left.toInt64() % right.toInt64()));
@@ -23255,6 +24346,8 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) == 0;
+                    else if (isIntegerType(left.type()) && isIntegerType(right.type()))
+                        result = compareIntegerValues(left, right) == 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
                              right.type() == core::DataType::FLOAT64 ||
                              left.type() == core::DataType::FLOAT32 ||
@@ -23271,6 +24364,8 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) != 0;
+                    else if (isIntegerType(left.type()) && isIntegerType(right.type()))
+                        result = compareIntegerValues(left, right) != 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
                              right.type() == core::DataType::FLOAT64 ||
                              left.type() == core::DataType::FLOAT32 ||
@@ -23287,6 +24382,8 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) < 0;
+                    else if (isIntegerType(left.type()) && isIntegerType(right.type()))
+                        result = compareIntegerValues(left, right) < 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
                              right.type() == core::DataType::FLOAT64 ||
                              left.type() == core::DataType::FLOAT32 ||
@@ -23303,6 +24400,8 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) > 0;
+                    else if (isIntegerType(left.type()) && isIntegerType(right.type()))
+                        result = compareIntegerValues(left, right) > 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
                              right.type() == core::DataType::FLOAT64 ||
                              left.type() == core::DataType::FLOAT32 ||
@@ -23319,6 +24418,8 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) <= 0;
+                    else if (isIntegerType(left.type()) && isIntegerType(right.type()))
+                        result = compareIntegerValues(left, right) <= 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
                              right.type() == core::DataType::FLOAT64 ||
                              left.type() == core::DataType::FLOAT32 ||
@@ -23335,6 +24436,8 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) >= 0;
+                    else if (isIntegerType(left.type()) && isIntegerType(right.type()))
+                        result = compareIntegerValues(left, right) >= 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
                              right.type() == core::DataType::FLOAT64 ||
                              left.type() == core::DataType::FLOAT32 ||
@@ -23742,13 +24845,21 @@ namespace scratchbird
                     return false;
                 }
 
-                // Enforce VARCHAR/CHAR length if metadata exists
+                // Enforce VARCHAR/CHAR length if metadata exists (character count, UTF-8)
                 if ((col_type == core::DataType::CHAR ||
                      col_type == core::DataType::VARCHAR) &&
-                    columns[i].type_precision > 0 &&
-                    value.toString().size() > columns[i].type_precision)
+                    columns[i].type_precision > 0)
                 {
-                    return false;
+                    std::string text = value.toString();
+                    size_t char_count = core::UTF8Utils::countCharacters(text);
+                    if (!text.empty() && char_count == 0)
+                    {
+                        return false;
+                    }
+                    if (char_count > columns[i].type_precision)
+                    {
+                        return false;
+                    }
                 }
 
                 values_out.push_back(std::move(value));
@@ -24959,28 +26070,12 @@ namespace scratchbird
             return result;
         }
 
-        core::Status Executor::callFunctionByName(const std::string& function_name,
+        core::Status Executor::callFunctionByInfo(const core::CatalogManager::FunctionInfo& function_info,
                                                   const std::vector<Value>& args,
                                                   Value& result_out,
                                                   core::ErrorContext* ctx)
         {
-            core::CatalogManager::FunctionInfo function_info;
             core::ErrorContext err_ctx;
-            auto status = db_->catalog_manager()->getFunction(function_name, function_info, &err_ctx);
-            if (status != core::Status::OK)
-            {
-                if (ctx)
-                {
-                    std::string msg = "Function not found: " + function_name;
-                    if (!err_ctx.message.empty())
-                    {
-                        msg += ": " + err_ctx.message;
-                    }
-                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, msg.c_str());
-                }
-                return core::Status::NOT_FOUND;
-            }
-
             if (function_info.bytecode.empty())
             {
                 SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
@@ -25208,6 +26303,112 @@ namespace scratchbird
             return core::Status::OK;
         }
 
+        core::Status Executor::callFunctionByName(const std::string& function_name,
+                                                  const std::vector<Value>& args,
+                                                  Value& result_out,
+                                                  core::ErrorContext* ctx)
+        {
+            core::CatalogManager::FunctionInfo function_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getFunction(function_name, function_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (ctx)
+                {
+                    std::string msg = "Function not found: " + function_name;
+                    if (!err_ctx.message.empty())
+                    {
+                        msg += ": " + err_ctx.message;
+                    }
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, msg.c_str());
+                }
+                return core::Status::NOT_FOUND;
+            }
+
+            return callFunctionByInfo(function_info, args, result_out, ctx);
+        }
+
+        core::Status Executor::callFunctionById(const core::ID& function_id,
+                                                const std::vector<Value>& args,
+                                                Value& result_out,
+                                                core::ErrorContext* ctx)
+        {
+            core::CatalogManager::FunctionInfo function_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getFunctionById(function_id, function_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (ctx)
+                {
+                    std::string msg = "Function not found: " + function_id.toString();
+                    if (!err_ctx.message.empty())
+                    {
+                        msg += ": " + err_ctx.message;
+                    }
+                    SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                }
+                return status;
+            }
+
+            return callFunctionByInfo(function_info, args, result_out, ctx);
+        }
+
+        core::Status Executor::callUDRFunctionById(const core::ID& udr_id,
+                                                   const std::vector<Value>& args,
+                                                   Value& result_out,
+                                                   core::ErrorContext* ctx)
+        {
+            (void)args;
+            (void)result_out;
+
+            core::CatalogManager::UDRInfo udr_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getUDR(udr_id, udr_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (ctx)
+                {
+                    std::string msg = "UDR not found: " + udr_id.toString();
+                    if (!err_ctx.message.empty())
+                    {
+                        msg += ": " + err_ctx.message;
+                    }
+                    SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                }
+                return status;
+            }
+
+            if (udr_info.udr_type != core::CatalogManager::UDRType::FUNCTION)
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "UDR is not a function");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (conn_ctx)
+            {
+                auto security_ctx = conn_ctx->getCurrentSecurityContext();
+                if (!security_ctx.is_superuser && !isZeroUuid(security_ctx.effective_user_id))
+                {
+                    if (!db_->catalog_manager()->hasObjectPermission(
+                            udr_info.udr_id,
+                            security_ctx.effective_user_id,
+                            0x0001,
+                            &err_ctx))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
+                                          "Permission denied: EXECUTE on UDR");
+                        return core::Status::PERMISSION_DENIED;
+                    }
+                }
+            }
+
+            SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
+                              "UDR execution not implemented");
+            return core::Status::NOT_IMPLEMENTED;
+        }
+
         void Executor::executeBlock()
         {
             // Read variable declaration count
@@ -25262,6 +26463,21 @@ namespace scratchbird
                     {
                         case ExtendedOpcode::EXT_ASSIGN:
                             executeAssignment();
+                            break;
+                        case ExtendedOpcode::EXT_SAVEPOINT_BEGIN:
+                            executeBlrSavepointBegin();
+                            break;
+                        case ExtendedOpcode::EXT_SAVEPOINT_END:
+                            executeBlrSavepointEnd();
+                            break;
+                        case ExtendedOpcode::EXT_SAVEPOINT:
+                            executeSavepoint();
+                            break;
+                        case ExtendedOpcode::EXT_RELEASE_SAVEPOINT:
+                            executeReleaseSavepoint();
+                            break;
+                        case ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT:
+                            executeRollbackToSavepoint();
                             break;
                         case ExtendedOpcode::EXT_IF:
                             executeIfStatement();
@@ -32608,8 +33824,11 @@ namespace scratchbird
                 case core::DataType::FLOAT64:
                     return a.getFloat64() == b.getFloat64();
                 case core::DataType::VARCHAR:
-                case core::DataType::TEXT:
                     return a.getVarchar() == b.getVarchar();
+                case core::DataType::TEXT:
+                    return a.getText() == b.getText();
+                case core::DataType::CHAR:
+                    return a.getChar() == b.getChar();
                 case core::DataType::BOOLEAN:
                     return a.getBoolean() == b.getBoolean();
                 default:
@@ -33713,6 +34932,94 @@ namespace scratchbird
             stack_.push(Value::makeInt64(static_cast<int64_t>(mask)));
         }
 
+        static bool extractNumericArray(const Value& input,
+                                        std::vector<std::optional<double>>& out,
+                                        std::string& error_out)
+        {
+            out.clear();
+            if (input.type() == core::DataType::ARRAY)
+            {
+                const auto& arr = input.getArray();
+                out.reserve(arr.size());
+                for (const auto& elem : arr)
+                {
+                    if (elem.isNull())
+                    {
+                        out.emplace_back(std::nullopt);
+                        continue;
+                    }
+                    try
+                    {
+                        out.emplace_back(coerceToDouble(elem));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        error_out = e.what();
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            try
+            {
+                json parsed = json::parse(input.toString());
+                if (!parsed.is_array())
+                {
+                    error_out = "Expected JSON array";
+                    return false;
+                }
+                out.reserve(parsed.size());
+                for (const auto& elem : parsed)
+                {
+                    if (elem.is_null())
+                    {
+                        out.emplace_back(std::nullopt);
+                        continue;
+                    }
+                    if (elem.is_number())
+                    {
+                        out.emplace_back(elem.get<double>());
+                        continue;
+                    }
+                    if (elem.is_string())
+                    {
+                        const std::string& text = elem.get_ref<const std::string&>();
+                        try
+                        {
+                            size_t idx = 0;
+                            double val = std::stod(text, &idx);
+                            while (idx < text.size() &&
+                                   std::isspace(static_cast<unsigned char>(text[idx])))
+                            {
+                                ++idx;
+                            }
+                            if (idx != text.size())
+                            {
+                                error_out = "Non-numeric array element";
+                                return false;
+                            }
+                            out.emplace_back(val);
+                            continue;
+                        }
+                        catch (...)
+                        {
+                            error_out = "Non-numeric array element";
+                            return false;
+                        }
+                    }
+                    error_out = "Non-numeric array element";
+                    return false;
+                }
+                return true;
+            }
+            catch (const json::exception&)
+            {
+                error_out = "Invalid JSON array";
+                return false;
+            }
+        }
+
         // ========================================================================
         // STATISTICAL FUNCTIONS (Nov 14, 2025)
         // Phase 4 Enhancement: Scalar versions - aggregate versions already work
@@ -33729,13 +35036,13 @@ namespace scratchbird
                 return;
             }
 
-            if (input.type() != core::DataType::ARRAY)
+            std::vector<std::optional<double>> arr;
+            std::string error_msg;
+            if (!extractNumericArray(input, arr, error_msg))
             {
-                error("STDDEV_SAMP scalar requires an ARRAY argument");
+                error("STDDEV_SAMP expects a numeric JSON array: " + error_msg);
                 return;
             }
-
-            const auto& arr = input.getArray();
             size_t n = 0;
             double mean = 0.0;
             double m2 = 0.0;
@@ -33743,8 +35050,8 @@ namespace scratchbird
             // Welford's online algorithm for numerical stability
             for (const auto& elem : arr)
             {
-                if (elem.isNull()) continue;
-                double val = coerceToDouble(elem);
+                if (!elem.has_value()) continue;
+                double val = *elem;
                 n++;
                 double delta = val - mean;
                 mean += delta / static_cast<double>(n);
@@ -33774,13 +35081,13 @@ namespace scratchbird
                 return;
             }
 
-            if (input.type() != core::DataType::ARRAY)
+            std::vector<std::optional<double>> arr;
+            std::string error_msg;
+            if (!extractNumericArray(input, arr, error_msg))
             {
-                error("STDDEV_POP scalar requires an ARRAY argument");
+                error("STDDEV_POP expects a numeric JSON array: " + error_msg);
                 return;
             }
-
-            const auto& arr = input.getArray();
             size_t n = 0;
             double mean = 0.0;
             double m2 = 0.0;
@@ -33788,8 +35095,8 @@ namespace scratchbird
             // Welford's online algorithm for numerical stability
             for (const auto& elem : arr)
             {
-                if (elem.isNull()) continue;
-                double val = coerceToDouble(elem);
+                if (!elem.has_value()) continue;
+                double val = *elem;
                 n++;
                 double delta = val - mean;
                 mean += delta / static_cast<double>(n);
@@ -33818,13 +35125,13 @@ namespace scratchbird
                 return;
             }
 
-            if (input.type() != core::DataType::ARRAY)
+            std::vector<std::optional<double>> arr;
+            std::string error_msg;
+            if (!extractNumericArray(input, arr, error_msg))
             {
-                error("VAR_SAMP scalar requires an ARRAY argument");
+                error("VAR_SAMP expects a numeric JSON array: " + error_msg);
                 return;
             }
-
-            const auto& arr = input.getArray();
             size_t n = 0;
             double mean = 0.0;
             double m2 = 0.0;
@@ -33832,8 +35139,8 @@ namespace scratchbird
             // Welford's online algorithm for numerical stability
             for (const auto& elem : arr)
             {
-                if (elem.isNull()) continue;
-                double val = coerceToDouble(elem);
+                if (!elem.has_value()) continue;
+                double val = *elem;
                 n++;
                 double delta = val - mean;
                 mean += delta / static_cast<double>(n);
@@ -33863,13 +35170,13 @@ namespace scratchbird
                 return;
             }
 
-            if (input.type() != core::DataType::ARRAY)
+            std::vector<std::optional<double>> arr;
+            std::string error_msg;
+            if (!extractNumericArray(input, arr, error_msg))
             {
-                error("VAR_POP scalar requires an ARRAY argument");
+                error("VAR_POP expects a numeric JSON array: " + error_msg);
                 return;
             }
-
-            const auto& arr = input.getArray();
             size_t n = 0;
             double mean = 0.0;
             double m2 = 0.0;
@@ -33877,8 +35184,8 @@ namespace scratchbird
             // Welford's online algorithm for numerical stability
             for (const auto& elem : arr)
             {
-                if (elem.isNull()) continue;
-                double val = coerceToDouble(elem);
+                if (!elem.has_value()) continue;
+                double val = *elem;
                 n++;
                 double delta = val - mean;
                 mean += delta / static_cast<double>(n);
@@ -33908,14 +35215,19 @@ namespace scratchbird
                 return;
             }
 
-            if (x_input.type() != core::DataType::ARRAY || y_input.type() != core::DataType::ARRAY)
+            std::vector<std::optional<double>> arr_x;
+            std::vector<std::optional<double>> arr_y;
+            std::string error_msg;
+            if (!extractNumericArray(x_input, arr_x, error_msg))
             {
-                error("CORR requires two ARRAY arguments");
+                error("CORR expects numeric JSON arrays: " + error_msg);
                 return;
             }
-
-            const auto& arr_x = x_input.getArray();
-            const auto& arr_y = y_input.getArray();
+            if (!extractNumericArray(y_input, arr_y, error_msg))
+            {
+                error("CORR expects numeric JSON arrays: " + error_msg);
+                return;
+            }
 
             if (arr_x.size() != arr_y.size())
             {
@@ -33929,9 +35241,9 @@ namespace scratchbird
             double sum_x = 0.0, sum_y = 0.0;
             for (size_t i = 0; i < arr_x.size(); i++)
             {
-                if (arr_x[i].isNull() || arr_y[i].isNull()) continue;
-                sum_x += coerceToDouble(arr_x[i]);
-                sum_y += coerceToDouble(arr_y[i]);
+                if (!arr_x[i].has_value() || !arr_y[i].has_value()) continue;
+                sum_x += *arr_x[i];
+                sum_y += *arr_y[i];
                 n++;
             }
 
@@ -33948,9 +35260,9 @@ namespace scratchbird
             double sum_xy = 0.0, sum_x2 = 0.0, sum_y2 = 0.0;
             for (size_t i = 0; i < arr_x.size(); i++)
             {
-                if (arr_x[i].isNull() || arr_y[i].isNull()) continue;
-                double dx = coerceToDouble(arr_x[i]) - mean_x;
-                double dy = coerceToDouble(arr_y[i]) - mean_y;
+                if (!arr_x[i].has_value() || !arr_y[i].has_value()) continue;
+                double dx = *arr_x[i] - mean_x;
+                double dy = *arr_y[i] - mean_y;
                 sum_xy += dx * dy;
                 sum_x2 += dx * dx;
                 sum_y2 += dy * dy;
@@ -33979,14 +35291,19 @@ namespace scratchbird
                 return;
             }
 
-            if (x_input.type() != core::DataType::ARRAY || y_input.type() != core::DataType::ARRAY)
+            std::vector<std::optional<double>> arr_x;
+            std::vector<std::optional<double>> arr_y;
+            std::string error_msg;
+            if (!extractNumericArray(x_input, arr_x, error_msg))
             {
-                error("COVAR_POP requires two ARRAY arguments");
+                error("COVAR_POP expects numeric JSON arrays: " + error_msg);
                 return;
             }
-
-            const auto& arr_x = x_input.getArray();
-            const auto& arr_y = y_input.getArray();
+            if (!extractNumericArray(y_input, arr_y, error_msg))
+            {
+                error("COVAR_POP expects numeric JSON arrays: " + error_msg);
+                return;
+            }
 
             if (arr_x.size() != arr_y.size())
             {
@@ -34001,9 +35318,9 @@ namespace scratchbird
 
             for (size_t i = 0; i < arr_x.size(); i++)
             {
-                if (arr_x[i].isNull() || arr_y[i].isNull()) continue;
-                double x = coerceToDouble(arr_x[i]);
-                double y = coerceToDouble(arr_y[i]);
+                if (!arr_x[i].has_value() || !arr_y[i].has_value()) continue;
+                double x = *arr_x[i];
+                double y = *arr_y[i];
                 n++;
                 double dx = x - mean_x;
                 mean_x += dx / static_cast<double>(n);
@@ -34616,380 +35933,53 @@ namespace scratchbird
 
         void Executor::executeExtract()
         {
-            // EXTRACT(field FROM value) - extract sub-information from complex types
-            // Bytecode format: field_id (uint8_t), then source expression is already evaluated
-
-            // Read field ID from bytecode
+            // Spec: docs/specifications/EXTRACT_AND_ALTER_ELEMENT.md
             uint8_t field_id = readByte();
+            uint8_t arg_count = readByte();
             ExtractField field = static_cast<ExtractField>(field_id);
 
-            // Source value is on top of stack (already evaluated by bytecode)
             Value source = pop();
 
-            // Handle NULL source
-            if (source.isNull())
+            std::vector<Value> args(arg_count);
+            for (uint8_t i = 0; i < arg_count; ++i)
             {
-                push(Value::makeNull());
+                args[arg_count - 1 - i] = pop();
+            }
+
+            Value result;
+            std::string err;
+            if (!extractElement(source, field, args, &result, &err))
+            {
+                error(err.empty() ? "EXTRACT failed" : err);
                 return;
             }
+            push(result);
+        }
 
-            // Dispatch based on source type and field
-            core::DataType source_type = source.type();
+        void Executor::executeAlterElement()
+        {
+            // Spec: docs/specifications/EXTRACT_AND_ALTER_ELEMENT.md
+            uint8_t field_id = readByte();
+            uint8_t arg_count = readByte();
+            ExtractField field = static_cast<ExtractField>(field_id);
 
-            // ===== TEMPORAL TYPES =====
-            if (source_type == core::DataType::DATE)
+            Value new_value = pop();
+            Value source = pop();
+
+            std::vector<Value> args(arg_count);
+            for (uint8_t i = 0; i < arg_count; ++i)
             {
-                int64_t days = source.getDate();
+                args[arg_count - 1 - i] = pop();
+            }
 
-                switch (field)
-                {
-                    case ExtractField::YEAR:
-                        push(Value::makeInt32(core::TypeExtractor::extractYear(days)));
-                        return;
-                    case ExtractField::MONTH:
-                        push(Value::makeInt32(core::TypeExtractor::extractMonth(days)));
-                        return;
-                    case ExtractField::DAY:
-                        push(Value::makeInt32(core::TypeExtractor::extractDay(days)));
-                        return;
-                    case ExtractField::DOW:
-                        push(Value::makeInt32(core::TypeExtractor::extractDayOfWeek(days)));
-                        return;
-                    case ExtractField::DOY:
-                        push(Value::makeInt32(core::TypeExtractor::extractDayOfYear(days)));
-                        return;
-                    case ExtractField::QUARTER:
-                    {
-                        int32_t month = core::TypeExtractor::extractMonth(days);
-                        push(Value::makeInt32((month - 1) / 3 + 1));  // Quarter 1-4
-                        return;
-                    }
-                    case ExtractField::EPOCH:
-                    {
-                        // Epoch for DATE: days * seconds_per_day
-                        push(Value::makeInt64(days * 86400));
-                        return;
-                    }
-                    default:
-                        error("Field '" + std::to_string(field_id) + "' not valid for DATE type");
-                        return;
-                }
-            }
-            else if (source_type == core::DataType::TIME)
+            Value result;
+            std::string err;
+            if (!alterElement(source, field, args, new_value, &result, &err))
             {
-                int64_t microseconds = source.getTime();
-
-                switch (field)
-                {
-                    case ExtractField::HOUR:
-                        push(Value::makeInt32(core::TypeExtractor::extractHour(microseconds)));
-                        return;
-                    case ExtractField::MINUTE:
-                        push(Value::makeInt32(core::TypeExtractor::extractMinute(microseconds)));
-                        return;
-                    case ExtractField::SECOND:
-                        push(Value::makeInt32(core::TypeExtractor::extractSecond(microseconds)));
-                        return;
-                    case ExtractField::MICROSECOND:
-                        push(Value::makeInt32(core::TypeExtractor::extractMicrosecond(microseconds)));
-                        return;
-                    case ExtractField::MILLISECOND:
-                    {
-                        int32_t us = core::TypeExtractor::extractMicrosecond(microseconds);
-                        push(Value::makeInt32(us / 1000));  // Millisecond part only
-                        return;
-                    }
-                    case ExtractField::EPOCH:
-                    {
-                        // Epoch for TIME: microseconds / 1000000 (seconds since midnight)
-                        push(Value::makeInt64(microseconds / 1000000));
-                        return;
-                    }
-                    default:
-                        error("Field '" + std::to_string(field_id) + "' not valid for TIME type");
-                        return;
-                }
+                error(err.empty() ? "ALTER_ELEMENT failed" : err);
+                return;
             }
-            else if (source_type == core::DataType::TIMESTAMP)
-            {
-                int64_t microseconds = source.getTimestamp();
-
-                switch (field)
-                {
-                    case ExtractField::YEAR:
-                        push(Value::makeInt32(core::TypeExtractor::extractTimestampYear(microseconds)));
-                        return;
-                    case ExtractField::MONTH:
-                        push(Value::makeInt32(core::TypeExtractor::extractTimestampMonth(microseconds)));
-                        return;
-                    case ExtractField::DAY:
-                        push(Value::makeInt32(core::TypeExtractor::extractTimestampDay(microseconds)));
-                        return;
-                    case ExtractField::HOUR:
-                        push(Value::makeInt32(core::TypeExtractor::extractTimestampHour(microseconds)));
-                        return;
-                    case ExtractField::MINUTE:
-                        push(Value::makeInt32(core::TypeExtractor::extractTimestampMinute(microseconds)));
-                        return;
-                    case ExtractField::SECOND:
-                        push(Value::makeInt32(core::TypeExtractor::extractTimestampSecond(microseconds)));
-                        return;
-                    case ExtractField::MICROSECOND:
-                        push(Value::makeInt32(core::TypeExtractor::extractTimestampMicrosecond(microseconds)));
-                        return;
-                    case ExtractField::MILLISECOND:
-                    {
-                        int32_t us = core::TypeExtractor::extractTimestampMicrosecond(microseconds);
-                        push(Value::makeInt32(us / 1000));
-                        return;
-                    }
-                    case ExtractField::DOW:
-                    {
-                        // Convert microseconds to days
-                        int64_t days = microseconds / 86400000000LL;
-                        push(Value::makeInt32(core::TypeExtractor::extractDayOfWeek(days)));
-                        return;
-                    }
-                    case ExtractField::DOY:
-                    {
-                        int64_t days = microseconds / 86400000000LL;
-                        push(Value::makeInt32(core::TypeExtractor::extractDayOfYear(days)));
-                        return;
-                    }
-                    case ExtractField::QUARTER:
-                    {
-                        int32_t month = core::TypeExtractor::extractTimestampMonth(microseconds);
-                        push(Value::makeInt32((month - 1) / 3 + 1));
-                        return;
-                    }
-                    case ExtractField::EPOCH:
-                    {
-                        // Epoch: seconds since Unix epoch
-                        push(Value::makeInt64(microseconds / 1000000));
-                        return;
-                    }
-                    default:
-                        error("Field '" + std::to_string(field_id) + "' not valid for TIMESTAMP type");
-                        return;
-                }
-            }
-            else if (source_type == core::DataType::INTERVAL)
-            {
-                core::Interval interval = source.getInterval();
-
-                switch (field)
-                {
-                    case ExtractField::YEAR:
-                        // Years from months (12 months = 1 year)
-                        push(Value::makeInt32(interval.months / 12));
-                        return;
-                    case ExtractField::MONTH:
-                        // Remaining months after extracting full years
-                        push(Value::makeInt32(interval.months % 12));
-                        return;
-                    case ExtractField::DAY:
-                        push(Value::makeInt32(interval.days));
-                        return;
-                    case ExtractField::HOUR:
-                    {
-                        // Hours from microseconds
-                        int64_t hours = interval.microseconds / 3600000000LL;
-                        push(Value::makeInt32(static_cast<int32_t>(hours)));
-                        return;
-                    }
-                    case ExtractField::MINUTE:
-                    {
-                        // Minutes from microseconds (after extracting hours)
-                        int64_t total_minutes = interval.microseconds / 60000000LL;
-                        int32_t minutes = static_cast<int32_t>(total_minutes % 60);
-                        push(Value::makeInt32(minutes));
-                        return;
-                    }
-                    case ExtractField::SECOND:
-                    {
-                        // Seconds from microseconds (after extracting minutes)
-                        int64_t total_seconds = interval.microseconds / 1000000LL;
-                        int32_t seconds = static_cast<int32_t>(total_seconds % 60);
-                        push(Value::makeInt32(seconds));
-                        return;
-                    }
-                    case ExtractField::MICROSECOND:
-                    {
-                        // Microsecond component only (fractional part of second)
-                        int32_t us = static_cast<int32_t>(interval.microseconds % 1000000);
-                        push(Value::makeInt32(us));
-                        return;
-                    }
-                    case ExtractField::MILLISECOND:
-                    {
-                        // Millisecond component only
-                        int32_t ms = static_cast<int32_t>((interval.microseconds % 1000000) / 1000);
-                        push(Value::makeInt32(ms));
-                        return;
-                    }
-                    case ExtractField::EPOCH:
-                    {
-                        // Total interval as seconds (approximate, assumes 30 days/month)
-                        double total_seconds =
-                            (interval.months * 2592000.0) +  // 30 days/month in seconds
-                            (interval.days * 86400.0) +       // days to seconds
-                            (interval.microseconds / 1000000.0); // microseconds to seconds
-                        push(Value::makeFloat64(total_seconds));
-                        return;
-                    }
-                    default:
-                        error("Field '" + std::to_string(field_id) + "' not valid for INTERVAL type");
-                        return;
-                }
-            }
-            // ===== UUID TYPE =====
-            else if (source_type == core::DataType::UUID)
-            {
-                std::vector<uint8_t> uuid = source.getUUID();
-
-                switch (field)
-                {
-                    case ExtractField::VERSION:
-                        push(Value::makeInt32(core::TypeExtractor::extractUUIDVersion(uuid)));
-                        return;
-                    case ExtractField::VARIANT:
-                        push(Value::makeInt32(core::TypeExtractor::extractUUIDVariant(uuid)));
-                        return;
-                    case ExtractField::TIMESTAMP:
-                    {
-                        core::ErrorContext ctx;
-                        auto timestamp = core::TypeExtractor::extractUUIDTimestamp(uuid, &ctx);
-                        if (timestamp.has_value())
-                        {
-                            push(Value::makeInt64(*timestamp));
-                        }
-                        else
-                        {
-                            error("UUID timestamp extraction failed: only supported for UUIDv1 and UUIDv7");
-                        }
-                        return;
-                    }
-                    case ExtractField::CLOCK_SEQ:
-                    {
-                        // WP-4 EXEC-M1: UUID clock sequence (v1 only)
-                        // For UUIDv1, clock_seq is in bytes 8-9 (13 bits of clock_seq_hi_and_reserved + clock_seq_low)
-                        int version = core::TypeExtractor::extractUUIDVersion(uuid);
-                        if (version != 1)
-                        {
-                            push(Value::makeNull());  // clock_seq only meaningful for UUIDv1
-                            return;
-                        }
-                        if (uuid.size() < 10)
-                        {
-                            push(Value::makeNull());
-                            return;
-                        }
-                        // clock_seq_hi_and_reserved is byte 8 (lower 6 bits)
-                        // clock_seq_low is byte 9
-                        int32_t clock_seq = ((uuid[8] & 0x3F) << 8) | uuid[9];
-                        push(Value::makeInt32(clock_seq));
-                        return;
-                    }
-                    case ExtractField::NODE:
-                    {
-                        // WP-4 EXEC-M1: UUID node (v1 only) - MAC address in bytes 10-15
-                        int version = core::TypeExtractor::extractUUIDVersion(uuid);
-                        if (version != 1)
-                        {
-                            push(Value::makeNull());  // node only meaningful for UUIDv1
-                            return;
-                        }
-                        if (uuid.size() < 16)
-                        {
-                            push(Value::makeNull());
-                            return;
-                        }
-                        // Format as MAC address string: xx:xx:xx:xx:xx:xx
-                        static const char hex_chars[] = "0123456789abcdef";
-                        std::string mac;
-                        mac.reserve(17);
-                        for (size_t i = 10; i < 16; i++)
-                        {
-                            if (i > 10) mac.push_back(':');
-                            mac.push_back(hex_chars[(uuid[i] >> 4) & 0x0F]);
-                            mac.push_back(hex_chars[uuid[i] & 0x0F]);
-                        }
-                        push(Value::makeVarchar(mac));
-                        return;
-                    }
-                    default:
-                        error("Field '" + std::to_string(field_id) + "' not supported for UUID type");
-                        return;
-                }
-            }
-            // ===== ARRAY TYPE =====
-            else if (source_type == core::DataType::ARRAY)
-            {
-                try {
-                    const auto& array = source.getArray();
-
-                    switch (field)
-                    {
-                        case ExtractField::CARDINALITY:
-                            push(Value::makeInt32(static_cast<int32_t>(array.size())));
-                            return;
-                        case ExtractField::NDIMS:
-                            // For vector<TypedValue>, we treat it as 1D array
-                            push(Value::makeInt32(1));
-                            return;
-                        case ExtractField::LOWER:
-                            // PostgreSQL arrays are 1-indexed by default
-                            push(Value::makeInt32(1));
-                            return;
-                        case ExtractField::UPPER:
-                            push(Value::makeInt32(static_cast<int32_t>(array.size())));
-                            return;
-                        case ExtractField::DIMS:
-                        {
-                            // WP-4 EXEC-M2: Return array of dimension sizes
-                            // For 1D array, return ARRAY[size]
-                            std::vector<core::TypedValue> dims;
-                            dims.push_back(Value::makeInt32(static_cast<int32_t>(array.size())));
-                            push(Value::makeArray(dims));
-                            return;
-                        }
-                        default:
-                            error("Field '" + std::to_string(field_id) + "' not supported for ARRAY type");
-                            return;
-                    }
-                } catch (const std::exception& e) {
-                    push(Value::makeNull());
-                    return;
-                }
-            }
-            // ===== SPATIAL TYPES =====
-            else if (source_type == core::DataType::POINT)
-            {
-                core::Point point = source.getPoint();
-
-                switch (field)
-                {
-                    case ExtractField::X:
-                        push(Value::makeFloat64(point.x));
-                        return;
-                    case ExtractField::Y:
-                        push(Value::makeFloat64(point.y));
-                        return;
-                    case ExtractField::SRID:
-                        push(Value::makeInt32(point.srid));
-                        return;
-                    default:
-                        error("Field '" + std::to_string(field_id) + "' not valid for POINT type");
-                        return;
-                }
-            }
-            else
-            {
-                // WP-4 EXEC-L4: Clear error message for unsupported EXTRACT type/field combinations
-                std::string type_name = dataTypeToString(source_type);
-                error("EXTRACT not supported for " + type_name + " type. "
-                      "Supported types: DATE, TIME, TIMESTAMP, INTERVAL, UUID, ARRAY, GEOMETRY (POINT)");
-            }
+            push(result);
         }
 
         void Executor::executeEncode()

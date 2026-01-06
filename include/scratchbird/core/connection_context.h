@@ -221,6 +221,8 @@ namespace scratchbird::core
         void setCurrentUser(const ID& user_id, bool is_superuser);
         void setActiveRole(const ID& role_id);
         void clearActiveRole();
+        bool hasStagedSecurityContext() const { return security_context_staged_; }
+        void applyStagedSecurityContext();
 
         void setRoleSwitchPolicy(RoleSwitchPolicy policy);
         RoleSwitchPolicy roleSwitchPolicy() const { return role_switch_policy_; }

@@ -128,6 +128,7 @@ namespace scratchbird::optimizer
         static bool matchCoalesce(const CoalesceExpr *q, const CoalesceExpr *i);
         static bool matchNullIf(const NullIfExpr *q, const NullIfExpr *i);
         static bool matchExtract(const ExtractExpr *q, const ExtractExpr *i);
+        static bool matchAlterElement(const AlterElementExpr *q, const AlterElementExpr *i);
 
         // Helper methods
         static bool isCommutativeOperator(BinaryOp op);

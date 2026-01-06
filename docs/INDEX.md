@@ -93,6 +93,7 @@ Detailed technical specs for all features:
 - **[On-Disk Format](specifications/ON_DISK_FORMAT.md)** - Storage format specification
 - **[Error Handling](specifications/ERROR_HANDLING.md)** - Error handling system
 - **[Catalog Specification](specifications/CATALOG_SPECIFICATION.md)** - System catalog design
+- **[Component Model and Responsibilities](specifications/COMPONENT_MODEL_AND_RESPONSIBILITIES.md)** - Engine/parser/listener boundaries and trust model
 - **[Storage Engine Spec](specifications/STORAGE_ENGINE_SPEC.md)** - Storage engine architecture
 - **[Transaction Management](specifications/TRANSACTION_MANAGEMENT.md)** - MGA transaction system
 
@@ -107,6 +108,11 @@ Architecture and design decisions:
 - **[MVCC Design](design/mvcc_design.md)**
 - **[Page Management](design/page_management.md)**
 - **[TOAST Design](design/toast_design.md)**
+
+### Diagrams
+
+- **[Component Model Diagrams](diagrams/component_model_diagrams.md)** - Engine/parser/listener flow (Mermaid + ASCII)
+- **[Component Responsibility Matrix](diagrams/component_responsibility_matrix.md)** - Ownership matrix for core components
 
 ### Reference Materials
 
