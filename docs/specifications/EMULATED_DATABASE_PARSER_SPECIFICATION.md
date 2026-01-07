@@ -38,12 +38,12 @@ Copy the patterns, not the code.
 - Emulated parsers are separate and must only implement the subset supported by their native engines.
 - The engine executes only SBLR; parsers are isolated front-ends that generate it.
 
-### Rule 2: No V1 Parser Usage
-**The V1 parser has been removed.**
+### Rule 2: No Legacy Parser Usage
+**The legacy parser has been removed.**
 
-- DO NOT reintroduce V1 parser code
-- DO NOT write code that depends on V1 parser behavior
-- DO NOT reference V1 parser code patterns
+- DO NOT reintroduce legacy parser code
+- DO NOT write code that depends on legacy parser behavior
+- DO NOT reference legacy parser code patterns
 
 ### Rule 3: SBLR is the Common Layer
 **All parsers generate SBLR bytecode that the executor runs.**
@@ -248,7 +248,7 @@ When implementing an emulated database parser:
 ### WRONG: Modifying V2 to support Firebird
 ```cpp
 // DON'T DO THIS - modifying V2 bytecode generator for Firebird
-void BytecodeGeneratorV2::generateSelectListV1Compatible(...) {
+void BytecodeGeneratorV2::generateSelectListDialectCompatible(...) {
     // This is WRONG - V2 should not have Firebird-specific code
 }
 ```

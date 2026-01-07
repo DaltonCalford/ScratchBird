@@ -17,7 +17,7 @@ Status: derived from static code review; no runtime execution performed.
 - [ ] DROP TABLE/INDEX/VIEW/SEQUENCE: switch from TABLE_REF lists to single name string + flags byte; align CASCADE/RESTRICT encoding.
 - [ ] TRUNCATE: emit single table name + flags, not TABLE_REF lists and optional extra bytes.
 - [ ] SELECT: remove DISTINCT flag byte or update executor to read it; align SELECT list alias encoding (executor expects alias markers as COLUMN_REF + empty qualifier).
-- [ ] SELECT: align FROM clause layout (executor expects single TABLE_REF for v1 format); current parser emits BEGIN_LIST and join opcodes.
+- [ ] SELECT: align FROM clause layout (executor expects single TABLE_REF for legacy format); current parser emits BEGIN_LIST and join opcodes.
 - [ ] INSERT: remove alias string after TABLE_REF; align values layout (executor expects a single row list without row_count); handle DEFAULT VALUES / SELECT sources explicitly.
 - [ ] UPDATE: emit ASSIGNMENT + COLUMN_REF + column name (executor expects COLUMN_REF opcode); remove alias string after TABLE_REF.
 - [ ] DELETE: remove alias string after TABLE_REF; remove USING clause or add executor support.
@@ -38,5 +38,5 @@ Status: derived from static code review; no runtime execution performed.
 - [ ] CREATE SEQUENCE: options parsed but dropped.
 
 ## Cross-cutting
-- [ ] Decide whether PostgreSQL parser should target executor (v1) format or move executor to accept parser’s richer format.
+- [ ] Decide whether PostgreSQL parser should target executor (current) format or move executor to accept parser’s richer format.
 - [ ] Add bytecode versioning or dialect flags if multiple payload formats must coexist.

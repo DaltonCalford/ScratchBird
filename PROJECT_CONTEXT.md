@@ -13,7 +13,7 @@
 - **Triggers:** Before/after for DB/table (SELECT support TBD); ordered by smallint; ensure runtime hooks.  
 
 ## Current Work (see `docs/planning/PLAN_AUDIT_16_23_REPAIR.md`)
-- Emulated parser alignment to v1 SBLR (MySQL/PostgreSQL DML done; Firebird DDL/DML pending).
+- Emulated parser alignment to SBLR v2 (MySQL/PostgreSQL DML done; Firebird DDL/DML pending).
 - Document and close executor gaps surfaced by parser alignment (ON CONFLICT/RETURNING/UPDATE FROM/DELETE USING, SELECT DISTINCT, etc.).
 - Dialect parity and adapter e2e tests (Firebird → MySQL → PostgreSQL order); no ScratchBird fallback.
 - Listener/parser binaries + protocol conformance test harnesses (Plan 06–08).

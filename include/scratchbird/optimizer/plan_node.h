@@ -10,8 +10,7 @@
  * - Enum types (JoinType, WindowFunc, etc.) from shared_types.h
  * - Resolved expression types from sblr/resolved_ast_v2.h (V2 AST)
  *
- * MIGRATION COMPLETE: This file now uses V2 resolved types exclusively.
- * All V1 parser dependencies have been removed.
+ * MIGRATION COMPLETE: This file uses V2 resolved types exclusively.
  */
 
 #include "scratchbird/core/types.h"

@@ -2294,7 +2294,7 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
     ResolvedTableRef ref;
     ref.table_uuid = table_info.table_id;
     ref.schema_uuid = table_info.schema_id;
-    ref.name = internString(table_name);  // Store original name for v1 bytecode compat
+    ref.name = internString(table_name);  // Preserve original name for bytecode emission
 
     // Check if this is actually a view, not a table
     CatalogManager::ViewInfo view_info;

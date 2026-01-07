@@ -42,7 +42,7 @@ namespace sblr {
     class QueryCompilerV2;  // Phase 9: Parser V2 integration
 }
 
-// Parser V1 has been removed. All query compilation now uses Parser V2.
+// All query compilation uses Parser V2.
 
 namespace server {
 

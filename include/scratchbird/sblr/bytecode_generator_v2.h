@@ -51,6 +51,14 @@ public:
     void writeByte(uint8_t byte) { bytecode_.push_back(byte); }
     void writeOpcode(sblr::Opcode op) { writeByte(static_cast<uint8_t>(op)); }
 
+    void writeUVarint(uint64_t value) {
+        uint8_t buffer[10];
+        size_t count = sblr::writeUVarint(buffer, value);
+        bytecode_.insert(bytecode_.end(), buffer, buffer + count);
+    }
+
+    void writeListCount(uint64_t count) { writeUVarint(count); }
+
     void writeExtendedOpcode(uint16_t ext_op) {
         writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
         writeInt16(ext_op);
@@ -82,12 +90,12 @@ public:
     }
 
     void writeString(const std::string& str) {
-        if (str.size() > UINT32_MAX) {
-            addError("String length exceeds maximum allowed size (4GB)");
-            writeInt32(0);
+        if (str.size() > UINT64_MAX) {
+            addError("String length exceeds maximum allowed size (UVARINT)");
+            writeUVarint(0);
             return;
         }
-        writeInt32(static_cast<uint32_t>(str.size()));
+        writeUVarint(static_cast<uint64_t>(str.size()));
         bytecode_.insert(bytecode_.end(), str.begin(), str.end());
     }
 
@@ -215,11 +223,6 @@ private:
     void generateSelectList(const std::vector<ResolvedSelectItem>& items);
     void generateFromClause(const std::vector<ResolvedTableRef*>& tables,
                            const std::vector<ResolvedJoin*>& joins);
-
-    // V1-compatible format (for executor compatibility)
-    void generateSelectListV1Compatible(const std::vector<ResolvedSelectItem>& items);
-    void generateFromClauseV1Compatible(const std::vector<ResolvedTableRef*>& tables,
-                                        const std::vector<ResolvedJoin*>& joins);
     void generateWhereClause(ResolvedExpression* where);
     void generateGroupByClause(const std::vector<ResolvedExpression*>& group_by);
     void generateHavingClause(ResolvedExpression* having);
@@ -249,6 +252,11 @@ private:
     void writeStringId(StringPool::StringId id);
     void writeString16(std::string_view str);
     void writeObjectPath(const SchemaPath& path);
+    void writeTableRefPayload(const ResolvedTableRef& table_ref);
+    void writeTableRefPayload(const core::ID& table_uuid,
+                              StringPool::StringId name,
+                              bool has_alias,
+                              StringPool::StringId alias);
 
     /**
      * Map binary operator to opcode

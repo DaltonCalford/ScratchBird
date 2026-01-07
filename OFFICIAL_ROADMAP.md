@@ -3,7 +3,7 @@
 ## Alpha
 - **Alpha 1 – Engine/Core**  
   - [x] Storage engine (heap), buffer pool, page manager, MGA transactions  
-  - [x] Catalog/tables/indexes/sequences; parser v1; basic DDL/DML  
+  - [x] Catalog/tables/indexes/sequences; bootstrap parser; basic DDL/DML  
 - **Alpha 2 – Parser V2 & Dialects**  
   - [x] Context-aware parser v2 (ScratchBird dialect)  
   - [x] Firebird/MySQL/PostgreSQL dialect parsers  

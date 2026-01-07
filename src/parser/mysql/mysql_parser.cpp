@@ -549,7 +549,7 @@ void Parser::parseSelectStmt() {
 
     // Handle SELECT modifiers
     if (matchKeyword(TokenType::KW_DISTINCT) || matchKeyword(TokenType::KW_DISTINCTROW)) {
-        // DISTINCT is parsed but not emitted in v1 bytecode.
+        // DISTINCT is parsed but not emitted in bytecode yet.
     } else {
         matchKeyword(TokenType::KW_ALL);  // Optional, default
     }
@@ -924,7 +924,7 @@ void Parser::parseGroupByClause() {
     // Handle WITH ROLLUP
     if (matchKeyword(TokenType::KW_WITH)) {
         if (matchKeyword(TokenType::KW_ROLLUP)) {
-            // ROLLUP parsed but not emitted in v1 bytecode.
+        // ROLLUP parsed but not emitted in bytecode yet.
         }
     }
 }
@@ -2076,7 +2076,7 @@ void Parser::parseInsertStmt() {
         consume(TokenType::RIGHT_PAREN, "Expected )");
 
         while (match(TokenType::COMMA)) {
-            // Additional rows parsed but not emitted in v1 bytecode.
+            // Additional rows parsed but not emitted in bytecode yet.
             consume(TokenType::LEFT_PAREN, "Expected (");
             int depth = 1;
             while (depth > 0 && !check(TokenType::END_OF_FILE)) {

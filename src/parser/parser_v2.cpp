@@ -4637,7 +4637,7 @@ SetStmt* Parser::parseSet() {
         if (check(TokenType::INTEGER_LITERAL)) {
             advance();
         }
-        error("SET PARSER VERSION is not supported (V1 parser removed)");
+        error("SET PARSER VERSION is not supported");
         stmt->span = makeSpan(start);
         return stmt;
     }
@@ -4884,7 +4884,7 @@ ShowStmt* Parser::parseShow() {
     // SHOW PARSER VERSION (unsupported)
     else if (matchContextual("PARSER")) {
         expectContextual("VERSION", "Expected VERSION after PARSER");
-        error("SHOW PARSER VERSION is not supported (V1 parser removed)");
+        error("SHOW PARSER VERSION is not supported");
         stmt->show_type = ShowStmt::ShowType::VARIABLE;
     }
     // Default: SHOW variable_name

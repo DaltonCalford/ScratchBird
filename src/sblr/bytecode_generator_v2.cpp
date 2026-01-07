@@ -379,11 +379,21 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
 void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::SELECT);
 
-    // Generate select list (V1-compatible format: no flags byte before BEGIN_LIST)
-    generateSelectListV1Compatible(stmt->select_list);
+    // Compact stream layout (v2): flags + select list + FROM list (Appendix_A_SBLR_BYTECODE.md).
+    uint8_t flags = 0;
+    if (stmt->distinct) {
+        flags |= 0x01;
+    }
+    if (stmt->for_update) {
+        flags |= 0x02;
+    }
+    if (stmt->for_share) {
+        flags |= 0x04;
+    }
+    current_result_->writeByte(flags);
 
-    // Generate FROM clause (TABLE_REF or empty TABLE_REF for no-FROM)
-    generateFromClauseV1Compatible(stmt->from_tables, stmt->joins);
+    generateSelectList(stmt->select_list);
+    generateFromClause(stmt->from_tables, stmt->joins);
 
     // Generate WHERE clause
     if (stmt->where) {
@@ -447,143 +457,115 @@ void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
     }
 }
 
-void BytecodeGeneratorV2::generateSelectListV1Compatible(const std::vector<ResolvedSelectItem>& items) {
-    // V1-compatible format: BEGIN_LIST, count, items, END_LIST
-    current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-    current_result_->writeInt32(static_cast<uint32_t>(items.size()));
-
-    for (const auto& item : items) {
-        switch (item.item_type) {
-            case ResolvedSelectItem::ItemType::STAR:
-                current_result_->writeOpcode(sblr::Opcode::SELECT_STAR);
-                break;
-
-            case ResolvedSelectItem::ItemType::TABLE_STAR:
-                current_result_->writeExtendedOpcode(
-                    sblr::ExtendedOpcode::EXT_SELECT_TABLE_STAR);
-                current_result_->writeUUID(item.table_uuid);
-                break;
-
-            case ResolvedSelectItem::ItemType::EXPRESSION:
-                generateExpression(item.expr);
-                // Write alias if present
-                if (item.has_alias) {
-                    current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
-                    current_result_->writeString("");  // No qualifier
-                    writeStringId(item.alias);
-                }
-                break;
-        }
-    }
-
-    current_result_->writeOpcode(sblr::Opcode::END_LIST);
-}
-
-void BytecodeGeneratorV2::generateFromClauseV1Compatible(const std::vector<ResolvedTableRef*>& tables,
-                                                         const std::vector<ResolvedJoin*>& joins) {
-    // V1-compatible format: single TABLE_REF with table name string
-    // For no-FROM (constant expression SELECT), use empty string TABLE_REF
-    if (tables.empty()) {
-        // No FROM clause - constant expression SELECT (e.g., SELECT 1)
-        current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-        current_result_->writeString("");  // Empty string indicates no table
-    } else if (tables.size() == 1 && joins.empty()) {
-        // Simple single table FROM clause - use alias if present, otherwise table name
-        current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-        if (tables[0]->has_alias) {
-            writeStringId(tables[0]->alias);
-        } else {
-            // Write table name for V1 bytecode compatibility
-            // Note: ResolvedTableRef.name is populated by semantic analyzer for this purpose
-            writeStringId(tables[0]->name);
-        }
-    } else {
-        // Multiple tables or joins - use original FROM clause generation
-        generateFromClause(tables, joins);
-    }
-}
 
 void BytecodeGeneratorV2::generateInsert(ResolvedInsertStmt* stmt) {
-    // Generate v1-compatible bytecode format
-    // Format: INSERT, TABLE_REF, table_name, BEGIN_LIST, col_count, [COLUMN_REF, qualifier, name]*, END_LIST,
-    //         row_count, [BEGIN_LIST, val_count, values..., END_LIST]*, [RETURNING]
-
+    // Compact stream layout (v2): INSERT + target + column list + source + optional ON CONFLICT/RETURNING.
     current_result_->writeOpcode(sblr::Opcode::INSERT);
 
-    // Write table name with TABLE_REF opcode
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-    writeStringId(stmt->target_table.name);
+    writeTableRefPayload(stmt->target_table);
 
-    // Write column list
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->target_column_indexes.size()));
-
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->target_column_indexes.size()));
     for (uint32_t col_idx : stmt->target_column_indexes) {
         if (col_idx < stmt->target_table.columns.size()) {
             current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
-            // Note: INSERT executor expects only column name, no qualifier
-            // (unlike CREATE TABLE which reads qualifier + name)
             writeStringId(stmt->target_table.columns[col_idx].name);
         }
     }
-
     current_result_->writeOpcode(sblr::Opcode::END_LIST);
 
-    // Write values - executor expects BEGIN_LIST immediately after column list END_LIST
-    // NOTE: The v1 bytecode generator writes row_count before rows, but executor doesn't read it.
-    // For compatibility, we write the first row's values directly without row_count prefix.
-    if (stmt->source == ResolvedInsertStmt::Source::VALUES && !stmt->values_rows.empty()) {
-        // Write first row only (single-row INSERT compatible with executor)
-        const auto& row = stmt->values_rows[0];
-        current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-        current_result_->writeInt32(static_cast<uint32_t>(row.size()));
-
-        for (auto* expr : row) {
-            generateExpression(expr);
+    if (stmt->source == ResolvedInsertStmt::Source::SELECT) {
+        if (!stmt->select_source) {
+            current_result_->addError("INSERT ... SELECT missing select source");
+        } else {
+            generateSelect(stmt->select_source);
         }
-
-        current_result_->writeOpcode(sblr::Opcode::END_LIST);
-
-        // For multi-row INSERT, log warning (not supported by executor yet)
-        if (stmt->values_rows.size() > 1) {
-            current_result_->addWarning("Multi-row INSERT not fully supported; only first row inserted");
-        }
-    } else if (stmt->source == ResolvedInsertStmt::Source::SELECT) {
-        // INSERT ... SELECT not yet fully supported with v1 executor
-        current_result_->addError("INSERT ... SELECT not supported in v1 bytecode format");
     } else {
-        // DEFAULT VALUES - empty value list
         current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-        current_result_->writeInt32(0);
+        uint64_t row_count = 0;
+        if (stmt->source == ResolvedInsertStmt::Source::VALUES) {
+            row_count = stmt->values_rows.size();
+        }
+        current_result_->writeListCount(row_count);
+
+        if (stmt->source == ResolvedInsertStmt::Source::VALUES) {
+            for (const auto& row : stmt->values_rows) {
+                current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+                current_result_->writeListCount(static_cast<uint64_t>(row.size()));
+                for (auto* expr : row) {
+                    generateExpression(expr);
+                }
+                current_result_->writeOpcode(sblr::Opcode::END_LIST);
+            }
+        }
+
         current_result_->writeOpcode(sblr::Opcode::END_LIST);
     }
 
-    // Handle RETURNING
-    if (!stmt->returning.empty()) {
-        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RETURNING);
-        current_result_->writeInt32(static_cast<uint32_t>(stmt->returning.size()));
-        for (const auto& item : stmt->returning) {
-            if (item.alias != StringPool::INVALID_ID) {
-                writeStringId(item.alias);
-            } else if (auto* col_ref = dynamic_cast<ResolvedColumnRef*>(item.expr)) {
-                writeStringId(col_ref->column_name);
-            } else {
-                current_result_->writeString("?column?");
+    if (stmt->on_conflict) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ON_CONFLICT);
+
+        if (!stmt->on_conflict->conflict_columns.empty()) {
+            current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ON_CONFLICT_COLUMN);
+            current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+            current_result_->writeListCount(stmt->on_conflict->conflict_columns.size());
+            for (uint32_t col_idx : stmt->on_conflict->conflict_columns) {
+                if (col_idx < stmt->target_table.columns.size()) {
+                    current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
+                    writeStringId(stmt->target_table.columns[col_idx].name);
+                }
+            }
+            current_result_->writeOpcode(sblr::Opcode::END_LIST);
+        } else if (!isZeroUuid(stmt->on_conflict->constraint_uuid)) {
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_ON_CONFLICT_CONSTRAINT);
+            current_result_->writeByte(1);
+            current_result_->writeUUID(stmt->on_conflict->constraint_uuid);
+        }
+
+        if (stmt->on_conflict->action == ConflictAction::NOTHING) {
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_NOTHING);
+        } else if (stmt->on_conflict->action == ConflictAction::UPDATE) {
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE);
+            current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+            current_result_->writeListCount(
+                static_cast<uint64_t>(stmt->on_conflict->update_assignments.size()));
+            for (const auto& [col_idx, expr] : stmt->on_conflict->update_assignments) {
+                current_result_->writeOpcode(sblr::Opcode::ASSIGNMENT);
+                current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
+                if (col_idx < stmt->target_table.columns.size()) {
+                    writeStringId(stmt->target_table.columns[col_idx].name);
+                } else {
+                    current_result_->writeString("?column?");
+                }
+                generateExpression(expr);
+            }
+            current_result_->writeOpcode(sblr::Opcode::END_LIST);
+
+            if (stmt->on_conflict->where) {
+                current_result_->writeOpcode(sblr::Opcode::WHERE_CLAUSE);
+                generateExpression(stmt->on_conflict->where);
             }
         }
+    }
+
+    if (!stmt->returning.empty()) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RETURNING);
+        generateSelectList(stmt->returning);
     }
 }
 
 void BytecodeGeneratorV2::generateUpdate(ResolvedUpdateStmt* stmt) {
-    // Generate v1-compatible bytecode format (executor expects TABLE_REF + column names).
     current_result_->writeOpcode(sblr::Opcode::UPDATE);
 
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-    writeStringId(stmt->target_table.name);
+    writeTableRefPayload(stmt->target_table);
 
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->assignments.size()));
-
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->assignments.size()));
     for (const auto& [col_idx, expr] : stmt->assignments) {
         current_result_->writeOpcode(sblr::Opcode::ASSIGNMENT);
         current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
@@ -594,11 +576,10 @@ void BytecodeGeneratorV2::generateUpdate(ResolvedUpdateStmt* stmt) {
         }
         generateExpression(expr);
     }
-
     current_result_->writeOpcode(sblr::Opcode::END_LIST);
 
     if (!stmt->from_tables.empty() || !stmt->joins.empty()) {
-        current_result_->addWarning("UPDATE ... FROM not supported in v1 executor; ignored");
+        generateFromClause(stmt->from_tables, stmt->joins);
     }
 
     if (stmt->where) {
@@ -612,14 +593,13 @@ void BytecodeGeneratorV2::generateUpdate(ResolvedUpdateStmt* stmt) {
 }
 
 void BytecodeGeneratorV2::generateDelete(ResolvedDeleteStmt* stmt) {
-    // Generate v1-compatible bytecode format (executor expects TABLE_REF + table name).
     current_result_->writeOpcode(sblr::Opcode::DELETE);
 
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-    writeStringId(stmt->target_table.name);
+    writeTableRefPayload(stmt->target_table);
 
     if (!stmt->using_tables.empty() || !stmt->using_joins.empty()) {
-        current_result_->addWarning("DELETE ... USING not supported in v1 executor; ignored");
+        generateFromClause(stmt->using_tables, stmt->using_joins);
     }
 
     if (stmt->where) {
@@ -637,22 +617,19 @@ void BytecodeGeneratorV2::generateDelete(ResolvedDeleteStmt* stmt) {
 // =============================================================================
 
 void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
-    // Generate v1-compatible bytecode format that the executor expects
-    // Format: CREATE_TABLE, TABLE_REF, table_name, BEGIN_LIST, col_count,
-    //         [COLUMN_DEF, COLUMN_REF, qualifier, name, type, constraints...]*,
-    //         END_LIST, tablespace_name, [table-level constraints]
+    // Compact stream layout (v2): CREATE_TABLE, TABLE_REF, column list, tablespace, constraints.
 
     current_result_->writeOpcode(sblr::Opcode::CREATE_TABLE);
 
     // Write table name with TABLE_REF opcode
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-    writeStringId(stmt->table_name);
+    writeTableRefPayload(core::ID{}, stmt->table_name, false, StringPool::INVALID_ID);
 
     // Write BEGIN_LIST opcode for columns
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->columns.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->columns.size()));
 
-    // Write each column definition in v1 format
+    // Write each column definition in the current format
     for (const auto& col : stmt->columns) {
         current_result_->writeOpcode(sblr::Opcode::COLUMN_DEF);
 
@@ -775,7 +752,7 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
 
     current_result_->writeByte(stmt->unique ? 1 : 0);
 
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->column_names.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->column_names.size()));
     for (const auto& col_name : stmt->column_names) {
         writeStringId(col_name);
     }
@@ -841,7 +818,7 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
     writeStringId(stmt->view_name);
 
     // Write column names if specified
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->column_names.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->column_names.size()));
     for (auto col_name : stmt->column_names) {
         writeStringId(col_name);
     }
@@ -852,7 +829,7 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
     }
 
     if (!deps.empty()) {
-        current_result_->writeInt32(static_cast<uint32_t>(deps.size()));
+        current_result_->writeListCount(static_cast<uint64_t>(deps.size()));
         for (const auto& dep : deps) {
             current_result_->writeUUID(dep.first);
             current_result_->writeByte(static_cast<uint8_t>(dep.second));
@@ -930,7 +907,7 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
             generateDataType(stmt->base_type);
             break;
         case DomainKind::RECORD:
-            current_result_->writeInt32(static_cast<uint32_t>(stmt->record_fields.size()));
+            current_result_->writeListCount(static_cast<uint64_t>(stmt->record_fields.size()));
             for (const auto& field : stmt->record_fields) {
                 writeStringId(field.name);
                 writeTypeRef(field.type);
@@ -939,7 +916,7 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
             }
             break;
         case DomainKind::ENUM:
-            current_result_->writeInt32(static_cast<uint32_t>(stmt->enum_values.size()));
+            current_result_->writeListCount(static_cast<uint64_t>(stmt->enum_values.size()));
             for (const auto& value : stmt->enum_values) {
                 writeStringId(value.label);
                 current_result_->writeInt32(static_cast<uint32_t>(value.position));
@@ -950,7 +927,7 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
             writeTypeRef(stmt->set_element_type);
             break;
         case DomainKind::VARIANT:
-            current_result_->writeInt32(static_cast<uint32_t>(stmt->variant_allowed_types.size()));
+            current_result_->writeListCount(static_cast<uint64_t>(stmt->variant_allowed_types.size()));
             for (const auto& type_ref : stmt->variant_allowed_types) {
                 writeTypeRef(type_ref);
             }
@@ -961,7 +938,7 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
     current_result_->writeString(stmt->default_value);
     current_result_->writeString(stmt->has_collation ? stmt->collation_name : std::string());
 
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->constraints.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->constraints.size()));
     for (const auto& constraint : stmt->constraints) {
         current_result_->writeByte(static_cast<uint8_t>(constraint.type));
         if (constraint.name != StringPool::INVALID_ID) {
@@ -1345,7 +1322,7 @@ void BytecodeGeneratorV2::generateDrop(ResolvedDropStmt* stmt) {
     current_result_->writeByte(flags);
 
     // Write object count and UUIDs
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->object_uuids.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->object_uuids.size()));
     for (const auto& uuid : stmt->object_uuids) {
         current_result_->writeUUID(uuid);
     }
@@ -1399,10 +1376,10 @@ void BytecodeGeneratorV2::generateStartTransaction(ResolvedStartTransactionStmt*
     if (flags & sblr::TransactionFlags::HAS_RESERVATIONS) {
         // V2 reservation list encoding matches executor expectations (BEGIN_LIST/TABLE_REF/END_LIST).
         current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-        current_result_->writeInt32(static_cast<uint32_t>(stmt->table_reservations.size()));
+        current_result_->writeListCount(static_cast<uint64_t>(stmt->table_reservations.size()));
         for (const auto& reservation : stmt->table_reservations) {
             current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-            writeStringId(reservation.table_name);
+            writeTableRefPayload(core::ID{}, reservation.table_name, false, StringPool::INVALID_ID);
             current_result_->writeByte(static_cast<uint8_t>(reservation.lock_mode));
             current_result_->writeByte(reservation.for_write ? 1 : 0);
         }
@@ -1523,11 +1500,12 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
                 }
                 if (flags & sblr::TransactionFlags::HAS_RESERVATIONS) {
                     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-                    current_result_->writeInt32(
-                        static_cast<uint32_t>(stmt->table_reservations.size()));
+                    current_result_->writeListCount(
+                        static_cast<uint64_t>(stmt->table_reservations.size()));
                     for (const auto& reservation : stmt->table_reservations) {
                         current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-                        writeStringId(reservation.table_name);
+                        writeTableRefPayload(core::ID{}, reservation.table_name, false,
+                                             StringPool::INVALID_ID);
                         current_result_->writeByte(static_cast<uint8_t>(reservation.lock_mode));
                         current_result_->writeByte(reservation.for_write ? 1 : 0);
                     }
@@ -1787,7 +1765,7 @@ void BytecodeGeneratorV2::generateTruncateTable(ResolvedTruncateTableStmt* stmt)
     current_result_->writeByte(flags);
 
     // Write table count and UUIDs
-    current_result_->writeInt32(static_cast<uint32_t>(stmt->table_uuids.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->table_uuids.size()));
     for (const auto& uuid : stmt->table_uuids) {
         current_result_->writeUUID(uuid);
     }
@@ -1914,8 +1892,7 @@ void BytecodeGeneratorV2::generateLiteral(ResolvedLiteral* expr) {
 }
 
 void BytecodeGeneratorV2::generateColumnRef(ResolvedColumnRefExpr* expr) {
-    // V1-compatible format: COLUMN_REF followed by column name string only
-    // The executor looks up the column by name in the current row context
+    // Column reference by name (resolved in executor against current row context).
     current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
     writeStringId(expr->column.column_name);
 }
@@ -2042,7 +2019,7 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         } else {
             // Generic function call
             writeStringId(expr->function.function_name);
-            current_result_->writeInt32(static_cast<uint32_t>(expr->arguments.size()));
+            current_result_->writeListCount(static_cast<uint64_t>(expr->arguments.size()));
             return;
         }
         write_arg_count();
@@ -2361,7 +2338,7 @@ void BytecodeGeneratorV2::generateCase(ResolvedCase* expr) {
     }
 
     // Write number of WHEN clauses
-    current_result_->writeInt32(static_cast<uint32_t>(expr->when_clauses.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(expr->when_clauses.size()));
 
     // Generate each WHEN clause
     for (const auto& when : expr->when_clauses) {
@@ -2429,7 +2406,7 @@ void BytecodeGeneratorV2::generateIn(ResolvedInExpr* expr) {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_IN_LIST);
         current_result_->writeByte(expr->negated ? 1 : 0);
-        current_result_->writeInt32(static_cast<uint32_t>(expr->values.size()));
+        current_result_->writeListCount(static_cast<uint64_t>(expr->values.size()));
         for (auto* val : expr->values) {
             generateExpression(val);
         }
@@ -2530,7 +2507,7 @@ void BytecodeGeneratorV2::generateArray(ResolvedArrayExpr* expr) {
     } else {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT);
-        current_result_->writeInt32(static_cast<uint32_t>(expr->elements.size()));
+        current_result_->writeListCount(static_cast<uint64_t>(expr->elements.size()));
         for (auto* elem : expr->elements) {
             generateExpression(elem);
         }
@@ -2586,7 +2563,7 @@ void BytecodeGeneratorV2::generateAlterElement(ResolvedAlterElementExpr* expr) {
 
 void BytecodeGeneratorV2::generateSelectList(const std::vector<ResolvedSelectItem>& items) {
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-    current_result_->writeInt32(static_cast<uint32_t>(items.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(items.size()));
 
     for (const auto& item : items) {
         switch (item.item_type) {
@@ -2595,8 +2572,10 @@ void BytecodeGeneratorV2::generateSelectList(const std::vector<ResolvedSelectIte
                 break;
 
             case ResolvedSelectItem::ItemType::TABLE_STAR:
-                current_result_->writeOpcode(sblr::Opcode::SELECT_STAR);
-                current_result_->writeUUID(item.table_uuid);
+                current_result_->writeExtendedOpcode(
+                    sblr::ExtendedOpcode::EXT_SELECT_TABLE_STAR);
+                writeTableRefPayload(item.table_uuid, StringPool::INVALID_ID, false,
+                                     StringPool::INVALID_ID);
                 break;
 
             case ResolvedSelectItem::ItemType::EXPRESSION:
@@ -2604,7 +2583,7 @@ void BytecodeGeneratorV2::generateSelectList(const std::vector<ResolvedSelectIte
                 if (item.has_alias) {
                     writeStringId(item.alias);
                 } else {
-                    current_result_->writeInt32(0);  // No alias
+                    current_result_->writeString(std::string());
                 }
                 break;
         }
@@ -2615,19 +2594,13 @@ void BytecodeGeneratorV2::generateSelectList(const std::vector<ResolvedSelectIte
 
 void BytecodeGeneratorV2::generateFromClause(const std::vector<ResolvedTableRef*>& tables,
                                              const std::vector<ResolvedJoin*>& joins) {
-    // Write table references
+    // Write table references (compact stream list; Appendix_A_SBLR_BYTECODE.md).
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-    current_result_->writeInt32(static_cast<uint32_t>(tables.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(tables.size()));
 
     for (auto* table : tables) {
         current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-        current_result_->writeUUID(table->table_uuid);
-
-        if (table->has_alias) {
-            writeStringId(table->alias);
-        } else {
-            current_result_->writeInt32(0);  // No alias
-        }
+        writeTableRefPayload(*table);
     }
 
     current_result_->writeOpcode(sblr::Opcode::END_LIST);
@@ -2640,12 +2613,7 @@ void BytecodeGeneratorV2::generateFromClause(const std::vector<ResolvedTableRef*
         // Write right table
         if (join->right) {
             current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-            current_result_->writeUUID(join->right->table_uuid);
-            if (join->right->has_alias) {
-                writeStringId(join->right->alias);
-            } else {
-                current_result_->writeInt32(0);
-            }
+            writeTableRefPayload(*join->right);
         }
 
         // Write join condition
@@ -2663,7 +2631,7 @@ void BytecodeGeneratorV2::generateWhereClause(ResolvedExpression* where) {
 
 void BytecodeGeneratorV2::generateGroupByClause(const std::vector<ResolvedExpression*>& group_by) {
     current_result_->writeOpcode(sblr::Opcode::GROUP_BY);
-    current_result_->writeInt32(static_cast<uint32_t>(group_by.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(group_by.size()));
 
     for (auto* expr : group_by) {
         generateExpression(expr);
@@ -2677,7 +2645,7 @@ void BytecodeGeneratorV2::generateHavingClause(ResolvedExpression* having) {
 
 void BytecodeGeneratorV2::generateOrderByClause(const std::vector<ResolvedOrderByItem*>& order_by) {
     current_result_->writeOpcode(sblr::Opcode::ORDER_BY);
-    current_result_->writeInt32(static_cast<uint32_t>(order_by.size()));
+    current_result_->writeListCount(static_cast<uint64_t>(order_by.size()));
 
     for (auto* item : order_by) {
         current_result_->writeOpcode(sblr::Opcode::SORT_KEY);
@@ -2828,6 +2796,32 @@ void BytecodeGeneratorV2::writeObjectPath(const SchemaPath& path) {
     current_result_->writeByte(static_cast<uint8_t>(path.components.size()));
     for (auto component : path.components) {
         writeString16(getString(component));
+    }
+}
+
+void BytecodeGeneratorV2::writeTableRefPayload(const ResolvedTableRef& table_ref) {
+    writeTableRefPayload(table_ref.table_uuid, table_ref.name, table_ref.has_alias, table_ref.alias);
+}
+
+void BytecodeGeneratorV2::writeTableRefPayload(const core::ID& table_uuid,
+                                               StringPool::StringId name,
+                                               bool has_alias,
+                                               StringPool::StringId alias) {
+    const bool has_uuid = !isZeroUuid(table_uuid);
+    current_result_->writeByte(has_uuid ? 1 : 0);
+    if (has_uuid) {
+        current_result_->writeUUID(table_uuid);
+    } else if (name != StringPool::INVALID_ID) {
+        writeStringId(name);
+    } else {
+        current_result_->addError("TABLE_REF missing name and UUID");
+        current_result_->writeString(std::string());
+    }
+
+    if (has_alias && alias != StringPool::INVALID_ID) {
+        writeStringId(alias);
+    } else {
+        current_result_->writeString(std::string());
     }
 }
 

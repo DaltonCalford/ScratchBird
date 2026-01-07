@@ -42,7 +42,7 @@ class ResolvedExpression;
 struct ResolvedTableRef {
     ID table_uuid;                      // UUID of table/view in catalog
     ID schema_uuid;                     // Schema containing the object
-    StringPool::StringId name;          // Original table name (for v1 bytecode compat)
+    StringPool::StringId name;          // Original table name (for bytecode emission)
     StringPool::StringId alias;         // Runtime alias (if any)
     bool has_alias = false;
 

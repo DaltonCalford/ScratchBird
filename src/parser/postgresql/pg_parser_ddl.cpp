@@ -928,10 +928,10 @@ void Parser::parseCreateIndex() {
     }
 
     if (has_expressions) {
-        error("PostgreSQL expression indexes are not supported in v1 bytecode yet");
+        error("PostgreSQL expression indexes are not supported in current bytecode yet");
     }
     if (has_include) {
-        error("PostgreSQL INCLUDE indexes are not supported in v1 bytecode yet");
+        error("PostgreSQL INCLUDE indexes are not supported in current bytecode yet");
     }
 
     emit(sblr::Opcode::CREATE_INDEX);

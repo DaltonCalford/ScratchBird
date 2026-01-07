@@ -6,7 +6,7 @@
 ## Phase Summary (history + todo)
 - **Alpha 1 – Engine/Core**  
   - [x] Storage engine, MGA transactions, catalog, indexes, sequences  
-  - [x] Parser v1, basic DDL/DML, core tests  
+  - [x] Bootstrap parser, basic DDL/DML, core tests  
 - **Alpha 2 – Parser V2 & Dialects**  
   - [x] Parser v2 (context-aware), ScratchBird dialect  
   - [x] Firebird/MySQL/PostgreSQL dialect parsers  
@@ -15,8 +15,8 @@
   - [x] Network stack, service mode, security (core/enterprise)  
   - [x] Wire adapters (FB/MySQL/PG/native), pooling, FDW/UDR, ODBC/JDBC  
 - **Alpha (Completion) – Parser Alignment & Audit Repairs** *(current)*  
-  - [x] MySQL/PostgreSQL DML bytecode alignment (v1 SBLR format)  
-  - [ ] Firebird DDL/DML alignment (via v2 → v1 SBLR or executor extensions)  
+  - [x] MySQL/PostgreSQL DML bytecode alignment (SBLR v2 format)  
+  - [ ] Firebird DDL/DML alignment (via v2 → SBLR v2 or executor extensions)  
   - [ ] Executor gaps for emulated dialects (see list below)  
   - [ ] Dialect parity + adapter e2e suites per dialect; no cross-dialect fallbacks; Firebird→MySQL→PostgreSQL order  
 
@@ -33,7 +33,7 @@
 - DML extras not supported: `ON CONFLICT`, `UPDATE ... FROM`, `DELETE ... USING`, `INSERT ... SELECT`, multi-row `VALUES`, `RETURNING`.
 - SELECT limitations: no DISTINCT handling, no expression SELECT-list with FROM, ORDER BY/GROUP BY expressions limited to column refs.
 - DML ORDER BY/LIMIT for UPDATE/DELETE not supported.
-- JOIN emission not wired for emulated parsers (executor supports v1 join opcodes, but dialect parsers currently skip them).
+- JOIN emission not wired for emulated parsers (executor supports join opcodes, but dialect parsers currently skip them).
 
 ## Links
 - Roadmap: `OFFICIAL_ROADMAP.md`  

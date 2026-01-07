@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 
 namespace scratchbird
 {
@@ -1663,6 +1664,45 @@ namespace scratchbird
         inline uint16_t readInt16(const uint8_t *buffer)
         {
             return buffer[0] | (uint16_t(buffer[1]) << 8);
+        }
+
+        inline size_t writeUVarint(uint8_t *buffer, uint64_t value)
+        {
+            size_t count = 0;
+            while (value >= 0x80)
+            {
+                buffer[count++] = static_cast<uint8_t>(value) | 0x80;
+                value >>= 7;
+            }
+            buffer[count++] = static_cast<uint8_t>(value);
+            return count;
+        }
+
+        inline bool readUVarint(const uint8_t *buffer, size_t buffer_len,
+                                uint64_t &value_out, size_t &bytes_read)
+        {
+            value_out = 0;
+            bytes_read = 0;
+            uint32_t shift = 0;
+
+            while (bytes_read < buffer_len)
+            {
+                uint8_t byte = buffer[bytes_read++];
+                value_out |= (static_cast<uint64_t>(byte & 0x7F) << shift);
+
+                if ((byte & 0x80) == 0)
+                {
+                    return true;
+                }
+
+                shift += 7;
+                if (shift > 63)
+                {
+                    return false;
+                }
+            }
+
+            return false;
         }
 
     } // namespace sblr

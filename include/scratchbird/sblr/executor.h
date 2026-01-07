@@ -312,11 +312,17 @@ namespace scratchbird
             uint16_t readInt16();
             uint32_t readInt32();
             uint64_t readInt64();
+            uint64_t readUVarint();
             double readDouble();
             std::string readString();
             std::string readString16();
             core::ObjectPath readObjectPath();
             core::ID readId();
+            void readTableRefPayload(core::ID& table_id_out,
+                                     std::string& name_out,
+                                     std::string& alias_out,
+                                     bool& has_uuid_out);
+            size_t skipExpressionRange(size_t start_pc);
             core::DataType readDataTypeWithModifiers(uint32_t& precision_out, uint32_t& scale_out);
             void readDependencies(std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
             core::Status resolveSchemaIdForName(const std::string& schema_path,
@@ -503,7 +509,7 @@ namespace scratchbird
             // top-level AGG_INIT, this executes the aggregate inline by scanning
             // the current table context and returning a single scalar value.
             // func_type: 0=COUNT, 1=SUM, 2=AVG, 3=MIN, 4=MAX, 5=ARRAY_AGG
-            Value executeScalarAggregate(uint8_t func_type, size_t arg_expr_pc);
+            Value executeScalarAggregate(uint8_t func_type, size_t arg_expr_start, size_t arg_expr_end);
 
             // Sorting execution helper (Phase 1 Task 1.6.4)
             void executeSort(std::unique_ptr<ResultSet> input_result_set);
