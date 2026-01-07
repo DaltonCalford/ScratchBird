@@ -19,10 +19,10 @@ The DML statements in ScratchBird are detailed in the following specifications. 
 
 | Command | Description | Detailed Specification |
 | :---- | :---- | :---- |
-| **SELECT** | Retrieves data from one or more tables, views, or functions. The most complex and powerful DML command. | [DML\_SELECT.md](https://www.google.com/search?q=./04_DML/DML_SELECT.md) |
-| **INSERT** | Adds one or more new rows of data into a table. | [DML\_INSERT.md](https://www.google.com/search?q=./04_DML/DML_INSERT.md) |
-| **UPDATE** | Modifies existing rows in a table that match specified criteria. | [DML\_UPDATE.md](https://www.google.com/search?q=./04_DML/DML_UPDATE.md) |
-| **DELETE** | Removes existing rows from a table that match specified criteria. | [DML\_DELETE.md](https://www.google.com/search?q=./04_DML/DML_DELETE.md) |
-| **MERGE** | Performs a conditional INSERT, UPDATE, or DELETE on a target table based on its comparison with a source dataset. | [DML\_MERGE.md](https://www.google.com/search?q=./04_DML/DML_MERGE.md) |
-| **COPY** | A command for high-performance bulk data loading and unloading between a table and a file. | [DML\_COPY.md](https://www.google.com/search?q=./04_DML/DML_COPY.md) |
+| **SELECT** | Retrieves data from one or more tables, views, or functions. The most complex and powerful DML command. | [DML\_SELECT.md](DML_SELECT.md) |
+| **INSERT** | Adds one or more new rows of data into a table. | [DML\_INSERT.md](DML_INSERT.md) |
+| **UPDATE** | Modifies existing rows in a table that match specified criteria. | [DML\_UPDATE.md](DML_UPDATE.md) |
+| **DELETE** | Removes existing rows from a table that match specified criteria. | [DML\_DELETE.md](DML_DELETE.md) |
+| **MERGE** | Performs a conditional INSERT, UPDATE, or DELETE on a target table based on its comparison with a source dataset. | [DML\_MERGE.md](DML_MERGE.md) |
+| **COPY** | A command for high-performance bulk data loading and unloading between a table and a file. | _Specification TBD_ |
 

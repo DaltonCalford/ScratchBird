@@ -22,8 +22,8 @@ These objects define the fundamental structure and storage of the database.
 
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
-| **DATABASE** | The top-level container for all schemas, tables, and other objects. Manages global settings like page size and default character set. | [DDL\_DATABASES.md](https://www.google.com/search?q=./DDL_DATABASES.md) |
-| **SCHEMA** | A namespace within a database that contains a logical grouping of objects like tables, views, and functions. Essential for organizing large applications and managing permissions. | [DDL\_SCHEMAS.md](https://www.google.com/search?q=./DDL_SCHEMAS.md) |
+| **DATABASE** | The top-level container for all schemas, tables, and other objects. Manages global settings like page size and default character set. | [DDL\_DATABASES.md](DDL_DATABASES.md) |
+| **SCHEMA** | A namespace within a database that contains a logical grouping of objects like tables, views, and functions. Essential for organizing large applications and managing permissions. | [DDL\_SCHEMAS.md](DDL_SCHEMAS.md) |
 
 ### **2.2. Data Storage Objects**
 
@@ -31,10 +31,10 @@ These objects are directly responsible for storing and organizing data.
 
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
-| **TABLE** | The primary data structure, consisting of columns and rows. ScratchBird supports temporary, external, and partitioned tables. | [DDL\_TABLES.md](https://www.google.com/search?q=./DDL_TABLES.md) |
-| **INDEX** | A performance-optimization structure that provides faster retrieval of rows from a table. Supports various methods like B-tree, Hash, and GIN. | [DDL\_INDEXES.md](https://www.google.com/search?q=./DDL_INDEXES.md) |
-| **VIEW** | A virtual table based on the result-set of a SELECT statement. Simplifies complex queries and provides an abstraction layer for security. | [DDL\_VIEWS.md](https://www.google.com/search?q=./DDL_VIEWS.md) |
-| **SEQUENCE** | A user-defined object that generates a sequence of integers. Commonly used for creating unique primary key values. Also known as a GENERATOR. | [DDL\_SEQUENCES.md](https://www.google.com/search?q=./DDL_SEQUENCES.md) |
+| **TABLE** | The primary data structure, consisting of columns and rows. ScratchBird supports temporary, external, and partitioned tables. | [DDL\_TABLES.md](DDL_TABLES.md) |
+| **INDEX** | A performance-optimization structure that provides faster retrieval of rows from a table. Supports various methods like B-tree, Hash, and GIN. | [DDL\_INDEXES.md](DDL_INDEXES.md) |
+| **VIEW** | A virtual table based on the result-set of a SELECT statement. Simplifies complex queries and provides an abstraction layer for security. | [DDL\_VIEWS.md](DDL_VIEWS.md) |
+| **SEQUENCE** | A user-defined object that generates a sequence of integers. Commonly used for creating unique primary key values. Also known as a GENERATOR. | [DDL\_SEQUENCES.md](DDL_SEQUENCES.md) |
 
 ### **2.3. Type System and Integrity Objects**
 
@@ -42,7 +42,7 @@ These objects allow for the creation of custom data types and powerful, reusable
 
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
-| **DOMAIN** | A user-defined data type with optional constraints (NOT NULL, CHECK). ScratchBird extends this concept to include complex records, enums, sets, and embedded security rules. | [DDL\_DOMAINS.md](https://www.google.com/search?q=./DDL_DOMAINS.md) |
+| **DOMAIN** | A user-defined data type with optional constraints (NOT NULL, CHECK). ScratchBird extends this concept to include complex records, enums, sets, and embedded security rules. | [DDL\_DOMAINS\_COMPREHENSIVE.md](../types/DDL_DOMAINS_COMPREHENSIVE.md) |
 
 ### **2.4. Programmability Objects**
 
@@ -50,11 +50,11 @@ These objects enable complex business logic to be stored and executed directly w
 
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
-| **FUNCTION** | A subprogram that performs a calculation and must return a single value or a set of rows (SETOF). Can be used in DML statements. | [DDL\_FUNCTIONS.md](https://www.google.com/search?q=./DDL_FUNCTIONS.md) |
-| **PROCEDURE** | A subprogram that performs an action. Can control transactions and does not have to return a value. Called explicitly with CALL. | [DDL\_PROCEDURES.md](https://www.google.com/search?q=./DDL_PROCEDURES.md) |
-| **TRIGGER** | A procedure that is automatically executed in response to DML events (INSERT, UPDATE, DELETE) on a specified table. | [DDL\_TRIGGERS.md](https://www.google.com/search?q=./DDL_TRIGGERS.md) |
-| **EXCEPTION** | A user-defined, named error condition that can be raised and handled within the PSQL procedural language. | [DDL\_EXCEPTIONS.md](https://www.google.com/search?q=./DDL_EXCEPTIONS.md) |
-| **PACKAGE** | A schema object that encapsulates logically related types, variables, procedures, and functions into a single, managed unit. | [DDL\_PACKAGES.md](https://www.google.com/search?q=./DDL_PACKAGES.md) |
+| **FUNCTION** | A subprogram that performs a calculation and must return a single value or a set of rows (SETOF). Can be used in DML statements. | [DDL\_FUNCTIONS.md](DDL_FUNCTIONS.md) |
+| **PROCEDURE** | A subprogram that performs an action. Can control transactions and does not have to return a value. Called explicitly with CALL. | [DDL\_PROCEDURES.md](DDL_PROCEDURES.md) |
+| **TRIGGER** | A procedure that is automatically executed in response to DML events (INSERT, UPDATE, DELETE) on a specified table. | [DDL\_TRIGGERS.md](DDL_TRIGGERS.md) |
+| **EXCEPTION** | A user-defined, named error condition that can be raised and handled within the PSQL procedural language. | [DDL\_EXCEPTIONS.md](DDL_EXCEPTIONS.md) |
+| **PACKAGE** | A schema object that encapsulates logically related types, variables, procedures, and functions into a single, managed unit. | [DDL\_PACKAGES.md](DDL_PACKAGES.md) |
 
 ### **2.5. Security Objects**
 
@@ -62,7 +62,7 @@ These objects are the foundation of the database's access control system.
 
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
-| **ROLE & GROUP** | A security principal that can be granted privileges and can own objects. A role with LOGIN is a "user"; a role without LOGIN is a "group" for bundling permissions. Supports hierarchical inheritance. | [DDL\_ROLES\_AND\_GROUPS.md](https://www.google.com/search?q=./DDL_ROLES_AND_GROUPS.md) |
+| **ROLE & GROUP** | A security principal that can be granted privileges and can own objects. A role with LOGIN is a "user"; a role without LOGIN is a "group" for bundling permissions. Supports hierarchical inheritance. | [DDL\_ROLES\_AND\_GROUPS.md](DDL_ROLES_AND_GROUPS.md) |
 
 ### **2.6. Extensibility Objects**
 
@@ -70,5 +70,5 @@ These objects allow for extending the database's native capabilities with extern
 
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
-| **USER-DEFINED RESOURCE** | A mechanism for creating functions in external languages (e.g., C, Python). Consists of a LIBRARY object pointing to a shared library file and FUNCTION definitions bound to it. | [DDL\_USER\_DEFINED\_RESOURCES.md](https://www.google.com/search?q=./DDL_USER_DEFINED_RESOURCES.md) |
+| **USER-DEFINED RESOURCE** | A mechanism for creating functions in external languages (e.g., C, Python). Consists of a LIBRARY object pointing to a shared library file and FUNCTION definitions bound to it. | [DDL\_USER\_DEFINED\_RESOURCES.md](DDL_USER_DEFINED_RESOURCES.md) |
 
