@@ -126,7 +126,7 @@ typedef enum buffer_pool_type {
     BP_SEQUENTIAL,      // Sequential access
     BP_RANDOM,          // Random access
     BP_TEMPORARY,       // Temporary tables
-    BP_LOG              // WAL/redo log
+    BP_LOG              // Reserved for optional write-after log (not used in MGA)
 } BufferPoolType;
 ```
 

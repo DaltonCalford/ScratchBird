@@ -163,9 +163,9 @@ The maximum record (tuple) size is constrained by:
 
 ## Transaction Limits
 
-### Write-Ahead Log (WAL)
+### Write-after Log (WAL, optional)
 - Not implemented in Alpha
-- Future: 64-bit LSN (practically unlimited)
+- Future: 64-bit LSN (practically unlimited) for replication/PITR streams
 
 ### Concurrent Transactions
 - Alpha: Single-threaded, one transaction

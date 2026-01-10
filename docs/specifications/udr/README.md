@@ -25,7 +25,7 @@ User-Defined Resources (UDRs) allow external code to be called from SQL, enablin
 
 ScratchBird provides built-in UDR connectors:
 
-- **Remote Database UDR** - Connect to PostgreSQL, MySQL, MSSQL, Firebird
+- **Remote Database UDR** - Connect to PostgreSQL, MySQL, Firebird (MSSQL post-gold)
 - **Local Files UDR** - Read/write local files
 - **Local Scripts UDR** - Execute local shell scripts
 - **HTTP UDR** - Make HTTP/REST API calls

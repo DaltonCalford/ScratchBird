@@ -199,14 +199,14 @@ This "data-before-commit" approach guarantees that a committed transaction's cha
 
 ACTIVE is simply changed to ABORTED. No "undo" or "redo" log processing is required, because the careful writes protocol ensures the on-disk state is always consistent.
 
-#### **Optional Write-Ahead Log (WAL) for Replication and Recovery**
+#### **Optional Write-after Log (WAL) for Replication and Recovery**
 
-While not the primary mechanism for transaction durability, ScratchBird DB supports the optional generation of a Write-Ahead Log (WAL) stream, similar to PostgreSQL. When enabled, this stream records all data changes and transaction outcomes. This WAL is not used for local crash recovery but provides advanced high-availability and recovery features:
+While not the primary mechanism for transaction durability, ScratchBird DB supports the optional generation of a write-after log (WAL) stream, similar to PostgreSQL. When enabled, this stream records all data changes and transaction outcomes. This write-after log (WAL) is not used for local crash recovery but provides advanced high-availability and recovery features:
 
-* **Point-in-Time Recovery (PITR)**: By archiving the WAL files to a separate location, administrators can restore a database from a physical backup and "replay" the WAL to recover the database to any specific moment in time.  
-* **Streaming Replication**: Standby servers can connect to the primary server and consume the WAL stream in real-time. This allows for the maintenance of hot-standby replicas for high availability and read scaling.
+* **Point-in-Time Recovery (PITR)**: By archiving the write-after log (WAL) files to a separate location, administrators can restore a database from a physical backup and "replay" the write-after log (WAL) to recover the database to any specific moment in time.  
+* **Streaming Replication**: Standby servers can connect to the primary server and consume the write-after log (WAL) stream in real-time. This allows for the maintenance of hot-standby replicas for high availability and read scaling.
 
-Enabling the WAL generates additional I/O overhead but is essential for enterprise-grade disaster recovery and failover capabilities.
+Enabling the write-after log (WAL) generates additional I/O overhead but is essential for enterprise-grade disaster recovery and failover capabilities.
 
 ## **Section 2: Snapshot Management**
 
@@ -423,7 +423,7 @@ struct ItemId {
  \* @brief The header at the beginning of every 8KB data page.  
  \*/  
 struct DataPageHeader {  
-    // WAL information: Log Sequence Number of the last change to this page.  
+    // Write-after log (WAL) information: Log Sequence Number of the last change to this page.  
     uint64\_t pd\_lsn;  
       
     // Checksum to detect on-disk corruption.  

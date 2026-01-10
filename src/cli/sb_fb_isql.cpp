@@ -35,6 +35,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/firebird_query_compiler.h"
 #include "scratchbird/sblr/executor.h"
 // Note: EmulationViewGenerator has API mismatches - views created manually for now
@@ -72,6 +73,18 @@ struct FbEmulationState {
 static bool g_running = true;
 static FbIsqlConfig g_config;
 static FbEmulationState g_fb_state;
+static std::unique_ptr<core::ConnectionContext> g_conn_ctx;
+
+void updateConnectionContext(const std::string& schema_path, const core::ID& schema_id) {
+    if (!g_conn_ctx) {
+        return;
+    }
+
+    g_conn_ctx->set_dialect_tag("FIREBIRD");
+    g_conn_ctx->setCurrentSchemaId(schema_id);
+    g_conn_ctx->set_current_schema(schema_path);
+    g_conn_ctx->set_search_path({schema_path});
+}
 
 // =============================================================================
 // Signal handling
@@ -515,6 +528,7 @@ bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
     g_fb_state.database_name = dbName;
     g_fb_state.database_schema_id = schemaId;
     g_fb_state.connected = true;
+    updateConnectionContext(schemaPath, schemaId);
 
     std::cout << "Database '" << dbName << "' created.\n";
     std::cout << "Connected to database: " << schemaPath << "\n";
@@ -559,6 +573,7 @@ bool handleConnect(const std::string& dbPath, core::Database& db) {
     g_fb_state.database_name = dbName;
     g_fb_state.database_schema_id = schemaInfo.schema_id;
     g_fb_state.connected = true;
+    updateConnectionContext(schemaPath, schemaInfo.schema_id);
 
     std::cout << "Connected to database: " << schemaPath << "\n";
     return true;
@@ -852,11 +867,35 @@ bool executeFile(const std::string& filename, sblr::FirebirdQueryCompiler& compi
         return false;
     }
 
-    std::string sql_buffer;
+    std::vector<std::string> lines;
     std::string line;
-    bool success = true;
-
     while (std::getline(file, line)) {
+        lines.push_back(line);
+    }
+
+    bool has_script_marker = false;
+    for (const auto& ln : lines) {
+        if (ln.rfind("-- ===", 0) == 0) {
+            has_script_marker = true;
+            break;
+        }
+    }
+
+    std::string sql_buffer;
+    bool success = true;
+    bool in_script = !has_script_marker;
+
+    for (const auto& current_line : lines) {
+        if (has_script_marker && current_line.rfind("-- ===", 0) == 0) {
+            in_script = true;
+            continue;
+        }
+
+        if (!in_script) {
+            continue;
+        }
+
+        line = current_line;
         // Skip comments
         if (line.rfind("--", 0) == 0) {
             continue;
@@ -1116,10 +1155,24 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error opening database after create: " << open_ctx.message << "\n";
             return 1;
         }
-        if (!g_config.quiet) {
-            std::cout << "Created ScratchBird database: " << g_config.database_path << "\n";
-        }
+    if (!g_config.quiet) {
+        std::cout << "Created ScratchBird database: " << g_config.database_path << "\n";
     }
+}
+
+    // Create connection context for permissions/search_path
+    core::Status conn_status = db.connect(g_conn_ctx, &ctx);
+    if (conn_status != core::Status::OK || !g_conn_ctx) {
+        std::cerr << "Error: Failed to initialize connection context: " << ctx.message << "\n";
+        return 1;
+    }
+
+    core::ID user_id = core::generateUuidV7();
+    g_conn_ctx->setCurrentUser(user_id, true /*superuser*/);
+    g_conn_ctx->set_dialect_tag("FIREBIRD");
+    g_conn_ctx->set_current_schema("public");
+    g_conn_ctx->set_search_path({"public"});
+    core::ConnectionContext::setCurrent(g_conn_ctx.get());
 
     // Create compiler and executor
     sblr::FirebirdQueryCompiler compiler(&db);
@@ -1135,6 +1188,7 @@ int main(int argc, char* argv[]) {
     compiler.setStatsEnabled(g_config.show_stats);
 
     sblr::Executor executor(&db);
+    executor.setConnectionContext(g_conn_ctx.get());
 
     int result = 0;
 
@@ -1155,6 +1209,14 @@ int main(int argc, char* argv[]) {
         runInteractive(compiler, executor, db);
     }
 
+    if (g_conn_ctx) {
+        core::ErrorContext shutdown_ctx;
+        g_conn_ctx->shutdownTransaction(&shutdown_ctx);
+        core::ConnectionContext::setCurrent(nullptr);
+        g_conn_ctx.reset();
+    } else {
+        core::ConnectionContext::setCurrent(nullptr);
+    }
     db.close();
     return result;
 }

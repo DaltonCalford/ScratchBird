@@ -257,7 +257,7 @@ typedef struct sb_page_header {
     // Multi-version (enhanced)
     TransactionId   page_xmin;
     TransactionId   page_xmax;
-    uint64_t        page_lsn;        // For WAL
+    uint64_t        page_lsn;        // For optional write-after log (WAL)
     
     // Checksums (PostgreSQL-style)
     uint32_t        page_checksum;

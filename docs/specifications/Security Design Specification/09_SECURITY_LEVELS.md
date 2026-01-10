@@ -64,7 +64,7 @@ All SBSEC documents (01-08) reference this specification for security level requ
 │  • Everything in Level 1 plus:                                  │
 │  • Encryption at rest required                                  │
 │  • TDE for all databases                                        │
-│  • WAL encryption                                               │
+│  • Write-after log (WAL) encryption                             │
 │  • Backup encryption                                            │
 │                                                                  │
 │  Level 3: POLICY-CONTROLLED                                      │
@@ -184,7 +184,7 @@ All SBSEC documents (01-08) reference this specification for security level requ
 |---------|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Encryption at rest | | | ● | ● | ● | ● | ● |
 | TDE (Transparent Data Encryption) | | | ● | ● | ● | ● | ● |
-| WAL encryption | | | ● | ● | ● | ● | ● |
+| Write-after log (WAL) encryption | | | ● | ● | ● | ● | ● |
 | Backup encryption | | | ● | ● | ● | ● | ● |
 | Wire encryption (TLS) | | | ○ | ○ | ○ | ● | ● |
 | TLS 1.3 required | | | | | | ● | ● |
@@ -718,7 +718,7 @@ The following invariants MUST hold for each security level:
 - All Level 1 invariants plus:
 - All data at rest is encrypted
 - All backups are encrypted
-- WAL is encrypted
+- Write-after log (WAL) is encrypted
 
 ### Level 3 Invariants
 - All Level 2 invariants plus:

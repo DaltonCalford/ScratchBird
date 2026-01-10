@@ -629,6 +629,21 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
     current_result_->writeListCount(static_cast<uint64_t>(stmt->columns.size()));
 
+    auto write_column_type = [&](const ResolvedType& type) {
+        if (type.is_domain && type.domain_id != ID{}) {
+            current_result_->writeOpcode(sblr::Opcode::TYPE_DOMAIN);
+            current_result_->writeUUID(type.domain_id);
+            current_result_->writeByte(type.is_array ? 1 : 0);
+            if (type.is_array) {
+                current_result_->writeInt32(
+                    static_cast<uint32_t>(type.array_size.value_or(0)));
+            }
+            return;
+        }
+
+        generateDataType(type);
+    };
+
     // Write each column definition in the current format
     for (const auto& col : stmt->columns) {
         current_result_->writeOpcode(sblr::Opcode::COLUMN_DEF);
@@ -639,7 +654,7 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
         writeStringId(col.name);
 
         // Write data type opcode
-        generateDataType(col.type);
+        write_column_type(col.type);
 
         // Write NOT NULL constraint if column is not nullable
         if (!col.is_nullable) {
@@ -2004,11 +2019,6 @@ void BytecodeGeneratorV2::generateUnaryExpr(ResolvedUnaryExpr* expr) {
 }
 
 void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
-    // Generate arguments first
-    for (auto* arg : expr->arguments) {
-        generateExpression(arg);
-    }
-
     auto arg_count = expr->arguments.size();
     auto write_arg_count = [&]() {
         if (arg_count > std::numeric_limits<uint8_t>::max()) {
@@ -2026,38 +2036,57 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
 
     // Check for aggregate functions
     if (expr->function.is_aggregate) {
+        bool known = true;
+        sblr::Opcode agg_op{};
         if (func_name == "COUNT") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_COUNT);
+            agg_op = sblr::Opcode::AGG_COUNT;
         } else if (func_name == "SUM") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_SUM);
+            agg_op = sblr::Opcode::AGG_SUM;
         } else if (func_name == "AVG") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_AVG);
+            agg_op = sblr::Opcode::AGG_AVG;
         } else if (func_name == "MIN") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_MIN);
+            agg_op = sblr::Opcode::AGG_MIN;
         } else if (func_name == "MAX") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_MAX);
+            agg_op = sblr::Opcode::AGG_MAX;
         } else if (func_name == "STDDEV" || func_name == "STDDEV_SAMP") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_STDDEV_SAMP);
+            agg_op = sblr::Opcode::AGG_STDDEV_SAMP;
         } else if (func_name == "STDDEV_POP") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_STDDEV_POP);
+            agg_op = sblr::Opcode::AGG_STDDEV_POP;
         } else if (func_name == "VARIANCE" || func_name == "VAR_SAMP") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_VAR_SAMP);
+            agg_op = sblr::Opcode::AGG_VAR_SAMP;
         } else if (func_name == "VAR_POP") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_VAR_POP);
+            agg_op = sblr::Opcode::AGG_VAR_POP;
         } else if (func_name == "CORR") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_CORR);
+            agg_op = sblr::Opcode::AGG_CORR;
         } else if (func_name == "COVAR_POP") {
-            current_result_->writeOpcode(sblr::Opcode::AGG_COVAR_POP);
+            agg_op = sblr::Opcode::AGG_COVAR_POP;
         } else if (func_name == "ARRAY_AGG") {
-            current_result_->writeOpcode(sblr::Opcode::ARRAY_AGG);
+            agg_op = sblr::Opcode::ARRAY_AGG;
         } else {
+            known = false;
+        }
+
+        if (!known) {
             // Generic function call
+            for (auto* arg : expr->arguments) {
+                generateExpression(arg);
+            }
             writeStringId(expr->function.function_name);
             current_result_->writeListCount(static_cast<uint64_t>(expr->arguments.size()));
             return;
         }
+
+        current_result_->writeOpcode(agg_op);
         write_arg_count();
+        for (auto* arg : expr->arguments) {
+            generateExpression(arg);
+        }
         return;
+    }
+
+    // Generate arguments first
+    for (auto* arg : expr->arguments) {
+        generateExpression(arg);
     }
 
     if (!expr->function.is_builtin) {
@@ -3049,8 +3078,25 @@ std::string BytecodeDisassemblerV2::disassemble(const std::vector<uint8_t>& byte
         offset += 4;
         return val;
     };
+    auto readUVarint = [&]() -> uint64_t {
+        uint64_t value = 0;
+        uint32_t shift = 0;
+        while (offset < bytecode.size()) {
+            uint8_t byte = readByte();
+            value |= (static_cast<uint64_t>(byte & 0x7F) << shift);
+            if ((byte & 0x80) == 0) {
+                return value;
+            }
+            shift += 7;
+            if (shift > 63) {
+                offset = bytecode.size();
+                return 0;
+            }
+        }
+        return 0;
+    };
     auto readString = [&]() -> std::string {
-        uint32_t len = readInt32();
+        uint64_t len = readUVarint();
         if (len == 0) {
             return std::string();
         }
@@ -3061,6 +3107,25 @@ std::string BytecodeDisassemblerV2::disassemble(const std::vector<uint8_t>& byte
         std::string out_str(reinterpret_cast<const char*>(&bytecode[offset]), len);
         offset += len;
         return out_str;
+    };
+    auto readTableRefPayload = [&]() -> std::string {
+        if (!canRead(1)) {
+            offset = bytecode.size();
+            return std::string();
+        }
+        uint8_t ref_kind = readByte();
+        std::string name;
+        if (ref_kind != 0) {
+            if (!canRead(16)) {
+                offset = bytecode.size();
+                return std::string();
+            }
+            offset += 16;
+        } else {
+            name = readString();
+        }
+        (void)readString();  // alias
+        return name;
     };
 
     auto disassembleTransactionPayload = [&]() {
@@ -3094,12 +3159,12 @@ std::string BytecodeDisassemblerV2::disassemble(const std::vector<uint8_t>& byte
         if (flags & sblr::TransactionFlags::HAS_RESERVATIONS) {
             auto list_op = static_cast<sblr::Opcode>(readByte());
             if (list_op == sblr::Opcode::BEGIN_LIST) {
-                uint32_t count = readInt32();
+                uint64_t count = readUVarint();
                 out << "BEGIN_LIST " << std::dec << count << "\n";
-                for (uint32_t i = 0; i < count; ++i) {
+                for (uint64_t i = 0; i < count; ++i) {
                     auto item_op = static_cast<sblr::Opcode>(readByte());
                     if (item_op == sblr::Opcode::TABLE_REF) {
-                        std::string name = readString();
+                        std::string name = readTableRefPayload();
                         out << "TABLE_REF \"" << name << "\"\n";
                         readByte();  // lock_mode
                         readByte();  // for_write
@@ -3165,11 +3230,11 @@ std::string BytecodeDisassemblerV2::disassemble(const std::vector<uint8_t>& byte
                 readByte();
                 break;
             case sblr::Opcode::TABLE_REF:
-                out << "TABLE_REF \"" << readString() << "\"\n";
+                out << "TABLE_REF \"" << readTableRefPayload() << "\"\n";
                 break;
             case sblr::Opcode::BEGIN_LIST:
                 out << "BEGIN_LIST\n";
-                readInt32();
+                readUVarint();
                 break;
             case sblr::Opcode::END_LIST:
                 out << "END_LIST\n";

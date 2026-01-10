@@ -19,6 +19,7 @@
 
 #include "pg_lexer.h"
 #include <scratchbird/sblr/opcodes.h>
+#include <scratchbird/core/types.h>
 #include <vector>
 #include <string>
 #include <memory>
@@ -264,7 +265,9 @@ private:
     void emitI64(int64_t val);
     void emitF64(double val);
     void emitString(std::string_view str);
+    void emitUUID(const core::ID& uuid);
     void emitTypeDefinition(const PgDataType& type);
+    bool resolveDomainId(const std::string& type_name, core::ID& domain_id_out);
 
     // Statement parsing
     void parseStatementInternal();

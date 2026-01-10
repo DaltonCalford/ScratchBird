@@ -14,21 +14,21 @@ Status: derived from static code review; no runtime execution performed.
 - [x] SELECT: emit BEGIN_LIST for FROM with TABLE_REF entries + JOIN_TYPE sequences (aligned with executor).
 - [x] INSERT: emit TABLE_REF payload with ref_kind + alias, column list as COLUMN_REF + name, and row_count/row lists.
 - [x] INSERT: handle DEFAULT VALUES (row_count=0) and INSERT ... SELECT (emit SELECT bytecode) for executor.
-- [ ] INSERT: ON DUPLICATE KEY UPDATE is emitted as EXT_ON_CONFLICT_DO_UPDATE, which executor does not handle.
+- [x] INSERT: ON DUPLICATE KEY UPDATE emits EXT_ON_CONFLICT + DO UPDATE payloads that executor can read (no explicit target).
 - [x] UPDATE: emit TABLE_REF payload with ref_kind + alias and assignments as ASSIGNMENT + COLUMN_REF + expression; ignore extra table list in bytecode.
 - [x] DELETE: emit TABLE_REF payload with ref_kind + alias; ORDER BY/LIMIT parsed but not emitted.
-- [ ] REPLACE: encoded as INSERT + EXT_ON_CONFLICT_DO_UPDATE; executor does not support.
-- [ ] LOCK/UNLOCK TABLES: parser emits LITERAL_NULL at top-level, which executor does not handle as a statement opcode.
+- [ ] REPLACE: encoded with legacy payload; still needs ON CONFLICT alignment and semantics.
+- [x] LOCK/UNLOCK TABLES: emit explicit errors (avoid invalid top-level opcodes).
 
 ## Missing DDL implementations
 - [x] CREATE INDEX / CREATE VIEW: TODO stubs.
-- [ ] CREATE PROCEDURE / FUNCTION / TRIGGER: TODO stubs.
+- [x] CREATE PROCEDURE / FUNCTION / TRIGGER: TODO stubs.
 - [x] DROP TABLE / DROP INDEX / DROP VIEW: not implemented.
 - [x] TRUNCATE: not implemented.
 
 ## Partial implementations / silent drops
 - [ ] ALTER TABLE supports only RENAME; other ALTER actions are rejected.
-- [ ] CREATE TABLE: FULLTEXT/SPATIAL/KEY/INDEX constraints are parsed and dropped.
+- [x] CREATE TABLE: FULLTEXT/SPATIAL/KEY/INDEX constraints are parsed and emitted as CREATE INDEX.
 - [ ] CREATE TABLE: many table options are parsed for syntax but not emitted.
 
 ## Cross-cutting

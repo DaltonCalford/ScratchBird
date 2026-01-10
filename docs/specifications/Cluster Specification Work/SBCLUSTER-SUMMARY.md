@@ -14,6 +14,8 @@ This document suite specifies the complete architecture for ScratchBird distribu
 
 **Version**: 1.0 (2026-01-02)
 
+**Scope Note:** WAL references describe an optional write-after log stream for replication/PITR; MGA does not use WAL for recovery.
+
 ---
 
 ## Specification Structure
@@ -406,7 +408,7 @@ SELECT region, SUM(amount) FROM orders GROUP BY region;
 - **Replication Factor (RF)**: Number of copies (default: RF=2)
 - **Primary/Replica**: Each shard has 1 primary (writes) + N-1 replicas (reads)
 - **Asynchronous Replication**: Primary commits, then replicates
-- **Write-Ahead Log (WAL)**: Changes streamed from primary to replicas
+- **Write-after log (WAL)**: Changes streamed from primary to replicas
 
 **Replication Topology**:
 ```
@@ -419,10 +421,10 @@ Primary (Node A, Shard 001)
 **Write Path**:
 1. Client sends write to coordinator
 2. Coordinator routes to shard primary
-3. Primary commits to local WAL
+3. Primary commits to local write-after log (WAL)
 4. Primary acknowledges write to client (async replication)
-5. Primary streams WAL entry to replicas
-6. Replicas apply WAL entry
+5. Primary streams write-after log (WAL) entry to replicas
+6. Replicas apply write-after log (WAL) entry
 
 **Read Path**:
 - **Strong consistency**: Read from primary
@@ -450,7 +452,7 @@ Primary (Node A, Shard 001)
 - **Per-Shard Backups**: Each shard backed up independently
 - **Cluster-Consistent Set**: Coordinated snapshots across all shards (point-in-time)
 - **Full Backup**: Complete shard snapshot
-- **Incremental Backup**: WAL segments since last backup
+- **Incremental Backup**: write-after log (WAL) segments since last backup
 - **Trust Boundary**: Certificates/keys NEVER backed up
 
 **Backup Procedure**:
@@ -466,7 +468,7 @@ Primary (Node A, Shard 001)
 1. Provision new cluster (new nodes, new UUIDs)
 2. For each shard:
    a. Restore shard snapshot from backup
-   b. Apply incremental WAL segments (if any)
+   b. Apply incremental write-after log (WAL) segments (if any)
 3. Re-establish trust:
    a. Generate new CA
    b. Issue new node certificates
@@ -784,7 +786,7 @@ Tampering breaks chain verification.
 | **RLS** | Row-Level Security - per-row access control |
 | **CLS** | Column-Level Security - per-column access control |
 | **MVCC** | Multi-Version Concurrency Control - transaction isolation |
-| **WAL** | Write-Ahead Log - transaction log for replication |
+| **Write-after log (WAL)** | Transaction stream for replication/PITR |
 | **OTLP** | OpenTelemetry Protocol - telemetry data format |
 | **Shard** | Independent data partition |
 | **Coordinator** | Node routing distributed queries |

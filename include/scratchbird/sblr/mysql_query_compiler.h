@@ -61,16 +61,18 @@ public:
     // Default schema path for unqualified identifiers
     const std::string& defaultSchema() const { return default_schema_; }
     void setDefaultSchema(const std::string& schema) { default_schema_ = schema; }
+    void setCompatibilityMode(parser::mysql::MySQLCompatMode mode) { compat_mode_ = mode; }
+    parser::mysql::MySQLCompatMode compatibilityMode() const { return compat_mode_; }
 
 private:
     core::Database* db_;
     core::CatalogManager* catalog_;
     std::string default_schema_;
     bool stats_enabled_ = true;
+    parser::mysql::MySQLCompatMode compat_mode_ = parser::mysql::MySQLCompatMode::MYSQL57;
 
     MySQLCompilationResult compileInternal(const std::string& sql);
 };
 
 } // namespace sblr
 } // namespace scratchbird
-

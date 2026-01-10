@@ -65,15 +65,6 @@ bool readU16(const std::vector<uint8_t>& bytecode, size_t* offset, uint16_t* out
     return true;
 }
 
-bool readU32(const std::vector<uint8_t>& bytecode, size_t* offset, uint32_t* out) {
-    if (*offset + 4 > bytecode.size()) {
-        return false;
-    }
-    *out = sblr::readInt32(&bytecode[*offset]);
-    *offset += 4;
-    return true;
-}
-
 bool readString16(const std::vector<uint8_t>& bytecode, size_t* offset, std::string* out) {
     uint16_t length = 0;
     if (!readU16(bytecode, offset, &length)) {
@@ -87,9 +78,21 @@ bool readString16(const std::vector<uint8_t>& bytecode, size_t* offset, std::str
     return true;
 }
 
-bool readString32(const std::vector<uint8_t>& bytecode, size_t* offset, std::string* out) {
-    uint32_t length = 0;
-    if (!readU32(bytecode, offset, &length)) {
+bool readUVarint(const std::vector<uint8_t>& bytecode, size_t* offset, uint64_t* out) {
+    if (*offset >= bytecode.size()) {
+        return false;
+    }
+    size_t bytes_read = 0;
+    if (!sblr::readUVarint(&bytecode[*offset], bytecode.size() - *offset, *out, bytes_read)) {
+        return false;
+    }
+    *offset += bytes_read;
+    return true;
+}
+
+bool readStringVarint(const std::vector<uint8_t>& bytecode, size_t* offset, std::string* out) {
+    uint64_t length = 0;
+    if (!readUVarint(bytecode, offset, &length)) {
         return false;
     }
     if (*offset + length > bytecode.size()) {
@@ -498,9 +501,9 @@ TEST_F(RenameMoveOpcodeDbTest, FirebirdRenameDomainEmitsExtendedOpcode) {
     EXPECT_EQ(action, static_cast<uint8_t>(sblr::AlterDomainAction::RENAME));
 
     std::string domain_path;
-    ASSERT_TRUE(readString32(bytecode, &offset, &domain_path));
+    ASSERT_TRUE(readStringVarint(bytecode, &offset, &domain_path));
     std::string new_name;
-    ASSERT_TRUE(readString32(bytecode, &offset, &new_name));
+    ASSERT_TRUE(readStringVarint(bytecode, &offset, &new_name));
 
     std::string domain_last = domain_path;
     auto dot_pos = domain_last.find_last_of('.');

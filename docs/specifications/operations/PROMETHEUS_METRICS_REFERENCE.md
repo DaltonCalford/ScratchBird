@@ -43,7 +43,6 @@ scratchbird_connections_used_ratio 0.344
 # TYPE scratchbird_connections_established_total counter
 scratchbird_connections_established_total{protocol="postgresql"} 15234
 scratchbird_connections_established_total{protocol="mysql"} 8901
-scratchbird_connections_established_total{protocol="tds"} 456
 scratchbird_connections_established_total{protocol="firebird"} 123
 scratchbird_connections_established_total{protocol="native"} 7890
 
@@ -65,7 +64,7 @@ scratchbird_connections_rejected_total{reason="database_not_found"} 15
 **Labels:**
 | Label | Values | Description |
 |-------|--------|-------------|
-| `protocol` | postgresql, mysql, tds, firebird, native | Wire protocol |
+| `protocol` | postgresql, mysql, firebird, native (tds post-gold) | Wire protocol |
 | `reason` | normal, timeout, error, admin_kill, max_connections, auth_failed, ssl_required, database_not_found | Close/reject reason |
 
 ### 2.3 Connection Timing
@@ -363,20 +362,22 @@ scratchbird_disk_usage_bytes{type="temp"} 536870912
 
 ---
 
-## 7. WAL/Recovery Metrics
+## 7. Write-after Log (WAL)/Recovery Metrics
+
+**Scope Note:** MGA does not use write-after log (WAL) for recovery. These metrics apply only if an optional write-after log is introduced (post-gold).
 
 ```prometheus
-# HELP scratchbird_wal_bytes_written_total WAL bytes written
+# HELP scratchbird_wal_bytes_written_total Write-after log (WAL) bytes written
 # TYPE scratchbird_wal_bytes_written_total counter
 scratchbird_wal_bytes_written_total 9876543210
 
-# HELP scratchbird_wal_segments_total WAL segments
+# HELP scratchbird_wal_segments_total Write-after log (WAL) segments
 # TYPE scratchbird_wal_segments_total gauge
 scratchbird_wal_segments_total{state="active"} 3
 scratchbird_wal_segments_total{state="archived"} 1234
 scratchbird_wal_segments_total{state="pending_archive"} 2
 
-# HELP scratchbird_wal_segment_size_bytes WAL segment size
+# HELP scratchbird_wal_segment_size_bytes Write-after log (WAL) segment size
 # TYPE scratchbird_wal_segment_size_bytes gauge
 scratchbird_wal_segment_size_bytes 16777216
 

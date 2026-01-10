@@ -5,6 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 
+run_ctest() {
+    local label="$1"
+    shift
+    local start=$SECONDS
+    "$@"
+    local elapsed=$((SECONDS - start))
+    echo "Completed ${label} in ${elapsed}s"
+}
+
 if [[ ! -d "${BUILD_DIR}" ]]; then
     echo "Build directory not found: ${BUILD_DIR}" >&2
     echo "Run CMake configure/generate first (e.g., mkdir build && cmake ..)." >&2
@@ -18,39 +27,39 @@ cd "${BUILD_DIR}"
 case "${1:-all}" in
     smoke)
         echo "Running smoke tests..."
-        ctest -L smoke --output-on-failure
+        run_ctest "smoke" ctest -L smoke --output-on-failure
         ;;
     unit)
         echo "Running unit tests..."
-        ctest -L unit --output-on-failure --timeout 10
+        run_ctest "unit" ctest -L unit --output-on-failure --timeout 10
         ;;
     integration)
         echo "Running integration tests..."
-        ctest -L integration --output-on-failure --timeout 60
+        run_ctest "integration" ctest -L integration --output-on-failure --timeout 60
         ;;
     stress)
         echo "Running stress tests..."
-        ctest -L stress --output-on-failure --timeout 600
+        run_ctest "stress" ctest -L stress --output-on-failure --timeout 600
         ;;
     performance)
         echo "Running performance tests..."
-        ctest -L performance --output-on-failure --timeout 300
+        run_ctest "performance" ctest -L performance --output-on-failure --timeout 300
         ;;
     quarantine)
         echo "Running quarantine tests (known issues)..."
-        ctest -L quarantine --output-on-failure --timeout 60 || true
+        run_ctest "quarantine" ctest -L quarantine --output-on-failure --timeout 60 || true
         ;;
     quick)
         echo "Running quick test suite (smoke + unit)..."
-        ctest -L "smoke|unit" --output-on-failure --timeout 10
+        run_ctest "quick" ctest -L "smoke|unit" --output-on-failure --timeout 10
         ;;
     ci)
         echo "Running CI test suite (smoke + unit + integration)..."
-        ctest -L "smoke|unit|integration" -E "quarantine" --output-on-failure --timeout 60
+        run_ctest "ci" ctest -L "smoke|unit|integration" -E "quarantine" --output-on-failure --timeout 60
         ;;
     all)
         echo "Running all tests (excluding quarantine)..."
-        ctest -E "quarantine" --output-on-failure --timeout 300
+        run_ctest "all" ctest -E "quarantine" --output-on-failure --timeout 300
         ;;
     *)
         echo "Usage: $0 {smoke|unit|integration|stress|performance|quarantine|quick|ci|all}" >&2

@@ -621,9 +621,11 @@ void Parser::parsePrimaryExpr() {
         if (match(TokenType::LEFT_PAREN)) {
             if (match(TokenType::STAR)) {
                 emit(sblr::Opcode::AGG_COUNT);
+                emitByte(1);
                 emit(sblr::Opcode::LITERAL_NULL);  // COUNT(*)
             } else {
                 emit(sblr::Opcode::AGG_COUNT);
+                emitByte(1);
                 parseExpression();
             }
             consume(TokenType::RIGHT_PAREN, "Expected ) after COUNT");
@@ -643,9 +645,11 @@ void Parser::parseFunctionCall(const std::string& name) {
     if (lower_name == "count") {
         if (match(TokenType::STAR)) {
             emit(sblr::Opcode::AGG_COUNT);
+            emitByte(1);
             emit(sblr::Opcode::LITERAL_NULL);
         } else {
             emit(sblr::Opcode::AGG_COUNT);
+            emitByte(1);
             parseExpression();
         }
         consume(TokenType::RIGHT_PAREN, "Expected ) after COUNT");
@@ -653,24 +657,28 @@ void Parser::parseFunctionCall(const std::string& name) {
     }
     if (lower_name == "sum") {
         emit(sblr::Opcode::AGG_SUM);
+        emitByte(1);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
     }
     if (lower_name == "avg") {
         emit(sblr::Opcode::AGG_AVG);
+        emitByte(1);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
     }
     if (lower_name == "min") {
         emit(sblr::Opcode::AGG_MIN);
+        emitByte(1);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
     }
     if (lower_name == "max") {
         emit(sblr::Opcode::AGG_MAX);
+        emitByte(1);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;

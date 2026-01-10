@@ -4,6 +4,8 @@
 
 JDBC (Java Database Connectivity) is primarily a Java API. To use JDBC from C++, we need to use JNI (Java Native Interface) to bridge between C++ and Java. This specification covers how to integrate JDBC functionality into C++ applications.
 
+**Scope Note:** SQL Server JDBC references here are for external connectivity; MSSQL/TDS server emulation remains post-gold.
+
 ## Architecture
 
 ```

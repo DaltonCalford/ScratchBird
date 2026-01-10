@@ -52,6 +52,18 @@ The converted tests are organized into 39 categories including:
 
 **Prerequisites:** The `sb_fb_isql` client must be built first (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)).
 
+### CTest (curated subset)
+
+The CTest target runs a small curated subset defined in `config/ctest_list.txt`:
+
+```bash
+ctest -R CompatibilityFirebird --test-dir build
+```
+
+This uses `sb_fb_isql` and creates a fresh ScratchBird database per test under `results/ctest/`.
+
+### Manual runs
+
 Once `sb_fb_isql` is available:
 
 ```bash

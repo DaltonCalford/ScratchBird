@@ -11,6 +11,8 @@
 
 ODBC (Open Database Connectivity) is the industry-standard database access method for Windows and cross-platform applications. ODBC support is absolutely critical for ScratchBird adoption in business intelligence, enterprise reporting, and Microsoft Office integration. ScratchBird uses its native ODBC driver, which connects to the ScratchBird network listener (default port 3092) using the ScratchBird wire protocol.
 
+**Scope Note:** SQL Server ODBC comparisons and SSRS references are post-gold; MSSQL/TDS emulation is not part of current scope.
+
 **Key Requirements:**
 - ODBC 3.8 specification compliance
 - Windows and Linux support (unixODBC)
@@ -69,7 +71,7 @@ ODBC (Open Database Connectivity) is the industry-standard database access metho
 - [ ] **MIGRATION_GUIDE.md** - Migration from other ODBC drivers
   - From PostgreSQL ODBC (psqlODBC)
   - From MySQL ODBC (Connector/ODBC)
-  - From SQL Server ODBC
+  - From SQL Server ODBC (post-gold reference)
   - From Firebird ODBC (OdbcFb)
   - DSN migration
   - Connection string migration
@@ -363,7 +365,7 @@ Benchmark against psqlODBC (PostgreSQL ODBC driver):
 | Bulk INSERT (1,000 rows) | Within 15% of psqlODBC |
 | SQLTables metadata call | Within 15% of psqlODBC |
 | Excel data refresh (1,000 rows) | Within 20% of MySQL ODBC |
-| Power BI DirectQuery | Within 20% of SQL Server ODBC |
+| Power BI DirectQuery | Within 20% of SQL Server ODBC (post-gold reference) |
 
 ---
 
@@ -471,7 +473,7 @@ sudo odbcinst -i -d -f /etc/scratchbird-odbc/odbcinst.ini
 - [ ] Power BI Service integration (gateway)
 - [ ] Tableau Desktop integration
 - [ ] Tableau Server integration
-- [ ] SQL Server Reporting Services (SSRS)
+- [ ] SQL Server Reporting Services (SSRS) (post-gold reference)
 - [ ] Crystal Reports
 - [ ] QlikView / Qlik Sense
 - [ ] Python pyodbc usage

@@ -174,7 +174,7 @@ We define four attacker models based on capabilities and access:
 
 **Components**:
 - Shard data files (heap pages, TOAST)
-- Write-Ahead Log (WAL)
+- Write-after log (WAL)
 - Backup files (S3, etc.)
 - Audit log storage
 

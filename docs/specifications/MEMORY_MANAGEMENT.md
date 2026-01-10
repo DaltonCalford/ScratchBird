@@ -171,9 +171,9 @@ ScratchBird Memory Architecture:
 
 ### 2.3. MGA-Specific Memory Requirements
 
-**ScratchBird uses Firebird MGA, not PostgreSQL WAL:**
+**ScratchBird uses Firebird MGA, not PostgreSQL write-after log (WAL):**
 
-- **No WAL Buffers** - MGA doesn't require WAL for recovery
+- **No write-after log (WAL) Buffers** - MGA doesn't require write-after log (WAL) for recovery
 - **Multi-Version Storage** - Pages contain multiple tuple versions
 - **Transaction Marker Caching** - OIT, OAT, OST, NEXT in memory
 - **Sweep Metadata** - Garbage collection state tracking
@@ -195,13 +195,13 @@ struct TransactionState {
 
 **Comparison with PostgreSQL:**
 
-| Aspect | ScratchBird (MGA) | PostgreSQL (WAL) |
+| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL)) |
 |--------|-------------------|------------------|
-| **WAL Buffers** | Not needed | 16 MB default |
+| **Write-after log (WAL) Buffers** | Not needed | 16 MB default |
 | **Version Storage** | In-page (xmin/xmax) | TOAST + HOT |
 | **Commit Log** | Commit bitmap | CLOG files |
-| **Recovery** | No WAL replay | WAL replay |
-| **Memory Overhead** | Lower (no WAL) | Higher (WAL + buffers) |
+| **Recovery** | No write-after log (WAL) replay | Write-after log (WAL) replay |
+| **Memory Overhead** | Lower (no write-after log (WAL)) | Higher (write-after log (WAL) + buffers) |
 
 ---
 

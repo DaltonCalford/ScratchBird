@@ -290,7 +290,7 @@ This document defines the **implementation boundary** for ScratchBird cluster fe
 | **Replication factor = 2** | ○ | ✓ | ✓ | Alpha: RF=1 acceptable |
 | **Primary/replica model** | ○ | ✓ | ✓ | Alpha: no replication OK |
 | **Asynchronous replication** | — | ✓ | ✓ | Beta+ MUST |
-| **WAL streaming** | — | ✓ | ✓ | Beta+ MUST |
+| **Write-after log (WAL) streaming** | — | ✓ | ✓ | Beta+ MUST |
 | **Replica failover** | — | ✓ | ✓ | Beta+ MUST |
 | **Replication lag monitoring** | — | ✓ | ✓ | Beta+ MUST |
 | **Synchronous replication** | — | — | △ | GA: OPTIONAL |
@@ -302,7 +302,7 @@ This document defines the **implementation boundary** for ScratchBird cluster fe
 
 **Beta Requirements**:
 - RF=2 (primary + 1 replica)
-- Asynchronous WAL streaming
+- Asynchronous write-after log (WAL) streaming
 - Automated failover on primary failure
 
 **GA Enhancements**:
@@ -317,7 +317,7 @@ This document defines the **implementation boundary** for ScratchBird cluster fe
 |---------|-------|------|-----|-------|
 | **Per-shard backups** | ○ | ✓ | ✓ | Alpha: manual OK |
 | **Full backup** | ○ | ✓ | ✓ | Alpha: manual OK |
-| **Incremental backup (WAL)** | — | ○ | ✓ | GA: MUST |
+| **Incremental backup (write-after log (WAL))** | — | ○ | ✓ | GA: MUST |
 | **Cluster-consistent snapshots** | — | ○ | ✓ | GA: MUST |
 | **Trust boundary enforcement** | — | ✓ | ✓ | Beta+ MUST (no key backup) |
 | **Backup encryption** | — | ✓ | ✓ | Beta+ MUST |
@@ -335,7 +335,7 @@ This document defines the **implementation boundary** for ScratchBird cluster fe
 - Trust boundary: NO certificate/key backup
 
 **GA Enhancements**:
-- Incremental backups (WAL-based)
+- Incremental backups (write-after log (WAL)-based)
 - Point-in-time recovery
 - Automated scheduling via SBCLUSTER-09
 
@@ -430,7 +430,7 @@ This document defines the **implementation boundary** for ScratchBird cluster fe
 - SBCLUSTER-03: Full CA infrastructure
 - SBCLUSTER-04: Complete security bundle
 - SBCLUSTER-06: Multi-shard queries with push-down
-- SBCLUSTER-07: Replication (RF=2, WAL streaming, failover)
+- SBCLUSTER-07: Replication (RF=2, write-after log (WAL) streaming, failover)
 - SBCLUSTER-08: Automated encrypted backups
 - SBCLUSTER-10: Cryptographic audit chain
 

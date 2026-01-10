@@ -256,7 +256,7 @@ if (remote_ts > local_ts ||
 ```
 Replication Catch-Up (Current):
   - Replica behind by N LSNs
-  - Primary streams WAL records from last_lsn to current_lsn
+  - Primary streams write-after log (WAL) records from last_lsn to current_lsn
   - Works well for small gaps (<1000 records)
 
 Time-Partitioned Merkle (Beta Addition):
@@ -302,7 +302,7 @@ void anti_entropy_check(UUID replica_uuid) {
             // Divergence detected in this hour
             log_info("Divergence in hour {}: replicating missing records", hour);
 
-            // 3. Stream WAL records for this hour only
+            // 3. Stream write-after log (WAL) records for this hour only
             stream_wal_range(replica_uuid, hour_start_lsn, hour_end_lsn);
         }
     }
@@ -403,8 +403,8 @@ uint16_t assign_shard_colocated(UUID table_id, const TypedValue& partition_key_v
 
 **Must NOT Reference:**
 - ❌ **TRANSACTION_MAIN.md** status claim ("MOSTLY NOT IMPLEMENTED") - OUT OF DATE
-- ❌ **PostgreSQL MVCC patterns** (snapshots, CLOG, WAL for crash recovery)
-- ❌ **"Write-Ahead Log"** terminology - use "Commit Log Streaming" instead
+- ❌ **PostgreSQL MVCC patterns** (snapshots, CLOG, write-after log (WAL) for crash recovery)
+- ❌ **Legacy WAL terminology** - use "write-after log (WAL)" or "Commit Log Streaming" instead
 
 ---
 
@@ -455,7 +455,7 @@ uint16_t assign_shard_colocated(UUID table_id, const TypedValue& partition_key_v
 ### 6.2 What ScratchBird DOES NOT DO (Anti-Patterns)
 
 ❌ **PostgreSQL MVCC** - No snapshots, no CLOG, no xmin/xmax arrays
-❌ **WAL for Crash Recovery** - TIP handles crash recovery, not log replay
+❌ **Write-after log (WAL) for Crash Recovery** - TIP handles crash recovery, not log replay
 ❌ **Cross-Shard Transactions** - Each shard is independent (no global 2PC)
 ❌ **Global Snapshots** - Per-shard MGA, not cluster-wide MVCC
 ❌ **Append-Only Storage** - In-place updates with back versions
@@ -464,7 +464,7 @@ uint16_t assign_shard_colocated(UUID table_id, const TypedValue& partition_key_v
 
 | ❌ Incorrect (PostgreSQL) | ✅ Correct (ScratchBird) |
 |--------------------------|-------------------------|
-| WAL (Write-Ahead Log) | Commit Log Streaming (after commit) |
+| Write-after log (WAL) | Commit Log Streaming (after commit) |
 | MVCC | MGA (Multi-Generational Architecture) |
 | CLOG | TIP (Transaction Inventory Pages) |
 | Snapshot isolation | Statement-level read consistency + TIP |

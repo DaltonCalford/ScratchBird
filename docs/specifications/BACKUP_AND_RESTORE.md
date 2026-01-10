@@ -86,14 +86,14 @@ ScratchBird's backup system is built on these principles:
 
 ### 2.2. Integration with MGA
 
-ScratchBird uses Firebird-style Multi-Generational Architecture (MGA), NOT PostgreSQL-style WAL:
+ScratchBird uses Firebird-style Multi-Generational Architecture (MGA), NOT PostgreSQL-style write-after log (WAL):
 
-- **No WAL for Recovery** - Backup/restore does not rely on WAL replay
+- **No write-after log (WAL) for Recovery** - Backup/restore does not rely on write-after log (WAL) replay
 - **Transaction Markers** - Uses OIT, OAT, OST, NEXT for visibility
 - **Record Versioning** - Multiple versions (xmin/xmax) are backed up
 - **Snapshot Isolation** - Backup sees a consistent snapshot based on transaction markers
 
-**Critical:** Backup consistency is achieved through MGA snapshot isolation, NOT through WAL checkpoints.
+**Critical:** Backup consistency is achieved through MGA snapshot isolation, NOT through write-after log (WAL) checkpoints.
 
 ### 2.3. Backup Storage Architecture
 
@@ -119,7 +119,7 @@ Backup Storage Hierarchy:
 
 - **Temporal Tables** provide application-level point-in-time queries
 - **PITR** is useful for disaster recovery and replication, not primary time-travel
-- **WAL Archive** for PITR is optional and low-priority feature
+- **Write-after log (WAL) Archive** for PITR is optional and low-priority feature
 
 ---
 
@@ -533,7 +533,7 @@ For fast random access during restore:
 
 ### 5.2. Snapshot Acquisition
 
-**Critical:** ScratchBird uses MGA snapshot isolation, NOT WAL checkpoints.
+**Critical:** ScratchBird uses MGA snapshot isolation, NOT write-after log (WAL) checkpoints.
 
 ```cpp
 // Pseudo-code for snapshot acquisition
@@ -972,7 +972,7 @@ void restore_parallel(BackupFile* file, size_t num_threads) {
 2. **Transaction Log Archive** - Continuous log of transactions
 3. **Recovery Target** - Transaction ID or timestamp
 
-**Note:** Transaction log archive is distinct from WAL (which ScratchBird does not use for recovery).
+**Note:** Transaction log archive is distinct from write-after log (WAL), which ScratchBird does not use for recovery.
 
 ### 7.3. Transaction Log Archive
 
@@ -1098,21 +1098,21 @@ SELECT * FROM employees FOR SYSTEM_TIME BETWEEN
 
 ## 8. MGA-Specific Considerations
 
-### 8.1. MGA vs. WAL-Based Backup
+### 8.1. MGA vs. Write-after Log (WAL)-Based Backup
 
 **Critical Difference:**
 
-| Aspect | ScratchBird (MGA) | PostgreSQL (WAL) |
+| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL)) |
 |--------|-------------------|------------------|
-| **Recovery** | No WAL replay | WAL replay required |
-| **Consistency** | Snapshot isolation | WAL checkpoint |
+| **Recovery** | No write-after log (WAL) replay | Write-after log (WAL) replay required |
+| **Consistency** | Snapshot isolation | Write-after log (WAL) checkpoint |
 | **Backup Mode** | Snapshot transaction | pg_start_backup() |
 | **Concurrency** | No blocking | No blocking |
-| **Record Versions** | Multiple versions backed up | Single version + WAL |
+| **Record Versions** | Multiple versions backed up | Single version + write-after log (WAL) |
 
 **MGA Implications:**
 
-1. **No WAL Dependency** - Backup does not require WAL archiving for recovery
+1. **No write-after log (WAL) Dependency** - Backup does not require write-after log (WAL) archiving for recovery
 2. **Snapshot Visibility** - Backup sees consistent snapshot using transaction markers
 3. **Old Versions** - Backup may include dead tuples (before sweep)
 4. **Transaction Markers** - OIT, OAT, OST, NEXT must be preserved

@@ -1,0 +1,11 @@
+# MySQL compatibility CTest list
+# Paths are relative to tests/compatibility/mysql/converted
+# Use SCRATCHBIRD_MY_COMPAT_RUN=1 to enable.
+
+main/alias.sql
+main/ansi.sql
+main/auto_increment.sql
+main/delete.sql
+main/insert.sql
+main/join.sql
+main/update.sql

@@ -8,13 +8,13 @@
 
 ## Overview
 
-This document specifies how the database engine provides drop-in compatibility with PostgreSQL, MySQL, MSSQL, and Firebird wire protocols, enabling clients to use native drivers without modification.
+This document specifies how the database engine provides drop-in compatibility with PostgreSQL, MySQL, and Firebird wire protocols. MSSQL/TDS compatibility is post-gold and described here for future work.
 
 ---
 
 ## Design Goals
 
-1. **Wire Compatibility**: Support native client libraries (libpq, MySQL Connector, TDS, Firebird client)
+1. **Wire Compatibility**: Support native client libraries (libpq, MySQL Connector, Firebird client; TDS post-gold)
 2. **Parser Isolation**: Each protocol has dedicated parser plugin
 3. **Hot-Swappable**: Update parsers without engine downtime
 4. **System Catalog Virtualization**: Emulate protocol-specific system tables
@@ -422,7 +422,9 @@ mysql.db
 
 ---
 
-### MSSQL TDS Protocol
+### MSSQL TDS Protocol (post-gold)
+
+**Scope Note:** TDS/MSSQL support is deferred until after the project goes gold. This section is retained for future compatibility work.
 
 **Port**: 1433  
 **Documentation**: https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/
@@ -815,7 +817,7 @@ SessionState* session_create(const char* username, const char* database) {
 - **LOCAL INFILE**: Client-side file upload
 - **Character Sets**: utf8, utf8mb4, latin1, etc.
 
-### MSSQL
+### MSSQL (post-gold)
 
 - **MARS** (Multiple Active Result Sets): Complex to support
 - **Bulk Copy**: High-speed bulk insert
@@ -856,7 +858,7 @@ protocols:
     character_set: utf8mb4
     
   mssql:
-    enabled: true
+    enabled: false  # post-gold
     port: 1433
     max_connections: 500
     parser_plugin: /usr/lib/db/parsers/tsql_parser.so
@@ -951,7 +953,7 @@ def test_mysql_basic():
 - [ ] Error packet format
 - [ ] Character set handling
 
-### MSSQL
+### MSSQL (post-gold)
 - [ ] PRELOGIN/LOGIN7
 - [ ] SQL Batch handling
 - [ ] RPC handling

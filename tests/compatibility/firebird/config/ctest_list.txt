@@ -1,0 +1,13 @@
+# Firebird compatibility tests run via CTest (paths relative to converted/)
+functional/dml/delete_01.sql
+functional/dml/delete_02.sql
+functional/dml/insert_01.sql
+functional/dml/join_01.sql
+functional/dml/join_02.sql
+functional/intfunc/avg_01.sql
+functional/intfunc/avg_02.sql
+functional/intfunc/avg_03.sql
+functional/intfunc/avg_04.sql
+functional/intfunc/avg_07.sql
+functional/intfunc/avg_08.sql
+functional/intfunc/count_01_v1_0.sql

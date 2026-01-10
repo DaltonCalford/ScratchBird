@@ -67,6 +67,13 @@ for test in converted/core/*.sql; do
 done
 ```
 
+CTest wrapper (opt-in):
+
+```bash
+# Uses config/ctest_list.txt and writes to results/ctest/<timestamp>
+SCRATCHBIRD_PG_COMPAT_RUN=1 ctest -R CompatibilityPostgreSQL --test-dir build
+```
+
 ## Test Format
 
 PostgreSQL tests are mostly pure SQL with minimal directives:

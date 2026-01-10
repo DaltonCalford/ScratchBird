@@ -15,6 +15,8 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
+**Scope Note:** SQL Server migration references are informational; MSSQL/TDS emulation is post-gold.
+
 
 ## Overview
 
@@ -95,7 +97,7 @@ using var rows = prep.ExecuteReader();
 - [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other providers
   - From Npgsql (PostgreSQL .NET provider)
   - From MySql.Data / MySqlConnector
-  - From System.Data.SqlClient (SQL Server)
+  - From System.Data.SqlClient (SQL Server, post-gold reference)
   - From FirebirdSql.Data.FirebirdClient
   - Connection string migration
   - Code changes required

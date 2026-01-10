@@ -2,6 +2,8 @@
 
 ## Overview
 
+**Scope Note:** MSSQL/TDS support is post-gold. This driver spec is retained for future implementation and is not part of the current version.
+
 Microsoft SQL Server can be accessed from C++ applications using multiple approaches: ODBC (cross-platform), FreeTDS (Unix/Linux), and SQL Server Native Client (Windows). This specification covers all approaches with complete implementation details.
 
 ## Connection Libraries

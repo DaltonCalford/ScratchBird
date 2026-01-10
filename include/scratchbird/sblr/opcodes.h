@@ -178,6 +178,7 @@ namespace scratchbird
             TYPE_BLOB = 0xB1,      // Binary large object
             TYPE_BYTEA = 0xB2,     // Byte array (PostgreSQL compatible)
             TYPE_JSON = 0xB3,      // JSON data
+            TYPE_DOMAIN = 0xB8,    // Domain type reference (domain_id follows)
 
             // Query optimization hints (Phase 1, Task 1.3)
             SCAN_HINT = 0xC0,  // Scan method hint (0=seq, 1=index)
@@ -1304,6 +1305,7 @@ namespace scratchbird
             EXT_EXPR_IS_NULL = 0x0211,  // IS NULL predicate
             EXT_SAVEPOINT_BEGIN = 0x0212,  // Savepoint scope begin (blr_start_savepoint)
             EXT_SAVEPOINT_END = 0x0213,  // Savepoint scope end (blr_end_savepoint)
+            EXT_INSERTED_COLUMN_REF = 0x0214,  // INSERTED column reference (MySQL VALUES(col))
         };
 
         enum class AlterSchemaAction : uint8_t

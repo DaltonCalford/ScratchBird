@@ -19,7 +19,7 @@ This document defines the encryption architecture and key management framework f
 This specification covers:
 - Key hierarchy and derivation
 - Transparent Data Encryption (TDE)
-- WAL and transaction log encryption
+- Write-after log (WAL) and transaction log encryption
 - Backup encryption
 - Wire protocol encryption
 - Key lifecycle management
@@ -40,7 +40,7 @@ This specification covers:
 | Feature | L0 | L1 | L2 | L3 | L4 | L5 | L6 |
 |---------|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Encryption at rest | | | ● | ● | ● | ● | ● |
-| WAL encryption | | | ● | ● | ● | ● | ● |
+| Write-after log (WAL) encryption | | | ● | ● | ● | ● | ● |
 | Backup encryption | | | ● | ● | ● | ● | ● |
 | Wire encryption (TLS) | | | ○ | ○ | ● | ● | ● |
 | HSM support | | | ○ | ○ | ○ | ● | ● |
@@ -121,7 +121,7 @@ ScratchBird implements a hierarchical key management system where each key prote
 | DBK | Database | CMK | TSK, LEK, BKK | Until rotation |
 | TSK | Tablespace | DBK | Data Encryption Keys | Until rotation |
 | DEK | Page/Extent | TSK | Actual data pages | Until rotation |
-| LEK | Transaction Log | DBK | WAL entries | Until rotation |
+| LEK | Transaction Log | DBK | Write-after log (WAL) entries | Until rotation |
 | BKK | Backup | CMK + passphrase | Backup data | Per backup |
 
 ### 2.3 Key Storage
@@ -579,7 +579,7 @@ AES-256-GCM is the default due to hardware acceleration (AES-NI) availability.
 
 ---
 
-## 7. WAL and Log Encryption
+## 7. Write-after Log (WAL) and Log Encryption
 
 ### 7.1 Log Encryption Key (LEK)
 
@@ -587,7 +587,7 @@ The LEK encrypts Write-Ahead Log entries:
 
 ```python
 def encrypt_wal_record(record, lek):
-    """Encrypt a WAL record."""
+    """Encrypt a write-after log (WAL) record."""
     
     # Generate unique IV from LSN
     iv = derive_wal_iv(record.lsn, lek.version)
@@ -611,11 +611,11 @@ def encrypt_wal_record(record, lek):
     )
 ```
 
-### 7.2 WAL Record Format
+### 7.2 Write-after Log (WAL) Record Format
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                 ENCRYPTED WAL RECORD                             │
+│              ENCRYPTED WRITE-AFTER LOG (WAL) RECORD              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  Header (unencrypted, authenticated):                           │
@@ -637,14 +637,14 @@ def encrypt_wal_record(record, lek):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.3 WAL Key Rotation
+### 7.3 Write-after Log (WAL) Key Rotation
 
-LEK rotation must be coordinated with WAL archival:
+LEK rotation must be coordinated with write-after log (WAL) archival:
 
 1. Generate new LEK version
-2. Mark rotation point in WAL
+2. Mark rotation point in write-after log (WAL)
 3. New records use new LEK
-4. Old LEK retained until all old WAL archived
+4. Old LEK retained until all old write-after log (WAL) archived
 5. Old LEK destroyed after retention period
 
 ---

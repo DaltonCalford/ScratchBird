@@ -8,6 +8,8 @@
 
 ---
 
+**Scope Note:** "WAL" references in this spec refer to an optional per-index write-after log and do not imply a global recovery log.
+
 ## ⚠️ CRITICAL REQUIREMENTS
 
 This is a **COMPLETE IMPLEMENTATION SPECIFICATION** for LSM-Tree index.
@@ -24,7 +26,7 @@ This is a **COMPLETE IMPLEMENTATION SPECIFICATION** for LSM-Tree index.
 - Full code examples for all components
 - Firebird MGA compliance patterns (TransactionId, TIP-based visibility)
 - Bloom filter implementation
-- WAL integration for durability
+- Write-after log (WAL) integration for durability (optional)
 - Compaction strategies (leveled and tiered)
 - Performance characteristics
 - Testing requirements
@@ -41,7 +43,7 @@ This is a **COMPLETE IMPLEMENTATION SPECIFICATION** for LSM-Tree index.
 5. [Firebird MGA Compliance](#5-firebird-mga-compliance)
 6. [Bloom Filter](#6-bloom-filter)
 7. [Compaction Strategies](#7-compaction-strategies)
-8. [Write-Ahead Log (WAL) Integration](#8-write-ahead-log-wal-integration)
+8. [Write-after Log (WAL) Integration](#8-write-after-log-wal-integration)
 9. [Query Operations](#9-query-operations)
 10. [Performance Characteristics](#10-performance-characteristics)
 11. [Testing Requirements](#11-testing-requirements)
@@ -98,7 +100,7 @@ LSM-Tree (Log-Structured Merge-Tree) is a data structure optimized for **write-h
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌───────────────┐              ┌─────────────────────┐     │
-│  │   Memtable    │  (Flush)     │   Write-Ahead Log   │     │
+│  │   Memtable    │  (Flush)     │ Write-after Log (WAL) │     │
 │  │  (In-Memory)  │──────────────│      (Durability)   │     │
 │  │  Red-Black    │              │   Append-only file  │     │
 │  │     Tree      │              └─────────────────────┘     │
@@ -135,7 +137,7 @@ LSM-Tree (Log-Structured Merge-Tree) is a data structure optimized for **write-h
 ```
 1. Write arrives
    ↓
-2. Append to WAL (durability)
+2. Append to write-after log (WAL) (durability)
    ↓
 3. Insert into Memtable (Red-Black Tree)
    ↓
@@ -1033,17 +1035,17 @@ Status compactLevel0ToLevel1(LSMTreeIndex* lsm, ErrorContext* ctx) {
 
 ---
 
-## 8. Write-Ahead Log (WAL) Integration
+## 8. Write-after Log (WAL) Integration
 
 ### 8.1 Purpose
 
 **Problem**: Memtable is in-memory. If process crashes before memtable flushes to SSTable, **writes are lost**.
 
-**Solution**: Write-Ahead Log (WAL) - append-only file recording every write BEFORE updating memtable.
+**Solution**: Write-after Log (WAL) - append-only log recording writes for durability/replication (optional).
 
-**Recovery**: On startup, replay WAL to reconstruct memtable.
+**Recovery**: On startup, replay write-after log (WAL) to reconstruct memtable.
 
-### 8.2 WAL Entry Format
+### 8.2 Write-after Log (WAL) Entry Format
 
 ```cpp
 struct WALEntry {
@@ -1060,7 +1062,7 @@ struct WALEntry {
 };
 ```
 
-### 8.3 WAL Writer
+### 8.3 Write-after Log (WAL) Writer
 
 ```cpp
 class WALWriter {
@@ -1084,19 +1086,19 @@ private:
 };
 ```
 
-### 8.4 WAL Write Flow
+### 8.4 Write-after Log (WAL) Write Flow
 
 ```cpp
 Status LSMTreeIndex::put(const std::vector<uint8_t>& key,
                          const std::vector<uint8_t>& value,
                          uint64_t xmin,
                          ErrorContext* ctx) {
-    // 1. Append to WAL (durability)
+    // 1. Append to write-after log (WAL) (durability)
     uint64_t seq = nextSequenceNumber();
     Status status = wal_writer_->append(0, key, value, xmin, 0, seq, ctx);
     if (!status.ok()) return status;
 
-    // 2. Sync WAL to disk (fsync)
+    // 2. Sync write-after log (WAL) to disk (fsync)
     status = wal_writer_->sync(ctx);
     if (!status.ok()) return status;
 
@@ -1114,7 +1116,7 @@ Status LSMTreeIndex::put(const std::vector<uint8_t>& key,
 }
 ```
 
-### 8.5 WAL Recovery
+### 8.5 Write-after Log (WAL) Recovery
 
 ```cpp
 Status LSMTreeIndex::recoverFromWAL(ErrorContext* ctx) {
@@ -1138,18 +1140,18 @@ Status LSMTreeIndex::recoverFromWAL(ErrorContext* ctx) {
 
     reader.close(ctx);
 
-    // WAL replayed, can now delete it
+    // write-after log (WAL) replayed, can now delete it
     std::remove(wal_path_.c_str());
 
     return Status::OK;
 }
 ```
 
-### 8.6 WAL Truncation
+### 8.6 Write-after Log (WAL) Truncation
 
-**Problem**: WAL grows indefinitely.
+**Problem**: write-after log (WAL) grows indefinitely.
 
-**Solution**: After memtable flushes to SSTable, truncate WAL (no longer needed).
+**Solution**: After memtable flushes to SSTable, truncate write-after log (WAL) (no longer needed).
 
 ```cpp
 Status LSMTreeIndex::flushMemtable(ErrorContext* ctx) {
@@ -1169,7 +1171,7 @@ Status LSMTreeIndex::flushMemtable(ErrorContext* ctx) {
     }
     writer.finish(ctx);
 
-    // 3. Truncate WAL (entries now durable in SSTable)
+    // 3. Truncate write-after log (WAL) (entries now durable in SSTable)
     wal_writer_->truncate(ctx);
 
     // 4. Delete immutable memtable
@@ -1306,10 +1308,10 @@ Status LSMTreeIndex::scan(const std::vector<uint8_t>& start_key,
 
 | Operation | Memtable | SSTable (one file) | LSM-Tree (all levels) |
 |-----------|----------|--------------------|-----------------------|
-| Insert | O(log n) | N/A (immutable) | O(log n) + WAL write |
+| Insert | O(log n) | N/A (immutable) | O(log n) + write-after log (WAL) write |
 | Point query | O(log n) | O(log n) + I/O | O(log n) * L levels |
 | Range scan | O(log n + k) | O(log n + k) | O(log n + k) * L |
-| Delete | O(log n) | N/A | O(log n) + WAL write |
+| Delete | O(log n) | N/A | O(log n) + write-after log (WAL) write |
 | Compaction | N/A | O(n log n) | O(n) per level |
 
 Where:
@@ -1327,7 +1329,7 @@ Where:
 | Level 1 | 100 MB |
 | Level 2 | 1 GB |
 | Level 3 | 10 GB |
-| WAL | ~4 MB (matches memtable) |
+| Write-after Log (WAL) | ~4 MB (matches memtable) |
 | Bloom filters | ~1% of SSTable size |
 | Space amplification | 10-30% overhead (during compaction) |
 
@@ -1336,7 +1338,7 @@ Where:
 **Write amplification** = Total bytes written / Bytes written by user
 
 **Example**: Insert 10 MB of data
-1. Write 10 MB to WAL (1x)
+1. Write 10 MB to write-after log (WAL) (1x)
 2. Write 10 MB to Level 0 (1x)
 3. Compact Level 0 → Level 1 (read 10 MB, write 10 MB) (1x)
 4. Compact Level 1 → Level 2 (read 10 MB, write 10 MB) (1x)
@@ -1365,7 +1367,7 @@ Where:
 
 | Workload | Throughput | Notes |
 |----------|------------|-------|
-| Sequential inserts | 100K-500K ops/sec | Batch writes, WAL buffered |
+| Sequential inserts | 100K-500K ops/sec | Batch writes, write-after log (WAL) buffered |
 | Random inserts | 50K-200K ops/sec | Memtable Red-Black Tree |
 | Point queries | 10K-50K ops/sec | Bloom filters reduce I/O |
 | Range scans (1K rows) | 1K-10K ops/sec | K-way merge overhead |
@@ -1408,13 +1410,13 @@ Where:
 - [x] Atomic replacement of SSTables
 - [x] Concurrent reads during compaction
 
-**WAL Tests** (`test_wal.cpp`):
-- [x] Append entries to WAL
-- [x] Sync WAL to disk (fsync)
-- [x] Recover memtable from WAL
-- [x] Truncate WAL after memtable flush
-- [x] Handle corrupted WAL entries (checksum)
-- [x] WAL entry order matches memtable order
+**Write-after Log (WAL) Tests** (`test_wal.cpp`):
+- [x] Append entries to write-after log (WAL)
+- [x] Sync write-after log (WAL) to disk (fsync)
+- [x] Recover memtable from write-after log (WAL)
+- [x] Truncate write-after log (WAL) after memtable flush
+- [x] Handle corrupted write-after log (WAL) entries (checksum)
+- [x] Write-after log (WAL) entry order matches memtable order
 
 ### 11.2 Integration Tests
 
@@ -1446,7 +1448,7 @@ Where:
 - [x] Concurrent readers and writers (100 threads)
 - [x] Simulate crashes during compaction
 - [x] Bloom filter effectiveness (measure false positives)
-- [x] WAL recovery with large dataset (100 MB WAL)
+- [x] write-after log (WAL) recovery with large dataset (100 MB write-after log (WAL))
 
 ---
 
@@ -1492,10 +1494,10 @@ Where:
 - [x] Background thread pool
 - [x] Unit tests (6 test cases)
 
-#### WAL (Write-Ahead Log) (15-20 hours)
-- [x] WAL entry format
+#### Write-after Log (WAL) (15-20 hours)
+- [x] Write-after log (WAL) entry format
 - [x] Append and sync operations
-- [x] Recovery from WAL
+- [x] Recovery from write-after log (WAL)
 - [x] Truncation after flush
 - [x] Checksum validation
 - [x] Unit tests (5 test cases)
@@ -1538,7 +1540,7 @@ Where:
 | SSTable Writer | 20-30 |
 | SSTable Reader | 20-30 |
 | Compaction | 30-40 |
-| WAL | 15-20 |
+| Write-after Log (WAL) | 15-20 |
 | Bloom Filter | 10-15 |
 | Integration | 20-30 |
 | Testing & Optimization | 20-30 |
@@ -1583,7 +1585,7 @@ This specification provides a **complete blueprint** for implementing LSM-Tree i
 - LSM-Tree optimizes write-heavy workloads with sequential writes
 - Memtable (Red-Black Tree) + SSTables (immutable sorted files) + Compaction
 - Bloom filters reduce read amplification by 90%+
-- WAL ensures durability (recover from crashes)
+- Optional write-after log (WAL) ensures per-index durability (recover from crashes)
 - Leveled compaction keeps data organized (10x size increase per level)
 - Firebird MGA throughout (xmin/xmax, TIP-based visibility, NO PostgreSQL MVCC)
 

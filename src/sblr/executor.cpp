@@ -106,6 +106,7 @@ namespace scratchbird
             std::vector<std::string> splitSchemaComponents(const std::string& path);
             std::string joinSchemaComponents(const std::vector<std::string>& components,
                                              size_t start_index = 0);
+            bool isAggregateOpcode(Opcode op);
             core::Status buildAbsoluteSchemaPath(core::CatalogManager* catalog,
                                                  const core::ConnectionContext* conn_ctx,
                                                  const core::ObjectPath& path,
@@ -2691,6 +2692,72 @@ namespace scratchbird
             return convertDataType(type_op, precision_out);
         }
 
+        core::DataType Executor::readColumnTypeWithDomain(core::ID& domain_id_out,
+                                                          uint32_t& precision_out,
+                                                          uint32_t& scale_out)
+        {
+            precision_out = 0;
+            scale_out = 0;
+            domain_id_out = core::ID{};
+
+            Opcode type_op = static_cast<Opcode>(readByte());
+            if (type_op == Opcode::TYPE_DOMAIN)
+            {
+                domain_id_out = readId();
+                bool is_array = readByte() != 0;
+                if (is_array)
+                {
+                    (void)readInt32();
+                    error("Array domains are not supported for column definitions yet");
+                }
+
+                auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                if (!domain_mgr)
+                {
+                    error("Domain manager not available");
+                }
+
+                core::DomainInfo domain_info;
+                core::ErrorContext ctx;
+                core::Status status = domain_mgr->getDomain(domain_id_out, domain_info, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Domain not found for column definition";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+
+                precision_out = domain_info.precision;
+                scale_out = domain_info.scale;
+                return domain_info.base_type;
+            }
+
+            if (type_op == Opcode::EXTENDED_OPCODE)
+            {
+                uint16_t ext_op = readExtendedOpcode();
+                return convertExtendedDataType(ext_op);
+            }
+
+            switch (type_op)
+            {
+                case Opcode::TYPE_VARCHAR:
+                case Opcode::TYPE_CHAR:
+                    precision_out = readInt32();
+                    break;
+                case Opcode::TYPE_DECIMAL:
+                    precision_out = readInt32();
+                    scale_out = readInt32();
+                    break;
+                default:
+                    break;
+            }
+
+            return convertDataType(type_op, precision_out);
+        }
+
         uint64_t Executor::readInt64()
         {
             if (pc_ + 8 > bytecode_size_)
@@ -3279,6 +3346,10 @@ namespace scratchbird
                     break;
                 }
                 Opcode op = static_cast<Opcode>(readByte());
+                if (aggregate_scan_active_ && isAggregateOpcode(op))
+                {
+                    aggregate_scan_found_ = true;
+                }
                 skipExpressionToken(op);
                 saw_opcode = true;
             }
@@ -4431,7 +4502,7 @@ namespace scratchbird
                 error("Expected BEGIN_LIST for columns");
             }
 
-            uint32_t column_count = readInt32();
+            uint32_t column_count = static_cast<uint32_t>(readUVarint());
 
             // Read column definitions
             std::vector<core::CatalogManager::ColumnInfo> columns;
@@ -4465,11 +4536,11 @@ namespace scratchbird
                 readString();  // Skip qualifier (always empty for column definitions)
                 std::string col_name = readString();
 
-                // Read data type
+                // Read data type (including domain references)
                 uint32_t precision = 0;
                 uint32_t scale = 0;
-                core::DataType col_type = readDataTypeWithModifiers(precision, scale);
-                (void)scale;  // Scale stored in catalog metadata, not used in DataType enum
+                core::ID domain_id{};
+                core::DataType col_type = readColumnTypeWithDomain(domain_id, precision, scale);
 
                 // Check for NOT_NULL constraint
                 bool nullable = true;
@@ -4624,7 +4695,10 @@ namespace scratchbird
                 core::CatalogManager::ColumnInfo col_info;
                 col_info.column_name = col_name;
                 col_info.data_type = static_cast<uint16_t>(col_type);
+                col_info.type_precision = precision;
+                col_info.type_scale = scale;
                 col_info.max_length = precision;
+                col_info.domain_id = domain_id;
                 col_info.nullable = nullable;
                 col_info.has_default = !default_expr_hex.empty();
                 col_info.default_expr = default_expr_hex; // Store DEFAULT expression hex bytecode
@@ -6826,6 +6900,27 @@ namespace scratchbird
             else if (server_info.emulation_type_id != type_info.emulation_type_id)
             {
                 error("Emulation server type mismatch");
+            }
+
+            auto normalize_key = [](const std::string& value) {
+                return scratchbird::core::IdentifierUtils::toUpper(value);
+            };
+
+            if (normalize_key(dialect) == "MYSQL")
+            {
+                bool has_mysql_compat = false;
+                for (const auto& opt : options)
+                {
+                    if (normalize_key(opt.key) == "MYSQL.COMPATIBILITY")
+                    {
+                        has_mysql_compat = true;
+                        break;
+                    }
+                }
+                if (!has_mysql_compat)
+                {
+                    options.push_back({"mysql.compatibility", "mysql57"});
+                }
             }
 
             core::CatalogManager::EmulatedDatabaseInfo db_info;
@@ -9453,6 +9548,42 @@ namespace scratchbird
                 error("Failed to get table columns");
             }
 
+            struct DomainDefault {
+                bool has_default = false;
+                std::string value;
+            };
+            std::vector<DomainDefault> domain_defaults(all_columns.size());
+            if (auto* domain_mgr = db_ ? db_->domain_manager() : nullptr)
+            {
+                for (size_t i = 0; i < all_columns.size(); ++i)
+                {
+                    const auto& col = all_columns[i];
+                    if (col.domain_id == core::ID{} || col.has_default)
+                    {
+                        continue;
+                    }
+
+                    core::DomainInfo domain_info;
+                    core::ErrorContext dom_ctx;
+                    auto status = domain_mgr->getDomain(col.domain_id, domain_info, &dom_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to resolve domain default";
+                        if (!dom_ctx.message.empty())
+                        {
+                            err_msg += ": " + dom_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    if (!domain_info.default_value.empty())
+                    {
+                        domain_defaults[i].has_default = true;
+                        domain_defaults[i].value = domain_info.default_value;
+                    }
+                }
+            }
+
             std::vector<size_t> col_indices;
             if (col_names.empty())
             {
@@ -9738,6 +9869,7 @@ namespace scratchbird
                 Kind kind = Kind::EXPR;
                 size_t expr_start = 0;
                 size_t expr_end = 0;
+                bool has_aggregate = false;
                 std::string alias;
                 core::ID table_id{};
                 std::string table_name;
@@ -10147,9 +10279,18 @@ namespace scratchbird
                         continue;
                     }
 
-                    if (all_columns[i].has_default && !all_columns[i].default_value.empty())
+                    if (all_columns[i].has_default &&
+                        (!all_columns[i].default_expr.empty() ||
+                         !all_columns[i].default_value.empty()))
                     {
                         row_values[i] = evaluateDefaultValue(all_columns[i]);
+                    }
+                    else if (domain_defaults[i].has_default)
+                    {
+                        auto temp_col = all_columns[i];
+                        temp_col.has_default = true;
+                        temp_col.default_value = domain_defaults[i].value;
+                        row_values[i] = evaluateDefaultValue(temp_col);
                     }
                     else
                     {
@@ -10457,6 +10598,11 @@ namespace scratchbird
 
                             std::vector<Value> old_row_values = conflict_row;
 
+                            const auto* saved_insert_values = current_insert_values_;
+                            const auto* saved_insert_columns = current_insert_columns_;
+                            current_insert_values_ = &row_values;
+                            current_insert_columns_ = &all_columns;
+
                             for (const auto& assign : on_conflict.update_assignments)
                             {
                                 size_t saved_pc = pc_;
@@ -10473,6 +10619,9 @@ namespace scratchbird
 
                                 conflict_row[assign.column_index] = std::move(new_value);
                             }
+
+                            current_insert_values_ = saved_insert_values;
+                            current_insert_columns_ = saved_insert_columns;
 
                             for (const auto& assign : on_conflict.update_assignments)
                             {
@@ -11457,6 +11606,7 @@ namespace scratchbird
                 Kind kind = Kind::EXPR;
                 size_t expr_start = 0;
                 size_t expr_end = 0;
+                bool has_aggregate = false;
                 std::string alias;
                 core::ID table_id{};
                 std::string table_name;
@@ -11810,20 +11960,7 @@ namespace scratchbird
                 combined_columns_template = tables[0].columns;
 
                 auto append_columns = [&](const std::vector<core::CatalogManager::ColumnInfo>& cols) {
-                    std::unordered_set<std::string> existing;
-                    existing.reserve(combined_columns_template.size() + cols.size());
-                    for (const auto& col : combined_columns_template)
-                    {
-                        existing.insert(col.column_name);
-                    }
-                    for (const auto& col : cols)
-                    {
-                        if (existing.count(col.column_name) != 0)
-                        {
-                            error("Ambiguous column name in join: " + col.column_name);
-                        }
-                        combined_columns_template.push_back(col);
-                    }
+                    combined_columns_template.insert(combined_columns_template.end(), cols.begin(), cols.end());
                 };
 
                 size_t table_index = 1;
@@ -11865,20 +12002,7 @@ namespace scratchbird
                 std::vector<std::vector<Value>> combined_rows = tables[0].rows;
 
                 auto append_columns = [&](const std::vector<core::CatalogManager::ColumnInfo>& cols) {
-                    std::unordered_set<std::string> existing;
-                    existing.reserve(combined_columns.size() + cols.size());
-                    for (const auto& col : combined_columns)
-                    {
-                        existing.insert(col.column_name);
-                    }
-                    for (const auto& col : cols)
-                    {
-                        if (existing.count(col.column_name) != 0)
-                        {
-                            error("Ambiguous column name in join: " + col.column_name);
-                        }
-                        combined_columns.push_back(col);
-                    }
+                    combined_columns.insert(combined_columns.end(), cols.begin(), cols.end());
                 };
 
                 size_t table_index = 1;
@@ -12752,6 +12876,7 @@ namespace scratchbird
                 Kind kind = Kind::EXPR;
                 size_t expr_start = 0;
                 size_t expr_end = 0;
+                bool has_aggregate = false;
                 std::string alias;
                 core::ID table_id{};
                 std::string table_name;
@@ -13105,20 +13230,7 @@ namespace scratchbird
                 combined_columns_template = tables[0].columns;
 
                 auto append_columns = [&](const std::vector<core::CatalogManager::ColumnInfo>& cols) {
-                    std::unordered_set<std::string> existing;
-                    existing.reserve(combined_columns_template.size() + cols.size());
-                    for (const auto& col : combined_columns_template)
-                    {
-                        existing.insert(col.column_name);
-                    }
-                    for (const auto& col : cols)
-                    {
-                        if (existing.count(col.column_name) != 0)
-                        {
-                            error("Ambiguous column name in join: " + col.column_name);
-                        }
-                        combined_columns_template.push_back(col);
-                    }
+                    combined_columns_template.insert(combined_columns_template.end(), cols.begin(), cols.end());
                 };
 
                 size_t table_index = 1;
@@ -13160,20 +13272,7 @@ namespace scratchbird
                 std::vector<std::vector<Value>> combined_rows = tables[0].rows;
 
                 auto append_columns = [&](const std::vector<core::CatalogManager::ColumnInfo>& cols) {
-                    std::unordered_set<std::string> existing;
-                    existing.reserve(combined_columns.size() + cols.size());
-                    for (const auto& col : combined_columns)
-                    {
-                        existing.insert(col.column_name);
-                    }
-                    for (const auto& col : cols)
-                    {
-                        if (existing.count(col.column_name) != 0)
-                        {
-                            error("Ambiguous column name in join: " + col.column_name);
-                        }
-                        combined_columns.push_back(col);
-                    }
+                    combined_columns.insert(combined_columns.end(), cols.begin(), cols.end());
                 };
 
                 size_t table_index = 1;
@@ -14081,6 +14180,11 @@ namespace scratchbird
             if (val.isNull() && func != AggFunc::COUNT && func != AggFunc::ARRAY_AGG)
                 return;
 
+            if (!val.isNull() && input_type == core::DataType::UNKNOWN)
+            {
+                input_type = val.type();
+            }
+
             // Handle DISTINCT
             if (distinct)
             {
@@ -14088,6 +14192,11 @@ namespace scratchbird
                 if (distinct_values.find(key) != distinct_values.end())
                     return; // Already seen this value
                 distinct_values.insert(key);
+            }
+
+            if ((func == AggFunc::SUM || func == AggFunc::AVG) && isIntegerType(val.type()))
+            {
+                int_sum += static_cast<core::int128_t>(val.toInt64());
             }
 
             switch (func)
@@ -14232,7 +14341,16 @@ namespace scratchbird
                     return count > 0 ? Value::makeFloat64(sum) : Value::makeNull();
 
                 case AggFunc::AVG:
-                    return count > 0 ? Value::makeFloat64(sum / count) : Value::makeNull();
+                    if (count == 0)
+                    {
+                        return Value::makeNull();
+                    }
+                    if (isIntegerType(input_type))
+                    {
+                        core::int128_t avg = int_sum / static_cast<core::int128_t>(count);
+                        return Value::makeInt64(static_cast<int64_t>(avg));
+                    }
+                    return Value::makeFloat64(sum / count);
 
                 case AggFunc::MIN:
                 case AggFunc::MAX:
@@ -14550,6 +14668,8 @@ namespace scratchbird
             }
 
             size_t saved_pc = pc_;
+            const auto* saved_row_values = current_row_values_;
+            const auto* saved_row_columns = current_row_columns_;
 
             // Scan all rows and accumulate
             core::Tuple tuple;
@@ -14562,26 +14682,39 @@ namespace scratchbird
                     continue;  // Skip malformed tuples
                 }
 
-                // Evaluate the argument expression at the saved PC
                 size_t row_saved_pc = pc_;
-                pc_ = arg_expr_start;
                 current_row_values_ = &row_values;
                 current_row_columns_ = &all_columns;
 
                 try
                 {
+                    if (scalar_aggregate_filter_active_)
+                    {
+                        pc_ = scalar_aggregate_filter_start_;
+                        Value where_val = evaluateExpressionRange(scalar_aggregate_filter_end_);
+                        if (!where_val.toBoolean())
+                        {
+                            current_row_values_ = saved_row_values;
+                            current_row_columns_ = saved_row_columns;
+                            pc_ = row_saved_pc;
+                            continue;
+                        }
+                    }
+
+                    pc_ = arg_expr_start;
                     Value arg_val = evaluateExpressionRange(arg_expr_end);
-                    current_row_values_ = nullptr;
-                    current_row_columns_ = nullptr;
-                    pc_ = row_saved_pc;
 
                     // Accumulate the value
                     accumulator.accumulate(arg_val);
+
+                    current_row_values_ = saved_row_values;
+                    current_row_columns_ = saved_row_columns;
+                    pc_ = row_saved_pc;
                 }
                 catch (...)
                 {
-                    current_row_values_ = nullptr;
-                    current_row_columns_ = nullptr;
+                    current_row_values_ = saved_row_values;
+                    current_row_columns_ = saved_row_columns;
                     pc_ = row_saved_pc;
                     throw;
                 }
@@ -17097,6 +17230,15 @@ namespace scratchbird
             // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive SELECT operation
             checkQueryLimits();
 
+            const std::string saved_table = current_table_;
+            struct TableContextRestore {
+                Executor* exec;
+                std::string table;
+                ~TableContextRestore() {
+                    exec->current_table_ = table;
+                }
+            } table_restore{this, saved_table};
+
             uint8_t flags = readByte();
             bool is_distinct = (flags & 0x01) != 0;
 
@@ -17111,6 +17253,7 @@ namespace scratchbird
                 Kind kind = Kind::EXPR;
                 size_t expr_start = 0;
                 size_t expr_end = 0;
+                bool has_aggregate = false;
                 std::string alias;
                 core::ID table_id{};
                 std::string table_name;
@@ -17142,6 +17285,7 @@ namespace scratchbird
             uint64_t select_count = readUVarint();
             std::vector<SelectItemInfo> select_items;
             select_items.reserve(static_cast<size_t>(select_count));
+            bool select_has_aggregate = false;
 
             for (uint64_t i = 0; i < select_count; ++i)
             {
@@ -17186,8 +17330,21 @@ namespace scratchbird
                 SelectItemInfo item;
                 item.kind = SelectItemInfo::Kind::EXPR;
                 item.expr_start = pc_;
-                item.expr_end = skipExpressionRange(pc_);
+                {
+                    bool prev_active = aggregate_scan_active_;
+                    bool prev_found = aggregate_scan_found_;
+                    aggregate_scan_active_ = true;
+                    aggregate_scan_found_ = false;
+                    item.expr_end = skipExpressionRange(pc_);
+                    item.has_aggregate = aggregate_scan_found_;
+                    aggregate_scan_active_ = prev_active;
+                    aggregate_scan_found_ = prev_found || item.has_aggregate;
+                }
                 item.alias = readString();
+                if (item.has_aggregate)
+                {
+                    select_has_aggregate = true;
+                }
                 select_items.push_back(std::move(item));
             }
 
@@ -17252,6 +17409,30 @@ namespace scratchbird
                 joins.push_back(std::move(join));
             }
 
+            current_table_.clear();
+            if (table_refs.size() == 1 && joins.empty())
+            {
+                const auto& ref = table_refs.front();
+                if (ref.has_uuid)
+                {
+                    core::CatalogManager::TableInfo table_info;
+                    core::ErrorContext table_ctx;
+                    if (db_ && db_->catalog_manager() &&
+                        db_->catalog_manager()->getTable(ref.table_id, table_info, &table_ctx) == core::Status::OK)
+                    {
+                        current_table_ = table_info.table_name;
+                    }
+                    else if (!ref.table_name.empty())
+                    {
+                        current_table_ = ref.table_name;
+                    }
+                }
+                else if (!ref.table_name.empty())
+                {
+                    current_table_ = ref.table_name;
+                }
+            }
+
             size_t where_start_pc = 0;
             size_t where_end_pc = 0;
             bool has_where = false;
@@ -17273,6 +17454,75 @@ namespace scratchbird
                 {
                     has_aggregation = true;
                 }
+            }
+
+            if (!has_aggregation && select_has_aggregate)
+            {
+                if (table_refs.empty())
+                {
+                    error("Aggregate function used without FROM clause");
+                }
+                if (table_refs.size() != 1 || !joins.empty())
+                {
+                    error("Aggregation with joins is not supported yet");
+                }
+
+                struct ScalarAggregateFilterGuard
+                {
+                    Executor* exec;
+                    bool prev_active;
+                    size_t prev_start;
+                    size_t prev_end;
+
+                    ScalarAggregateFilterGuard(Executor* e, bool enable, size_t start, size_t end)
+                        : exec(e),
+                          prev_active(e->scalar_aggregate_filter_active_),
+                          prev_start(e->scalar_aggregate_filter_start_),
+                          prev_end(e->scalar_aggregate_filter_end_)
+                    {
+                        exec->scalar_aggregate_filter_active_ = enable;
+                        exec->scalar_aggregate_filter_start_ = start;
+                        exec->scalar_aggregate_filter_end_ = end;
+                    }
+
+                    ~ScalarAggregateFilterGuard()
+                    {
+                        exec->scalar_aggregate_filter_active_ = prev_active;
+                        exec->scalar_aggregate_filter_start_ = prev_start;
+                        exec->scalar_aggregate_filter_end_ = prev_end;
+                    }
+                } filter_guard(this, has_where, where_start_pc, where_end_pc);
+
+                current_result_set_ = std::make_unique<ResultSet>();
+
+                std::vector<Value> row_values;
+                row_values.reserve(select_items.size());
+
+                size_t expr_index = 0;
+                for (const auto& item : select_items)
+                {
+                    if (item.kind != SelectItemInfo::Kind::EXPR)
+                    {
+                        error("SELECT * not supported with aggregation");
+                    }
+
+                    size_t saved_pc = pc_;
+                    pc_ = item.expr_start;
+                    Value value = evaluateExpressionRange(item.expr_end);
+                    pc_ = saved_pc;
+
+                    std::string col_name = item.alias;
+                    if (col_name.empty())
+                    {
+                        col_name = "expr" + std::to_string(expr_index + 1);
+                    }
+                    current_result_set_->addColumn(col_name, value.type());
+                    row_values.push_back(std::move(value));
+                    ++expr_index;
+                }
+
+                current_result_set_->addRow(std::move(row_values));
+                return;
             }
 
             auto normalize_name = [](const std::string& name) {
@@ -17434,6 +17684,62 @@ namespace scratchbird
 
                 std::string table_name = ref.table_name;
                 core::CatalogManager::TableInfo table_info;
+                if (!table_name.empty())
+                {
+                    std::string upper_name = scratchbird::core::IdentifierUtils::toUpper(table_name);
+                    if (upper_name.rfind("MON_", 0) == 0)
+                    {
+                        bool has_star = false;
+                        std::vector<std::pair<std::string, std::string>> projection_items;
+                        for (const auto& item : select_items)
+                        {
+                            if (item.kind == SelectItemInfo::Kind::STAR)
+                            {
+                                has_star = true;
+                                continue;
+                            }
+                            if (item.kind == SelectItemInfo::Kind::TABLE_STAR)
+                            {
+                                error("TABLE.* not supported for monitoring tables");
+                            }
+                            std::string col_name;
+                            if (!infer_simple_column_ref(item.expr_start, item.expr_end, col_name))
+                            {
+                                error("Only column references supported for monitoring tables");
+                            }
+                            std::string alias = item.alias.empty() ? col_name : item.alias;
+                            projection_items.push_back({col_name, alias});
+                        }
+                        executeMonitoringQuery(table_name);
+                        return;
+                    }
+                    if (upper_name == "SYS.CATALOG.OBJECT_RESOLVER")
+                    {
+                        bool has_star = false;
+                        std::vector<std::pair<std::string, std::string>> projection_items;
+                        for (const auto& item : select_items)
+                        {
+                            if (item.kind == SelectItemInfo::Kind::STAR)
+                            {
+                                has_star = true;
+                                continue;
+                            }
+                            if (item.kind == SelectItemInfo::Kind::TABLE_STAR)
+                            {
+                                error("TABLE.* not supported for object resolver");
+                            }
+                            std::string col_name;
+                            if (!infer_simple_column_ref(item.expr_start, item.expr_end, col_name))
+                            {
+                                error("Only column references supported for object resolver");
+                            }
+                            std::string alias = item.alias.empty() ? col_name : item.alias;
+                            projection_items.push_back({col_name, alias});
+                        }
+                        executeObjectResolverQuery(projection_items, has_star);
+                        return;
+                    }
+                }
                 if (ref.has_uuid)
                 {
                     if (db_->catalog_manager()->getTable(table_id, table_info, &err_ctx) != core::Status::OK)
@@ -17508,64 +17814,6 @@ namespace scratchbird
                         }
                         error(err_msg);
                     }
-                }
-
-                // Check if this is a monitoring/system table (MON_ prefix)
-                if (!table_name.empty() && table_name.size() >= 4 &&
-                    table_name.substr(0, 4) == "MON_")
-                {
-                    bool has_star = false;
-                    std::vector<std::pair<std::string, std::string>> projection_items;
-                    for (const auto& item : select_items)
-                    {
-                        if (item.kind == SelectItemInfo::Kind::STAR)
-                        {
-                            has_star = true;
-                            continue;
-                        }
-                        if (item.kind == SelectItemInfo::Kind::TABLE_STAR)
-                        {
-                            error("TABLE.* not supported for monitoring tables");
-                        }
-                        std::string col_name;
-                        if (!infer_simple_column_ref(item.expr_start, item.expr_end, col_name))
-                        {
-                            error("Only column references supported for monitoring tables");
-                        }
-                        std::string alias = item.alias.empty() ? col_name : item.alias;
-                        projection_items.push_back({col_name, alias});
-                    }
-                    executeMonitoringQuery(table_name);
-                    return;
-                }
-
-                if (!table_name.empty() &&
-                    scratchbird::core::IdentifierUtils::toUpper(table_name) ==
-                        "SYS.CATALOG.OBJECT_RESOLVER")
-                {
-                    bool has_star = false;
-                    std::vector<std::pair<std::string, std::string>> projection_items;
-                    for (const auto& item : select_items)
-                    {
-                        if (item.kind == SelectItemInfo::Kind::STAR)
-                        {
-                            has_star = true;
-                            continue;
-                        }
-                        if (item.kind == SelectItemInfo::Kind::TABLE_STAR)
-                        {
-                            error("TABLE.* not supported for object resolver");
-                        }
-                        std::string col_name;
-                        if (!infer_simple_column_ref(item.expr_start, item.expr_end, col_name))
-                        {
-                            error("Only column references supported for object resolver");
-                        }
-                        std::string alias = item.alias.empty() ? col_name : item.alias;
-                        projection_items.push_back({col_name, alias});
-                    }
-                    executeObjectResolverQuery(projection_items, has_star);
-                    return;
                 }
 
                 if (!table_name.empty())
@@ -17919,20 +18167,7 @@ namespace scratchbird
                 combined_rows = tables[0].rows;
 
                 auto append_columns = [&](const std::vector<core::CatalogManager::ColumnInfo>& cols) {
-                    std::unordered_set<std::string> existing;
-                    existing.reserve(combined_columns.size() + cols.size());
-                    for (const auto& col : combined_columns)
-                    {
-                        existing.insert(col.column_name);
-                    }
-                    for (const auto& col : cols)
-                    {
-                        if (existing.count(col.column_name) != 0)
-                        {
-                            error("Ambiguous column name in join: " + col.column_name);
-                        }
-                        combined_columns.push_back(col);
-                    }
+                    combined_columns.insert(combined_columns.end(), cols.begin(), cols.end());
                 };
 
                 size_t table_index = 1;
@@ -21420,6 +21655,26 @@ namespace scratchbird
                     {
                         Value operand = pop();
                         push(Value::makeBoolean(operand.isNull()));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_INSERTED_COLUMN_REF))
+                    {
+                        std::string col_name = readString();
+                        if (!current_insert_values_ || !current_insert_columns_)
+                        {
+                            error("VALUES() reference outside of INSERT context");
+                        }
+
+                        auto it = std::find_if(current_insert_columns_->begin(),
+                                               current_insert_columns_->end(), [&col_name](const auto& c)
+                                               { return c.column_name == col_name; });
+
+                        if (it == current_insert_columns_->end())
+                        {
+                            error("Column not found in INSERT row: " + col_name);
+                        }
+
+                        size_t col_idx = std::distance(current_insert_columns_->begin(), it);
+                        push((*current_insert_values_)[col_idx]);
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LIKE_ESCAPE) ||
                              ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE))
@@ -27897,6 +28152,37 @@ namespace scratchbird
 
                 return isExpressionOpcode(op);
             }
+
+            bool isAggregateOpcode(Opcode op)
+            {
+                switch (op)
+                {
+                    case Opcode::AGG_SUM:
+                    case Opcode::AGG_AVG:
+                    case Opcode::AGG_MIN:
+                    case Opcode::AGG_MAX:
+                    case Opcode::AGG_COUNT:
+                    case Opcode::AGG_STDDEV_SAMP:
+                    case Opcode::AGG_STDDEV_POP:
+                    case Opcode::AGG_VAR_SAMP:
+                    case Opcode::AGG_VAR_POP:
+                    case Opcode::AGG_CORR:
+                    case Opcode::AGG_COVAR_POP:
+                    case Opcode::AGG_REGR_SLOPE:
+                    case Opcode::AGG_REGR_INTERCEPT:
+                    case Opcode::AGG_REGR_COUNT:
+                    case Opcode::AGG_REGR_R2:
+                    case Opcode::AGG_REGR_AVGX:
+                    case Opcode::AGG_REGR_AVGY:
+                    case Opcode::AGG_REGR_SXX:
+                    case Opcode::AGG_REGR_SYY:
+                    case Opcode::AGG_REGR_SXY:
+                    case Opcode::ARRAY_AGG:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
         } // namespace
 
         Value Executor::evaluateExpressionRange(size_t end_pc)
@@ -32176,6 +32462,109 @@ namespace scratchbird
         {
             std::string var_name = readString();
             std::string normalized = scratchbird::core::IdentifierUtils::toUpper(var_name);
+
+            auto readSingleStringValue = [&](bool& default_requested) -> std::string {
+                if (pc_ >= bytecode_size_)
+                {
+                    error("Missing SET parser payload");
+                }
+
+                uint8_t next = bytecode_[pc_];
+                if (next == 0 || next == 1)
+                {
+                    uint8_t marker = readByte();
+                    if (marker == 0)
+                    {
+                        default_requested = true;
+                        return {};
+                    }
+
+                    evaluateExpression();
+                    Value v = pop();
+                    if (v.isNull())
+                    {
+                        default_requested = true;
+                        return {};
+                    }
+                    auto type = v.type();
+                    if (type != core::DataType::VARCHAR &&
+                        type != core::DataType::TEXT &&
+                        type != core::DataType::CHAR)
+                    {
+                        error("parser value must be a string");
+                    }
+                    return v.toString();
+                }
+                if (next == static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                {
+                    error("SET PARSER does not accept list values");
+                }
+                if (next == static_cast<uint8_t>(Opcode::LITERAL_NULL))
+                {
+                    readByte();
+                    default_requested = true;
+                    return {};
+                }
+
+                evaluateExpression();
+                Value v = pop();
+                if (v.isNull())
+                {
+                    default_requested = true;
+                    return {};
+                }
+                auto type = v.type();
+                if (type != core::DataType::VARCHAR &&
+                    type != core::DataType::TEXT &&
+                    type != core::DataType::CHAR)
+                {
+                    error("parser value must be a string");
+                }
+                return v.toString();
+            };
+
+            if (normalized == "PARSER")
+            {
+                if (!conn_ctx_)
+                {
+                    error("SET parser requires connection context");
+                }
+
+                bool default_requested = false;
+                std::string parser_value = readSingleStringValue(default_requested);
+
+                if (default_requested || parser_value.empty())
+                {
+                    conn_ctx_->set_dialect_tag("SCRATCHBIRD");
+                    return;
+                }
+
+                std::string upper = scratchbird::core::IdentifierUtils::toUpper(parser_value);
+                std::string parser_tag;
+                if (upper == "SCRATCHBIRD" || upper == "V2" || upper == "AUTO")
+                {
+                    parser_tag = "SCRATCHBIRD";
+                }
+                else if (upper == "FIREBIRD" || upper == "FIREBIRDSQL" || upper == "FB")
+                {
+                    parser_tag = "FIREBIRD";
+                }
+                else if (upper == "POSTGRESQL" || upper == "POSTGRES" || upper == "PG")
+                {
+                    parser_tag = "POSTGRESQL";
+                }
+                else if (upper == "MYSQL")
+                {
+                    parser_tag = "MYSQL";
+                }
+                else
+                {
+                    error("Unknown parser: " + parser_value);
+                }
+
+                conn_ctx_->set_dialect_tag(parser_tag);
+                return;
+            }
 
             if (normalized != "SEARCH_PATH")
             {

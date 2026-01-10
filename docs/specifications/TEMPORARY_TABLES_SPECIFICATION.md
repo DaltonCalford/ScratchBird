@@ -125,7 +125,7 @@ Rules:
 ## 8. Storage, Logging, and Replication
 
 - Temporary table data MUST be stored outside the main durable data path.
-- Temporary table data MUST NOT be written to WAL in core execution.
+- Temporary table data MUST NOT be written to the optional write-after log stream.
 - Temporary table data MUST NOT be included in replication streams by default.
 - Temporary table data MUST NOT be included in full backups unless explicitly
   configured for diagnostic use.
@@ -271,6 +271,6 @@ SELECT * FROM my_temp;        -- should fail
 - SBLR: encode temp flags in CREATE_TABLE payload.
 - Catalog: persist metadata, enforce visibility, store temp scopes.
 - Executor: enforce lifecycle and cleanup on commit/rollback/disconnect.
-- Storage: use temp tablespace or in-memory storage, no WAL.
+- Storage: use temp tablespace or in-memory storage, no write-after log.
 - Replication: exclude temp tables by default.
 - Tests: implement and run cases in Section 13.

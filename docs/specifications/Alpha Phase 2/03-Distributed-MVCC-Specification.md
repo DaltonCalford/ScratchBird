@@ -529,8 +529,8 @@ int storage_insert_version(RowVersion* version) {
     uint64_t ts = uuid_v7_extract_timestamp_ns(version->row_uuid);
     timestamp_index_insert(&gc_index, ts, version->row_uuid);
     
-    // 4. Write to persistent storage (WAL)
-    wal_append(version);
+    // 4. Persist version (data pages; optional write-after log stream)
+    write_after_log_append(version);  // no-op until post-gold
     
     return STORAGE_OK;
 }

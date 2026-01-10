@@ -10,9 +10,10 @@
 
 ## Overview
 
-This directory contains Alpha Phase 2 technical specifications for a distributed, multi-dialect SQL database engine. The system provides wire protocol compatibility with PostgreSQL, MySQL, MSSQL, and Firebird while implementing a modern three-tier architecture for optimal OLTP and OLAP performance.
+This directory contains Alpha Phase 2 technical specifications for a distributed, multi-dialect SQL database engine. The system provides wire protocol compatibility with PostgreSQL, MySQL, and Firebird (MSSQL/TDS post-gold) while implementing a modern three-tier architecture for optimal OLTP and OLAP performance.
 
 **Note:** These specifications represent an alternative architectural approach to distributed operation. The primary cluster architecture for Beta is documented in [Cluster Specification Work](../Cluster%20Specification%20Work/).
+**Scope Note:** MSSQL/TDS support is deferred until after the project goes gold; mentions here are forward-looking.
 
 ---
 
@@ -36,7 +37,7 @@ Complete MVCC implementation using UUID v7 versioning, transaction lifecycle, co
 Asynchronous replication from TX engines to Ingestion tier, change data capture format, conflict detection/resolution, and OLAP batch building. Essential for multi-tier data flow.
 
 **[05-Wire-Protocol-Integration-Specification.md](./05-Wire-Protocol-Integration-Specification.md)**  
-Wire protocol handlers for PostgreSQL, MySQL, MSSQL, and Firebird. Parser plugin API, authentication integration, system catalog virtualization, and session management.
+Wire protocol handlers for PostgreSQL, MySQL, and Firebird (MSSQL/TDS post-gold). Parser plugin API, authentication integration, system catalog virtualization, and session management.
 
 ### Data Tier Components
 
@@ -60,13 +61,13 @@ Prometheus metrics by component, alerting rules (latency, lag, conflicts, clock 
 UDR (User Defined Routine) plugin architecture inspired by Firebird, plugin lifecycle management, function/procedure/trigger support, message buffers and type system, memory management and safety, security sandboxing, and example implementations.
 
 **[11-Remote-Database-UDR-Specification.md](./11-Remote-Database-UDR-Specification.md)** *(NEW)*  
-Remote database connection plugin for zero-downtime migration, foreign table support (Foreign Data Wrapper pattern), protocol adapters (PostgreSQL, MySQL, MSSQL, Firebird clients), connection pool management, query pushdown optimization, schema introspection, and hybrid query execution.
+Remote database connection plugin for zero-downtime migration, foreign table support (Foreign Data Wrapper pattern), protocol adapters (PostgreSQL, MySQL, Firebird clients; MSSQL post-gold), connection pool management, query pushdown optimization, schema introspection, and hybrid query execution.
 
 **Protocol Adapter Implementations:**
 - [11a-Connection-Pool-Implementation.md](./11a-Connection-Pool-Implementation.md) - Connection pooling system
 - [11b-PostgreSQL-Client-Implementation.md](./11b-PostgreSQL-Client-Implementation.md) - PostgreSQL adapter (libpq)
 - [11c-MySQL-Client-Implementation.md](./11c-MySQL-Client-Implementation.md) - MySQL adapter (libmysqlclient)
-- [11d-MSSQL-Client-Implementation.md](./11d-MSSQL-Client-Implementation.md) - MSSQL adapter (FreeTDS)
+- [11d-MSSQL-Client-Implementation.md](./11d-MSSQL-Client-Implementation.md) - MSSQL adapter (FreeTDS, post-gold)
 - [11e-Firebird-Client-Implementation.md](./11e-Firebird-Client-Implementation.md) - Firebird adapter (fbclient)
 
 ---
@@ -79,7 +80,7 @@ Remote database connection plugin for zero-downtime migration, foreign table sup
 2. [Architecture Overview](./01-Architecture-Overview.md) - System Overview, Deployment Topologies
 
 **Key takeaways:**
-- Drop-in replacement for major databases (PostgreSQL, MySQL, MSSQL, Firebird)
+- Drop-in replacement for major databases (PostgreSQL, MySQL, Firebird; MSSQL post-gold)
 - Three-tier architecture separates OLTP and OLAP workloads
 - 12-month implementation timeline in 4 phases
 - Scales horizontally to 100+ nodes
@@ -141,7 +142,7 @@ Remote database connection plugin for zero-downtime migration, foreign table sup
 **Implementation focus:**
 - PostgreSQL wire protocol (startup, auth, query flow)
 - MySQL wire protocol (handshake, COM_QUERY, prepared statements)
-- MSSQL TDS protocol (LOGIN7, SQL Batch)
+- MSSQL TDS protocol (LOGIN7, SQL Batch, post-gold)
 - Firebird protocol (op_connect, op_execute)
 - Parser plugin API and hot-swapping
 
@@ -229,7 +230,7 @@ Each protocol runs in a dedicated process with its own parser:
 ```
 PostgreSQL (5432) → Parser Plugin → Bytecode → Engine
 MySQL (3306)      → Parser Plugin → Bytecode → Engine
-MSSQL (1433)      → Parser Plugin → Bytecode → Engine
+MSSQL (1433, post-gold) → Parser Plugin → Bytecode → Engine
 Firebird (3050)   → Parser Plugin → Bytecode → Engine
 ```
 
@@ -450,7 +451,7 @@ storage:
 **Protocol Compliance:**
 - PostgreSQL (psycopg2, libpq)
 - MySQL (mysql-connector)
-- MSSQL (pymssql)
+- MSSQL (pymssql, post-gold)
 - Firebird (fdb)
 
 **Performance Benchmarks:**

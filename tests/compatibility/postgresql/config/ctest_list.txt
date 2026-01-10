@@ -1,0 +1,9 @@
+# PostgreSQL compatibility CTest list
+# Paths are relative to tests/compatibility/postgresql/converted
+# Use SCRATCHBIRD_PG_COMPAT_RUN=1 to enable.
+
+core/select.sql
+core/insert.sql
+core/update.sql
+core/delete.sql
+core/join.sql

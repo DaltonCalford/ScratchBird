@@ -8,6 +8,8 @@ The ScratchBird ODBC driver provides standard ODBC connectivity for:
 1. **Client Applications** connecting TO ScratchBird databases
 2. **ScratchBird Foreign Tables** connecting FROM ScratchBird to external databases (MSSQL, Oracle, DB2, etc.)
 
+**Scope Note:** MSSQL external connectivity is post-gold; MSSQL examples are forward-looking.
+
 ### 1.2 ODBC Version
 
 - **ODBC 3.8** compliance (with ODBC 3.52 backwards compatibility)
@@ -532,7 +534,7 @@ SELECT * FROM mssql_schema.Customers WHERE region = 'EMEA';
 
 | Database | ODBC Driver | Notes |
 |----------|-------------|-------|
-| SQL Server | ODBC Driver 17/18 | Full support |
+| SQL Server | ODBC Driver 17/18 | Planned (post-gold) |
 | Oracle | Oracle Instant Client | Full support |
 | DB2 | IBM DB2 ODBC Driver | Full support |
 | Teradata | Teradata ODBC Driver | Full support |
@@ -551,7 +553,7 @@ The `odbc_fdw` supports pushdown of:
 - JOINs between tables on same server
 
 ```sql
--- This query pushes most operations to SQL Server
+-- This query pushes most operations to SQL Server (post-gold)
 SELECT region, COUNT(*), SUM(revenue)
 FROM mssql_schema.Orders
 WHERE order_date >= '2024-01-01'

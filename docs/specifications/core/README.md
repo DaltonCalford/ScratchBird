@@ -8,6 +8,8 @@ This directory contains core system specifications for ScratchBird's internal ar
 
 The core system specifications define the fundamental architecture, internal APIs, thread safety models, and critical infrastructure that underlies all other ScratchBird components.
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## Specifications in this Directory
 
 ### Architecture & Infrastructure

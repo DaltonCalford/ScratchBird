@@ -1,5 +1,7 @@
 # ScratchBird Replication and Shadow Database Specifications
 
+**Scope Note:** ScratchBird uses MGA and does not use WAL for recovery. References to WAL here describe an optional write-after log stream for replication/PITR (post-gold).
+
 ## Shadow Database (Physical/Block-Level Replication)
 
 ### Overview
@@ -64,7 +66,7 @@ Channel 1: Page-Level Replication (Primary)
   - May lag during high load
   - Typically every few seconds
 
-Channel 2: WAL Streaming (Gap Protection)
+Channel 2: Write-after log (WAL) Streaming (Gap Protection)
   - Continuous streaming via Kafka/MQ
   - Sub-second latency
   - Smaller packets (not constrained by page size)
@@ -75,7 +77,7 @@ Channel 2: WAL Streaming (Gap Protection)
 ```
 1. Page Change Detection:
    Primary -> Dirty page -> Queue for replication
-   Primary -> WAL record -> Stream to Kafka immediately
+   Primary -> write-after log (WAL) record -> Stream to Kafka immediately
 
 2. Dual Transmission:
    Page Channel (TCP):
@@ -89,36 +91,36 @@ Channel 2: WAL Streaming (Gap Protection)
        - Raw page bytes
        - Page-level checksum
    
-   WAL Channel (Kafka):
-     [WAL Packet: Variable size]
+   Write-after Log (WAL) Channel (Kafka):
+     [Write-after Log (WAL) Packet: Variable size]
        - Magic: "SWAL"
        - Source DB UUID
        - LSN
        - Transaction ID
-       - WAL record type
-       - WAL payload (can be < 1KB)
+      - Write-after log (WAL) record type
+      - Write-after log (WAL) payload (can be < 1KB)
        - Checksum
 
 3. Shadow Processing:
    Page Apply: Write to exact file position
-   WAL Buffer: Store in memory/persistent queue
+   Write-after Log (WAL) Buffer: Store in memory/persistent queue
    
 4. Gap Detection and Recovery:
    If (WAL_LSN > Page_LSN):
      - Pages are behind
-     - Keep WAL records for replay
+     - Keep write-after log (WAL) records for replay
    If (Page_LSN >= WAL_LSN):
      - Pages are current
-     - Discard old WAL records
+     - Discard old write-after log (WAL) records
 
 5. Promotion with Gap Recovery:
    - Stop page reception
-   - Apply all buffered WAL records
+   - Apply all buffered write-after log (WAL) records
    - Verify no gaps in LSN sequence
    - Promote to primary
 ```
 
-#### WAL Streaming via Kafka
+#### Write-after log (WAL) Streaming via Kafka
 
 ##### Kafka Topic Structure
 ```
@@ -136,10 +138,10 @@ Message Format:
     - timestamp
     - transaction_id
     - table_uuid (if applicable)
-  Value: Serialized WAL record
+  Value: Serialized write-after log (WAL) record
 ```
 
-##### WAL Packet Types
+##### Write-after log (WAL) Packet Types
 ```
 1. Transaction Boundaries:
    - BEGIN (xid, timestamp)
@@ -167,16 +169,16 @@ Message Format:
 ##### Scenario 1: Primary Crash with Unflushed Pages
 ```
 Timeline:
-  T1: Transaction commits, WAL written
-  T2: WAL streamed to Kafka
-  T3: Shadow receives WAL via Kafka
+  T1: Transaction commits, write-after log (WAL) written
+  T2: Write-after log (WAL) streamed to Kafka
+  T3: Shadow receives write-after log (WAL) via Kafka
   T4: Page not yet flushed to disk
   T5: Primary crashes
   T6: Page replication never happens
 
 Recovery:
-  - Shadow has WAL records via Kafka
-  - On promotion, replay WAL from last page LSN
+  - Shadow has write-after log (WAL) records via Kafka
+  - On promotion, replay write-after log (WAL) from last page LSN
   - Reconstructs missing page changes
   - Zero data loss achieved
 ```
@@ -186,12 +188,12 @@ Recovery:
 Timeline:
   T1: Network partition begins
   T2: Page replication fails (TCP timeout)
-  T3: WAL continues via Kafka (different path/broker)
+  T3: Write-after log (WAL) continues via Kafka (different path/broker)
   T4: Partition heals
   T5: Page replication resumes
 
 Recovery:
-  - WAL records fill the gap
+  - Write-after log (WAL) records fill the gap
   - Page replication catches up
   - No promotion needed
 ```
@@ -199,7 +201,7 @@ Recovery:
 ##### Scenario 3: Kafka Failure
 ```
 Fallback:
-  - Direct WAL streaming over TCP
+  - Direct write-after log (WAL) streaming over TCP
   - Store-and-forward to local disk
   - Replay when Kafka recovers
   - Page replication continues normally
@@ -220,14 +222,14 @@ shadow.sbd.shadow   - Shadow-specific metadata
 
 ##### Zero Data Loss (RPO=0)
 ```
-Without WAL Streaming:
+Without Write-after Log (WAL) Streaming:
   - Last page flush: LSN 1000
   - Current LSN: 1050
   - Potential loss: 50 transactions
 
-With WAL Streaming:
+With Write-after Log (WAL) Streaming:
   - Last page flush: LSN 1000
-  - WAL buffer has: LSN 1001-1050
+  - Write-after log (WAL) buffer has: LSN 1001-1050
   - Data loss: 0 transactions
 ```
 
@@ -239,7 +241,7 @@ Traditional Shadow:
   - Manual intervention needed
 
 Dual-Channel Shadow:
-  - Apply buffered WAL immediately
+  - Apply buffered write-after log (WAL) immediately
   - Automatic gap detection
   - Self-healing on promotion
 ```
@@ -251,7 +253,7 @@ Page Replication:
   - Batched for efficiency
   - Higher latency acceptable
 
-WAL Streaming:
+Write-after Log (WAL) Streaming:
   - Single row update: ~100 bytes
   - Immediate transmission
   - Optimized for small changes
@@ -272,7 +274,7 @@ CREATE SHADOW ha_shadow
     kafka_brokers = 'kafka1:9092,kafka2:9092',
     kafka_topic = 'scratchbird.wal.prod',
     kafka_compression = 'LZ4',
-    wal_buffer_size = '1GB',      -- Buffer up to 1GB of WAL
+    wal_buffer_size = '1GB',      -- Buffer up to 1GB of write-after log (WAL)
     
     sync_mode = 'ASYNC',          -- Don't wait for shadow ACK
     max_lag = '10MB'              -- Alert if > 10MB behind
@@ -292,7 +294,7 @@ CREATE SHADOW dr_shadow
     wal_channel = 'KAFKA',
     kafka_brokers = 'dr-kafka:9092',
     kafka_topic = 'scratchbird.wal.dr',
-    kafka_retention = '72h',      -- Keep 3 days of WAL
+    kafka_retention = '72h',      -- Keep 3 days of write-after log (WAL)
     
     sync_mode = 'ASYNC',
     max_lag = '100MB'             -- Tolerate more lag for DR
@@ -308,7 +310,7 @@ CREATE SHADOW sync_shadow
     page_interval = '100ms',      -- Aggressive page flushing
     
     wal_channel = 'DIRECT_TCP',   -- Skip Kafka for low latency
-    wal_sync = 'SYNC',            -- Wait for WAL acknowledgment
+    wal_sync = 'SYNC',            -- Wait for write-after log (WAL) acknowledgment
     
     sync_mode = 'SYNC',           -- Transaction waits for shadow
     sync_timeout = '5s',          -- Fail transaction if no ACK
@@ -440,7 +442,7 @@ Slot = {
   Plugin: "scratchbird_output"
   LSN: Current position
   Active: true/false
-  Retained_WAL_Size: bytes
+  Retained_Write_after_Log_Size: bytes
 }
 ```
 

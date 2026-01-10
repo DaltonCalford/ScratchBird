@@ -41649,7 +41649,7 @@ Cannot change difference file name while database is in backup mode
 
 wal\_backup\_err
 
-Physical backup is not allowed while Write-Ahead Log is in use
+Physical backup is not allowed while write-after log (WAL) is in use
 
 \-904
 

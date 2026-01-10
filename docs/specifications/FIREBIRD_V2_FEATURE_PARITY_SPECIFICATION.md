@@ -647,7 +647,7 @@ void onRollback() {
 **Phase 6: Storage**
 - Session/transaction temp tables: Use in-memory storage OR separate temp tablespace
 - Do NOT persist to main storage engine
-- Do NOT write to WAL (optional optimization)
+- Do NOT write to the optional write-after log stream
 
 #### Testing Requirements
 
@@ -723,11 +723,13 @@ CREATE UNLOGGED TABLE test (id INT);  -- Creates normal logged table
 
 #### What UNLOGGED Tables Should Do
 
-**Purpose:** Optimize performance by skipping WAL writes
+**Purpose:** Optimize performance by skipping optional write-after log writes
 
-**Characteristics:**
-- NOT written to Write-Ahead Log (WAL)
-- Faster INSERT/UPDATE/DELETE (no WAL overhead)
+**MGA Note:** ScratchBird does not use WAL for recovery, so UNLOGGED tables are effectively identical to regular tables today. If a write-after log (WAL) is introduced later (replication/PITR), UNLOGGED tables can bypass that stream.
+
+**Characteristics (PostgreSQL semantics):**
+- NOT written to write-after log (WAL, optional)
+- Faster INSERT/UPDATE/DELETE (no write-after log overhead)
 - NOT crash-safe (truncated on crash recovery)
 - Use case: Temporary data, staging tables, caches
 
@@ -735,8 +737,8 @@ CREATE UNLOGGED TABLE test (id INT);  -- Creates normal logged table
 
 1. **Bytecode Extension:** Add `unlogged` flag to CREATE_TABLE opcode
 2. **Catalog Storage:** Store `is_unlogged` flag in table metadata
-3. **Storage Engine:** Skip WAL writes for unlogged tables
-4. **Crash Recovery:** Truncate unlogged tables on database restart after crash
+3. **Storage Engine:** Skip write-after log (if introduced)
+4. **Crash Recovery:** Truncate unlogged tables only if a write-after log durability path exists
 
 **Priority:** 🟡 **MEDIUM** - Performance feature, not critical for correctness
 
@@ -1237,11 +1239,11 @@ SELECT RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION') FROM RDB$DATABASE;  -- FAILS
 - [ ] Implement executor support for PSQL opcodes
 
 ### Medium Priority (Other Parsed-But-Not-Implemented Features)
-- [ ] **UNLOGGED TABLES** - Implement WAL bypass for performance
+- [ ] **UNLOGGED TABLES** - Implement write-after log bypass for performance
   - [ ] Emit unlogged flag in bytecode
   - [ ] Store in catalog metadata
-  - [ ] Skip WAL writes in storage engine
-  - [ ] Truncate unlogged tables on crash recovery
+  - [ ] Skip write-after log writes in storage engine
+  - [ ] Truncate unlogged tables on crash recovery if write-after log durability is introduced
 - [ ] **WITH CHECK OPTION** (views) - Enforce view constraints on INSERT/UPDATE
   - [ ] Emit WITH CHECK OPTION flags to bytecode
   - [ ] Store in view metadata
@@ -1286,4 +1288,3 @@ SELECT RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION') FROM RDB$DATABASE;  -- FAILS
 
 **End of Specification**
 **Next Steps:** Prioritize fixes, assign implementation tasks, create GitHub issues
-

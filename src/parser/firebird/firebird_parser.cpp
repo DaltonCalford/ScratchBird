@@ -219,6 +219,7 @@ bool Parser::isNonReservedKeyword() const {
         case TokenType::KW_FIRST:
         case TokenType::KW_SKIP:
         case TokenType::KW_COUNT:
+        case TokenType::KW_AVG:
         case TokenType::KW_SUM:
         case TokenType::KW_KEY:
         case TokenType::KW_LEVEL:
@@ -2594,6 +2595,9 @@ Statement* Parser::parseSelectStatement() {
                check(TokenType::KW_NATURAL)) {
             auto* join = parseJoinClause();
             if (join) {
+                if (!join->left) {
+                    join->left = stmt->from;
+                }
                 stmt->joins.push_back(join);
             }
         }

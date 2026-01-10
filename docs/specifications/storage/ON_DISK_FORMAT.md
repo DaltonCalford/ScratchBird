@@ -1,6 +1,8 @@
 # ScratchBird On-Disk Format Specification
 ## AUTHORITATIVE - This defines the exact byte-level format
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ### Version History
 - v1.0.0 - Initial specification for Alpha 1.01
 - v1.1.0 - Stage 1.1: Added 64KB/128KB page support with extended structures
@@ -37,7 +39,7 @@ typedef struct PageHeader {
     uint32_t checksum;        // 0x0C: CRC32C of bytes [0x10..page_size)
     
     // Location (16 bytes)
-    uint64_t lsn;            // 0x10: Log Sequence Number (0 if no WAL)
+    uint64_t lsn;            // 0x10: Log Sequence Number (0 if no write-after log)
     uint32_t page_id;        // 0x18: Page number in file (0-based)
     uint32_t flags;          // 0x1C: Page-specific flags
     
@@ -122,7 +124,7 @@ typedef struct DatabaseHeader {
     
     // Configuration (32 bytes)
     uint32_t block_size;         // Must match page_header.page_size
-    uint32_t wal_level;          // WAL level (0=none for Alpha)
+    uint32_t wal_level;          // write-after log (WAL) level (0=none for Alpha)
     uint32_t max_connections;    // Maximum connections
     uint32_t encoding;           // Database encoding (UTF8=1)
     uint32_t locale;             // Locale ID
@@ -343,7 +345,7 @@ Every page operation MUST:
    - Update generation number
    - Recalculate checksum
    - Set dirty flag
-   - Update LSN (when WAL enabled)
+   - Update LSN (when write-after log (WAL) enabled)
 
 3. **Error Handling**:
    ```c

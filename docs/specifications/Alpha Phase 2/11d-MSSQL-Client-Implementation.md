@@ -1,5 +1,7 @@
 # MS SQL Server Client Implementation
 
+**Scope Note:** MSSQL/TDS adapter work is deferred until after the project goes gold. This document is retained for future compatibility work.
+
 MS SQL Server (TDS protocol) client adapter for Remote Database UDR.
 
 **See**: [11-Remote-Database-UDR-Specification.md](11-Remote-Database-UDR-Specification.md) for overview.

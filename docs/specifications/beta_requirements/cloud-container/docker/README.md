@@ -315,9 +315,10 @@ SCRATCHBIRD_EFFECTIVE_CACHE_SIZE=4GB  # Planner cache size hint
 SCRATCHBIRD_WORK_MEM=4MB              # Working memory per query
 SCRATCHBIRD_MAINTENANCE_WORK_MEM=64MB # Maintenance operations memory
 
-# WAL and checkpointing
-SCRATCHBIRD_WAL_LEVEL=replica         # WAL level (minimal, replica, logical)
-SCRATCHBIRD_MAX_WAL_SIZE=1GB          # Maximum WAL size
+# Write-after log (WAL) and checkpointing (optional, post-gold)
+# Note: MGA does not use write-after log (WAL) for recovery; these settings are reserved for future replication/PITR.
+SCRATCHBIRD_WAL_LEVEL=replica         # write-after log (WAL) level (minimal, replica, logical)
+SCRATCHBIRD_MAX_WAL_SIZE=1GB          # Maximum write-after log (WAL) size
 SCRATCHBIRD_CHECKPOINT_TIMEOUT=5min   # Checkpoint timeout
 
 # Logging

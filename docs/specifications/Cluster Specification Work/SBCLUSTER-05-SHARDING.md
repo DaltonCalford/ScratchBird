@@ -384,7 +384,7 @@ COMMIT;  -- ERROR: Cross-shard transactions not supported
 Each shard maintains its own:
 - **Transaction ID Space**: OAT, OIT, OST (Oldest Active, In-Flight, Snapshot Transactions)
 - **MVCC Versions**: Record versions are shard-local
-- **Write-Ahead Log**: Each shard has its own WAL
+- **Write-after log (WAL)**: Each shard has its own log stream
 - **Snapshot Isolation**: Snapshots are shard-local
 
 ### 6.3 Distributed Queries (Read-Only)

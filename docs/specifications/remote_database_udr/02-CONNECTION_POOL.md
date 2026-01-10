@@ -8,6 +8,8 @@ The Remote Connection Pool manages connections to external databases, providing:
 - Connection lifecycle management
 - Statistics and metrics collection
 
+**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+
 ---
 
 ## 2. Architecture

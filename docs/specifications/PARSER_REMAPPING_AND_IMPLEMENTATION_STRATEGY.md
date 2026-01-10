@@ -405,12 +405,12 @@ These features should be explicitly rejected with clear error messages rather th
 ### 10. UNLOGGED TABLES (PostgreSQL/V2)
 
 **Decision for Alpha:** ❌ **REJECT** with warning
-**Decision for Beta:** ✅ **IMPLEMENT**
+**Decision for Beta:** 🟡 **OPTIONAL** (only if write-after log is introduced)
 
 **Justification:**
 - Performance optimization feature (not core functionality)
-- Complex implementation (WAL bypass, crash recovery)
-- Can defer to Beta without breaking compatibility
+- MGA has no write-after log (WAL), so UNLOGGED semantics are effectively identical to regular tables
+- If a write-after log is introduced later (for replication/PITR), UNLOGGED can bypass it
 - Warning prevents user confusion
 
 **Alpha Implementation:**

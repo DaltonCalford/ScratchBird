@@ -4,6 +4,8 @@
 
 ---
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## IMPLEMENTATION STATUS: COMPLETED
 
 ## **Current Alpha Implementation:**
@@ -436,7 +438,7 @@ void commit_transaction_group(
     // Phase 2: Update TIP for all
     mga_batch_commit(tm->tm_mga_manager, group);
 
-    // Phase 3: Flush WAL once for all
+    // Phase 3: Flush write-after log (WAL) once for all
     flush_wal_for_group(group);
 
     // Phase 4: Release locks for all
@@ -466,7 +468,7 @@ Status execute_read_only_transaction(
 {
     // No locks needed with MGA
     // No TIP updates needed
-    // No WAL needed
+    // No write-after log (WAL) needed
 
     if (rot->rot_distributed) {
         // Use global snapshot for distributed reads

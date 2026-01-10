@@ -35,7 +35,7 @@ This approach resolves the CAP theorem trade-off by applying different consisten
 
 ### 1.3 Related Documents
 
-- `SBCLUSTER-07-REPLICATION.md` - Base per-shard WAL streaming
+- `SBCLUSTER-07-REPLICATION.md` - Base per-shard write-after log (WAL) streaming
 - `SBCLUSTER-05-SHARDING.md` - Shard assignment model
 - `MGA_RULES.md` - Firebird transaction visibility rules
 - Research: `/docs/specifications/reference/UUIDv7 Replication System Design.md`
@@ -148,7 +148,7 @@ Shard Definition:
   range: [start_key, end_key) (partition key hash range)
   replicas: [node_uuid_1, node_uuid_2, node_uuid_3]
   replication_factor: 3 (default)
-  primary: node_uuid_1 (for WAL streaming, optional in leaderless mode)
+  primary: node_uuid_1 (for write-after log (WAL) streaming, optional in leaderless mode)
 ```
 
 **Example 16-Shard Cluster (RF=2):**
@@ -216,7 +216,7 @@ Read Path:
 
 **Mode 1: Primary-Replica (SBCLUSTER-07 existing)**
 - One primary per shard accepts writes
-- Primary streams WAL to replicas
+- Primary streams write-after log (WAL) to replicas
 - Fast, simple, but primary is bottleneck
 - **Use case:** Single-region clusters, simple deployments
 
@@ -272,7 +272,7 @@ Node A       Node B       Node C
    │ 5b. Assign LSN (local log sequence number)
    │ 5c. Generate HLC timestamp (unix_ts + logical_counter)
    │ 5d. Embed HLC in UUIDv7 (record_id)
-   │ 5e. Write to local WAL
+   │ 5e. Write to local write-after log (WAL)
    │ 5f. Write to LSM tree (MemTable)
    │ 5g. Return ACK with (LSN, HLC_timestamp)
    │            │            │
@@ -436,7 +436,7 @@ Step 4: Promote Replica
 Step 5: Add New Replica (Optional)
   - Node D joins as new replica
   - Node B streams snapshot to Node D
-  - Node D catches up via WAL
+  - Node D catches up via write-after log (WAL)
 
 Step 6: Resume Normal Operations
   - Shard 007 now has RF=3 again

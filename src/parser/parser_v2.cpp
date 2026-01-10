@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/parser/parser_v2.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <cctype>
 #include <cstring>
 #include <algorithm>
@@ -1381,6 +1382,7 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
     SourceLocation start = currentLocation();
 
     auto* stmt = arena_.create<CreateDatabaseStmt>();
+    // Spec: docs/specifications/ddl/DDL_DATABASES.md
 
     if (match(TokenType::KW_IF)) {
         expect(TokenType::KW_NOT, "Expected NOT after IF");
@@ -1388,13 +1390,298 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
         stmt->if_not_exists = true;
     }
 
-    stmt->database_path = parseSchemaPath(state_);
-    if (stmt->database_path.isEmpty()) {
-        error("Expected database name");
-    }
-    std::string spec = schemaPathToString(stmt->database_path, stringPool());
-    if (!spec.empty()) {
-        stmt->source_spec = stringPool().intern(spec);
+    auto parse_string_or_identifier = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return std::string(stringPool().get(id));
+        }
+        if (isIdentifier()) {
+            auto id = currentIdentifier();
+            return std::string(stringPool().get(id));
+        }
+        return {};
+    };
+
+    auto parse_option_value = [&](bool* ok) -> std::string {
+        *ok = true;
+        bool negate = false;
+        bool saw_sign = false;
+        if (match(TokenType::MINUS)) {
+            negate = true;
+            saw_sign = true;
+        } else {
+            if (match(TokenType::PLUS)) {
+                saw_sign = true;
+            }
+        }
+
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            if (saw_sign) {
+                *ok = false;
+                return {};
+            }
+            return std::string(stringPool().get(id));
+        }
+        if (check(TokenType::INTEGER_LITERAL) || check(TokenType::FLOAT_LITERAL)) {
+            std::string text = std::string(state_.getTokenText(current()));
+            advance();
+            if (negate) {
+                return "-" + text;
+            }
+            return text;
+        }
+        if (isIdentifier()) {
+            if (saw_sign) {
+                *ok = false;
+                return {};
+            }
+            auto id = currentIdentifier();
+            return std::string(stringPool().get(id));
+        }
+
+        *ok = false;
+        return {};
+    };
+
+    auto parse_alias_id = [&]() -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (isIdentifier()) {
+            return currentIdentifier();
+        }
+        error("Expected alias name");
+        return StringPool::INVALID_ID;
+    };
+
+    if (matchContextual("EMULATED")) {
+        std::string dialect = parse_string_or_identifier();
+        if (dialect.empty()) {
+            error("Expected emulation dialect after EMULATED");
+        }
+        auto normalize_lower = [](std::string value) {
+            for (char& ch : value) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            return value;
+        };
+        dialect = normalize_lower(dialect);
+
+        std::string server;
+        bool server_set = false;
+        auto parse_server = [&]() {
+            server = parse_string_or_identifier();
+            if (server.empty()) {
+                error("Expected server name");
+            }
+            server_set = true;
+        };
+
+        if (match(TokenType::KW_ON)) {
+            expectContextual("SERVER", "Expected SERVER after ON");
+            parse_server();
+        } else if (matchContextual("SERVER")) {
+            parse_server();
+        }
+
+        std::string source_spec = parse_string_or_identifier();
+        if (source_spec.empty()) {
+            error("Expected emulated database source specification");
+        }
+
+        auto parse_options_block = [&]() {
+            if (matchContextual("OPTIONS") || matchContextual("OPTION")) {
+                // OPTIONS keyword consumed
+            }
+            expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
+            while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+                std::string key = parse_string_or_identifier();
+                if (key.empty()) {
+                    error("Expected option key");
+                    break;
+                }
+
+                bool has_value = false;
+                std::string value;
+                if (match(TokenType::EQUAL) || match(TokenType::EQUALS_GREATER)) {
+                    value = parse_option_value(&has_value);
+                } else {
+                    value = parse_option_value(&has_value);
+                }
+
+                if (!has_value) {
+                    error("Expected option value");
+                    break;
+                }
+
+                DatabaseOption opt;
+                opt.key = stringPool().intern(key);
+                opt.value = stringPool().intern(value);
+                stmt->options.push_back(opt);
+
+                if (!match(TokenType::COMMA)) {
+                    break;
+                }
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after options");
+        };
+
+        auto parse_alias_list = [&]() {
+            bool has_paren = match(TokenType::LEFT_PAREN);
+            while (!isAtEnd()) {
+                StringPool::StringId alias = parse_alias_id();
+                if (alias != StringPool::INVALID_ID) {
+                    stmt->aliases.push_back(alias);
+                }
+                if (match(TokenType::COMMA)) {
+                    continue;
+                }
+                break;
+            }
+            if (has_paren) {
+                expect(TokenType::RIGHT_PAREN, "Expected ')' after alias list");
+            }
+        };
+
+        while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
+            if (!server_set && match(TokenType::KW_ON)) {
+                expectContextual("SERVER", "Expected SERVER after ON");
+                parse_server();
+                continue;
+            }
+            if (!server_set && matchContextual("SERVER")) {
+                parse_server();
+                continue;
+            }
+            if (matchContextual("ALIAS") || matchContextual("ALIASES")) {
+                parse_alias_list();
+                continue;
+            }
+            if (match(TokenType::KW_WITH)) {
+                parse_options_block();
+                continue;
+            }
+            break;
+        }
+
+        auto is_windows_drive = [](std::string_view spec) {
+            return spec.size() >= 2 &&
+                   std::isalpha(static_cast<unsigned char>(spec[0])) &&
+                   spec[1] == ':' &&
+                   (spec.size() == 2 || spec[2] == '/' || spec[2] == '\\');
+        };
+
+        std::string spec_server;
+        std::string spec_path = source_spec;
+        if (!is_windows_drive(spec_path)) {
+            size_t colon = spec_path.find(':');
+            if (colon != std::string::npos) {
+                spec_server = spec_path.substr(0, colon);
+                spec_path = spec_path.substr(colon + 1);
+            }
+        }
+
+        if (!spec_server.empty()) {
+            if (server_set && scratchbird::core::IdentifierUtils::toUpper(server) !=
+                                  scratchbird::core::IdentifierUtils::toUpper(spec_server)) {
+                error("Server specified twice with different values");
+            }
+            server = spec_server;
+        }
+
+        if (server.empty()) {
+            server = "localhost";
+        }
+        server = normalize_lower(server);
+
+        auto split_path_components = [&](std::string_view path_in) {
+            std::vector<std::string> components;
+            std::string path(path_in);
+            while (!path.empty() && (path.front() == '/' || path.front() == '\\')) {
+                path.erase(path.begin());
+            }
+
+            if (is_windows_drive(path)) {
+                char drive = static_cast<char>(std::tolower(static_cast<unsigned char>(path[0])));
+                components.push_back(std::string(1, drive));
+                path.erase(0, 2);
+                if (!path.empty() && (path.front() == '/' || path.front() == '\\')) {
+                    path.erase(path.begin());
+                }
+            }
+
+            std::string current;
+            for (char ch : path) {
+                if (ch == '/' || ch == '\\') {
+                    if (!current.empty()) {
+                        components.push_back(current);
+                        current.clear();
+                    }
+                } else {
+                    current.push_back(ch);
+                }
+            }
+            if (!current.empty()) {
+                components.push_back(current);
+            }
+            return components;
+        };
+
+        std::string db_name;
+        std::vector<std::string> path_components;
+        bool looks_like_path = spec_path.find('/') != std::string::npos ||
+                               spec_path.find('\\') != std::string::npos ||
+                               is_windows_drive(spec_path);
+
+        if (looks_like_path) {
+            auto components = split_path_components(spec_path);
+            if (!components.empty()) {
+                db_name = components.back();
+                components.pop_back();
+                path_components = std::move(components);
+            }
+
+            size_t dot = db_name.find_last_of('.');
+            if (dot != std::string::npos && dot > 0) {
+                db_name = db_name.substr(0, dot);
+            }
+        } else {
+            db_name = spec_path;
+        }
+
+        if (db_name.empty()) {
+            error("Emulated database name is empty");
+        }
+
+        SchemaPath path;
+        path.type = PathType::ABSOLUTE;
+        path.components.push_back(stringPool().intern("emulation"));
+        path.components.push_back(stringPool().intern(dialect));
+        path.components.push_back(stringPool().intern(server));
+        for (const auto& comp : path_components) {
+            if (!comp.empty()) {
+                path.components.push_back(stringPool().intern(comp));
+            }
+        }
+        path.components.push_back(stringPool().intern(db_name));
+        stmt->database_path = std::move(path);
+        if (!source_spec.empty()) {
+            stmt->source_spec = stringPool().intern(source_spec);
+        }
+    } else {
+        stmt->database_path = parseSchemaPath(state_);
+        if (stmt->database_path.isEmpty()) {
+            error("Expected database name");
+        }
+        std::string spec = schemaPathToString(stmt->database_path, stringPool());
+        if (!spec.empty()) {
+            stmt->source_spec = stringPool().intern(spec);
+        }
     }
 
     stmt->span = makeSpan(start);
@@ -4645,43 +4932,50 @@ SetStmt* Parser::parseSet() {
         return stmt;
     }
 
-    if (matchContextual("PARSER")) {
-        expectContextual("VERSION", "Expected VERSION after PARSER");
-        if (check(TokenType::INTEGER_LITERAL)) {
-            advance();
+    auto parseVariableAssignment = [&](StringPool::StringId name_id) -> SetStmt* {
+        stmt->set_type = SetStmt::SetType::VARIABLE;
+        stmt->name = name_id;
+
+        // = or TO
+        if (!match(TokenType::EQUAL) && !matchContextual("TO")) {
+            error("Expected '=' or TO after variable name");
         }
-        error("SET PARSER VERSION is not supported");
+
+        // Value can be DEFAULT or an expression (or list of values)
+        if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
+            stmt->is_default = true;
+        } else {
+            // Parse value(s) - some settings accept comma-separated lists
+            stmt->value = parseExpression();
+            while (match(TokenType::COMMA)) {
+                stmt->values.push_back(stmt->value);
+                stmt->value = parseExpression();
+            }
+            if (!stmt->values.empty()) {
+                stmt->values.push_back(stmt->value);
+                stmt->value = nullptr;  // Use values list instead
+            }
+        }
+
         stmt->span = makeSpan(start);
         return stmt;
+    };
+
+    if (matchContextual("PARSER")) {
+        if (matchContextual("VERSION")) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                advance();
+            }
+            error("SET PARSER VERSION is not supported");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+        return parseVariableAssignment(stringPool().intern("PARSER"));
     }
 
     // Regular SET name = value / SET name TO value
-    stmt->set_type = SetStmt::SetType::VARIABLE;
-    stmt->name = expectIdentifier("Expected variable name");
-
-    // = or TO
-    if (!match(TokenType::EQUAL) && !matchContextual("TO")) {
-        error("Expected '=' or TO after variable name");
-    }
-
-    // Value can be DEFAULT or an expression (or list of values)
-    if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
-        stmt->is_default = true;
-    } else {
-        // Parse value(s) - some settings accept comma-separated lists
-        stmt->value = parseExpression();
-        while (match(TokenType::COMMA)) {
-            stmt->values.push_back(stmt->value);
-            stmt->value = parseExpression();
-        }
-        if (!stmt->values.empty()) {
-            stmt->values.push_back(stmt->value);
-            stmt->value = nullptr;  // Use values list instead
-        }
-    }
-
-    stmt->span = makeSpan(start);
-    return stmt;
+    StringPool::StringId var_name = expectIdentifier("Expected variable name");
+    return parseVariableAssignment(var_name);
 }
 
 ResetStmt* Parser::parseReset() {

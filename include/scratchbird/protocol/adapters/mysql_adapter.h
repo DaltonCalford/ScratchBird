@@ -421,6 +421,7 @@ private:
     // Prepared statements
     uint32_t next_stmt_id_ = 1;
     std::unordered_map<uint32_t, MySqlPreparedStatement> prepared_statements_;
+    std::vector<std::string> last_warnings_;
 
     // IPC client (bridge to engine)
     std::unique_ptr<client::Connection> client_;

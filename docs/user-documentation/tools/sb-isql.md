@@ -50,7 +50,7 @@ sb_isql [OPTIONS] [DATABASE]
 |--------|-------------|
 | `-c, --command SQL` | Execute SQL and exit |
 | `-f, --file FILE` | Execute SQL from file |
-| `-i, --input FILE` | Read input from file |
+| `-i, --input FILE` | Alias for `-f` (Firebird-compatible) |
 | `-o, --output FILE` | Write output to file |
 
 ---
@@ -70,6 +70,7 @@ sb_isql [OPTIONS] [DATABASE]
 | Option | Description |
 |--------|-------------|
 | `--sql-dialect N` | SQL dialect (1, 2, or 3) |
+| `-par, --parser NAME` | Parser selection (scratchbird, firebird, postgresql, mysql) |
 | `--bail` | Exit on first error |
 | `--echo` | Echo commands before execution |
 | `--help` | Show help |

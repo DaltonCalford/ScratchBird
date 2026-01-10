@@ -12,6 +12,8 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 **Status:** ✅ Complete and comprehensive
 **Target Release:** Beta
 
+**Scope Note:** WAL references in cluster specs describe an optional write-after log stream for replication/PITR; MGA does not use WAL for recovery.
+
 ## Core Specifications
 
 ### Overview & Principles
@@ -35,7 +37,7 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 
 - **[SBCLUSTER-05-SHARDING.md](SBCLUSTER-05-SHARDING.md)** - Data sharding and consistent hashing
 - **[SBCLUSTER-06-DISTRIBUTED-QUERY.md](SBCLUSTER-06-DISTRIBUTED-QUERY.md)** - Distributed query execution
-- **[SBCLUSTER-07-REPLICATION.md](SBCLUSTER-07-REPLICATION.md)** - Asynchronous replication and WAL streaming
+- **[SBCLUSTER-07-REPLICATION.md](SBCLUSTER-07-REPLICATION.md)** - Asynchronous replication and write-after log (WAL) streaming
 
 ### Operations
 
@@ -71,7 +73,7 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 
 ### Replication
 
-- **Asynchronous replication** - WAL streaming from primary to replicas
+- **Asynchronous replication** - Write-after log (WAL) streaming from primary to replicas
 - **Multi-master capability** - Write to any shard owner
 - **Conflict resolution** - UUIDv8-HLC based conflict resolution
 - **Lag monitoring** - Track replication lag per replica
@@ -153,7 +155,7 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 | Architecture | Single-node | Multi-node cluster |
 | Consensus | N/A | Raft (CCE) |
 | Sharding | N/A | Consistent hashing |
-| Replication | N/A | Asynchronous WAL streaming |
+| Replication | N/A | Asynchronous write-after log (WAL) streaming |
 | Distributed Query | N/A | Cross-shard execution |
 | Job Scheduler | Single-threaded | Distributed |
 | Observability | Basic metrics | Full cluster metrics |

@@ -6,7 +6,7 @@ This directory contains specifications for database drivers and client library e
 
 ## Overview
 
-ScratchBird implements driver emulation layers for PostgreSQL (libpq), MySQL (libmysqlclient), Firebird (fbclient), and MSSQL (FreeTDS) protocols, allowing existing client applications to connect without modification.
+ScratchBird implements driver emulation layers for PostgreSQL (libpq), MySQL (libmysqlclient), and Firebird (fbclient). MSSQL/TDS (FreeTDS) is post-gold, and is documented for future implementation.
 
 ## Specifications in this Directory
 
@@ -20,7 +20,7 @@ ScratchBird implements driver emulation layers for PostgreSQL (libpq), MySQL (li
 - **[postgresql_spec.md](postgresql_spec.md)** - PostgreSQL driver emulation
 - **[postgresql_technical.md](postgresql_technical.md)** - PostgreSQL technical details
 - **[mysql_mariadb_spec.md](mysql_mariadb_spec.md)** - MySQL/MariaDB driver emulation
-- **[mssql_spec.md](mssql_spec.md)** - MSSQL/TDS driver emulation
+- **[mssql_spec.md](mssql_spec.md)** - MSSQL/TDS driver emulation (post-gold)
 - **[firebird_spec.md](firebird_spec.md)** - Firebird driver emulation
 
 ### Generic Specifications
@@ -48,7 +48,7 @@ ScratchBird emulates multiple database drivers:
 - **PostgreSQL** - libpq compatible
 - **MySQL/MariaDB** - libmysqlclient compatible
 - **Firebird** - fbclient compatible
-- **MSSQL** - FreeTDS compatible
+- **MSSQL** - FreeTDS compatible (post-gold)
 - **JDBC** - Type 4 JDBC driver
 - **ODBC** - ODBC 3.x driver
 

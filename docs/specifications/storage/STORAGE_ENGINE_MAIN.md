@@ -557,7 +557,7 @@ Status perform_checkpoint(
     // Phase 4: Update control file
     update_control_file_checkpoint(checkpoint_lsn);
     
-    // Phase 5: Clean up old WAL
+    // Phase 5: Clean up optional write-after log (post-gold)
     if (params->remove_old_wal) {
         remove_old_wal_files(checkpoint_lsn);
     }
@@ -757,10 +757,12 @@ bool tuple_satisfies_snapshot(
 }
 ```
 
-### 6.2 WAL Integration
+### 6.2 Optional Write-After Log (Future)
+
+**Scope Note:** ScratchBird MGA does not use write-after log (WAL) for recovery. The write-after log is optional, future work for replication/PITR only.
 
 ```c
-// Write WAL record for page modification
+// Write optional write-after log record for page modification (future)
 void log_page_modification(
     BufferDesc* buf,
     WALRecordType type,
@@ -774,7 +776,7 @@ void log_page_modification(
     record.data = data;
     record.data_len = data_len;
     
-    // Write to WAL
+    // Write to optional write-after log
     LSN lsn = write_wal_record(&record);
     
     // Update page LSN
@@ -790,7 +792,7 @@ Following the ProjectPlan phases:
 
 1. **Phase 4**: Heap storage and basic page management
 2. **Phase 6**: Integration with MGA transactions
-3. **Phase 16**: WAL integration (secondary to MGA)
+3. **Phase 16**: Optional write-after log (post-gold, secondary to MGA)
 4. **Enhancement**: Advanced features (compression, encryption, multi-page-size)
 
 ## Conclusion

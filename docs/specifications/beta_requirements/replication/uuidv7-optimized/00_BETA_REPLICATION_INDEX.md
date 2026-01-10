@@ -298,7 +298,7 @@ Transaction touches only Shard 7 → Local TIP commit
 - TIP-based visibility (`isVersionVisible()` checks TIP state)
 - In-place updates with back versions (not append-only)
 - No snapshots (per-transaction state in TIP, not snapshot arrays)
-- No WAL for crash recovery (TIP handles crash recovery)
+- No write-after log (WAL) for crash recovery (TIP handles crash recovery)
 
 **Beta Replication Integration:**
 ```cpp
@@ -454,7 +454,7 @@ UuidV8Bytes generateUuidV8WithHLC();  // RFC 9562 v8 (custom format)
 - [ ] Network partition resilience (majority continues)
 - [ ] Split-brain prevention (generation numbers + fencing)
 - [ ] No cross-transaction data leakage (MGA isolation preserved)
-- [ ] Crash recovery via TIP (no WAL replay)
+- [ ] Crash recovery via TIP (no write-after log (WAL) replay)
 
 **Operational:**
 - [ ] Monitoring: replication lag, quorum health, anti-entropy progress

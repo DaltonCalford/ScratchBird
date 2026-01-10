@@ -752,8 +752,40 @@ set_target_properties(sb_fb_isql PROPERTIES
 
 message(STATUS "CLI tool: sb_fb_isql (Firebird SQL shell)")
 
+# sb_pg_isql - PostgreSQL Interactive SQL Shell
+add_executable(sb_pg_isql cli/sb_pg_isql.cpp)
+
+target_link_libraries(sb_pg_isql PRIVATE
+    scratchbird_fdw
+    scratchbird_core
+)
+
+set_target_properties(sb_pg_isql PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sb_pg_isql (PostgreSQL SQL shell)")
+
+# sb_my_isql - MySQL Interactive SQL Shell
+add_executable(sb_my_isql cli/sb_my_isql.cpp)
+
+target_link_libraries(sb_my_isql PRIVATE
+    scratchbird_fdw
+    scratchbird_core
+)
+
+set_target_properties(sb_my_isql PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sb_my_isql (MySQL SQL shell)")
+
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_testing
+install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

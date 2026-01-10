@@ -7,15 +7,18 @@
  */
 
 #include "scratchbird/protocol/adapters/mysql_adapter.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
 
+#include <nlohmann/json.hpp>
 #include <cstring>
 #include <random>
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <sstream>
 #include <functional>
 
@@ -28,6 +31,89 @@
 
 namespace scratchbird {
 namespace protocol {
+
+using json = nlohmann::json;
+
+namespace {
+
+using MySQLCompatMode = scratchbird::parser::mysql::MySQLCompatMode;
+
+MySQLCompatMode parseMysqlCompatValue(const std::string& value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (char ch : value) {
+        if (!std::isspace(static_cast<unsigned char>(ch))) {
+            normalized.push_back(ch);
+        }
+    }
+
+    std::string upper = scratchbird::core::IdentifierUtils::toUpper(normalized);
+    if (upper == "MYSQL80" || upper == "MYSQL8" || upper == "8" || upper == "8.0" || upper == "80") {
+        return MySQLCompatMode::MYSQL80;
+    }
+    return MySQLCompatMode::MYSQL57;
+}
+
+MySQLCompatMode resolveMysqlCompat(core::Database* db,
+                                  const std::string& db_name,
+                                  core::ErrorContext* ctx) {
+    if (!db) {
+        return MySQLCompatMode::MYSQL57;
+    }
+
+    auto* catalog = db->catalog_manager();
+    if (!catalog) {
+        return MySQLCompatMode::MYSQL57;
+    }
+
+    core::CatalogManager::EmulationServerInfo server_info;
+    if (catalog->getEmulationServerByName("localhost", server_info, ctx) != core::Status::OK) {
+        return MySQLCompatMode::MYSQL57;
+    }
+
+    core::CatalogManager::EmulatedDatabaseInfo db_info;
+    if (catalog->getEmulatedDatabaseByName(server_info.server_id, db_name, db_info, ctx) != core::Status::OK) {
+        return MySQLCompatMode::MYSQL57;
+    }
+
+    if (db_info.db_metadata.empty()) {
+        return MySQLCompatMode::MYSQL57;
+    }
+
+    try {
+        json meta = json::parse(db_info.db_metadata);
+        if (!meta.contains("options") || !meta["options"].is_array()) {
+            return MySQLCompatMode::MYSQL57;
+        }
+
+        for (const auto& entry : meta["options"]) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            auto key_it = entry.find("key");
+            auto val_it = entry.find("value");
+            if (key_it == entry.end() || val_it == entry.end() ||
+                !key_it->is_string() || !val_it->is_string()) {
+                continue;
+            }
+
+            std::string key = scratchbird::core::IdentifierUtils::toUpper(key_it->get<std::string>());
+            if (key == "MYSQL.COMPATIBILITY" || key == "MYSQL_COMPATIBILITY" || key == "MYSQLCOMPATIBILITY") {
+                return parseMysqlCompatValue(val_it->get<std::string>());
+            }
+        }
+    } catch (const json::exception&) {
+        return MySQLCompatMode::MYSQL57;
+    }
+
+    return MySQLCompatMode::MYSQL57;
+}
+
+uint16_t clampWarningCount(size_t count) {
+    return static_cast<uint16_t>(std::min<size_t>(count, std::numeric_limits<uint16_t>::max()));
+}
+
+} // namespace
 
 // ============================================================================
 // Constructor/Destructor
@@ -265,10 +351,14 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
         return status;
     }
 
+    last_warnings_.clear();
+
     sblr::MySQLQueryCompiler compiler(database_.get());
     std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
     compiler.setDefaultSchema("emulation.mysql.localhost.databases." + db_name);
+    compiler.setCompatibilityMode(resolveMysqlCompat(database_.get(), db_name, &ctx));
     auto result = compiler.compile(sql);
+    last_warnings_ = result.warnings();
     if (!result.success()) {
         error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
         return core::Status::INVALID_ARGUMENT;
@@ -681,6 +771,8 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    last_warnings_.clear();
+
     std::string query(reinterpret_cast<const char*>(current_packet_.data() + 1),
                       current_packet_.size() - 1);
 
@@ -823,6 +915,8 @@ core::Status MySqlAdapter::handleComStmtExecute(network::Connection* conn) {
                        "Unknown statement ID: " + std::to_string(stmt_id));
         return sendBuffer(conn);
     }
+
+    last_warnings_.clear();
 
     // Execute the prepared statement
     QueryContext ctx;
@@ -1040,7 +1134,7 @@ void MySqlAdapter::sendOkPacket(network::Connection* conn, uint64_t affected_row
     // Status flags
     if (client_capabilities_ & mysql::Capability::PROTOCOL_41) {
         writeInt2(payload, server_status_);
-        writeInt2(payload, 0);  // Warnings
+        writeInt2(payload, clampWarningCount(last_warnings_.size()));  // Warnings
     }
 
     // Info (session state changes or message)
@@ -1057,7 +1151,7 @@ void MySqlAdapter::sendEofPacket(network::Connection* conn) {
     writeInt1(payload, mysql::EOF_PACKET);
 
     if (client_capabilities_ & mysql::Capability::PROTOCOL_41) {
-        writeInt2(payload, 0);  // Warnings
+        writeInt2(payload, clampWarningCount(last_warnings_.size()));  // Warnings
         writeInt2(payload, server_status_);
     }
 

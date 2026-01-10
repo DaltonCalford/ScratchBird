@@ -4,6 +4,8 @@
 
 TOAST (The Oversized-Attribute Storage Technique) is a mechanism for storing large values that exceed the normal tuple size limits. It allows ScratchBird to handle large binary objects (LOBs), text, and other oversized data by storing them out-of-line in a separate TOAST table.
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## Architecture
 
 ### Key Components
@@ -167,11 +169,11 @@ bool isChunkVisible(uint64_t chunk_xmin, uint64_t chunk_xmax,
 
 ### Key Differences from PostgreSQL MVCC
 
-| Aspect | PostgreSQL (MVCC/WAL) | ScratchBird (MGA/TIP) |
+| Aspect | PostgreSQL (MVCC/write-after log (WAL)) | ScratchBird (MGA/TIP) |
 |--------|----------------------|----------------------|
-| Visibility Source | Snapshot + WAL | TIP state only |
-| Crash Recovery | WAL replay | TIP state check |
-| Transaction State | In-memory + WAL | TIP (2-bit state) |
+| Visibility Source | Snapshot + write-after log (WAL) | TIP state only |
+| Crash Recovery | write-after log (WAL) replay | TIP state check |
+| Transaction State | In-memory + write-after log (WAL) | TIP (2-bit state) |
 | Chunk Lifecycle | Snapshot-based | TIP-based |
 | Garbage Collection | Snapshot horizon | TIP state + orphan detection |
 
@@ -193,7 +195,7 @@ Each transaction has one of 4 states in TIP:
 
 ### Crash Recovery
 
-**Without WAL** (MGA approach):
+**Without write-after log (WAL)** (MGA approach):
 
 1. Database crashes during TOAST operation
 2. On restart, check TIP for transaction state
@@ -201,7 +203,7 @@ Each transaction has one of 4 states in TIP:
 4. TOAST chunks with aborted xmin become invisible
 5. Garbage collection (sweep) physically removes orphaned chunks
 
-**NO WAL replay needed** - all state recovered from TIP.
+**NO write-after log (WAL) replay needed** - all state recovered from TIP.
 
 ## Garbage Collection (MGA-Compliant)
 
@@ -397,7 +399,7 @@ When `ToastStrategy::EXTERNAL` is used:
 - ✅ Strategy selection logic
 - ✅ Error handling
 - ✅ **MGA compliance (TIP-based visibility)**
-- ✅ **Crash recovery (TIP state, no WAL)**
+- ✅ **Crash recovery (TIP state, no write-after log)**
 - ✅ **Concurrent operations (snapshot isolation)**
 - ✅ **Garbage collection (3-phase GC)**
 

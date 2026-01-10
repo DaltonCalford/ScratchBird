@@ -5,6 +5,8 @@
 
 ScratchBird's transaction system is built on Multi-Generational Architecture (MGA/MVCC) inherited from Firebird, enhanced with 64-bit transaction IDs, PostgreSQL-style predicate locking for true serializability, and built-in support for distributed transactions. This specification details the core MGA implementation.
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## 1. Transaction ID Management
 
 ### 1.1 Transaction ID Structure
@@ -961,10 +963,10 @@ Status prepare_transaction(
     pt->pt_deleted = copy_tuple_list(txn->txn_deleted_tuples);
     pt->pt_locks = copy_lock_list(txn->txn_locks);
     
-    // Write prepare record to WAL
+    // Write prepare record to write-after log (WAL)
     pt->pt_prepare_lsn = write_prepare_record(pt);
     
-    // Flush WAL to ensure durability
+    // Flush write-after log (WAL) to ensure durability
     flush_wal(pt->pt_prepare_lsn);
     
     // Update TIP to limbo state
@@ -1057,4 +1059,4 @@ This MGA core implementation provides:
 6. **Savepoints** and nested transaction support
 7. **Two-phase commit** for distributed transactions
 
-The system is designed to work without WAL for basic ACID properties (minus durability), with WAL added later only for crash recovery. This follows Firebird's proven MGA design while adding modern enhancements.
+The system is designed to work without write-after log (WAL) for basic ACID properties (minus durability), with write-after log (WAL) added later only for crash recovery. This follows Firebird's proven MGA design while adding modern enhancements.

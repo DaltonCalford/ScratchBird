@@ -10,6 +10,8 @@ The Remote Database UDR (User Defined Routine) plugin transforms ScratchBird int
 - **Hybrid Queries**: JOIN local and remote tables transparently
 - **Schema Discovery**: Automatically introspect remote database structure
 
+**Scope Note:** MSSQL/TDS adapter support is post-gold; references to MSSQL are forward-looking.
+
 **Implementation Time**: 8-12 weeks | **LOC**: ~15,000
 
 ---
@@ -24,7 +26,7 @@ This specification is split into multiple files for maintainability:
 | [02-CONNECTION_POOL.md](02-CONNECTION_POOL.md) | Remote connection pooling implementation | ~500 lines |
 | [03-POSTGRESQL_ADAPTER.md](03-POSTGRESQL_ADAPTER.md) | PostgreSQL wire protocol client adapter | ~600 lines |
 | [04-MYSQL_ADAPTER.md](04-MYSQL_ADAPTER.md) | MySQL wire protocol client adapter | ~600 lines |
-| [05-MSSQL_FIREBIRD_ADAPTERS.md](05-MSSQL_FIREBIRD_ADAPTERS.md) | MSSQL (TDS) and Firebird adapters | ~700 lines |
+| [05-MSSQL_FIREBIRD_ADAPTERS.md](05-MSSQL_FIREBIRD_ADAPTERS.md) | MSSQL (TDS, post-gold) and Firebird adapters | ~700 lines |
 | [06-QUERY_EXECUTION.md](06-QUERY_EXECUTION.md) | Query execution layer and pushdown | ~500 lines |
 | [07-SCHEMA_INTROSPECTION.md](07-SCHEMA_INTROSPECTION.md) | Remote schema discovery | ~400 lines |
 | [08-SQL_SYNTAX.md](08-SQL_SYNTAX.md) | SQL syntax, DDL, and examples | ~500 lines |
@@ -76,7 +78,7 @@ This specification is split into multiple files for maintainability:
 │  │  ┌─────────────┐  ┌─────────────┐  ┌────────────┐     │    │
 │  │  │ PostgreSQL  │  │   MySQL     │  │   MSSQL    │     │    │
 │  │  │  Adapter    │  │   Adapter   │  │  Adapter   │     │    │
-│  │  │  (native)   │  │  (native)   │  │   (TDS)    │     │    │
+│  │  │  (native)   │  │  (native)   │  │ TDS (post-gold) │ │    │
 │  │  └─────────────┘  └─────────────┘  └────────────┘     │    │
 │  │                                                         │    │
 │  │  ┌─────────────┐  ┌─────────────┐                      │    │
@@ -92,7 +94,7 @@ This specification is split into multiple files for maintainability:
 │  Remote/Legacy Databases                                        │
 │                                                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
-│  │ PostgreSQL   │  │ MySQL 5.7/8  │  │ MS SQL       │         │
+│  │ PostgreSQL   │  │ MySQL 5.7/8  │  │ MS SQL (post-gold) │    │
 │  │ 9.6 - 17.x   │  │ MariaDB 10+  │  │ 2016-2022    │         │
 │  └──────────────┘  └──────────────┘  └──────────────┘         │
 │                                                                 │

@@ -8,6 +8,8 @@ This directory contains transaction management specifications for ScratchBird's 
 
 ScratchBird implements a sophisticated transaction system based on Firebird's Multi-Generational Architecture (MGA), providing true MVCC (Multi-Version Concurrency Control) without undo logs. This directory contains specifications for transaction management, locking, distributed transactions, and session control.
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## Specifications in this Directory
 
 ### Core Transaction Management
@@ -58,7 +60,7 @@ Hierarchical locking system:
 **CRITICAL:** ScratchBird implements pure Firebird MGA, NOT PostgreSQL MVCC:
 
 - ✅ **MGA:** Multiple versions in-place, no undo, garbage collection
-- ❌ **MVCC (PostgreSQL):** Separate WAL/undo logs, vacuum
+- ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL)/undo logs, vacuum
 
 See [../../MGA_RULES.md](../../MGA_RULES.md) for absolute rules.
 

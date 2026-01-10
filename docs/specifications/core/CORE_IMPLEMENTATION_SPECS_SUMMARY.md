@@ -4,6 +4,8 @@
 
 This document provides a comprehensive index of all core implementation specifications for ScratchBird, following the hybrid approach recommended in `IMPLEMENTATION_RECOMMENDATIONS.md`. These specifications provide detailed technical blueprints for implementing the five critical database subsystems.
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## Completed Specifications
 
 ### 1. Index Implementation
@@ -68,7 +70,7 @@ This document provides a comprehensive index of all core implementation specific
 ### 4. Storage Engine
 **File**: `STORAGE_ENGINE_SPEC.md`
 **Status**: 🚧 To be created
-**Phase**: 4 (Heap Storage), 6 (MGA Transactions), 16 (WAL)
+**Phase**: 4 (Heap Storage), 6 (MGA Transactions), 16 (write-after log, post-gold)
 
 **Planned Features**:
 - Enhanced buffer pool with ring buffers (PostgreSQL-style)

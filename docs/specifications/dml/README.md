@@ -162,7 +162,7 @@ ScratchBird supports DML from multiple dialects:
 - **PostgreSQL** - Full PostgreSQL DML syntax
 - **MySQL** - MySQL-specific syntax (LIMIT, INSERT IGNORE, etc.)
 - **Firebird** - Firebird DML syntax (ROWS, FIRST/SKIP, etc.)
-- **MSSQL** - SQL Server syntax (TOP, OUTPUT, etc.)
+- **MSSQL** - SQL Server syntax (TOP, OUTPUT, etc.) (post-gold)
 
 ## Related Specifications
 

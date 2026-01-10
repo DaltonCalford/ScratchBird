@@ -6,7 +6,7 @@ This directory contains SQL parsing and grammar specifications for ScratchBird's
 
 ## Overview
 
-ScratchBird implements a unique multi-dialect SQL parser that supports native ScratchBird SQL, PostgreSQL, MySQL, Firebird, and MSSQL dialects. This directory contains the complete grammar specifications, parser implementation details, and emulation layer designs.
+ScratchBird implements a unique multi-dialect SQL parser that supports native ScratchBird SQL, PostgreSQL, MySQL, and Firebird dialects (MSSQL post-gold). This directory contains the complete grammar specifications, parser implementation details, and emulation layer designs.
 
 ## Specifications in this Directory
 
@@ -42,7 +42,7 @@ ScratchBird implements a unique multi-dialect SQL parser that supports native Sc
 ScratchBird uses a Y-Valve architecture that routes incoming SQL through dialect-specific parsers:
 
 1. **Native Parser (V2)** - ScratchBird's native SQL dialect
-2. **Emulated Parsers** - PostgreSQL, MySQL, Firebird, MSSQL parsers that generate SBLR bytecode directly
+2. **Emulated Parsers** - PostgreSQL, MySQL, Firebird parsers that generate SBLR bytecode directly (MSSQL post-gold)
 3. **Parser Isolation** - Emulated parsers are completely separate from V2 parser (no cross-contamination)
 
 ### Important Rules

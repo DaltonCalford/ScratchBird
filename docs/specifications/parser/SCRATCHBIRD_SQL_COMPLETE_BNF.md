@@ -85,6 +85,18 @@ UPPERCASE    Terminal (keyword)
     [ ENCRYPTED [ WITH PASSWORD <string_literal> ] ]
     [ OWNER <user_name> ]
     [ TABLESPACE <tablespace_name> ]
+  | CREATE DATABASE [ IF NOT EXISTS ] EMULATED <emulated_dialect>
+    [ ON SERVER <server_name> ] <source_spec>
+    [ ALIAS <alias_list> ]
+    [ WITH [ OPTIONS ] '(' <db_option_list> ')' ]
+
+<emulated_dialect> ::= <identifier> | <string_literal>
+<source_spec> ::= <identifier> | <string_literal>
+<alias_list> ::= <alias_name> { ',' <alias_name> }
+<alias_name> ::= <identifier> | <string_literal>
+<db_option_list> ::= <option_pair> { ',' <option_pair> }
+<option_pair> ::= <identifier> '=' <option_value>
+<option_value> ::= <identifier> | <string_literal> | <integer_literal> | <float_literal>
 
 <page_size> ::= 
     '8K' | '16K' | '32K' | '64K' | '128K'

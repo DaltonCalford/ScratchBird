@@ -7,14 +7,14 @@ This directory contains comprehensive SQL compatibility tests from three major d
 **Total Tests:** 11,905 SQL test files
 **Databases:** Firebird, MySQL, PostgreSQL
 **Purpose:** Validate ScratchBird's database emulation compatibility
-**Source Policy:** Upstream test suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`.
+**Source Policy:** Firebird and PostgreSQL suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`. MySQL tests are optional/external-only (GPL); fetch them explicitly when needed.
 
 ## Statistics
 
 | Database   | Tests | Categories | Original Format | Repository |
 |------------|-------|------------|-----------------|------------|
 | **Firebird**   | 2,826 | 39 | .fbt | [fbt-repository](https://github.com/FirebirdSQL/fbt-repository) |
-| **MySQL**      | 8,841 | 59 | .test | [mysql-server](https://github.com/mysql/mysql-server) |
+| **MySQL**      | 8,841 | 59 | .test | [mysql-server](https://github.com/mysql/mysql-server) *(optional/external)* |
 | **PostgreSQL** |   238 |  1 | .sql | [postgres](https://github.com/postgres/postgres) |
 | **TOTAL**      | **11,905** | **99** | | |
 
@@ -30,8 +30,8 @@ tests/compatibility/
 │   ├── config/                 # Test manifests and configuration
 │   └── README.md
 │
-├── mysql/                       # MySQL compatibility tests
-│   ├── repos/                  # Original test repository (vendored snapshot)
+├── mysql/                       # MySQL compatibility tests (optional/external)
+│   ├── repos/                  # Optional snapshot (fetch with --with-mysql)
 │   ├── converted/              # 8,841 converted SQL tests
 │   ├── expected/               # Expected output files
 │   ├── scripts/                # Conversion scripts
@@ -70,13 +70,21 @@ tests/compatibility/
 
 ### 1. Refresh Test Repositories (Vendored Snapshots)
 
-Refresh the latest tests from official repositories:
+Refresh the latest tests from official repositories (MySQL optional):
 
 ```bash
 ./scripts/update_test_repos.sh
 ```
 
 Run from `tests/compatibility/` (or use `./tests/compatibility/scripts/update_test_repos.sh` from the repo root). The script performs shallow clones and sparse checkout to refresh the vendored snapshots.
+
+To include MySQL tests (GPL), opt in:
+
+```bash
+SCRATCHBIRD_FETCH_MYSQL_TESTS=1 ./scripts/update_test_repos.sh
+# or
+./scripts/update_test_repos.sh --with-mysql
+```
 
 ### 2. Convert Tests to SQL
 
@@ -96,19 +104,19 @@ Create test catalogs:
 ./scripts/generate_test_manifests.py
 ```
 
-### 4. Run Tests (Future)
+### 4. Run Tests (CTest)
 
 Once the dedicated ISQL clients are built (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)):
 
 ```bash
-# Firebird tests
-firebird/scripts/run_firebird_tests.sh
+# Firebird compatibility subset (CTest)
+ctest -R CompatibilityFirebird --test-dir build
 
-# MySQL tests
-mysql/scripts/run_mysql_tests.sh
+# PostgreSQL compatibility subset (CTest, opt-in)
+SCRATCHBIRD_PG_COMPAT_RUN=1 ctest -R CompatibilityPostgreSQL --test-dir build
 
-# PostgreSQL tests
-postgresql/scripts/run_postgresql_tests.sh
+# MySQL compatibility subset (CTest, opt-in)
+SCRATCHBIRD_MY_COMPAT_RUN=1 ctest -R CompatibilityMySQL --test-dir build
 ```
 
 ## Test Conversion
@@ -194,7 +202,7 @@ Test repositories are vendored snapshots (no git submodules). Refresh them with:
 Updates are one-way into ScratchBird; do not push to upstream repositories. Avoid adding `.git` metadata under `repos/`.
 
 The update script uses shallow clones and sparse checkout to minimize disk usage and rsyncs the snapshot into `repos/`:
-- **MySQL:** Only `mysql-test/` directory (~812 MB vs 1.3 GB full repo)
+- **MySQL:** Optional; only `mysql-test/` directory when explicitly enabled
 - **PostgreSQL:** Only `src/test/regress/` directory (~18 MB vs 152 MB full repo)
 
 Large upstream artifacts are kept for fidelity and regression coverage (for example, `tests/compatibility/mysql/repos/mysql-server/mysql-test/std_data/bug36444172/dump.sql`).

@@ -215,7 +215,7 @@ Resource governors provide containment—SQL Server Resource Governor with MAX_C
 
 ## Privacy compliance attacks exploit data remnants and multi-tenant isolation failures
 
-**Write-Ahead Log data remnants undermine secure deletion**. SQLite and PostgreSQL WAL files retain deleted data until checkpoint operations—forensic tools recover "securely deleted" records from WAL slack space. GDPR Article 17 requires erasure "without undue delay," but WAL remnants may persist indefinitely. Rollback journals in TRUNCATE mode reset file size to 0 while content remains recoverable from disk sectors.
+**Write-after log (WAL) data remnants undermine secure deletion**. SQLite and PostgreSQL write-after log (WAL) files retain deleted data until checkpoint operations—forensic tools recover "securely deleted" records from write-after log (WAL) slack space. GDPR Article 17 requires erasure "without undue delay," but write-after log (WAL) remnants may persist indefinitely. Rollback journals in TRUNCATE mode reset file size to 0 while content remains recoverable from disk sectors.
 
 **Crypto-shred deletion** provides compliant erasure:
 1. Encrypt data with unique keys per deletion scope
@@ -260,7 +260,7 @@ Blockchain anchoring, TPM 2.0 integration, RFC 3161 trusted timestamps, and WORM
 | **HIGH** | SCRAM state exhaustion | 7.5 | Easy | Rate limit, iteration caps, timeouts |
 | **HIGH** | Distributed split-brain replay | 7.5 | Network position | STONITH fencing, quorum witnesses |
 | **MEDIUM** | UUID v7 clock manipulation | 6.5 | NTP control | Hybrid Logical Clocks, NTS |
-| **MEDIUM** | WAL data remnants | 6.0 | Forensic access | Crypto-shred, checkpoint enforcement |
+| **MEDIUM** | Write-after log (WAL) data remnants | 6.0 | Forensic access | Crypto-shred, checkpoint enforcement |
 
 **Implementation roadmap for ScratchBird**:
 

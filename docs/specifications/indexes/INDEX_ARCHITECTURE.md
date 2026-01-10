@@ -59,7 +59,7 @@ ScratchBird implements **11 production-ready index types** designed for diverse 
 ┌─────────────────────────────────────────────────────┐
 │ Storage Layer (Buffer Pool + Page Manager)         │
 │  - Page-level storage                               │
-│  - WAL integration                                  │
+│  - Optional write-after log integration (post-gold) │
 │  - TIP-based visibility                             │
 └─────────────────────────────────────────────────────┘
 ```

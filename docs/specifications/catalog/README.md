@@ -82,7 +82,7 @@ The catalog supports multiple SQL dialects:
 - **PostgreSQL** - `pg_catalog` system views
 - **MySQL** - `information_schema` and `mysql` schema
 - **Firebird** - `RDB$` system tables
-- **MSSQL** - `sys` catalog views
+- **MSSQL** - `sys` catalog views (post-gold)
 
 All dialect-specific views map to the core `sys` catalog tables.
 

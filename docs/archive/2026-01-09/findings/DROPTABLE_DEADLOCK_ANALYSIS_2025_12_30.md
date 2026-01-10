@@ -1,14 +1,19 @@
 # dropTable Deadlock Analysis - 2025-12-30
 
 **Date:** 2025-12-30
-**Status:** 🔴 CRITICAL DEADLOCK - Multiple Same-Thread Lock Re-Acquisition Issues
-**Tests Failing:** 4 TableDependencyTest timeouts + 2 ExecutorTransactionPayloadTest timeouts
+**Status:** ✅ RESOLVED - dropTable/dropSequence deadlock eliminated
+**Tests:** `ctest -R TableDependencyTest --test-dir build` (12/12 passed, 2026-01-10)
 
 ---
 
 ## Executive Summary
 
 The deadlock fix implemented earlier for `dropFunction()` and `dropProcedure()` DID work for those functions. However, `dropTable()` has a DIFFERENT deadlock pattern that was not addressed.
+
+### Status Update (2026-01-10)
+- Added internal helpers: `getDependenciesForInternal()` and `dropSequenceInternal()`; wired `dropTable()` to internal versions.
+- Updated `dropSequence()` to lock `sequence_cache_mutex_` + `dependency_cache_mutex_` up front and use internal helpers.
+- Table dependency tests now pass without timeouts.
 
 **Root Cause:** `dropTable()` holds both `mutex_` and `dependency_cache_mutex_` using `std::scoped_lock`, then calls several functions that try to RE-ACQUIRE `dependency_cache_mutex_`. Since `std::mutex` is NON-RECURSIVE, this causes a **same-thread deadlock**.
 

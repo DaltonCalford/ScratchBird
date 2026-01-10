@@ -272,11 +272,6 @@ set(SCRATCHBIRD_PERFORMANCE_TESTS
 list(JOIN SCRATCHBIRD_PERFORMANCE_TESTS ":" SCRATCHBIRD_PERFORMANCE_FILTER)
 
 set(SCRATCHBIRD_QUARANTINE_TESTS
-    StoredCodeDependencyTest.DropFunctionFailsIfCalledByAnotherFunction
-    StoredCodeDependencyTest.DropProcedureFailsIfCalled
-    StoredCodeDependencyTest.ComplexFunctionChain
-    StoredCodeDependencyTest.MixedFunctionProcedureDependencies
-    BytecodeOpcodesTest.SBLRVersionIsDefined
     JSONFunctionTest.JSON_OBJECT_OddArgs
     JSONFunctionTest.JSON_EXTRACT_WrongArgCount
 )
@@ -1725,6 +1720,42 @@ add_test(NAME ShadowIndexRebuild COMMAND test_shadow_index_rebuild)
 set_tests_properties(ShadowIndexRebuild PROPERTIES
     LABELS "integration;index;shadow;rebuild;versioning;plan01"
     TIMEOUT 60
+)
+
+# ==============================================================================
+# Compatibility Tests (vendored external suites)
+# ==============================================================================
+set(FIREBIRD_COMPAT_SCRIPT
+    "${CMAKE_SOURCE_DIR}/tests/compatibility/firebird/scripts/run_firebird_ctest.sh"
+)
+add_test(NAME CompatibilityFirebird COMMAND "${FIREBIRD_COMPAT_SCRIPT}")
+set_tests_properties(CompatibilityFirebird PROPERTIES
+    LABELS "compatibility;firebird"
+    TIMEOUT 300
+    ENVIRONMENT
+        "SCRATCHBIRD_FB_ISQL=$<TARGET_FILE:sb_fb_isql>;SCRATCHBIRD_FB_CTEST_LIST=${CMAKE_SOURCE_DIR}/tests/compatibility/firebird/config/ctest_list.txt"
+)
+
+set(POSTGRES_COMPAT_SCRIPT
+    "${CMAKE_SOURCE_DIR}/tests/compatibility/postgresql/scripts/run_postgresql_ctest.sh"
+)
+add_test(NAME CompatibilityPostgreSQL COMMAND "${POSTGRES_COMPAT_SCRIPT}")
+set_tests_properties(CompatibilityPostgreSQL PROPERTIES
+    LABELS "compatibility;postgresql"
+    TIMEOUT 300
+    ENVIRONMENT
+        "SCRATCHBIRD_PG_ISQL=$<TARGET_FILE:sb_pg_isql>;SCRATCHBIRD_PG_CTEST_LIST=${CMAKE_SOURCE_DIR}/tests/compatibility/postgresql/config/ctest_list.txt"
+)
+
+set(MYSQL_COMPAT_SCRIPT
+    "${CMAKE_SOURCE_DIR}/tests/compatibility/mysql/scripts/run_mysql_ctest.sh"
+)
+add_test(NAME CompatibilityMySQL COMMAND "${MYSQL_COMPAT_SCRIPT}")
+set_tests_properties(CompatibilityMySQL PROPERTIES
+    LABELS "compatibility;mysql"
+    TIMEOUT 300
+    ENVIRONMENT
+        "SCRATCHBIRD_MY_ISQL=$<TARGET_FILE:sb_my_isql>;SCRATCHBIRD_MY_CTEST_LIST=${CMAKE_SOURCE_DIR}/tests/compatibility/mysql/config/ctest_list.txt"
 )
 
 # Aggregate target for building all test executables.

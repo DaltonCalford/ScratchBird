@@ -5,6 +5,8 @@
 
 ScratchBird's network layer combines Firebird's efficient connection pooling, PostgreSQL's robust protocol handling, MySQL's result caching, and SQL Server's connection context preservation. The Y-Valve router provides multi-protocol support with intelligent routing and caching. This specification aligns with Phase 19 (Network Protocol) and enhances the existing Y-Valve architecture.
 
+**Scope Note:** TDS/MSSQL protocol support is post-gold; any TDS references are forward-looking.
+
 ## 1. Enhanced Connection Pooling
 
 ### 1.1 Connection Pool Architecture
@@ -266,7 +268,7 @@ bool validate_connection(PooledConnection* conn) {
         case PROTOCOL_FIREBIRD:
             valid = validate_firebird_connection(conn);
             break;
-        case PROTOCOL_TDS:
+        case PROTOCOL_TDS:  // post-gold
             valid = validate_tds_connection(conn);
             break;
         case PROTOCOL_NATIVE:

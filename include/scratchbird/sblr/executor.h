@@ -269,6 +269,14 @@ namespace scratchbird
             // Row context for expression evaluation (during SELECT WHERE)
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
+            // Insert-row context (for VALUES(col) in ON CONFLICT updates)
+            const std::vector<Value> *current_insert_values_ = nullptr;
+            const std::vector<core::CatalogManager::ColumnInfo> *current_insert_columns_ = nullptr;
+            bool aggregate_scan_active_ = false;
+            bool aggregate_scan_found_ = false;
+            bool scalar_aggregate_filter_active_ = false;
+            size_t scalar_aggregate_filter_start_ = 0;
+            size_t scalar_aggregate_filter_end_ = 0;
 
             // Bound parameters for placeholders (prepared statements)
             std::vector<std::string> parameter_values_;
@@ -325,6 +333,9 @@ namespace scratchbird
             size_t skipExpressionRange(size_t start_pc);
             void skipSelectStatement();
             core::DataType readDataTypeWithModifiers(uint32_t& precision_out, uint32_t& scale_out);
+            core::DataType readColumnTypeWithDomain(core::ID& domain_id_out,
+                                                    uint32_t& precision_out,
+                                                    uint32_t& scale_out);
             void readDependencies(std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
             core::Status resolveSchemaIdForName(const std::string& schema_path,
                                                 core::ID& schema_id_out,
@@ -576,9 +587,11 @@ namespace scratchbird
 
                 AggFunc func;
                 bool distinct;
+                core::DataType input_type;
                 Value result;           // Final result
                 int64_t count;          // For COUNT and AVG
                 double sum;             // For SUM and AVG
+                core::int128_t int_sum; // For integer SUM/AVG
                 std::unordered_set<std::string> distinct_values; // For DISTINCT
                 std::vector<Value> array_elements;  // For ARRAY_AGG
 
@@ -594,7 +607,8 @@ namespace scratchbird
                 double sum_y2;          // Σ(y²)
 
                 AggregateAccumulator(AggFunc f, bool d)
-                    : func(f), distinct(d), count(0), sum(0.0),
+                    : func(f), distinct(d), input_type(core::DataType::UNKNOWN), count(0),
+                      sum(0.0), int_sum(0),
                       mean(0.0), m2(0.0),
                       sum_x(0.0), sum_y(0.0), sum_xy(0.0), sum_x2(0.0), sum_y2(0.0) {}
 

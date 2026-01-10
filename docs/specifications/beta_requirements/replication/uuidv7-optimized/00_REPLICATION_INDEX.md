@@ -71,7 +71,7 @@ This specification is organized into focused documents:
 ### For Implementers
 **Recommended order:**
 1. Read all documents sequentially (00→08)
-2. Reference `/docs/specifications/Cluster Specification Work/SBCLUSTER-07-REPLICATION.md` for per-shard WAL streaming
+2. Reference `/docs/specifications/Cluster Specification Work/SBCLUSTER-07-REPLICATION.md` for per-shard write-after log (WAL) streaming
 3. Reference `/docs/specifications/beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md` for shadow databases
 4. Reference `/MGA_RULES.md` for transaction visibility integration
 
@@ -205,7 +205,7 @@ CREATE TABLE orders (
 ### With Existing ScratchBird Architecture
 
 **SBCLUSTER-07 (Replication):**
-- Extends per-shard WAL streaming with UUIDv7-aware verification
+- Extends per-shard write-after log (WAL) streaming with UUIDv7-aware verification
 - Adds time-partitioned Merkle forest for efficient anti-entropy
 - Maintains primary-replica model, enhances with leaderless option
 
@@ -244,7 +244,7 @@ CREATE TABLE orders (
 
 ### Integration Requirements (Beta)
 - [ ] Works with Firebird MGA visibility (TIP-based)
-- [ ] Integrates with SBCLUSTER-07 per-shard WAL streaming
+- [ ] Integrates with SBCLUSTER-07 per-shard write-after log (WAL) streaming
 - [ ] Compatible with existing shadow database protocol
 - [ ] Audit chain records all replication topology changes
 
@@ -283,7 +283,7 @@ CREATE TABLE orders (
 - [ ] Alpha Parser Remediation (P-001 to P-010) ← **BLOCKING**
 - [ ] UUIDv7 library integration (RFC 9562 compliant)
 - [ ] SBCLUSTER-01 through SBCLUSTER-04 (cluster foundation)
-- [ ] Per-shard WAL streaming (SBCLUSTER-07 base implementation)
+- [ ] Per-shard write-after log (WAL) streaming (SBCLUSTER-07 base implementation)
 
 ### Concurrent Development (Can Proceed in Parallel)
 - SBCLUSTER-08 (Backup/Restore) - shares time-partitioned Merkle trees

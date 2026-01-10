@@ -8,11 +8,11 @@
 
 ## Executive Summary
 
-This document describes a distributed, multi-dialect SQL database engine designed for high-performance OLTP and OLAP workloads. The system uses a three-tier architecture with protocol-agnostic wire handlers, supporting PostgreSQL, MySQL, MSSQL, and Firebird client compatibility.
+This document describes a distributed, multi-dialect SQL database engine designed for high-performance OLTP and OLAP workloads. The system uses a three-tier architecture with protocol-agnostic wire handlers, supporting PostgreSQL, MySQL, and Firebird client compatibility (MSSQL/TDS is post-gold).
 
 ### Key Design Principles
 
-1. **Wire Protocol Compatibility**: Drop-in replacement for PostgreSQL, MySQL, MSSQL, and Firebird
+1. **Wire Protocol Compatibility**: Drop-in replacement for PostgreSQL, MySQL, and Firebird (MSSQL/TDS post-gold)
 2. **Multi-Tier Storage**: Separate transaction, ingestion, and analytics engines
 3. **Distributed MVCC**: UUID v7-based versioning with Firebird-style multi-generational architecture
 4. **Clock Synchronization**: Cluster-wide heartbeat for globally ordered timestamps
@@ -32,12 +32,12 @@ This document describes a distributed, multi-dialect SQL database engine designe
 ┌─────────────────────────────────────────────────────────────────┐
 │                    CLIENT APPLICATIONS                          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
-│  │   libpq  │  │  MySQL   │  │   TDS    │  │ Firebird │       │
-│  │  (PG)    │  │Connector │  │ (MSSQL)  │  │  Client  │       │
+│  │   libpq  │  │  MySQL   │  │  TDS*    │  │ Firebird │       │
+│  │  (PG)    │  │Connector │  │ (MSSQL*) │  │  Client  │       │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
 └───────┼─────────────┼─────────────┼─────────────┼──────────────┘
         │             │             │             │
-    Port 5432     Port 3306     Port 1433     Port 3050
+    Port 5432     Port 3306     Port 1433*    Port 3050
         │             │             │             │
 ┌───────▼─────────────▼─────────────▼─────────────▼──────────────┐
 │              PROTOCOL HANDLER LAYER (Per-Protocol Process)      │
@@ -56,6 +56,7 @@ This document describes a distributed, multi-dialect SQL database engine designe
 │  │  - System catalog virtualization                         │  │
 │  └────────────────────────┬─────────────────────────────────┘  │
 └───────────────────────────┼──────────────────────────────────┘
+* MSSQL/TDS is post-gold and not part of current compatibility.
                             │ Unix Domain Socket
                             │ (MessagePack/Protobuf)
 ┌───────────────────────────▼──────────────────────────────────┐
@@ -111,7 +112,7 @@ Reuse artifacts: [Component Model Diagrams](../diagrams/component_model_diagrams
 | Catalog virtualization | Primary | Support | None | Engine defines surfaces; parser emulates dialect views. |
 | Shared SBLR cache | Primary | None | None | Global cache across sessions with security gating. |
 | Per-session compile cache | None | Primary | None | SQL -> SBLR artifacts scoped to connection. |
-| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no WAL in core. |
+| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no write-after log (WAL) in core. |
 | Scheduler (task planning) | Primary | None | None | Engine schedules GC and maintenance work. |
 | Job system (execution workers) | Primary | None | None | Engine owns background job execution. |
 | UDR connectors (local/remote) | Primary | None | None | Engine executes UDR connectors and enforces security. |
@@ -349,7 +350,7 @@ OLAP Shard Storage:
 
 ## Protocol Handler Architecture
 
-Each protocol (PostgreSQL, MySQL, MSSQL, Firebird) runs in a separate process with its own parser plugin.
+Each protocol (PostgreSQL, MySQL, Firebird; MSSQL post-gold) runs in a separate process with its own parser plugin.
 
 ### Protocol Handler Process
 
@@ -675,7 +676,7 @@ OLAP:
 ### Core Components
 
 - **Programming Language**: C/C++ (engine core), Rust (optional parsers)
-- **Wire Protocols**: Native implementations (PostgreSQL, MySQL, TDS, Firebird)
+- **Wire Protocols**: Native implementations (PostgreSQL, MySQL, Firebird; TDS post-gold)
 - **Serialization**: MessagePack or Protocol Buffers
 - **Message Broker**: Kafka or NATS Streaming
 - **Clock Sync**: Chrony (software), GPS/PTP (hardware)

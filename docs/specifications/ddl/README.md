@@ -6,7 +6,7 @@ This directory contains Data Definition Language (DDL) specifications for creati
 
 ## Overview
 
-DDL statements define the structure of database objects including databases, schemas, tables, views, indexes, procedures, functions, and more. ScratchBird supports DDL from multiple SQL dialects (PostgreSQL, MySQL, Firebird, MSSQL) all mapped to a common internal representation.
+DDL statements define the structure of database objects including databases, schemas, tables, views, indexes, procedures, functions, and more. ScratchBird supports DDL from multiple SQL dialects (PostgreSQL, MySQL, Firebird; MSSQL post-gold) all mapped to a common internal representation.
 
 ## Specifications in this Directory
 
@@ -114,7 +114,7 @@ ScratchBird accepts DDL from multiple dialects:
 - **PostgreSQL** - Full PostgreSQL DDL syntax
 - **MySQL** - MySQL DDL syntax (AUTO_INCREMENT, ENGINE, etc.)
 - **Firebird** - Firebird DDL syntax (COMPUTED BY, EXTERNAL, etc.)
-- **MSSQL** - SQL Server DDL syntax (IDENTITY, ON [PRIMARY], etc.)
+- **MSSQL** - SQL Server DDL syntax (IDENTITY, ON [PRIMARY], etc.) (post-gold)
 
 All dialects map to common internal catalog structures.
 

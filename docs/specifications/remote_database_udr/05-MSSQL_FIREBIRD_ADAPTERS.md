@@ -2,6 +2,8 @@
 
 ## Part 1: MSSQL Adapter (TDS Protocol)
 
+**Scope Note:** MSSQL/TDS adapter work is deferred until after the project goes gold. This section documents planned behavior only.
+
 ### 1.1 Overview
 
 The MSSQL adapter implements the `IProtocolAdapter` interface for connecting to Microsoft SQL Server using the Tabular Data Stream (TDS) protocol.

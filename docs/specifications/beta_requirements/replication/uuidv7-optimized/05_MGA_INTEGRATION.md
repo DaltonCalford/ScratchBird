@@ -555,8 +555,8 @@ Node B → Node A:
 
 ### Commit Log Purpose
 
-**NOT Write-Ahead Log (WAL)**:
-- ScratchBird MGA uses TIP for crash recovery, not WAL replay
+**NOT Write-after Log (WAL)**:
+- ScratchBird MGA uses TIP for crash recovery, not write-after log (WAL) replay
 - "Commit log" = replication log (streamed after commit)
 
 **Purpose**:
@@ -1019,7 +1019,7 @@ TEST(MGAIntegrationTest, DistributedGC) {
 - Sweeps back versions based on OIT ← Firebird sweep model preserved
 
 **Commit Log**:
-- Replication log (after commit) ← NOT Write-Ahead Log (PostgreSQL)
+- Replication log (after commit) ← NOT write-after log (WAL) (PostgreSQL)
 - TIP handles crash recovery ← MGA principle preserved
 
 ---

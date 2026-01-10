@@ -45,7 +45,7 @@ These documents are used for:
 ### Multi-Generational Architecture (MGA)
 
 - **Multiple record versions** - In-place record versioning
-- **No undo logs** - No separate undo/WAL logs
+- **No undo logs** - No separate undo/write-after log (WAL) logs
 - **Non-blocking reads** - Readers never block writers
 - **Snapshot isolation** - Consistent snapshots per transaction
 - **Garbage collection** - Cooperative garbage collection

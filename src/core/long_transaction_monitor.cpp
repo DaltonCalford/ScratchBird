@@ -259,6 +259,11 @@ namespace scratchbird::core
         uint32_t warning_threshold = warning_threshold_seconds_.load(std::memory_order_acquire);
         uint32_t critical_threshold = critical_threshold_seconds_.load(std::memory_order_acquire);
 
+        // ProcArray may not be initialized yet (e.g., before first connection).
+        if (!ProcArrayManager::getInstance()) {
+            return 0;
+        }
+
         // Get all active backends from ProcArray
         std::vector<ProcessControlBlock> active_backends;
         Status s = ProcArrayManager::getAllActiveBackends(&active_backends, ctx);

@@ -1,10 +1,15 @@
 # ExecutorTransactionPayloadTest Timeout Analysis - 2025-12-30
 
 **Date:** 2025-12-30
-**Status:** 🟡 ANALYSIS INCOMPLETE - Suspected CREATE TABLE or Autocommit Issue
-**Tests Failing:** 2 tests timing out at 300 seconds
+**Status:** ✅ RESOLVED - CREATE TABLE bytecode list count mismatch fixed
+**Tests:** `ctest -R ExecutorTransactionPayloadTest --test-dir build` (8/8 passed, 2026-01-10)
 
 ---
+
+### Status Update (2026-01-10)
+- Root cause was a bytecode format mismatch: `BytecodeGeneratorV2` writes list counts as UVarint, but `Executor::executeCreateTable` read a fixed `int32`, misaligning the stream and yielding `Expected COLUMN_DEF`.
+- Fixed by switching to `readUVarint()` for the column list count in `Executor::executeCreateTable`.
+- Autocommit tests now pass; no deadlock observed in CREATE TABLE.
 
 ## Test Failures
 
@@ -354,5 +359,5 @@ auto CatalogManager::createTable(...) -> Status
 
 **Analysis By:** Claude Code
 **Date:** 2025-12-30
-**Status:** DOCUMENTED - NO FIX ATTEMPTED PER USER REQUEST
+**Status:** RESOLVED (verification + fix applied)
 **Confidence:** Medium (hypothesis needs verification)

@@ -54,7 +54,7 @@ The ScratchBird Native Wire Protocol (SBWP) is a binary protocol optimized for S
 
 ### Why a Native Protocol?
 
-While ScratchBird supports PostgreSQL, MySQL, Firebird, and TDS protocols for compatibility, the native protocol provides:
+While ScratchBird supports PostgreSQL, MySQL, and Firebird protocols for compatibility (TDS is post-gold), the native protocol provides:
 
 1. **Full MGA Semantics** - Other protocols lack visibility epoch, record version concepts
 2. **All 86 Types** - No lossy type mapping to foreign type systems
@@ -1308,7 +1308,7 @@ Coordinator                   Participant A                 Participant B
     │── COMMIT ────────────────────────────────────────────────►│
     │◄─ COMMITTED ──────────────────────────────────────────────│
     │                              │                              │
-    │  [Write WAL: TXN COMPLETE]   │                              │
+    │  [Optional write-after log (post-gold)]                      │
 ```
 
 ### 10.6 Attachment Protocol (Native ScratchBird Only)

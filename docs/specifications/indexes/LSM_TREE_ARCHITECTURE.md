@@ -6,6 +6,8 @@
 
 ---
 
+**Scope Note:** "WAL" references in this spec refer to an optional per-index write-after log and do not imply a global recovery log.
+
 ## Executive Summary
 
 ScratchBird provides **two LSM-Tree implementations**:
@@ -92,7 +94,7 @@ LSMTree (In-Memory Only)
    - No size-based eviction
 
 5. **Recovery**:
-   - No WAL (Write-Ahead Log)
+   - No write-after log (WAL)
    - No crash recovery
    - No durability guarantees
 
@@ -191,7 +193,7 @@ LSMTreeIndex (Full Production)
 - Parallel compaction (future)
 
 ✅ **Durability**:
-- WAL (Write-Ahead Log) support (future)
+- Write-after log (WAL) support (future)
 - Crash recovery (future)
 - Atomic SSTable replacement
 
@@ -273,7 +275,7 @@ const size_t LEVEL2_MAX_SIZE = 400 * 1024 * 1024;  // 400MB
 |----------|------------------|---------------------|
 | **Dataset Size** | < 100K entries | Unlimited |
 | **Write Throughput** | < 1K writes/sec | > 10K writes/sec |
-| **Durability** | ❌ Not durable | ✅ Durable (with WAL) |
+| **Durability** | ❌ Not durable | ✅ Durable (with write-after log (WAL)) |
 | **Memory Usage** | High (all in RAM) | Low (mostly on disk) |
 | **Read Performance** | Excellent (in-memory) | Good (with Bloom filters) |
 | **Setup Complexity** | Simple (no files) | Complex (directories, SSTables) |
@@ -383,14 +385,14 @@ CREATE INDEX new_lsm_index ON table(column) USING LSM;
    - No automatic compaction
 
 2. **LSMTreeIndex (Full)**:
-   - No WAL (crash recovery incomplete)
+   - No write-after log (WAL) (crash recovery incomplete)
    - No compression (Snappy planned)
    - Single-threaded compaction
 
 ### Future Enhancements
 
 **Priority 1** (Critical):
-- WAL for LSMTreeIndex
+- Write-after log (WAL) for LSMTreeIndex
 - Crash recovery mechanism
 - Memory limits for LSMTree
 

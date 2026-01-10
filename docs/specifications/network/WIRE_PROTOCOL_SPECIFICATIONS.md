@@ -106,6 +106,8 @@ For ScratchBird to act as a drop-in replacement for multiple database engines, p
 
 ### 4. TDS Protocol (MSSQL)
 
+**Scope Note:** MSSQL/TDS support is post-gold; this section is forward-looking.
+
 #### Essential Components
 - **Login Process**
   - Pre-login packet
@@ -169,7 +171,7 @@ For ScratchBird to act as a drop-in replacement for multiple database engines, p
    - XDR encoding
    - Blob/Array support
 
-2. **TDS/MSSQL** - Enterprise support
+2. **TDS/MSSQL** - Enterprise support (post-gold)
    - Login7 protocol
    - RPC calls
    - Bulk operations
@@ -239,7 +241,7 @@ python: fdb, firebird-driver
 java: Jaybird JDBC driver
 ```
 
-#### MSSQL
+#### MSSQL (post-gold)
 ```bash
 # Using sqlcmd
 sqlcmd -S localhost -U user -P pass
@@ -263,7 +265,7 @@ Protocol Detector:
 - PostgreSQL: StartupMessage with version 196608
 - MySQL: Handshake packet
 - Firebird: op_connect
-- TDS: Pre-login packet
+- TDS (post-gold): Pre-login packet
 
 Protocol Handler:
 - Maintains protocol state machine
@@ -277,13 +279,13 @@ Protocol Handler:
 - PostgreSQL: No inherent limit
 - MySQL: 16MB default (max_allowed_packet)
 - Firebird: 32KB segments
-- TDS: 4KB default (negotiable to 32KB)
+- TDS (post-gold): 4KB default (negotiable to 32KB)
 
 ### Character Encoding
 - PostgreSQL: Client encoding parameter
 - MySQL: Character set negotiation
 - Firebird: Connection character set
-- TDS: Collation in login packet
+- TDS (post-gold): Collation in login packet
 
 ### Transaction Handling
 - Map protocol-specific transaction commands to MGA
@@ -297,13 +299,13 @@ Protocol Handler:
 - [ ] PostgreSQL Frontend/Backend Protocol
 - [ ] MySQL Client/Server Protocol  
 - [ ] Firebird Remote Protocol
-- [ ] MS-TDS Specification
+- [ ] MS-TDS Specification (post-gold)
 
 ### Reference Implementations
 - [ ] PostgreSQL: src/backend/libpq
 - [ ] MySQL: sql/protocol.cc
 - [ ] Firebird: src/remote/protocol.cpp
-- [ ] FreeTDS: src/tds/
+- [ ] FreeTDS: src/tds/ (post-gold)
 
 ### Testing Tools
 - [ ] Wireshark with protocol dissectors

@@ -644,7 +644,7 @@ Chaos testing, performance benchmarks, documentation, and production readiness.
 ### Integration Requirements (Beta)
 
 - [ ] Works with Firebird MGA visibility (TIP-based)
-- [ ] Integrates with SBCLUSTER-07 per-shard WAL streaming
+- [ ] Integrates with SBCLUSTER-07 per-shard write-after log (WAL) streaming
 - [ ] Compatible with existing shadow database protocol
 - [ ] Audit chain records all replication topology changes
 

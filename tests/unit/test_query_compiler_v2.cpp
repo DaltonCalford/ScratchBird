@@ -12,6 +12,7 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
@@ -137,6 +138,30 @@ TEST_F(QueryCompilerV2Test, CompileSelectWithCase) {
 TEST_F(QueryCompilerV2Test, CompileSelectWithCast) {
     auto result = compiler_->compile("SELECT CAST(123 AS VARCHAR)");
     ASSERT_TRUE(result.success()) << "Compilation failed";
+}
+
+TEST_F(QueryCompilerV2Test, ExecuteCreateTableWithDomainColumn) {
+    auto create_domain = compileAndExecute("CREATE DOMAIN positive_int AS INT NOT NULL");
+    ASSERT_TRUE(create_domain.success()) << create_domain.error();
+
+    auto create_table = compileAndExecute("CREATE TABLE domain_table (value positive_int)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    auto status = catalog_->getTable(test_schema_id_, "domain_table", table_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    CatalogManager::ColumnInfo column_info;
+    status = catalog_->getColumn(table_info.table_id, "value", column_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    DomainInfo domain_info;
+    status = db_.domain_manager()->getDomain(test_schema_id_, "positive_int", domain_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    EXPECT_EQ(column_info.domain_id, domain_info.domain_id);
+    EXPECT_EQ(column_info.data_type, static_cast<uint16_t>(domain_info.base_type));
 }
 
 // =============================================================================

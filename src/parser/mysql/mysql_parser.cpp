@@ -226,6 +226,10 @@ void Parser::error(const std::string& message) {
     errors_.emplace_back(message, current_token_.span.start);
 }
 
+void Parser::warning(const std::string& message) {
+    warnings_.push_back(message);
+}
+
 void Parser::synchronize() {
     // Skip tokens until we find a statement boundary
     while (!check(TokenType::END_OF_FILE)) {
@@ -340,6 +344,7 @@ void Parser::emitString(std::string_view str) {
 ParseResult Parser::parseStatement() {
     bytecode_.clear();
     errors_.clear();
+    warnings_.clear();
     next_placeholder_index_ = 1;
 
     // Emit SBLR version header
@@ -368,6 +373,9 @@ ParseResult Parser::parseStatement() {
         }
     } else {
         result.setBytecode(std::move(bytecode_));
+    }
+    for (const auto& warn : warnings_) {
+        result.addWarning(warn);
     }
     return result;
 }
@@ -1539,14 +1547,54 @@ void Parser::parseFunctionCall(const std::string& name) {
     std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
                    [](char c) { return std::toupper(c); });
 
+    if (upper_name == "VALUES") {
+        if (!in_on_duplicate_update_) {
+            error("VALUES() is only supported in ON DUPLICATE KEY UPDATE");
+        }
+
+        if (compat_mode_ == MySQLCompatMode::MYSQL80) {
+            warning("VALUES() is deprecated in MySQL 8.0; use a column alias instead");
+        }
+
+        auto parse_values_identifier = [&]() -> std::string {
+            if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+                return parseIdentifier();
+            }
+            if (isNonReservedKeyword(current_token_.type)) {
+                std::string token = tokenToString(current_token_.type);
+                advance();
+                return token;
+            }
+            error("Expected column name in VALUES()");
+            return "";
+        };
+
+        std::string column = parse_values_identifier();
+        if (match(TokenType::DOT)) {
+            column = parse_values_identifier();
+            if (match(TokenType::DOT)) {
+                column = parse_values_identifier();
+            }
+        }
+        if (match(TokenType::COMMA)) {
+            error("VALUES() expects a single column name");
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ) after VALUES()");
+
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_INSERTED_COLUMN_REF));
+        emitString(column);
+        return;
+    }
+
     // Aggregate functions
     if (upper_name == "COUNT") {
         emit(sblr::Opcode::AGG_COUNT);
+        emitByte(1);
         if (match(TokenType::STAR)) {
-            emit(sblr::Opcode::SELECT_STAR);
+            emit(sblr::Opcode::LITERAL_NULL);
         } else {
-            bool distinct = matchKeyword(TokenType::KW_DISTINCT);
-            emitByte(distinct ? 1 : 0);
+            matchKeyword(TokenType::KW_DISTINCT);
             parseExpression();
         }
         consume(TokenType::RIGHT_PAREN, "Expected )");
@@ -1555,8 +1603,8 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "SUM") {
         emit(sblr::Opcode::AGG_SUM);
-        bool distinct = matchKeyword(TokenType::KW_DISTINCT);
-        emitByte(distinct ? 1 : 0);
+        emitByte(1);
+        matchKeyword(TokenType::KW_DISTINCT);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -1564,8 +1612,8 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "AVG") {
         emit(sblr::Opcode::AGG_AVG);
-        bool distinct = matchKeyword(TokenType::KW_DISTINCT);
-        emitByte(distinct ? 1 : 0);
+        emitByte(1);
+        matchKeyword(TokenType::KW_DISTINCT);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -1573,6 +1621,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "MIN") {
         emit(sblr::Opcode::AGG_MIN);
+        emitByte(1);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -1580,6 +1629,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "MAX") {
         emit(sblr::Opcode::AGG_MAX);
+        emitByte(1);
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -2005,10 +2055,15 @@ void Parser::parseInsertStmt() {
         bool is_default = false;
         std::vector<uint8_t> expr;
     };
+    struct OnDuplicateAssignment {
+        std::string column;
+        std::vector<uint8_t> expr;
+    };
     std::vector<std::vector<InsertValue>> rows;
     bool default_values_only = false;
     bool has_select = false;
     std::vector<uint8_t> select_bytecode;
+    std::vector<OnDuplicateAssignment> on_duplicate_assignments;
 
     if (matchKeyword(TokenType::KW_DEFAULT)) {
         matchKeyword(TokenType::KW_VALUES);
@@ -2178,15 +2233,32 @@ void Parser::parseInsertStmt() {
         consumeKeyword(TokenType::KW_KEY, "Expected KEY");
         consumeKeyword(TokenType::KW_UPDATE, "Expected UPDATE");
 
-        bool prev_emit = emit_enabled_;
-        emit_enabled_ = false;
+        bool saved_on_duplicate = in_on_duplicate_update_;
+        in_on_duplicate_update_ = true;
         do {
-            parseIdentifier();
-            if (match(TokenType::EQUAL)) {
-                parseExpression();
-            }
+            std::string col = parseIdentifier();
+            consume(TokenType::EQUAL, "Expected =");
+            on_duplicate_assignments.push_back({col, captureExpressionBytecode()});
         } while (match(TokenType::COMMA));
-        emit_enabled_ = prev_emit;
+        in_on_duplicate_update_ = saved_on_duplicate;
+    }
+
+    if (!on_duplicate_assignments.empty()) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT));
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE));
+        emit(sblr::Opcode::BEGIN_LIST);
+        emitUVarint(on_duplicate_assignments.size());
+        for (const auto& assign : on_duplicate_assignments) {
+            emit(sblr::Opcode::ASSIGNMENT);
+            emit(sblr::Opcode::COLUMN_REF);
+            emitString(assign.column);
+            if (emit_enabled_) {
+                bytecode_.insert(bytecode_.end(), assign.expr.begin(), assign.expr.end());
+            }
+        }
+        emit(sblr::Opcode::END_LIST);
     }
 }
 
@@ -2641,7 +2713,8 @@ void Parser::parseAlterStmt() {
         std::vector<std::pair<std::string, std::string>> options;
         auto parse_option_value = [&]() -> std::string {
             if (check(TokenType::STRING_LITERAL)) {
-                std::string value = lexer_.stringPool().get(current_token_.value.string_id);
+                auto view = lexer_.stringPool().get(current_token_.value.string_id);
+                std::string value(view.data(), view.size());
                 advance();
                 return value;
             }
@@ -2956,9 +3029,10 @@ void Parser::parseCreateTable() {
         table = parseIdentifier();
     }
     resolveTableName(schema, table);
+    std::string table_path = schema + "/" + table;
 
     emit(sblr::Opcode::TABLE_REF);
-    emitString(schema + "/" + table);
+    emitString(table_path);
 
     // Column definitions
     consume(TokenType::LEFT_PAREN, "Expected (");
@@ -2969,6 +3043,7 @@ void Parser::parseCreateTable() {
 
     uint32_t col_count = 0;
     std::vector<ForeignKeyDef> pending_fks;
+    std::vector<IndexDef> pending_indexes;
     do {
         bool emitted_entry = false;
         if (check(TokenType::KW_PRIMARY) || check(TokenType::KW_UNIQUE) ||
@@ -2983,11 +3058,21 @@ void Parser::parseCreateTable() {
 
             if (matchKeyword(TokenType::KW_PRIMARY)) {
                 consumeKeyword(TokenType::KW_KEY, "Expected KEY after PRIMARY");
-                parseIndexDef(); // Accept syntax; no-op emission for now.
+                IndexDef idx = parseIndexDef();
+                idx.type = IndexDef::Type::PRIMARY;
+                if (!constraint_name.empty() && idx.name.empty()) {
+                    idx.name = constraint_name;
+                }
+                pending_indexes.push_back(std::move(idx));
             } else if (matchKeyword(TokenType::KW_UNIQUE)) {
                 matchKeyword(TokenType::KW_KEY);
                 matchKeyword(TokenType::KW_INDEX);
-                parseIndexDef(); // Accept syntax; no-op emission for now.
+                IndexDef idx = parseIndexDef();
+                idx.type = IndexDef::Type::UNIQUE;
+                if (!constraint_name.empty() && idx.name.empty()) {
+                    idx.name = constraint_name;
+                }
+                pending_indexes.push_back(std::move(idx));
             } else if (matchKeyword(TokenType::KW_FOREIGN)) {
                 consumeKeyword(TokenType::KW_KEY, "Expected KEY after FOREIGN");
                 ForeignKeyDef fk = parseForeignKeyDef();
@@ -3002,15 +3087,41 @@ void Parser::parseCreateTable() {
                 parseExpression();
                 emit_enabled_ = prev_emit;
                 consume(TokenType::RIGHT_PAREN, "Expected )");
-            } else if (matchKeyword(TokenType::KW_FULLTEXT) || matchKeyword(TokenType::KW_SPATIAL)) {
+            } else if (check(TokenType::KW_FULLTEXT) || check(TokenType::KW_SPATIAL)) {
+                bool is_spatial = matchKeyword(TokenType::KW_SPATIAL);
+                bool is_fulltext = false;
+                if (!is_spatial) {
+                    is_fulltext = matchKeyword(TokenType::KW_FULLTEXT);
+                }
                 matchKeyword(TokenType::KW_KEY);
                 matchKeyword(TokenType::KW_INDEX);
-                parseIndexDef(); // Accept syntax; no-op emission for now.
+                IndexDef idx = parseIndexDef();
+                idx.type = is_spatial ? IndexDef::Type::SPATIAL : IndexDef::Type::FULLTEXT;
+                if (!constraint_name.empty() && idx.name.empty()) {
+                    idx.name = constraint_name;
+                }
+                pending_indexes.push_back(std::move(idx));
             } else if (matchKeyword(TokenType::KW_KEY) || matchKeyword(TokenType::KW_INDEX)) {
-                parseIndexDef(); // Accept syntax; no-op emission for now.
+                IndexDef idx = parseIndexDef();
+                idx.type = IndexDef::Type::NORMAL;
+                if (!constraint_name.empty() && idx.name.empty()) {
+                    idx.name = constraint_name;
+                }
+                pending_indexes.push_back(std::move(idx));
             }
         } else {
             ColumnDef col = parseColumnDef();
+            if (col.primary_key) {
+                IndexDef idx;
+                idx.type = IndexDef::Type::PRIMARY;
+                idx.columns.push_back(col.name);
+                pending_indexes.push_back(std::move(idx));
+            } else if (col.unique) {
+                IndexDef idx;
+                idx.type = IndexDef::Type::UNIQUE;
+                idx.columns.push_back(col.name);
+                pending_indexes.push_back(std::move(idx));
+            }
 
             emit(sblr::Opcode::COLUMN_DEF);
             emit(sblr::Opcode::COLUMN_REF);
@@ -3323,6 +3434,81 @@ void Parser::parseCreateTable() {
     }
 
     emitString("");
+
+    auto resolve_index_type = [&](const IndexDef& idx) -> uint8_t {
+        if (idx.type == IndexDef::Type::FULLTEXT) {
+            return static_cast<uint8_t>(core::CatalogManager::IndexType::FULLTEXT);
+        }
+        if (idx.type == IndexDef::Type::SPATIAL) {
+            return static_cast<uint8_t>(core::CatalogManager::IndexType::RTREE);
+        }
+        if (!idx.algorithm.empty()) {
+            std::string algorithm = to_upper(idx.algorithm);
+            if (algorithm == "BTREE") {
+                return static_cast<uint8_t>(core::CatalogManager::IndexType::BTREE);
+            }
+            if (algorithm == "HASH") {
+                return static_cast<uint8_t>(core::CatalogManager::IndexType::HASH);
+            }
+            if (algorithm == "RTREE") {
+                return static_cast<uint8_t>(core::CatalogManager::IndexType::RTREE);
+            }
+            error("MySQL index type must be BTREE, HASH, or RTREE");
+        }
+        return static_cast<uint8_t>(core::CatalogManager::IndexType::BTREE);
+    };
+
+    auto make_index_name = [&](const IndexDef& idx) -> std::string {
+        if (!idx.name.empty()) {
+            return idx.name;
+        }
+        if (idx.type == IndexDef::Type::PRIMARY) {
+            return "PRIMARY";
+        }
+        std::string name = table;
+        for (const auto& col : idx.columns) {
+            name += "_" + col;
+        }
+        switch (idx.type) {
+            case IndexDef::Type::UNIQUE:
+                name += "_uniq";
+                break;
+            case IndexDef::Type::FULLTEXT:
+                name += "_ft";
+                break;
+            case IndexDef::Type::SPATIAL:
+                name += "_spatial";
+                break;
+            default:
+                name += "_idx";
+                break;
+        }
+        return name;
+    };
+
+    for (const auto& idx : pending_indexes) {
+        if (idx.columns.empty()) {
+            error("Index definition missing columns");
+            continue;
+        }
+
+        bool is_unique = (idx.type == IndexDef::Type::PRIMARY || idx.type == IndexDef::Type::UNIQUE);
+        uint8_t index_type = resolve_index_type(idx);
+        std::string index_name = make_index_name(idx);
+
+        emit(sblr::Opcode::CREATE_INDEX);
+        emitString(index_name);
+        emitString(table_path);
+        emitByte(is_unique ? 1 : 0);
+        emitU32(static_cast<uint32_t>(idx.columns.size()));
+        for (const auto& col : idx.columns) {
+            emitString(col);
+        }
+        emitString("");
+        emitByte(index_type);
+        emitByte(0);
+        emitByte(0);
+    }
 }
 
 ColumnDef Parser::parseColumnDef() {
@@ -3407,6 +3593,7 @@ ColumnDef Parser::parseColumnDef() {
         } else if (matchKeyword(TokenType::KW_PRIMARY)) {
             consumeKeyword(TokenType::KW_KEY, "Expected KEY after PRIMARY");
             col.primary_key = true;
+            col.type.nullable = false;
         } else if (matchKeyword(TokenType::KW_UNIQUE)) {
             matchKeyword(TokenType::KW_KEY);  // Optional KEY
             col.unique = true;
@@ -3919,15 +4106,259 @@ void Parser::parseCreateDatabase() {
 }
 
 void Parser::parseCreateProcedure() {
-    // TODO: Implement
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
+
+    std::string schema;
+    std::string proc_name = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = proc_name;
+        proc_name = parseIdentifier();
+    }
+    resolveTableName(schema, proc_name);
+    std::string proc_path = schema.empty() ? proc_name : schema + "/" + proc_name;
+
+    uint8_t flags = 0;
+    emitByte(flags);
+    emitString(proc_path);
+
+    std::vector<MySQLDataType> param_types;
+    std::vector<std::string> param_names;
+    std::vector<uint8_t> param_modes;
+
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            uint8_t mode = 0;
+            if (matchKeyword(TokenType::KW_IN)) {
+                mode = 0;
+            } else if (matchKeyword(TokenType::KW_OUT)) {
+                mode = 1;
+            } else if (matchKeyword(TokenType::KW_INOUT)) {
+                mode = 2;
+            }
+
+            param_modes.push_back(mode);
+            param_names.push_back(parseIdentifier());
+            param_types.push_back(parseDataType());
+
+            if (matchKeyword(TokenType::KW_DEFAULT) || match(TokenType::EQUAL)) {
+                bool prev_emit = emit_enabled_;
+                emit_enabled_ = false;
+                parseExpression();
+                emit_enabled_ = prev_emit;
+            }
+        } while (match(TokenType::COMMA));
+    }
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    emitByte(static_cast<uint8_t>(param_names.size()));
+    for (size_t i = 0; i < param_names.size(); ++i) {
+        emitByte(param_modes[i]);
+        emitString(param_names[i]);
+        emitByte(static_cast<uint8_t>(typeToOpcode(param_types[i].kind)));
+        emitU32(static_cast<uint32_t>(param_types[i].precision));
+        emitU32(static_cast<uint32_t>(param_types[i].scale));
+    }
+
+    auto capture_body = [&]() -> std::string {
+        if (check(TokenType::SEMICOLON) || check(TokenType::END_OF_FILE)) {
+            return "";
+        }
+        size_t start = current_token_.span.start.offset;
+        Token last = current_token_;
+        while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+            last = current_token_;
+            advance();
+        }
+        size_t end = last.span.start.offset + last.span.length;
+        auto input = lexer_.input();
+        if (end > input.size()) {
+            end = input.size();
+        }
+        if (end <= start) {
+            return "";
+        }
+        return std::string(input.substr(start, end - start));
+    };
+
+    std::string body = capture_body();
+    emitString(body);
 }
 
 void Parser::parseCreateFunction() {
-    // TODO: Implement
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_FUNCTION_STMT));
+
+    std::string schema;
+    std::string func_name = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = func_name;
+        func_name = parseIdentifier();
+    }
+    resolveTableName(schema, func_name);
+    std::string func_path = schema.empty() ? func_name : schema + "/" + func_name;
+
+    uint8_t flags = 0;
+    emitByte(flags);
+    emitString(func_path);
+
+    std::vector<MySQLDataType> param_types;
+    std::vector<std::string> param_names;
+    std::vector<uint8_t> param_modes;
+
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            uint8_t mode = 0;
+            if (matchKeyword(TokenType::KW_IN)) {
+                mode = 0;
+            } else if (matchKeyword(TokenType::KW_OUT)) {
+                mode = 1;
+            } else if (matchKeyword(TokenType::KW_INOUT)) {
+                mode = 2;
+            }
+
+            param_modes.push_back(mode);
+            param_names.push_back(parseIdentifier());
+            param_types.push_back(parseDataType());
+
+            if (matchKeyword(TokenType::KW_DEFAULT) || match(TokenType::EQUAL)) {
+                bool prev_emit = emit_enabled_;
+                emit_enabled_ = false;
+                parseExpression();
+                emit_enabled_ = prev_emit;
+            }
+        } while (match(TokenType::COMMA));
+    }
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    emitByte(static_cast<uint8_t>(param_names.size()));
+    for (size_t i = 0; i < param_names.size(); ++i) {
+        emitByte(param_modes[i]);
+        emitString(param_names[i]);
+        emitByte(static_cast<uint8_t>(typeToOpcode(param_types[i].kind)));
+        emitU32(static_cast<uint32_t>(param_types[i].precision));
+        emitU32(static_cast<uint32_t>(param_types[i].scale));
+    }
+
+    consumeKeyword(TokenType::KW_RETURNS, "Expected RETURNS");
+    MySQLDataType return_type = parseDataType();
+
+    emitByte(static_cast<uint8_t>(typeToOpcode(return_type.kind)));
+    emitU32(static_cast<uint32_t>(return_type.precision));
+    emitU32(static_cast<uint32_t>(return_type.scale));
+
+    auto capture_body = [&]() -> std::string {
+        if (check(TokenType::SEMICOLON) || check(TokenType::END_OF_FILE)) {
+            return "";
+        }
+        size_t start = current_token_.span.start.offset;
+        Token last = current_token_;
+        while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+            last = current_token_;
+            advance();
+        }
+        size_t end = last.span.start.offset + last.span.length;
+        auto input = lexer_.input();
+        if (end > input.size()) {
+            end = input.size();
+        }
+        if (end <= start) {
+            return "";
+        }
+        return std::string(input.substr(start, end - start));
+    };
+
+    std::string body = capture_body();
+    emitString(body);
 }
 
 void Parser::parseCreateTrigger() {
-    // TODO: Implement
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_TRIGGER));
+
+    std::string trigger_name = parseIdentifier();
+
+    uint8_t timing = 0;
+    if (matchKeyword(TokenType::KW_BEFORE)) {
+        timing = static_cast<uint8_t>(core::CatalogManager::TriggerTiming::BEFORE);
+    } else if (matchKeyword(TokenType::KW_AFTER)) {
+        timing = static_cast<uint8_t>(core::CatalogManager::TriggerTiming::AFTER);
+    } else {
+        error("Expected BEFORE or AFTER in CREATE TRIGGER");
+        synchronize();
+        return;
+    }
+
+    uint8_t event = 0;
+    if (matchKeyword(TokenType::KW_INSERT)) {
+        event = static_cast<uint8_t>(core::CatalogManager::TriggerEvent::INSERT);
+    } else if (matchKeyword(TokenType::KW_UPDATE)) {
+        event = static_cast<uint8_t>(core::CatalogManager::TriggerEvent::UPDATE);
+    } else if (matchKeyword(TokenType::KW_DELETE)) {
+        event = static_cast<uint8_t>(core::CatalogManager::TriggerEvent::DELETE);
+    } else {
+        error("Expected INSERT, UPDATE, or DELETE in CREATE TRIGGER");
+        synchronize();
+        return;
+    }
+
+    consumeKeyword(TokenType::KW_ON, "Expected ON");
+    std::string schema;
+    std::string table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = table;
+        table = parseIdentifier();
+    }
+    resolveTableName(schema, table);
+    std::string table_path = schema.empty() ? table : schema + "/" + table;
+
+    if (matchKeyword(TokenType::KW_FOR)) {
+        matchKeyword(TokenType::KW_EACH);
+        matchKeyword(TokenType::KW_ROW);
+    }
+
+    auto capture_body = [&]() -> std::string {
+        if (check(TokenType::SEMICOLON) || check(TokenType::END_OF_FILE)) {
+            return "";
+        }
+        size_t start = current_token_.span.start.offset;
+        Token last = current_token_;
+        while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+            last = current_token_;
+            advance();
+        }
+        size_t end = last.span.start.offset + last.span.length;
+        auto input = lexer_.input();
+        if (end > input.size()) {
+            end = input.size();
+        }
+        if (end <= start) {
+            return "";
+        }
+        return std::string(input.substr(start, end - start));
+    };
+
+    std::string body = capture_body();
+
+    std::string proc_name = "__trigger_" + trigger_name;
+    std::string proc_path = schema.empty() ? proc_name : schema + "/" + proc_name;
+
+    // Create an implicit procedure to hold the trigger body.
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
+    emitByte(0);
+    emitString(proc_path);
+    emitByte(0);  // no parameters
+    emitString(body);
+
+    emitString(trigger_name);
+    emitString(table_path);
+    emitByte(timing);
+    emitByte(event);
+    emitByte(static_cast<uint8_t>(core::CatalogManager::TriggerGranularity::FOR_EACH_ROW));
+    emitString(proc_path);
 }
 
 IndexDef Parser::parseIndexDef() {
@@ -3957,8 +4388,8 @@ IndexDef Parser::parseIndexDef() {
             return;
         }
         std::string upper = to_upper(algorithm);
-        if (upper != "BTREE" && upper != "HASH") {
-            error("MySQL index type must be BTREE or HASH");
+        if (upper != "BTREE" && upper != "HASH" && upper != "RTREE") {
+            error("MySQL index type must be BTREE, HASH, or RTREE");
         }
     };
 
@@ -4517,21 +4948,16 @@ void Parser::parseLockStmt() {
     consume(TokenType::KW_LOCK, "Expected LOCK");
     consumeKeyword(TokenType::KW_TABLES, "Expected TABLES");
 
-    // For now, just skip the lock statement
-    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
-        advance();
-    }
-
-    // Emit no-op
-    emit(sblr::Opcode::LITERAL_NULL);
+    error("LOCK TABLES is not supported in MySQL emulation yet");
+    synchronize();
 }
 
 void Parser::parseUnlockStmt() {
     consume(TokenType::KW_UNLOCK, "Expected UNLOCK");
     consumeKeyword(TokenType::KW_TABLES, "Expected TABLES");
 
-    // Emit no-op
-    emit(sblr::Opcode::LITERAL_NULL);
+    error("UNLOCK TABLES is not supported in MySQL emulation yet");
+    synchronize();
 }
 
 void Parser::parseSubquery() {

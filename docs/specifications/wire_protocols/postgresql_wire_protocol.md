@@ -753,7 +753,9 @@ CREATE_REPLICATION_SLOT slot_name LOGICAL pgoutput
 TIMELINE_HISTORY 2
 ```
 
-### WAL Data Messages
+### Write-after Log (WAL) Data Messages
+
+**Scope Note:** ScratchBird does not implement write-after log (WAL)-based replication. This section is included as PostgreSQL protocol reference only.
 
 In streaming replication, `CopyBothResponse` is used and **all** replication traffic is carried inside `CopyData` (type 'd') messages. The first byte of the `CopyData` payload is a submessage type:
 - 'w' = XLogData (primary → standby)

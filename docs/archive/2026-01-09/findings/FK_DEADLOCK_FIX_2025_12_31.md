@@ -2,7 +2,7 @@
 
 **Date:** 2025-12-31
 **Status:** ✅ FIXED - Lock ordering corrected in createForeignKey
-**Test:** TableDependencyTest.DropTableFailsIfParentFK
+**Tests:** TableDependencyTest.DropTableFailsIfParentFK, TableDependencyTest.ForeignKeyDependencyTypes, ForeignKeys, CompositeForeignKey
 **Issue:** Test timeout at 1,500 seconds (25 minutes) due to deadlock
 
 ---
@@ -277,7 +277,10 @@ No direct callers need changes - they already work correctly.
 
 **Test Result:**
 ```
-Test #1240: TableDependencyTest.DropTableFailsIfParentFK ... Passed 0.02 sec
+Test #654: TableDependencyTest.DropTableFailsIfParentFK ... Passed 0.03 sec (2026-01-10)
+Test #664: TableDependencyTest.ForeignKeyDependencyTypes ... Passed 0.03 sec (2026-01-10)
+Test #1997: ForeignKeys ... Passed 0.00 sec (2026-01-10)
+Test #2002: CompositeForeignKey ... Passed 0.00 sec (2026-01-10)
 ```
 
 **Actual Root Cause Found:**

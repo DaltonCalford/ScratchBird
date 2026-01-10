@@ -4,6 +4,8 @@
 
 ## Overview
 
+**Scope Note:** TDS/MSSQL support is deferred until after the project goes gold. This document is retained for future compatibility work and does not represent current implementation.
+
 TDS (Tabular Data Stream) is Microsoft's proprietary protocol for SQL Server and Sybase databases. It operates over TCP/IP on port 1433 by default. The protocol is packet-based with a maximum packet size of 65,536 bytes.
 
 ## Packet Structure

@@ -8,6 +8,8 @@ The Query Execution Layer sits between the ScratchBird query planner and the pro
 - Result aggregation from multiple sources
 - Transaction coordination
 
+**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+
 ---
 
 ## 2. Architecture
@@ -434,7 +436,7 @@ public:
 };
 ```
 
-### 5.4 MSSQL Translator
+### 5.4 MSSQL Translator (post-gold)
 
 ```cpp
 class MSSQLDialectTranslator : public SQLDialectTranslator {
@@ -635,7 +637,7 @@ private:
     std::unordered_map<DistributedTransactionId,
                        std::vector<ParticipantState>> transactions_;
 
-    // WAL logging for recovery
+    // Write-after log (WAL) logging for recovery
     void logPrepare(DistributedTransactionId txn_id,
                     const std::vector<std::string>& servers);
     void logCommit(DistributedTransactionId txn_id);

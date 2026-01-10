@@ -27,6 +27,7 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
     // Parsing + bytecode generation is handled by the MySQL parser itself
     auto parse_start = std::chrono::steady_clock::now();
     mysql::Parser parser(sql, db_, default_schema_);
+    parser.setCompatibilityMode(compat_mode_);
     mysql::ParseResult parse_result = parser.parseStatement();
     auto parse_end = std::chrono::steady_clock::now();
 
@@ -43,6 +44,9 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
     }
 
     result.setBytecode(parse_result.bytecode());
+    for (const auto& warn : parse_result.warnings()) {
+        result.addWarning(warn);
+    }
     stats.bytecode_size = parse_result.bytecode().size();
 
     auto total_end = std::chrono::steady_clock::now();

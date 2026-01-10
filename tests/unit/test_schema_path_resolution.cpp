@@ -17,6 +17,14 @@ using ObjectType = CatalogManager::ObjectType;
 
 namespace {
 
+void appendUVarint(std::vector<uint8_t>& bytecode, uint64_t value)
+{
+    size_t offset = bytecode.size();
+    bytecode.resize(offset + 10);
+    size_t count = scratchbird::sblr::writeUVarint(&bytecode[offset], value);
+    bytecode.resize(offset + count);
+}
+
 void appendUint32(std::vector<uint8_t>& bytecode, uint32_t value)
 {
     size_t offset = bytecode.size();
@@ -26,7 +34,7 @@ void appendUint32(std::vector<uint8_t>& bytecode, uint32_t value)
 
 void appendString(std::vector<uint8_t>& bytecode, const std::string& value)
 {
-    appendUint32(bytecode, static_cast<uint32_t>(value.size()));
+    appendUVarint(bytecode, static_cast<uint64_t>(value.size()));
     bytecode.insert(bytecode.end(), value.begin(), value.end());
 }
 
@@ -94,9 +102,11 @@ std::vector<uint8_t> buildCreateTableBytecode(const std::string& table_name,
 {
     auto bytecode = startBytecode(scratchbird::sblr::Opcode::CREATE_TABLE);
     bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::TABLE_REF));
+    bytecode.push_back(0);  // ref_kind: name
     appendString(bytecode, table_name);
+    appendString(bytecode, "");  // alias
     bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::BEGIN_LIST));
-    appendUint32(bytecode, static_cast<uint32_t>(column_names.size()));
+    appendUVarint(bytecode, static_cast<uint64_t>(column_names.size()));
     for (const auto& col_name : column_names)
     {
         bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::COLUMN_DEF));

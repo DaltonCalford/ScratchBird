@@ -15,6 +15,8 @@ This document specifies the backup and restore architecture for ScratchBird clus
 - Retention policies and lifecycle management
 - Cross-region backup replication
 
+**Scope Note:** WAL references describe an optional write-after log stream for replication/PITR; MGA does not use WAL for recovery.
+
 ### 1.3 Related Documents
 - **SBCLUSTER-00**: Guiding Principles (shard-local MVCC, shared-nothing)
 - **SBCLUSTER-02**: Membership and Identity (certificates never backed up)
@@ -24,7 +26,7 @@ This document specifies the backup and restore architecture for ScratchBird clus
 ### 1.4 Terminology
 - **Backup Set**: Collection of per-shard backups taken at coordinated time
 - **Full Backup**: Complete snapshot of shard data at a point in time
-- **Incremental Backup**: Changes since last backup (WAL segments)
+- **Incremental Backup**: Changes since last backup (write-after log (WAL) segments)
 - **PITR**: Point-In-Time Recovery (restore to specific timestamp)
 - **Trust Material**: Certificates, private keys, CA bundles (never backed up)
 - **Backup Target**: Node with BACKUP_TARGET role that stores backups
@@ -82,7 +84,7 @@ This document specifies the backup and restore architecture for ScratchBird clus
 **Backed Up**:
 - User data (tables, rows)
 - Catalog metadata (schemas, domains, procedures)
-- WAL segments
+- Write-after log (WAL) segments
 - Security policies (RLS, CLS, masking functions)
 - User accounts and grants
 
@@ -116,7 +118,7 @@ struct BackupSet {
 
 enum BackupType {
     FULL,         // Full snapshot
-    INCREMENTAL   // WAL segments since last full backup
+    INCREMENTAL   // write-after log (WAL) segments since last full backup
 };
 
 enum BackupSetState {
@@ -239,7 +241,7 @@ ShardBackup perform_full_shard_backup(
         }
     }
 
-    // 6. Backup WAL segments up to snapshot_lsn
+    // 6. Backup write-after log (WAL) segments up to snapshot_lsn
     WALSegments wal = export_wal_segments(shard_uuid, 0, snapshot_lsn);
     stream.write_wal_segments(wal);
 
@@ -259,7 +261,7 @@ ShardBackup perform_full_shard_backup(
 
 ### 4.2 Per-Shard Incremental Backup
 
-**Algorithm**: Backup WAL segments since last backup.
+**Algorithm**: Backup write-after log (WAL) segments since last backup.
 
 ```cpp
 ShardBackup perform_incremental_shard_backup(
@@ -279,14 +281,14 @@ ShardBackup perform_incremental_shard_backup(
     backup.end_lsn = current_lsn;
     backup.backup_timestamp = now();
 
-    // 3. Export WAL segments
+    // 3. Export write-after log (WAL) segments
     WALSegments wal = export_wal_segments(
         shard_uuid,
         backup.start_lsn,
         backup.end_lsn
     );
 
-    // 4. Write WAL segments to backup target
+    // 4. Write write-after log (WAL) segments to backup target
     BackupStream stream = open_backup_stream(target, backup.shard_backup_uuid);
     stream.write_wal_segments(wal);
     stream.close();
@@ -425,7 +427,7 @@ void restore_shard_from_backup(
 
     full_stream.close();
 
-    // 5. Apply incremental backups (WAL replay)
+    // 5. Apply incremental backups (write-after log (WAL) replay)
     for (const ShardBackup& inc_backup : incremental_backups) {
         BackupStream inc_stream = open_backup_stream_for_read(inc_backup);
         WALSegments wal = inc_stream.read_wal_segments();
@@ -494,7 +496,7 @@ void restore_cluster_from_backup_set(
 
 ### 5.4 Point-In-Time Recovery (PITR)
 
-**Algorithm**: Restore cluster to specific timestamp using WAL replay.
+**Algorithm**: Restore cluster to specific timestamp using write-after log (WAL) replay.
 
 ```cpp
 void restore_to_point_in_time(
@@ -504,13 +506,13 @@ void restore_to_point_in_time(
     // 1. Restore from full backup
     restore_cluster_from_backup_set(full_backup_set, backup_target);
 
-    // 2. For each shard, replay WAL up to target timestamp
+    // 2. For each shard, replay write-after log (WAL) up to target timestamp
     for (const ShardBackup& shard_backup : full_backup_set.shard_backups) {
         // Find all incremental backups after full backup
         vector<ShardBackup> incremental_backups =
             find_incremental_backups_after(shard_backup.backup_timestamp);
 
-        // Replay WAL up to target timestamp
+        // Replay write-after log (WAL) up to target timestamp
         replay_wal_until_timestamp(
             shard_backup.shard_uuid,
             incremental_backups,

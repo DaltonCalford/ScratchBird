@@ -6,7 +6,10 @@
 
 #include "scratchbird/server/server_session.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 is now the only parser
+#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/firebird_query_compiler.h"
+#include "scratchbird/sblr/postgresql_query_compiler.h"
+#include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/auth_provider.h"
@@ -542,27 +545,84 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         ~QueryExecutingGuard() { flag.store(false, std::memory_order_release); }
     } guard(query_executing_);
 
-    // Parser V2 is now the only parser (V1 has been removed)
-    if (!compiler_v2_) {
-        compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(database_);
+    struct ConnectionContextGuard {
+        core::ConnectionContext* previous = nullptr;
+        bool changed = false;
+
+        explicit ConnectionContextGuard(core::ConnectionContext* current)
+            : previous(core::ConnectionContext::getCurrent())
+        {
+            if (current && current != previous) {
+                core::ConnectionContext::setCurrent(current);
+                changed = true;
+            }
+        }
+
+        ~ConnectionContextGuard() {
+            if (changed) {
+                core::ConnectionContext::setCurrent(previous);
+            }
+        }
+    } ctx_guard(conn_ctx_.get());
+
+    std::vector<uint8_t> bytecode;
+    std::string error_msg;
+
+    std::string dialect_tag = "SCRATCHBIRD";
+    if (conn_ctx_) {
+        dialect_tag = core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag());
     }
 
-    sblr::CompilationResultV2 compile_result = compiler_v2_->compile(sql);
-
-    if (!compile_result.success()) {
-        stats_.queries_failed++;
-        std::string error_msg = "Compilation error";
-        if (!compile_result.errors().empty()) {
-            error_msg = compile_result.errors()[0];
+    if (dialect_tag == "FIREBIRD" || dialect_tag == "FIREBIRDSQL") {
+        if (!compiler_firebird_) {
+            compiler_firebird_ = std::make_unique<sblr::FirebirdQueryCompiler>(database_);
         }
+        auto compile_result = compiler_firebird_->compile(sql);
+        if (!compile_result.success()) {
+            error_msg = compile_result.errors().empty() ? "Compilation error" : compile_result.errors()[0];
+        } else {
+            bytecode = compile_result.bytecode();
+        }
+    } else if (dialect_tag == "POSTGRESQL" || dialect_tag == "POSTGRES" || dialect_tag == "PG") {
+        if (!compiler_postgresql_) {
+            compiler_postgresql_ = std::make_unique<sblr::PostgreSQLQueryCompiler>(database_);
+        }
+        auto compile_result = compiler_postgresql_->compile(sql);
+        if (!compile_result.success()) {
+            error_msg = compile_result.errors().empty() ? "Compilation error" : compile_result.errors()[0];
+        } else {
+            bytecode = compile_result.bytecode();
+        }
+    } else if (dialect_tag == "MYSQL") {
+        if (!compiler_mysql_) {
+            compiler_mysql_ = std::make_unique<sblr::MySQLQueryCompiler>(database_);
+        }
+        auto compile_result = compiler_mysql_->compile(sql);
+        if (!compile_result.success()) {
+            error_msg = compile_result.errors().empty() ? "Compilation error" : compile_result.errors()[0];
+        } else {
+            bytecode = compile_result.bytecode();
+        }
+    } else {
+        if (!compiler_v2_) {
+            compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(database_);
+        }
+        auto compile_result = compiler_v2_->compile(sql);
+        if (!compile_result.success()) {
+            error_msg = compile_result.errors().empty() ? "Compilation error" : compile_result.errors()[0];
+        } else {
+            bytecode = compile_result.bytecode();
+        }
+    }
+
+    if (!error_msg.empty()) {
+        stats_.queries_failed++;
         if (conn_ctx_) {
             conn_ctx_->endStatementTrackingFailure(
                 static_cast<uint32_t>(core::Status::INVALID_ARGUMENT), "42000");
         }
         return sendError(error_msg, "42000", ctx);
     }
-
-    std::vector<uint8_t> bytecode = compile_result.bytecode();
 
     // Execute the bytecode
     sblr::ExecutionResult exec_result = executor_->execute(bytecode);

@@ -178,7 +178,7 @@ Sections without RFC 2119 keywords are **informative** and provide context, exam
 ✓ "Audit events MUST include prev_event_hash for chain verification."
 ✓ "Transactions MUST NOT span multiple shards."
 ✓ "Shard assignments MUST be consistent across all cluster members."
-✓ "WAL entries MUST be applied in order."
+✓ "Write-after log (WAL) entries MUST be applied in order."
 ```
 
 **Rationale**: Data corruption is unacceptable. No flexibility.

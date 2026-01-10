@@ -118,7 +118,7 @@ during processing.
 | Protocol       | Wire<br> protocol handlers (PostgreSQL, MySQL, MSSQL, Firebird), TLS<br> termination, channel binding       |
 | Authentication | Auth<br> dispatcher, provider registry, UDR framework, external auth<br> integration (Kerberos, LDAP, OIDC) |
 | Authorization  | Permission<br> cache, role hierarchy, grant/revoke management, row-level security                           |
-| Encryption     | Key<br> hierarchy (CMK→DBK→TSK→DEK), TDE, WAL encryption, backup<br> encryption                             |
+| Encryption     | Key<br> hierarchy (CMK→DBK→TSK→DEK), TDE, write-after log (WAL) encryption, backup<br> encryption                             |
 | Cluster        | Security<br> database replication, quorum management, fencing, membership<br> control                       |
 | Audit          | Event<br> collection, chain hashing, SIEM streaming, compliance reporting,<br> anomaly detection            |
 
@@ -450,7 +450,7 @@ through a hierarchical key management system.
 | DBK          | Database             | CMK                  | Wrap<br> tablespace keys      |
 | TSK          | Tablespace           | DBK                  | Wrap<br> data encryption keys |
 | DEK          | Page/extent          | TSK                  | Encrypt<br> actual data       |
-| LEK          | Transaction<br> log  | DBK                  | Encrypt<br> WAL/journal       |
+| LEK          | Transaction<br> log  | DBK                  | Encrypt<br> write-after log (WAL)/journal       |
 | BKK          | Backup               | CMK<br> + passphrase | Encrypt<br> backups           |
 
 ## **7.2 Key Derivation Sources**
@@ -2738,7 +2738,7 @@ Encryption and key management is where security architecture gets complicated. T
 | Data Encryption Key  | DEK          | Page/extent        | TSK                     | Actual data encryption      |
 | Backup Key           | BKK          | Backup set         | CMK + backup passphrase | Encrypt backups             |
 | Credential Store Key | CSK          | DATABASES table    | SDK                     | Encrypt stored passwords    |
-| Log Encryption Key   | LEK          | Transaction log    | DBK                     | Encrypt WAL/journal         |
+| Log Encryption Key   | LEK          | Transaction log    | DBK                     | Encrypt write-after log (WAL)/journal         |
 | Replication Key      | RPK          | Replication stream | CMK                     | Encrypt replication traffic |
 
 ## Master Key Management
@@ -3338,13 +3338,13 @@ int decrypt_page(
 }
 ```
 
-### WAL/Transaction Log Encryption
+### Write-after Log (WAL)/Transaction Log Encryption
 
 c
 
 ```c
 /*
- * WAL records are encrypted individually.
+ * Write-after log (WAL) records are encrypted individually.
  * Each record has its own IV based on LSN.
  */
 typedef struct EncryptedWALRecord {
@@ -4285,7 +4285,7 @@ Database start with encryption enabled:
 │ 5. INITIALIZE ENCRYPTION SUBSYSTEM                               │
 ├─────────────────────────────────────────────────────────────────┤
 │  - Register page encryption hooks                               │
-│  - Register WAL encryption hooks                                │
+│  - Register write-after log (WAL) encryption hooks               │
 │  - Enable encrypted I/O                                         │
 └─────────────────────────────────────────────────────────────────┘
     │
@@ -4294,7 +4294,7 @@ Database start with encryption enabled:
 │ 6. NORMAL STARTUP                                                │
 ├─────────────────────────────────────────────────────────────────┤
 │  - Open encrypted data files                                    │
-│  - Replay encrypted WAL if needed                               │
+│  - Replay encrypted write-after log (WAL) if needed              │
 │  - Accept connections                                           │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -9280,5 +9280,3 @@ void update_behavior_baselines(void) {
 | `audit.anomaly.threshold_stddev`      | FLOAT   | 3.0                                | Anomaly detection threshold      |
 | `audit.compliance.auto_reports`       | BOOLEAN | FALSE                              | Auto-generate compliance reports |
 | `audit.compliance.report_schedule`    | STRING  | 0 0 1 * *                          | Report generation schedule       |
-
-

@@ -85,7 +85,7 @@ This specification covers **Service Mode** - running ScratchBird as a persistent
 │  ┌────────────────────────────────────────────────────────────────────┐ │
 │  │  Listener Threads (per protocol)                                    │ │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────┐ │ │
-│  │  │ Native :3092 │ │ PG :5432     │ │ MySQL :3306  │ │ TDS :1433  │ │ │
+│  │  │ Native :3092 │ │ PG :5432     │ │ MySQL :3306  │ │ TDS*:1433 │ │ │
 │  │  └──────────────┘ └──────────────┘ └──────────────┘ └────────────┘ │ │
 │  │  ┌──────────────┐ ┌──────────────┐                                 │ │
 │  │  │ FB :3050     │ │ Unix Socket  │                                 │ │
@@ -117,6 +117,8 @@ This specification covers **Service Mode** - running ScratchBird as a persistent
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+**Note:** TDS/MSSQL listener is reserved for post-gold; current versions expose Native/PG/MySQL/Firebird only.
+
 ### 2.2 Thread Model
 
 | Thread Type | Count | Purpose |
@@ -124,7 +126,7 @@ This specification covers **Service Mode** - running ScratchBird as a persistent
 | Main | 1 | Signal handling, coordination |
 | Listener | 1 per protocol | Accept connections |
 | Worker | Configurable (default: CPU cores × 2) | Query execution |
-| Checkpoint | 1 per database | WAL checkpointing |
+| Checkpoint | 1 per database | MGA checkpointing (no write-after log (WAL)) |
 | Garbage Collector | 1 per database | MGA version cleanup |
 | Stats Collector | 1 | Aggregate statistics |
 | Watchdog | 1 | Health monitoring |
@@ -165,7 +167,7 @@ OPTIONS:
     --mysql-port <PORT>         MySQL protocol port
                                 Default: 3306 (0 to disable)
 
-    --tds-port <PORT>           TDS/MSSQL protocol port
+    --tds-port <PORT>           TDS/MSSQL protocol port (post-gold, reserved)
                                 Default: 1433 (0 to disable)
 
     --fb-port <PORT>            Firebird protocol port
@@ -228,7 +230,7 @@ Protocol versions:
   - ScratchBird Native: 1.0
   - PostgreSQL: 3.0
   - MySQL: 10
-  - TDS: 7.4
+  - TDS: 7.4 (post-gold)
   - Firebird: 13
 Build: Release
 Compiler: GCC 13.2.0
@@ -323,7 +325,7 @@ pg_port = 5432
 # MySQL protocol port (0 to disable)
 mysql_port = 3306
 
-# TDS/MSSQL protocol port (0 to disable)
+# TDS/MSSQL protocol port (reserved; post-gold, 0 to disable)
 tds_port = 1433
 
 # Firebird protocol port (0 to disable)
@@ -462,7 +464,8 @@ huge_pages = try
 # STORAGE SECTION
 #==============================================================================
 [storage]
-# WAL directory (default: same as data directory)
+# Optional write-after log (post-gold). MGA does not use write-after log (WAL) for recovery; these are no-ops until implemented.
+# Write-after log (WAL) directory (default: same as data directory)
 wal_dir =
 
 # Checkpoint interval (seconds)
@@ -471,10 +474,10 @@ checkpoint_interval = 300
 # Checkpoint completion target (0.0 - 1.0)
 checkpoint_completion_target = 0.9
 
-# Maximum WAL size before checkpoint (bytes)
+# Maximum write-after log (WAL) size before checkpoint (bytes)
 max_wal_size = 1073741824  # 1GB
 
-# Minimum WAL size to retain
+# Minimum write-after log (WAL) size to retain
 min_wal_size = 80MB
 
 # fsync after each commit: on | off (DANGEROUS if off)
@@ -486,7 +489,7 @@ synchronous_commit = on
 # Full page writes after checkpoint
 full_page_writes = on
 
-# WAL compression
+# Write-after log (WAL) compression
 wal_compression = zstd
 
 # Data file sync method: fsync | fdatasync | open_sync | open_datasync
@@ -770,7 +773,7 @@ role = primary
 # Replication slots
 max_replication_slots = 10
 
-# WAL sender processes
+# Write-after log (WAL) sender processes
 max_wal_senders = 10
 
 # Standby connection string (for standby role)
@@ -921,7 +924,7 @@ auto_create = false
 
 **Behavior:**
 - Clients specify database in connection string
-- `CREATE DATABASE name` creates new .sbdb file
+- `CREATE DATABASE name` creates new .sbdb file (ScratchBird only; emulated dialects create metadata only)
 - `DROP DATABASE name` removes file (with safeguards)
 - Per-database resource limits
 - Cross-database queries (with federation)
@@ -1221,7 +1224,7 @@ EOF
 7. Initialize shared memory
 8. Open database files
    ├── Verify database integrity
-   ├── Replay WAL if needed
+   ├── Skip write-after log (WAL) replay (MGA); optional write-after log replay if configured
    └── Initialize buffer pool
 9. Start background services
    ├── Checkpoint writer
@@ -1231,7 +1234,7 @@ EOF
     ├── Native protocol (3092)
     ├── PostgreSQL (5432)
     ├── MySQL (3306)
-    ├── TDS (1433)
+    ├── TDS (1433, post-gold)
     ├── Firebird (3050)
     └── Unix socket
 11. Start worker thread pool
@@ -1272,7 +1275,7 @@ If the server crashed:
 3. For each database:
    ├── Open database file
    ├── Detect incomplete checkpoint
-   ├── Replay WAL from last checkpoint
+   ├── Skip write-after log (WAL) replay (MGA); optional write-after log replay if configured
    ├── Verify data integrity
    └── Complete recovery
 4. Continue normal startup
@@ -1697,7 +1700,7 @@ Databases: 3 (main, production, analytics)
 
 /var/lib/scratchbird/   # Data directory
 ├── main.sbdb           # Default database
-└── wal/                # WAL files
+└── wal/                # Optional write-after log files (post-gold)
 
 /var/log/scratchbird/   # Log directory
 ├── sb_server.log       # Main server log
@@ -1877,7 +1880,7 @@ sb_admin show locks --blocking
 # Buffer pool statistics
 sb_admin show buffers --histogram
 
-# WAL status
+# Write-after log status (post-gold)
 sb_admin show wal
 
 # Replication status (if enabled)

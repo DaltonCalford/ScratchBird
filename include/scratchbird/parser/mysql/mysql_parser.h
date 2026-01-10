@@ -54,9 +54,13 @@ public:
     bool success() const { return errors_.empty(); }
 
     const std::vector<ParseError>& errors() const { return errors_; }
+    const std::vector<std::string>& warnings() const { return warnings_; }
 
     void addError(const std::string& message, SourceLocation loc) {
         errors_.emplace_back(message, loc);
+    }
+    void addWarning(const std::string& message) {
+        warnings_.push_back(message);
     }
 
     const std::vector<uint8_t>& bytecode() const { return bytecode_; }
@@ -68,7 +72,13 @@ public:
 
 private:
     std::vector<ParseError> errors_;
+    std::vector<std::string> warnings_;
     std::vector<uint8_t> bytecode_;
+};
+
+enum class MySQLCompatMode : uint8_t {
+    MYSQL57 = 0,
+    MYSQL80 = 1,
 };
 
 /**
@@ -144,7 +154,7 @@ struct IndexDef {
     std::string name;
     std::vector<std::string> columns;
     std::vector<int> column_lengths;  // Prefix lengths for text columns
-    std::string algorithm;  // BTREE, HASH
+    std::string algorithm;  // BTREE, HASH, RTREE
     std::string comment;
 };
 
@@ -318,6 +328,9 @@ public:
     StringPool& stringPool() { return lexer_.stringPool(); }
     const StringPool& stringPool() const { return lexer_.stringPool(); }
 
+    void setCompatibilityMode(MySQLCompatMode mode) { compat_mode_ = mode; }
+    MySQLCompatMode compatibilityMode() const { return compat_mode_; }
+
 private:
     Lexer lexer_;
     core::Database* db_;
@@ -328,6 +341,9 @@ private:
     uint32_t next_placeholder_index_ = 1;
     bool emit_enabled_ = true;
     bool pending_or_replace_ = false;
+    bool in_on_duplicate_update_ = false;
+    MySQLCompatMode compat_mode_ = MySQLCompatMode::MYSQL57;
+    std::vector<std::string> warnings_;
 
     // Token management
     void advance();
@@ -340,6 +356,7 @@ private:
 
     // Error handling
     void error(const std::string& message);
+    void warning(const std::string& message);
     void synchronize();
 
     // Bytecode emission helpers

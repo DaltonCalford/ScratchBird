@@ -914,7 +914,7 @@ Status IVFIndex::assignVectorToList(uint64_t vector_id,
     list.pq_codes.insert(list.pq_codes.end(), pq_code.begin(), pq_code.end());
     list.num_vectors++;
 
-    // 4. Mark list as dirty for WAL
+    // 4. Mark list as dirty for optional write-after log (WAL)
     markListDirty(nearest_list);
 
     return Status::OK;

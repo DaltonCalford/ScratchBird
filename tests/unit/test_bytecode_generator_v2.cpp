@@ -180,6 +180,31 @@ protected:
         return false;
     }
 
+    bool readUVarint(const std::vector<uint8_t>& bytecode, size_t* offset, uint64_t* out) {
+        if (*offset >= bytecode.size()) {
+            return false;
+        }
+        size_t bytes_read = 0;
+        if (!sblr::readUVarint(&bytecode[*offset], bytecode.size() - *offset, *out, bytes_read)) {
+            return false;
+        }
+        *offset += bytes_read;
+        return true;
+    }
+
+    bool readStringVarint(const std::vector<uint8_t>& bytecode, size_t* offset, std::string* out) {
+        uint64_t length = 0;
+        if (!readUVarint(bytecode, offset, &length)) {
+            return false;
+        }
+        if (*offset + length > bytecode.size()) {
+            return false;
+        }
+        out->assign(reinterpret_cast<const char*>(&bytecode[*offset]), length);
+        *offset += length;
+        return true;
+    }
+
     struct StartTransactionPayload {
         uint16_t flags = 0;
         uint8_t conflict_action = 0;
@@ -197,6 +222,14 @@ protected:
         uint32_t reservation_count = 0;
         uint8_t first_lock_mode = 0;
         uint8_t first_for_write = 0;
+    };
+
+    struct CreateDatabasePayload {
+        uint8_t flags = 0;
+        std::string database_path;
+        std::string source_spec;
+        std::vector<std::pair<std::string, std::string>> options;
+        std::vector<std::string> aliases;
     };
 
     bool parseStartTransactionPayload(const std::vector<uint8_t>& bytecode,
@@ -257,20 +290,69 @@ protected:
             if (offset + 1 > bytecode.size()) return false;
             out.has_reservations = true;
             if (bytecode[offset++] != static_cast<uint8_t>(Opcode::BEGIN_LIST)) return false;
-            if (offset + 4 > bytecode.size()) return false;
-            out.reservation_count = sblr::readInt32(&bytecode[offset]);
-            offset += 4;
+            uint64_t reservation_count = 0;
+            if (!readUVarint(bytecode, &offset, &reservation_count)) return false;
+            out.reservation_count = static_cast<uint32_t>(reservation_count);
             if (out.reservation_count > 0) {
                 if (offset + 1 > bytecode.size()) return false;
                 if (bytecode[offset++] != static_cast<uint8_t>(Opcode::TABLE_REF)) return false;
-                if (offset + 4 > bytecode.size()) return false;
-                uint32_t name_len = sblr::readInt32(&bytecode[offset]);
-                offset += 4;
-                if (offset + name_len + 2 > bytecode.size()) return false;
-                offset += name_len;
+                if (offset + 1 > bytecode.size()) return false;
+                uint8_t ref_kind = bytecode[offset++];
+                if (ref_kind != 0) {
+                    if (offset + 16 > bytecode.size()) return false;
+                    offset += 16;
+                } else {
+                    std::string table_name;
+                    if (!readStringVarint(bytecode, &offset, &table_name)) return false;
+                }
+                std::string alias;
+                if (!readStringVarint(bytecode, &offset, &alias)) return false;
+                if (offset + 2 > bytecode.size()) return false;
                 out.first_lock_mode = bytecode[offset++];
                 out.first_for_write = bytecode[offset++];
             }
+        }
+
+        return true;
+    }
+
+    bool parseCreateDatabasePayload(const std::vector<uint8_t>& bytecode,
+                                    CreateDatabasePayload& out) {
+        size_t offset = 0;
+        if (!findExtendedOpcode(bytecode, sblr::ExtendedOpcode::EXT_CREATE_DATABASE, offset)) {
+            return false;
+        }
+
+        if (offset >= bytecode.size()) {
+            return false;
+        }
+        out.flags = bytecode[offset++];
+
+        if (!readStringVarint(bytecode, &offset, &out.database_path)) return false;
+        if (!readStringVarint(bytecode, &offset, &out.source_spec)) return false;
+
+        if (offset + 4 > bytecode.size()) return false;
+        uint32_t option_count = sblr::readInt32(&bytecode[offset]);
+        offset += 4;
+        out.options.clear();
+        out.options.reserve(option_count);
+        for (uint32_t i = 0; i < option_count; ++i) {
+            std::string key;
+            std::string value;
+            if (!readStringVarint(bytecode, &offset, &key)) return false;
+            if (!readStringVarint(bytecode, &offset, &value)) return false;
+            out.options.emplace_back(std::move(key), std::move(value));
+        }
+
+        if (offset + 4 > bytecode.size()) return false;
+        uint32_t alias_count = sblr::readInt32(&bytecode[offset]);
+        offset += 4;
+        out.aliases.clear();
+        out.aliases.reserve(alias_count);
+        for (uint32_t i = 0; i < alias_count; ++i) {
+            std::string alias;
+            if (!readStringVarint(bytecode, &offset, &alias)) return false;
+            out.aliases.push_back(std::move(alias));
         }
 
         return true;
@@ -656,6 +738,42 @@ TEST_F(BytecodeGeneratorV2Test, CreateTable) {
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::COLUMN_DEF));
 }
 
+TEST_F(BytecodeGeneratorV2Test, CreateDatabaseEmulatedSimple) {
+    auto result = generateBytecode("CREATE DATABASE IF NOT EXISTS EMULATED mysql mydb");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    CreateDatabasePayload payload;
+    ASSERT_TRUE(parseCreateDatabasePayload(result.bytecode(), payload));
+
+    EXPECT_EQ(payload.flags & 0x01, 0x01);  // IF NOT EXISTS
+    EXPECT_EQ(payload.database_path, "emulation.mysql.localhost.mydb");
+    EXPECT_EQ(payload.source_spec, "mydb");
+    EXPECT_TRUE(payload.options.empty());
+    EXPECT_TRUE(payload.aliases.empty());
+}
+
+TEST_F(BytecodeGeneratorV2Test, CreateDatabaseEmulatedWithOptionsAndAliases) {
+    auto result = generateBytecode(
+        "CREATE DATABASE EMULATED firebird 'srv:/var/db/employee.fdb' "
+        "ALIAS legacy, emp "
+        "WITH OPTIONS (user = 'SYSDBA', password = 'masterkey')");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    CreateDatabasePayload payload;
+    ASSERT_TRUE(parseCreateDatabasePayload(result.bytecode(), payload));
+
+    EXPECT_EQ(payload.database_path, "emulation.firebird.srv.var.db.employee");
+    EXPECT_EQ(payload.source_spec, "srv:/var/db/employee.fdb");
+    ASSERT_EQ(payload.options.size(), 2u);
+    EXPECT_EQ(payload.options[0].first, "user");
+    EXPECT_EQ(payload.options[0].second, "SYSDBA");
+    EXPECT_EQ(payload.options[1].first, "password");
+    EXPECT_EQ(payload.options[1].second, "masterkey");
+    ASSERT_EQ(payload.aliases.size(), 2u);
+    EXPECT_EQ(payload.aliases[0], "legacy");
+    EXPECT_EQ(payload.aliases[1], "emp");
+}
+
 TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     auto result = generateBytecode(
         "CREATE DOMAIN test_domain AS TEXT DEFAULT '5' "
@@ -681,14 +799,9 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     uint8_t domain_kind = result.bytecode()[payload_offset++];
     EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::BASIC));
 
-    ASSERT_LE(payload_offset + 4, result.bytecode().size());
-    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4;
-    ASSERT_LE(payload_offset + name_len, result.bytecode().size());
-    std::string domain_name(result.bytecode().begin() + payload_offset,
-                            result.bytecode().begin() + payload_offset + name_len);
+    std::string domain_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &domain_name));
     EXPECT_EQ(domain_name, "test_domain");
-    payload_offset += name_len;
 
     // Base type opcode
     ASSERT_LT(payload_offset, result.bytecode().size());
@@ -698,12 +811,8 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     ASSERT_LT(payload_offset, result.bytecode().size());
     payload_offset += 1;
 
-    ASSERT_LE(payload_offset + 4, result.bytecode().size());
-    uint32_t value_len = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4;
-    ASSERT_LE(payload_offset + value_len, result.bytecode().size());
-    std::string default_value(result.bytecode().begin() + payload_offset,
-                              result.bytecode().begin() + payload_offset + value_len);
+    std::string default_value;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &default_value));
     EXPECT_EQ(default_value, "'5'");
 }
 
@@ -718,19 +827,10 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomainRecord) {
                                    payload_offset));
 
     auto read_string = [&](size_t& offset) -> std::string {
-        if (offset + 4 > result.bytecode().size()) {
-            ADD_FAILURE() << "String length out of range";
-            return {};
-        }
-        uint32_t len = sblr::readInt32(&result.bytecode()[offset]);
-        offset += 4;
-        if (offset + len > result.bytecode().size()) {
+        std::string out;
+        if (!readStringVarint(result.bytecode(), &offset, &out)) {
             ADD_FAILURE() << "String data out of range";
-            return {};
         }
-        std::string out(result.bytecode().begin() + offset,
-                        result.bytecode().begin() + offset + len);
-        offset += len;
         return out;
     };
 
@@ -741,8 +841,8 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomainRecord) {
     std::string domain_name = read_string(payload_offset);
     EXPECT_EQ(domain_name, "person_record");
 
-    uint32_t field_count = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4;
+    uint64_t field_count = 0;
+    ASSERT_TRUE(readUVarint(result.bytecode(), &payload_offset, &field_count));
     EXPECT_EQ(field_count, 2u);
 
     std::string field1_name = read_string(payload_offset);
@@ -773,19 +873,10 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomainEnum) {
                                    payload_offset));
 
     auto read_string = [&](size_t& offset) -> std::string {
-        if (offset + 4 > result.bytecode().size()) {
-            ADD_FAILURE() << "String length out of range";
-            return {};
-        }
-        uint32_t len = sblr::readInt32(&result.bytecode()[offset]);
-        offset += 4;
-        if (offset + len > result.bytecode().size()) {
+        std::string out;
+        if (!readStringVarint(result.bytecode(), &offset, &out)) {
             ADD_FAILURE() << "String data out of range";
-            return {};
         }
-        std::string out(result.bytecode().begin() + offset,
-                        result.bytecode().begin() + offset + len);
-        offset += len;
         return out;
     };
 
@@ -796,8 +887,8 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomainEnum) {
     std::string domain_name = read_string(payload_offset);
     EXPECT_EQ(domain_name, "status");
 
-    uint32_t value_count = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4;
+    uint64_t value_count = 0;
+    ASSERT_TRUE(readUVarint(result.bytecode(), &payload_offset, &value_count));
     EXPECT_EQ(value_count, 2u);
 
     std::string label1 = read_string(payload_offset);
@@ -830,10 +921,8 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomainSet) {
     uint8_t domain_kind = result.bytecode()[payload_offset++];
     EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::SET));
 
-    ASSERT_LE(payload_offset + 4, result.bytecode().size());
-    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4 + name_len;
-    ASSERT_LE(payload_offset, result.bytecode().size());
+    std::string domain_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &domain_name));
 
     EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // type_ref kind
     EXPECT_EQ(result.bytecode()[payload_offset++], static_cast<uint8_t>(Opcode::TYPE_TEXT));
@@ -852,13 +941,11 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomainVariant) {
     uint8_t domain_kind = result.bytecode()[payload_offset++];
     EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::VARIANT));
 
-    ASSERT_LE(payload_offset + 4, result.bytecode().size());
-    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4 + name_len;
-    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    std::string domain_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &domain_name));
 
-    uint32_t type_count = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4;
+    uint64_t type_count = 0;
+    ASSERT_TRUE(readUVarint(result.bytecode(), &payload_offset, &type_count));
     EXPECT_EQ(type_count, 2u);
 
     EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // type_ref kind
@@ -892,12 +979,8 @@ TEST_F(BytecodeGeneratorV2Test, AlterDomainSetDefault) {
     uint8_t action = result.bytecode()[payload_offset++];
     EXPECT_EQ(action, static_cast<uint8_t>(sblr::AlterDomainAction::SET_DEFAULT));
 
-    ASSERT_LE(payload_offset + 4, result.bytecode().size());
-    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4;
-    ASSERT_LE(payload_offset + name_len, result.bytecode().size());
-    std::string domain_name(result.bytecode().begin() + payload_offset,
-                            result.bytecode().begin() + payload_offset + name_len);
+    std::string domain_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &domain_name));
     EXPECT_EQ(domain_name, "test_domain");
 }
 
@@ -915,12 +998,8 @@ TEST_F(BytecodeGeneratorV2Test, DropDomainIfExists) {
     EXPECT_EQ(flags & 0x01, 0x01);  // IF EXISTS set
     EXPECT_EQ(flags & 0x02, 0x02);  // RESTRICT set
 
-    ASSERT_LE(payload_offset + 4, result.bytecode().size());
-    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
-    payload_offset += 4;
-    ASSERT_LE(payload_offset + name_len, result.bytecode().size());
-    std::string domain_name(result.bytecode().begin() + payload_offset,
-                            result.bytecode().begin() + payload_offset + name_len);
+    std::string domain_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &domain_name));
     EXPECT_EQ(domain_name, "test_domain");
 }
 
@@ -953,14 +1032,8 @@ TEST_F(BytecodeGeneratorV2Test, AlterTableAddColumn) {
     size_t offset = findOpcodeOffset(result.bytecode(), Opcode::ALTER_TABLE);
     ASSERT_LT(offset, result.bytecode().size());
     offset += 1;
-    ASSERT_LE(offset + 4, result.bytecode().size());
-    uint32_t name_len = sblr::readInt32(&result.bytecode()[offset]);
-    offset += 4;
-    ASSERT_LE(offset + name_len, result.bytecode().size());
-
-    std::string table_name(result.bytecode().begin() + offset,
-                           result.bytecode().begin() + offset + name_len);
-    offset += name_len;
+    std::string table_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &offset, &table_name));
     ASSERT_LT(offset, result.bytecode().size());
     uint8_t action = result.bytecode()[offset];
 

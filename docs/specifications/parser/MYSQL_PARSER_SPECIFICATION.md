@@ -513,6 +513,8 @@ create_specification:
   | [DEFAULT] ENCRYPTION [=] {'Y' | 'N'}
 ```
 
+**Emulation Note:** In ScratchBird emulation, `CREATE DATABASE/SCHEMA` registers emulated schema metadata only and does not create physical database files.
+
 ### CREATE TABLE
 
 ```sql

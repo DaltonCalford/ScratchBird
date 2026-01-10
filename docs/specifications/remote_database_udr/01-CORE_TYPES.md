@@ -1,5 +1,7 @@
 # Remote Database UDR - Core Types
 
+**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+
 ## 1. Enumerations
 
 ### 1.1 RemoteDatabaseType
@@ -10,7 +12,7 @@ Identifies the type of remote database being connected to.
 enum class RemoteDatabaseType : uint8_t {
     POSTGRESQL = 1,    // PostgreSQL 9.6+
     MYSQL      = 2,    // MySQL 5.7+, MariaDB 10+
-    MSSQL      = 3,    // Microsoft SQL Server 2016+
+    MSSQL      = 3,    // Microsoft SQL Server 2016+ (post-gold)
     FIREBIRD   = 4,    // Firebird 2.5+
     SCRATCHBIRD = 5,   // ScratchBird (federated)
     ORACLE     = 6,    // Oracle 12c+ (future)
@@ -370,7 +372,7 @@ const std::unordered_map<uint8_t, ScratchBirdType> mysql_type_map = {
 };
 ```
 
-### 3.3 SQL Server to ScratchBird
+### 3.3 SQL Server to ScratchBird (post-gold)
 
 ```cpp
 const std::unordered_map<uint8_t, ScratchBirdType> tds_type_map = {

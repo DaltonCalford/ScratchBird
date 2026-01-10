@@ -6,6 +6,8 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include <cctype>
 #include <cstring>
 #include <algorithm>
@@ -284,6 +286,15 @@ void Parser::emitString(std::string_view str) {
     }
 }
 
+void Parser::emitUUID(const core::ID& uuid) {
+    if (!emit_enabled_) {
+        return;
+    }
+    for (uint8_t byte : uuid.bytes) {
+        bytecode_.push_back(byte);
+    }
+}
+
 // ============================================================================
 // Main Parsing Entry Points
 // ============================================================================
@@ -510,6 +521,57 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     }
 }
 
+bool Parser::resolveDomainId(const std::string& type_name, core::ID& domain_id_out) {
+    domain_id_out = core::ID{};
+
+    if (!db_) {
+        error("Domain lookup requires database context");
+        return false;
+    }
+
+    auto* catalog = db_->catalog_manager();
+    if (!catalog) {
+        error("Catalog manager not available for domain lookup");
+        return false;
+    }
+
+    std::string schema;
+    std::string name = type_name;
+    auto dot = type_name.find('.');
+    if (dot != std::string::npos) {
+        schema = type_name.substr(0, dot);
+        name = type_name.substr(dot + 1);
+    }
+
+    resolveTableName(schema, name);
+
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext ctx;
+    auto status = catalog->getSchema(schema, schema_info, &ctx);
+    if (status != core::Status::OK) {
+        std::string err_msg = "Schema not found for domain: " + schema;
+        if (!ctx.message.empty()) {
+            err_msg += " (" + ctx.message + ")";
+        }
+        error(err_msg);
+        return false;
+    }
+
+    core::DomainInfo domain_info;
+    status = catalog->getDomainByName(schema_info.schema_id, name, domain_info, &ctx);
+    if (status != core::Status::OK) {
+        std::string err_msg = "Domain not found: " + name;
+        if (!ctx.message.empty()) {
+            err_msg += " (" + ctx.message + ")";
+        }
+        error(err_msg);
+        return false;
+    }
+
+    domain_id_out = domain_info.domain_id;
+    return true;
+}
+
 // ============================================================================
 // Type Conversion Helper
 // ============================================================================
@@ -561,6 +623,17 @@ sblr::Opcode Parser::typeToOpcode(PgDataType::Kind kind) {
 
 void Parser::emitTypeDefinition(const PgDataType& type) {
     // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md for SBLR type encoding.
+    if (type.kind == PgDataType::Kind::DOMAIN) {
+        core::ID domain_id;
+        if (!resolveDomainId(type.type_name, domain_id)) {
+            return;
+        }
+        emit(sblr::Opcode::TYPE_DOMAIN);
+        emitUUID(domain_id);
+        emitByte(0);  // is_array = false (array domains not supported yet)
+        return;
+    }
+
     if (type.kind == PgDataType::Kind::INT128 ||
         type.kind == PgDataType::Kind::UINT128) {
         emit(sblr::Opcode::EXTENDED_OPCODE);

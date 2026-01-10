@@ -307,7 +307,7 @@ sb_admin health --full
 # Locks              | OK     | No deadlocks
 # Vacuum             | OK     | Last: 2 hours ago
 # Checkpoints        | OK     | Regular, no backlog
-# WAL                | OK     | 3 segments
+# Write-after log    | N/A    | Optional (post-gold)
 #
 # Overall: WARNING (1 issue)
 ```

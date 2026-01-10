@@ -6,7 +6,7 @@ This directory contains network layer and wire protocol specifications for Scrat
 
 ## Overview
 
-ScratchBird implements a sophisticated network layer with the Y-Valve architecture for multi-protocol support, enabling clients to connect using PostgreSQL, MySQL, Firebird, MSSQL, or ScratchBird native protocols.
+ScratchBird implements a sophisticated network layer with the Y-Valve architecture for multi-protocol support, enabling clients to connect using PostgreSQL, MySQL, Firebird, or ScratchBird native protocols (MSSQL/TDS post-gold).
 
 ## Specifications in this Directory
 
@@ -29,7 +29,7 @@ The Y-Valve is ScratchBird's protocol multiplexer:
 - **PostgreSQL Wire Protocol** - Full libpq compatibility
 - **MySQL Wire Protocol** - MySQL client/server protocol
 - **Firebird Wire Protocol** - Firebird remote protocol
-- **TDS (MSSQL) Protocol** - SQL Server TDS protocol
+- **TDS (MSSQL) Protocol** - SQL Server TDS protocol (post-gold)
 - **ScratchBird Native** - Optimized native protocol
 
 See [Wire Protocols](../wire_protocols/) for detailed protocol specifications.

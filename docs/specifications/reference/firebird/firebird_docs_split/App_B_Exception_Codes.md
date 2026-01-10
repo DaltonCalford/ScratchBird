@@ -2758,7 +2758,7 @@ STATEMENT
 -904 335544832 wrong_backup_state Cannot change difference file name
 while database is in backup mode
 -904 335544833 wal_backup_err Physical backup is not allowed while
-Write-Ahead Log is in use
+Write-after log (WAL) is in use
 -904 335544852 partner_idx_incompat_type partner index segment no @1 has
 incompatible data type
 -904 335544857 blobtoobig Maximum BLOB size exceeded

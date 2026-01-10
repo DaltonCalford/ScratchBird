@@ -9,6 +9,12 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 ---
 
+## Scope Clarifications (Current Version)
+
+- **Write-after log (WAL)/LSN**: MGA provides recovery without write-after log (WAL); the optional write-after log (WAL) is not implemented in the current version. Any write-after log (WAL) references describe a future, optional write-after log for replication/PITR (not recovery).
+- **MSSQL/TDS**: SQL Server/TDS support is deferred until after the project goes gold; references are forward-looking.
+- **Emulated databases**: Emulated databases are metadata-only schemas; CREATE DATABASE in emulated dialects does not create physical files.
+
 ## Quick Navigation
 
 ### 🚀 Getting Started
@@ -69,21 +75,21 @@ This directory contains comprehensive technical specifications for the ScratchBi
 | [**cluster/**](cluster/) | Distributed cluster architecture | 18 specs | ✅ Complete |
 | [Raft Consensus](cluster/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) | Cluster config management | CCE specification | ✅ Complete |
 | [Sharding](cluster/SBCLUSTER-05-SHARDING.md) | Data partitioning | Consistent hashing | ✅ Complete |
-| [Replication](cluster/SBCLUSTER-07-REPLICATION.md) | Data replication | Async WAL streaming | ✅ Complete |
+| [Replication](cluster/SBCLUSTER-07-REPLICATION.md) | Data replication | Async logical stream (optional write-after log) | ✅ Complete |
 
 ### Network & Connectivity
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
 | [**network/**](network/) | Network layer & wire protocols | Network layer, wire protocols, Y-Valve | ✅ Organized |
-| [**wire_protocols/**](wire_protocols/) | Protocol specifications | TDS and other protocols | ✅ Active |
+| [**wire_protocols/**](wire_protocols/) | Protocol specifications | TDS (post-gold) and other protocols | ✅ Active |
 | [**api/**](api/) | Client APIs | Client library API, connection pooling | ✅ Organized |
 
 ### Drivers & Integrations
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**drivers/**](drivers/) | Database drivers & emulation | JDBC, ODBC, Firebird, PostgreSQL, MySQL, MSSQL specs | ✅ Organized |
+| [**drivers/**](drivers/) | Database drivers & emulation | JDBC, ODBC, Firebird, PostgreSQL, MySQL, MSSQL (post-gold) specs | ✅ Organized |
 | [**beta_requirements/**](beta_requirements/) | Beta drivers & integrations | 140+ specs | ✅ Excellent |
 | └─ [drivers/](beta_requirements/drivers/) | Language drivers | 11 driver specs (P0: 7) | ✅ Specified |
 | └─ [orms/](beta_requirements/orms-frameworks/) | ORM frameworks | 12 ORM integrations | ✅ Specified |
@@ -95,7 +101,7 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**replication/**](replication/) | Replication protocols | Replication, shadow protocols, WAL | ✅ Organized |
+| [**replication/**](replication/) | Replication protocols | Replication, shadow protocols, optional write-after log | ✅ Organized |
 | [**compression/**](compression/) | Compression framework | Compression specifications | ✅ Organized |
 | [**udr/**](udr/) | User-Defined Resources | UDR system specification | ✅ Organized |
 | [**triggers/**](triggers/) | Trigger system | Trigger context variables | ✅ Organized |
@@ -301,7 +307,7 @@ Authentication frameworks and methods:
 Durability and replication:
 
 - [BACKUP_AND_RESTORE.md](BACKUP_AND_RESTORE.md) (72 lines) - ⚠️ Needs major expansion
-- [WAL_IMPLEMENTATION.md](WAL_IMPLEMENTATION.md) (79 lines) - WAL (low priority with temporal tables)
+- [WAL_IMPLEMENTATION.md](WAL_IMPLEMENTATION.md) (79 lines) - Optional write-after log (post-gold)
 - [REPLICATION_AND_SHADOW_PROTOCOLS.md](REPLICATION_AND_SHADOW_PROTOCOLS.md) (589 lines) - Replication
 
 ### Special Features

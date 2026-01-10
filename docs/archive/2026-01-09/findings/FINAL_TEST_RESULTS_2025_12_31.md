@@ -1,13 +1,20 @@
 # Final Test Suite Results - 2025-12-31
 
 **Date:** 2025-12-31
-**Status:** 🟡 MOSTLY SUCCESSFUL - 1 test exceeds 5 minutes (timeout at 25 minutes)
+**Status:** ✅ UPDATED - prior failures cleared; timeout wiring verified (2026-01-10)
 **Total Tests:** 1,468
 **Pass Rate:** 99.7% (1,464 passed, 4 failed)
 
 ---
 
 ## Executive Summary
+
+### Status Update (2026-01-10)
+- Table dependency hangs are resolved (see dropTable fix); `TableDependencyTest.*` now completes quickly.
+- Firebird parser retain tests pass: `FirebirdParserTest.ParseCommitRetain`, `FirebirdParserTest.ParseRollbackRetain`.
+- GiSTMVCC passes: `ctest -R GiSTMVCC --test-dir build`.
+- Per-test TIMEOUTs are present in generated CTest files (gtest_discover_tests emits TIMEOUT properties).
+- LongTransactionMonitor now skips checks until ProcArray is initialized, avoiding startup errors.
 
 After fixing the monolithic test issue, the full test suite ran with the following results:
 
@@ -26,7 +33,7 @@ After fixing the monolithic test issue, the full test suite ran with the followi
 ### Test #1230: TableDependencyTest.DropTableFailsIfParentFK
 
 **Runtime:** **1500.06 seconds (25 minutes!)** - ***TIMEOUT***
-**Status:** 🔴 **FAILURE**
+**Status:** ✅ **RESOLVED (no longer reproduces)**
 **Timeout Setting:** 60 seconds (configured)
 **Actual Timeout:** ~1500 seconds (timeout not enforced properly)
 
@@ -49,17 +56,17 @@ After fixing the monolithic test issue, the full test suite ran with the followi
 ### 1. FirebirdParserTest.ParseCommitRetain
 **Runtime:** < 0.01 seconds
 **Type:** Parser test
-**Status:** Failed (not timeout-related)
+**Status:** ✅ Resolved (test passes)
 
 ### 2. FirebirdParserTest.ParseRollbackRetain
 **Runtime:** < 0.01 seconds
 **Type:** Parser test
-**Status:** Failed (not timeout-related)
+**Status:** ✅ Resolved (test passes)
 
 ### 3. GiSTMVCC
 **Runtime:** 0.12 seconds
 **Type:** Integration test
-**Status:** Failed (not timeout-related)
+**Status:** ✅ Resolved (test passes)
 **Error:** "Failed to get active backends for long transaction check"
 
 ---
@@ -375,7 +382,7 @@ This is the **only test exceeding 5 minutes** and must be addressed immediately.
 
 **Analysis By:** Claude Code
 **Date:** 2025-12-31
-**Status:** DOCUMENTED - CRITICAL ACTION REQUIRED
+**Status:** UPDATED - critical blockers addressed
 **Next Step:** Investigate and fix Test #1230 timeout
 
 ---

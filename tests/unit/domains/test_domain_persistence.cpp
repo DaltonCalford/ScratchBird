@@ -73,6 +73,17 @@ TEST(DomainPersistenceTest, ReloadsDomainMetadata)
     status = dm->createVariantDomain(schema_id, "flexible_value", variant_types, variant_id, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
+    ID domain_table_id;
+    std::vector<CatalogManager::ColumnInfo> domain_columns;
+    CatalogManager::ColumnInfo domain_col;
+    domain_col.column_name = "value";
+    domain_col.data_type = static_cast<uint16_t>(DataType::INT32);
+    domain_col.domain_id = basic_id;
+    domain_col.nullable = false;
+    domain_columns.push_back(domain_col);
+    status = catalog->createTable(schema_id, "domain_table", domain_columns, domain_table_id, 0, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
     db.close();
 
     Database db_reopen;
@@ -118,6 +129,11 @@ TEST(DomainPersistenceTest, ReloadsDomainMetadata)
     ASSERT_EQ(variant_info.variant_allowed_types.size(), 2u);
     EXPECT_EQ(variant_info.variant_allowed_types[0].type, DataType::INT32);
     EXPECT_EQ(variant_info.variant_allowed_types[1].type, DataType::TEXT);
+
+    CatalogManager::ColumnInfo persisted_col;
+    status = db_reopen.catalog_manager()->getColumn(domain_table_id, "value", persisted_col, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(persisted_col.domain_id, basic_id);
 
     db_reopen.close();
     std::remove(test_db);

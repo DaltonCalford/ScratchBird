@@ -4,8 +4,10 @@
 
 The Remote Database UDR (User Defined Routine) plugin enables your database engine to connect to external databases using native wire protocol client implementations. This transforms your existing wire protocol expertise into a powerful migration and integration tool.
 
+**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+
 **Strategic Benefits:**
-- **Bidirectional Protocol Support**: Your PostgreSQL/MySQL/MSSQL/Firebird server code becomes client code
+- **Bidirectional Protocol Support**: Your PostgreSQL/MySQL/Firebird server code becomes client code (MSSQL post-gold)
 - **Zero-Downtime Migration**: Migrate data from legacy systems incrementally
 - **Foreign Data Wrapper Pattern**: Query remote data transparently
 - **Hybrid Query Execution**: JOIN local and remote tables seamlessly
@@ -16,7 +18,7 @@ The Remote Database UDR (User Defined Routine) plugin enables your database engi
 - Connection pooling: [11a-Connection-Pool-Implementation.md](11a-Connection-Pool-Implementation.md)
 - PostgreSQL client: [11b-PostgreSQL-Client-Implementation.md](11b-PostgreSQL-Client-Implementation.md)
 - MySQL client: [11c-MySQL-Client-Implementation.md](11c-MySQL-Client-Implementation.md)
-- MSSQL client: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md)
+- MSSQL client: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md) (post-gold)
 - Firebird client: [11e-Firebird-Client-Implementation.md](11e-Firebird-Client-Implementation.md)
 
 ---
@@ -56,7 +58,7 @@ The Remote Database UDR (User Defined Routine) plugin enables your database engi
 │  ┌────────────▼───────────────────────────────────┐    │
 │  │  Protocol Adapters                              │    │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐       │    │
-│  │  │PostgreSQL│ │  MySQL   │ │  MSSQL   │       │    │
+│  │  │PostgreSQL│ │  MySQL   │ │ MSSQL*  │       │    │
 │  │  └──────────┘ └──────────┘ └──────────┘       │    │
 │  │  ┌──────────┐                                  │    │
 │  │  │ Firebird │                                  │    │
@@ -67,10 +69,12 @@ The Remote Database UDR (User Defined Routine) plugin enables your database engi
 ┌───────────────▼──────────────────────────────────────────┐
 │  Remote/Legacy Databases                                │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│  │PostgreSQL│ │  MySQL   │ │  MSSQL   │ │ Firebird │  │
+│  │PostgreSQL│ │  MySQL   │ │ MSSQL*  │ │ Firebird │  │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘  │
 └──────────────────────────────────────────────────────────┘
 ```
+
+* MSSQL adapter is post-gold and not part of current scope.
 
 ---
 
@@ -326,7 +330,7 @@ DATETIME   → TIMESTAMP
 BLOB       → BYTES
 ```
 
-**MSSQL → Internal:**
+**MSSQL (post-gold) → Internal:**
 ```
 INT        → INT32
 BIGINT     → INT64
@@ -665,7 +669,7 @@ remote_database_udr/
 ├── protocol_adapters/
 │   ├── postgresql.c          # PostgreSQL client (see 11b)
 │   ├── mysql.c               # MySQL client (see 11c)
-│   ├── mssql.c               # MSSQL client (see 11d)
+│   ├── mssql.c               # MSSQL client (post-gold; see 11d)
 │   └── firebird.c            # Firebird client (see 11e)
 ├── query_executor.c          # Query execution layer
 ├── schema_introspection.c    # Schema discovery
@@ -1023,7 +1027,7 @@ SELECT COUNT(*), AVG(price) FROM foreign_table;
 - [ ] Implement connection pool (see 11a)
 - [ ] Implement PostgreSQL adapter (see 11b)
 - [ ] Implement MySQL adapter (see 11c)
-- [ ] Implement MSSQL adapter (see 11d)
+- [ ] Implement MSSQL adapter (post-gold; see 11d)
 - [ ] Implement Firebird adapter (see 11e)
 - [ ] Implement query executor
 - [ ] Implement schema introspection
@@ -1044,7 +1048,7 @@ SELECT COUNT(*), AVG(price) FROM foreign_table;
 - **Connection Pooling**: [11a-Connection-Pool-Implementation.md](11a-Connection-Pool-Implementation.md)
 - **PostgreSQL Client**: [11b-PostgreSQL-Client-Implementation.md](11b-PostgreSQL-Client-Implementation.md)
 - **MySQL Client**: [11c-MySQL-Client-Implementation.md](11c-MySQL-Client-Implementation.md)
-- **MSSQL Client**: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md)
+- **MSSQL Client (post-gold)**: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md)
 - **Firebird Client**: [11e-Firebird-Client-Implementation.md](11e-Firebird-Client-Implementation.md)
 
 ---

@@ -1,5 +1,7 @@
 # Remote Database UDR - SQL Syntax
 
+**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+
 ## 1. Foreign Server Management
 
 ### 1.1 CREATE SERVER
@@ -62,7 +64,7 @@ CREATE SERVER prod_mysql
         connect_timeout '10000'
     );
 
--- SQL Server
+-- SQL Server (post-gold)
 CREATE SERVER analytics_mssql
     FOREIGN DATA WRAPPER mssql_fdw
     OPTIONS (

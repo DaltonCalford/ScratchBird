@@ -40,9 +40,12 @@ namespace sblr {
     class ResultSet;
     class ExecutionResult;
     class QueryCompilerV2;  // Phase 9: Parser V2 integration
+    class FirebirdQueryCompiler;
+    class PostgreSQLQueryCompiler;
+    class MySQLQueryCompiler;
 }
 
-// All query compilation uses Parser V2.
+// Query compilation uses the selected parser (ScratchBird or emulated dialects).
 
 namespace server {
 
@@ -290,8 +293,11 @@ private:
     // Executor for query execution
     std::unique_ptr<sblr::Executor> executor_;
 
-    // Query compiler (Parser V2 is now the only parser)
+    // Query compilers
     std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
+    std::unique_ptr<sblr::FirebirdQueryCompiler> compiler_firebird_;
+    std::unique_ptr<sblr::PostgreSQLQueryCompiler> compiler_postgresql_;
+    std::unique_ptr<sblr::MySQLQueryCompiler> compiler_mysql_;
 
     // Statistics
     SessionStats stats_;

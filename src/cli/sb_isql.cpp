@@ -98,6 +98,7 @@ struct IsqlConfig {
     std::string command;           // -c: single command
     std::string input_file;        // -f: input file
     std::string output_file;       // -o: output file
+    std::string parser_name;       // -par/--parser: select SQL parser
 
     bool tuples_only = false;      // -t: no headers/footers
     bool no_align = false;         // -A: unaligned output
@@ -2603,7 +2604,7 @@ bool extractDDL(bool include_create_database) {
 
     core::ErrorContext ctx;
     ResultSet results;
-    std::string sql = "SELECT name FROM sb_catalog.sb_domains WHERE schema_id IS NOT NULL ORDER BY name";
+    std::string sql = "SELECT name FROM sb_catalog.sb_domains ORDER BY name";
     if (g_connection) {
         core::Status status = g_connection->executeQuery(sql, &results, &ctx);
         if (status == core::Status::OK) {
@@ -2838,6 +2839,7 @@ void printUsage(const char* program) {
     std::cout << "  -H, --host=<host>         Host (default: localhost)\n";
     std::cout << "  -c, --command=<sql>       Execute single command and exit\n";
     std::cout << "  -f, --file=<file>         Execute commands from file and exit\n";
+    std::cout << "  -i, --input=<file>        Alias for -f (Firebird compatible)\n";
     std::cout << "  -o, --output=<file>       Write output to file\n";
     std::cout << "  -t, --tuples-only         Print tuples only (no headers/footers)\n";
     std::cout << "  -A, --no-align            Unaligned output mode\n";
@@ -2851,6 +2853,7 @@ void printUsage(const char* program) {
     std::cout << "  -x, --extract             Extract DDL (no data)\n";
     std::cout << "  -ex, --extract-db         Extract DDL with CREATE DATABASE\n";
     std::cout << "  -s, --dialect=<n>         SQL dialect (1, 2, or 3, default: 3)\n";
+    std::cout << "  -par, --parser=<name>     Parser (scratchbird, firebird, postgresql, mysql)\n";
     std::cout << "  -h, --help                Show this help\n";
     std::cout << "      --version             Show version\n\n";
     std::cout << "SET Commands (Firebird ISQL compatible):\n";
@@ -2904,6 +2907,28 @@ void printVersion() {
     std::cout << "sb_isql (ScratchBird Interactive SQL) 0.1.0\n";
 }
 
+std::string normalizeParserName(const std::string& input) {
+    std::string upper = input;
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+
+    if (upper == "SCRATCHBIRD" || upper == "V2" || upper == "AUTO") {
+        return "SCRATCHBIRD";
+    }
+    if (upper == "FIREBIRD" || upper == "FIREBIRDSQL" || upper == "FB") {
+        return "FIREBIRD";
+    }
+    if (upper == "POSTGRESQL" || upper == "POSTGRES" || upper == "PG") {
+        return "POSTGRESQL";
+    }
+    if (upper == "MYSQL") {
+        return "MYSQL";
+    }
+
+    return {};
+}
+
 bool parseArgs(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -2936,10 +2961,18 @@ bool parseArgs(int argc, char* argv[]) {
             g_config.command = argv[++i];
         } else if (arg.find("--command=") == 0) {
             g_config.command = arg.substr(10);
+        } else if (arg == "-i" && i + 1 < argc) {
+            g_config.input_file = argv[++i];
+        } else if (arg.find("--input=") == 0) {
+            g_config.input_file = arg.substr(8);
         } else if (arg == "-f" && i + 1 < argc) {
             g_config.input_file = argv[++i];
         } else if (arg.find("--file=") == 0) {
             g_config.input_file = arg.substr(7);
+        } else if (arg == "-par" && i + 1 < argc) {
+            g_config.parser_name = argv[++i];
+        } else if (arg.find("--parser=") == 0) {
+            g_config.parser_name = arg.substr(9);
         } else if (arg == "-o" && i + 1 < argc) {
             g_config.output_file = argv[++i];
         } else if (arg.find("--output=") == 0) {
@@ -3192,6 +3225,18 @@ int main(int argc, char* argv[]) {
 
     if (g_config.verbose) {
         std::cout << "Connected to " << g_config.database_path << "\n";
+    }
+
+    if (!g_config.parser_name.empty()) {
+        std::string parser_name = normalizeParserName(g_config.parser_name);
+        if (parser_name.empty()) {
+            std::cerr << "Error: Unknown parser '" << g_config.parser_name << "'\n";
+            return 1;
+        }
+        std::string set_parser = "SET PARSER TO '" + parser_name + "'";
+        if (!executeSQL(set_parser)) {
+            return 1;
+        }
     }
 
     int result = 0;

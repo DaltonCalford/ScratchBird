@@ -401,7 +401,7 @@ bool vm_page_is_all_visible(
 ```c
 // FSM reconstruction for crash recovery (Firebird-style)
 // Rebuilds FSM from actual page state on database open
-// Supports full MGA transaction recovery without WAL
+// Supports full MGA transaction recovery without write-after log (WAL)
 
 // FSM reconstruction context
 typedef struct fsm_reconstruction_context {
@@ -546,7 +546,7 @@ Status database_open_with_fsm_reconstruction(
 
     // 4. Reconstruct FSM from actual pages (MGA-style recovery)
     // This ensures FSM is always consistent with actual page state,
-    // supporting full transaction recovery without WAL
+    // supporting full transaction recovery without write-after log (WAL)
     FSMReconstructionContext recon_ctx;
     recon_ctx.total_pages = db->page_mgr->total_pages;
     recon_ctx.scan_start_time = get_current_time_ms();
@@ -572,9 +572,9 @@ Status database_open_with_fsm_reconstruction(
 
 #### 2.3.1 FSM Reconstruction Design Rationale
 
-**Why FSM Reconstruction (Not WAL)?**
+**Why FSM Reconstruction (Not Write-after Log (WAL))?**
 
-ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which provides crash recovery without requiring Write-Ahead Logging for this purpose:
+ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which provides crash recovery without requiring a write-after log (WAL) stream for this purpose:
 
 1. **FSM is a Hint Structure**
    - FSM tracks page allocation state
@@ -588,7 +588,7 @@ ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which
    - Pages allocated by aborted transactions remain allocated
    - Tuples marked with aborted xmin → invisible to all
    - Garbage collector reclaims pages later
-   - **No WAL needed for crash recovery**
+   - **No write-after log (WAL) needed for crash recovery**
 
 3. **Conservative Error Handling**
    - Read errors → mark page allocated (not free)
@@ -620,13 +620,13 @@ ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which
    - Supports Full MGA transaction recovery
    ```
 
-**Note on WAL Purpose:**
-- **WAL is NOT needed for crash recovery** in MGA (Firebird proves this)
-- WAL is valuable for:
+**Note on Write-after Log (WAL) Purpose:**
+- **Write-after log (WAL) is NOT needed for crash recovery** in MGA (Firebird proves this)
+- Write-after log (WAL) is valuable for:
   - **Point-in-time recovery** (restore to specific timestamp)
   - **Replication** (stream changes to replicas)
   - **Forensic analysis** (audit trail of all changes)
-- ScratchBird may add WAL in Beta for replication support
+- ScratchBird may add write-after log (WAL) in Beta for replication support
 
 #### 2.3.2 Transaction Recovery Scenarios
 

@@ -430,6 +430,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t type_precision; // For DECIMAL, VECTOR dimensions, VARCHAR length
         uint32_t type_scale;     // For DECIMAL scale
         uint32_t max_length;     // Legacy field, use type_precision instead
+        ID domain_id;            // Domain ID (zero if not domain-based)
         uint8_t nullable;
         uint8_t has_default;
         uint8_t is_primary_key;
@@ -7380,6 +7381,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             record.type_precision = col.type_precision;
             record.type_scale = col.type_scale;
             record.max_length = col.max_length;
+            record.domain_id = col.domain_id;
             record.nullable = col.nullable ? 1 : 0;
             record.has_default = col.has_default ? 1 : 0;
             record.is_primary_key = col.is_primary_key ? 1 : 0;
@@ -7426,6 +7428,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.type_precision = record.type_precision;
             info.type_scale = record.type_scale;
             info.max_length = record.max_length;
+            info.domain_id = record.domain_id;
             info.nullable = record.nullable != 0;
             info.has_default = record.has_default != 0;
             info.is_primary_key = record.is_primary_key != 0;
@@ -13501,6 +13504,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.type_precision = new_column.type_precision;
     record.type_scale = new_column.type_scale;
     record.max_length = new_column.max_length;
+    record.domain_id = new_column.domain_id;
     record.nullable = new_column.nullable ? 1 : 0;
     record.has_default = new_column.has_default ? 1 : 0;
     record.is_primary_key = new_column.is_primary_key ? 1 : 0;

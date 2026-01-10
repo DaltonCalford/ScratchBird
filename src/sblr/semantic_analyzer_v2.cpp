@@ -5705,6 +5705,11 @@ ResolvedTableRef* SemanticAnalyzerV2::analyzeTableRef(TableRefNode* node) {
             *resolved = *table_ref;
             resolved->alias = node->alias;
             resolved->has_alias = node->has_alias;
+            if (!resolved->has_alias) {
+                // Allow table-qualified references when no alias is provided.
+                resolved->alias = resolved->name;
+                resolved->has_alias = true;
+            }
             break;
         }
 

@@ -4,6 +4,8 @@
 
 A database is the top-level container for all schemas, tables, and other objects in a ScratchBird instance. The CREATE DATABASE command initializes the physical files, default tablespaces, and system catalogs required for the database to operate.
 
+**Emulation Note:** For emulated dialects, CREATE DATABASE is metadata-only and maps to schema creation; no physical database files are created.
+
 ## **CREATE DATABASE**
 
 Initializes a new database with specified properties.
@@ -44,6 +46,41 @@ CREATE DATABASE ecommerce\_platform
 CREATE DATABASE secure\_hr\_data  
     ENCRYPTED WITH PASSWORD 'a\_very\_strong\_secret'  
     OWNER 'db\_admin';
+
+## **CREATE DATABASE EMULATED**
+
+Creates a metadata-only emulated database and the emulation catalog views under
+`emulation.<dialect>.<server>.<path>.<database>`. No physical database file is created.
+
+### **Syntax**
+
+CREATE DATABASE \[ IF NOT EXISTS \] EMULATED \<dialect\>  
+    \[ ON SERVER \<server\_name\> \] \<source\_spec\>  
+    \[ ALIAS \<alias\_name\> \[, \<alias\_name\> ... \] \]  
+    \[ WITH \[ OPTIONS \] ( \<option\_key\> \= \<option\_value\> \[, ... \] ) \];
+
+### **Parameters**
+
+* EMULATED: Marks this as a metadata-only emulated database.  
+* \<dialect\>: Emulated engine name (e.g., `mysql`, `postgresql`, `firebird`).  
+* ON SERVER: Optional server name. Defaults to `localhost`.  
+* \<source\_spec\>: Identifier or string literal describing the source database.  
+  * String literals may include OS paths or `server:/path` specs.  
+  * Path components become schema path components, and the file name becomes the database name (extension stripped).  
+* ALIAS: Optional list of alias names to create as synonyms under `emulated.<dialect>`.  
+* WITH OPTIONS: Arbitrary key/value metadata stored with the emulated database record.
+
+### **Examples**
+
+**1\. Create a MySQL emulated database with defaults:**
+
+CREATE DATABASE EMULATED mysql mydb;
+
+**2\. Create a Firebird emulated database from a file path with aliases and options:**
+
+CREATE DATABASE EMULATED firebird 'srv:/var/db/employee.fdb'  
+    ALIAS legacy, emp  
+    WITH OPTIONS (user = 'SYSDBA', password = 'masterkey');
 
 ## **ALTER DATABASE**
 

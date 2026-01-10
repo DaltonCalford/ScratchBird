@@ -8,6 +8,8 @@ The ScratchBird JDBC driver provides standard JDBC connectivity for:
 1. **Java Applications** connecting TO ScratchBird databases
 2. **ScratchBird Foreign Tables** connecting FROM ScratchBird to external databases via JDBC
 
+**Scope Note:** MSSQL external connectivity is post-gold; MSSQL entries are forward-looking.
+
 ### 1.2 JDBC Version
 
 - **JDBC 4.3** compliance (Java 9+)
@@ -624,7 +626,7 @@ SELECT * FROM oracle_schema.EMP WHERE deptno = 10;
 | Database | JDBC Driver | Notes |
 |----------|-------------|-------|
 | Oracle | ojdbc8.jar | Full support |
-| SQL Server | mssql-jdbc.jar | Full support |
+| SQL Server | mssql-jdbc.jar | Planned (post-gold) |
 | DB2 | db2jcc4.jar | Full support |
 | MySQL | mysql-connector-java.jar | Full support |
 | PostgreSQL | postgresql.jar | Full support |

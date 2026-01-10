@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document provides a comprehensive implementation roadmap for the distributed, multi-dialect SQL database engine. The system is designed to support high-performance OLTP and OLAP workloads while maintaining wire protocol compatibility with PostgreSQL, MySQL, MSSQL, and Firebird.
+This document provides a comprehensive implementation roadmap for the distributed, multi-dialect SQL database engine. The system is designed to support high-performance OLTP and OLAP workloads while maintaining wire protocol compatibility with PostgreSQL, MySQL, and Firebird (MSSQL/TDS post-gold).
 
 ---
 
@@ -20,7 +20,7 @@ This document provides a comprehensive implementation roadmap for the distribute
 2. **Distributed MVCC** - UUID v7-based versioning with Firebird-style multi-generational architecture  
 3. **Replication Protocol** - Asynchronous change data capture with conflict resolution
 4. **Three-Tier Storage** - Transaction, Ingestion, and OLAP engines
-5. **Wire Protocol Handlers** - Drop-in replacement for PostgreSQL, MySQL, MSSQL, Firebird
+5. **Wire Protocol Handlers** - Drop-in replacement for PostgreSQL, MySQL, Firebird (MSSQL post-gold)
 
 ### Key Design Decisions
 
@@ -162,7 +162,8 @@ This document provides a comprehensive implementation roadmap for the distribute
 
 #### Milestones
 
-1. **MSSQL Protocol**
+1. **MSSQL Protocol (post-gold)**
+   - Scope note: deferred until after project goes gold
    - [ ] TDS wire protocol handler
    - [ ] LOGIN7 authentication
    - [ ] SQL Batch handling
@@ -279,7 +280,7 @@ This document provides a comprehensive implementation roadmap for the distribute
 
 - PostgreSQL protocol compliance
 - MySQL protocol compliance  
-- MSSQL protocol compliance
+- MSSQL protocol compliance (post-gold)
 - Firebird protocol compliance
 - Use native client libraries
 
@@ -443,7 +444,7 @@ Datacenter:
 3. **MVCC Dashboard** - Transactions, versions, GC
 4. **Replication Dashboard** - Lag, throughput, conflicts
 5. **Query Performance** - Latency, throughput, cache
-6. **Per-Protocol Metrics** - PostgreSQL, MySQL, MSSQL, Firebird
+6. **Per-Protocol Metrics** - PostgreSQL, MySQL, Firebird (MSSQL post-gold)
 
 ### Alerting
 
@@ -590,7 +591,7 @@ Datacenter:
 
 - ✅ PostgreSQL wire protocol compatibility
 - ✅ MySQL wire protocol compatibility
-- ✅ MSSQL wire protocol compatibility
+- ⏳ MSSQL wire protocol compatibility (post-gold)
 - ✅ Firebird wire protocol compatibility
 - ✅ MVCC with snapshot isolation
 - ✅ Distributed transactions
@@ -628,7 +629,7 @@ Datacenter:
 2. **Clock Synchronization** - Heartbeat protocol and uncertainty tracking
 3. **Distributed MVCC** - UUID v7 versioning and garbage collection
 4. **Replication Protocol** - Change data capture and conflict resolution
-5. **Wire Protocol Integration** - PostgreSQL, MySQL, MSSQL, Firebird compatibility
+5. **Wire Protocol Integration** - PostgreSQL, MySQL, Firebird compatibility (MSSQL post-gold)
 6. **Implementation Roadmap** (this document) - Phased delivery plan
 
 ---
@@ -649,7 +650,7 @@ Datacenter:
 - **LSM**: Log-Structured Merge tree
 - **OLTP**: Online Transaction Processing
 - **OLAP**: Online Analytical Processing
-- **TDS**: Tabular Data Stream (MSSQL protocol)
+- **TDS**: Tabular Data Stream (MSSQL protocol, post-gold)
 - **PTP**: Precision Time Protocol
 - **NTP**: Network Time Protocol
 - **SSO**: Single Sign-On

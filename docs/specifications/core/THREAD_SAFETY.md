@@ -1,5 +1,7 @@
 # Thread Safety Specification
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## Thread Safety Levels
 
 ### Level 1: Immutable
@@ -76,7 +78,7 @@ RULES:
 
 ## Critical Sections (Alpha)
 
-Commit sequence (no WAL in Alpha):
+Commit sequence (no write-after log (WAL) in Alpha):
 1) Acquire TIP exclusive lock
 2) Update TIP state to Committed
 3) Release TIP lock

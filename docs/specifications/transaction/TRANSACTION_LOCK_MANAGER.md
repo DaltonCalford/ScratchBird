@@ -5,6 +5,8 @@
 
 ScratchBird's lock manager combines Firebird's lightweight locking (due to MGA reducing lock needs), PostgreSQL's comprehensive lock types including predicate locks for true serializability, and adds modern features like deadlock detection algorithms and advisory locks.
 
+**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+
 ## 1. Lock Manager Architecture
 
 ### 1.1 Core Lock Manager Structure

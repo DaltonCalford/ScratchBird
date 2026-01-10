@@ -207,27 +207,27 @@ uint16_t calculate_shard_id_random() {
 
 ---
 
-### 9. WAL Ordering
+### 9. Write-after Log (WAL) Ordering
 
-**Write-Ahead Log (WAL) entries MUST be applied in order on replicas.**
+**Write-after log (WAL) entries MUST be applied in order on replicas.**
 
 ```cpp
-// ✓ CORRECT: Apply WAL in sequence
+// ✓ CORRECT: Apply write-after log (WAL) in sequence
 for (WALEntry entry : wal_stream) {
     if (entry.lsn != expected_lsn) {
-        throw WALSequenceException("WAL entries out of order");
+        throw WALSequenceException("Write-after log (WAL) entries out of order");
     }
     apply_wal_entry(entry);
     expected_lsn = entry.lsn + 1;
 }
 
-// ✗ WRONG: Apply WAL out of order (FORBIDDEN)
+// ✗ WRONG: Apply write-after log (WAL) out of order (FORBIDDEN)
 apply_wal_entry(entry_5);
 apply_wal_entry(entry_3);  // WRONG: out of order
 apply_wal_entry(entry_4);
 ```
 
-**Rationale**: Out-of-order WAL application corrupts replica state.
+**Rationale**: Out-of-order write-after log (WAL) application corrupts replica state.
 
 ---
 
@@ -302,7 +302,7 @@ Before committing cluster code, verify:
 - [ ] **mTLS enforcement**: All inter-node connections use mTLS
 - [ ] **Raft for critical state**: CCE/membership changes via Raft
 - [ ] **Consistent hashing**: Shard routing is deterministic
-- [ ] **WAL ordering**: Replicas apply WAL in order
+- [ ] **Write-after log (WAL) ordering**: Replicas apply write-after log (WAL) in order
 - [ ] **No cross-shard FKs**: Foreign keys don't span shards
 - [ ] **Tests pass**: Raft election, audit verification tests
 

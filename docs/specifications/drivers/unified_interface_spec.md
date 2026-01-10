@@ -4,6 +4,8 @@
 
 This specification defines a unified C++ interface that abstracts database-specific implementations, allowing applications to work with multiple database engines (MySQL, MariaDB, PostgreSQL, MSSQL) through a common API.
 
+**Scope Note:** MSSQL/TDS support is post-gold; MSSQL entries are forward-looking.
+
 ## Architecture Design
 
 ### Layer Structure

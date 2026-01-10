@@ -7,13 +7,15 @@ This document specifies the replication architecture for ScratchBird clusters. R
 
 ### 1.2 Scope
 - Per-shard replication model
-- Logical commit log replication (WAL streaming)
+- Logical commit log replication (write-after log (WAL) streaming)
 - Physical shadow replication (block-level mirroring)
 - Primary-replica architecture
 - Failover and promotion procedures
 - Fencing mechanisms to prevent split-brain
 - Replication lag monitoring and alerting
 - Consistency guarantees and trade-offs
+
+**Scope Note:** Write-after log (WAL) references describe an optional write-after log stream for replication/PITR; MGA does not use write-after log (WAL) for recovery.
 
 ### 1.3 Related Documents
 - **SBCLUSTER-00**: Guiding Principles (shard-local MVCC, shared-nothing)
@@ -24,7 +26,7 @@ This document specifies the replication architecture for ScratchBird clusters. R
 ### 1.4 Terminology
 - **Primary**: Node that accepts writes for a shard
 - **Replica**: Node that receives replicated data from the primary
-- **WAL**: Write-Ahead Log (transaction log)
+- **Write-after log (WAL)**: Transaction log stream for replication/PITR
 - **Logical Replication**: Replaying logical operations (INSERT, UPDATE, DELETE)
 - **Physical Replication**: Copying physical data blocks
 - **Replication Lag**: Time delay between primary write and replica acknowledgment
@@ -50,10 +52,10 @@ This document specifies the replication architecture for ScratchBird clusters. R
 ┌─────────────────────────────────────────────────────────────┐
 │                      SHARD 1                                │
 │                                                             │
-│  ┌──────────────┐      WAL Stream       ┌──────────────┐   │
+│  ┌──────────────┐  Write-after Log (WAL) Stream  ┌──────────────┐   │
 │  │  PRIMARY     │ ──────────────────────>│  REPLICA 1   │   │
 │  │  (Node A)    │                        │  (Node B)    │   │
-│  │              │      WAL Stream        │              │   │
+│  │              │  Write-after Log (WAL) Stream │              │   │
 │  │              │ ──────────────────────>│              │   │
 │  └──────────────┘           │            └──────────────┘   │
 │                              │                               │
@@ -65,7 +67,7 @@ This document specifies the replication architecture for ScratchBird clusters. R
 
 Write Path:
   1. Client → Primary (write accepted)
-  2. Primary → WAL (durable on disk)
+  2. Primary → write-after log (WAL) (durable on disk)
   3. Primary → Replicas (asynchronous streaming)
   4. Primary → Client (ACK returned, may not wait for replicas)
 
@@ -77,7 +79,7 @@ Read Path:
 ### 2.3 Replication Modes
 
 **Logical Replication (Default)**:
-- Stream logical operations from WAL
+- Stream logical operations from write-after log (WAL)
 - Replicas replay INSERT/UPDATE/DELETE operations
 - Allows heterogeneous hardware (different storage layouts)
 - Enables partial replication (filter by table/schema)
@@ -184,7 +186,7 @@ enum ReplicaRole {
 };
 
 enum ReplicaStatus {
-    STREAMING,       // Actively streaming and applying WAL
+    STREAMING,       // Actively streaming and applying write-after log (WAL)
     CATCHING_UP,     // Streaming but significantly behind
     DISCONNECTED,    // Temporarily disconnected from primary
     FAILED           // Permanently failed
@@ -195,7 +197,7 @@ enum ReplicaStatus {
 
 ## 4. Logical Replication
 
-### 4.1 WAL Streaming
+### 4.1 Write-after Log (WAL) Streaming
 
 **Primary Side**:
 ```cpp
@@ -250,11 +252,11 @@ ReplicaAck receive_wal_record(const WALRecord& record) {
     if (record.lsn != state.last_received_lsn + 1) {
         log_warning("LSN gap detected: expected {}, got {}",
             state.last_received_lsn + 1, record.lsn);
-        // Request missing WAL records
+        // Request missing write-after log (WAL) records
         request_missing_wal(state.last_received_lsn + 1, record.lsn);
     }
 
-    // 3. Write to replica's WAL buffer
+    // 3. Write to replica's write-after log (WAL) buffer
     wal_buffer.append(record);
     state.last_received_lsn = record.lsn;
 
@@ -269,7 +271,7 @@ ReplicaAck receive_wal_record(const WALRecord& record) {
 }
 ```
 
-### 4.2 WAL Record Application
+### 4.2 Write-after Log (WAL) Record Application
 
 ```cpp
 void apply_wal_record_to_storage(const WALRecord& record) {
@@ -584,7 +586,7 @@ ReplicationLag compute_replication_lag(const UUID& replica_uuid, const UUID& sha
     // Time lag: primary's current time - replica's last contact
     lag.time_lag = now() - replica_state.last_contact_at;
 
-    // Bytes lag: estimate based on WAL record size
+    // Bytes lag: estimate based on write-after log (WAL) record size
     lag.bytes_lag = lag.lsn_lag * average_wal_record_size;
 
     return lag;
@@ -643,7 +645,7 @@ ALTER SHARD shard_001
 1. New replica connects to primary
 2. Primary sends full snapshot (base backup)
 3. Replica loads snapshot
-4. Replica begins streaming WAL from snapshot LSN
+4. Replica begins streaming write-after log (WAL) from snapshot LSN
 5. Replica catches up to primary
 6. Replica status changes to STREAMING
 
@@ -656,7 +658,7 @@ ALTER SHARD shard_001
 ```
 
 **Procedure**:
-1. Primary stops sending WAL to replica
+1. Primary stops sending write-after log (WAL) to replica
 2. Replica is marked as REMOVED
 3. Replica's data can be deleted
 
@@ -698,8 +700,8 @@ ALTER SHARD shard_001
 
 **Guarantee**: **Eventual Consistency**
 
-- Primary ACKs write immediately (after local WAL flush)
-- Replicas receive and apply WAL asynchronously
+- Primary ACKs write immediately (after local write-after log (WAL) flush)
+- Replicas receive and apply write-after log (WAL) asynchronously
 - If primary fails before replica applies, data may be lost
 
 **Data Loss Window**: Typically < 1 second (depends on replication lag)
@@ -732,7 +734,7 @@ ALTER SHARD shard_001
 
 ### 10.1 Encrypted Replication Streams
 
-WAL streams are encrypted using TLS 1.3:
+Write-after log (WAL) streams are encrypted using TLS 1.3:
 
 ```cpp
 // Replicas connect to primary with mTLS
@@ -745,7 +747,7 @@ tls_ctx.set_min_protocol_version(TLS_1_3);
 // Establish encrypted connection
 TLSSocket socket = tls_ctx.connect(primary_node_address);
 
-// Stream WAL over encrypted socket
+// Stream write-after log (WAL) over encrypted socket
 WALStream stream(socket);
 ```
 
@@ -777,12 +779,12 @@ bool authenticate_replica(const X509Certificate& replica_cert) {
 }
 ```
 
-### 10.3 WAL Encryption at Rest
+### 10.3 Write-after Log (WAL) Encryption at Rest
 
-WAL files are encrypted on disk using AES-256-GCM:
+Write-after log (WAL) files are encrypted on disk using AES-256-GCM:
 
 ```cpp
-// Write encrypted WAL record
+// Write encrypted write-after log (WAL) record
 EncryptedWALRecord encrypt_wal_record(const WALRecord& record) {
     bytes plaintext = serialize(record);
 
@@ -807,7 +809,7 @@ EncryptedWALRecord encrypt_wal_record(const WALRecord& record) {
 
 ### 11.1 Functional Tests
 
-**Test: WAL Streaming**
+**Test: Write-after Log (WAL) Streaming**
 ```cpp
 TEST(Replication, WALStreaming) {
     auto cluster = create_test_cluster(3, 16);
@@ -899,7 +901,7 @@ ALTER SHARD shard_001
   SET REPLICATION MODE = ASYNC;
 ```
 
-**Behavior**: Primary ACKs writes immediately after local WAL flush.
+**Behavior**: Primary ACKs writes immediately after local write-after log (WAL) flush.
 
 ### 12.2 Configure Sync Replication
 
