@@ -216,7 +216,7 @@ All 7 expected files **FOUND**:
 | **IMPLEMENTATION_AUDIT.md** | /docs/ | 87 KB | Nov 2025 | ✅ Found |
 | **INDEX_ARCHITECTURE.md** | /docs/specifications/ | 30 KB | Nov 20, 2025 | ✅ Found |
 | **INDEX_IMPLEMENTATION_GUIDE.md** | /docs/specifications/ | 33 KB | Nov 20, 2025 | ✅ Found |
-| **ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md** | /docs/planning/ | 29 KB | Active | ✅ Found |
+| **ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md** | /docs/archive/2026-01-09/planning/ | 29 KB | Active | ✅ Found |
 | **CATALOG_CORRECTIONS_COMPLETE_2025-11-09.md** | /docs/status/ | 22 KB | Nov 9, 2025 | ✅ Found |
 | **INDEX_SYSTEM_REMEDIATION_PLAN.md** | /docs/audit/ | 10 KB | 2025 | ✅ Found |
 | **INDEX_SYSTEM_AGENT_TASKS.md** | /docs/audit/ | 26 KB | 2025 | ✅ Found |

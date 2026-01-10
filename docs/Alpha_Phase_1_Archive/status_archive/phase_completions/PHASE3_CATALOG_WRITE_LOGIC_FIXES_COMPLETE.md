@@ -3,7 +3,7 @@
 **Date**: November 3, 2025
 **Status**: ✅ COMPLETE
 **Duration**: ~2 hours (estimated 3-4 hours)
-**Plan**: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+**Plan**: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
 **Phase**: 3 of 7
 
 ---
@@ -598,7 +598,7 @@ Phase 3 successfully fixed all critical catalog write logic bugs. The catalog la
 **Next**: Phase 4 - Catalog Read Logic Verification
 
 **Reference Documents**:
-- Master Plan: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+- Master Plan: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
 - Phase 1 Status: docs/status/PHASE1_UTF8_UTILS_COMPLETE.md
 - Phase 2 Status: docs/status/PHASE2_CATALOG_STORAGE_EXPANSION_COMPLETE.md
 - Phase 3 Status: docs/status/PHASE3_CATALOG_WRITE_LOGIC_FIXES_COMPLETE.md

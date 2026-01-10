@@ -102,7 +102,7 @@ SETVAL('sequence_name', value [, is_called])  -- Set value
 
 #### **Documentation & Tests** (2 files):
 15. **`test_sequences.sql`** - Comprehensive test cases (120 lines)
-16. **`docs/planning/SEQUENCE_IMPLEMENTATION_PLAN.md`** - Design document (600+ lines)
+16. **`docs/Alpha_Phase_1_Archive/planning_archive/SEQUENCE_IMPLEMENTATION_PLAN.md`** - Design document (600+ lines)
 
 ---
 
@@ -508,7 +508,7 @@ cd /home/dcalford/CliWork/ScratchBird/build
 
 ## Related Documentation
 
-- `/docs/planning/SEQUENCE_IMPLEMENTATION_PLAN.md` - Original design document
+- `/docs/Alpha_Phase_1_Archive/planning_archive/SEQUENCE_IMPLEMENTATION_PLAN.md` - Original design document
 - `/MGA_RULES.md` - MGA compliance rules
 - `/PROJECT_CONTEXT.md` - Overall project status
 

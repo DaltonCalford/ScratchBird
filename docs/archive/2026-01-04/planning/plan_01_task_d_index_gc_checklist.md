@@ -3,7 +3,7 @@
 Use this checklist per index type. Do not proceed to the next index until this list is fully complete and reviewed.
 
 ## 0) Preconditions
-- [ ] Read `docs/planning/plan_01_index_gc_clarifications.md` for this index type.
+- [ ] Read `docs/archive/2026-01-04/planning/plan_01_index_gc_clarifications.md` for this index type.
 - [ ] Identify the exact class + file for `removeDeadEntries()`.
 - [ ] Confirm whether the GC logic already exists (if yes, do NOT re-implement; only add tests).
 

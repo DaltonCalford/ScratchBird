@@ -52,7 +52,7 @@ grep -r "isVersionVisible|isSnapshotVisible" src/core/*.cpp
 - Contents: Key findings, recommendations, work required (60-85 hours)
 
 **Comprehensive Action Plan** (31KB):
-- File: `docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md`
+- File: `docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md`
 - Contents: Step-by-step implementation guide for all 7 issues
 
 **Quick Reference Guide**:
@@ -170,7 +170,7 @@ Status LSMTreeIndex::scan(...) {
    - Executive summary of all findings
    - Recommendations and work required
 
-2. `/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` (31KB)
+2. `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` (31KB)
    - Comprehensive 70-page action plan
    - Step-by-step implementation guide
 

@@ -11,10 +11,10 @@ P0 (prevents incompatible on-disk or API assumptions).
 - `docs/specifications/TRANSACTION_DISTRIBUTED.md`
 - `docs/specifications/REPLICATION_AND_SHADOW_PROTOCOLS.md`
 - `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
-- `docs/planning/plan_01_core_storage_gc.md`
-- `docs/planning/plan_03_security_context_auth_audit_quorum.md`
-- `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md`
-- `docs/findings/alpha_cluster_compatibility_audit.md`
+- `docs/archive/2026-01-04/planning/plan_01_core_storage_gc.md`
+- `docs/archive/2026-01-04/planning/plan_03_security_context_auth_audit_quorum.md`
+- `docs/archive/2026-01-04/planning/plan_10_cluster_domains_and_conflict_resolution.md`
+- `docs/archive/2026-01-09/findings/alpha_cluster_compatibility_audit.md`
 
 ## Order of Implementation
 1) Cluster identity and time abstraction.

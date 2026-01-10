@@ -3,7 +3,7 @@
 **Status:** COMPLETE
 **Date:** 2025-11-03
 **Phase Duration:** 1 hour
-**Plan Reference:** docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (Phase 4, lines 420-450)
+**Plan Reference:** docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (Phase 4, lines 420-450)
 
 ## Overview
 
@@ -208,7 +208,7 @@ Phase 4 verified and hardened catalog read logic to ensure safe handling of expa
    Risk Level: MINIMAL (defensive only, no functional changes)
    Testing: Not required (defensive assertions only)
 
-   Reference: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (Phase 4)
+   Reference: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (Phase 4)
    Status: docs/status/PHASE4_CATALOG_READ_SAFETY_COMPLETE.md
    ```
 
@@ -235,6 +235,6 @@ Phase 4 successfully verified and hardened catalog read logic. All read function
 
 ---
 *Generated: 2025-11-03*
-*Plan: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md*
+*Plan: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md*
 *Previous: docs/status/PHASE3_CATALOG_WRITE_LOGIC_FIXES_COMPLETE.md*
 *Next: Phase 5 (Query Layer SQL Parser)*

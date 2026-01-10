@@ -57,7 +57,7 @@ git log --oneline --grep="MGA" | head -5
 - `b4ccd33` - Storage Layer MGA Compliance: Fix SNAPSHOT isolation to use TIP
 - `e5b19c8` - Update MGA_COMPLIANCE_FIX_PLAN.md to reflect 100% completion
 
-**Plan Document**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md`
+**Plan Document**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md`
 
 **What Was Fixed**:
 - All 7 index types now use TIP-based visibility (not snapshot-based)
@@ -91,7 +91,7 @@ git log --oneline --grep="TOAST" | head -8
 - `6464813` - Phase 2 Complete: TIP-Based Visibility Implementation - Firebird MGA
 - `5e66a29` - Phase 1 Complete: TOAST Chunk Format Redesign - Firebird MGA Compliance
 
-**Plan Document**: `/docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+**Plan Document**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
 
 **What Was Fixed**:
 - TOAST chunk format redesigned: added explicit xmin/xmax (28-byte header)
@@ -124,7 +124,7 @@ git log --oneline | grep -i "utf8\|identifier" | head -5
 - `75de4f0` - Phase 4 Complete: Catalog Read Logic UTF-8 Safety
 - `ee47e38` - Phase 3 Complete: Catalog Write Logic UTF-8 Fixes
 
-**Plan Document**: `/docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md`
+**Plan Document**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md`
 
 **What Was Fixed**:
 - UTF8Utils enhanced with proper character/byte validation

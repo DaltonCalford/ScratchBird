@@ -66,7 +66,7 @@ This session completed the design for ScratchBird's context variables following 
 
 ### 2. Context Variables Design Document
 
-**File Created**: `/docs/planning/ALPHA_CONTEXT_VARIABLES_DESIGN.md` (~1,200 lines)
+**File Created**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/ALPHA_CONTEXT_VARIABLES_DESIGN.md` (~1,200 lines)
 
 **Contents**:
 
@@ -188,7 +188,7 @@ class ConnectionContext {
 
 ### 3. Updated Row Identity Design (v2.1)
 
-**File Updated**: `/docs/planning/ALPHA_ROW_IDENTITY_ENHANCED.md`
+**File Updated**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/ALPHA_ROW_IDENTITY_ENHANCED.md`
 
 **Changes**:
 - Added reference to `ALPHA_CONTEXT_VARIABLES_DESIGN.md`

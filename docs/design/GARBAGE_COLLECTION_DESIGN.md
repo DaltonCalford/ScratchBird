@@ -3,7 +3,7 @@
 **Date:** October 10, 2025
 **Status:** Design Document
 **Phase:** Phase 3, Task 3.4
-**Reference:** `docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md`
+**Reference:** `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md`
 
 ---
 

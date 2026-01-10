@@ -508,8 +508,8 @@ When creating new tests:
 
 ## References
 
-- **Current Failures:** `/docs/findings/TEST_SUITE_FAILURES_2025_12_27.md`
-- **Timeout Analysis:** `/docs/findings/TEST_TIMEOUT_ANALYSIS_2025_12_29.md`
+- **Current Failures:** `/docs/archive/2026-01-09/findings/TEST_SUITE_FAILURES_2025_12_27.md`
+- **Timeout Analysis:** `/docs/archive/2026-01-09/findings/TEST_TIMEOUT_ANALYSIS_2025_12_29.md`
 - **Test Statistics:** `/docs/PROJECT_STATISTICS.md` (3,023 test cases, 1,346 CTest tests)
 
 ---

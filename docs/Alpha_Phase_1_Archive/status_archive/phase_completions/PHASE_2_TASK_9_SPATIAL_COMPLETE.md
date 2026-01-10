@@ -420,7 +420,7 @@ Cost-based selection ensures optimal query plans.
    - `/docs/development/TASK_9_5_IMPLEMENTATION_GUIDE.md` (SRID detailed spec)
 
 3. **Roadmap Updates**:
-   - `/docs/planning/FEATURE_PARITY_ROADMAP.md` (Phase 2 spatial status)
+   - `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/FEATURE_PARITY_ROADMAP.md` (Phase 2 spatial status)
 
 ---
 

@@ -50,7 +50,7 @@ Domains are **schema-scoped**, and the required schema/database DDL infrastructu
 **Plan 04 now depends on:**
 - ✅ Plan 03B (WITH block infrastructure) - implementation complete
 - ⚠️ **Plan 02B (Schema/Database DDL)** - core complete; remaining alignment/testing
-  - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md` for status
+  - See `docs/archive/2026-01-04/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md` for status
 
 **Prerequisite work:** COMPLETE (Plan 03B). Remaining work is Plan 02B alignment + verification.
 
@@ -59,7 +59,7 @@ Domains are **schema-scoped**, and the required schema/database DDL infrastructu
 1. Track remaining Plan 02B alignment items (cascade semantics, adapter path alignment, tests).
 2. Maintain verification coverage for domain infrastructure and WITH blocks.
 
-**Detailed Analysis:** See `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
+**Detailed Analysis:** See `/docs/archive/2026-01-09/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 
 ---
 
@@ -385,7 +385,7 @@ Plan 03B delivered the prerequisites in parallel workstreams:
 **Stream 3 - Validation & Quality:** Validation integration, quality pipeline
 **Stream 4 - Infrastructure:** SBLR opcodes for WITH blocks
 
-**Implementation Status:** COMPLETE (see `docs/planning/PLAN_03B_DOMAIN_INFRASTRUCTURE.md`)
+**Implementation Status:** COMPLETE (see `docs/archive/2026-01-04/planning/PLAN_03B_DOMAIN_INFRASTRUCTURE.md`)
 
 ---
 

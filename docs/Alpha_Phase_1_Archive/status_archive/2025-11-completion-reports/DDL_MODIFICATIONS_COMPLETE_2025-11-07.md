@@ -78,7 +78,7 @@ catalog_manager->alterColumnType(table_id, "col_name", new_type, precision, scal
 - Implementation time: ~6-8 hours
 
 **Documentation**:
-- `docs/planning/ALTER_TABLE_IMPLEMENTATION_PLAN.md` (600+ lines)
+- `docs/Alpha_Phase_1_Archive/planning_archive/ALTER_TABLE_IMPLEMENTATION_PLAN.md` (600+ lines)
 - `docs/status/ALTER_TABLE_COMPLETE_2025-11-07.md` (400+ lines)
 
 ---

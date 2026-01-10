@@ -3,7 +3,7 @@
 **Date**: November 3, 2025
 **Status**: ✅ COMPLETE
 **Duration**: ~1.5 hours (estimated 2-3 hours)
-**Plan**: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+**Plan**: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
 **Phase**: 2 of 7
 
 ---
@@ -468,7 +468,7 @@ Phase 2 successfully expanded all catalog storage structures to support 128 UTF-
 **Next**: Phase 3 - Catalog Write Logic Fixes
 
 **Reference Documents**:
-- Master Plan: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+- Master Plan: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
 - Phase 1 Status: docs/status/PHASE1_UTF8_UTILS_COMPLETE.md
 - Audit Report: docs/audit/03_SQL_IDENTIFIER_AUDIT.md
 - Modified Files:

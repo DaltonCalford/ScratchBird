@@ -16,7 +16,7 @@
 - ⚠️ External validation pending (unixODBC isql + BI tools)
 
 **Note:** The detailed function status tables below are a historical snapshot from 2025-12-26.
-Refer to `docs/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md` for current status.
+Refer to `docs/archive/2026-01-04/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md` for current status.
 
 **Current State:**
 - ODBC driver completed for Alpha scope

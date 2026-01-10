@@ -274,7 +274,7 @@ All work maintained strict Firebird MGA compliance:
 ## DOCUMENTATION ARTIFACTS
 
 ### Planning Documents
-- `/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Master plan (100% complete)
+- `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Master plan (100% complete)
 
 ### Completion Reports
 - `/docs/status/P3_HNSW_DISTANCE_METRICS_COMPLETE_2025-11-06.md` - P3 verification

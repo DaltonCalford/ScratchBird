@@ -520,8 +520,8 @@ All implementations maintain Firebird MGA compliance:
 ## RELATED DOCUMENTATION
 
 ### Planning Documents
-- `/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Master plan
-- `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Overall roadmap
+- `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Master plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Overall roadmap
 
 ### Completion Reports
 - `/docs/status/CUSTOM_TABLESPACE_COMPLETION_REPORT_2025-11-06.md` - Detailed P2 report

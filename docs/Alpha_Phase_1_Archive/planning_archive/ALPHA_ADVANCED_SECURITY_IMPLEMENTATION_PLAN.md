@@ -13,8 +13,8 @@ This document provides a logical implementation order for advanced security feat
 1. ✅ Added **Query Plan Security Integration** (Phase 3.0) - 10-100x performance improvement
 2. ✅ Added **Group Membership Caching** - Critical for complete permission checking
 3. ✅ Added **SQL Object Permissions** (Phase 3.1) - Definer rights, ownership chaining
-4. 📝 See `/docs/planning/QUERY_PLAN_SECURITY_INTEGRATION.md` for query plan design
-5. 📝 See `/docs/planning/SQL_OBJECT_PERMISSIONS_DESIGN.md` for object permissions design
+4. 📝 See `/docs/Alpha_Phase_1_Archive/planning_archive/QUERY_PLAN_SECURITY_INTEGRATION.md` for query plan design
+5. 📝 See `/docs/Alpha_Phase_1_Archive/planning_archive/SQL_OBJECT_PERMISSIONS_DESIGN.md` for object permissions design
 
 **Total Timeline:** 50-73 hours for critical path (was 30-43 hours)
 - Query Plan Security adds 11-17 hours but provides 10-100x speedup
@@ -26,7 +26,7 @@ This document provides a logical implementation order for advanced security feat
 
 > **ARCHITECTURAL REVISION (Nov 10, 2025):**
 > Based on analysis, implementing **Query Plan Security Integration** provides superior performance and architecture.
-> See `/docs/planning/QUERY_PLAN_SECURITY_INTEGRATION.md` for detailed design.
+> See `/docs/Alpha_Phase_1_Archive/planning_archive/QUERY_PLAN_SECURITY_INTEGRATION.md` for detailed design.
 
 ### **Phase 3.0: Query Plan Security Framework** (NEW - HIGHEST PRIORITY!)
 **Duration:** 11-17 hours
@@ -128,7 +128,7 @@ public:
 **Duration:** 14-21 hours
 **Rationale:** Required for stored procedures, views, and triggers; enables ownership chaining
 
-> **See:** `/docs/planning/SQL_OBJECT_PERMISSIONS_DESIGN.md` for complete design
+> **See:** `/docs/Alpha_Phase_1_Archive/planning_archive/SQL_OBJECT_PERMISSIONS_DESIGN.md` for complete design
 
 #### 3.1.1: Catalog Schema for Object Permissions (2-3 hours)
 **Priority:** CRITICAL - Foundation for definer rights

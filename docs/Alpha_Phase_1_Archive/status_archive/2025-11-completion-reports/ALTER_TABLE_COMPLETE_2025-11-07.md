@@ -233,9 +233,9 @@ $ echo $?
    - executeAlterTable full implementation (lines 2405-2512, 107 lines)
 
 ### Documentation (3 files)
-4. `docs/planning/ALTER_TABLE_IMPLEMENTATION_PLAN.md` (NEW, 600+ lines)
+4. `docs/Alpha_Phase_1_Archive/planning_archive/ALTER_TABLE_IMPLEMENTATION_PLAN.md` (NEW, 600+ lines)
 5. `docs/status/ALTER_TABLE_COMPLETE_2025-11-07.md` (THIS FILE, 400+ lines)
-6. `docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` (UPDATED)
+6. `docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` (UPDATED)
 
 ---
 

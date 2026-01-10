@@ -10,7 +10,7 @@ Historical implementation and remediation plans from early Alpha development. Th
 ## Contents
 
 ### Main Implementation Plan
-- `IMPLEMENTATION_PLAN.md` - Original authoritative plan (now `docs/planning/ALPHA_IMPLEMENTATION_PLAN.md`)
+- `IMPLEMENTATION_PLAN.md` - Original authoritative plan (now `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/ALPHA_IMPLEMENTATION_PLAN.md`)
 
 ### Remediation Plans
 - `remediation_plan_2025_09_15.md` - September 15 bug fixes
@@ -22,15 +22,15 @@ Historical implementation and remediation plans from early Alpha development. Th
 ## Current Planning
 
 For current plans, see:
-- `docs/planning/ALPHA_IMPLEMENTATION_PLAN.md` - Current authoritative plan
-- `docs/planning/BTREE_IMPLEMENTATION_PLAN.md` - B-tree implementation
-- `docs/planning/HASH_INDEX_IMPLEMENTATION_PLAN.md` - Hash index implementation
-- `docs/planning/MGA_IMPLEMENTATION_PLAN.md` - MVCC/MGA implementation
-- `docs/planning/CRITICAL_FIXES_IMPLEMENTATION_PLAN.md` - Recent critical fixes
+- `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/ALPHA_IMPLEMENTATION_PLAN.md` - Current authoritative plan
+- `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/BTREE_IMPLEMENTATION_PLAN.md` - B-tree implementation
+- `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/HASH_INDEX_IMPLEMENTATION_PLAN.md` - Hash index implementation
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/INDEX_MGA_IMPLEMENTATION_PLAN.md` - MVCC/MGA implementation
+- `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/CRITICAL_FIXES_IMPLEMENTATION_PLAN.md` - Recent critical fixes
 
 ## Note
 
-The remediation plans here document issues found during early development. Many have been superseded by the comprehensive critical fixes plan in `docs/planning/`.
+The remediation plans here document issues found during early development. Many have been superseded by the comprehensive critical fixes plan in `docs/archive/2026-01-09/planning/`.
 
 ---
 

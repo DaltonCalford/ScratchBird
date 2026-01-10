@@ -1,7 +1,7 @@
 # Plan 05 - Protocols, ODBC, Connection Pool
 
 **Status Update (2026-01-XX):**
-- The ODBC portion has been completed under Plan 05 (see `docs/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md`).
+- The ODBC portion has been completed under Plan 05 (see `docs/archive/2026-01-04/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md`).
 - Protocol adapter and connection pool work are tracked in their respective plans; this document is legacy for the combined scope.
 
 ## Scope
@@ -17,10 +17,10 @@ P1 (required for external connectivity).
 - `docs/specifications/ODBC_DRIVER_SPECIFICATION.md`
 - `docs/specifications/CONNECTION_POOLING_SPECIFICATION.md`
 - `docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
-- `docs/findings/firebird_wire_protocol_gaps.md`
-- `docs/findings/mysql_wire_protocol_gaps.md`
-- `docs/findings/postgresql_wire_protocol_gaps.md`
-- `docs/planning/plan_16_attachment_transaction_model.md`
+- `docs/archive/2026-01-09/findings/firebird_wire_protocol_gaps.md`
+- `docs/archive/2026-01-09/findings/mysql_wire_protocol_gaps.md`
+- `docs/archive/2026-01-09/findings/postgresql_wire_protocol_gaps.md`
+- `docs/archive/2026-01-04/planning/plan_16_attachment_transaction_model.md`
 
 ## Order of Implementation
 1) Native/PostgreSQL/MySQL/Firebird protocol gaps (auth, cancel, COPY, describe).
@@ -64,9 +64,9 @@ P1 (required for external connectivity).
 
 ## Implementation Tasks
 - Implement native adapter authentication, cancel, and describe.
-- Implement PostgreSQL adapter cancel, COPY IN, MD5/SCRAM auth; align with `docs/findings/postgresql_wire_protocol_gaps.md`.
-- Implement MySQL adapter password validation and DB existence checks; align with `docs/findings/mysql_wire_protocol_gaps.md`.
-- Implement Firebird adapter authentication, result parsing, and DB-drop handling; align with `docs/findings/firebird_wire_protocol_gaps.md`.
+- Implement PostgreSQL adapter cancel, COPY IN, MD5/SCRAM auth; align with `docs/archive/2026-01-09/findings/postgresql_wire_protocol_gaps.md`.
+- Implement MySQL adapter password validation and DB existence checks; align with `docs/archive/2026-01-09/findings/mysql_wire_protocol_gaps.md`.
+- Implement Firebird adapter authentication, result parsing, and DB-drop handling; align with `docs/archive/2026-01-09/findings/firebird_wire_protocol_gaps.md`.
 - Ensure emulated replication commands are rejected or deferred with clear errors (no replication support in Alpha).
 - Implement ODBC connect/execute/prepare/cancel and catalog queries.
 - Implement connection pool reset: rollback transaction, reset search_path, reset role, reset session vars, clear cached prepared statements.

@@ -25,4 +25,4 @@
 
 ## Notes
 - Keep ScratchBird-only features (e.g., 128-bit, advanced domains) out of emulated engines; adapters may expose safe fallbacks only.  
-- Reference: `docs/planning/Beta Phase 0 Implementation Plan.md` for upcoming Beta packaging/tooling; Alpha tasks here are independent of packaging.  
+- Reference: `docs/archive/2026-01-04/planning/Beta_Phase_0_Implementation_Plan.md` for upcoming Beta packaging/tooling; Alpha tasks here are independent of packaging.  

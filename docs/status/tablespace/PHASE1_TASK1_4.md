@@ -746,7 +746,7 @@ The GIN index now fully supports MVCC visibility checking for all query operatio
 **Author**: Claude (Anthropic AI)
 **Date**: October 19, 2025
 **Related Documents**:
-- `/docs/planning/INDEX_MGA_IMPLEMENTATION_PLAN.md` (Updated with Task 1.4 completion)
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/INDEX_MGA_IMPLEMENTATION_PLAN.md` (Updated with Task 1.4 completion)
 - `/docs/audit/INDEX_MGA_COMPLIANCE_ANALYSIS.md` (GIN compliance analysis)
 - `/include/scratchbird/core/gin_index.h` (GIN index interface)
 - `/src/core/gin_index.cpp` (GIN index implementation)

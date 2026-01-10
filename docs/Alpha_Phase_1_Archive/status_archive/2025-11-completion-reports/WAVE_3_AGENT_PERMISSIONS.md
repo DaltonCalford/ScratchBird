@@ -99,7 +99,7 @@ Add these to the `"allow"` array in `settings.local.json`:
 
       // ============ DOCUMENTATION ============
       // Update documentation
-      "Edit(//home/dcalford/CliWork/ScratchBird/docs/planning/FEATURE_PARITY_ROADMAP.md)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/FEATURE_PARITY_ROADMAP.md)",
       "Edit(//home/dcalford/CliWork/ScratchBird/README.md)",
       "Write(//home/dcalford/CliWork/ScratchBird/docs/status/WAVE_3_*.md)",
 

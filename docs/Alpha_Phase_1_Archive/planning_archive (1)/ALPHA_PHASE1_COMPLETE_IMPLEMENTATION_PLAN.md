@@ -43,10 +43,10 @@
 - `/docs/IMPLEMENTATION_AUDIT.md` - AI-optimized implementation reference
 
 ### Planning Documents
-- `/docs/planning/ALTER_TABLE_IMPLEMENTATION_PLAN.md` - DDL modifications
-- `/docs/planning/DDL_MODIFICATIONS_IMPLEMENTATION_PLAN.md` - DROP operations
-- `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md` - Security architecture
-- `/docs/planning/SECURITY_PHASE3_FINAL_IMPLEMENTATION_PLAN.md` - Advanced security
+- `/docs/Alpha_Phase_1_Archive/planning_archive/ALTER_TABLE_IMPLEMENTATION_PLAN.md` - DDL modifications
+- `/docs/Alpha_Phase_1_Archive/planning_archive/DDL_MODIFICATIONS_IMPLEMENTATION_PLAN.md` - DROP operations
+- `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md` - Security architecture
+- `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_PHASE3_FINAL_IMPLEMENTATION_PLAN.md` - Advanced security
 
 ### Specifications
 - `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md` - Security system design

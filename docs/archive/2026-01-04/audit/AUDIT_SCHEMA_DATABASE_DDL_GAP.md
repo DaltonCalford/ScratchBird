@@ -81,7 +81,7 @@ Scope: Align plans with current code for schema/database DDL, emulation schema p
 - Update Plan 05 dependency notes to point to the Plan 02B document (once created).
 
 ## Files Referenced
-- `docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
+- `docs/archive/2026-01-09/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 - `include/scratchbird/sblr/opcodes.h`
 - `src/sblr/executor.cpp`
 - `src/parser/postgresql/pg_parser_ddl.cpp`

@@ -121,9 +121,9 @@ conn_ctx->setCurrentUser(user_info.user_id, user_info.is_superuser);
 
 - `/docs/status/CONNECTION_CONTEXT_SECURITY_INTEGRATION_2025-11-10.md` - Complete integration guide
 - `/docs/status/SECURITY_IMPLEMENTATION_PLAN_UPDATE_2025-11-10.md` - Phase 3 planning
-- `/docs/planning/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md` - Advanced features (50-73 hours)
-- `/docs/planning/QUERY_PLAN_SECURITY_INTEGRATION.md` - Query plan security design
-- `/docs/planning/SQL_OBJECT_PERMISSIONS_DESIGN.md` - Object permissions design
+- `/docs/Alpha_Phase_1_Archive/planning_archive/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md` - Advanced features (50-73 hours)
+- `/docs/Alpha_Phase_1_Archive/planning_archive/QUERY_PLAN_SECURITY_INTEGRATION.md` - Query plan security design
+- `/docs/Alpha_Phase_1_Archive/planning_archive/SQL_OBJECT_PERMISSIONS_DESIGN.md` - Object permissions design
 
 ---
 

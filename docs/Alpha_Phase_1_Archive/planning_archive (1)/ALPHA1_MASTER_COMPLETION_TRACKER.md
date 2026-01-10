@@ -365,7 +365,7 @@ This section details the remaining work organized by component.
 
 ## Component 1: PSQL/Stored Procedures & Triggers ✅ **COMPLETE**
 
-**Planning Document:** `/docs/planning/ALPHA1_PSQL_TRIGGERS_IMPLEMENTATION_PLAN.md`
+**Planning Document:** `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA1_PSQL_TRIGGERS_IMPLEMENTATION_PLAN.md`
 
 **Status:** 100% Complete (Nov 23, 2025)
 **Priority:** COMPLETE
@@ -415,7 +415,7 @@ This section details the remaining work organized by component.
 
 ## Component 2: Advanced SQL Features (~20% of remaining)
 
-**Planning Document:** `/docs/planning/ALPHA1_ADVANCED_SQL_FEATURES_PLAN.md`
+**Planning Document:** `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA1_ADVANCED_SQL_FEATURES_PLAN.md`
 
 **Status:** Partially Implemented
 **Priority:** HIGH (critical SQL features)
@@ -577,7 +577,7 @@ SELECT city FROM suppliers
 ```
 
 **Documentation:**
-- See `/docs/planning/CTE_IMPLEMENTATION_STATUS.md` for full details (updated to 100% complete)
+- See `/docs/Alpha_Phase_1_Archive/planning_archive (1)/CTE_IMPLEMENTATION_STATUS.md` for full details (updated to 100% complete)
 - Standalone test: `/tests/manual/test_cte_standalone.cpp`
 
 ### Blocking Dependencies
@@ -591,7 +591,7 @@ SELECT city FROM suppliers
 
 ## Component 3: Constraint Features & SQL Engine Commands (~15% of remaining)
 
-**Planning Document:** `/docs/planning/ALPHA1_CONSTRAINTS_AND_ENGINE_COMMANDS_PLAN.md`
+**Planning Document:** `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA1_CONSTRAINTS_AND_ENGINE_COMMANDS_PLAN.md`
 
 **Status:** Not Started
 **Priority:** MEDIUM
@@ -634,7 +634,7 @@ SELECT city FROM suppliers
 
 ## Component 4: Command-Line Tools & Views (~20% of remaining)
 
-**Planning Document:** `/docs/planning/ALPHA1_CLI_TOOLS_AND_VIEWS_COMPLETION_PLAN.md`
+**Planning Document:** `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA1_CLI_TOOLS_AND_VIEWS_COMPLETION_PLAN.md`
 
 **Status:** Not Started
 **Priority:** MEDIUM to HIGH
@@ -859,7 +859,7 @@ Alpha 1 represents approximately **11% of the total project scope**.
 - **Official Roadmap:** `/OFFICIAL_ROADMAP.md`
 - **Project Context:** `/PROJECT_CONTEXT.md`
 - **MGA Rules:** `/MGA_RULES.md`
-- **Planning Documents:** `/docs/planning/`
+- **Planning Documents:** `/docs/archive/2026-01-09/planning/`
   - `ALPHA1_PSQL_TRIGGERS_IMPLEMENTATION_PLAN.md`
   - `ALPHA1_ADVANCED_SQL_FEATURES_PLAN.md`
   - `ALPHA1_CONSTRAINTS_AND_ENGINE_COMMANDS_PLAN.md`

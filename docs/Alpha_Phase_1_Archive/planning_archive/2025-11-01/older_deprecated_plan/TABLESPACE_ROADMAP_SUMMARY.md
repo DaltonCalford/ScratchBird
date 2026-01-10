@@ -284,13 +284,13 @@ Potential features:
    - Snapshot isolation
    - Visibility rules
 
-3. **`docs/planning/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md`**:
+3. **`docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md`**:
    - Detailed task breakdown
    - Subtask specifications
    - File-level changes
    - Acceptance criteria
 
-4. **`docs/planning/MGA_ONLINE_MIGRATION_ANALYSIS.md`**:
+4. **`docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/MGA_ONLINE_MIGRATION_ANALYSIS.md`**:
    - PostgreSQL vs Firebird comparison
    - Why MGA simplifies ONLINE migration
    - Architecture patterns

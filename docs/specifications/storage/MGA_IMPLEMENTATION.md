@@ -16,7 +16,7 @@
 - Snapshot contamination: **0 instances** ✅
 - TIP-based visibility calls: **16 instances** ✅
 - Transaction state lookups: **8 instances** ✅
-- See `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` for complete audit results
+- See `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md` for complete audit results
 
 ## Overview
 

@@ -405,7 +405,7 @@ add_test(NAME HNSWDistanceMetrics COMMAND test_hnsw_distance_metrics)
 
 ## RELATED DOCUMENTATION
 
-- `/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Master plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Master plan
 - `/docs/status/PHASE_1.5_GPID_MIGRATION_COMPLETE_2025-11-06.md` - P2 completion
 - `/docs/status/CUSTOM_TABLESPACE_COMPLETION_REPORT_2025-11-06.md` - P2 detailed report
 - `/include/scratchbird/core/vector.h` - Vector API definition

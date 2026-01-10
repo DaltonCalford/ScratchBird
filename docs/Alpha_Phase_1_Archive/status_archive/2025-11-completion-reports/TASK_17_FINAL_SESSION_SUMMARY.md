@@ -198,8 +198,8 @@ Task 17 features **CAN** be used safely ONLY if:
 ### Documentation Files
 
 **Created**:
-1. `/docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` - Main design doc
-2. `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` - Implementation guide
+1. `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` - Main design doc
+2. `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` - Implementation guide
 3. `/docs/status/TASK_17_FOUNDATION_COMPLETE.md` - Phase 1-5 completion
 4. `/docs/status/TASK_17_PHASE_6_COMPLETE.md` - Index building completion
 5. `/docs/status/TASK_17_PHASE_7_COMPLETE.md` - Index maintenance completion

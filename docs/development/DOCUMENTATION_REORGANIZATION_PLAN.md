@@ -57,7 +57,7 @@ DOCUMENTATION_UPDATE_SUMMARY.md
 
 ### Problem 3: Analysis/Review Files in Root
 
-These should be in `/docs/planning/` or `/docs/audit/`:
+These should be in `/docs/archive/2026-01-09/planning/` or `/docs/audit/`:
 
 ```
 MGA_COMPLIANCE_REVIEW_TABLESPACE.md → /docs/audit/
@@ -284,7 +284,7 @@ After reorganization:
 
 ### 1. **Phase 7 Planning Document** (HIGH PRIORITY)
 
-**File**: `/docs/planning/PHASE7_IMPLEMENTATION_PLAN.md`
+**File**: `/docs/specifications/storage/TABLESPACE_SPECIFICATION.md`
 
 **Content**: Detailed implementation plan for Phase 7 (Advanced Features):
 - Tablespace space management and SHRINK operations
@@ -327,7 +327,7 @@ After reorganization:
 
 ### 4. **Next Sprint Preparation Document** (HIGH PRIORITY)
 
-**File**: `/docs/planning/SPRINT7_PHASE7_PREPARATION.md`
+**File**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT7_PHASE7_PREPARATION.md`
 
 **Content**:
 - Sprint 7 goals (Phase 7 implementation)
@@ -388,7 +388,7 @@ After reorganization:
 - Update total hours completed
 - Update percentage complete statistics
 
-### 4. **docs/planning/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md**
+### 4. **docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md**
 
 **Updates needed:**
 - Mark Phase 6 as COMPLETE
@@ -424,8 +424,8 @@ After reorganization:
 - [ ] **Step 9**: Verify all moves completed successfully
 
 - [ ] **Step 10**: Create missing documentation
-  - [ ] `/docs/planning/PHASE7_IMPLEMENTATION_PLAN.md`
-  - [ ] `/docs/planning/SPRINT7_PHASE7_PREPARATION.md`
+  - [ ] `/docs/specifications/storage/TABLESPACE_SPECIFICATION.md`
+  - [ ] `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT7_PHASE7_PREPARATION.md`
   - [ ] `/docs/status/TABLESPACE_IMPLEMENTATION_COMPLETE.md`
   - [ ] `/docs/testing/MGA_CATALOG_COMPLIANCE_TEST_REPORT.md`
   - [ ] `/docs/reference/CATALOG_MANAGER_API.md`
@@ -435,7 +435,7 @@ After reorganization:
   - [ ] `/PROJECT_CONTEXT.md`
   - [ ] `/docs/INDEX.md`
   - [ ] `/docs/status/CURRENT_STATUS.md`
-  - [ ] `/docs/planning/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md`
+  - [ ] `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md`
 
 - [ ] **Step 12**: Verify all internal links still work
 

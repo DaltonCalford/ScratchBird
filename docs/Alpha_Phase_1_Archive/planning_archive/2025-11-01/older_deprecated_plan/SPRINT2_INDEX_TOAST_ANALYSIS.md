@@ -577,7 +577,7 @@ Given the scope (22-41 hours of implementation work), I recommend **Option B**:
 
 | File | Status | Lines | Description |
 |------|--------|-------|-------------|
-| `docs/planning/SPRINT2_INDEX_TOAST_ANALYSIS.md` | ✅ NEW | ~800 | This comprehensive analysis document |
+| `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT2_INDEX_TOAST_ANALYSIS.md` | ✅ NEW | ~800 | This comprehensive analysis document |
 
 ---
 

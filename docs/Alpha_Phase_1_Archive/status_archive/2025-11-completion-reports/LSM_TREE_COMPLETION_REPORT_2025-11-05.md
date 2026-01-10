@@ -379,7 +379,7 @@ if (entry.type == ENTRY_TYPE_DELETE && entry.xmax < OIT)
 - `tests/CMakeLists.txt` (MODIFIED - added new test targets)
 
 ### Documentation
-- `docs/planning/LSM_TREE_IMPLEMENTATION_PLAN.md` (UPDATED - marked all phases complete)
+- `docs/Alpha_Phase_1_Archive/Index_Implementation_Archive/LSM_TREE_IMPLEMENTATION_PLAN.md` (UPDATED - marked all phases complete)
 - `docs/status/LSM_TREE_COMPLETION_REPORT_2025-11-05.md` (NEW - this file)
 
 ---
@@ -538,7 +538,7 @@ This index can be used for:
 
 ## References
 
-- [LSM-Tree Implementation Plan](/docs/planning/LSM_TREE_IMPLEMENTATION_PLAN.md)
+- [LSM-Tree Implementation Plan](/docs/Alpha_Phase_1_Archive/Index_Implementation_Archive/LSM_TREE_IMPLEMENTATION_PLAN.md)
 - [MGA Rules](/MGA_RULES.md)
 - [Project Context](/PROJECT_CONTEXT.md)
 

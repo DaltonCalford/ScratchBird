@@ -54,7 +54,7 @@ The executor was skipping all non-expression/non-partial indexes.
 
 ### 3. Comprehensive Index Roadmap (November 20, 2025)
 **Commit**: `7e2134b`
-**File**: `docs/planning/INDEX_COMPLETION_ROADMAP.md`
+**File**: `docs/Alpha_Phase_1_Archive/planning_archive/INDEX_COMPLETION_ROADMAP.md`
 
 **Content**: 500+ line detailed implementation plan
 - Complete analysis of all 11 indexes

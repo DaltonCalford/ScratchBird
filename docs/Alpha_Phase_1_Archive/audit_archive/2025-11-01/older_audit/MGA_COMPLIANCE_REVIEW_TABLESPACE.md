@@ -512,7 +512,7 @@ All DML operations on user tables use **separate code paths** that correctly imp
 - **UPDATE**: Uses `HeapPage::updateTuple()` with back-versioning (correct MGA)
 - **DELETE**: Marks record deleted in-place (correct MGA)
 
-**Evidence**: `docs/planning/MVCC_VS_MGA_CODE_REVIEW.md` confirms:
+**Evidence**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/MVCC_VS_MGA_CODE_REVIEW.md` confirms:
 - ✅ `HeapPage::updateTuple()` correctly implements MGA for same-page updates (lines 562-900)
 - ❌ `StorageEngine::updateTuple()` has separate cross-page UPDATE bug (not related to this)
 
@@ -755,7 +755,7 @@ SELECT * FROM pg_tablespace WHERE tablespace_name = 'test_ts';
 ## References
 
 1. **MGA Specification**: `docs/specifications/MGA_IMPLEMENTATION.md`
-2. **Existing MGA Bug Report**: `docs/planning/MVCC_VS_MGA_CODE_REVIEW.md`
+2. **Existing MGA Bug Report**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/MVCC_VS_MGA_CODE_REVIEW.md`
 3. **Correct MGA Code**: `src/core/heap_page.cpp` lines 562-900
 4. **Fixed Catalog Code**:
    - `updateRecordInHeapPage()`: `src/core/catalog_manager.cpp` lines 1277-1358

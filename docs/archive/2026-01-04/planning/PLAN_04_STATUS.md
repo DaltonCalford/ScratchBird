@@ -87,7 +87,7 @@
    - Canonical emulation path resolved to `remote.emulated.<dialect>.<server>.<db>` (dot-path)
 
 2. **Documentation Updated** ✅
-   - `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` - historical analysis
+   - `/docs/archive/2026-01-09/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` - historical analysis
    - `PLAN_04_PREREQUISITES.md` updated with resolved status
    - `PLAN_04_IMPLEMENTATION_CHECKLIST.md` updated with unblocked status
 
@@ -201,7 +201,7 @@
 
 **Status Update:** Plan 03B enforcement work is complete; domain DDL wiring uses the enforcement pipeline.
 
-**Detailed Analysis:** `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
+**Detailed Analysis:** `/docs/archive/2026-01-09/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 
 ---
 
@@ -237,7 +237,7 @@
 
 ### Plan 02B: Schema/Database DDL (60-80 hours)
 
-**Status:** CORE COMPLETE - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
+**Status:** CORE COMPLETE - See `docs/archive/2026-01-04/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
 **Critical For:** Plan 04 testing capability
 
 **Delivered:**
@@ -261,15 +261,15 @@ Plan 04 is complete. Proceed to Plan 05 (query optimization spec + vector execut
 ### Specifications
 - ✅ `/docs/specifications/DDL_DOMAINS_COMPREHENSIVE.md` (NEW)
 - ✅ `/docs/specifications/SBLR_DOMAIN_PAYLOADS.md` (NEW)
-- ✅ `/docs/planning/PLAN_04_IMPLEMENTATION_CHECKLIST.md` (NEW)
-- ✅ `/docs/planning/PLAN_03B_DOMAIN_INFRASTRUCTURE.md` (NEW)
-- ✅ `/docs/planning/PLAN_04_PREREQUISITES.md` (NEW)
+- ✅ `/docs/archive/2026-01-04/planning/PLAN_04_IMPLEMENTATION_CHECKLIST.md` (NEW)
+- ✅ `/docs/archive/2026-01-04/planning/PLAN_03B_DOMAIN_INFRASTRUCTURE.md` (NEW)
+- ✅ `/docs/archive/2026-01-04/planning/PLAN_04_PREREQUISITES.md` (NEW)
 
 ### Findings
-- ✅ `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` (NEW)
+- ✅ `/docs/archive/2026-01-09/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` (NEW)
 
 ### Status Tracking
-- ✅ `/docs/planning/PLAN_04_STATUS.md` (THIS FILE - NEW)
+- ✅ `/docs/archive/2026-01-04/planning/PLAN_04_STATUS.md` (THIS FILE - NEW)
 
 ---
 
@@ -339,7 +339,7 @@ Plan 04 is complete. Proceed to Plan 05 (query optimization spec + vector execut
 **In case of session error, the next AI should:**
 
 1. Read this status document first
-2. Read `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for historical context
+2. Read `/docs/archive/2026-01-09/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for historical context
 3. Read `PLAN_04_PREREQUISITES.md` for full prerequisites list
 4. Read `PLAN_04_IMPLEMENTATION_CHECKLIST.md` for task breakdown
 5. Confirm emulated parser/domain DDL alignment tasks

@@ -436,7 +436,7 @@ SELECT ST_Distance(
 - ✅ `/docs/status/PHASE_2_TASK_9_3_GEOMETRY_CONSTRUCTORS_COMPLETE.md` - GEOS function status
 
 ### Roadmap Updates
-- ✅ `/docs/planning/FEATURE_PARITY_ROADMAP.md` - Updated Task 9.3 and 9.5 to 100% complete
+- ✅ `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/FEATURE_PARITY_ROADMAP.md` - Updated Task 9.3 and 9.5 to 100% complete
 
 ---
 

@@ -583,7 +583,7 @@ TEST(SPGiSTIntegrationTest, PrefixSearch) {
 
 - ✅ `/docs/status/SPGIST_COMPLETION_REPORT_2025-11-04.md` - This file
 - ⏸️ `/docs/analysis/INDEX_IMPLEMENTATION_AUDIT_2025-11-04.md` - To be updated
-- ⏸️ `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - To be updated
+- ⏸️ `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - To be updated
 - ⏸️ `/README.md` - To be updated
 - ⏸️ `/PROJECT_CONTEXT.md` - To be updated
 

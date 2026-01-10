@@ -188,7 +188,7 @@ $ echo $?
 14. `src/core/catalog_manager.cpp` (+120 lines)
 
 ### Documentation (3 files)
-15. `docs/planning/DDL_MODIFICATIONS_IMPLEMENTATION_PLAN.md` (NEW, 600+ lines)
+15. `docs/Alpha_Phase_1_Archive/planning_archive/DDL_MODIFICATIONS_IMPLEMENTATION_PLAN.md` (NEW, 600+ lines)
 16. `docs/status/DDL_IMPLEMENTATION_STATUS.md` (NEW, 300+ lines)
 17. `docs/status/BUILD_FIXES_2025-11-07.md` (NEW, 150+ lines)
 

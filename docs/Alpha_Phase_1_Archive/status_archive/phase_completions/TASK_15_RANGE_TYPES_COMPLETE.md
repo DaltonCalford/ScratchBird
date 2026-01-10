@@ -575,7 +575,7 @@ EXT_RANGE_ADJACENT = 0xBE      EXT_RANGE_UPPER_INC = 0xC6
 - ✅ Implementation roadmap (4 sub-phases, 6-10 days effort)
 - ✅ Testing strategy defined
 
-**Design Document**: `docs/planning/TASK_15_PHASE_6_GIST_DESIGN.md`
+**Design Document**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_15_PHASE_6_GIST_DESIGN.md`
 
 ### Future Enhancements (PostgreSQL 14+)
 - [ ] Multirange support (int4multirange, etc.)

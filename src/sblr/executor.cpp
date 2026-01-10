@@ -1,6 +1,8 @@
 #include "scratchbird/sblr/executor.h"
 #include <unordered_set>
+#include <unordered_map>
 #include <chrono>
+#include <functional>
 #include <optional>
 #include "scratchbird/parser/shared_types.h"
 #include "scratchbird/sblr/resolved_ast_v2.h"
@@ -115,6 +117,19 @@ namespace scratchbird
                                                            std::string& server_out,
                                                            std::string& database_out,
                                                            core::ErrorContext* ctx);
+            core::Status expandEmulatedAliasPath(core::CatalogManager* catalog,
+                                                 const std::string& path_in,
+                                                 std::string& path_out,
+                                                 core::ErrorContext* ctx);
+            core::Status createEmulatedAliasSynonym(core::CatalogManager* catalog,
+                                                    const std::string& dialect,
+                                                    const std::string& alias,
+                                                    const std::string& target_path,
+                                                    core::ErrorContext* ctx);
+            core::Status dropEmulatedAliasSynonym(core::CatalogManager* catalog,
+                                                  const std::string& dialect,
+                                                  const std::string& alias,
+                                                  core::ErrorContext* ctx);
             std::string stripRootPrefixForDisplay(const std::string& schema_path);
             core::Status buildObjectPathFromName(const std::string& qualified_name,
                                                  core::ObjectPath& path,
@@ -1488,6 +1503,11 @@ namespace scratchbird
                         result = ExecutionResult(std::move(current_result_set_));
                         break;
 
+                    case Opcode::EXPLAIN_PLAN:
+                        executeExplainPlan();
+                        result = ExecutionResult(std::move(current_result_set_));
+                        break;
+
                     case Opcode::NESTED_LOOP_JOIN:
                         executeNestedLoopJoin();
                         result = ExecutionResult(std::move(current_result_set_));
@@ -1729,6 +1749,11 @@ namespace scratchbird
                         {
                             // P1-10: ANALYZE statement execution
                             executeAnalyze();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COPY))
+                        {
+                            executeCopy();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FUNCTION_STMT))
@@ -2788,7 +2813,8 @@ namespace scratchbird
         {
             pc_ = start_pc;
 
-            auto skipSelectStatement = [&]() {
+            std::function<void()> skipSelectStatement;
+            skipSelectStatement = [&]() {
                 uint8_t flags = readByte();
                 (void)flags;
 
@@ -3051,7 +3077,6 @@ namespace scratchbird
                     case Opcode::AGG_VAR_SAMP:
                     case Opcode::AGG_VAR_POP:
                     case Opcode::AGG_CORR:
-                    case Opcode::AGG_COVAR_POP:
                     case Opcode::AGG_REGR_SLOPE:
                     case Opcode::AGG_REGR_INTERCEPT:
                     case Opcode::AGG_REGR_COUNT:
@@ -3139,6 +3164,22 @@ namespace scratchbird
                                 readId();
                                 readInt16();
                                 break;
+                            case ExtendedOpcode::EXT_CHECK_DOMAIN_PRIVILEGE:
+                                readId();
+                                readId();
+                                break;
+                            case ExtendedOpcode::EXT_ENCRYPT_DOMAIN_VALUE:
+                                readId();
+                                readInt16();
+                                break;
+                            case ExtendedOpcode::EXT_DECRYPT_DOMAIN_VALUE:
+                                readId();
+                                readInt16();
+                                break;
+                            case ExtendedOpcode::EXT_NORMALIZE_DOMAIN_VALUE:
+                                readId();
+                                readInt16();
+                                break;
                             case ExtendedOpcode::EXT_VALIDATE_DOMAIN_VALUE:
                                 readId();
                                 readInt16();
@@ -3153,6 +3194,12 @@ namespace scratchbird
                                 readId();
                                 readId();
                                 readInt16();
+                                break;
+                            case ExtendedOpcode::EXT_AUDIT_DOMAIN_ACCESS:
+                                readId();
+                                readId();
+                                readId();
+                                readId();
                                 break;
                             case ExtendedOpcode::EXT_EXTRACT:
                                 readByte();
@@ -3239,6 +3286,196 @@ namespace scratchbird
             return pc_;
         }
 
+        void Executor::skipSelectStatement()
+        {
+            uint8_t flags = readByte();
+            (void)flags;
+
+            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+            {
+                error("Expected BEGIN_LIST for SELECT list");
+            }
+            uint64_t select_count = readUVarint();
+            for (uint64_t i = 0; i < select_count; ++i)
+            {
+                if (pc_ >= bytecode_size_)
+                {
+                    error("Unexpected end of bytecode in SELECT list");
+                }
+
+                uint8_t next = bytecode_[pc_];
+                if (next == static_cast<uint8_t>(Opcode::SELECT_STAR))
+                {
+                    readByte();
+                    continue;
+                }
+
+                if (next == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    size_t saved_pc = pc_;
+                    readByte();
+                    uint16_t ext = readExtendedOpcode();
+                    if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_SELECT_TABLE_STAR))
+                    {
+                        core::ID table_id{};
+                        std::string table_name;
+                        std::string table_alias;
+                        bool has_uuid = false;
+                        readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                        continue;
+                    }
+                    pc_ = saved_pc;
+                }
+
+                skipExpressionRange(pc_);
+                readString(); // alias (may be empty)
+            }
+            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+            {
+                error("Expected END_LIST after SELECT list");
+            }
+
+            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+            {
+                error("Expected BEGIN_LIST for FROM clause");
+            }
+            uint64_t table_count = readUVarint();
+            for (uint64_t i = 0; i < table_count; ++i)
+            {
+                if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                {
+                    error("Expected TABLE_REF in FROM clause");
+                }
+                core::ID table_id{};
+                std::string table_name;
+                std::string table_alias;
+                bool has_uuid = false;
+                readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+            }
+            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+            {
+                error("Expected END_LIST after FROM clause");
+            }
+
+            while (pc_ < bytecode_size_ &&
+                   bytecode_[pc_] == static_cast<uint8_t>(Opcode::JOIN_TYPE))
+            {
+                readByte();
+                readByte(); // join type
+                if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                {
+                    error("Expected TABLE_REF after JOIN_TYPE");
+                }
+                core::ID table_id{};
+                std::string table_name;
+                std::string table_alias;
+                bool has_uuid = false;
+                readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::JOIN_CONDITION))
+                {
+                    readByte();
+                    skipExpressionRange(pc_);
+                }
+            }
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+            {
+                readByte();
+                skipExpressionRange(pc_);
+            }
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::GROUP_BY))
+            {
+                readByte();
+                uint64_t group_count = readUVarint();
+                for (uint64_t i = 0; i < group_count; ++i)
+                {
+                    skipExpressionRange(pc_);
+                }
+            }
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::HAVING))
+            {
+                readByte();
+                skipExpressionRange(pc_);
+            }
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+            {
+                readByte();
+                uint64_t order_count = readUVarint();
+                for (uint64_t i = 0; i < order_count; ++i)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::SORT_KEY))
+                    {
+                        error("Expected SORT_KEY in ORDER BY");
+                    }
+                    skipExpressionRange(pc_);
+                    Opcode dir = static_cast<Opcode>(readByte());
+                    if (dir != Opcode::SORT_ASC && dir != Opcode::SORT_DESC)
+                    {
+                        error("Expected SORT_ASC or SORT_DESC in ORDER BY");
+                    }
+                    if (pc_ < bytecode_size_)
+                    {
+                        Opcode nulls = static_cast<Opcode>(bytecode_[pc_]);
+                        if (nulls == Opcode::NULLS_FIRST || nulls == Opcode::NULLS_LAST)
+                        {
+                            readByte();
+                        }
+                    }
+                }
+            }
+
+            if (pc_ < bytecode_size_ &&
+                (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                 bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+            {
+                if (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT))
+                {
+                    readByte();
+                    skipExpressionRange(pc_);
+                }
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET))
+                {
+                    readByte();
+                    skipExpressionRange(pc_);
+                }
+            }
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            {
+                size_t saved_pc = pc_;
+                readByte();
+                uint16_t ext = readExtendedOpcode();
+                bool is_set_op = (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION) ||
+                                  ext == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION_ALL) ||
+                                  ext == static_cast<uint16_t>(ExtendedOpcode::EXT_INTERSECT) ||
+                                  ext == static_cast<uint16_t>(ExtendedOpcode::EXT_INTERSECT_ALL) ||
+                                  ext == static_cast<uint16_t>(ExtendedOpcode::EXT_EXCEPT) ||
+                                  ext == static_cast<uint16_t>(ExtendedOpcode::EXT_EXCEPT_ALL));
+                if (is_set_op)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::SELECT))
+                    {
+                        error("Expected SELECT after set operation");
+                    }
+                    skipSelectStatement();
+                }
+                else
+                {
+                    pc_ = saved_pc;
+                }
+            }
+        }
+
         core::Status Executor::resolveSchemaIdForName(const std::string& schema_path,
                                                       core::ID& schema_id_out,
                                                       core::ErrorContext* ctx,
@@ -3265,7 +3502,7 @@ namespace scratchbird
                 enforce_root = !dialect.empty() && dialect != "SCRATCHBIRD";
                 if (enforce_root)
                 {
-                    std::string expected_prefix = "REMOTE.EMULATED." + dialect;
+                    std::string expected_prefix = "EMULATION." + dialect;
                     const auto& paths = conn_ctx_->search_path();
                     if (!paths.empty())
                     {
@@ -3423,8 +3660,20 @@ namespace scratchbird
                 return core::Status::INTERNAL_ERROR;
             }
 
+            std::string expanded_name;
+            core::ErrorContext alias_ctx;
+            auto alias_status = expandEmulatedAliasPath(catalog, qualified_name, expanded_name, &alias_ctx);
+            if (alias_status != core::Status::OK)
+            {
+                if (!alias_ctx.message.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, alias_status, alias_ctx.message.c_str());
+                }
+                return alias_status;
+            }
+
             core::ObjectPath path;
-            auto status = buildObjectPathFromName(qualified_name, path, ctx);
+            auto status = buildObjectPathFromName(expanded_name, path, ctx);
             if (status != core::Status::OK)
             {
                 return status;
@@ -3572,8 +3821,20 @@ namespace scratchbird
                 return core::Status::INTERNAL_ERROR;
             }
 
+            std::string expanded_name;
+            core::ErrorContext alias_ctx;
+            auto alias_status = expandEmulatedAliasPath(catalog, qualified_name, expanded_name, &alias_ctx);
+            if (alias_status != core::Status::OK)
+            {
+                if (!alias_ctx.message.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, alias_status, alias_ctx.message.c_str());
+                }
+                return alias_status;
+            }
+
             core::ObjectPath path;
-            auto status = buildObjectPathFromName(qualified_name, path, ctx);
+            auto status = buildObjectPathFromName(expanded_name, path, ctx);
             if (status != core::Status::OK)
             {
                 return status;
@@ -4160,6 +4421,7 @@ namespace scratchbird
             std::string table_name;
             std::string table_alias;
             bool has_uuid = false;
+            core::ID table_id;
             readTableRefPayload(table_id, table_name, table_alias, has_uuid);
             LOG_INFO(EXECUTOR, "CREATE TABLE start: %s", table_name.c_str());
 
@@ -4512,7 +4774,6 @@ namespace scratchbird
             }
 
             // Create table in catalog
-            core::ID table_id;
             LOG_INFO(EXECUTOR, "CREATE TABLE catalog createTable call: %s",
                      resolved_table_name.c_str());
             status = db_->catalog_manager()->createTable(schema_info.schema_id, resolved_table_name,
@@ -6242,11 +6503,11 @@ namespace scratchbird
             auto components = splitSchemaComponents(absolute_path);
             core::CatalogManager::SchemaType schema_type =
                 core::CatalogManager::SchemaType::APPLICATION;
-            if (components.size() >= 2 &&
-                scratchbird::core::IdentifierUtils::namesMatch(
-                    components[0], false, "remote", false) &&
-                scratchbird::core::IdentifierUtils::namesMatch(
-                    components[1], false, "emulated", false))
+            if (!components.empty() &&
+                (scratchbird::core::IdentifierUtils::namesMatch(
+                     components[0], false, "emulation", false) ||
+                 scratchbird::core::IdentifierUtils::namesMatch(
+                     components[0], false, "emulated", false)))
             {
                 schema_type = core::CatalogManager::SchemaType::REMOTE_EMULATED;
             }
@@ -6391,8 +6652,45 @@ namespace scratchbird
                 }
                 case sblr::AlterSchemaAction::SET_PATH:
                 {
-                    (void)readString();
-                    error("ALTER SCHEMA SET PATH is not supported");
+                    std::string new_path = readString();
+                    if (new_path.empty())
+                    {
+                        error("ALTER SCHEMA SET PATH requires a target path");
+                    }
+
+                    std::string new_name;
+                    core::ID target_schema_id;
+                    core::ErrorContext path_ctx;
+                    status = resolveSchemaIdForQualifiedName(new_path,
+                                                            new_name,
+                                                            target_schema_id,
+                                                            &path_ctx,
+                                                            false);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to resolve target schema path";
+                        if (!path_ctx.message.empty())
+                        {
+                            err_msg += ": " + path_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    status = db_->catalog_manager()->moveObject(
+                        core::CatalogManager::ObjectType::SCHEMA,
+                        schema_id,
+                        target_schema_id,
+                        new_name,
+                        &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER SCHEMA SET PATH failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
                     break;
                 }
                 default:
@@ -6407,6 +6705,30 @@ namespace scratchbird
             bool if_not_exists = (flags & 0x01) != 0;
 
             std::string db_path = readString();
+            std::string source_spec = readString();
+
+            struct DbOption {
+                std::string key;
+                std::string value;
+            };
+            uint32_t option_count = readInt32();
+            std::vector<DbOption> options;
+            options.reserve(option_count);
+            for (uint32_t i = 0; i < option_count; ++i)
+            {
+                DbOption opt;
+                opt.key = readString();
+                opt.value = readString();
+                options.push_back(std::move(opt));
+            }
+
+            uint32_t alias_count = readInt32();
+            std::vector<std::string> aliases;
+            aliases.reserve(alias_count);
+            for (uint32_t i = 0; i < alias_count; ++i)
+            {
+                aliases.push_back(readString());
+            }
 
             std::string normalized_path;
             std::string dialect;
@@ -6527,10 +6849,49 @@ namespace scratchbird
                 error(err_msg);
             }
 
+            json metadata = json::object();
+            metadata["schema_path"] = normalized_path;
+            metadata["dialect"] = dialect;
+            metadata["server"] = server;
+            metadata["database"] = db_name;
+            if (!source_spec.empty())
+            {
+                metadata["source_spec"] = source_spec;
+            }
+            if (!options.empty())
+            {
+                json option_list = json::array();
+                for (const auto& opt : options)
+                {
+                    json entry = json::object();
+                    entry["key"] = opt.key;
+                    entry["value"] = opt.value;
+                    option_list.push_back(std::move(entry));
+                }
+                metadata["options"] = std::move(option_list);
+            }
+            if (!aliases.empty())
+            {
+                metadata["aliases"] = aliases;
+            }
+            auto path_components = splitSchemaComponents(normalized_path);
+            if (path_components.size() >= 4)
+            {
+                json path_list = json::array();
+                for (size_t i = 3; i + 1 < path_components.size(); ++i)
+                {
+                    path_list.push_back(path_components[i]);
+                }
+                if (!path_list.empty())
+                {
+                    metadata["path_components"] = std::move(path_list);
+                }
+            }
+
             core::ID emulated_db_id;
             status = db_->catalog_manager()->createEmulatedDatabase(
                 db_name, server_info.server_id, schema_id,
-                std::string(), emulated_db_id, &ctx);
+                metadata.dump(), emulated_db_id, &ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "CREATE DATABASE failed";
@@ -6546,11 +6907,15 @@ namespace scratchbird
             {
                 core::ErrorContext view_ctx;
                 auto generator = catalog::createEmulationViewGenerator(db_->catalog_manager());
-                auto view_status = generator->generateEmulatedViews(server, db_name, protocol, &view_ctx);
+                auto view_status = generator->generateEmulatedViews(normalized_path,
+                                                                    server,
+                                                                    db_name,
+                                                                    protocol,
+                                                                    &view_ctx);
                 if (view_status != core::Status::OK)
                 {
                     core::ErrorContext cleanup_ctx;
-                    generator->dropEmulatedViews(server, db_name, protocol, &cleanup_ctx);
+                    generator->dropEmulatedViews(normalized_path, server, db_name, protocol, &cleanup_ctx);
                     db_->catalog_manager()->dropEmulatedDatabase(emulated_db_id, &cleanup_ctx);
 
                     std::string err_msg = "Failed to generate emulation views";
@@ -6559,6 +6924,44 @@ namespace scratchbird
                         err_msg += ": " + view_ctx.message;
                     }
                     error(err_msg);
+                }
+            }
+
+            if (!aliases.empty())
+            {
+                std::vector<std::string> created_aliases;
+                created_aliases.reserve(aliases.size());
+                for (const auto& alias : aliases)
+                {
+                    core::ErrorContext alias_ctx;
+                    auto alias_status = createEmulatedAliasSynonym(db_->catalog_manager(),
+                                                                   dialect,
+                                                                   alias,
+                                                                   normalized_path,
+                                                                   &alias_ctx);
+                    if (alias_status != core::Status::OK)
+                    {
+                        for (const auto& created : created_aliases)
+                        {
+                            core::ErrorContext drop_ctx;
+                            dropEmulatedAliasSynonym(db_->catalog_manager(), dialect, created, &drop_ctx);
+                        }
+                        core::ErrorContext cleanup_ctx;
+                        auto generator = catalog::createEmulationViewGenerator(db_->catalog_manager());
+                        if (protocol != catalog::ProtocolType::SCRATCHBIRD)
+                        {
+                            generator->dropEmulatedViews(normalized_path, server, db_name, protocol, &cleanup_ctx);
+                        }
+                        db_->catalog_manager()->dropEmulatedDatabase(emulated_db_id, &cleanup_ctx);
+
+                        std::string err_msg = "Failed to create emulated database alias";
+                        if (!alias_ctx.message.empty())
+                        {
+                            err_msg += ": " + alias_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    created_aliases.push_back(alias);
                 }
             }
         }
@@ -6610,7 +7013,7 @@ namespace scratchbird
                     break;
                 case parser::v2::DomainKind::RECORD:
                 {
-                    uint32_t field_count = readInt32();
+                    uint32_t field_count = static_cast<uint32_t>(readUVarint());
                     record_fields.reserve(field_count);
                     for (uint32_t i = 0; i < field_count; ++i)
                     {
@@ -6630,7 +7033,7 @@ namespace scratchbird
                 }
                 case parser::v2::DomainKind::ENUM:
                 {
-                    uint32_t value_count = readInt32();
+                    uint32_t value_count = static_cast<uint32_t>(readUVarint());
                     enum_values.reserve(value_count);
                     for (uint32_t i = 0; i < value_count; ++i)
                     {
@@ -6647,7 +7050,7 @@ namespace scratchbird
                     break;
                 case parser::v2::DomainKind::VARIANT:
                 {
-                    uint32_t type_count = readInt32();
+                    uint32_t type_count = static_cast<uint32_t>(readUVarint());
                     variant_allowed_types.reserve(type_count);
                     for (uint32_t i = 0; i < type_count; ++i)
                     {
@@ -6664,7 +7067,7 @@ namespace scratchbird
             std::string default_value = readString();
             std::string collation_name = readString();
 
-            uint32_t constraint_count = readInt32();
+            uint32_t constraint_count = static_cast<uint32_t>(readUVarint());
             std::vector<core::DomainConstraint> constraints;
             constraints.reserve(constraint_count);
 
@@ -7251,7 +7654,37 @@ namespace scratchbird
             bool if_exists = (flags & 0x01) != 0;
             bool force = (flags & 0x02) != 0;
 
+            if (force && conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: DROP DATABASE FORCE requires superuser");
+            }
+
             std::string db_path = readString();
+            std::string resolved_path;
+            {
+                core::ErrorContext alias_ctx;
+                auto alias_status = expandEmulatedAliasPath(db_->catalog_manager(),
+                                                           db_path,
+                                                           resolved_path,
+                                                           &alias_ctx);
+                if (alias_status != core::Status::OK)
+                {
+                    if (if_exists)
+                    {
+                        return;
+                    }
+                    std::string err_msg = "Invalid emulated database alias";
+                    if (!alias_ctx.message.empty())
+                    {
+                        err_msg += ": " + alias_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+            if (!resolved_path.empty())
+            {
+                db_path = resolved_path;
+            }
 
             std::string normalized_path;
             std::string dialect;
@@ -7307,11 +7740,129 @@ namespace scratchbird
                 error(err_msg);
             }
 
+            std::string db_schema_path;
+            if (db_->catalog_manager()->getSchemaPath(db_info.schema_id,
+                                                      db_schema_path,
+                                                      &ctx) == core::Status::OK)
+            {
+                std::string normalized_db_path =
+                    stripRootPrefixForDisplay(normalizeSchemaPath(db_schema_path));
+                std::vector<core::CatalogManager::SessionInfo> sessions;
+                auto session_status = db_->catalog_manager()->listSessions(sessions, &ctx);
+                if (session_status == core::Status::OK)
+                {
+                    struct BlockingSession {
+                        core::ID session_id;
+                        std::string username;
+                        std::string schema_path;
+                    };
+                    std::vector<BlockingSession> blocking;
+                    for (const auto& session : sessions)
+                    {
+                        if (isZeroUuid(session.current_schema_id))
+                        {
+                            continue;
+                        }
+                        std::string session_schema_path;
+                        core::ErrorContext path_ctx;
+                        if (db_->catalog_manager()->getSchemaPath(session.current_schema_id,
+                                                                  session_schema_path,
+                                                                  &path_ctx) != core::Status::OK)
+                        {
+                            continue;
+                        }
+                        std::string normalized_session =
+                            stripRootPrefixForDisplay(normalizeSchemaPath(session_schema_path));
+                        if (normalized_session == normalized_db_path ||
+                            normalized_session.rfind(normalized_db_path + ".", 0) == 0)
+                        {
+                            blocking.push_back({session.session_id,
+                                                session.username,
+                                                normalized_session});
+                        }
+                    }
+
+                    if (!blocking.empty())
+                    {
+                        if (!force)
+                        {
+                            std::ostringstream msg;
+                            msg << "DROP DATABASE blocked: active sessions detected:";
+                            for (const auto& entry : blocking)
+                            {
+                                msg << " [session=" << entry.session_id.toString()
+                                    << " user=" << entry.username
+                                    << " schema=" << entry.schema_path << "]";
+                            }
+                            error(msg.str());
+                        }
+                        else
+                        {
+                            std::unordered_set<core::ID, core::IDHash> session_ids;
+                            for (const auto& entry : blocking)
+                            {
+                                session_ids.insert(entry.session_id);
+                            }
+                            std::vector<core::ProcessControlBlock> backends;
+                            core::ErrorContext proc_ctx;
+                            auto proc_status = core::ProcArrayManager::getAllActiveBackends(
+                                &backends, &proc_ctx);
+                            if (proc_status == core::Status::OK)
+                            {
+                                for (const auto& proc : backends)
+                                {
+                                    if (!proc.is_active)
+                                    {
+                                        continue;
+                                    }
+                                    if (session_ids.find(proc.session_id) != session_ids.end())
+                                    {
+                                        core::ErrorContext term_ctx;
+                                        core::ProcArrayManager::requestBackendTermination(
+                                            proc.proc_id, &term_ctx);
+                                    }
+                                }
+                            }
+
+                            for (const auto& entry : blocking)
+                            {
+                                core::ErrorContext close_ctx;
+                                db_->catalog_manager()->closeSession(entry.session_id, &close_ctx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            std::vector<std::string> aliases;
+            if (!db_info.db_metadata.empty())
+            {
+                try
+                {
+                    json meta = json::parse(db_info.db_metadata);
+                    auto it = meta.find("aliases");
+                    if (it != meta.end() && it->is_array())
+                    {
+                        for (const auto& entry : *it)
+                        {
+                            if (entry.is_string())
+                            {
+                                aliases.push_back(entry.get<std::string>());
+                            }
+                        }
+                    }
+                }
+                catch (const json::exception&)
+                {
+                    // Ignore malformed metadata and proceed with drop.
+                }
+            }
+
             auto protocol = catalog::protocolTypeFromString(dialect);
             if (protocol != catalog::ProtocolType::SCRATCHBIRD)
             {
                 auto generator = catalog::createEmulationViewGenerator(db_->catalog_manager());
-                status = generator->dropEmulatedViews(server, db_name, protocol, &ctx);
+                status = generator->dropEmulatedViews(normalized_path, server, db_name, protocol, &ctx);
             }
             else
             {
@@ -7325,6 +7876,31 @@ namespace scratchbird
                     err_msg += ": " + ctx.message;
                 }
                 error(err_msg);
+            }
+
+            if (!aliases.empty())
+            {
+                for (const auto& alias : aliases)
+                {
+                    core::ErrorContext alias_ctx;
+                    auto alias_status = dropEmulatedAliasSynonym(db_->catalog_manager(),
+                                                                 dialect,
+                                                                 alias,
+                                                                 &alias_ctx);
+                    if (alias_status == core::Status::NOT_FOUND)
+                    {
+                        continue;
+                    }
+                    if (alias_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to drop emulated database alias";
+                        if (!alias_ctx.message.empty())
+                        {
+                            err_msg += ": " + alias_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                }
             }
 
             status = db_->catalog_manager()->dropEmulatedDatabase(db_info.emulated_db_id, &ctx);
@@ -7343,6 +7919,27 @@ namespace scratchbird
         {
             uint8_t action = readByte();
             std::string db_path = readString();
+            std::string resolved_path;
+            {
+                core::ErrorContext alias_ctx;
+                auto alias_status = expandEmulatedAliasPath(db_->catalog_manager(),
+                                                           db_path,
+                                                           resolved_path,
+                                                           &alias_ctx);
+                if (alias_status != core::Status::OK)
+                {
+                    std::string err_msg = "Invalid emulated database alias";
+                    if (!alias_ctx.message.empty())
+                    {
+                        err_msg += ": " + alias_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+            if (!resolved_path.empty())
+            {
+                db_path = resolved_path;
+            }
 
             std::string normalized_path;
             std::string dialect;
@@ -7420,6 +8017,40 @@ namespace scratchbird
                         }
                         error(err_msg);
                     }
+
+                    try
+                    {
+                        json meta = db_info.db_metadata.empty()
+                            ? json::object()
+                            : json::parse(db_info.db_metadata);
+                        meta["database"] = new_name;
+                        std::string schema_path;
+                        core::ErrorContext path_ctx;
+                        if (db_->catalog_manager()->getSchemaPath(db_info.schema_id,
+                                                                  schema_path,
+                                                                  &path_ctx) == core::Status::OK)
+                        {
+                            meta["schema_path"] = schema_path;
+                        }
+                        status = db_->catalog_manager()->updateEmulatedDatabase(
+                            db_info.emulated_db_id,
+                            meta.dump(),
+                            std::nullopt,
+                            &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to update emulated database metadata";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+                    catch (const json::exception&)
+                    {
+                        error("Failed to update emulated database metadata");
+                    }
                     break;
                 }
                 case sblr::AlterDatabaseAction::SET_OWNER:
@@ -7442,6 +8073,258 @@ namespace scratchbird
                     if (status != core::Status::OK)
                     {
                         std::string err_msg = "ALTER DATABASE OWNER failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDatabaseAction::ADD_ALIAS:
+                {
+                    std::string alias = readString();
+                    core::ErrorContext alias_ctx;
+                    status = createEmulatedAliasSynonym(db_->catalog_manager(),
+                                                        dialect,
+                                                        alias,
+                                                        normalized_path,
+                                                        &alias_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DATABASE ADD ALIAS failed";
+                        if (!alias_ctx.message.empty())
+                        {
+                            err_msg += ": " + alias_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    try
+                    {
+                        json meta = db_info.db_metadata.empty()
+                            ? json::object()
+                            : json::parse(db_info.db_metadata);
+                        json alias_list = json::array();
+                        if (meta.contains("aliases") && meta["aliases"].is_array())
+                        {
+                            alias_list = meta["aliases"];
+                        }
+
+                        bool exists = false;
+                        for (const auto& entry : alias_list)
+                        {
+                            if (!entry.is_string())
+                            {
+                                continue;
+                            }
+                            if (scratchbird::core::IdentifierUtils::namesMatch(
+                                    entry.get<std::string>(), false, alias, false))
+                            {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists)
+                        {
+                            alias_list.push_back(alias);
+                            meta["aliases"] = std::move(alias_list);
+                        }
+                        status = db_->catalog_manager()->updateEmulatedDatabase(
+                            db_info.emulated_db_id,
+                            meta.dump(),
+                            std::nullopt,
+                            &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            core::ErrorContext revert_ctx;
+                            dropEmulatedAliasSynonym(db_->catalog_manager(), dialect, alias, &revert_ctx);
+                            std::string err_msg = "Failed to update emulated database metadata";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+                    catch (const json::exception&)
+                    {
+                        core::ErrorContext revert_ctx;
+                        dropEmulatedAliasSynonym(db_->catalog_manager(), dialect, alias, &revert_ctx);
+                        error("Failed to update emulated database metadata");
+                    }
+                    break;
+                }
+                case sblr::AlterDatabaseAction::DROP_ALIAS:
+                {
+                    std::string alias = readString();
+                    core::ErrorContext alias_ctx;
+                    status = dropEmulatedAliasSynonym(db_->catalog_manager(),
+                                                      dialect,
+                                                      alias,
+                                                      &alias_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DATABASE DROP ALIAS failed";
+                        if (!alias_ctx.message.empty())
+                        {
+                            err_msg += ": " + alias_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    try
+                    {
+                        json meta = db_info.db_metadata.empty()
+                            ? json::object()
+                            : json::parse(db_info.db_metadata);
+                        if (meta.contains("aliases") && meta["aliases"].is_array())
+                        {
+                            json updated = json::array();
+                            for (const auto& entry : meta["aliases"])
+                            {
+                                if (!entry.is_string())
+                                {
+                                    continue;
+                                }
+                                const auto& existing = entry.get<std::string>();
+                                if (scratchbird::core::IdentifierUtils::namesMatch(
+                                        existing, false, alias, false))
+                                {
+                                    continue;
+                                }
+                                updated.push_back(existing);
+                            }
+                            meta["aliases"] = std::move(updated);
+                        }
+                        status = db_->catalog_manager()->updateEmulatedDatabase(
+                            db_info.emulated_db_id,
+                            meta.dump(),
+                            std::nullopt,
+                            &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to update emulated database metadata";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+                    catch (const json::exception&)
+                    {
+                        error("Failed to update emulated database metadata");
+                    }
+                    break;
+                }
+                case sblr::AlterDatabaseAction::SET_OPTIONS:
+                {
+                    struct DbOption {
+                        std::string key;
+                        std::string value;
+                    };
+
+                    uint32_t option_count = readInt32();
+                    std::vector<DbOption> options;
+                    options.reserve(option_count);
+                    for (uint32_t i = 0; i < option_count; ++i)
+                    {
+                        DbOption opt;
+                        opt.key = readString();
+                        opt.value = readString();
+                        if (opt.key.empty())
+                        {
+                            error("ALTER DATABASE option key cannot be empty");
+                        }
+                        options.push_back(std::move(opt));
+                    }
+
+                    if (options.empty())
+                    {
+                        error("ALTER DATABASE requires at least one option");
+                    }
+
+                    json meta = json::object();
+                    if (!db_info.db_metadata.empty())
+                    {
+                        try
+                        {
+                            meta = json::parse(db_info.db_metadata);
+                        }
+                        catch (const json::exception&)
+                        {
+                            error("Failed to parse emulated database metadata");
+                        }
+                    }
+
+                    auto normalize_key = [](const std::string& value) {
+                        return scratchbird::core::IdentifierUtils::toUpper(value);
+                    };
+
+                    std::vector<DbOption> merged;
+                    std::unordered_map<std::string, size_t> key_index;
+
+                    if (meta.contains("options") && meta["options"].is_array())
+                    {
+                        for (const auto& entry : meta["options"])
+                        {
+                            if (!entry.is_object())
+                            {
+                                continue;
+                            }
+                            auto key_it = entry.find("key");
+                            auto val_it = entry.find("value");
+                            if (key_it == entry.end() || val_it == entry.end() ||
+                                !key_it->is_string() || !val_it->is_string())
+                            {
+                                continue;
+                            }
+                            DbOption opt;
+                            opt.key = key_it->get<std::string>();
+                            opt.value = val_it->get<std::string>();
+                            std::string norm = normalize_key(opt.key);
+                            if (key_index.find(norm) == key_index.end())
+                            {
+                                key_index[norm] = merged.size();
+                                merged.push_back(std::move(opt));
+                            }
+                        }
+                    }
+
+                    for (const auto& opt : options)
+                    {
+                        std::string norm = normalize_key(opt.key);
+                        auto it = key_index.find(norm);
+                        if (it == key_index.end())
+                        {
+                            key_index[norm] = merged.size();
+                            merged.push_back(opt);
+                        }
+                        else
+                        {
+                            merged[it->second].value = opt.value;
+                        }
+                    }
+
+                    json option_list = json::array();
+                    for (const auto& opt : merged)
+                    {
+                        json entry = json::object();
+                        entry["key"] = opt.key;
+                        entry["value"] = opt.value;
+                        option_list.push_back(std::move(entry));
+                    }
+                    meta["options"] = std::move(option_list);
+
+                    status = db_->catalog_manager()->updateEmulatedDatabase(
+                        db_info.emulated_db_id,
+                        meta.dump(),
+                        std::nullopt,
+                        &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to update emulated database metadata";
                         if (!ctx.message.empty())
                         {
                             err_msg += ": " + ctx.message;
@@ -8663,15 +9546,26 @@ namespace scratchbird
                         uint64_t value_count = readUVarint();
                         std::vector<Value> row;
                         row.reserve(static_cast<size_t>(value_count));
-                        for (uint64_t i = 0; i < value_count; ++i)
+                        stack_ = std::stack<Value>();
+                        while (pc_ < bytecode_size_ &&
+                               bytecode_[pc_] != static_cast<uint8_t>(Opcode::END_LIST))
                         {
-                            size_t expr_start = pc_;
-                            size_t expr_end = skipExpressionRange(pc_);
-                            size_t saved_pc = pc_;
-                            pc_ = expr_start;
-                            Value value = evaluateExpressionRange(expr_end);
-                            pc_ = saved_pc;
-                            row.push_back(std::move(value));
+                            if (!isExpressionAt(bytecode_, bytecode_size_, pc_))
+                            {
+                                error("Expected expression in VALUES row");
+                            }
+                            evaluateExpression();
+                        }
+                        size_t produced = stack_.size();
+                        if (produced != value_count)
+                        {
+                            error("Expression produced " + std::to_string(produced) +
+                                  " values, expected " + std::to_string(value_count));
+                        }
+                        row.resize(produced);
+                        for (size_t i = 0; i < produced; ++i)
+                        {
+                            row[produced - 1 - i] = pop();
                         }
 
                         if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
@@ -14572,7 +15466,7 @@ namespace scratchbird
                     // Columns NOT in set: use NULL (they're aggregated)
                     for (uint32_t col_idx = 0; col_idx < total_grouping_columns; col_idx++)
                     {
-                        bool col_in_set = (col_idx < set.column_expr_pcs.size());
+                        bool col_in_set = (col_idx < set.column_exprs.size());
 
                         if (col_in_set)
                         {
@@ -20637,7 +21531,7 @@ namespace scratchbird
                                 error(msg);
                             }
                         }
-                        push(Value::makeBoolean(passed));
+                        setStackValueAtOffset(value_offset, Value::makeBoolean(passed));
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_DOMAIN_MASKING))
                     {
@@ -20890,7 +21784,7 @@ namespace scratchbird
                             error(msg);
                         }
 
-                        push(Value::makeBoolean(is_valid));
+                        setStackValueAtOffset(value_offset, Value::makeBoolean(is_valid));
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_QUALITY_PIPELINE))
                     {
@@ -20967,7 +21861,7 @@ namespace scratchbird
                             error(msg);
                         }
 
-                        push(Value::makeBoolean(is_unique));
+                        setStackValueAtOffset(value_offset, Value::makeBoolean(is_unique));
                     }
                     // Array manipulation functions
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_APPEND))
@@ -26982,7 +27876,14 @@ namespace scratchbird
                     return false;
                 }
 
-                Opcode op = static_cast<Opcode>(bytecode[pc]);
+                uint8_t raw = bytecode[pc];
+                if (raw == static_cast<uint8_t>(Opcode::END_LIST) ||
+                    raw == static_cast<uint8_t>(Opcode::END))
+                {
+                    return false;
+                }
+
+                Opcode op = static_cast<Opcode>(raw);
                 if (op == Opcode::EXTENDED_OPCODE)
                 {
                     if (pc + sizeof(uint16_t) >= bytecode_size)
@@ -31299,7 +32200,7 @@ namespace scratchbird
             if (!dialect.empty() && dialect != "SCRATCHBIRD")
             {
                 enforce_root = true;
-                expected_prefix = "REMOTE.EMULATED." + dialect;
+                expected_prefix = "EMULATION." + dialect;
                 const auto& existing_paths = conn_ctx_->search_path();
                 if (!existing_paths.empty())
                 {
@@ -31320,6 +32221,20 @@ namespace scratchbird
                 {
                     return;
                 }
+
+                std::string expanded_entry;
+                core::ErrorContext alias_ctx;
+                auto alias_status = expandEmulatedAliasPath(catalog, entry, expanded_entry, &alias_ctx);
+                if (alias_status != core::Status::OK)
+                {
+                    std::string msg = "Failed to resolve emulated alias: " + raw;
+                    if (!alias_ctx.message.empty())
+                    {
+                        msg += ": " + alias_ctx.message;
+                    }
+                    error(msg);
+                }
+                entry = expanded_entry;
 
                 if (enforce_root)
                 {
@@ -41036,7 +41951,7 @@ namespace scratchbird
                     start = 1;
                 }
 
-                if (components.size() - start < 5)
+                if (components.size() - start < 4)
                 {
                     SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
                                       "Emulated database path is incomplete");
@@ -41044,28 +41959,184 @@ namespace scratchbird
                 }
 
                 if (!scratchbird::core::IdentifierUtils::namesMatch(
-                        components[start], false, "remote", false) ||
-                    !scratchbird::core::IdentifierUtils::namesMatch(
-                        components[start + 1], false, "emulated", false))
+                        components[start], false, "emulation", false))
                 {
                     SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                      "Emulated database path must start with remote.emulated");
+                                      "Emulated database path must start with emulation");
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                if (components.size() - start != 5)
-                {
-                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                      "Emulated database path has unexpected depth");
-                    return core::Status::INVALID_ARGUMENT;
-                }
-
-                dialect_out = components[start + 2];
-                server_out = components[start + 3];
-                database_out = components[start + 4];
+                dialect_out = components[start + 1];
+                server_out = components[start + 2];
+                database_out = components.back();
                 normalized_path_out = joinSchemaComponents(components, start);
 
                 return core::Status::OK;
+            }
+
+            core::Status expandEmulatedAliasPath(core::CatalogManager* catalog,
+                                                 const std::string& path_in,
+                                                 std::string& path_out,
+                                                 core::ErrorContext* ctx)
+            {
+                path_out = normalizeSchemaPath(path_in);
+                if (!catalog)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Catalog manager not available");
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                auto components = splitSchemaComponents(path_out);
+                if (components.empty())
+                {
+                    return core::Status::OK;
+                }
+
+                size_t start = 0;
+                if (scratchbird::core::IdentifierUtils::namesMatch(
+                        components[0], false, "root", false))
+                {
+                    start = 1;
+                }
+
+                if (components.size() <= start + 2)
+                {
+                    return core::Status::OK;
+                }
+
+                if (!scratchbird::core::IdentifierUtils::namesMatch(
+                        components[start], false, "emulated", false))
+                {
+                    return core::Status::OK;
+                }
+
+                std::string dialect = components[start + 1];
+                std::string alias = components[start + 2];
+                if (alias.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Emulated alias is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                std::string alias_schema_path = "emulated." + dialect;
+                core::CatalogManager::SchemaInfo alias_schema;
+                auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
+                if (status != core::Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                      "Emulated alias schema not found");
+                    return status;
+                }
+
+                core::CatalogManager::SynonymInfo synonym;
+                status = catalog->getSynonymByName(alias_schema.schema_id, alias, synonym, ctx);
+                if (status != core::Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Emulated database alias not found");
+                    return status;
+                }
+                if (synonym.target_type != core::CatalogManager::ObjectType::SCHEMA)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Emulated alias does not reference a schema");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                std::string target_path = normalizeSchemaPath(synonym.target_path);
+                auto target_components = splitSchemaComponents(target_path);
+                std::vector<std::string> expanded = target_components;
+                if (components.size() > start + 3)
+                {
+                    expanded.insert(expanded.end(),
+                                    components.begin() +
+                                        static_cast<std::vector<std::string>::difference_type>(start + 3),
+                                    components.end());
+                }
+                path_out = joinSchemaComponents(expanded, 0);
+                return core::Status::OK;
+            }
+
+            core::Status createEmulatedAliasSynonym(core::CatalogManager* catalog,
+                                                    const std::string& dialect,
+                                                    const std::string& alias,
+                                                    const std::string& target_path,
+                                                    core::ErrorContext* ctx)
+            {
+                if (!catalog)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Catalog manager not available");
+                    return core::Status::INTERNAL_ERROR;
+                }
+                if (alias.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Alias name cannot be empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+                if (alias.find('.') != std::string::npos || alias.find('/') != std::string::npos)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Alias name must be a single identifier");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                std::string alias_schema_path = "emulated." + dialect;
+                core::CatalogManager::SchemaInfo alias_schema;
+                auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
+                if (status != core::Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Emulated alias schema not found");
+                    return status;
+                }
+
+                core::ID synonym_id;
+                return catalog->createSynonym(alias_schema.schema_id,
+                                              alias,
+                                              target_path,
+                                              core::CatalogManager::ObjectType::SCHEMA,
+                                              true,
+                                              synonym_id,
+                                              ctx);
+            }
+
+            core::Status dropEmulatedAliasSynonym(core::CatalogManager* catalog,
+                                                  const std::string& dialect,
+                                                  const std::string& alias,
+                                                  core::ErrorContext* ctx)
+            {
+                if (!catalog)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Catalog manager not available");
+                    return core::Status::INTERNAL_ERROR;
+                }
+                if (alias.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Alias name cannot be empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                std::string alias_schema_path = "emulated." + dialect;
+                core::CatalogManager::SchemaInfo alias_schema;
+                auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
+                if (status != core::Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Emulated alias schema not found");
+                    return status;
+                }
+
+                core::CatalogManager::SynonymInfo synonym;
+                status = catalog->getSynonymByName(alias_schema.schema_id, alias, synonym, ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+
+                return catalog->dropSynonym(synonym.synonym_id, ctx);
             }
 
             core::Status buildObjectPathFromName(const std::string& qualified_name,
@@ -41195,7 +42266,7 @@ namespace scratchbird
                     return false;
                 }
 
-                std::string expected_prefix = "REMOTE.EMULATED." + dialect;
+                std::string expected_prefix = "EMULATION." + dialect;
                 const auto& paths = conn_ctx->search_path();
                 if (!paths.empty())
                 {
@@ -41692,6 +42763,63 @@ namespace scratchbird
                                                         core::CatalogManager::ObjectType::PACKAGE,
                                                         {},
                                                         &ctx);
+        }
+
+        void Executor::executeExplainPlan()
+        {
+            uint8_t flags = readByte();
+            bool analyze = (flags & 0x01) != 0;
+
+            if (pc_ >= bytecode_size_)
+            {
+                error("EXPLAIN requires a statement");
+            }
+
+            Opcode next_op = static_cast<Opcode>(readByte());
+            if (next_op != Opcode::SELECT)
+            {
+                error("EXPLAIN currently supports SELECT only");
+            }
+
+            size_t analyzed_rows = 0;
+            if (analyze)
+            {
+                executeSelect();
+                if (current_result_set_)
+                {
+                    analyzed_rows = current_result_set_->rowCount();
+                }
+            }
+            else
+            {
+                skipSelectStatement();
+            }
+
+            current_result_set_ = std::make_unique<ResultSet>();
+            current_result_set_->addColumn("QUERY PLAN", core::DataType::VARCHAR);
+
+            std::string plan_line = analyze
+                ? "EXPLAIN ANALYZE not implemented (rows=" + std::to_string(analyzed_rows) + ")"
+                : "EXPLAIN not implemented";
+            std::vector<Value> row;
+            row.push_back(Value::makeVarchar(plan_line));
+            current_result_set_->addRow(std::move(row));
+        }
+
+        void Executor::executeCopy()
+        {
+            std::string table_name = readString();
+            uint8_t direction = readByte();
+            std::string target = readString();
+            uint32_t column_count = readInt32();
+            for (uint32_t i = 0; i < column_count; ++i)
+            {
+                readString();
+            }
+            (void)table_name;
+            (void)direction;
+            (void)target;
+            error("COPY is not implemented");
         }
 
     } // namespace sblr

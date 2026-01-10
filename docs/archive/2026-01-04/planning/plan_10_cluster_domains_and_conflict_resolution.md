@@ -11,8 +11,8 @@ P0 (core metadata consistency and cross-node correctness).
 - `docs/specifications/03_TYPES_AND_DOMAINS.md`
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - `docs/specifications/draft_security_architecture_specification.md`
-- `docs/findings/engine_gap_report.md` (domains + cluster gaps)
-- `docs/planning/plan_12_domain_runtime_and_type_system.md`
+- `docs/archive/2026-01-09/findings/engine_gap_report.md` (domains + cluster gaps)
+- `docs/archive/2026-01-04/planning/plan_12_domain_runtime_and_type_system.md`
 
 ## Order of Implementation
 1) Catalog schema changes for cluster domains and conflict tracking.
@@ -99,7 +99,7 @@ P0 (core metadata consistency and cross-node correctness).
 - **Compatibility name**: `compat_name` optional and used for cross-dialect resolution.
 - **Domain kind**: store `domain_kind` (BASIC/RECORD/ENUM/SET/VARIANT) and `parent_domain_id` for inheritance.
 - **Element types**: store `element_type_oid`/`element_domain_id` for SET/ARRAY domains.
-- **Runtime enforcement**: see `docs/planning/plan_12_domain_runtime_and_type_system.md` for constraint evaluation, casting, and advanced domain type semantics.
+- **Runtime enforcement**: see `docs/archive/2026-01-04/planning/plan_12_domain_runtime_and_type_system.md` for constraint evaluation, casting, and advanced domain type semantics.
 - **Canonical ordering**: compare UUIDv7 timestamps; tie-break with full UUID bytes.
 - **Conflict key**: `domain_name|dialect_tag` and `compat_name|*` (if compat provided).
 - **State**:

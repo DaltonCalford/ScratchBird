@@ -752,7 +752,7 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
 
     current_result_->writeByte(stmt->unique ? 1 : 0);
 
-    current_result_->writeListCount(static_cast<uint64_t>(stmt->column_names.size()));
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->column_names.size()));
     for (const auto& col_name : stmt->column_names) {
         writeStringId(col_name);
     }
@@ -787,8 +787,28 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
     }
 
     current_result_->writeByte(index_type);
-    current_result_->writeByte(0);
-    current_result_->writeByte(0);
+
+    bool has_expressions = false;
+    bool has_predicate = (stmt->where_clause != nullptr);
+    current_result_->writeByte(has_expressions ? 1 : 0);
+    current_result_->writeByte(has_predicate ? 1 : 0);
+
+    if (has_predicate)
+    {
+        BytecodeResultV2 temp_result;
+        BytecodeResultV2* saved_result = current_result_;
+        current_result_ = &temp_result;
+        generateExpression(stmt->where_clause);
+        current_result_ = saved_result;
+
+        const auto& bytecode = temp_result.bytecode();
+        current_result_->writeInt32(static_cast<uint32_t>(bytecode.size()));
+        for (uint8_t b : bytecode)
+        {
+            current_result_->writeByte(b);
+        }
+        current_result_->writeString("");
+    }
 }
 
 void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
@@ -874,6 +894,16 @@ void BytecodeGeneratorV2::generateCreateDatabase(ResolvedCreateDatabaseStmt* stm
     uint8_t flags = stmt->if_not_exists ? 0x01 : 0x00;
     current_result_->writeByte(flags);
     current_result_->writeString(schemaPathToString(stmt->database_path, string_pool_));
+    current_result_->writeString(stmt->source_spec);
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->options.size()));
+    for (const auto& opt : stmt->options) {
+        current_result_->writeString(opt.key);
+        current_result_->writeString(opt.value);
+    }
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->aliases.size()));
+    for (const auto& alias : stmt->aliases) {
+        current_result_->writeString(alias);
+    }
 }
 
 void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
@@ -1125,6 +1155,10 @@ void BytecodeGeneratorV2::generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt)
             } else {
                 current_result_->writeString("");
             }
+            break;
+        case AlterDatabaseAction::ADD_ALIAS:
+        case AlterDatabaseAction::DROP_ALIAS:
+            current_result_->writeString(stmt->alias);
             break;
         default:
             current_result_->writeString("");

@@ -470,7 +470,7 @@ Phase 6 successfully completed all documentation tasks for the TOAST MGA Complia
 **Next**: Production deployment, optional optimizations
 
 **Reference Documents**:
-- Master Plan: `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+- Master Plan: `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
 - Executive Summary: `docs/status/TOAST_MGA_COMPLIANCE_COMPLETE.md`
 - Specifications: `docs/specifications/TOAST_LOB_STORAGE.md`, `docs/specifications/HEAP_TOAST_INTEGRATION.md`
 - Phase Status: `docs/status/PHASE1_*.md` through `docs/status/PHASE6_*.md`

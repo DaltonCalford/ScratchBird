@@ -91,7 +91,7 @@ See [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md) for details.
 ## Quick Navigation
 
 ```
-docs/planning/
+docs/archive/2026-01-09/planning/
 ├── README.md                         # This file
 ├── CODE_COMPLETION_MASTER_PLAN.md    # ✅ 100% COMPLETE (135/135 items)
 ├── FUTURE_WORK_BLOCKED_ITEMS.md      # Blocked dependencies

@@ -80,8 +80,8 @@ std::string buildEmulatedServerRoot(std::string_view default_schema) {
         parts.push_back(current);
     }
 
-    if (parts.size() > 4) {
-        parts.resize(4);
+    if (parts.size() > 3) {
+        parts.resize(3);
     }
 
     std::string root;
@@ -153,6 +153,7 @@ void Parser::parseCreateStmt() {
         consumeKeyword(TokenType::KW_REPLACE, "Expected REPLACE");
         or_replace = true;
     }
+    pending_or_replace_ = or_replace;
 
     // Handle TEMP/TEMPORARY
     bool is_temp = matchKeyword(TokenType::KW_TEMP) || matchKeyword(TokenType::KW_TEMPORARY);
@@ -201,20 +202,46 @@ void Parser::parseCreateStmt() {
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_USER));
         std::string user_name = parseIdentifier();
         emitString(user_name);
-        // Optional WITH PASSWORD
+        bool has_password = false;
+        bool is_superuser = false;
+        std::string password;
+
         if (matchKeyword(TokenType::KW_WITH)) {
+            // Optional WITH keyword before options
+        }
+        while (true) {
             if (matchKeyword(TokenType::KW_PASSWORD)) {
-                if (check(TokenType::STRING_LITERAL)) {
-                    uint32_t id = current_token_.value.string_id;
-                    std::string password(lexer_.stringPool().get(id));
-                    emitString(password);
-                    advance();
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal for PASSWORD");
+                    break;
                 }
+                uint32_t id = current_token_.value.string_id;
+                password = std::string(lexer_.stringPool().get(id));
+                has_password = true;
+                advance();
+            } else if (matchKeyword(TokenType::KW_SUPERUSER)) {
+                is_superuser = true;
+            } else if (matchKeyword(TokenType::KW_NOSUPERUSER)) {
+                is_superuser = false;
+            } else if (matchKeyword(TokenType::KW_WITH)) {
+                continue;
+            } else {
+                break;
             }
+        }
+
+        uint8_t flags = 0;
+        if (has_password) flags |= 0x01;
+        if (is_superuser) flags |= 0x02;
+        emitByte(flags);
+        if (has_password) {
+            emitString(password);
         }
     } else {
         error("Expected TABLE, INDEX, VIEW, SEQUENCE, FUNCTION, etc. after CREATE");
     }
+
+    pending_or_replace_ = false;
 }
 
 // ============================================================================
@@ -243,7 +270,9 @@ void Parser::parseCreateTable() {
     resolveTableName(schema, table);
 
     emit(sblr::Opcode::TABLE_REF);
-    emitString(schema + "/" + table);
+    emitByte(0);
+    emitString(schema.empty() ? table : schema + "/" + table);
+    emitString("");
 
     consume(TokenType::LEFT_PAREN, "Expected (");
 
@@ -964,13 +993,16 @@ void Parser::parseCreateIndex() {
 void Parser::parseCreateView() {
     emit(sblr::Opcode::CREATE_VIEW);
 
+    bool or_replace = pending_or_replace_;
+    pending_or_replace_ = false;
+
     bool if_not_exists = false;
     if (matchKeyword(TokenType::KW_IF)) {
         consumeKeyword(TokenType::KW_NOT, "Expected NOT");
         consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
         if_not_exists = true;
     }
-    emitByte(if_not_exists ? 1 : 0);
+    (void)if_not_exists;
 
     std::string schema;
     std::string view_name = parseIdentifier();
@@ -979,46 +1011,90 @@ void Parser::parseCreateView() {
         view_name = parseIdentifier();
     }
     resolveTableName(schema, view_name);
-    emitString(schema + "/" + view_name);
+    std::string view_path = schema.empty() ? view_name : schema + "/" + view_name;
 
     // Column list
+    std::vector<std::string> column_names;
     if (match(TokenType::LEFT_PAREN)) {
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t count = 0;
         do {
-            emitString(parseIdentifier());
-            count++;
+            column_names.push_back(parseIdentifier());
         } while (match(TokenType::COMMA));
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
         consume(TokenType::RIGHT_PAREN, "Expected )");
     }
 
     consumeKeyword(TokenType::KW_AS, "Expected AS");
+    size_t def_start = current_token_.span.start.offset;
+    bool prev_emit = emit_enabled_;
+    emit_enabled_ = false;
     parseSelectStmt();
+    emit_enabled_ = prev_emit;
+    size_t def_end = current_token_.span.start.offset;
+
+    auto trim_sql = [](std::string_view text) -> std::string {
+        size_t start = 0;
+        while (start < text.size() &&
+               std::isspace(static_cast<unsigned char>(text[start]))) {
+            start++;
+        }
+        size_t end = text.size();
+        while (end > start &&
+               std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+            end--;
+        }
+        return std::string(text.substr(start, end - start));
+    };
+    std::string definition;
+    if (def_end >= def_start) {
+        definition = trim_sql(lexer_.input().substr(def_start, def_end - def_start));
+    }
 
     // WITH CHECK OPTION
+    bool check_option = false;
     if (matchKeyword(TokenType::KW_WITH)) {
         if (matchKeyword(TokenType::KW_CHECK)) {
             consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
-            emitByte(1);
+            check_option = true;
         } else if (matchKeyword(TokenType::KW_LOCAL)) {
             consumeKeyword(TokenType::KW_CHECK, "Expected CHECK");
             consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
-            emitByte(2);
+            check_option = true;
         } else if (matchKeyword(TokenType::KW_CASCADED)) {
             consumeKeyword(TokenType::KW_CHECK, "Expected CHECK");
             consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
-            emitByte(3);
+            check_option = true;
         }
     }
+
+    uint8_t flags = 0;
+    if (or_replace) {
+        flags |= 0x01;
+    }
+    if (check_option) {
+        flags |= 0x02;
+    }
+    if (!column_names.empty()) {
+        flags |= 0x04;
+    }
+
+    emitString(view_path);
+    emitByte(flags);
+    if (!column_names.empty()) {
+        if (column_names.size() > 255) {
+            error("Too many column names in CREATE VIEW");
+        } else {
+            emitByte(static_cast<uint8_t>(column_names.size()));
+            for (const auto& col : column_names) {
+                emitString(col);
+            }
+        }
+    }
+    emitString(definition);
 }
 
 void Parser::parseCreateMaterializedView() {
     emit(sblr::Opcode::CREATE_VIEW);
-    emitByte(1);  // Materialized flag
+    bool or_replace = pending_or_replace_;
+    pending_or_replace_ = false;
 
     // Similar to CREATE VIEW but materialized
     std::string schema;
@@ -1028,21 +1104,52 @@ void Parser::parseCreateMaterializedView() {
         view_name = parseIdentifier();
     }
     resolveTableName(schema, view_name);
-    emitString(schema + "/" + view_name);
+    std::string view_path = schema.empty() ? view_name : schema + "/" + view_name;
 
     consumeKeyword(TokenType::KW_AS, "Expected AS");
+    size_t def_start = current_token_.span.start.offset;
+    bool prev_emit = emit_enabled_;
+    emit_enabled_ = false;
     parseSelectStmt();
+    emit_enabled_ = prev_emit;
+    size_t def_end = current_token_.span.start.offset;
+
+    auto trim_sql = [](std::string_view text) -> std::string {
+        size_t start = 0;
+        while (start < text.size() &&
+               std::isspace(static_cast<unsigned char>(text[start]))) {
+            start++;
+        }
+        size_t end = text.size();
+        while (end > start &&
+               std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+            end--;
+        }
+        return std::string(text.substr(start, end - start));
+    };
+    std::string definition;
+    if (def_end >= def_start) {
+        definition = trim_sql(lexer_.input().substr(def_start, def_end - def_start));
+    }
 
     // WITH [NO] DATA
     if (matchKeyword(TokenType::KW_WITH)) {
         if (matchKeyword(TokenType::KW_NO)) {
             consumeKeyword(TokenType::KW_DATA, "Expected DATA");
-            emitByte(0);  // No data
         } else {
             consumeKeyword(TokenType::KW_DATA, "Expected DATA");
-            emitByte(1);  // With data
         }
     }
+
+    uint8_t flags = 0;
+    if (or_replace) {
+        flags |= 0x01;
+    }
+    flags |= 0x08;  // materialized
+
+    emitString(view_path);
+    emitByte(flags);
+    emitString(definition);
 }
 
 void Parser::parseCreateSequence() {
@@ -1054,7 +1161,7 @@ void Parser::parseCreateSequence() {
         consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
         if_not_exists = true;
     }
-    emitByte(if_not_exists ? 1 : 0);
+    (void)if_not_exists;
 
     std::string schema;
     std::string seq_name = parseIdentifier();
@@ -1065,30 +1172,66 @@ void Parser::parseCreateSequence() {
     resolveTableName(schema, seq_name);
     emitString(schema + "/" + seq_name);
 
+    auto parse_int64 = [&]() -> int64_t {
+        bool negative = false;
+        if (match(TokenType::MINUS)) {
+            negative = true;
+        } else {
+            match(TokenType::PLUS);
+        }
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            error("Expected integer literal in CREATE SEQUENCE option");
+            return 0;
+        }
+        int64_t value = current_token_.value.int_value;
+        advance();
+        return negative ? -value : value;
+    };
+
+    bool has_increment = false;
+    bool has_minvalue = false;
+    bool has_maxvalue = false;
+    bool has_start = false;
+    bool has_cache = false;
+    bool has_cycle = false;
+    int64_t increment_by = 1;
+    int64_t min_value = 1;
+    int64_t max_value = 0;
+    int64_t start_value = 0;
+    int64_t cache_size = 1;
+    bool cycle = false;
+
     // Sequence options
     while (true) {
         if (matchKeyword(TokenType::KW_START)) {
             matchKeyword(TokenType::KW_WITH);
-            parseExpression();
+            start_value = parse_int64();
+            has_start = true;
         } else if (matchKeyword(TokenType::KW_INCREMENT)) {
             matchKeyword(TokenType::KW_BY);
-            parseExpression();
+            increment_by = parse_int64();
+            has_increment = true;
         } else if (matchKeyword(TokenType::KW_MINVALUE)) {
-            parseExpression();
+            min_value = parse_int64();
+            has_minvalue = true;
         } else if (matchKeyword(TokenType::KW_NO)) {
             if (matchKeyword(TokenType::KW_MINVALUE)) {
-                // No minimum
+                has_minvalue = false;
             } else if (matchKeyword(TokenType::KW_MAXVALUE)) {
-                // No maximum
+                has_maxvalue = false;
             } else if (matchKeyword(TokenType::KW_CYCLE)) {
-                // No cycle
+                has_cycle = true;
+                cycle = false;
             }
         } else if (matchKeyword(TokenType::KW_MAXVALUE)) {
-            parseExpression();
+            max_value = parse_int64();
+            has_maxvalue = true;
         } else if (matchKeyword(TokenType::KW_CYCLE)) {
-            // Cycle enabled
+            has_cycle = true;
+            cycle = true;
         } else if (matchKeyword(TokenType::KW_CACHE)) {
-            parseExpression();
+            cache_size = parse_int64();
+            has_cache = true;
         } else if (matchKeyword(TokenType::KW_OWNED)) {
             consumeKeyword(TokenType::KW_BY, "Expected BY");
             if (matchKeyword(TokenType::KW_NONE)) {
@@ -1100,6 +1243,22 @@ void Parser::parseCreateSequence() {
             break;
         }
     }
+
+    uint8_t flags = 0;
+    if (has_increment) flags |= 0x01;
+    if (has_minvalue) flags |= 0x02;
+    if (has_maxvalue) flags |= 0x04;
+    if (has_start) flags |= 0x08;
+    if (has_cache) flags |= 0x10;
+    if (has_cycle) flags |= 0x20;
+
+    emitByte(flags);
+    if (has_increment) emitI64(increment_by);
+    if (has_minvalue) emitI64(min_value);
+    if (has_maxvalue) emitI64(max_value);
+    if (has_start) emitI64(start_value);
+    if (has_cache) emitI64(cache_size);
+    if (has_cycle) emitByte(cycle ? 1 : 0);
 }
 
 void Parser::parseCreateDatabase() {
@@ -1111,41 +1270,56 @@ void Parser::parseCreateDatabase() {
     }
 
     std::string db_name = parseIdentifier();
+    std::vector<std::pair<std::string, std::string>> options;
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DATABASE));
     emitByte(if_not_exists ? 0x01 : 0x00);
     std::string db_path = buildEmulatedServerRoot(default_schema_);
     if (!db_path.empty()) {
-        db_path.push_back('.');
+        db_path += ".databases.";
     }
     db_path += db_name;
     emitString(db_path);
+    emitString(db_name);
 
     // Database options
     if (matchKeyword(TokenType::KW_WITH)) {
         while (true) {
             if (matchKeyword(TokenType::KW_OWNER)) {
                 match(TokenType::EQUAL);
-                parseIdentifier();
+                std::string owner = parseIdentifier();
+                options.emplace_back("owner", owner);
             } else if (matchKeyword(TokenType::KW_TEMPLATE)) {
                 match(TokenType::EQUAL);
-                parseIdentifier();
+                std::string tmpl = parseIdentifier();
+                options.emplace_back("template", tmpl);
             } else if (matchKeyword(TokenType::KW_ENCODING)) {
                 match(TokenType::EQUAL);
                 if (check(TokenType::STRING_LITERAL)) {
+                    std::string value = std::string(stringPool().get(current_token_.value.string_id));
                     advance();
+                    options.emplace_back("encoding", value);
                 } else {
-                    parseIdentifier();
+                    std::string value = parseIdentifier();
+                    options.emplace_back("encoding", value);
                 }
             } else if (matchKeyword(TokenType::KW_TABLESPACE)) {
                 match(TokenType::EQUAL);
-                parseIdentifier();
+                std::string value = parseIdentifier();
+                options.emplace_back("tablespace", value);
             } else {
                 break;
             }
         }
     }
+
+    emitU32(static_cast<uint32_t>(options.size()));
+    for (const auto& opt : options) {
+        emitString(opt.first);
+        emitString(opt.second);
+    }
+    emitU32(0);  // alias count
 }
 
 void Parser::parseCreateSchema() {
@@ -2082,7 +2256,7 @@ void Parser::parseAlterStmt() {
     auto build_database_path_string = [&](const std::string& db_name) {
         std::string db_path = buildEmulatedServerRoot(default_schema_);
         if (!db_path.empty()) {
-            db_path.push_back('.');
+            db_path += ".databases.";
         }
         return db_path + db_name;
     };
@@ -2474,7 +2648,7 @@ void Parser::parseDropStmt() {
 
         std::string db_path = buildEmulatedServerRoot(default_schema_);
         if (!db_path.empty()) {
-            db_path.push_back('.');
+            db_path += ".databases.";
         }
         db_path += db_name;
         emitString(db_path);

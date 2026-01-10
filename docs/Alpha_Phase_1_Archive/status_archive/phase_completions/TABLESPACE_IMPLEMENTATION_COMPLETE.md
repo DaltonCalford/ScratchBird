@@ -607,7 +607,7 @@ Status CatalogManager::executeSwapPhase(MigrationContext& ctx,
 - `tests/unit/test_cross_page_update_mga.cpp` (NEW, 180 lines)
 
 **Documentation**:
-- `docs/planning/MVCC_VS_MGA_CODE_REVIEW.md`
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/MVCC_VS_MGA_CODE_REVIEW.md`
 - `docs/status/sprints/SPRINT0_MGA_BUG_FIX.md`
 
 ---

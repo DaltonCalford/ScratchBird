@@ -331,7 +331,7 @@ public:
             ID parent_schema_id;                // Parent schema UUID (zero UUID for root)
             std::string schema_name;            // Short name (not full path)
             bool name_is_delimited = false;     // True if name was double-quoted (case-sensitive)
-            std::string full_path;              // Cached full dotted path (e.g., "remote.emulated.firebird")
+            std::string full_path;              // Cached full dotted path (e.g., "emulation.firebird")
             SchemaType schema_type = SchemaType::APPLICATION;
             ID owner_id;                        // Owner UUID reference (NOT name)
             uint16_t default_tablespace_id = 0; // Default tablespace for new tables

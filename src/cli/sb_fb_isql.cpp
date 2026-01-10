@@ -26,6 +26,8 @@
 #include <chrono>
 #include <iomanip>
 #include <algorithm>
+#include <cctype>
+#include <string_view>
 #include <signal.h>
 
 #include "scratchbird/core/database.h"
@@ -257,53 +259,130 @@ bool executeSQL(const std::string& sql, sblr::FirebirdQueryCompiler& compiler, s
 // Firebird Database Emulation Commands
 // =============================================================================
 
-/**
- * Extract database name from Firebird-style path
- * e.g., "/path/to/employee.fdb" -> "employee"
- *       "employee" -> "employee"
- *       "employee.fdb" -> "employee"
- */
-std::string extractDatabaseName(const std::string& path) {
-    std::string name = path;
+struct FirebirdDatabaseSpec {
+    std::string server;
+    std::string file_path;
+};
 
-    // Remove quotes if present
-    if (name.size() >= 2 && name.front() == '\'' && name.back() == '\'') {
-        name = name.substr(1, name.size() - 2);
-    }
+FirebirdDatabaseSpec parseFirebirdDatabaseSpec(std::string_view spec) {
+    FirebirdDatabaseSpec result;
+    result.file_path = std::string(spec);
 
-    // Find last path separator
-    size_t lastSlash = name.find_last_of("/\\");
-    if (lastSlash != std::string::npos) {
-        name = name.substr(lastSlash + 1);
-    }
-
-    // Remove .fdb extension if present
-    if (name.size() > 4) {
-        std::string ext = name.substr(name.size() - 4);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        if (ext == ".fdb") {
-            name = name.substr(0, name.size() - 4);
+    size_t colon = result.file_path.find(':');
+    if (colon != std::string::npos) {
+        bool is_drive = (colon == 1 &&
+                         std::isalpha(static_cast<unsigned char>(result.file_path[0])) &&
+                         result.file_path.size() > 2 &&
+                         (result.file_path[2] == '\\' || result.file_path[2] == '/'));
+        if (!is_drive) {
+            result.server = result.file_path.substr(0, colon);
+            result.file_path.erase(0, colon + 1);
         }
     }
 
-    return name;
+    return result;
 }
 
-/**
- * Get full schema path for a Firebird database
- */
-std::string getFirebirdSchemaPath(const std::string& server, const std::string& database) {
-    return "remote.emulated.firebird." + server + "." + database;
+std::vector<std::string> splitFirebirdPathComponents(std::string_view path) {
+    std::string working(path);
+    std::vector<std::string> components;
+
+    if (working.size() >= 2 && std::isalpha(static_cast<unsigned char>(working[0])) &&
+        working[1] == ':') {
+        std::string drive(1, static_cast<char>(std::tolower(static_cast<unsigned char>(working[0]))));
+        components.push_back(drive);
+        working.erase(0, 2);
+    }
+
+    while (!working.empty() && (working.front() == '/' || working.front() == '\\')) {
+        working.erase(working.begin());
+    }
+
+    std::string current;
+    for (char ch : working) {
+        if (ch == '/' || ch == '\\') {
+            if (!current.empty()) {
+                components.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        components.push_back(current);
+    }
+
+    if (!components.empty()) {
+        components.pop_back();
+    }
+
+    return components;
+}
+
+std::string deriveFirebirdDatabaseName(std::string_view file_path) {
+    size_t last_sep = file_path.find_last_of("/\\");
+    std::string base = (last_sep == std::string_view::npos)
+        ? std::string(file_path)
+        : std::string(file_path.substr(last_sep + 1));
+
+    if (base.empty()) {
+        return base;
+    }
+
+    size_t dot = base.find_last_of('.');
+    if (dot != std::string::npos && dot + 1 < base.size()) {
+        std::string ext = base.substr(dot + 1);
+        for (char& ch : ext) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        if (ext == "fdb" || ext == "gdb") {
+            base = base.substr(0, dot);
+        }
+    }
+
+    return base;
+}
+
+bool buildFirebirdSchemaPath(const std::string& db_path,
+                             const std::string& default_server,
+                             std::string& schema_path_out,
+                             std::string& db_name_out,
+                             std::string& server_out) {
+    std::string normalized = db_path;
+    if (normalized.size() >= 2 && normalized.front() == '\'' && normalized.back() == '\'') {
+        normalized = normalized.substr(1, normalized.size() - 2);
+    }
+
+    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(normalized);
+    server_out = spec.server.empty() ? default_server : spec.server;
+    db_name_out = deriveFirebirdDatabaseName(spec.file_path);
+    if (db_name_out.empty()) {
+        return false;
+    }
+
+    auto path_components = splitFirebirdPathComponents(spec.file_path);
+    std::string schema = "emulation.firebird." + server_out;
+    for (const auto& comp : path_components) {
+        if (!comp.empty()) {
+            schema.push_back('.');
+            schema += comp;
+        }
+    }
+    schema.push_back('.');
+    schema += db_name_out;
+    schema_path_out = schema;
+    return true;
 }
 
 /**
  * Ensure the Firebird emulation schema hierarchy exists
- * Creates: remote, remote.emulated, remote.emulated.firebird, remote.emulated.firebird.{server}
+ * Creates: emulation, emulation.firebird, emulation.firebird.{server}
  */
 bool ensureFirebirdSchemaHierarchy(core::CatalogManager* catalog, const std::string& server) {
     if (!catalog) return false;
 
-    std::string path = "remote.emulated.firebird." + server;
+    std::string path = "emulation.firebird." + server;
     core::ErrorContext ctx;
     core::ID schema_id;
     core::Status status = catalog->createSchemaPath(
@@ -317,14 +396,19 @@ bool ensureFirebirdSchemaHierarchy(core::CatalogManager* catalog, const std::str
 
 /**
  * Handle CREATE DATABASE command
- * Creates schema at remote.emulated.firebird.{server}.{database}
+ * Creates schema at emulation.firebird.{server}.{path...}.{database}
  * and generates RDB$ system views
  */
 bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
-    std::string dbName = extractDatabaseName(dbPath);
-    if (dbName.empty()) {
+    std::string dbName;
+    std::string schemaPath;
+    std::string serverName;
+    if (!buildFirebirdSchemaPath(dbPath, g_fb_state.server_name, schemaPath, dbName, serverName)) {
         std::cerr << "Error: Invalid database name\n";
         return false;
+    }
+    if (!serverName.empty()) {
+        g_fb_state.server_name = serverName;
     }
 
     core::CatalogManager* catalog = db.catalog_manager();
@@ -339,9 +423,6 @@ bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
     }
 
     core::ErrorContext ctx;
-
-    // Create schema path: remote.emulated.firebird.localhost.{dbName}
-    std::string schemaPath = getFirebirdSchemaPath(g_fb_state.server_name, dbName);
 
     // Create schema using hierarchical path API
     core::ID schemaId;
@@ -443,13 +524,18 @@ bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
 
 /**
  * Handle CONNECT command
- * Switches to schema at remote.emulated.firebird.{server}.{database}
+ * Switches to schema at emulation.firebird.{server}.{path...}.{database}
  */
 bool handleConnect(const std::string& dbPath, core::Database& db) {
-    std::string dbName = extractDatabaseName(dbPath);
-    if (dbName.empty()) {
+    std::string dbName;
+    std::string schemaPath;
+    std::string serverName;
+    if (!buildFirebirdSchemaPath(dbPath, g_fb_state.server_name, schemaPath, dbName, serverName)) {
         std::cerr << "Error: Invalid database name\n";
         return false;
+    }
+    if (!serverName.empty()) {
+        g_fb_state.server_name = serverName;
     }
 
     core::CatalogManager* catalog = db.catalog_manager();
@@ -459,7 +545,6 @@ bool handleConnect(const std::string& dbPath, core::Database& db) {
     }
 
     core::ErrorContext ctx;
-    std::string schemaPath = getFirebirdSchemaPath(g_fb_state.server_name, dbName);
 
     // Look up the schema
     core::CatalogManager::SchemaInfo schemaInfo;
@@ -481,13 +566,18 @@ bool handleConnect(const std::string& dbPath, core::Database& db) {
 
 /**
  * Handle DROP DATABASE command
- * Drops schema at remote.emulated.firebird.{server}.{database}
+ * Drops schema at emulation.firebird.{server}.{path...}.{database}
  */
 bool handleDropDatabase(const std::string& dbPath, core::Database& db) {
-    std::string dbName = extractDatabaseName(dbPath);
-    if (dbName.empty()) {
+    std::string dbName;
+    std::string schemaPath;
+    std::string serverName;
+    if (!buildFirebirdSchemaPath(dbPath, g_fb_state.server_name, schemaPath, dbName, serverName)) {
         std::cerr << "Error: Invalid database name\n";
         return false;
+    }
+    if (!serverName.empty()) {
+        g_fb_state.server_name = serverName;
     }
 
     core::CatalogManager* catalog = db.catalog_manager();
@@ -497,7 +587,6 @@ bool handleDropDatabase(const std::string& dbPath, core::Database& db) {
     }
 
     core::ErrorContext ctx;
-    std::string schemaPath = getFirebirdSchemaPath(g_fb_state.server_name, dbName);
 
     // Look up the schema
     core::CatalogManager::SchemaInfo schemaInfo;

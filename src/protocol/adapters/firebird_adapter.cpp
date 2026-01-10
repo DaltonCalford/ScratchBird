@@ -13,19 +13,122 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/firebird_query_compiler.h"
 
-#include <filesystem>
 #include <cstring>
 #include <random>
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <string_view>
 
 namespace scratchbird {
 namespace protocol {
 
 namespace {
+struct FirebirdDatabaseSpec {
+    std::string server;
+    std::string file_path;
+};
+
+FirebirdDatabaseSpec parseFirebirdDatabaseSpec(std::string_view spec) {
+    FirebirdDatabaseSpec result;
+    result.file_path = std::string(spec);
+
+    size_t colon = result.file_path.find(':');
+    if (colon != std::string::npos) {
+        bool is_drive = (colon == 1 &&
+                         std::isalpha(static_cast<unsigned char>(result.file_path[0])) &&
+                         result.file_path.size() > 2 &&
+                         (result.file_path[2] == '\\' || result.file_path[2] == '/'));
+        if (!is_drive) {
+            result.server = result.file_path.substr(0, colon);
+            result.file_path.erase(0, colon + 1);
+        }
+    }
+
+    return result;
+}
+
+std::vector<std::string> splitFirebirdPathComponents(std::string_view path) {
+    std::string working(path);
+    std::vector<std::string> components;
+
+    if (working.size() >= 2 && std::isalpha(static_cast<unsigned char>(working[0])) &&
+        working[1] == ':') {
+        std::string drive(1, static_cast<char>(std::tolower(static_cast<unsigned char>(working[0]))));
+        components.push_back(drive);
+        working.erase(0, 2);
+    }
+
+    while (!working.empty() && (working.front() == '/' || working.front() == '\\')) {
+        working.erase(working.begin());
+    }
+
+    std::string current;
+    for (char ch : working) {
+        if (ch == '/' || ch == '\\') {
+            if (!current.empty()) {
+                components.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        components.push_back(current);
+    }
+
+    if (!components.empty()) {
+        components.pop_back();
+    }
+
+    return components;
+}
+
+std::string deriveFirebirdDatabaseName(std::string_view file_path) {
+    size_t last_sep = file_path.find_last_of("/\\");
+    std::string base = (last_sep == std::string_view::npos)
+        ? std::string(file_path)
+        : std::string(file_path.substr(last_sep + 1));
+
+    if (base.empty()) {
+        return base;
+    }
+
+    size_t dot = base.find_last_of('.');
+    if (dot != std::string::npos && dot + 1 < base.size()) {
+        std::string ext = base.substr(dot + 1);
+        for (char& ch : ext) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        if (ext == "fdb" || ext == "gdb") {
+            base = base.substr(0, dot);
+        }
+    }
+
+    return base;
+}
+
+std::string buildEmulatedFirebirdSchemaPath(const std::string& server,
+                                            const std::vector<std::string>& path_components,
+                                            const std::string& db_name) {
+    std::string schema = "emulation.firebird." + server;
+    for (const auto& comp : path_components) {
+        if (!comp.empty()) {
+            schema.push_back('.');
+            schema += comp;
+        }
+    }
+    if (!db_name.empty()) {
+        schema.push_back('.');
+        schema += db_name;
+    }
+    return schema;
+}
+
 // Minimal BLR parser for SQLDA (scalar fields only; text/varchar/int sizes)
 core::Status parseBlr(const std::vector<uint8_t>& blr,
                       std::vector<FirebirdStatement::BlrField>& fields_out,
@@ -543,17 +646,14 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         return core::Status::INVALID_ARGUMENT;
     }
 
-    std::string db_name;
-    if (!database_path_.empty()) {
-        auto stem = std::filesystem::path(database_path_).stem().string();
-        if (!stem.empty()) {
-            db_name = stem;
-        }
-    }
+    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(database_path_.string());
+    std::string server = spec.server.empty() ? "localhost" : spec.server;
+    std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
         db_name = "default";
     }
-    auto schema_name = std::string("remote.emulated.firebird.localhost.") + db_name;
+    auto path_components = splitFirebirdPathComponents(spec.file_path);
+    auto schema_name = buildEmulatedFirebirdSchemaPath(server, path_components, db_name);
     firebird_schema_name_ = schema_name;
 
     core::CatalogManager::SchemaInfo fb_schema;

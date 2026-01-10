@@ -70,7 +70,7 @@ Status rollback_transaction(SBTransaction* txn) {
 
 **Savings**: 7-8 hours (28% total effort reduction!)
 
-**Document Created**: `docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN_REVISED.md` (950 lines)
+**Document Created**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN_REVISED.md` (950 lines)
 
 ### 3. Code Review (1 hour)
 
@@ -93,7 +93,7 @@ Status rollback_transaction(SBTransaction* txn) {
 ### 4. Documentation Updates (1 hour)
 
 **Updated Main Design Document**:
-- `docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
 - Status: 46% MGA compliance (was 40%)
 - Phase 2 scope revised (no undo logging!)
 - Remaining effort: 38-57 hours (was 50-79 hours)

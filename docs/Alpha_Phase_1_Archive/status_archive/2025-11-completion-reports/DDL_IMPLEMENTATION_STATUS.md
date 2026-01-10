@@ -118,7 +118,7 @@ DDL modifications implementation for DROP TABLE and DROP INDEX is **100% complet
   - Implemented AlterTableStmt visitor (stub - minimal validation)
 
 ### 7. Documentation
-- **docs/planning/DDL_MODIFICATIONS_IMPLEMENTATION_PLAN.md** (NEW, 600+ lines)
+- **docs/Alpha_Phase_1_Archive/planning_archive/DDL_MODIFICATIONS_IMPLEMENTATION_PLAN.md** (NEW, 600+ lines)
   - Complete implementation guide
   - Bytecode format specifications
   - MGA compliance checklist

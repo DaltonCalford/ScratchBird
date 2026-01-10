@@ -424,6 +424,15 @@ TEST_F(MySQLParserTest, CreateTableWithTypes) {
     expectSuccess("CREATE TABLE test (g GEOMETRY, p POINT, l LINESTRING, poly POLYGON)");
 }
 
+TEST_F(MySQLParserTest, CreateTableWithExpressionDefault) {
+    expectSuccess("CREATE TABLE test (a INT DEFAULT (1 + 2), b TEXT DEFAULT 'x')");
+}
+
+TEST_F(MySQLParserTest, CreateTableWithGeneratedColumn) {
+    expectSuccess("CREATE TABLE test (a INT, b INT GENERATED ALWAYS AS (a + 1) STORED)");
+    expectSuccess("CREATE TABLE test (a INT, b INT AS (a + 1) VIRTUAL)");
+}
+
 TEST_F(MySQLParserTest, CreateTableWithConstraints) {
     expectSuccess("CREATE TABLE test (id INT, name VARCHAR(50), PRIMARY KEY (id))");
     expectSuccess("CREATE TABLE test (id INT, name VARCHAR(50), UNIQUE KEY uq_name (name))");

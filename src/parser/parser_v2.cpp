@@ -1392,6 +1392,10 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
     if (stmt->database_path.isEmpty()) {
         error("Expected database name");
     }
+    std::string spec = schemaPathToString(stmt->database_path, stringPool());
+    if (!spec.empty()) {
+        stmt->source_spec = stringPool().intern(spec);
+    }
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -1706,7 +1710,6 @@ AlterSchemaStmt* Parser::parseAlterSchema() {
         if (matchContextual("PATH")) {
             stmt->action = AlterSchemaAction::SET_PATH;
             stmt->new_path = parseSchemaPath(state_);
-            error("ALTER SCHEMA SET PATH is not supported yet");
         } else {
             error("Expected PATH after SET");
         }
@@ -1735,8 +1738,18 @@ AlterDatabaseStmt* Parser::parseAlterDatabase() {
         expectContextual("TO", "Expected TO after OWNER");
         stmt->action = AlterDatabaseAction::SET_OWNER;
         stmt->owner = expectIdentifier("Expected owner name");
+    } else if (matchContextual("ALIAS")) {
+        if (matchContextual("ADD")) {
+            stmt->action = AlterDatabaseAction::ADD_ALIAS;
+            stmt->alias = expectIdentifier("Expected alias name");
+        } else if (matchContextual("DROP")) {
+            stmt->action = AlterDatabaseAction::DROP_ALIAS;
+            stmt->alias = expectIdentifier("Expected alias name");
+        } else {
+            error("Expected ADD or DROP after ALIAS");
+        }
     } else {
-        error("Expected RENAME TO or OWNER TO after database name");
+        error("Expected RENAME TO, OWNER TO, or ALIAS ADD/DROP after database name");
     }
 
     stmt->span = makeSpan(start);

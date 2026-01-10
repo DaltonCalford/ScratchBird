@@ -421,7 +421,7 @@ The master plan claims **10/12 indexes complete (83%)**, but detailed source cod
 
 **Specifications Created**:
 - ✅ `/docs/specifications/COLUMNSTORE_SPEC.md` (complete)
-- ✅ `/docs/planning/COLUMNSTORE_IMPLEMENTATION_PLAN.md` (complete)
+- ✅ `/docs/Alpha_Phase_1_Archive/Index_Implementation_Archive/COLUMNSTORE_IMPLEMENTATION_PLAN.md` (complete)
 
 ---
 
@@ -442,7 +442,7 @@ The master plan claims **10/12 indexes complete (83%)**, but detailed source cod
 
 **Specifications Created**:
 - ✅ `/docs/specifications/LSM_TREE_SPEC.md` (complete)
-- ✅ `/docs/planning/LSM_TREE_IMPLEMENTATION_PLAN.md` (complete)
+- ✅ `/docs/Alpha_Phase_1_Archive/Index_Implementation_Archive/LSM_TREE_IMPLEMENTATION_PLAN.md` (complete)
 
 ---
 

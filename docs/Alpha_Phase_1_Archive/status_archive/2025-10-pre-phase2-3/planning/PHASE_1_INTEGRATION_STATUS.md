@@ -241,7 +241,7 @@ uint32_t buffer_pool_size = cfg.getUInt("memory", "buffer_pool_size", 128);
 ## Integration Guide
 
 Full integration instructions available in:
-- **File**: `docs/planning/PHASE_1_INTEGRATION_GUIDE.md`
+- **File**: `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_1_INTEGRATION_GUIDE.md`
 - **Contents**:
   - Build system integration
   - Logger migration guide
@@ -302,8 +302,8 @@ Full integration instructions available in:
 
 ## References
 
-- **Implementation Plan**: `docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md`
-- **Integration Guide**: `docs/planning/PHASE_1_INTEGRATION_GUIDE.md`
+- **Implementation Plan**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md`
+- **Integration Guide**: `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_1_INTEGRATION_GUIDE.md`
 - **Coding Standards**: `docs/development/CODING_STANDARDS.md`
 - **Error Handling Audit**: `docs/audits/error_handling_audit_2025_10_07.md`
 

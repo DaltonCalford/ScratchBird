@@ -714,11 +714,11 @@ SELECT * FROM MON_TRANSACTION_MARKERS;
    - Multi-isolation level concurrency tests
 
 ### Documentation
-1. **docs/planning/implemented/PHASE_3_READONLY_OPTIMIZATIONS.md**
+1. **docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_3_READONLY_OPTIMIZATIONS.md**
    - Comprehensive documentation of all 5 READ ONLY optimizations
    - Implementation details, code locations, benefits
 
-2. **docs/planning/implemented/PHASE_3_PROGRESS.md** (updated)
+2. **docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_3_PROGRESS.md** (updated)
    - Phase 3 task tracking (to be marked complete)
 
 ---

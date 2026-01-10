@@ -347,8 +347,8 @@ Although tests cannot run in this environment, the implementation has been verif
 - Header: `include/scratchbird/sblr/executor.h:224-227`
 
 **Documentation:**
-- Implementation Guide: `docs/planning/ROLLUP_CUBE_EXECUTOR_IMPLEMENTATION_GUIDE.md`
-- This Document: `docs/planning/ADVANCED_GROUPING_TEST_STATUS.md`
+- Implementation Guide: `docs/archive/2026-01-04/planning/old_Plans/archive/ROLLUP_CUBE_EXECUTOR_IMPLEMENTATION_GUIDE.md`
+- This Document: `docs/archive/2026-01-04/planning/old_Plans/archive/ADVANCED_GROUPING_TEST_STATUS.md`
 
 ---
 

@@ -803,7 +803,7 @@ CREATE OR REPLACE VIEW active_employees AS
 | **`src/optimizer/query_planner.cpp`** | **85** | **0** | **View expansion implementation** |
 | `test_views.sql` | 148 | 0 | DDL test suite |
 | `test_views_query.sql` | 75 | 0 | Query expansion test suite |
-| `docs/planning/VIEWS_IMPLEMENTATION_PLAN.md` | 800 | 0 | Design document |
+| `docs/Alpha_Phase_1_Archive/planning_archive/VIEWS_IMPLEMENTATION_PLAN.md` | 800 | 0 | Design document |
 | `docs/status/VIEWS_IMPLEMENTATION_COMPLETE.md` | 1250 | 0 | Completion report |
 
 **Total**: ~3,285 lines added across 16 files

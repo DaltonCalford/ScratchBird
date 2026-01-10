@@ -112,7 +112,7 @@ Successfully completed the HNSW (Hierarchical Navigable Small World) Index imple
 
 #### To Update:
 - `/docs/analysis/INDEX_IMPLEMENTATION_AUDIT_2025-11-04.md` - Mark HNSW as 100% complete
-- `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Update HNSW status
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Update HNSW status
 - `/README.md` - Update index status and latest achievements
 - `/PROJECT_CONTEXT.md` - Update implementation status
 
@@ -291,7 +291,7 @@ updated_node.node_xmax = node->node_xmax;  // Transaction that deleted node (0 i
 - `/HNSW_INDEX_IMPLEMENTATION_SUMMARY.md` - NEW (this file)
 - `/docs/status/HNSW_COMPLETION_REPORT_2025-11-04.md` - NEW
 - `/docs/analysis/INDEX_IMPLEMENTATION_AUDIT_2025-11-04.md` - TO UPDATE
-- `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - TO UPDATE
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - TO UPDATE
 - `/README.md` - TO UPDATE
 - `/PROJECT_CONTEXT.md` - TO UPDATE
 

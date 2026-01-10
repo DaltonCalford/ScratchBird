@@ -53,7 +53,7 @@ Emulated parser constraints (by design):
 - `docs/specifications/SYSTEM_CATALOG_STRUCTURE.md`
 - `docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md`
 - `docs/specifications/Appendix_A_SBLR_BYTECODE.md`
-- `docs/findings/engine_gap_report.md` (UUID resolver gap)
+- `docs/archive/2026-01-09/findings/engine_gap_report.md` (UUID resolver gap)
 
 ## Order of Implementation
 1) Schema path resolution and caches (schema hierarchy support).

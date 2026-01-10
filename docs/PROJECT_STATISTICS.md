@@ -133,9 +133,9 @@
 ### Documentation Directories
 
 - `docs/specifications/` - Technical specifications (6,752 files counting subdirs)
-- `docs/planning/` - Project plans and schedules
+- `docs/planning/` - Canonical remediation plan (archived plans in `docs/archive/2026-01-09/planning/`)
 - `docs/design/` - Architecture and design documents
-- `docs/findings/` - Analysis and investigation reports
+- `docs/findings/` - Consolidated findings (archived originals in `docs/archive/2026-01-09/findings/`)
 - `docs/audit/` - Code reviews and audit reports
 - `docs/development/` - Development procedures
 - `docs/testing/` - Test plans and strategies

@@ -32,10 +32,10 @@ This archive contains documentation from before the completion of Phase 2 (Conne
 - Phase 4 GC improvements (part of Phase 3 Task 3.4)
 
 **Current Planning Documents:**
-- `/docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md` - Master plan
-- `/docs/planning/implemented/PHASE_2_COMPLETE.md` - Phase 2 completion (Oct 7, 2025)
-- `/docs/planning/implemented/PHASE_3_COMPLETE.md` - Phase 3 completion (Oct 11, 2025)
-- `/docs/planning/implemented/PHASE_3_READONLY_OPTIMIZATIONS.md` - READ ONLY optimizations
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md` - Master plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_2_COMPLETE.md` - Phase 2 completion (Oct 7, 2025)
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_3_COMPLETE.md` - Phase 3 completion (Oct 11, 2025)
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_3_READONLY_OPTIMIZATIONS.md` - READ ONLY optimizations
 
 ---
 
@@ -87,9 +87,9 @@ The following remain in active documentation:
 
 ### Current Status & Planning
 - `/docs/status/CURRENT_STATUS.md` - Authoritative current status
-- `/docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md` - Master implementation plan
-- `/docs/planning/implemented/PHASE_2_COMPLETE.md` - Phase 2 completion report
-- `/docs/planning/implemented/PHASE_3_COMPLETE.md` - Phase 3 completion report
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md` - Master implementation plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_2_COMPLETE.md` - Phase 2 completion report
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_3_COMPLETE.md` - Phase 3 completion report
 
 ### Current Development
 - `/docs/development/TODO.md` - Current prioritized work items

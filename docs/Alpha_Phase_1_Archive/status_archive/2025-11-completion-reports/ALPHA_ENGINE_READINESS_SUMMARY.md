@@ -136,7 +136,7 @@ The following features are **COMPLETELY MISSING** or **STUBBED** and block produ
 | Data Type Ops | 10% | Low | 110-160 | 🟡 MEDIUM |
 | **TOTAL** | **~78%** | - | **1,470-2,025** | - |
 
-**See `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` for detailed implementation roadmap.**
+**See `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` for detailed implementation roadmap.**
 
 ---
 

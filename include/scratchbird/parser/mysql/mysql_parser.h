@@ -327,6 +327,7 @@ private:
     std::vector<ParseError> errors_;
     uint32_t next_placeholder_index_ = 1;
     bool emit_enabled_ = true;
+    bool pending_or_replace_ = false;
 
     // Token management
     void advance();
@@ -345,6 +346,7 @@ private:
     void emit(sblr::Opcode op);
     void emitByte(uint8_t byte);
     void emitU16(uint16_t val);
+    void emitUVarint(uint64_t val);
     void emitU32(uint32_t val);
     void emitU64(uint64_t val);
     void emitI64(int64_t val);

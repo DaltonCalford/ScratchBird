@@ -3318,6 +3318,35 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDatabase(CreateDatabaseStmt*
     resolved->span = stmt->span;
     resolved->if_not_exists = stmt->if_not_exists;
     resolved->database_path = stmt->database_path;
+    if (stmt->source_spec != StringPool::INVALID_ID)
+    {
+        resolved->source_spec = std::string(string_pool_.get(stmt->source_spec));
+    }
+
+    resolved->options.reserve(stmt->options.size());
+    for (const auto& opt : stmt->options)
+    {
+        ResolvedDatabaseOption resolved_opt;
+        if (opt.key != StringPool::INVALID_ID)
+        {
+            resolved_opt.key = std::string(string_pool_.get(opt.key));
+        }
+        if (opt.value != StringPool::INVALID_ID)
+        {
+            resolved_opt.value = std::string(string_pool_.get(opt.value));
+        }
+        resolved->options.push_back(std::move(resolved_opt));
+    }
+
+    resolved->aliases.reserve(stmt->aliases.size());
+    for (auto alias_id : stmt->aliases)
+    {
+        if (alias_id == StringPool::INVALID_ID)
+        {
+            continue;
+        }
+        resolved->aliases.emplace_back(string_pool_.get(alias_id));
+    }
 
     return resolved;
 }
@@ -3675,6 +3704,10 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDatabase(AlterDatabaseStmt* s
     resolved->database_path = stmt->database_path;
     resolved->new_name = stmt->new_name;
     resolved->owner = stmt->owner;
+    if (stmt->alias != StringPool::INVALID_ID)
+    {
+        resolved->alias = std::string(string_pool_.get(stmt->alias));
+    }
 
     return resolved;
 }

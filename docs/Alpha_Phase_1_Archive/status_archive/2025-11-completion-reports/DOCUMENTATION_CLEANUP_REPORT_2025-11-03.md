@@ -255,7 +255,7 @@ This report documents the comprehensive cleanup of ScratchBird's documentation f
 - 07_ALPHA_COMPLETION_ROADMAP.md
 - MGA_CORRECTNESS_REVIEW.md (November 3, 2025)
 
-**`/docs/planning/` (2 files):**
+**`/docs/archive/2026-01-09/planning/` (2 files):**
 - ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md - **ACTIVE PLAN** (November 3, 2025)
 - archive/ (4 completed plans archived earlier)
 
@@ -287,7 +287,7 @@ This report documents the comprehensive cleanup of ScratchBird's documentation f
 - COMPREHENSIVE_CODE_ANALYSIS_REPORT.md (undated, superseded)
 - COMPREHENSIVE_DOCUMENTATION_ANALYSIS_REPORT.md (incorrect claims)
 
-**`/docs/planning/archive/` (4 existing files from previous session):**
+**`/docs/Alpha_Phase_1_Archive/planning_archive (1)/` (4 existing files from previous session):**
 - MGA_COMPLIANCE_FIX_PLAN.md
 - PHASE_3_REVISED_TASKS.md
 - SQL_IDENTIFIER_UTF8_FIX_PLAN.md
@@ -409,7 +409,7 @@ These are the AUTHORITATIVE sources for project status as of November 3, 2025:
 - **`/docs/specifications/INDEX_IMPLEMENTATION_SPEC.md`** (November 3, 2025) - 4/12 index types
 
 ### 9.3 Active Planning
-- **`/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`** (November 3, 2025) - 1,755-2,425 hours remaining
+- **`/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`** (November 3, 2025) - 1,755-2,425 hours remaining
 
 ### 9.4 Recent Audits
 - **`/docs/audit/04_DEFERRED_WORK_CORRECTED_ASSESSMENT.md`** (November 3, 2025) - Corrected assessment post-MGA
@@ -430,7 +430,7 @@ These are the AUTHORITATIVE sources for project status as of November 3, 2025:
 - Contents: CURRENT_STATUS.md claiming 85-90% complete
 
 **Completed Plans (Pre-November 2):**
-- Location: `/docs/planning/archive/`
+- Location: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/`
 - Contents: MGA, TOAST, SQL UTF-8 fix plans (all completed)
 
 **Development Analysis (Undated):**
@@ -610,7 +610,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/gin/test_gin_phase6\\.cpp$")
 
 4. ✅ **Added NOT IMPLEMENTED warnings**
    - Updated `/docs/ALPHA_ENGINE_READINESS_SUMMARY.md` with prominent "⚠️ CRITICAL: FEATURES NOT YET IMPLEMENTED" section
-   - Updated `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` with "⚠️ CRITICAL BLOCKERS - NOT YET IMPLEMENTED" section
+   - Updated `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` with "⚠️ CRITICAL BLOCKERS - NOT YET IMPLEMENTED" section
    - Both documents now clearly list:
      - DDL Modifications (ALTER/DROP) - 0% complete
      - Security (GRANT/REVOKE) - 0% complete
@@ -628,4 +628,4 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/gin/test_gin_phase6\\.cpp$")
 - **0 mathematical functions** (previously not mentioned)
 - **Missing DDL/Security/Constraints** (previously not emphasized)
 
-**Next Steps:** None - documentation cleanup complete. Focus on implementation per `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`.
+**Next Steps:** None - documentation cleanup complete. Focus on implementation per `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`.

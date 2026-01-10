@@ -107,7 +107,7 @@ Continue Phase 2 implementation by completing Phase 2.3 (GC Integration).
    - MGA compliance verification
    - Examples and performance characteristics
 
-2. **docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN_REVISED.md** (updated)
+2. **docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN_REVISED.md** (updated)
    - Marked Phase 2 complete (54% total progress)
    - Updated all sub-phase statuses
    - Documented actual vs estimated effort

@@ -322,11 +322,72 @@ ast::SourceSpan toV2Span(const fb::SourceSpan& span) {
     return ast::SourceSpan(loc, span.length);
 }
 
-std::string deriveFirebirdDatabaseName(std::string_view db_path) {
-    size_t last_sep = db_path.find_last_of("/\\");
+struct FirebirdDatabaseSpec {
+    std::string server;
+    std::string file_path;
+};
+
+FirebirdDatabaseSpec parseFirebirdDatabaseSpec(std::string_view spec) {
+    FirebirdDatabaseSpec result;
+    result.file_path = std::string(spec);
+
+    size_t colon = result.file_path.find(':');
+    if (colon != std::string::npos) {
+        bool is_drive = (colon == 1 &&
+                         std::isalpha(static_cast<unsigned char>(result.file_path[0])) &&
+                         result.file_path.size() > 2 &&
+                         (result.file_path[2] == '\\' || result.file_path[2] == '/'));
+        if (!is_drive) {
+            result.server = result.file_path.substr(0, colon);
+            result.file_path.erase(0, colon + 1);
+        }
+    }
+
+    return result;
+}
+
+std::vector<std::string> splitFirebirdPathComponents(std::string_view path) {
+    std::string working(path);
+    std::vector<std::string> components;
+
+    if (working.size() >= 2 && std::isalpha(static_cast<unsigned char>(working[0])) &&
+        working[1] == ':') {
+        std::string drive(1, static_cast<char>(std::tolower(static_cast<unsigned char>(working[0]))));
+        components.push_back(drive);
+        working.erase(0, 2);
+    }
+
+    while (!working.empty() && (working.front() == '/' || working.front() == '\\')) {
+        working.erase(working.begin());
+    }
+
+    std::string current;
+    for (char ch : working) {
+        if (ch == '/' || ch == '\\') {
+            if (!current.empty()) {
+                components.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        components.push_back(current);
+    }
+
+    if (!components.empty()) {
+        components.pop_back();  // Drop file name
+    }
+
+    return components;
+}
+
+std::string deriveFirebirdDatabaseName(std::string_view file_path) {
+    size_t last_sep = file_path.find_last_of("/\\");
     std::string base = (last_sep == std::string_view::npos)
-        ? std::string(db_path)
-        : std::string(db_path.substr(last_sep + 1));
+        ? std::string(file_path)
+        : std::string(file_path.substr(last_sep + 1));
 
     if (base.empty()) {
         return base;
@@ -346,13 +407,21 @@ std::string deriveFirebirdDatabaseName(std::string_view db_path) {
     return base;
 }
 
-ast::SchemaPath buildEmulatedDatabasePath(ast::StringPool& pool, std::string_view db_name) {
+ast::SchemaPath buildEmulatedDatabasePath(ast::StringPool& pool,
+                                          std::string_view dialect,
+                                          std::string_view server,
+                                          const std::vector<std::string>& path_components,
+                                          std::string_view db_name) {
     ast::SchemaPath path;
     path.type = ast::PathType::ABSOLUTE;
-    path.components.push_back(pool.intern("remote"));
-    path.components.push_back(pool.intern("emulated"));
-    path.components.push_back(pool.intern("firebird"));
-    path.components.push_back(pool.intern("localhost"));
+    path.components.push_back(pool.intern("emulation"));
+    path.components.push_back(pool.intern(dialect));
+    path.components.push_back(pool.intern(server));
+    for (const auto& comp : path_components) {
+        if (!comp.empty()) {
+            path.components.push_back(pool.intern(comp));
+        }
+    }
     path.components.push_back(pool.intern(db_name));
     return path;
 }
@@ -1682,13 +1751,33 @@ Statement* Parser::parseCreateDatabase() {
     auto* stmt = allocate<ast::CreateDatabaseStmt>();
     stmt->span = toV2Span(current_token_.span);
 
-    auto parseValueToken = [&]() {
-        if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL) ||
-            check(TokenType::IDENTIFIER)) {
+    auto parseValueTokenText = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+            auto id = internFromLexer(current_token_.value.string_id);
+            std::string value = std::string(string_pool_.get(id));
             advance();
-            return true;
+            return value;
         }
-        return false;
+        if (check(TokenType::IDENTIFIER)) {
+            auto id = parseIdentifier();
+            return std::string(string_pool_.get(id));
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            std::string value = std::to_string(current_token_.value.int_value);
+            advance();
+            return value;
+        }
+        return {};
+    };
+
+    auto add_option = [&](const std::string& key, const std::string& value) {
+        if (key.empty() || value.empty()) {
+            return;
+        }
+        ast::DatabaseOption opt;
+        opt.key = string_pool_.intern(key);
+        opt.value = string_pool_.intern(value);
+        stmt->options.push_back(opt);
     };
 
     std::string db_path_text;
@@ -1704,40 +1793,64 @@ Statement* Parser::parseCreateDatabase() {
         return stmt;
     }
 
-    std::string db_name = deriveFirebirdDatabaseName(db_path_text);
+    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(db_path_text);
+    std::string server = spec.server.empty() ? "localhost" : spec.server;
+    std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
         error("Database name is empty");
         return stmt;
     }
 
-    stmt->database_path = buildEmulatedDatabasePath(string_pool_, db_name);
+    auto path_components = splitFirebirdPathComponents(spec.file_path);
+    stmt->database_path = buildEmulatedDatabasePath(string_pool_,
+                                                    "firebird",
+                                                    server,
+                                                    path_components,
+                                                    db_name);
+    if (!db_path_text.empty()) {
+        stmt->source_spec = string_pool_.intern(db_path_text);
+    }
 
     // Optional Firebird parameters (ignored for emulation)
     while (!atEnd() && !check(TokenType::SEMICOLON)) {
-        if (matchKeyword(TokenType::KW_USER) || matchKeyword(TokenType::KW_PASSWORD)) {
-            if (!parseValueToken()) {
-                error("Expected identifier or string literal after USER/PASSWORD");
+        if (matchKeyword(TokenType::KW_USER)) {
+            std::string value = parseValueTokenText();
+            if (value.empty()) {
+                error("Expected identifier or string literal after USER");
                 break;
             }
+            add_option("user", value);
+        } else if (matchKeyword(TokenType::KW_PASSWORD)) {
+            std::string value = parseValueTokenText();
+            if (value.empty()) {
+                error("Expected identifier or string literal after PASSWORD");
+                break;
+            }
+            add_option("password", value);
         } else if (matchKeyword(TokenType::KW_PAGE)) {
             matchKeyword(TokenType::KW_SIZE);
-            if (!check(TokenType::INTEGER_LITERAL)) {
+            std::string value = parseValueTokenText();
+            if (value.empty()) {
                 error("Expected page size after PAGE [SIZE]");
                 break;
             }
-            advance();
+            add_option("page_size", value);
         } else if (matchKeyword(TokenType::KW_DEFAULT)) {
             if (matchKeyword(TokenType::KW_CHARACTER)) {
                 matchKeyword(TokenType::KW_SET);
-                if (!parseValueToken()) {
+                std::string value = parseValueTokenText();
+                if (value.empty()) {
                     error("Expected character set after DEFAULT CHARACTER SET");
                     break;
                 }
+                add_option("default_character_set", value);
             } else if (matchKeyword(TokenType::KW_COLLATION)) {
-                if (!parseValueToken()) {
+                std::string value = parseValueTokenText();
+                if (value.empty()) {
                     error("Expected collation after DEFAULT COLLATION");
                     break;
                 }
+                add_option("default_collation", value);
             } else {
                 break;
             }
@@ -1832,19 +1945,55 @@ Statement* Parser::parseDropDatabase() {
         return stmt;
     }
 
-    std::string db_name = deriveFirebirdDatabaseName(db_path_text);
+    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(db_path_text);
+    std::string server = spec.server.empty() ? "localhost" : spec.server;
+    std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
         error("Database name is empty");
         return stmt;
     }
 
-    stmt->database_path = buildEmulatedDatabasePath(string_pool_, db_name);
+    auto path_components = splitFirebirdPathComponents(spec.file_path);
+    stmt->database_path = buildEmulatedDatabasePath(string_pool_,
+                                                    "firebird",
+                                                    server,
+                                                    path_components,
+                                                    db_name);
     return stmt;
 }
 
 Statement* Parser::parseAlterDatabase() {
     auto* stmt = allocate<ast::AlterDatabaseStmt>();
     stmt->span = toV2Span(current_token_.span);
+
+    auto matchIdentifierText = [&](const char* keyword) -> bool {
+        if (!check(TokenType::IDENTIFIER)) {
+            return false;
+        }
+        std::string_view text = lexer_.getTokenText(current_token_);
+        size_t len = std::strlen(keyword);
+        if (text.size() != len) {
+            return false;
+        }
+        for (size_t i = 0; i < len; ++i) {
+            char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+            char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+            if (a != b) {
+                return false;
+            }
+        }
+        advance();
+        return true;
+    };
+
+    auto parseAliasName = [&]() -> ast::StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+            auto id = internFromLexer(current_token_.value.string_id);
+            advance();
+            return id;
+        }
+        return parseIdentifier();
+    };
 
     std::string db_path_text;
     if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
@@ -1859,13 +2008,35 @@ Statement* Parser::parseAlterDatabase() {
         return stmt;
     }
 
-    std::string db_name = deriveFirebirdDatabaseName(db_path_text);
+    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(db_path_text);
+    std::string server = spec.server.empty() ? "localhost" : spec.server;
+    std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
         error("Database name is empty");
         return stmt;
     }
 
-    stmt->database_path = buildEmulatedDatabasePath(string_pool_, db_name);
+    auto path_components = splitFirebirdPathComponents(spec.file_path);
+    stmt->database_path = buildEmulatedDatabasePath(string_pool_,
+                                                    "firebird",
+                                                    server,
+                                                    path_components,
+                                                    db_name);
+
+    if (matchIdentifierText("ALIAS")) {
+        if (matchKeyword(TokenType::KW_ADD)) {
+            stmt->action = ast::AlterDatabaseAction::ADD_ALIAS;
+            stmt->alias = parseAliasName();
+            return stmt;
+        }
+        if (matchKeyword(TokenType::KW_DROP)) {
+            stmt->action = ast::AlterDatabaseAction::DROP_ALIAS;
+            stmt->alias = parseAliasName();
+            return stmt;
+        }
+        error("Expected ADD or DROP after ALIAS");
+        return stmt;
+    }
 
     if (matchKeyword(TokenType::KW_RENAME)) {
         consume(TokenType::KW_TO, "Expected TO after RENAME");

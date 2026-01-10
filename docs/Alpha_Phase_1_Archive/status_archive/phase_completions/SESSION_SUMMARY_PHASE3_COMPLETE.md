@@ -129,7 +129,7 @@ for each index {
 2. `docs/status/SESSION_SUMMARY_PHASE3_COMPLETE.md` (this document)
 
 **Files Modified**:
-1. `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+1. `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
    - Marked Phase 3 as complete
    - Updated completion: 40h → 65h (45%)
    - Added Phase 3 completion summary
@@ -261,7 +261,7 @@ Per `PHASE3_STORAGE_ENGINE_INTEGRATION_COMPLETE.md`:
 **Files Changed**: 3
 - `src/core/storage_engine.cpp`
 - `docs/status/PHASE3_STORAGE_ENGINE_INTEGRATION_COMPLETE.md`
-- `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+- `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
 
 ### Commit 2: 5ef7d01
 **Title**: Phase 3 Complete: Integration Tests and Documentation Updates
@@ -273,7 +273,7 @@ Per `PHASE3_STORAGE_ENGINE_INTEGRATION_COMPLETE.md`:
 
 **Files Changed**: 2
 - `tests/integration/test_storage_toast_indexing.cpp`
-- `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+- `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
 
 ---
 
@@ -435,7 +435,7 @@ Per `PHASE3_STORAGE_ENGINE_INTEGRATION_COMPLETE.md`:
 ### Files Modified
 
 1. `src/core/storage_engine.cpp` (+400 lines) ✅
-2. `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (updated status) ✅
+2. `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (updated status) ✅
 
 ### Total LOC
 
@@ -464,10 +464,10 @@ Per `PHASE3_STORAGE_ENGINE_INTEGRATION_COMPLETE.md`:
 
 ### Planning Documents
 
-1. `/docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+1. `/docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
    - Master plan (updated with Phase 3 completion)
 
-2. `/docs/planning/PHASE_3_REVISED_TASKS.md`
+2. `/docs/Alpha_Phase_1_Archive/planning_archive (1)/PHASE_3_REVISED_TASKS.md`
    - Detailed Phase 3 task breakdown
 
 ### Status Documents

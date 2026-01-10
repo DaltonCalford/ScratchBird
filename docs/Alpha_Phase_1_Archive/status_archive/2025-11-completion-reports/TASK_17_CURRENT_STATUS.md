@@ -61,14 +61,14 @@ Task 17 (Expression and Filtered Indexes) has completed its **foundation phase**
 ## Key Documents
 
 ### 1. Design Document
-**File**: `/docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
+**File**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
 - Complete 13-phase design
 - PostgreSQL compatibility matrix
 - Architecture diagrams
 - 680 lines
 
 ### 2. Implementation Guide ⭐ NEW
-**File**: `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md`
+**File**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md`
 - **Complete production-ready code** for Phases 6-13
 - Exact file locations and modifications
 - Full function implementations with error handling
@@ -97,7 +97,7 @@ Task 17 (Expression and Filtered Indexes) has completed its **foundation phase**
 
 #### Step 1: Implement Phase 6 (Index Building) - 15-20 hours
 
-**File**: `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` (Section 6)
+**File**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` (Section 6)
 
 **Changes Required**:
 1. `src/sblr/bytecode_generator.cpp` (lines 128-154)
@@ -120,7 +120,7 @@ Task 17 (Expression and Filtered Indexes) has completed its **foundation phase**
 
 #### Step 2: Implement Phase 7 (Index Maintenance) - 30-40 hours
 
-**File**: `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` (Section 7)
+**File**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` (Section 7)
 
 **Changes Required**:
 1. `src/sblr/executor.cpp` - `executeInsert()`
@@ -143,7 +143,7 @@ Task 17 (Expression and Filtered Indexes) has completed its **foundation phase**
 
 #### Step 3: Implement Phases 8-9 (Query Planner) - 70-90 hours
 
-**File**: `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` (Sections 8-9)
+**File**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` (Sections 8-9)
 
 **New Files**:
 - `include/scratchbird/optimizer/expression_matcher.h`
@@ -309,7 +309,7 @@ Integration (Phases 6-13): ~5,000-7,000 lines (estimated) 📋
 ## Team Coordination
 
 ### For Developers
-1. Read `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md`
+1. Read `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md`
 2. Start with Phase 6 (index building)
 3. Use provided code directly
 4. Follow integration instructions exactly
@@ -335,7 +335,7 @@ Integration (Phases 6-13): ~5,000-7,000 lines (estimated) 📋
 ### Option 1: Implement Phase 6 Now (Recommended)
 ```bash
 # 1. Read the guide
-vim /docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md
+vim /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md
 
 # 2. Implement bytecode generator changes (Section 6.1)
 vim src/sblr/bytecode_generator.cpp

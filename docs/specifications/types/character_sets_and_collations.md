@@ -478,7 +478,7 @@ Character sets and timezones work together:
 
 **Implementation Date**: November 3, 2025
 **Status**: COMPLETE ✅
-**Reference**: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+**Reference**: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
 
 ### Overview
 
@@ -763,7 +763,7 @@ CREATE TABLE Users (id INT); -- Stored as: users
 - SQL:2016 §5.2 - Identifier length limits (128 characters)
 - RFC 3629 - UTF-8, a transformation format of ISO 10646
 - Unicode Standard 15.0 - Character encoding
-- docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md - Implementation plan
+- docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md - Implementation plan
 - docs/status/PHASE1_UTF8_UTILS_ENHANCEMENTS_COMPLETE.md - Phase 1 status
 - docs/status/PHASE2_CATALOG_STORAGE_EXPANSION_COMPLETE.md - Phase 2 status
 - docs/status/PHASE3_CATALOG_WRITE_LOGIC_FIXES_COMPLETE.md - Phase 3 status

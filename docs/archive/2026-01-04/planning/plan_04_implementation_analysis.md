@@ -34,8 +34,8 @@ None. Plan 04 implementation and parser compatibility coverage are complete.
 
 ## References
 
-- `docs/planning/PLAN_04_STATUS.md`
-- `docs/planning/PLAN_04_IMPLEMENTATION_CHECKLIST.md`
-- `docs/planning/PLAN_04_PREREQUISITES.md`
+- `docs/archive/2026-01-04/planning/PLAN_04_STATUS.md`
+- `docs/archive/2026-01-04/planning/PLAN_04_IMPLEMENTATION_CHECKLIST.md`
+- `docs/archive/2026-01-04/planning/PLAN_04_PREREQUISITES.md`
 - `docs/specifications/DDL_DOMAINS_COMPREHENSIVE.md`
 - `docs/specifications/SBLR_DOMAIN_PAYLOADS.md`

@@ -246,7 +246,7 @@ $ cd build && cmake --build . --target scratchbird_sblr
    - Added xmin parameter to add_node()
    - Added comment explaining purpose
 
-3. **docs/planning/TASK_17_MGA_PHASE_3_IMPLEMENTATION_PLAN.md** (created)
+3. **docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_PHASE_3_IMPLEMENTATION_PLAN.md** (created)
    - Comprehensive implementation guide for Phase 3
    - 500+ lines of detailed instructions
 
@@ -274,7 +274,7 @@ $ cd build && cmake --build . --target scratchbird_sblr
 
 ### Documentation Files (2 files)
 
-1. **docs/planning/TASK_17_MGA_PHASE_3_IMPLEMENTATION_PLAN.md** (NEW, 500 lines)
+1. **docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_PHASE_3_IMPLEMENTATION_PLAN.md** (NEW, 500 lines)
    - Complete implementation guide for Phase 3
    - Detailed code examples
    - Testing strategy

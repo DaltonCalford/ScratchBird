@@ -212,7 +212,7 @@ case Opcode::EXT_ST_POINT: {
 - `src/CMakeLists.txt` (+6 lines) - Spatial library
 - `tests/CMakeLists.txt` (+18 lines) - wave1_tests executable
 - `README.md` (updated to Alpha 1.0.8)
-- `docs/planning/FEATURE_PARITY_ROADMAP.md` (Wave 1 progress)
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/FEATURE_PARITY_ROADMAP.md` (Wave 1 progress)
 - `docs/development/AI_PARALLEL_DEVELOPMENT_GUIDE.md` (created in planning)
 
 ---
@@ -265,8 +265,8 @@ These are excluded from build and don't affect Wave 1 work.
 ### Documentation
 - `/docs/status/WAVE_1_COMPLETION_REPORT.md` - Comprehensive Wave 1 analysis
 - `/docs/development/AI_PARALLEL_DEVELOPMENT_GUIDE.md` - Parallel development strategy
-- `/docs/planning/PHASE_2_KICKOFF.md` - Phase 2 strategic plan
-- `/docs/planning/FEATURE_PARITY_ROADMAP.md` - Updated with Wave 1 progress
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/PHASE_2_KICKOFF.md` - Phase 2 strategic plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/FEATURE_PARITY_ROADMAP.md` - Updated with Wave 1 progress
 
 ### Code References
 **Spatial Types**:
@@ -395,7 +395,7 @@ Task(
 
 Refer to:
 - `/docs/status/WAVE_1_COMPLETION_REPORT.md` - Detailed analysis
-- `/docs/planning/PHASE_2_KICKOFF.md` - Strategic context
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/PHASE_2_KICKOFF.md` - Strategic context
 - Existing test files for usage examples
 - Existing parser/executor code for patterns
 

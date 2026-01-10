@@ -486,7 +486,7 @@ for (const auto& key : keys) {
 - `docs/status/TOAST_MGA_COMPLIANCE_COMPLETE.md` (NEW, this file)
 
 **Planning Documents**:
-- `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (UPDATED continuously)
+- `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (UPDATED continuously)
 
 **Total Documentation**: ~3,000 lines
 
@@ -652,7 +652,7 @@ The TOAST MGA Compliance Fix Plan successfully transformed ScratchBird's TOAST i
 **MAJOR MILESTONE**: TOAST implementation is now fully compliant with Firebird MGA architecture. All critical and high-priority acceptance criteria met.
 
 **Reference Documents**:
-- Master Plan: `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+- Master Plan: `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
 - Specifications: `docs/specifications/TOAST_LOB_STORAGE.md`, `docs/specifications/HEAP_TOAST_INTEGRATION.md`
 - Phase Status: `docs/status/PHASE1_*.md` through `docs/status/PHASE5_*.md`
 - MGA Rules: `MGA_RULES.md`

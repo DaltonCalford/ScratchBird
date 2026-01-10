@@ -487,6 +487,14 @@ TEST_F(PostgreSQLParserTest, CreateTableWithTypes) {
     expectSuccess("CREATE TABLE test (a JSON, b JSONB, c BOOLEAN)");
 }
 
+TEST_F(PostgreSQLParserTest, CreateTableWithExpressionDefault) {
+    expectSuccess("CREATE TABLE test (a INT DEFAULT (1 + 2), b TEXT DEFAULT 'x')");
+}
+
+TEST_F(PostgreSQLParserTest, CreateTableWithGeneratedColumn) {
+    expectSuccess("CREATE TABLE test (a INT, b INT GENERATED ALWAYS AS (a + 1) STORED)");
+}
+
 TEST_F(PostgreSQLParserTest, CreateTableTemporary) {
     expectSuccess("CREATE TEMPORARY TABLE temp_users (id INT)");
     expectSuccess("CREATE TEMP TABLE temp_users (id INT)");
@@ -500,6 +508,10 @@ TEST_F(PostgreSQLParserTest, CreateIndex) {
     expectSuccess("CREATE INDEX idx_name ON users USING btree (name)");
     expectSuccess("CREATE INDEX idx_name ON users USING gin (tags)");
     expectSuccess("CREATE INDEX idx_name ON users USING gist (location)");
+}
+
+TEST_F(PostgreSQLParserTest, CreateIndexWithPredicate) {
+    expectSuccess("CREATE INDEX idx_active ON users (id) WHERE id > 0");
 }
 
 TEST_F(PostgreSQLParserTest, CreateView) {

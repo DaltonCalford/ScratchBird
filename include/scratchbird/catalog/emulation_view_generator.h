@@ -83,7 +83,7 @@ public:
     /**
      * Generate server schema for a new emulation server
      *
-     * Creates the schema path /remote/emulated/{protocol}/{server_name}/
+     * Creates the schema path /emulation/{protocol}/{server_name}/
      *
      * @param server_name Name of the emulation server
      * @param protocol Protocol type being emulated
@@ -93,9 +93,9 @@ public:
     Status generateServerSchema(const std::string& server_name,
                                 ProtocolType protocol,
                                 ErrorContext* ctx = nullptr) {
-        // Build schema path: remote.emulated.{protocol}.{server}
+        // Build schema path: emulation.{protocol}.{server}
         std::string protocolName = protocolTypeToString(protocol);
-        std::string schemaPath = "remote.emulated." + protocolName + "." + server_name;
+        std::string schemaPath = "emulation." + protocolName + "." + server_name;
         ID schema_id;
         return catalog_->createSchemaPath(schemaPath, CatalogManager::SchemaType::REMOTE_EMULATED,
                                           schema_id, ctx);
@@ -107,20 +107,19 @@ public:
      * Creates the database schema and all protocol-specific system views
      * as virtual tables.
      *
+     * @param schema_path Full emulated database schema path
      * @param server_name Name of the emulation server
      * @param database_name Name of the database to emulate
      * @param protocol Protocol type being emulated
      * @param ctx Error context
      * @return Status::OK on success
      */
-    Status generateEmulatedViews(const std::string& server_name,
+    Status generateEmulatedViews(const std::string& schema_path,
+                                 const std::string& server_name,
                                  const std::string& database_name,
                                  ProtocolType protocol,
                                  ErrorContext* ctx = nullptr) {
-        // Build database schema path
-        std::string protocolName = protocolTypeToString(protocol);
-        std::string schemaPath = "remote.emulated." + protocolName + "." +
-                                  server_name + "." + database_name;
+        std::string schemaPath = schema_path;
 
         ID schema_id;
         Status s = catalog_->createSchemaPath(schemaPath, CatalogManager::SchemaType::REMOTE_EMULATED,
@@ -147,19 +146,19 @@ public:
     /**
      * Drop all emulated views for a database
      *
+     * @param schema_path Full emulated database schema path
      * @param server_name Name of the emulation server
      * @param database_name Name of the database
      * @param protocol Protocol type
      * @param ctx Error context
      * @return Status::OK on success
      */
-    Status dropEmulatedViews(const std::string& server_name,
+    Status dropEmulatedViews(const std::string& schema_path,
+                             const std::string& server_name,
                              const std::string& database_name,
                              ProtocolType protocol,
                              ErrorContext* ctx = nullptr) {
-        std::string protocolName = protocolTypeToString(protocol);
-        std::string schemaPath = "remote.emulated." + protocolName + "." +
-                                  server_name + "." + database_name;
+        std::string schemaPath = schema_path;
 
         // Get schema info
         CatalogManager::SchemaInfo schemaInfo;

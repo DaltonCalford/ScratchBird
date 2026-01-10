@@ -41,7 +41,7 @@ New directories created:
 - Test strategies (CRITICAL_FIXES_TEST_PLAN.md, etc.)
 
 **From `project/plan/` (7 files):**
-- IMPLEMENTATION_PLAN.md → `docs/planning/ALPHA_IMPLEMENTATION_PLAN.md`
+- IMPLEMENTATION_PLAN.md → `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/ALPHA_IMPLEMENTATION_PLAN.md`
 - Remediation plans (remediation_plan_2025_09_15.md, etc.)
 - UUID migration plans (column_uuid_migration_plan.md, etc.)
 - Code quality plans (code_quality_remediation_plan_2025_09_16.md)
@@ -126,7 +126,7 @@ The `project/` directory now contains:
 All files successfully copied:
 - 80+ markdown files from `project/` to `docs/archive/`
 - All subdirectories preserved (implementation/, testing/, archive/)
-- IMPLEMENTATION_PLAN.md copied to docs/planning/ as ALPHA_IMPLEMENTATION_PLAN.md
+- IMPLEMENTATION_PLAN.md copied to docs/archive/2026-01-09/planning/ as ALPHA_IMPLEMENTATION_PLAN.md
 - PROCESS_AND_AGENTS.md copied to docs/development/
 
 ## Next Steps
@@ -142,7 +142,7 @@ All files successfully copied:
 - Main index: `docs/INDEX.md`
 - Archive overview: `docs/archive/README.md`
 - Current status: `docs/status/OVERALL_PROJECT_STATUS.md`
-- Alpha plan: `docs/planning/ALPHA_IMPLEMENTATION_PLAN.md`
+- Alpha plan: `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/ALPHA_IMPLEMENTATION_PLAN.md`
 
 ---
 

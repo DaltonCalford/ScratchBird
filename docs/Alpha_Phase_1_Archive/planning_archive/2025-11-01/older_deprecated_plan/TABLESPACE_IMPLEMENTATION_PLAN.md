@@ -1284,7 +1284,7 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - ✅ Added `Status::CANCELLED` status code (3005)
   - ✅ Updated executor to pass nullptr for progress_callback
   - ✅ STUB simulation demonstrates progress tracking with 100 pages
-  - ✅ See `docs/planning/PHASE4_TASK4_1_3_PROGRESS_TRACKING.md` for full details
+  - ✅ See `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/PHASE4_TASK4_1_3_PROGRESS_TRACKING.md` for full details
   - **Actual Time**: 2 hours (estimated 3-4 hours)
 
 - [x] **4.1.4**: Handle large tables efficiently ✅ COMPLETE (2025-10-21)
@@ -1297,7 +1297,7 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - ✅ Batch processing loop with memory allocation/deallocation simulation
   - ✅ Progress callback integration: Invoke every 100 pages (PROGRESS_CALLBACK_INTERVAL_PAGES)
   - ✅ Detailed logging: Batch number, pages processed, memory usage per batch
-  - ✅ See `docs/planning/PHASE4_TASK4_1_4_BATCH_PROCESSING.md` for full details
+  - ✅ See `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/PHASE4_TASK4_1_4_BATCH_PROCESSING.md` for full details
   - **Actual Time**: 1.5 hours (estimated 2-3 hours)
 
 - [x] **4.1.5**: Update index TIDs correctly ✅ COMPLETE (2025-10-21)
@@ -1315,7 +1315,7 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - ✅ Integrated into `moveTableToTablespace()` with error handling
   - ✅ Rollback support on index update failure
   - ✅ Detailed logging per index type
-  - ✅ See `docs/planning/PHASE4_TASK4_1_5_INDEX_TID_UPDATE.md` for full details
+  - ✅ See `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/PHASE4_TASK4_1_5_INDEX_TID_UPDATE.md` for full details
   - **Actual Time**: 2.5 hours (estimated 3-4 hours)
 
 - [x] **4.1.6**: Add query execution handler ✅ COMPLETE (2025-10-21)

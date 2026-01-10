@@ -296,8 +296,8 @@ The PROJECT_CONTEXT.md file and several planning documents contain claims that d
 **Verification**: ✅ **CONFIRMED**
 
 **Evidence**:
-- File: `docs/planning/SPRINT3_ONLINE_MIGRATION_ARCHITECTURE.md` exists
-- File: `docs/planning/SPRINT3_SUMMARY.md` exists (read in full during audit)
+- File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/SPRINT3_ONLINE_MIGRATION_ARCHITECTURE.md` exists
+- File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/SPRINT3_SUMMARY.md` exists (read in full during audit)
 - Status in document: "✅ COMPLETE"
 
 **Note**: This is a design/documentation sprint, not implementation. No code changes expected.
@@ -315,8 +315,8 @@ The PROJECT_CONTEXT.md file and several planning documents contain claims that d
 **Verification**: ⚠️ **CONFLICTING INFORMATION**
 
 **What Planning Documents Say**:
-- File: `docs/planning/SPRINT4_SUMMARY.md:8` - "**Current Status**: PLAN READY, IMPLEMENTATION PENDING"
-- File: `docs/planning/SPRINT4_SUMMARY.md:296` - "**Implementation Status**: ⏸️ **NOT STARTED**"
+- File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT4_SUMMARY.md:8` - "**Current Status**: PLAN READY, IMPLEMENTATION PENDING"
+- File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT4_SUMMARY.md:296` - "**Implementation Status**: ⏸️ **NOT STARTED**"
 
 **What Code Verification Shows**:
 
@@ -366,8 +366,8 @@ The PROJECT_CONTEXT.md file and several planning documents contain claims that d
 **Verification**: ❌ **CONTRADICTS CODE**
 
 **What Planning Documents Say**:
-- File: `docs/planning/SPRINT5_SUMMARY.md:8` - "**Current Status**: PLAN READY, IMPLEMENTATION PENDING"
-- File: `docs/planning/SPRINT5_SUMMARY.md:456` - "**Implementation Status**: ⏸️ **NOT STARTED**"
+- File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT5_SUMMARY.md:8` - "**Current Status**: PLAN READY, IMPLEMENTATION PENDING"
+- File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT5_SUMMARY.md:456` - "**Implementation Status**: ⏸️ **NOT STARTED**"
 
 **What Code Verification Shows**:
 - File: `include/scratchbird/core/migration_worker.h` - ❌ **DOES NOT EXIST**
@@ -437,7 +437,7 @@ Based on document review and code verification, here is the recommended organiza
 | TABLESPACE_IMPLEMENTATION_PLAN.md | ⚠️ PARTIAL | Plan reference |
 | TABLESPACE_ROADMAP_SUMMARY.md | ⚠️ PARTIAL | Summary reference |
 
-### Documents to MOVE to /docs/planning/implemented
+### Documents to MOVE to /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented
 
 | Document | Reason |
 |----------|--------|

@@ -237,7 +237,7 @@ for (uint64_t tid : tuple_ids) {
   - Error handling, performance considerations, testing requirements
 
 - [x] **2.1.3**: Plan integration with existing sweep (30 min) - ✅ **COMPLETE**
-  - File: `/docs/planning/SWEEP_INTEGRATION_PLAN.md` (created, ~500 lines)
+  - File: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SWEEP_INTEGRATION_PLAN.md` (created, ~500 lines)
   - Reviewed existing sweep logic in `garbage_collector.cpp::cleanPage()`
   - Identified integration points:
     * Add `HeapPage::collectDeadTuples()` method
@@ -255,7 +255,7 @@ for (uint64_t tid : tuple_ids) {
 **Files Created**:
 - `include/scratchbird/core/index_gc_interface.h` (~115 lines)
 - `docs/specifications/INDEX_GC_PROTOCOL.md` (~600 lines)
-- `docs/planning/SWEEP_INTEGRATION_PLAN.md` (~500 lines)
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SWEEP_INTEGRATION_PLAN.md` (~500 lines)
 
 ---
 

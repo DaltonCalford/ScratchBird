@@ -16,7 +16,7 @@
 - Will survive memory compaction
 
 ### 2. Implementation Plan ✅
-**Created**: `docs/planning/CATALOG_CORRECTION_IMPLEMENTATION_PLAN.md`
+**Created**: `docs/Alpha_Phase_1_Archive/planning_archive/CATALOG_CORRECTION_IMPLEMENTATION_PLAN.md`
 - Detailed 9-week implementation plan (270-370 hours)
 - 6 phases with specific tasks and time estimates
 - Week-by-week schedule
@@ -162,7 +162,7 @@ Before continuing with Phase 1.1 code updates, we should decide:
 ## Files Modified This Session
 
 1. ✅ `docs/development/CATALOG_DESIGN_REQUIREMENTS.md` (NEW)
-2. ✅ `docs/planning/CATALOG_CORRECTION_IMPLEMENTATION_PLAN.md` (NEW)
+2. ✅ `docs/Alpha_Phase_1_Archive/planning_archive/CATALOG_CORRECTION_IMPLEMENTATION_PLAN.md` (NEW)
 3. ✅ `src/core/catalog_manager.cpp` (MODIFIED - SchemaRecord structure)
 4. ✅ `include/scratchbird/core/catalog_manager.h` (MODIFIED - SchemaInfo structure)
 5. ✅ `docs/status/CATALOG_CORRECTION_SESSION_2025-11-08.md` (NEW - this file)

@@ -661,7 +661,7 @@ SELECT * FROM mixed WHERE data IS INT;
 
 ## RELATED DOCUMENTATION
 
-- `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Overall plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Overall plan
 - `/include/scratchbird/core/typed_value.h` - Type system API
 - `/src/core/domain_manager.cpp` - Implementation file
 - `/src/sblr/expression_evaluator.cpp` - Expression evaluation

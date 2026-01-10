@@ -23,7 +23,7 @@ Successfully corrected the faulty INDEX_MGA_COMPLIANCE_ANALYSIS.md and INDEX_MGA
   - Clarified that indexes do NOT need xmin/xmax fields in entries
   - Explained that visibility is checked via heap tuple, not index entry
 
-### 2. `/docs/planning/INDEX_MGA_IMPLEMENTATION_PLAN.md` (v2.0)
+### 2. `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/INDEX_MGA_IMPLEMENTATION_PLAN.md` (v2.0)
 - **Issue**: Original plan included unnecessary tasks based on PostgreSQL model
 - **Correction**: Simplified to match actual Firebird MGA requirements
 - **Key Changes**:

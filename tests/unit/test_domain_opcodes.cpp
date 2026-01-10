@@ -38,9 +38,17 @@ void appendInt32(std::vector<uint8_t>& out, uint32_t value)
     scratchbird::sblr::writeInt32(&out[offset], value);
 }
 
+void appendUVarint(std::vector<uint8_t>& out, uint64_t value)
+{
+    size_t offset = out.size();
+    out.resize(offset + 10);
+    size_t count = scratchbird::sblr::writeUVarint(&out[offset], value);
+    out.resize(offset + count);
+}
+
 void appendString(std::vector<uint8_t>& out, const std::string& value)
 {
-    appendInt32(out, static_cast<uint32_t>(value.size()));
+    appendUVarint(out, static_cast<uint64_t>(value.size()));
     out.insert(out.end(), value.begin(), value.end());
 }
 
@@ -80,12 +88,14 @@ std::vector<uint8_t> buildSelectBytecode(
     appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
     appendByte(bytecode, SBLR_VERSION);
     appendByte(bytecode, static_cast<uint8_t>(Opcode::SELECT));
+    appendByte(bytecode, 0); // flags
     appendByte(bytecode, static_cast<uint8_t>(Opcode::BEGIN_LIST));
-    appendInt32(bytecode, select_count);
+    appendUVarint(bytecode, select_count);
     emit(bytecode);
     appendByte(bytecode, static_cast<uint8_t>(Opcode::END_LIST));
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::TABLE_REF));
-    appendString(bytecode, "");
+    appendByte(bytecode, static_cast<uint8_t>(Opcode::BEGIN_LIST));
+    appendUVarint(bytecode, 0);
+    appendByte(bytecode, static_cast<uint8_t>(Opcode::END_LIST));
     return bytecode;
 }
 
@@ -248,9 +258,13 @@ TEST_F(DomainOpcodeTest, CheckDomainConstraintPasses)
 {
     auto bytecode = buildSelectBytecode(2, [&](std::vector<uint8_t>& out) {
         appendLiteralString(out, "ok");
+        appendString(out, "");
+
+        appendLiteralString(out, "ok");
         appendExtendedOpcode(out, ExtendedOpcode::EXT_CHECK_DOMAIN_CONSTRAINT);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -265,9 +279,13 @@ TEST_F(DomainOpcodeTest, CheckDomainConstraintFailsOnNull)
 {
     auto bytecode = buildSelectBytecode(2, [&](std::vector<uint8_t>& out) {
         appendLiteralNull(out);
+        appendString(out, "");
+
+        appendLiteralNull(out);
         appendExtendedOpcode(out, ExtendedOpcode::EXT_CHECK_DOMAIN_CONSTRAINT);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -286,6 +304,7 @@ TEST_F(DomainOpcodeTest, ApplyDomainMasking)
         appendId(out, domain_id_);
         appendId(out, user_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -301,6 +320,7 @@ TEST_F(DomainOpcodeTest, CheckDomainPrivilege)
         appendExtendedOpcode(out, ExtendedOpcode::EXT_CHECK_DOMAIN_PRIVILEGE);
         appendId(out, domain_id_);
         appendId(out, user_id_);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -331,6 +351,7 @@ TEST_F(DomainOpcodeTest, EncryptAndDecryptDomainValue)
         appendExtendedOpcode(out, ExtendedOpcode::EXT_ENCRYPT_DOMAIN_VALUE);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
 
         appendLiteralString(out, "secret");
         appendExtendedOpcode(out, ExtendedOpcode::EXT_ENCRYPT_DOMAIN_VALUE);
@@ -339,6 +360,7 @@ TEST_F(DomainOpcodeTest, EncryptAndDecryptDomainValue)
         appendExtendedOpcode(out, ExtendedOpcode::EXT_DECRYPT_DOMAIN_VALUE);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -356,6 +378,7 @@ TEST_F(DomainOpcodeTest, NormalizeDomainValue)
         appendExtendedOpcode(out, ExtendedOpcode::EXT_NORMALIZE_DOMAIN_VALUE);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -375,9 +398,13 @@ TEST_F(DomainOpcodeTest, ValidateDomainValueFalse)
 
     auto bytecode = buildSelectBytecode(2, [&](std::vector<uint8_t>& out) {
         appendLiteralString(out, "value");
+        appendString(out, "");
+
+        appendLiteralString(out, "value");
         appendExtendedOpcode(out, ExtendedOpcode::EXT_VALIDATE_DOMAIN_VALUE);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -397,9 +424,13 @@ TEST_F(DomainOpcodeTest, ValidateDomainValueTrue)
 
     auto bytecode = buildSelectBytecode(2, [&](std::vector<uint8_t>& out) {
         appendLiteralString(out, "value");
+        appendString(out, "");
+
+        appendLiteralString(out, "value");
         appendExtendedOpcode(out, ExtendedOpcode::EXT_VALIDATE_DOMAIN_VALUE);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -424,6 +455,7 @@ TEST_F(DomainOpcodeTest, ApplyQualityPipeline)
         appendExtendedOpcode(out, ExtendedOpcode::EXT_APPLY_QUALITY_PIPELINE);
         appendId(out, domain_id_);
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -445,12 +477,16 @@ TEST_F(DomainOpcodeTest, CheckGlobalUniqueness)
 
     auto bytecode = buildSelectBytecode(2, [&](std::vector<uint8_t>& out) {
         appendLiteralString(out, "dup");
+        appendString(out, "");
+
+        appendLiteralString(out, "dup");
         appendExtendedOpcode(out, ExtendedOpcode::EXT_CHECK_GLOBAL_UNIQUENESS);
         appendId(out, domain_id_);
         appendId(out, table_id_);
         appendId(out, column_id_);
         appendId(out, generateUuidV7());
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);
@@ -461,12 +497,16 @@ TEST_F(DomainOpcodeTest, CheckGlobalUniqueness)
 
     auto unique_bytecode = buildSelectBytecode(2, [&](std::vector<uint8_t>& out) {
         appendLiteralString(out, "unique");
+        appendString(out, "");
+
+        appendLiteralString(out, "unique");
         appendExtendedOpcode(out, ExtendedOpcode::EXT_CHECK_GLOBAL_UNIQUENESS);
         appendId(out, domain_id_);
         appendId(out, table_id_);
         appendId(out, column_id_);
         appendId(out, generateUuidV7());
         appendInt16(out, 0);
+        appendString(out, "");
     });
 
     result = executeBytecode(unique_bytecode);
@@ -489,6 +529,7 @@ TEST_F(DomainOpcodeTest, AuditDomainAccessLogged)
         appendId(out, user_id_);
         appendId(out, table_id_);
         appendId(out, column_id_);
+        appendString(out, "");
     });
 
     auto result = executeBytecode(bytecode);

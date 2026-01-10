@@ -183,6 +183,6 @@ ctest -N | tail -30
 
 ## Related Documentation
 
-- `/docs/planning/CATALOG_CLEANUP_OVERVIEW.md` - Catalog system plans
+- `/docs/archive/2026-01-04/planning/old_Plans/archive/CATALOG_CLEANUP_OVERVIEW.md` - Catalog system plans
 - `/MGA_RULES.md` - Transaction manager rules
 - `/PROJECT_CONTEXT.md` - Overall project status

@@ -1366,7 +1366,7 @@ ScratchBird is an ambitious database engine project aiming to create a universal
 
 **MUST READ (Priority 1):**
 1. `/docs/status/OVERALL_PROJECT_STATUS.md` - Current state
-2. `/docs/planning/ALPHA_IMPLEMENTATION_PLAN.md` - Roadmap
+2. `/docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/ALPHA_IMPLEMENTATION_PLAN.md` - Roadmap
 3. `/docs/issues/DEFICIENCY_ANALYSIS_AND_ACTION_PLAN.md` - Known issues
 4. `/docs/audits/CATALOG_SYSTEM_AUDIT_2025_10_03.md` - Catalog gaps
 5. `/docs/design/ARCHITECTURE_CLARIFICATION.md` - MGA vs WAL

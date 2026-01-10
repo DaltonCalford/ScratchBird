@@ -727,12 +727,20 @@ struct ResolvedDropSchemaStmt : public ResolvedStatement {
     std::vector<SchemaPath> schema_paths;
 };
 
+struct ResolvedDatabaseOption {
+    std::string key;
+    std::string value;
+};
+
 /**
  * Resolved CREATE DATABASE statement
  */
 struct ResolvedCreateDatabaseStmt : public ResolvedStatement {
     bool if_not_exists = false;
     SchemaPath database_path;
+    std::string source_spec;
+    std::vector<ResolvedDatabaseOption> options;
+    std::vector<std::string> aliases;
 };
 
 /**
@@ -817,6 +825,7 @@ struct ResolvedAlterDatabaseStmt : public ResolvedStatement {
     SchemaPath database_path;
     StringPool::StringId new_name = StringPool::INVALID_ID;
     StringPool::StringId owner = StringPool::INVALID_ID;
+    std::string alias;
 };
 
 /**

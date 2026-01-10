@@ -772,7 +772,7 @@ Implement segment chain management, compaction, and garbage collection.
 
 **Files**:
 - Update `/docs/status/COLUMNSTORE_COMPLETION_REPORT_2025-11-03.md`
-- Update `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` (mark complete)
+- Update `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` (mark complete)
 
 **Acceptance Criteria**:
 - [ ] Completion report updated with actual implementation
@@ -896,7 +896,7 @@ Implement segment chain management, compaction, and garbage collection.
 - `/MGA_RULES.md` (Firebird MGA rules)
 
 **Master Plan**:
-- `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
 
 **Existing Code**:
 - `include/scratchbird/core/columnstore.h` (page format, API)

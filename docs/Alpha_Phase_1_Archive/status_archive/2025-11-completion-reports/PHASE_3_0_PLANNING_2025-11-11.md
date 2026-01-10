@@ -30,7 +30,7 @@ Phase 3.0 consists of 6 small tasks that complete the Security Phase 2 implement
 - `src/sblr/executor.cpp` (lines 12456-12467, 12519-12520)
 - `CMakeLists.txt` (add bcrypt dependency)
 
-**Implementation**: See `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1228-1273`
+**Implementation**: See `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1228-1273`
 
 ---
 
@@ -44,7 +44,7 @@ Phase 3.0 consists of 6 small tasks that complete the Security Phase 2 implement
 
 **Pattern**: See `docs/archive/phase1_standalone_tests/test_aggregation_execution.cpp`
 
-**Implementation**: See `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1276-1306`
+**Implementation**: See `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1276-1306`
 
 ---
 
@@ -58,7 +58,7 @@ Phase 3.0 consists of 6 small tasks that complete the Security Phase 2 implement
 - `src/core/catalog_manager.cpp` (UserRecord update)
 - `src/sblr/executor.cpp` (line 12523-12525)
 
-**Implementation**: See `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1309-1347`
+**Implementation**: See `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1309-1347`
 
 ---
 
@@ -70,7 +70,7 @@ Phase 3.0 consists of 6 small tasks that complete the Security Phase 2 implement
 **Files**:
 - `src/sblr/executor.cpp` (lines 13179-13185)
 
-**Implementation**: Full code provided in `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1350-1440`
+**Implementation**: Full code provided in `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1350-1440`
 
 **Behavior**:
 1. Check user's direct permissions
@@ -89,7 +89,7 @@ Phase 3.0 consists of 6 small tasks that complete the Security Phase 2 implement
 - `src/core/catalog_manager.cpp` (deleteUser, deleteRole, deleteGroup)
 - `src/sblr/executor.cpp` (executeDropUser, executeDropRole, executeDropGroup)
 
-**Implementation**: Full code provided in `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1443-1507`
+**Implementation**: Full code provided in `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md:1443-1507`
 
 **Behavior**:
 - CASCADE: Remove all dependencies (roles, groups, permissions, grants)
@@ -216,7 +216,7 @@ Once Phase 3.0 is complete, the security system will be production-ready for bas
 
 ## References
 
-- **Implementation Plan**: `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md` (lines 1221-1540)
+- **Implementation Plan**: `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md` (lines 1221-1540)
 - **Specification**: `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - **Phase 2 Complete**: `/docs/status/SECURITY_PHASE2_COMPLETE_2025-11-11.md`
 - **Project Context**: `/PROJECT_CONTEXT.md` (updated Nov 11, 2025)

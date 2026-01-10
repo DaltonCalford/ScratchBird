@@ -483,7 +483,7 @@ While comprehensive test suites have been created, manual testing is still neede
 - `docs/status/PHASE5_TESTING_VALIDATION_COMPLETE.md` (NEW, this file)
 
 **Planning Documentation**:
-- `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (UPDATED, Phase 5 marked complete)
+- `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (UPDATED, Phase 5 marked complete)
 
 ---
 

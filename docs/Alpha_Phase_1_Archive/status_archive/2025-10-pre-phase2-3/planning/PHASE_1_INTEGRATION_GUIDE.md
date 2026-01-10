@@ -753,7 +753,7 @@ git add include/scratchbird/core/logger.h
 git add src/core/logger.cpp
 git add include/scratchbird/core/utf8_utils.h
 git add src/core/utf8_utils.cpp
-git add docs/planning/PHASE_1_INTEGRATION_GUIDE.md
+git add docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_1_INTEGRATION_GUIDE.md
 
 # Stage any CMakeLists.txt changes
 git add CMakeLists.txt src/core/CMakeLists.txt
@@ -795,7 +795,7 @@ New Files:
   * Identifier validation (128 characters per SQL standard)
   * Code point encoding/decoding
 
-- docs/planning/PHASE_1_INTEGRATION_GUIDE.md: Integration guide
+- docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_1_INTEGRATION_GUIDE.md: Integration guide
   * Build system integration steps
   * Migration guides (fprintf -> LOG_*, magic numbers -> Config)
   * Testing instructions and examples
@@ -899,7 +899,7 @@ For questions or issues during integration:
 1. Review this integration guide
 2. Check implementation files for inline documentation
 3. Refer to `docs/development/CODING_STANDARDS.md`
-4. Refer to `docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md`
+4. Refer to `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md`
 
 ---
 

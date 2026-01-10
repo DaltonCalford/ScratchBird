@@ -18,6 +18,7 @@
 #include <sstream>  // Phase 1: Dependency error messages
 #include <cctype>
 #include <array>
+#include <limits>
 #include "scratchbird/sblr/opcodes.h"
 #include <map>      // Phase 1: Dependency grouping
 #include <chrono>  // Phase 4 Task 4.1.3: Progress tracking
@@ -1873,7 +1874,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
         security_policy_epoch_ = epoch_record.global_epoch;
 
-        // Create default schema hierarchy (18 schemas)
+        // Create default schema hierarchy (22 schemas)
         // Schema tree structure:
         // root (top-level)
         // ├── sys (system catalogs)
@@ -1887,16 +1888,23 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // ├── app (application data)
         // ├── users (user home directories - DIFFERENT from sys.sec.users)
         // ├── remote (remote/federated objects)
-        // │   └── emulated (database emulation layer)
-        // │       ├── mysql (MySQL compatibility)
-        // │       ├── postgresql (PostgreSQL compatibility)
-        // │       ├── mssql (SQL Server compatibility)
-        // │       └── firebird (Firebird compatibility)
+        // ├── emulation (emulated database schema roots)
+        // │   ├── mysql (MySQL compatibility)
+        // │   ├── postgresql (PostgreSQL compatibility)
+        // │   ├── mssql (SQL Server compatibility)
+        // │   └── firebird (Firebird compatibility)
+        // ├── emulated (alias schema roots)
+        // │   ├── mysql (MySQL aliases)
+        // │   ├── postgresql (PostgreSQL aliases)
+        // │   ├── mssql (SQL Server aliases)
+        // │   └── firebird (Firebird aliases)
         // └── public (default user schema)
 
         ID root_id, sys_id, sec_id, srv_id, users_sec_id, roles_id, groups_id;
         ID mon_id, agents_id, app_id, users_home_id, remote_id, public_id;
-        ID emulated_id, mysql_id, postgresql_id, mssql_id, firebird_id;
+        ID emulation_id, emulated_id;
+        ID mysql_id, postgresql_id, mssql_id, firebird_id;
+        ID alias_mysql_id, alias_postgresql_id, alias_mssql_id, alias_firebird_id;
 
         // Level 0: root
         status = createSchemaInternal("root", "system", root_id, ID(), ctx, db_->uuid());
@@ -1913,6 +1921,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         if (status != Status::OK) return status;
 
         status = createSchemaInternal("remote", "system", remote_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("emulation", "system", emulation_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("emulated", "system", emulated_id, root_id, ctx);
         if (status != Status::OK) return status;
 
         status = createSchemaInternal("public", "system", public_id, root_id, ctx);
@@ -1941,23 +1955,33 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = createSchemaInternal("groups", "system", groups_id, sec_id, ctx);
         if (status != Status::OK) return status;
 
-        // Level 2: remote.emulated.* schemas
-        status = createSchemaInternal("emulated", "system", emulated_id, remote_id, ctx);
+        // Level 2: emulation.* schemas
+        status = createSchemaInternal("mysql", "system", mysql_id, emulation_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("mysql", "system", mysql_id, emulated_id, ctx);
+        status = createSchemaInternal("postgresql", "system", postgresql_id, emulation_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("postgresql", "system", postgresql_id, emulated_id, ctx);
+        status = createSchemaInternal("mssql", "system", mssql_id, emulation_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("mssql", "system", mssql_id, emulated_id, ctx);
+        status = createSchemaInternal("firebird", "system", firebird_id, emulation_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("firebird", "system", firebird_id, emulated_id, ctx);
+        // Level 2: emulated.* alias schemas
+        status = createSchemaInternal("mysql", "system", alias_mysql_id, emulated_id, ctx);
         if (status != Status::OK) return status;
 
-        DEBUG_LOG_DB("System catalog initialized with 18 schemas in hierarchy");
+        status = createSchemaInternal("postgresql", "system", alias_postgresql_id, emulated_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("mssql", "system", alias_mssql_id, emulated_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("firebird", "system", alias_firebird_id, emulated_id, ctx);
+        if (status != Status::OK) return status;
+
+        DEBUG_LOG_DB("System catalog initialized with 22 schemas in hierarchy");
         DEBUG_LOG_DB("  schemas page=" << schemas_table_page_
                      << ", tables page=" << tables_table_page_
                      << ", columns page=" << columns_table_page_);
@@ -4761,14 +4785,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         return Status::OK;
     }
 
-    // Phase A CRUD: Drop schema (RESTRICT-only policy)
     auto CatalogManager::dropSchema(const ID &schema_id, bool cascade, ErrorContext *ctx) -> Status
     {
-        (void)cascade;  // RESTRICT-only policy
-
         SchemaInfo schema_info;
-        std::unordered_set<ID, IDHash> table_ids;
-
+        std::vector<SchemaInfo> schema_snapshot;
         {
             std::lock_guard<CatalogMutex> lock(mutex_);
             auto schema_it = schema_cache_.find(schema_id);
@@ -4778,153 +4798,659 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 return Status::NOT_FOUND;
             }
             schema_info = schema_it->second;
-
-            for (const auto &[id, table] : table_cache_)
+            schema_snapshot.reserve(schema_cache_.size());
+            for (const auto& [id, info] : schema_cache_)
             {
-                if (table.schema_id == schema_id)
+                schema_snapshot.push_back(info);
+            }
+        }
+
+        if (!cascade)
+        {
+            std::unordered_set<ID, IDHash> table_ids;
+            {
+                std::lock_guard<CatalogMutex> lock(mutex_);
+                for (const auto &[id, table] : table_cache_)
                 {
-                    table_ids.insert(id);
+                    if (table.schema_id == schema_id)
+                    {
+                        table_ids.insert(id);
+                    }
+                }
+            }
+
+            struct SchemaCounts {
+                size_t tables = 0;
+                size_t views = 0;
+                size_t sequences = 0;
+                size_t domains = 0;
+                size_t triggers = 0;
+                size_t indexes = 0;
+                size_t packages = 0;
+                size_t udrs = 0;
+                size_t exceptions = 0;
+                size_t functions = 0;
+                size_t procedures = 0;
+                size_t synonyms = 0;
+                size_t foreign_tables = 0;
+                size_t child_schemas = 0;
+                size_t total() const {
+                    return tables + views + sequences + domains + triggers + indexes +
+                           packages + udrs + exceptions + functions + procedures +
+                           synonyms + foreign_tables + child_schemas;
+                }
+            } counts;
+
+            {
+                std::lock_guard<CatalogMutex> lock(mutex_);
+                for (const auto &[id, table] : table_cache_) {
+                    if (table.schema_id == schema_id) {
+                        counts.tables++;
+                    }
+                }
+                for (const auto &[id, schema] : schema_cache_) {
+                    if (schema.parent_schema_id == schema_id && id != schema_id) {
+                        counts.child_schemas++;
+                    }
+                }
+                for (const auto &[id, index] : index_cache_) {
+                    if (table_ids.find(index.table_id) != table_ids.end()) {
+                        counts.indexes++;
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(view_cache_mutex_);
+                for (const auto &[id, view] : view_cache_) {
+                    if (view.schema_id == schema_id) {
+                        counts.views++;
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+                for (const auto& [seq_id, state] : sequence_cache_) {
+                    if (state && state->schema_id == schema_id) {
+                        counts.sequences++;
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(trigger_mutex_);
+                for (const auto& [id, trig] : trigger_cache_) {
+                    if (table_ids.find(trig.table_id) != table_ids.end()) {
+                        counts.triggers++;
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(psql_mutex_);
+                for (const auto& [name, func] : functions_) {
+                    if (func.schema_id == schema_id) {
+                        counts.functions++;
+                    }
+                }
+                for (const auto& [name, proc] : procedures_) {
+                    if (proc.schema_id == schema_id) {
+                        counts.procedures++;
+                    }
+                }
+            }
+
+            std::vector<PackageInfo> packages;
+            if (listPackages(schema_id, packages, ctx) == Status::OK) {
+                counts.packages = packages.size();
+            }
+
+            std::vector<UDRInfo> udrs;
+            if (listUDRs(schema_id, udrs, ctx) == Status::OK) {
+                counts.udrs = udrs.size();
+            }
+
+            std::vector<ExceptionInfo> exceptions;
+            if (listExceptions(schema_id, exceptions, ctx) == Status::OK) {
+                counts.exceptions = exceptions.size();
+            }
+
+            std::vector<SynonymInfo> synonyms;
+            if (listSynonyms(schema_id, synonyms, ctx) == Status::OK) {
+                counts.synonyms = synonyms.size();
+            }
+
+            std::vector<ForeignTableInfo> foreign_tables;
+            if (listForeignTables(schema_id, foreign_tables, ctx) == Status::OK) {
+                counts.foreign_tables = foreign_tables.size();
+            }
+
+            auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+            if (domain_mgr) {
+                std::vector<DomainInfo> domains;
+                if (domain_mgr->listDomains(schema_id, domains, ctx) == Status::OK) {
+                    counts.domains = domains.size();
+                }
+            }
+
+            if (counts.total() > 0)
+            {
+                std::ostringstream msg;
+                msg << "Cannot drop schema \"" << schema_info.schema_name
+                    << "\" because it contains objects\n";
+                msg << "DETAIL:\n";
+                if (counts.tables > 0) msg << "  Tables: " << counts.tables << "\n";
+                if (counts.views > 0) msg << "  Views: " << counts.views << "\n";
+                if (counts.functions > 0) msg << "  Functions: " << counts.functions << "\n";
+                if (counts.procedures > 0) msg << "  Procedures: " << counts.procedures << "\n";
+                if (counts.sequences > 0) msg << "  Sequences: " << counts.sequences << "\n";
+                if (counts.domains > 0) msg << "  Domains: " << counts.domains << "\n";
+                if (counts.triggers > 0) msg << "  Triggers: " << counts.triggers << "\n";
+                if (counts.indexes > 0) msg << "  Indexes: " << counts.indexes << "\n";
+                if (counts.packages > 0) msg << "  Packages: " << counts.packages << "\n";
+                if (counts.udrs > 0) msg << "  UDRs: " << counts.udrs << "\n";
+                if (counts.exceptions > 0) msg << "  Exceptions: " << counts.exceptions << "\n";
+                if (counts.synonyms > 0) msg << "  Synonyms: " << counts.synonyms << "\n";
+                if (counts.foreign_tables > 0) msg << "  Foreign Tables: " << counts.foreign_tables << "\n";
+                if (counts.child_schemas > 0) msg << "  Child Schemas: " << counts.child_schemas << "\n";
+
+                msg << "  Total: " << counts.total() << " objects\n";
+                msg << "HINT: Drop or move all objects from schema first.\n";
+                msg << "  To see list: SELECT object_name, object_type FROM SYS.OBJECTS ";
+                msg << "WHERE schema_name = '" << schema_info.schema_name << "';";
+
+                SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, msg.str().c_str());
+                return Status::CONSTRAINT_VIOLATION;
+            }
+
+            {
+                std::lock_guard<CatalogMutex> lock(mutex_);
+                Status status = deleteSchemaRecord(schema_id, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                schema_cache_.erase(schema_id);
+                schema_count_--;
+                status = writeCatalogRoot(ctx);
+                if (status == Status::OK)
+                {
+                    db_->sync(ctx);
+                }
+            }
+
+            return Status::OK;
+        }
+
+        std::unordered_set<ID, IDHash> schema_set;
+        std::vector<ID> pending{schema_id};
+        while (!pending.empty())
+        {
+            ID current = pending.back();
+            pending.pop_back();
+            if (!schema_set.insert(current).second)
+            {
+                continue;
+            }
+
+            for (const auto& info : schema_snapshot)
+            {
+                if (info.parent_schema_id == current && info.schema_id != current)
+                {
+                    pending.push_back(info.schema_id);
                 }
             }
         }
 
-        struct SchemaCounts {
-            size_t tables = 0;
-            size_t views = 0;
-            size_t sequences = 0;
-            size_t domains = 0;
-            size_t triggers = 0;
-            size_t indexes = 0;
-            size_t packages = 0;
-            size_t udrs = 0;
-            size_t exceptions = 0;
-            size_t functions = 0;
-            size_t procedures = 0;
-            size_t child_schemas = 0;
-            size_t total() const {
-                return tables + views + sequences + domains + triggers + indexes +
-                       packages + udrs + exceptions + functions + procedures + child_schemas;
+        struct DropEntry {
+            ID id;
+            ObjectType type;
+            std::string name;
+        };
+
+        std::unordered_map<ID, DropEntry, IDHash> drop_entries;
+        std::vector<DropEntry> domain_entries;
+        auto add_entry = [&](const ID& id, ObjectType type, const std::string& name) {
+            if (isZeroUuidLocal(id))
+            {
+                return;
             }
-        } counts;
+            if (drop_entries.find(id) != drop_entries.end())
+            {
+                return;
+            }
+            DropEntry entry{id, type, name};
+            drop_entries.emplace(id, entry);
+            if (type == ObjectType::DOMAIN)
+            {
+                domain_entries.push_back(entry);
+            }
+        };
 
         {
             std::lock_guard<CatalogMutex> lock(mutex_);
-            for (const auto &[id, table] : table_cache_) {
-                if (table.schema_id == schema_id) {
-                    counts.tables++;
-                }
-            }
-            for (const auto &[id, schema] : schema_cache_) {
-                if (schema.parent_schema_id == schema_id && id != schema_id) {
-                    counts.child_schemas++;
-                }
-            }
-            for (const auto &[id, index] : index_cache_) {
-                if (table_ids.find(index.table_id) != table_ids.end()) {
-                    counts.indexes++;
+            for (const auto& [id, table] : table_cache_)
+            {
+                if (schema_set.find(table.schema_id) != schema_set.end())
+                {
+                    add_entry(id, ObjectType::TABLE, table.table_name);
                 }
             }
         }
 
         {
             std::lock_guard<std::mutex> lock(view_cache_mutex_);
-            for (const auto &[id, view] : view_cache_) {
-                if (view.schema_id == schema_id) {
-                    counts.views++;
+            for (const auto& [id, view] : view_cache_)
+            {
+                if (schema_set.find(view.schema_id) != schema_set.end())
+                {
+                    add_entry(id, ObjectType::VIEW, view.name);
                 }
             }
         }
 
         {
             std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
-            for (const auto& [seq_id, state] : sequence_cache_) {
-                if (state && state->schema_id == schema_id) {
-                    counts.sequences++;
+            for (const auto& [seq_id, state] : sequence_cache_)
+            {
+                if (state && schema_set.find(state->schema_id) != schema_set.end())
+                {
+                    add_entry(seq_id, ObjectType::SEQUENCE, state->name);
                 }
             }
         }
 
         {
-            std::lock_guard<std::mutex> lock(trigger_mutex_);
-            for (const auto& [id, trig] : trigger_cache_) {
-                if (table_ids.find(trig.table_id) != table_ids.end()) {
-                    counts.triggers++;
+            std::vector<FunctionInfo> functions;
+            if (listFunctions(functions, ctx) == Status::OK)
+            {
+                for (const auto& func : functions)
+                {
+                    if (schema_set.find(func.schema_id) != schema_set.end())
+                    {
+                        add_entry(func.function_id, ObjectType::FUNCTION, func.name);
+                    }
+                }
+            }
+
+            std::vector<ProcedureInfo> procedures;
+            if (listProcedures(procedures, ctx) == Status::OK)
+            {
+                for (const auto& proc : procedures)
+                {
+                    if (schema_set.find(proc.schema_id) != schema_set.end())
+                    {
+                        add_entry(proc.procedure_id, ObjectType::PROCEDURE, proc.name);
+                    }
                 }
             }
         }
 
+        for (const auto& schema : schema_snapshot)
         {
-            std::lock_guard<std::mutex> lock(psql_mutex_);
-            for (const auto& [name, func] : functions_) {
-                if (func.schema_id == schema_id) {
-                    counts.functions++;
+            if (schema_set.find(schema.schema_id) == schema_set.end())
+            {
+                continue;
+            }
+
+            std::vector<PackageInfo> packages;
+            if (listPackages(schema.schema_id, packages, ctx) == Status::OK)
+            {
+                for (const auto& pkg : packages)
+                {
+                    add_entry(pkg.package_id, ObjectType::PACKAGE, pkg.package_name);
                 }
             }
-            for (const auto& [name, proc] : procedures_) {
-                if (proc.schema_id == schema_id) {
-                    counts.procedures++;
+
+            std::vector<UDRInfo> udrs;
+            if (listUDRs(schema.schema_id, udrs, ctx) == Status::OK)
+            {
+                for (const auto& udr : udrs)
+                {
+                    add_entry(udr.udr_id, ObjectType::UDR, udr.udr_name);
+                }
+            }
+
+            std::vector<ExceptionInfo> exceptions;
+            if (listExceptions(schema.schema_id, exceptions, ctx) == Status::OK)
+            {
+                for (const auto& ex : exceptions)
+                {
+                    add_entry(ex.exception_id, ObjectType::EXCEPTION, ex.name);
+                }
+            }
+
+            std::vector<SynonymInfo> synonyms;
+            if (listSynonyms(schema.schema_id, synonyms, ctx) == Status::OK)
+            {
+                for (const auto& synonym : synonyms)
+                {
+                    add_entry(synonym.synonym_id, ObjectType::SYNONYM, synonym.synonym_name);
+                }
+            }
+
+            std::vector<ForeignTableInfo> foreign_tables;
+            if (listForeignTables(schema.schema_id, foreign_tables, ctx) == Status::OK)
+            {
+                for (const auto& foreign_table : foreign_tables)
+                {
+                    add_entry(foreign_table.foreign_table_id,
+                              ObjectType::FOREIGN_TABLE,
+                              foreign_table.table_name);
+                }
+            }
+
+            auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+            if (domain_mgr)
+            {
+                std::vector<DomainInfo> domains;
+                if (domain_mgr->listDomains(schema.schema_id, domains, ctx) == Status::OK)
+                {
+                    for (const auto& domain : domains)
+                    {
+                        add_entry(domain.domain_id, ObjectType::DOMAIN, domain.domain_name);
+                    }
                 }
             }
         }
 
-        counts.domains = 0;
-
-        std::vector<PackageInfo> packages;
-        if (listPackages(schema_id, packages, ctx) == Status::OK) {
-            counts.packages = packages.size();
-        }
-
-        std::vector<UDRInfo> udrs;
-        if (listUDRs(schema_id, udrs, ctx) == Status::OK) {
-            counts.udrs = udrs.size();
-        }
-
-        std::vector<ExceptionInfo> exceptions;
-        if (listExceptions(schema_id, exceptions, ctx) == Status::OK) {
-            counts.exceptions = exceptions.size();
-        }
-
-        if (counts.total() > 0)
+        std::vector<DependencyInfo> blocking_deps;
         {
+            std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+            for (const auto& [dep_id, dep] : dependency_cache_)
+            {
+                if (drop_entries.find(dep.referenced_object_id) == drop_entries.end())
+                {
+                    continue;
+                }
+                if (dep.dependency_type == DependencyType::AUTO)
+                {
+                    continue;
+                }
+                if (drop_entries.find(dep.dependent_object_id) != drop_entries.end())
+                {
+                    continue;
+                }
+                blocking_deps.push_back(dep);
+            }
+        }
+
+        if (!blocking_deps.empty())
+        {
+            std::vector<DependencyName> resolved;
+            resolveDependencyNames(blocking_deps, resolved, ctx);
+
+            std::map<ObjectType, std::vector<std::string>> grouped;
+            for (const auto& dep : resolved)
+            {
+                grouped[dep.dependent_type].push_back(dep.dependent_name);
+            }
+
             std::ostringstream msg;
             msg << "Cannot drop schema \"" << schema_info.schema_name
-                << "\" because it contains objects\n";
+                << "\" because other objects depend on objects in this schema\n";
             msg << "DETAIL:\n";
-            if (counts.tables > 0) msg << "  Tables: " << counts.tables << "\n";
-            if (counts.views > 0) msg << "  Views: " << counts.views << "\n";
-            if (counts.functions > 0) msg << "  Functions: " << counts.functions << "\n";
-            if (counts.procedures > 0) msg << "  Procedures: " << counts.procedures << "\n";
-            if (counts.sequences > 0) msg << "  Sequences: " << counts.sequences << "\n";
-            if (counts.domains > 0) msg << "  Domains: " << counts.domains << "\n";
-            if (counts.triggers > 0) msg << "  Triggers: " << counts.triggers << "\n";
-            if (counts.indexes > 0) msg << "  Indexes: " << counts.indexes << "\n";
-            if (counts.packages > 0) msg << "  Packages: " << counts.packages << "\n";
-            if (counts.udrs > 0) msg << "  UDRs: " << counts.udrs << "\n";
-            if (counts.exceptions > 0) msg << "  Exceptions: " << counts.exceptions << "\n";
-            if (counts.child_schemas > 0) msg << "  Child Schemas: " << counts.child_schemas << "\n";
-
-            msg << "  Total: " << counts.total() << " objects\n";
-            msg << "HINT: Drop or move all objects from schema first.\n";
-            msg << "  To see list: SELECT object_name, object_type FROM SYS.OBJECTS ";
-            msg << "WHERE schema_name = '" << schema_info.schema_name << "';";
+            for (auto& [type, names] : grouped)
+            {
+                std::sort(names.begin(), names.end());
+                names.erase(std::unique(names.begin(), names.end()), names.end());
+                std::string label = objectTypeToString(type);
+                if (names.size() > 1 && !label.empty() && label.back() != 's')
+                {
+                    label.push_back('s');
+                }
+                msg << "  " << label << ":\n";
+                for (const auto& name : names)
+                {
+                    msg << "    - " << name << "\n";
+                }
+            }
+            msg << "HINT: Drop or alter the dependent objects before retrying.\n";
 
             SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, msg.str().c_str());
             return Status::CONSTRAINT_VIOLATION;
         }
 
+        std::unordered_map<ID, std::vector<ID>, IDHash> edges;
+        std::unordered_map<ID, size_t, IDHash> indegree;
+        for (const auto& [id, entry] : drop_entries)
         {
-            std::lock_guard<CatalogMutex> lock(mutex_);
-            Status status = deleteSchemaRecord(schema_id, ctx);
-            if (status != Status::OK)
+            if (entry.type != ObjectType::DOMAIN)
+            {
+                indegree[id] = 0;
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+            for (const auto& [dep_id, dep] : dependency_cache_)
+            {
+                if (indegree.find(dep.dependent_object_id) == indegree.end() ||
+                    indegree.find(dep.referenced_object_id) == indegree.end())
+                {
+                    continue;
+                }
+                edges[dep.dependent_object_id].push_back(dep.referenced_object_id);
+                indegree[dep.referenced_object_id]++;
+            }
+        }
+
+        auto priority_for = [&](ObjectType type) -> int {
+            switch (type)
+            {
+                case ObjectType::SYNONYM:
+                    return 0;
+                case ObjectType::VIEW:
+                    return 1;
+                case ObjectType::FUNCTION:
+                    return 2;
+                case ObjectType::PROCEDURE:
+                    return 3;
+                case ObjectType::PACKAGE:
+                    return 4;
+                case ObjectType::UDR:
+                    return 5;
+                case ObjectType::EXCEPTION:
+                    return 6;
+                case ObjectType::FOREIGN_TABLE:
+                    return 7;
+                case ObjectType::TABLE:
+                    return 8;
+                case ObjectType::SEQUENCE:
+                    return 9;
+                default:
+                    return 10;
+            }
+        };
+
+        std::vector<ID> ready;
+        ready.reserve(indegree.size());
+        for (const auto& [id, deg] : indegree)
+        {
+            if (deg == 0)
+            {
+                ready.push_back(id);
+            }
+        }
+
+        std::vector<ID> order;
+        order.reserve(indegree.size());
+
+        auto pop_ready = [&]() -> ID {
+            size_t best = 0;
+            int best_priority = std::numeric_limits<int>::max();
+            std::string best_name;
+            for (size_t i = 0; i < ready.size(); ++i)
+            {
+                const auto& entry = drop_entries.at(ready[i]);
+                int priority = priority_for(entry.type);
+                if (priority < best_priority ||
+                    (priority == best_priority && entry.name < best_name))
+                {
+                    best = i;
+                    best_priority = priority;
+                    best_name = entry.name;
+                }
+            }
+            ID id = ready[best];
+            ready.erase(ready.begin() + static_cast<long>(best));
+            return id;
+        };
+
+        while (!ready.empty())
+        {
+            ID current = pop_ready();
+            order.push_back(current);
+            auto it = edges.find(current);
+            if (it == edges.end())
+            {
+                continue;
+            }
+            for (const auto& neighbor : it->second)
+            {
+                auto indeg_it = indegree.find(neighbor);
+                if (indeg_it == indegree.end())
+                {
+                    continue;
+                }
+                if (indeg_it->second > 0)
+                {
+                    indeg_it->second--;
+                    if (indeg_it->second == 0)
+                    {
+                        ready.push_back(neighbor);
+                    }
+                }
+            }
+        }
+
+        if (order.size() != indegree.size())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "Cannot cascade drop schema due to dependency cycle");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        for (const auto& id : order)
+        {
+            const auto& entry = drop_entries.at(id);
+            Status status = Status::OK;
+            switch (entry.type)
+            {
+                case ObjectType::VIEW:
+                    status = dropView(entry.id, true, ctx);
+                    break;
+                case ObjectType::TABLE:
+                    status = dropTable(entry.id, true, ctx);
+                    break;
+                case ObjectType::SEQUENCE:
+                    status = dropSequence(entry.id, true, ctx);
+                    break;
+                case ObjectType::FUNCTION:
+                    status = dropFunction(entry.name, true, ctx);
+                    break;
+                case ObjectType::PROCEDURE:
+                    status = dropProcedure(entry.name, true, ctx);
+                    break;
+                case ObjectType::PACKAGE:
+                    status = dropPackage(entry.id, true, ctx);
+                    break;
+                case ObjectType::UDR:
+                    status = dropUDR(entry.id, true, ctx);
+                    break;
+                case ObjectType::EXCEPTION:
+                    status = dropException(entry.id, true, ctx);
+                    break;
+                case ObjectType::FOREIGN_TABLE:
+                    status = dropForeignTable(entry.id, ctx);
+                    break;
+                case ObjectType::SYNONYM:
+                    status = dropSynonym(entry.id, ctx);
+                    break;
+                default:
+                    break;
+            }
+
+            if (status != Status::OK && status != Status::NOT_FOUND)
             {
                 return status;
             }
-            schema_cache_.erase(schema_id);
-            schema_count_--;
-            status = writeCatalogRoot(ctx);
+        }
+
+        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+        if (domain_mgr)
+        {
+            for (const auto& entry : domain_entries)
+            {
+                Status status = domain_mgr->dropDomain(entry.id, ctx);
+                if (status != Status::OK && status != Status::NOT_FOUND)
+                {
+                    return status;
+                }
+            }
+        }
+
+        std::unordered_map<ID, ID, IDHash> schema_parent;
+        for (const auto& info : schema_snapshot)
+        {
+            schema_parent.emplace(info.schema_id, info.parent_schema_id);
+        }
+
+        std::vector<ID> schema_drop_order(schema_set.begin(), schema_set.end());
+        auto compute_depth = [&](const ID& id) -> size_t {
+            size_t depth = 0;
+            ID current = id;
+            auto it = schema_parent.find(current);
+            while (it != schema_parent.end() && !isZeroUuidLocal(it->second))
+            {
+                ++depth;
+                current = it->second;
+                it = schema_parent.find(current);
+            }
+            return depth;
+        };
+
+        std::unordered_map<ID, size_t, IDHash> depth_cache;
+        for (const auto& id : schema_drop_order)
+        {
+            depth_cache[id] = compute_depth(id);
+        }
+
+        std::sort(schema_drop_order.begin(), schema_drop_order.end(),
+                  [&](const ID& lhs, const ID& rhs) {
+                      auto lhs_depth = depth_cache[lhs];
+                      auto rhs_depth = depth_cache[rhs];
+                      if (lhs_depth != rhs_depth)
+                      {
+                          return lhs_depth > rhs_depth;
+                      }
+                      return lhs.toString() > rhs.toString();
+                  });
+
+        {
+            std::lock_guard<CatalogMutex> lock(mutex_);
+            for (const auto& id : schema_drop_order)
+            {
+                Status status = deleteSchemaRecord(id, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                schema_cache_.erase(id);
+                if (schema_count_ > 0)
+                {
+                    schema_count_--;
+                }
+            }
+            Status status = writeCatalogRoot(ctx);
             if (status == Status::OK)
             {
                 db_->sync(ctx);
+            }
+            else
+            {
+                return status;
             }
         }
 

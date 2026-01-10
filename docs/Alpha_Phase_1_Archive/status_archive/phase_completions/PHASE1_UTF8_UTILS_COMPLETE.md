@@ -3,7 +3,7 @@
 **Date**: November 3, 2025
 **Status**: ✅ COMPLETE
 **Duration**: ~2.5 hours
-**Plan**: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+**Plan**: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
 **Phase**: 1 of 7
 
 ---
@@ -412,7 +412,7 @@ Phase 1 successfully implemented the UTF-8 utility enhancements needed for safe 
 **Next**: Phase 2 - Catalog Storage Expansion
 
 **Reference Documents**:
-- Master Plan: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+- Master Plan: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
 - Audit Report: docs/audit/03_SQL_IDENTIFIER_AUDIT.md
 - Header File: include/scratchbird/core/utf8_utils.h
 - Implementation: src/core/utf8_utils.cpp:347-440

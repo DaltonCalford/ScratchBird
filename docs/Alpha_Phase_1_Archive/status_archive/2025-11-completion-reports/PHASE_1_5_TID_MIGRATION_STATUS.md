@@ -677,7 +677,7 @@ Phase 1.5 is COMPLETE when:
 ## 📖 References
 
 - **Specification**: `docs/specifications/TABLESPACE_SPECIFICATION.md`
-- **Implementation Plan**: `docs/planning/TABLESPACE_IMPLEMENTATION_PLAN.md` (Section Phase 1.5)
+- **Implementation Plan**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_IMPLEMENTATION_PLAN.md` (Section Phase 1.5)
 - **TID Analysis**: `docs/STATUS_PHASE1_TASK1_2_5_TID_ANALYSIS.md`
 - **Project Context**: `PROJECT_CONTEXT.md`
 

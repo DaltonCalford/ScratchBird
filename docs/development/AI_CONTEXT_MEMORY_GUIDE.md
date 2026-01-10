@@ -27,8 +27,8 @@ These files provide the foundational understanding of the project:
   - Production readiness assessment
 
 ### 1.4 Implementation Plans
-- **`/docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md`** - Current roadmap (Oct 11, 2025)
-- **`/docs/planning/ALPHA_003_IMPLEMENTATION_PLAN.md`** - Active GIN index work
+- **`/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md`** - Current roadmap (Oct 11, 2025)
+- **`/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_003_IMPLEMENTATION_PLAN.md`** - Active GIN index work
 
 ---
 
@@ -167,7 +167,7 @@ Load in this order:
 If working on specific component, also load:
 - Relevant specification from `/docs/specifications/`
 - Relevant status report from `/docs/status/`
-- Relevant plan from `/docs/planning/`
+- Relevant plan from `/docs/planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md` or `/docs/archive/2026-01-09/planning/`
 
 ### 5.3 After Context Compaction
 Reload these minimal files:
@@ -188,7 +188,7 @@ Oct 13: /docs/status/ALPHA_003_PROGRESS.md
 Oct 13: /docs/status/ALPHA_003_GIN_PHASE_6_COMPLETE.md
 Oct 12: /docs/status/CURRENT_STATUS.md
 Oct 12: /docs/development/CODING_STANDARDS.md
-Oct 11: /docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md
+Oct 11: /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md
 ```
 
 ### Core Stable Documents (Updated Infrequently)
@@ -217,7 +217,7 @@ Oct 11: /docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md
 → Check `/docs/status/` for completion reports
 
 ### "What's the plan for feature Y?"
-→ Check `/docs/planning/` for implementation plans
+→ Check `/docs/planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md` and `/docs/archive/2026-01-09/planning/` for implementation plans
 
 ---
 

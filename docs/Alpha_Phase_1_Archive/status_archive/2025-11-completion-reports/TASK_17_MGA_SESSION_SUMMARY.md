@@ -39,7 +39,7 @@
 
 **Documents Created**:
 - `/docs/status/TASK_17_MGA_INFRASTRUCTURE_ASSESSMENT.md`
-- `/docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md`
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md`
 
 ### 2. Phase 1.1: Add Transaction Context (2 hours)
 
@@ -84,7 +84,7 @@ if (!db_->storage_engine()->isVisible(hdr->xmin, hdr->xmax, xid))
 2. `/docs/status/TASK_17_MGA_SESSION_SUMMARY.md` (this document)
 
 **Documents Updated**:
-1. `/docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` (status update)
+1. `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` (status update)
 
 ---
 
@@ -356,10 +356,10 @@ Only ~50 lines of code changed, but major safety improvements:
 
 ### Documentation (4 files created, 1 updated)
 - `docs/status/TASK_17_MGA_INFRASTRUCTURE_ASSESSMENT.md` (NEW)
-- `docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md` (NEW)
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md` (NEW)
 - `docs/status/TASK_17_MGA_PHASE_1_COMPLETE.md` (NEW)
 - `docs/status/TASK_17_MGA_SESSION_SUMMARY.md` (NEW - this document)
-- `docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` (UPDATED)
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` (UPDATED)
 
 ---
 

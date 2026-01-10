@@ -322,7 +322,7 @@ Status cleanToastChunksByTIP(const ID& toast_table_id,
 
 ### Documentation
 
-**docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md** (updated)
+**docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md** (updated)
 - Marked Phase 4 as complete
 - Updated progress: 65% complete (4 of 6 phases)
 - Added Phase 4 completion summary
@@ -516,7 +516,7 @@ The integration tests validate correctness but manual testing is needed for:
 
 ### Planning Documents
 
-- `/docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - Master plan (Phase 4 section)
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - Master plan (Phase 4 section)
 
 ### Architecture Documents
 

@@ -219,9 +219,9 @@ Speedup: 75x faster!
 
 ## Related Documents
 
-1. **Implementation Plan:** `/docs/planning/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md`
-2. **Query Plan Design:** `/docs/planning/QUERY_PLAN_SECURITY_INTEGRATION.md`
-3. **Object Permissions Design:** `/docs/planning/SQL_OBJECT_PERMISSIONS_DESIGN.md`
+1. **Implementation Plan:** `/docs/Alpha_Phase_1_Archive/planning_archive/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md`
+2. **Query Plan Design:** `/docs/Alpha_Phase_1_Archive/planning_archive/QUERY_PLAN_SECURITY_INTEGRATION.md`
+3. **Object Permissions Design:** `/docs/Alpha_Phase_1_Archive/planning_archive/SQL_OBJECT_PERMISSIONS_DESIGN.md`
 4. **Connection Context Integration:** `/docs/status/CONNECTION_CONTEXT_SECURITY_INTEGRATION_2025-11-10.md`
 
 ---

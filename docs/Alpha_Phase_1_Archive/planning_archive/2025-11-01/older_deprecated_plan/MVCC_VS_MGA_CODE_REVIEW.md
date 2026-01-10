@@ -443,7 +443,7 @@ Before declaring ALPHA ready:
 1. **MGA Implementation Spec**: `docs/specifications/MGA_IMPLEMENTATION.md` lines 970-1006
 2. **Correct MGA Code**: `src/core/heap_page.cpp` lines 562-900 (same-page updates)
 3. **Buggy Code**: `src/core/storage_engine.cpp` lines 729-800 (cross-page updates)
-4. **MGA Analysis**: `docs/planning/MGA_ONLINE_MIGRATION_ANALYSIS.md`
+4. **MGA Analysis**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/MGA_ONLINE_MIGRATION_ANALYSIS.md`
 
 ---
 

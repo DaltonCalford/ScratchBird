@@ -614,7 +614,7 @@ include/scratchbird/core/garbage_collector.h     | Major enhancements
 src/core/garbage_collector.cpp                   | ~1000 lines added/modified
 src/sblr/executor.cpp                            | Enhanced MON_GARBAGE_COLLECTION query
 tests/unit/test_garbage_collector.cpp            | 598 lines (new)
-docs/planning/PHASE_4_*.md                       | 7 completion reports (new)
+docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_4_*.md                       | 7 completion reports (new)
 ```
 
 **Cumulative Changes (Task 3.4 / Phase 4)**: 4 core files, 1 test file, 7 documentation files; ~1600+ lines of code
@@ -972,7 +972,7 @@ src/core/connection_context.cpp                        |  22 ++++ (modified)
 src/sblr/executor.cpp                                  |  60 ++++ (modified)
 tests/unit/test_long_transaction_monitor.cpp           | 456 ++++++ (new)
 sb_config.ini                                          |  73 ++++ (new)
-docs/planning/PHASE_3_PROGRESS.md                     | 237 +++++ (modified)
+docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_3_PROGRESS.md                     | 237 +++++ (modified)
 ```
 
 **Cumulative Changes (Task 3.5 Complete)**: 11 files changed, ~1,453 insertions(+), 17 deletions(-)

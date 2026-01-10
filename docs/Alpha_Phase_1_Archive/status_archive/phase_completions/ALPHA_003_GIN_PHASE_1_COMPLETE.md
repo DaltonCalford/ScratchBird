@@ -13,7 +13,7 @@
 - Advanced features still have stubs/deferred implementation
 - Test phases 4-6 are excluded from build
 - Full feature completeness required per project standards
-- See `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` for remaining GIN work
+- See `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` for remaining GIN work
 
 **GIN is NOT production-ready** until all features are complete, not deferred or stubbed.
 
@@ -343,7 +343,7 @@ The following are marked as TODO and will be implemented in later phases:
 - [GIN Specification](/docs/specifications/LOW_LEVEL_SPECIFICATION_GIN_INDEX.md)
 - [ALPHA-003 Progress](/docs/status/ALPHA_003_PROGRESS.md)
 - [ALPHA-003 Audit](/docs/status/ALPHA_003_AUDIT_FINDINGS.md)
-- [Implementation Plan](/docs/planning/ALPHA_003_IMPLEMENTATION_PLAN.md)
+- [Implementation Plan](/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_003_IMPLEMENTATION_PLAN.md)
 
 ---
 

@@ -463,7 +463,7 @@ These are **NOT blockers** for Wave 1 delivery. They are separate features for f
 2. `docs/status/WAVE_1_SESSION_HANDOFF.md` (existing)
 3. `docs/status/TASK_9_AGENT_STRATEGY.md` (existing)
 4. `docs/status/WAVE_1_FINAL_DELIVERY.md` (NEW - this file)
-5. `docs/planning/FEATURE_PARITY_ROADMAP.md` (update needed)
+5. `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/FEATURE_PARITY_ROADMAP.md` (update needed)
 6. `README.md` (update needed)
 
 ### Recommended Commit Message

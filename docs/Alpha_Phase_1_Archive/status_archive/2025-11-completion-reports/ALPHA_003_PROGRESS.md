@@ -16,7 +16,7 @@ This document tracks the implementation progress of all index types for ALPHA-00
 - `/docs/specifications/LOW_LEVEL_SPECIFICATION_HASH_INDEX.md` - Hash index detailed spec
 - `/docs/specifications/LOW_LEVEL_SPECIFICATION_GIN_INDEX.md` - GIN index detailed spec
 - `/docs/specifications/LOW_LEVEL_SPECIFICATION_BITMAP_INDEX.md` - Bitmap index detailed spec
-- `/docs/planning/ALPHA_003_IMPLEMENTATION_PLAN.md` - Implementation plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_003_IMPLEMENTATION_PLAN.md` - Implementation plan
 
 ---
 

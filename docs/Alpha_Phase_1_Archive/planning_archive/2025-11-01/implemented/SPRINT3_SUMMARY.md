@@ -31,7 +31,7 @@ Sprint 3 has been **FULLY COMPLETED**. A comprehensive architecture design docum
 
 ### 1. Architecture Document Created ✅
 
-**Document**: `docs/planning/SPRINT3_ONLINE_MIGRATION_ARCHITECTURE.md`
+**Document**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/SPRINT3_ONLINE_MIGRATION_ARCHITECTURE.md`
 
 **Contents** (~15,000 words, comprehensive):
 - Part 1: Migration State Tracking

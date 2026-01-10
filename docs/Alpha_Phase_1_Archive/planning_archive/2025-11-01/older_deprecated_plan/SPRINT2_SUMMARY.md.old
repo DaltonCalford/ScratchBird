@@ -376,8 +376,8 @@ Status BRINIndex::updateBlockRangesAfterMigration(
 
 | File | Lines | Description |
 |------|-------|-------------|
-| `docs/planning/SPRINT2_INDEX_TOAST_ANALYSIS.md` | ~800 | Comprehensive analysis, algorithms, estimates |
-| `docs/planning/SPRINT2_SUMMARY.md` | ~400 | This summary document |
+| `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT2_INDEX_TOAST_ANALYSIS.md` | ~800 | Comprehensive analysis, algorithms, estimates |
+| `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT2_SUMMARY.md` | ~400 | This summary document |
 
 **Total Documentation**: ~1,200 lines of detailed analysis and planning
 

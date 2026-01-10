@@ -50,7 +50,7 @@ REVOKE SELECT (salary) ON TABLE employees FROM alice;
 
 **Status**: Complete planning document created
 
-**Document**: `/docs/planning/SECURITY_PHASE3_4_RLS_PLAN.md`
+**Document**: `/docs/Alpha_Phase_1_Archive/planning_archive/SECURITY_PHASE3_4_RLS_PLAN.md`
 
 **Scope**:
 - Row-level security policies

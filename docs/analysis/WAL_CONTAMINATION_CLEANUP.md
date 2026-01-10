@@ -377,7 +377,7 @@ When reviewing any plan or code for MGA compliance:
 ## Files Changed
 
 **Modified**:
-1. `/docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+1. `/docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
    - Removed WAL tasks from Phase 5 (lines 1371-1466)
    - Added "NO WAL" warning
    - Updated test names and coverage goals

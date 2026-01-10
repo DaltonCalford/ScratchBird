@@ -571,4 +571,4 @@ The core storage engine, MVCC implementation, indexing structures, and transacti
 **Report Authority:**
 - Code audit: `/docs/audit/after_transaction_work.md` (Oct 6, 2025)
 - Documentation audit: `/docs/audit/after_transaction_documentation_work.md` (Oct 11, 2025)
-- Implementation plan: `/docs/planning/ALPHA_1_2_IMPLEMENTATION_PLAN.md` (updated Oct 11, 2025)
+- Implementation plan: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/ALPHA_1_2_IMPLEMENTATION_PLAN.md` (updated Oct 11, 2025)

@@ -562,4 +562,4 @@ TOTAL: 66-96 hours
 **References**:
 - `docs/specifications/MGA_IMPLEMENTATION.md`
 - `docs/specifications/TRANSACTION_MGA_CORE.md`
-- `docs/planning/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md`
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md`

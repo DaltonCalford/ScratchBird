@@ -325,7 +325,7 @@ ODBC types map to ScratchBird native types as follows (Alpha baseline):
    - Procedure tables if SQLProcedures needed
 
 4. **Schema/Database DDL** ✅ AVAILABLE (Plan 02B core complete)
-   - Alignment/testing still in progress; see `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
+   - Alignment/testing still in progress; see `docs/archive/2026-01-04/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
 
 ### External Dependencies
 
@@ -593,7 +593,7 @@ ODBC types map to ScratchBird native types as follows (Alpha baseline):
 - `/src/odbc/odbc_client_bridge.cpp` (NEW) - Adapter around libscratchbird client APIs
 - `/src/client/network_client.cpp` (NEW) - libscratchbird network client (native protocol)
 - `/include/scratchbird/client/network_client.h` (NEW) - Network client API
-- `/docs/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md` (NEW) - After decisions
+- `/docs/archive/2026-01-04/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md` (NEW) - After decisions
 
 ### Documentation to Create
 - `/docs/odbc/ODBC_TYPE_MAPPING.md` - Type conversion reference
@@ -610,7 +610,7 @@ ODBC types map to ScratchBird native types as follows (Alpha baseline):
 - SQL:2023 Standard (for type mappings)
 
 ### Existing ScratchBird Plans
-- Plan 02B: Schema/Database DDL (core complete; alignment/testing remaining). See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`.
+- Plan 02B: Schema/Database DDL (core complete; alignment/testing remaining). See `docs/archive/2026-01-04/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`.
 - Plan 03: Authentication/Authorization (used by wire protocol)
 - Plan 04: Domain DDL (affects type system)
 

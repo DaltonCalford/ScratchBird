@@ -356,13 +356,13 @@ Index Layer:
 ### Created
 1. `/docs/analysis/TOAST_INDEX_INTEGRATION_ANALYSIS.md` (NEW)
 2. `/docs/analysis/TOAST_INDEX_OPTIONS_ANALYSIS.md` (NEW)
-3. `/docs/planning/PHASE_3_REVISED_TASKS.md` (NEW)
+3. `/docs/Alpha_Phase_1_Archive/planning_archive (1)/PHASE_3_REVISED_TASKS.md` (NEW)
 4. `/include/scratchbird/core/index_key_extractor.h` (NEW)
 5. `/src/core/index_key_extractor.cpp` (NEW)
 6. `/docs/status/TOAST_MGA_PHASE3_ANALYSIS_COMPLETE.md` (NEW - this document)
 
 ### Modified
-1. `/docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (UPDATED)
+1. `/docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` (UPDATED)
    - Phase 3 title and approach revised
    - Phase 5 removed with detailed explanation
    - Progress tracking updated

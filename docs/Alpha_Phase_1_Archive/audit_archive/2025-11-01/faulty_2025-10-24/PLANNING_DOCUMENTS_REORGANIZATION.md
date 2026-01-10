@@ -9,13 +9,13 @@
 
 **Total Planning Documents**: 41 files
 - Currently in /docs/planning: 41 files
-- Currently in /docs/planning/implemented: 6 files
+- Currently in /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented: 6 files
 - **Recommended to MOVE**: 4 files
 - **Recommended to KEEP**: 37 files
 
 ---
 
-## Documents to MOVE to /docs/planning/implemented/
+## Documents to MOVE to /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/
 
 ### 1. SPRINT0_BUG_FIX_COMPLETE.md ✅ **MOVE IMMEDIATELY**
 
@@ -31,7 +31,7 @@
 **Actual Status**: ✅ COMPLETE (verified)
 **Confidence**: HIGH
 
-**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/planning/SPRINT0_BUG_FIX_COMPLETE.md /home/dcalford/CliWork/ScratchBird/docs/planning/implemented/`
+**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/SPRINT0_BUG_FIX_COMPLETE.md /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/`
 
 ---
 
@@ -49,7 +49,7 @@
 **Actual Status**: ✅ COMPLETE (verified)
 **Confidence**: HIGH
 
-**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/planning/SPRINT1_FOUNDATION_COMPLETE.md /home/dcalford/CliWork/ScratchBird/docs/planning/implemented/`
+**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/SPRINT1_FOUNDATION_COMPLETE.md /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/`
 
 ---
 
@@ -67,7 +67,7 @@
 **Actual Status**: ✅ COMPLETE (design sprint)
 **Confidence**: HIGH
 
-**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/planning/SPRINT3_SUMMARY.md /home/dcalford/CliWork/ScratchBird/docs/planning/implemented/`
+**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/SPRINT3_SUMMARY.md /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/`
 
 ---
 
@@ -85,11 +85,11 @@
 **Actual Status**: ✅ COMPLETE (document deliverable)
 **Confidence**: HIGH
 
-**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/planning/SPRINT3_ONLINE_MIGRATION_ARCHITECTURE.md /home/dcalford/CliWork/ScratchBird/docs/planning/implemented/`
+**Action**: `mv /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/SPRINT3_ONLINE_MIGRATION_ARCHITECTURE.md /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/`
 
 ---
 
-## Documents to KEEP in /docs/planning/ (NOT complete)
+## Documents to KEEP in /docs/archive/2026-01-09/planning/ (NOT complete)
 
 ### Sprint 2 Documents ⚠️ **KEEP - Needs Verification**
 
@@ -304,11 +304,11 @@ echo "Remaining documents in planning/ need verification before moving"
 
 **Before Reorganization**:
 - /docs/planning: 41 files
-- /docs/planning/implemented: 6 files
+- /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented: 6 files
 
 **After Reorganization**:
 - /docs/planning: 37 files
-- /docs/planning/implemented: 10 files (6 existing + 4 moved)
+- /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented: 10 files (6 existing + 4 moved)
 
 **Pending Verification** (before can move):
 - Sprint 2: 3 files (need index TID method verification)

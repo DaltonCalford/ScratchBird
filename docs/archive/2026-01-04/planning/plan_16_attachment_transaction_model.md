@@ -9,11 +9,11 @@ P0 (core behavioral contract; required for Alpha parity and future cluster work)
 ## References
 - `docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
 - `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
-- `docs/planning/plan_03_sblr_version2_extended_opcodes.md` (transaction payload v2)
-- `docs/planning/plan_03_security_context_auth_audit_quorum.md` (session/authkey binding)
-- `docs/planning/plan_05_protocol_odbc_pool.md` (protocol/pool integration)
-- `docs/planning/plan_06_metadata_show_and_catalog.md` (monitoring metadata)
-- `docs/planning/plan_07_emulated_protocol_compatibility.md` (dialect behavior mapping)
+- `docs/archive/2026-01-04/planning/plan_03_sblr_version2_extended_opcodes.md` (transaction payload v2)
+- `docs/archive/2026-01-04/planning/plan_03_security_context_auth_audit_quorum.md` (session/authkey binding)
+- `docs/archive/2026-01-04/planning/plan_05_protocol_odbc_pool.md` (protocol/pool integration)
+- `docs/archive/2026-01-09/planning/plan_06_metadata_show_and_catalog.md` (monitoring metadata)
+- `docs/archive/2026-01-09/planning/plan_07_emulated_protocol_compatibility.md` (dialect behavior mapping)
 
 ## Decisions / Constraints (Resolved)
 - ScratchBird is **always in a transaction**. There is never a "no transaction" state.

@@ -242,7 +242,7 @@ ScratchBird is a modern relational database engine built from scratch with a foc
 
 ## Related Documents
 
-- **Planning:** See `docs/planning/`
+- **Planning:** See `docs/archive/2026-01-09/planning/`
 - **Status Updates:** See `docs/status/`
 - **Development Notes:** See `docs/development/`
 - **Specifications:** See `docs/specifications/`

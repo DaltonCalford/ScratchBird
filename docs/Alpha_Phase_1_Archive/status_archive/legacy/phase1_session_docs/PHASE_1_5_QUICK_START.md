@@ -426,7 +426,7 @@ valgrind --leak-check=full ./scratchbird_tests 2>&1 | grep "no leaks"
 valgrind --tool=helgrind ./scratchbird_tests 2>&1 | grep "ERROR SUMMARY: 0"
 
 # 5. Update documentation
-vim docs/planning/TABLESPACE_IMPLEMENTATION_PLAN.md
+vim docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_IMPLEMENTATION_PLAN.md
 # Mark Phase 1.5 as COMPLETE
 
 # 6. Update project context

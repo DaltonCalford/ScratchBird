@@ -550,12 +550,12 @@ Until Phases 6-9 are complete:
 ## Documentation References
 
 ### Primary Documents
-1. **Design Document**: `/docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
+1. **Design Document**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
    - Complete design for all 13 phases
    - PostgreSQL compatibility matrix
    - Architecture diagrams
 
-2. **Integration Plan**: `/docs/planning/TASK_17_PHASE_6_13_IMPLEMENTATION_PLAN.md`
+2. **Integration Plan**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_PHASE_6_13_IMPLEMENTATION_PLAN.md`
    - Detailed implementation steps for Phases 6-13
    - Code snippets for each integration point
    - Estimated effort breakdown

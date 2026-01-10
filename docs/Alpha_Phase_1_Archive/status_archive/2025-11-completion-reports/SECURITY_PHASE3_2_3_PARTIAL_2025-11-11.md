@@ -16,7 +16,7 @@ Phase 3.2.3 aims to add persistent permission caching across queries with LRU ev
 ## What Has Been Completed ✅
 
 ### 1. Planning Document ✅
-**File**: `docs/planning/PERMISSION_CACHE_OPTIMIZATION_PHASE3_2_3.md`
+**File**: `docs/Alpha_Phase_1_Archive/planning_archive/PERMISSION_CACHE_OPTIMIZATION_PHASE3_2_3.md`
 
 - Comprehensive design specification
 - Performance analysis (2-5x expected improvement)

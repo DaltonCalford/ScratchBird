@@ -401,7 +401,7 @@ None critical - all core functionality integrated
 5. `tests/unit/test_config.cpp` - Config tests
 6. `tests/unit/test_logger.cpp` - Logger tests
 7. `tests/unit/test_utf8_utils.cpp` - UTF-8 tests
-8. `docs/planning/PHASE_1_*.md` - Documentation (3 files)
+8. `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_1_*.md` - Documentation (3 files)
 
 ### Modified Files (8)
 1. `include/scratchbird/core/config.h` - Added Config class

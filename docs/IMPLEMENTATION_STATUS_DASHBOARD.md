@@ -26,7 +26,7 @@
 
 ## Plan Progress (Active)
 - Plan 02 (UUID Resolution/Rename/Move): complete (resolver cache/view, rename/move across object types, resolver rebuild + test coverage).
-- Plan 04 (Emulated parser alignment): in progress (see `docs/planning/PLAN_04_PARSER_BYTECODE_ALIGNMENT_PROGRESS.md`).
+- Plan 04 (Emulated parser alignment): in progress (see `docs/archive/2026-01-09/planning/PLAN_04_PARSER_BYTECODE_ALIGNMENT_PROGRESS.md`).
 - Plan 06–08 (ISQL clients, protocol conformance, test automation): pending start after parser alignment.
 
 ## Executor Gaps (Documented for Follow-up)
@@ -38,5 +38,5 @@
 ## Links
 - Roadmap: `OFFICIAL_ROADMAP.md`  
 - Current context: `PROJECT_CONTEXT.md`  
-- Planning: `docs/planning/` (e.g., `alpha3_gap_todo.md`, `dependency_lifecycle_audit.md`)  
+- Planning: `docs/planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md` and `docs/archive/2026-01-09/planning/`  
 - Specs: `docs/specifications/`

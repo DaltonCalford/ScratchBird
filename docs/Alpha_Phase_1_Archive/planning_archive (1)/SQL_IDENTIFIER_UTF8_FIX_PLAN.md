@@ -1103,7 +1103,7 @@ Tested and validated with:
 - docs/status/SQL_IDENTIFIER_UTF8_FIX_COMPLETE.md (850+ lines)
 
 **Planning**:
-- docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (this file, updated)
+- docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (this file, updated)
 
 ### Lessons Learned
 

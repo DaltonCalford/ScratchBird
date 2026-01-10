@@ -89,6 +89,7 @@ This directory contains comprehensive technical specifications for the ScratchBi
 | └─ [orms/](beta_requirements/orms-frameworks/) | ORM frameworks | 12 ORM integrations | ✅ Specified |
 | └─ [tools/](beta_requirements/tools/) | Database tools | DBeaver, pgAdmin, etc. | ✅ Specified |
 | └─ [cloud/](beta_requirements/cloud-container/) | Cloud deployment | Docker, K8s, Helm | ✅ Specified |
+| └─ [optional/](beta_requirements/optional/) | Optional beta engine features | Storage encoding optimizations | ✅ Draft |
 
 ### Additional Subsystems
 

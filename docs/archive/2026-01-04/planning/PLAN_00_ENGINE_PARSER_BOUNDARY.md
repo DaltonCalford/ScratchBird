@@ -157,6 +157,6 @@ Deliverable: Tests and docs match architecture.
 ## References
 - `README.md`
 - `PROJECT_CONTEXT.md`
-- `docs/planning/plan_04_parser_and_compatibility.md`
-- `docs/planning/plan_07_emulated_protocol_compatibility.md`
-- `docs/planning/plan_03_sblr_version2_extended_opcodes.md`
+- `docs/archive/2026-01-04/planning/plan_04_parser_and_compatibility.md`
+- `docs/archive/2026-01-09/planning/plan_07_emulated_protocol_compatibility.md`
+- `docs/archive/2026-01-04/planning/plan_03_sblr_version2_extended_opcodes.md`

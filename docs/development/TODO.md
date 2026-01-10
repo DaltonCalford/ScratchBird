@@ -290,7 +290,7 @@ log_file = scratchbird.log
 - ✅ Parser support for transaction statements
 - ✅ Multi-connection support enabled
 
-**Documentation:** See `docs/planning/implemented/PHASE_2_COMPLETE.md`
+**Documentation:** See `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_2_COMPLETE.md`
 
 ---
 
@@ -309,7 +309,7 @@ log_file = scratchbird.log
 - ✅ READ ONLY transaction optimizations
 - ✅ Monitoring queries (MON_ACTIVE_TRANSACTIONS, etc.)
 
-**Documentation:** See `docs/planning/implemented/PHASE_3_COMPLETE.md`
+**Documentation:** See `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/implemented/PHASE_3_COMPLETE.md`
 
 ---
 

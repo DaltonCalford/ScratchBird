@@ -10,9 +10,9 @@ P0 (Alpha requirement).
 - `docs/specifications/firebird_spec.md`
 - `docs/specifications/FirebirdReferenceDocument.md`
 - `docs/specifications/wire_protocols/firebird_wire_protocol.md`
-- `docs/findings/firebird_emulation_parity_audit.md`
-- `docs/findings/firebird_wire_protocol_gaps.md`
-- `docs/planning/appendix_firebird_catalog_columns.md`
+- `docs/archive/2026-01-09/findings/firebird_emulation_parity_audit.md`
+- `docs/archive/2026-01-09/findings/firebird_wire_protocol_gaps.md`
+- `docs/archive/2026-01-04/planning/appendix_firebird_catalog_columns.md`
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 
 ## Decisions / Constraints (Resolved)
@@ -129,7 +129,7 @@ P0 (Alpha requirement).
 - [ ] Wire protocol matches Firebird client expectations.
 - [ ] Firebird transaction lifecycles match native behavior.
 - [ ] System catalog queries return correct columns.
-- [ ] All items in `docs/findings/firebird_wire_protocol_gaps.md` closed or deferred with explicit note.
+- [ ] All items in `docs/archive/2026-01-09/findings/firebird_wire_protocol_gaps.md` closed or deferred with explicit note.
 
 ## Testing Requirements
 - Unit tests:

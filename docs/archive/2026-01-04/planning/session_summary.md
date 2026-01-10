@@ -44,19 +44,19 @@
 - Data sources: IANA TZDB (timezone), Unicode CLDR/ICU (charset/collation).
 
 ## Updated Plans / Specs (Highlights)
-- `docs/planning/plan_16_attachment_transaction_model.md`: attachment model, runtime views, transaction defaults.
+- `docs/archive/2026-01-04/planning/plan_16_attachment_transaction_model.md`: attachment model, runtime views, transaction defaults.
 - `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`: header includes attachment_id/txn_id; non-zero required.
-- `docs/specifications/Appendix_A_SBLR_BYTECODE.md` + `docs/planning/plan_03_sblr_version2_extended_opcodes.md`: SBLR v2 + extended opcodes.
-- `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md`: domain DDL, conflict algorithm, canonical names.
-- `docs/planning/plan_06_metadata_show_and_catalog.md`: canonical catalog DDL, SHOW mapping, emulated view rules.
-- `docs/planning/plan_03_security_context_auth_audit_quorum.md`: security tables + quorum/cache rules.
-- `docs/planning/plan_13/14/15_*_emulation_parity.md`: emulated engine parity with per-DB view schemas.
-- `docs/planning/Beta_Phase_0_Implementation_Plan.md`: expanded documentation requirements + `sb_install` spec.
-- `docs/planning/alpha_exit_checklist_matrix.md`: alpha exit criteria checklist.
+- `docs/specifications/Appendix_A_SBLR_BYTECODE.md` + `docs/archive/2026-01-04/planning/plan_03_sblr_version2_extended_opcodes.md`: SBLR v2 + extended opcodes.
+- `docs/archive/2026-01-04/planning/plan_10_cluster_domains_and_conflict_resolution.md`: domain DDL, conflict algorithm, canonical names.
+- `docs/archive/2026-01-09/planning/plan_06_metadata_show_and_catalog.md`: canonical catalog DDL, SHOW mapping, emulated view rules.
+- `docs/archive/2026-01-04/planning/plan_03_security_context_auth_audit_quorum.md`: security tables + quorum/cache rules.
+- `docs/archive/2026-01-04/planning/plan_13/14/15_*_emulation_parity.md`: emulated engine parity with per-DB view schemas.
+- `docs/archive/2026-01-04/planning/Beta_Phase_0_Implementation_Plan.md`: expanded documentation requirements + `sb_install` spec.
+- `docs/archive/2026-01-04/planning/alpha_exit_checklist_matrix.md`: alpha exit criteria checklist.
 
 ## Current Workspace State
 - Many uncommitted changes across planning/spec files and some code/tests. Do not commit without coordination (other AI is implementing Plan 01).
-- The old planning directory cleanup has already happened; new plans live in `docs/planning/`.
+- The old planning directory cleanup has already happened; new plans live in `docs/archive/2026-01-09/planning/`.
 - Added dormant transaction catalog scaffolding (CatalogRootPage pointer, `DormantTransactionRecord`, CatalogManager CRUD + TOAST-backed text fields). General catalog TOAST manager still pending.
 - Wired statement tracking in ServerSession/ProtocolAdapter and added Database-level dormant detach/reattach registry (keeps ProcArray/locks alive). Server restart purges dormant records from prior instances; GC/lease enforcement still pending.
 - CatalogManager now persists sequences, views, triggers, procedures/functions (including parameter records), synonyms, and foreign tables and reloads them on startup; rename/move updates are persisted for those types.

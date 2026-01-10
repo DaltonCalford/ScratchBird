@@ -440,6 +440,14 @@ struct DomainQualityOptions {
     std::string enrich_function;
 };
 
+/**
+ * CREATE DATABASE option
+ */
+struct DatabaseOption {
+    StringPool::StringId key = StringPool::INVALID_ID;
+    StringPool::StringId value = StringPool::INVALID_ID;
+};
+
 // =============================================================================
 // DDL Statements
 // =============================================================================
@@ -629,6 +637,9 @@ public:
 
     bool if_not_exists = false;
     SchemaPath database_path;
+    StringPool::StringId source_spec = StringPool::INVALID_ID;  // Original spec/path
+    std::vector<DatabaseOption> options;
+    std::vector<StringPool::StringId> aliases;
 };
 
 /**
@@ -754,6 +765,8 @@ public:
 enum class AlterDatabaseAction : uint8_t {
     RENAME = 1,
     SET_OWNER = 2,
+    ADD_ALIAS = 3,
+    DROP_ALIAS = 4,
 };
 
 class AlterDatabaseStmt : public Statement {
@@ -765,6 +778,7 @@ public:
     SchemaPath database_path;
     StringPool::StringId new_name = StringPool::INVALID_ID;
     StringPool::StringId owner = StringPool::INVALID_ID;
+    StringPool::StringId alias = StringPool::INVALID_ID;
 };
 
 /**

@@ -1551,7 +1551,7 @@ Where:
 ## 13. Implementation Plan Reference
 
 **For detailed task tracking, see**:
-- `/docs/planning/LSM_TREE_IMPLEMENTATION_PLAN.md` (created separately)
+- `/docs/Alpha_Phase_1_Archive/Index_Implementation_Archive/LSM_TREE_IMPLEMENTATION_PLAN.md` (created separately)
 
 **MGA compliance reference**:
 - `/MGA_RULES.md` - CRITICAL: Read before any transaction/visibility work
@@ -1588,7 +1588,7 @@ This specification provides a **complete blueprint** for implementing LSM-Tree i
 - Firebird MGA throughout (xmin/xmax, TIP-based visibility, NO PostgreSQL MVCC)
 
 **Next Steps**:
-1. Create detailed implementation plan (`/docs/planning/LSM_TREE_IMPLEMENTATION_PLAN.md`)
+1. Create detailed implementation plan (`/docs/Alpha_Phase_1_Archive/Index_Implementation_Archive/LSM_TREE_IMPLEMENTATION_PLAN.md`)
 2. Begin Phase 1: Memtable implementation
 3. Continuously reference `/MGA_RULES.md` for visibility rules
 

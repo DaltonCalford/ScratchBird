@@ -603,7 +603,7 @@ SELECT * FROM find_nearby_stores(
 
 **See Also**:
 - `/docs/development/AI_PARALLEL_DEVELOPMENT_GUIDE.md` - Agent deployment guide
-- `/docs/planning/SPATIAL_IMPLEMENTATION_PLAN.md` - Detailed spatial design
-- `/docs/planning/PROCEDURAL_CODE_PLAN.md` - PL/ScratchBird language spec
+- `/docs/specifications/types/MULTI_GEOMETRY_TYPES_SPEC.md` - Detailed spatial design
+- `/docs/specifications/parser/05_PSQL_PROCEDURAL_LANGUAGE.md` - PL/ScratchBird language spec
 - `/docs/status/WAVE_1_COMPLETION_REPORT.md` - Wave 1 results
 - `/docs/status/WAVE_2_COMPLETION_SUMMARY.md` - Wave 2 results

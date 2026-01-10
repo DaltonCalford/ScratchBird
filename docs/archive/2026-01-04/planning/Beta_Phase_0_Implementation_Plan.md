@@ -1,7 +1,7 @@
 # **Specification: Alpha Phase 4 / Beta Phase 0 Implementation Plan**
 
 **Status:** READY FOR IMPLEMENTATION
-**Dependencies:** `docs/planning/alpha_exit_checklist_matrix.md`
+**Dependencies:** `docs/archive/2026-01-04/planning/alpha_exit_checklist_matrix.md`
 **Goal:** Transition ScratchBird from a development codebase to a distributable, installable product.
 **Output:** Installable packages (Windows/Linux), updated tools, and end-user documentation.
 

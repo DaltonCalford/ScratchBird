@@ -483,7 +483,7 @@ Technical Details:
 Estimated effort: ~30 hours over 4 days
 Phase 1.5: COMPLETE ✅
 
-See docs/planning/TABLESPACE_IMPLEMENTATION_PLAN.md for details.
+See docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_IMPLEMENTATION_PLAN.md for details.
 "
 
 # Push to remote

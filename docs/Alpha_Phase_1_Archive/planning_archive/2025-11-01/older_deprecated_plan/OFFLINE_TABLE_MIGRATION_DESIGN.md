@@ -194,7 +194,7 @@ ALTER TABLE table_name SET TABLESPACE tablespace_name ONLINE;  -- Rejected in Ph
 
 **Files Modified**:
 - `sql/executor/executor.cpp` (~150-200 lines)
-- `docs/planning/TABLESPACE_IMPLEMENTATION_PLAN.md` (update status)
+- `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/TABLESPACE_IMPLEMENTATION_PLAN.md` (update status)
 - Test files (if applicable)
 
 **Success Criteria**:

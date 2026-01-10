@@ -1249,7 +1249,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 - **ONLINE Migration**: Depends on TID stability (bug would break migration design)
 - **Data Integrity**: Index corruption risk (TIDs would point to wrong location)
 
-**Documentation**: See `docs/planning/MVCC_VS_MGA_CODE_REVIEW.md` for original analysis
+**Documentation**: See `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/MVCC_VS_MGA_CODE_REVIEW.md` for original analysis
 
 **Goal**: ✅ **ACHIEVED** - Critical architectural bug fixed
 

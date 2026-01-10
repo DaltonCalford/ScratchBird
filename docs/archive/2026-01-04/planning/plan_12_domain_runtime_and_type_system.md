@@ -1,7 +1,7 @@
 # Plan 12 - Domain Runtime and Type System Integration
 
 ## Scope
-Complete end-to-end domain functionality: unified catalog definitions, type resolution, runtime verification, casting rules, array/sub-domain semantics, and named element access (RECORD/ENUM/SET/VARIANT). This plan covers runtime behavior and type-system integration; cluster conflict handling is in `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md`.
+Complete end-to-end domain functionality: unified catalog definitions, type resolution, runtime verification, casting rules, array/sub-domain semantics, and named element access (RECORD/ENUM/SET/VARIANT). This plan covers runtime behavior and type-system integration; cluster conflict handling is in `docs/archive/2026-01-04/planning/plan_10_cluster_domains_and_conflict_resolution.md`.
 
 ## Priority
 P0 (domains are core to data correctness and dialect compatibility).
@@ -10,8 +10,8 @@ P0 (domains are core to data correctness and dialect compatibility).
 - `docs/specifications/DDL_DOMAINS.md`
 - `docs/specifications/03_TYPES_AND_DOMAINS.md`
 - `docs/specifications/SYSTEM_CATALOG_STRUCTURE.md`
-- `docs/findings/domain_support_gaps.md`
-- `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md`
+- `docs/archive/2026-01-09/findings/domain_support_gaps.md`
+- `docs/archive/2026-01-04/planning/plan_10_cluster_domains_and_conflict_resolution.md`
 
 ## Order of Implementation
 1) Unify domain catalog and type descriptor storage.

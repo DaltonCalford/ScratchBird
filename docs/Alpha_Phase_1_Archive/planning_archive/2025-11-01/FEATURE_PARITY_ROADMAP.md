@@ -410,8 +410,8 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
     * `/src/optimizer/cost_model.cpp` - Join cost implementation (~130 lines)
     * `/include/scratchbird/optimizer/selectivity_estimator.h` - estimateJoinSelectivity (~70 lines)
     * `/src/optimizer/selectivity_estimator.cpp` - Selectivity implementation (~135 lines)
-    * `/docs/planning/JOIN_PLANNER_DESIGN.md` - Planner design (370 lines)
-    * `/docs/planning/JOIN_IMPLEMENTATION_COMPLETION.md` - Integration guide (625 lines)
+    * `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/JOIN_PLANNER_DESIGN.md` - Planner design (370 lines)
+    * `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/JOIN_IMPLEMENTATION_COMPLETION.md` - Integration guide (625 lines)
     * `/include/scratchbird/optimizer/query_planner.h` - JOIN planning methods (~90 lines)
     * `/src/optimizer/query_planner.cpp` - Complete JOIN integration (~370 lines)
     * `/src/sblr/bytecode_generator.cpp` - StringPool parameter passing
@@ -834,7 +834,7 @@ These features are needed to compete with PostgreSQL, MySQL, SQL Server:
 **Why First in Phase 2**: Largest single market segment (GIS/mapping).
 **Wave 1 Status**: ✅ Infrastructure 100% complete (Agent 1), SQL integration pending (6-8h)
 
-**See**: `/docs/planning/SPATIAL_IMPLEMENTATION_PLAN.md` and `/docs/status/WAVE_1_COMPLETION_REPORT.md`
+**See**: `/docs/specifications/types/MULTI_GEOMETRY_TYPES_SPEC.md` and `/docs/status/WAVE_1_COMPLETION_REPORT.md`
 
 - [x] **9.1 Core Spatial Types** (80-120 hours) → ✅ **INFRASTRUCTURE COMPLETE** (Oct 28, Agent 1)
   - [x] Implement POINT type ✅ 2D coordinate storage (16 bytes)
@@ -943,7 +943,7 @@ These features are needed to compete with PostgreSQL, MySQL, SQL Server:
 **Why Second in Phase 2**: Business logic enforcement in database.
 **Wave 2 + Wave 4 Status**: ✅ 100% COMPLETE - Triggers and Stored Procedures delivered
 
-**See**: `/docs/planning/PROCEDURAL_CODE_PLAN.md` and `/docs/status/WAVE_2_COMPLETION_SUMMARY.md`
+**See**: `/docs/specifications/parser/05_PSQL_PROCEDURAL_LANGUAGE.md` and `/docs/status/WAVE_2_COMPLETION_SUMMARY.md`
 
 - [x] **10.1 Trigger Support** (80-120 hours) → ✅ **100% COMPLETE** (Oct 28, Agent C + C2)
   - [x] Add CREATE TRIGGER parser support ✅ Complete - full syntax
@@ -1233,7 +1233,7 @@ These features complete the feature set for full database replacement:
 
 - **Total Delivered**: ~2,500 lines (implementation + tests) + 3 comprehensive documents
 - **Test Coverage**: 219/219 tests passing (100%)
-- **Documentation**: `/docs/status/TASK_15_RANGE_TYPES_COMPLETE.md`, `/docs/planning/TASK_15_PHASE_6_GIST_DESIGN.md`
+- **Documentation**: `/docs/status/TASK_15_RANGE_TYPES_COMPLETE.md`, `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_15_PHASE_6_GIST_DESIGN.md`
 
 **Phase 3.2 Completion Criteria**: ✅ **ALL CRITERIA MET** - Full range type support with temporal types, operators, SQL integration, bytecode opcodes, and GiST design
 
@@ -1450,11 +1450,11 @@ Each phase is ordered by **dependency** and **market impact**:
 ## Appendix: Detailed Task Breakdowns
 
 For detailed task breakdowns, see:
-- `/docs/planning/PHASE1_DETAILED_TASKS.md` - Phase 1 task breakdown
-- `/docs/planning/PHASE2_DETAILED_TASKS.md` - Phase 2 task breakdown
-- `/docs/planning/PHASE3_DETAILED_TASKS.md` - Phase 3 task breakdown
-- `/docs/planning/SPATIAL_IMPLEMENTATION_PLAN.md` - Spatial features detailed plan
-- `/docs/planning/PROCEDURAL_CODE_PLAN.md` - Triggers/procedures detailed plan
+- `/docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_1_INTEGRATION_GUIDE.md` - Phase 1 task breakdown
+- `/docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_2_PROGRESS.md` - Phase 2 task breakdown
+- `/docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/PHASE_3_PROGRESS.md` - Phase 3 task breakdown
+- `/docs/specifications/types/MULTI_GEOMETRY_TYPES_SPEC.md` - Spatial features detailed plan
+- `/docs/specifications/parser/05_PSQL_PROCEDURAL_LANGUAGE.md` - Triggers/procedures detailed plan
 
 ---
 
@@ -1503,7 +1503,7 @@ For detailed task breakdowns, see:
   - Algorithm ready for implementation once dependencies available
 - **Completed**: Statistics Collection design document
   - Commit: 9b47ef9 - "Add comprehensive Statistics Collection design document"
-  - File: `docs/planning/STATISTICS_COLLECTION_DESIGN.md` (399 lines)
+  - File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/STATISTICS_COLLECTION_DESIGN.md` (399 lines)
   - Complete architecture, data flow, and algorithm documentation
   - Detailed remaining tasks breakdown (Tasks 1.1.4 - 1.1.8)
   - Design decisions, integration points, and testing strategy
@@ -1588,7 +1588,7 @@ For detailed task breakdowns, see:
 
 **Late Evening Session - Cost Model Implementation**
 - **Completed**: Cost Model design document
-  - File: `docs/planning/COST_MODEL_DESIGN.md` (250 lines)
+  - File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/COST_MODEL_DESIGN.md` (250 lines)
   - PostgreSQL-compatible cost parameters and formulas
   - Sequential scan and index scan cost estimation
   - Cache effect modeling
@@ -1624,7 +1624,7 @@ For detailed task breakdowns, see:
 
 **Continued - Query Planner Implementation**
 - **Completed**: Query Planner design document
-  - File: `docs/planning/QUERY_PLANNER_DESIGN.md` (737 lines)
+  - File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/QUERY_PLANNER_DESIGN.md` (737 lines)
   - Complete query planning pipeline architecture
   - PlanNode and Path class hierarchies
   - Path generation algorithms
@@ -1675,7 +1675,7 @@ For detailed task breakdowns, see:
 
 **Continued - Selectivity Estimation Implementation**
 - **Completed**: Selectivity Estimation design document
-  - File: `docs/planning/SELECTIVITY_ESTIMATION_DESIGN.md` (723 lines)
+  - File: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/SELECTIVITY_ESTIMATION_DESIGN.md` (723 lines)
   - Complete formulas and algorithms for all predicate types
   - Detailed examples with histogram interpolation
   - Equality with MCV support, range with histograms

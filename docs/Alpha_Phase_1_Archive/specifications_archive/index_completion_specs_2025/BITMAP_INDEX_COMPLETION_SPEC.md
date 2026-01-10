@@ -716,7 +716,7 @@ This specification provides complete implementation details for the 3 missing fe
 - Composite key indexes work correctly
 
 **Next Steps**:
-1. Create detailed implementation plan (`/docs/planning/BITMAP_INDEX_COMPLETION_PLAN.md`)
+1. Create detailed implementation plan (`/docs/Alpha_Phase_1_Archive/Index_Implementation_Archive/BITMAP_INDEX_COMPLETION_PLAN.md`)
 2. Begin with multi-page dictionary (highest priority for scalability)
 3. Add compression tracking (quick win for metrics)
 4. Add mixed type support (enables composite keys)

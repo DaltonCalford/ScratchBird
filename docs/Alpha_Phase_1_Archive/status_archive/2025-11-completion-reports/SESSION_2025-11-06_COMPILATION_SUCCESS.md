@@ -339,7 +339,7 @@ Per INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md:
 
 ### Documentation
 1. docs/analysis/INDEX_REVIEW_EXECUTIVE_SUMMARY_2025-11-06.md (new)
-2. docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md (new)
+2. docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md (new)
 3. docs/INDEX_REVIEW_FILES_REFERENCE.md (new)
 4. docs/implementation/LSM_TREE_RANGE_SCAN_IMPLEMENTATION_2025-11-06.md (new)
 5. docs/implementation/LSM_TREE_RANGE_SCAN_PROGRESS_2025-11-06.md (new)

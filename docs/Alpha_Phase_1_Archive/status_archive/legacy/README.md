@@ -34,7 +34,7 @@ This directory contains legacy documentation that has been superseded by the cur
 For current project documentation, see:
 
 - **Status:** `docs/status/` - Current implementation status and completion reports
-- **Planning:** `docs/planning/` - Active implementation plans
+- **Planning:** `docs/archive/2026-01-09/planning/` - Active implementation plans
 - **Development:** `docs/development/` - Development notes and analysis
 - **Specifications:** `docs/specifications/` - Technical specifications
 - **Design:** `docs/design/` - Architecture and design documents

@@ -979,7 +979,7 @@ Orchestrate all components: memtable, SSTables, compaction, Bloom filter.
 
 **Files**:
 - Create `/docs/status/LSM_TREE_COMPLETION_REPORT_2025-11-XX.md`
-- Update `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` (mark complete)
+- Update `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` (mark complete)
 
 **Acceptance Criteria**:
 - [ ] Completion report created
@@ -1121,7 +1121,7 @@ Orchestrate all components: memtable, SSTables, compaction, Bloom filter.
 - `/MGA_RULES.md` (Firebird MGA rules)
 
 **Master Plan**:
-- `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
 
 **External References**:
 - [LevelDB Documentation](https://github.com/google/leveldb/blob/main/doc/index.md)

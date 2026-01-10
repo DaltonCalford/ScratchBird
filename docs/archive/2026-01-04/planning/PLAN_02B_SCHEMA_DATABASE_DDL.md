@@ -7,12 +7,12 @@ Status: In progress (core implementation complete; adapter/compiler alignment co
 Scope: Provide SBLR opcodes, parser emission, executor handlers, and catalog integration for CREATE/DROP/ALTER SCHEMA and CREATE/DROP/ALTER DATABASE. Align emulated database lifecycle with catalog schema paths and view generation.
 
 References:
-- `docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
+- `docs/archive/2026-01-09/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 - `docs/audit/AUDIT_SCHEMA_DATABASE_DDL_GAP.md`
-- `docs/planning/PLAN_04_PREREQUISITES.md`
-- `docs/planning/plan_13_mysql_emulation_parity.md`
-- `docs/planning/plan_14_postgresql_emulation_parity.md`
-- `docs/planning/plan_15_firebird_emulation_parity.md`
+- `docs/archive/2026-01-04/planning/PLAN_04_PREREQUISITES.md`
+- `docs/archive/2026-01-04/planning/plan_13_mysql_emulation_parity.md`
+- `docs/archive/2026-01-04/planning/plan_14_postgresql_emulation_parity.md`
+- `docs/archive/2026-01-04/planning/plan_15_firebird_emulation_parity.md`
 
 ## Current Implementation (as of 2025-12-31)
 Completed:

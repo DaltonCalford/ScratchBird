@@ -259,7 +259,7 @@ agent_result = Task(
     Context: Phase 2 Task 9.1 - Core Spatial Types
 
     Your task is to:
-    1. Read /docs/planning/PHASE_2_KICKOFF.md for context
+    1. Read /docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/PHASE_2_KICKOFF.md for context
     2. Create spatial type structures in include/scratchbird/core/spatial_types.h
     3. Implement WKT parser for POINT(x y), LINESTRING(...), POLYGON(...)
     4. Implement WKB binary serialization

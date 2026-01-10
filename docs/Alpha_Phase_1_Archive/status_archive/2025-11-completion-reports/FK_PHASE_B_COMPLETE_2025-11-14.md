@@ -200,7 +200,7 @@ CREATE TABLE order_items (
 |------|-------|---------|
 | `README.md` | ~20 | Updated FK constraint status |
 | `PROJECT_CONTEXT.md` | ~30 | Updated constraints section |
-| `docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` | ~10 | Updated milestones |
+| `docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` | ~10 | Updated milestones |
 | `docs/status/FK_PHASE_B_COMPLETE_2025-11-14.md` | ~350 | This completion document |
 
 ---

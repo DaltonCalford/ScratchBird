@@ -981,7 +981,7 @@ See: `/MGA_RULES.md`
 
 - `/docs/specifications/DATA_TYPES_SPEC.md` - Base type system
 - `/docs/specifications/DOMAIN_SPEC.md` - Domain definitions
-- `/docs/planning/CRUD_IMPLEMENTATION_PLAN.md` - Agent D tasks
+- `/docs/archive/2026-01-04/planning/old_Plans/archive/CRUD_IMPLEMENTATION_PLAN.md` - Agent D tasks
 
 ### External Resources
 

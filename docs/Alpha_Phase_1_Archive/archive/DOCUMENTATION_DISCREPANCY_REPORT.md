@@ -575,7 +575,7 @@ Despite the discrepancies, the audit found several areas where the project **exc
 
 - `/home/user/ScratchBird/README.md`
 - `/home/user/ScratchBird/PROJECT_CONTEXT.md`
-- `/home/user/ScratchBird/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+- `/home/user/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
 - `/home/user/ScratchBird/src/core/*.cpp` (all index implementations)
 - `/home/user/ScratchBird/src/parser/parser.cpp`
 - `/home/user/ScratchBird/src/sblr/executor.cpp`

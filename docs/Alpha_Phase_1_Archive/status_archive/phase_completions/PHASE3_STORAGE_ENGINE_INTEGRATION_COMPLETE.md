@@ -260,8 +260,8 @@ Per TOAST_MGA_COMPLIANCE_FIX_PLAN.md:
 
 - **Analysis**: `/docs/analysis/TOAST_INDEX_INTEGRATION_ANALYSIS.md`
 - **Options**: `/docs/analysis/TOAST_INDEX_OPTIONS_ANALYSIS.md`
-- **Plan**: `/docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
-- **Tasks**: `/docs/planning/PHASE_3_REVISED_TASKS.md`
+- **Plan**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md`
+- **Tasks**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/PHASE_3_REVISED_TASKS.md`
 - **Analysis Complete**: `/docs/status/TOAST_MGA_PHASE3_ANALYSIS_COMPLETE.md`
 
 ---

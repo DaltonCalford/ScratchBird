@@ -1,14 +1,18 @@
-# Database Engine Specification Documents
+# Alpha Phase 2 Specifications
 
-**Version:** 1.0  
-**Date:** 2025-01-25  
+**[← Back to Specifications Index](../README.md)**
+
+**Version:** 1.0
+**Date:** 2025-01-25
 **Status:** Draft for Review
 
 ---
 
 ## Overview
 
-This directory contains the complete technical specifications for a distributed, multi-dialect SQL database engine. The system provides wire protocol compatibility with PostgreSQL, MySQL, MSSQL, and Firebird while implementing a modern three-tier architecture for optimal OLTP and OLAP performance.
+This directory contains Alpha Phase 2 technical specifications for a distributed, multi-dialect SQL database engine. The system provides wire protocol compatibility with PostgreSQL, MySQL, MSSQL, and Firebird while implementing a modern three-tier architecture for optimal OLTP and OLAP performance.
+
+**Note:** These specifications represent an alternative architectural approach to distributed operation. The primary cluster architecture for Beta is documented in [Cluster Specification Work](../Cluster%20Specification%20Work/).
 
 ---
 
@@ -537,8 +541,8 @@ security@[domain] (private reporting)
 
 ---
 
-**Document Index Last Updated:** 2025-11-25  
-**Total Documentation:** 17 comprehensive specifications (~350 KB total)  
+**Document Index Last Updated:** 2025-11-25
+**Total Documentation:** 17 comprehensive specifications (~350 KB total)
 **Status:** Design Complete - Ready for Implementation
 
 **Document Breakdown:**
@@ -547,3 +551,23 @@ security@[domain] (private reporting)
 - Operations & Deployment (08-09): 62 KB
 - Extensibility & Migration (10-11x): 75 KB
 - Index & Guide (README): 16 KB
+
+---
+
+## Related Specifications
+
+- [Cluster Specification Work](../Cluster%20Specification%20Work/) - Primary Beta cluster architecture
+- [Remote Database UDR](../remote_database_udr/) - Remote database adapter specifications
+- [UDR System](../udr/) - UDR system specification
+- [Wire Protocols](../wire_protocols/) - Wire protocol implementations
+- [Replication](../beta_requirements/replication/) - Beta replication specifications
+
+## Navigation
+
+- **Parent Directory:** [Specifications Index](../README.md)
+- **Related:** [Cluster Specifications](../Cluster%20Specification%20Work/README.md)
+- **Project Root:** [ScratchBird Home](../../../README.md)
+
+---
+
+**Last Updated:** January 2026

@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -140,9 +141,12 @@ void Parser::parseSetStmt() {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_ROLE));
 
-        if (matchKeyword(TokenType::KW_NONE)) {
-            emitString("");
+        uint8_t flags = 0;
+        if (matchKeyword(TokenType::KW_NONE) || matchKeyword(TokenType::KW_DEFAULT)) {
+            flags |= 0x01;
+            emitByte(flags);
         } else {
+            emitByte(flags);
             std::string role_name = parseIdentifier();
             emitString(role_name);
         }
@@ -152,9 +156,12 @@ void Parser::parseSetStmt() {
             emit(sblr::Opcode::EXTENDED_OPCODE);
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_SESSION_AUTH));
 
-            if (matchKeyword(TokenType::KW_DEFAULT)) {
-                emitString("");
+            uint8_t flags = 0;
+            if (matchKeyword(TokenType::KW_DEFAULT) || matchKeyword(TokenType::KW_RESET)) {
+                flags |= 0x01;
+                emitByte(flags);
             } else {
+                emitByte(flags);
                 std::string user_name = parseIdentifier();
                 emitString(user_name);
             }
@@ -490,134 +497,129 @@ void Parser::parseGrantStmt() {
     consume(TokenType::KW_GRANT, "Expected GRANT");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GRANT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GRANT_PRIVILEGE));
 
-    // Privileges
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t count = 0;
+    uint32_t privileges = 0;
+    bool has_column_list = false;
+    std::vector<std::string> column_names;
+
+    auto add_privilege = [&](core::CatalogManager::Privilege priv) {
+        privileges |= static_cast<uint32_t>(priv);
+    };
 
     if (matchKeyword(TokenType::KW_ALL)) {
         matchKeyword(TokenType::KW_PRIVILEGES);
-        emitString("ALL");
-        count = 1;
+        privileges = static_cast<uint32_t>(core::CatalogManager::Privilege::ALL);
     } else {
         do {
-            std::string priv;
             if (matchKeyword(TokenType::KW_SELECT)) {
-                priv = "SELECT";
+                add_privilege(core::CatalogManager::Privilege::SELECT);
             } else if (matchKeyword(TokenType::KW_INSERT)) {
-                priv = "INSERT";
+                add_privilege(core::CatalogManager::Privilege::INSERT);
             } else if (matchKeyword(TokenType::KW_UPDATE)) {
-                priv = "UPDATE";
+                add_privilege(core::CatalogManager::Privilege::UPDATE);
             } else if (matchKeyword(TokenType::KW_DELETE)) {
-                priv = "DELETE";
+                add_privilege(core::CatalogManager::Privilege::DELETE);
             } else if (matchKeyword(TokenType::KW_TRUNCATE)) {
-                priv = "TRUNCATE";
+                add_privilege(core::CatalogManager::Privilege::TRUNCATE);
             } else if (matchKeyword(TokenType::KW_REFERENCES)) {
-                priv = "REFERENCES";
+                add_privilege(core::CatalogManager::Privilege::REFERENCES);
             } else if (matchKeyword(TokenType::KW_TRIGGER)) {
-                priv = "TRIGGER";
+                add_privilege(core::CatalogManager::Privilege::TRIGGER);
             } else if (matchKeyword(TokenType::KW_EXECUTE)) {
-                priv = "EXECUTE";
+                add_privilege(core::CatalogManager::Privilege::EXECUTE);
             } else if (matchKeyword(TokenType::KW_USAGE)) {
-                priv = "USAGE";
+                add_privilege(core::CatalogManager::Privilege::USAGE);
             } else if (matchKeyword(TokenType::KW_CREATE)) {
-                priv = "CREATE";
+                add_privilege(core::CatalogManager::Privilege::CREATE);
             } else if (matchKeyword(TokenType::KW_CONNECT)) {
-                priv = "CONNECT";
+                add_privilege(core::CatalogManager::Privilege::CONNECT);
             } else if (matchKeyword(TokenType::KW_TEMPORARY)) {
-                priv = "TEMPORARY";
+                add_privilege(core::CatalogManager::Privilege::TEMPORARY);
+            } else {
+                error("Unsupported GRANT privilege");
+                break;
             }
-            emitString(priv);
 
-            // Column list for column-level privileges
             if (match(TokenType::LEFT_PAREN)) {
+                has_column_list = true;
                 do {
-                    parseIdentifier();
+                    column_names.push_back(parseIdentifier());
                 } while (match(TokenType::COMMA));
                 consume(TokenType::RIGHT_PAREN, "Expected )");
             }
-
-            count++;
         } while (match(TokenType::COMMA));
     }
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
-
     consumeKeyword(TokenType::KW_ON, "Expected ON");
 
-    // Object type and name
+    core::CatalogManager::PermissionObjectType object_type =
+        core::CatalogManager::PermissionObjectType::TABLE;
     if (matchKeyword(TokenType::KW_TABLE)) {
-        emitByte(1);
+        object_type = core::CatalogManager::PermissionObjectType::TABLE;
     } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
-        emitByte(2);
+        object_type = core::CatalogManager::PermissionObjectType::SEQUENCE;
     } else if (matchKeyword(TokenType::KW_FUNCTION)) {
-        emitByte(3);
+        object_type = core::CatalogManager::PermissionObjectType::FUNCTION;
     } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
-        emitByte(4);
-    } else if (matchKeyword(TokenType::KW_DATABASE)) {
-        emitByte(5);
+        object_type = core::CatalogManager::PermissionObjectType::PROCEDURE;
     } else if (matchKeyword(TokenType::KW_SCHEMA)) {
-        emitByte(6);
+        object_type = core::CatalogManager::PermissionObjectType::SCHEMA;
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        object_type = core::CatalogManager::PermissionObjectType::VIEW;
     } else if (matchKeyword(TokenType::KW_ALL)) {
-        // GRANT ON ALL TABLES/SEQUENCES/FUNCTIONS IN SCHEMA
-        if (matchKeyword(TokenType::KW_TABLES)) {
-            emitByte(11);
-        } else if (matchKeyword(TokenType::KW_SEQUENCES)) {
-            emitByte(12);
-        } else if (matchKeyword(TokenType::KW_FUNCTIONS)) {
-            emitByte(13);
-        }
-        consumeKeyword(TokenType::KW_IN, "Expected IN");
-        consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
-    } else {
-        emitByte(1);  // Default to TABLE
+        error("GRANT ON ALL ... is not supported in current bytecode");
     }
 
-    // Object names
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t obj_count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t obj_count = 0;
-    do {
-        std::string obj_name = parseQualifiedName();
-        emitString(obj_name);
-        obj_count++;
-    } while (match(TokenType::COMMA));
-    sblr::writeInt32(&bytecode_[obj_count_pos], obj_count);
-    emit(sblr::Opcode::END_LIST);
+    std::string object_name = parseQualifiedName();
+    if (match(TokenType::COMMA)) {
+        error("GRANT supports a single object in current bytecode");
+        parseQualifiedName();
+    }
 
     consumeKeyword(TokenType::KW_TO, "Expected TO");
 
-    // Grantees
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t grantee_count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t grantee_count = 0;
-    do {
-        if (matchKeyword(TokenType::KW_PUBLIC)) {
-            emitString("PUBLIC");
-        } else if (matchKeyword(TokenType::KW_GROUP)) {
-            std::string group_name = parseIdentifier();
-            emitString("GROUP:" + group_name);
-        } else {
-            std::string grantee = parseIdentifier();
-            emitString(grantee);
-        }
-        grantee_count++;
-    } while (match(TokenType::COMMA));
-    sblr::writeInt32(&bytecode_[grantee_count_pos], grantee_count);
-    emit(sblr::Opcode::END_LIST);
+    core::CatalogManager::GranteeType grantee_type = core::CatalogManager::GranteeType::USER;
+    std::string grantee_name;
+    if (matchKeyword(TokenType::KW_PUBLIC)) {
+        grantee_type = core::CatalogManager::GranteeType::PUBLIC;
+    } else if (matchKeyword(TokenType::KW_GROUP)) {
+        grantee_type = core::CatalogManager::GranteeType::GROUP;
+        grantee_name = parseIdentifier();
+    } else if (matchKeyword(TokenType::KW_ROLE)) {
+        grantee_type = core::CatalogManager::GranteeType::ROLE;
+        grantee_name = parseIdentifier();
+    } else {
+        grantee_name = parseIdentifier();
+    }
+    if (match(TokenType::COMMA)) {
+        error("GRANT supports a single grantee in current bytecode");
+        parseIdentifier();
+    }
 
     // WITH GRANT OPTION
+    bool with_grant_option = false;
     if (matchKeyword(TokenType::KW_WITH)) {
         consumeKeyword(TokenType::KW_GRANT, "Expected GRANT");
         consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GRANT_OPTION));
+        with_grant_option = true;
+    }
+
+    uint8_t flags = 0;
+    if (with_grant_option) flags |= 0x01;
+    if (has_column_list) flags |= 0x02;
+
+    emitU32(privileges);
+    emitByte(static_cast<uint8_t>(object_type));
+    emitString(object_name);
+    emitByte(static_cast<uint8_t>(grantee_type));
+    emitString(grantee_name);
+    emitByte(flags);
+    if (has_column_list) {
+        emitU32(static_cast<uint32_t>(column_names.size()));
+        for (const auto& name : column_names) {
+            emitString(name);
+        }
     }
 }
 
@@ -625,93 +627,123 @@ void Parser::parseRevokeStmt() {
     consume(TokenType::KW_REVOKE, "Expected REVOKE");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_REVOKE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_REVOKE_PRIVILEGE));
 
     // GRANT OPTION FOR
-    bool revoke_grant_option = false;
     if (matchKeyword(TokenType::KW_GRANT)) {
         consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
         consumeKeyword(TokenType::KW_FOR, "Expected FOR");
-        revoke_grant_option = true;
     }
-    emitByte(revoke_grant_option ? 1 : 0);
 
-    // Privileges (same as GRANT)
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t count = 0;
+    uint32_t privileges = 0;
+    bool has_column_list = false;
+    std::vector<std::string> column_names;
+
+    auto add_privilege = [&](core::CatalogManager::Privilege priv) {
+        privileges |= static_cast<uint32_t>(priv);
+    };
 
     if (matchKeyword(TokenType::KW_ALL)) {
         matchKeyword(TokenType::KW_PRIVILEGES);
-        emitString("ALL");
-        count = 1;
+        privileges = static_cast<uint32_t>(core::CatalogManager::Privilege::ALL);
     } else {
         do {
-            std::string priv;
-            if (matchKeyword(TokenType::KW_SELECT)) priv = "SELECT";
-            else if (matchKeyword(TokenType::KW_INSERT)) priv = "INSERT";
-            else if (matchKeyword(TokenType::KW_UPDATE)) priv = "UPDATE";
-            else if (matchKeyword(TokenType::KW_DELETE)) priv = "DELETE";
-            else if (matchKeyword(TokenType::KW_TRUNCATE)) priv = "TRUNCATE";
-            else if (matchKeyword(TokenType::KW_REFERENCES)) priv = "REFERENCES";
-            else if (matchKeyword(TokenType::KW_TRIGGER)) priv = "TRIGGER";
-            else if (matchKeyword(TokenType::KW_EXECUTE)) priv = "EXECUTE";
-            else if (matchKeyword(TokenType::KW_USAGE)) priv = "USAGE";
-            else if (matchKeyword(TokenType::KW_CREATE)) priv = "CREATE";
-            emitString(priv);
-            count++;
+            if (matchKeyword(TokenType::KW_SELECT)) add_privilege(core::CatalogManager::Privilege::SELECT);
+            else if (matchKeyword(TokenType::KW_INSERT)) add_privilege(core::CatalogManager::Privilege::INSERT);
+            else if (matchKeyword(TokenType::KW_UPDATE)) add_privilege(core::CatalogManager::Privilege::UPDATE);
+            else if (matchKeyword(TokenType::KW_DELETE)) add_privilege(core::CatalogManager::Privilege::DELETE);
+            else if (matchKeyword(TokenType::KW_TRUNCATE)) add_privilege(core::CatalogManager::Privilege::TRUNCATE);
+            else if (matchKeyword(TokenType::KW_REFERENCES)) add_privilege(core::CatalogManager::Privilege::REFERENCES);
+            else if (matchKeyword(TokenType::KW_TRIGGER)) add_privilege(core::CatalogManager::Privilege::TRIGGER);
+            else if (matchKeyword(TokenType::KW_EXECUTE)) add_privilege(core::CatalogManager::Privilege::EXECUTE);
+            else if (matchKeyword(TokenType::KW_USAGE)) add_privilege(core::CatalogManager::Privilege::USAGE);
+            else if (matchKeyword(TokenType::KW_CREATE)) add_privilege(core::CatalogManager::Privilege::CREATE);
+            else if (matchKeyword(TokenType::KW_CONNECT)) add_privilege(core::CatalogManager::Privilege::CONNECT);
+            else if (matchKeyword(TokenType::KW_TEMPORARY)) add_privilege(core::CatalogManager::Privilege::TEMPORARY);
+            else {
+                error("Unsupported REVOKE privilege");
+                break;
+            }
+
+            if (match(TokenType::LEFT_PAREN)) {
+                has_column_list = true;
+                do {
+                    column_names.push_back(parseIdentifier());
+                } while (match(TokenType::COMMA));
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            }
         } while (match(TokenType::COMMA));
     }
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
-
     consumeKeyword(TokenType::KW_ON, "Expected ON");
 
-    // Object type (similar to GRANT)
-    if (matchKeyword(TokenType::KW_TABLE)) emitByte(1);
-    else if (matchKeyword(TokenType::KW_SEQUENCE)) emitByte(2);
-    else if (matchKeyword(TokenType::KW_FUNCTION)) emitByte(3);
-    else if (matchKeyword(TokenType::KW_DATABASE)) emitByte(5);
-    else if (matchKeyword(TokenType::KW_SCHEMA)) emitByte(6);
-    else emitByte(1);
+    core::CatalogManager::PermissionObjectType object_type =
+        core::CatalogManager::PermissionObjectType::TABLE;
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        object_type = core::CatalogManager::PermissionObjectType::TABLE;
+    } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
+        object_type = core::CatalogManager::PermissionObjectType::SEQUENCE;
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        object_type = core::CatalogManager::PermissionObjectType::FUNCTION;
+    } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        object_type = core::CatalogManager::PermissionObjectType::PROCEDURE;
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        object_type = core::CatalogManager::PermissionObjectType::SCHEMA;
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        object_type = core::CatalogManager::PermissionObjectType::VIEW;
+    } else if (matchKeyword(TokenType::KW_ALL)) {
+        error("REVOKE ON ALL ... is not supported in current bytecode");
+    }
 
-    // Object names
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t obj_count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t obj_count = 0;
-    do {
-        emitString(parseQualifiedName());
-        obj_count++;
-    } while (match(TokenType::COMMA));
-    sblr::writeInt32(&bytecode_[obj_count_pos], obj_count);
-    emit(sblr::Opcode::END_LIST);
+    std::string object_name = parseQualifiedName();
+    if (match(TokenType::COMMA)) {
+        error("REVOKE supports a single object in current bytecode");
+        parseQualifiedName();
+    }
 
     consumeKeyword(TokenType::KW_FROM, "Expected FROM");
 
-    // Grantees
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t grantee_count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t grantee_count = 0;
-    do {
-        if (matchKeyword(TokenType::KW_PUBLIC)) {
-            emitString("PUBLIC");
-        } else {
-            emitString(parseIdentifier());
-        }
-        grantee_count++;
-    } while (match(TokenType::COMMA));
-    sblr::writeInt32(&bytecode_[grantee_count_pos], grantee_count);
-    emit(sblr::Opcode::END_LIST);
+    core::CatalogManager::GranteeType grantee_type = core::CatalogManager::GranteeType::USER;
+    std::string grantee_name;
+    if (matchKeyword(TokenType::KW_PUBLIC)) {
+        grantee_type = core::CatalogManager::GranteeType::PUBLIC;
+    } else if (matchKeyword(TokenType::KW_GROUP)) {
+        grantee_type = core::CatalogManager::GranteeType::GROUP;
+        grantee_name = parseIdentifier();
+    } else if (matchKeyword(TokenType::KW_ROLE)) {
+        grantee_type = core::CatalogManager::GranteeType::ROLE;
+        grantee_name = parseIdentifier();
+    } else {
+        grantee_name = parseIdentifier();
+    }
+    if (match(TokenType::COMMA)) {
+        error("REVOKE supports a single grantee in current bytecode");
+        parseIdentifier();
+    }
 
     // CASCADE/RESTRICT
+    bool cascade = false;
     if (matchKeyword(TokenType::KW_CASCADE)) {
-        emitByte(1);
+        cascade = true;
     } else if (matchKeyword(TokenType::KW_RESTRICT)) {
-        emitByte(2);
+        cascade = false;
+    }
+
+    uint8_t flags = 0;
+    if (cascade) flags |= 0x01;
+    if (has_column_list) flags |= 0x02;
+
+    emitU32(privileges);
+    emitByte(static_cast<uint8_t>(object_type));
+    emitString(object_name);
+    emitByte(static_cast<uint8_t>(grantee_type));
+    emitString(grantee_name);
+    emitByte(flags);
+    if (has_column_list) {
+        emitU32(static_cast<uint32_t>(column_names.size()));
+        for (const auto& name : column_names) {
+            emitString(name);
+        }
     }
 }
 
@@ -827,49 +859,52 @@ void Parser::parseCopyStmt() {
     consume(TokenType::KW_COPY, "Expected COPY");
 
     // COPY table [(columns)] FROM/TO
-    std::string table_name = parseQualifiedName();
+    std::string schema;
+    std::string table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = table;
+        table = parseIdentifier();
+    }
+    resolveTableName(schema, table);
+    std::string table_path = schema.empty() ? table : schema + "/" + table;
 
     // Optional column list
+    std::vector<std::string> column_names;
     if (match(TokenType::LEFT_PAREN)) {
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t count = 0;
         do {
-            emit(sblr::Opcode::COLUMN_REF);
-            emitString(parseIdentifier());
-            count++;
+            column_names.push_back(parseIdentifier());
         } while (match(TokenType::COMMA));
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
         consume(TokenType::RIGHT_PAREN, "Expected )");
     }
 
-    emit(sblr::Opcode::TABLE_REF);
-    emitString(table_name);
-
+    uint8_t direction = 0;
+    std::string target;
     if (matchKeyword(TokenType::KW_FROM)) {
-        emitByte(1);  // COPY FROM
-
+        direction = 1;
         // STDIN or filename
         if (matchKeyword(TokenType::KW_STDIN)) {
-            emitString("STDIN");
+            target = "STDIN";
         } else if (check(TokenType::STRING_LITERAL)) {
             uint32_t id = current_token_.value.string_id;
-            emitString(lexer_.stringPool().get(id));
+            target = std::string(lexer_.stringPool().get(id));
             advance();
+        } else {
+            error("Expected STDIN or string literal for COPY FROM");
         }
     } else if (matchKeyword(TokenType::KW_TO)) {
-        emitByte(2);  // COPY TO
-
+        direction = 2;
         // STDOUT or filename
         if (matchKeyword(TokenType::KW_STDOUT)) {
-            emitString("STDOUT");
+            target = "STDOUT";
         } else if (check(TokenType::STRING_LITERAL)) {
             uint32_t id = current_token_.value.string_id;
-            emitString(lexer_.stringPool().get(id));
+            target = std::string(lexer_.stringPool().get(id));
             advance();
+        } else {
+            error("Expected STDOUT or string literal for COPY TO");
         }
+    } else {
+        error("Expected COPY FROM or COPY TO");
     }
 
     // Options
@@ -913,7 +948,20 @@ void Parser::parseCopyStmt() {
 
     // WHERE clause (for COPY FROM)
     if (matchKeyword(TokenType::KW_WHERE)) {
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = false;
         parseExpression();
+        emit_enabled_ = prev_emit;
+    }
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_COPY));
+    emitString(table_path);
+    emitByte(direction);
+    emitString(target);
+    emitU32(static_cast<uint32_t>(column_names.size()));
+    for (const auto& name : column_names) {
+        emitString(name);
     }
 }
 

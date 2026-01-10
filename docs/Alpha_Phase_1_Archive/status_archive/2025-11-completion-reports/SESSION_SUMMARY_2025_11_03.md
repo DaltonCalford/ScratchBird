@@ -308,11 +308,11 @@ Phase 3 Analysis Complete: Critical Architectural Correction - TOAST MGA
 Files:
 + docs/analysis/TOAST_INDEX_INTEGRATION_ANALYSIS.md
 + docs/analysis/TOAST_INDEX_OPTIONS_ANALYSIS.md
-+ docs/planning/PHASE_3_REVISED_TASKS.md
++ docs/Alpha_Phase_1_Archive/planning_archive (1)/PHASE_3_REVISED_TASKS.md
 + docs/status/TOAST_MGA_PHASE3_ANALYSIS_COMPLETE.md
 + include/scratchbird/core/index_key_extractor.h
 + src/core/index_key_extractor.cpp
-M docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md
+M docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md
 M include/scratchbird/core/toast.h
 M src/core/toast.cpp
 M src/core/btree.cpp
@@ -332,7 +332,7 @@ Commit: 4b916fa
 Remove WAL Contamination from Phase 5 (Testing) - MGA Uses TIP, Not WAL
 
 Files:
-M docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md
+M docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md
 
 Changes:
 - Removed ~125 lines of WAL testing tasks
@@ -463,7 +463,7 @@ Commit: 673e7ec
 1. `docs/analysis/TOAST_INDEX_INTEGRATION_ANALYSIS.md` - 15k words
 2. `docs/analysis/TOAST_INDEX_OPTIONS_ANALYSIS.md` - 20k words
 3. `docs/analysis/WAL_CONTAMINATION_CLEANUP.md` - 10k words
-4. `docs/planning/PHASE_3_REVISED_TASKS.md` - Task replacements
+4. `docs/Alpha_Phase_1_Archive/planning_archive (1)/PHASE_3_REVISED_TASKS.md` - Task replacements
 
 **Status Documents** (2):
 5. `docs/status/TOAST_MGA_PHASE3_ANALYSIS_COMPLETE.md` - Analysis summary
@@ -475,11 +475,11 @@ Commit: 673e7ec
 
 ### Modified (5 files)
 
-1. `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - Major updates
+1. `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - Major updates
 2. `include/scratchbird/core/toast.h` - Phase 1/2 complete markers
 3. `src/core/toast.cpp` - Phase 1/2 implementations
 4. `src/core/btree.cpp` - Phase 1/2 tracking
-5. `docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - WAL cleanup
+5. `docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - WAL cleanup
 
 ---
 

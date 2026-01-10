@@ -1,6 +1,6 @@
 # Beta Tasks (Summary & Priority)
 
-**Reference:** `docs/planning/Beta Phase 0 Implementation Plan.md` for packaging/tooling specifics. This file consolidates Beta-focused work items.
+**Reference:** `docs/archive/2026-01-04/planning/Beta_Phase_0_Implementation_Plan.md` for packaging/tooling specifics. This file consolidates Beta-focused work items.
 
 ## Priority P0
 - Packaging & builds (from Beta Phase 0): cross-compilation (Linux/Windows), CPack targets (DEB/RPM/TGZ/NSIS/ZIP/AppImage/Docker), build profiles, toolchain files.  

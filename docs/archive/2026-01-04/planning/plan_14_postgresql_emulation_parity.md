@@ -12,9 +12,9 @@ P0 (Alpha requirement).
 - `docs/specifications/POSTGRESQL_PARSER_IMPLEMENTATION.md`
 - `docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md`
 - `docs/specifications/wire_protocols/postgresql_wire_protocol.md`
-- `docs/findings/postgresql_emulation_parity_audit.md`
-- `docs/findings/postgresql_wire_protocol_gaps.md`
-- `docs/planning/appendix_postgresql_catalog_columns.md`
+- `docs/archive/2026-01-09/findings/postgresql_emulation_parity_audit.md`
+- `docs/archive/2026-01-09/findings/postgresql_wire_protocol_gaps.md`
+- `docs/archive/2026-01-04/planning/appendix_postgresql_catalog_columns.md`
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 
 ## Decisions / Constraints (Resolved)
@@ -155,7 +155,7 @@ P0 (Alpha requirement).
 - [ ] Protocol traces match PostgreSQL 16 expectations.
 - [ ] SQLSTATE errors for invalid transaction state match PostgreSQL.
 - [ ] Catalog tables/views match `appendix_postgresql_catalog_columns.md`.
-- [ ] All items in `docs/findings/postgresql_wire_protocol_gaps.md` closed or deferred with explicit note.
+- [ ] All items in `docs/archive/2026-01-09/findings/postgresql_wire_protocol_gaps.md` closed or deferred with explicit note.
 
 ## Testing Requirements
 - Unit tests:

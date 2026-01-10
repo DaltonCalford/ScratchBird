@@ -77,7 +77,7 @@ Based on audit report `/docs/audit/02_TOAST_IMPLEMENTATION_AUDIT.md`, the follow
 - **Why**: Understand TIP-based visibility implementation
 
 ### 5. Recent MGA Compliance Work
-- **File**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md`
+- **File**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md`
 - **Why**: See how we achieved index layer MGA compliance
 - **Lessons**: Hybrid approach works (extract snapshot_xid for TIP lookups)
 
@@ -414,7 +414,7 @@ TOAST chunks use **TIP-based visibility**:
 
 ### Lessons from Recent MGA Compliance Work
 
-**Reference**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md`
+**Reference**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md`
 
 From storage layer MGA compliance fix:
 - Hybrid approach works: Keep Snapshot structure, extract `snapshot_xid` for TIP
@@ -1675,7 +1675,7 @@ Result: Data consistent, no corruption, no WAL needed
 - **Heap Integration**: `/docs/specifications/HEAP_TOAST_INTEGRATION.md`
 
 ### Related Work
-- **Index MGA Compliance**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md`
+- **Index MGA Compliance**: `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md`
 - **Storage Engine MGA Fix**: Commit b4ccd33 (November 2, 2025)
 
 ### Code References
@@ -1742,7 +1742,7 @@ grep -r "cleanOrphanedToastChunks" src/core/vacuum.cpp
 
 ## 🎓 LESSONS FROM MGA COMPLIANCE WORK
 
-From `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` (completed November 2, 2025):
+From `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md` (completed November 2, 2025):
 
 1. **Hybrid Approach Works**:
    - Kept Snapshot structure, extracted `snapshot_xid` for TIP

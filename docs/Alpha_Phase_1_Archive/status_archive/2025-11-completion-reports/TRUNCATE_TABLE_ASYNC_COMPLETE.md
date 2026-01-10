@@ -237,8 +237,8 @@ With TRUNCATE TABLE complete, **DDL Modifications** for ALPHA Phase 1 are now **
 
 ## Related Documentation
 
-- `/docs/planning/TRUNCATE_TABLE_ASYNC_IMPLEMENTATION.md` - Design document
-- `/docs/planning/TRUNCATE_IMPLEMENTATION_CODE.md` - Original code snippets
+- `/docs/Alpha_Phase_1_Archive/planning_archive/TRUNCATE_TABLE_ASYNC_IMPLEMENTATION.md` - Design document
+- `/docs/Alpha_Phase_1_Archive/planning_archive/TRUNCATE_IMPLEMENTATION_CODE.md` - Original code snippets
 - `/MGA_RULES.md` - MGA compliance rules
 - `/PROJECT_CONTEXT.md` - Overall project status
 

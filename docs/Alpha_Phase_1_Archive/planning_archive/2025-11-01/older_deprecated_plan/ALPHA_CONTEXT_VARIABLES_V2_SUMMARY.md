@@ -433,4 +433,4 @@ END;
 **Document Version**: 1.0
 **Last Updated**: 2025-10-24
 **Status**: COMPLETE
-**Original Document**: `/docs/planning/ALPHA_CONTEXT_VARIABLES_DESIGN.md` (v2.0)
+**Original Document**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/ALPHA_CONTEXT_VARIABLES_DESIGN.md` (v2.0)

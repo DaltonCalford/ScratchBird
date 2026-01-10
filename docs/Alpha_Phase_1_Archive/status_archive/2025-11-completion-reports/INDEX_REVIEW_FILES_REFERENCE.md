@@ -21,7 +21,7 @@
 ---
 
 ### 2. Comprehensive Action Plan (Implementation Guide)
-**File**: `/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` (31KB)
+**File**: `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` (31KB)
 **Contents**:
 - Detailed implementation steps with code examples
 - MGA compliance checklists
@@ -111,7 +111,7 @@ less /home/dcalford/CliWork/ScratchBird/docs/analysis/INDEX_REVIEW_EXECUTIVE_SUM
 
 ### Option 2: Read Action Plan
 ```bash
-less /home/dcalford/CliWork/ScratchBird/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md
+less /home/dcalford/CliWork/ScratchBird/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md
 ```
 
 ### Option 3: View Quick Stats

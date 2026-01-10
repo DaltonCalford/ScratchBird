@@ -540,7 +540,7 @@ if (!isVisible(xmin, xmax, current_xid)) {
 
 ### Analysis Documents (NEW - This Session)
 - `/docs/status/TASK_17_MGA_ROLLBACK_ANALYSIS.md` - ⭐ Complete rollback analysis
-- `/docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN_REVISED.md` - ⭐ Revised plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN_REVISED.md` - ⭐ Revised plan
 
 ### Previous Status Documents
 - `/docs/status/TASK_17_MGA_PHASE_1_COMPLETE.md` - Phase 1.1-1.2 completion

@@ -28,7 +28,7 @@
 > - `/docs/status/TASK_17_MGA_PHASE_1_3_ASSESSMENT.md` - Phase 1.3 assessment
 > - `/docs/status/TASK_17_MGA_PHASE_1_COMPLETE.md` - MGA Phase 1.1-1.2 completion report
 > - `/docs/status/TASK_17_MGA_INFRASTRUCTURE_ASSESSMENT.md` - MGA infrastructure analysis
-> - `/docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md` - Full MGA implementation plan (NEEDS UPDATE)
+> - `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md` - Full MGA implementation plan (NEEDS UPDATE)
 > - `/docs/status/TASK_17_MGA_COMPLIANCE_ANALYSIS.md` - Original compliance analysis (historical)
 > - `/docs/status/TASK_17_PHASE_10_12_COMPLETION_REPORT.md` - Testing completion report
 > - `/docs/status/TASK_17_SESSION_REPORT.md` - Session accomplishments
@@ -723,7 +723,7 @@ All core infrastructure is **implemented and functional**:
 - Enable index population during creation
 - Est. 15-20 hours
 
-**See detailed implementation plan**: `/docs/planning/TASK_17_PHASE_6_13_IMPLEMENTATION_PLAN.md`
+**See detailed implementation plan**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_PHASE_6_13_IMPLEMENTATION_PLAN.md`
 
 Phases 7-13 (index maintenance, query planner, testing) represent ~160-215 hours of additional work and can be implemented incrementally.
 

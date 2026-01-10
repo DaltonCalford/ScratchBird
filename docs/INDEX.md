@@ -41,25 +41,9 @@ Current implementation status and completion reports:
 
 Implementation plans and gap analysis:
 
-#### Alpha 1 Completion Plans (November 2025)
-
-- **[Alpha 1 Master Completion Tracker](planning/ALPHA1_MASTER_COMPLETION_TRACKER.md)** - Complete Alpha 1 roadmap (87% → 100%)
-- **[PSQL/Triggers Implementation Plan](planning/ALPHA1_PSQL_TRIGGERS_IMPLEMENTATION_PLAN.md)** - Stored procedures and triggers (~1,950 lines, 60-80 hours)
-- **[Advanced SQL Features Plan](planning/ALPHA1_ADVANCED_SQL_FEATURES_PLAN.md)** - CTEs, MERGE, RETURNING, SAVEPOINT (~2,580 lines, 80-100 hours)
-- **[Constraints & Engine Commands Plan](planning/ALPHA1_CONSTRAINTS_AND_ENGINE_COMMANDS_PLAN.md)** - GENERATED/IDENTITY columns, SHOW/EXPLAIN (~3,450 lines, 90-110 hours)
-- **[CLI Tools & Views Completion Plan](planning/ALPHA1_CLI_TOOLS_AND_VIEWS_COMPLETION_PLAN.md)** - sb_isql, sb_verify, sb_backup, sb_security (~5,100 lines, 120-150 hours)
-
-#### Component Implementation Plans
-
-- **[Alpha Implementation Plan](planning/ALPHA_IMPLEMENTATION_PLAN.md)** - Authoritative Alpha roadmap
-- **[B-Tree Implementation Plan](planning/BTREE_IMPLEMENTATION_PLAN.md)** - Original B-tree design
-- **[Hash Index Implementation Plan](planning/HASH_INDEX_IMPLEMENTATION_PLAN.md)** - Hash index design
-- **[MGA Implementation Plan](planning/MGA_IMPLEMENTATION_PLAN.md)** - MVCC system design
-- **[MGA Gap Analysis](planning/MGA_GAP_ANALYSIS.md)** - Feature gaps identified
-- **[Critical Fixes Plan](planning/CRITICAL_FIXES_IMPLEMENTATION_PLAN.md)** - Bug fix roadmap
-- **[Index Completion Roadmap](planning/INDEX_COMPLETION_ROADMAP.md)** - All 11 indexes complete
-- **[Security System Implementation Plan](planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md)** - User/role/permission system
-- **[Views Implementation Plan](planning/VIEWS_IMPLEMENTATION_PLAN.md)** - Regular and materialized views
+- **[Consolidated Findings Remediation Plan](planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md)** - Canonical remediation plan
+- **[Planning Archive (2026-01-09)](archive/2026-01-09/planning/)** - Plans moved from `docs/planning/`
+- **[Legacy Planning Archives](Alpha_Phase_1_Archive/planning_archive/)** - Alpha Phase 1 planning history
 
 ### Development Notes
 
@@ -126,6 +110,7 @@ External references and examples:
 Historical documentation from legacy `project/` directory:
 
 - **[Archive Overview](archive/README.md)** - Index of archived materials
+- **[Findings/Planning Archive (2026-01-09)](archive/2026-01-09/)** - Moved findings and planning sets
 - **[Legacy Progress Logs](archive/legacy-progress/)** - Alpha 1.01-1.05 session logs
 - **[Legacy Code Reviews](archive/legacy-reviews/)** - Agent B review reports
 - **[Legacy Test Reports](archive/legacy-tests/)** - Agent C test documentation
@@ -141,19 +126,19 @@ Historical documentation from legacy `project/` directory:
 
 **B-Tree Index:**
 - Status: `status/BTREE_IMPLEMENTATION_COMPLETE.md`
-- Planning: `planning/BTREE_IMPLEMENTATION_PLAN.md`
+- Planning: `planning/README.md`
 - Spec: `specifications/LOW_LEVEL_SPECIFICATION_B-TREE_INDEX.md`
 - Design: `design/btree_index_design.md`
 
 **Hash Index:**
 - Status: `status/HASH_INDEX_STATUS.md`
-- Planning: `planning/HASH_INDEX_IMPLEMENTATION_PLAN.md`
+- Planning: `planning/README.md`
 - Spec: `specifications/LOW_LEVEL_SPECIFICATION_HASH_INDEX.md`
 - Design: `design/hash_index_design.md`
 
 **MVCC/Transactions (MGA):**
 - Status: `status/MGA_IMPLEMENTATION_COMPLETE.md`
-- Planning: `planning/MGA_IMPLEMENTATION_PLAN.md`
+- Planning: `planning/README.md`
 - Spec: `specifications/TRANSACTION_MANAGEMENT.md`
 - Design: `design/mvcc_design.md`
 
@@ -164,7 +149,7 @@ Historical documentation from legacy `project/` directory:
 - Current state of features
 - Code statistics
 
-**Planning Docs:** `planning/`
+**Planning Docs:** `planning/README.md`
 - Implementation roadmaps
 - Feature designs
 - Gap analysis

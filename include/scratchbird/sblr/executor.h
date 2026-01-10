@@ -323,6 +323,7 @@ namespace scratchbird
                                      std::string& alias_out,
                                      bool& has_uuid_out);
             size_t skipExpressionRange(size_t start_pc);
+            void skipSelectStatement();
             core::DataType readDataTypeWithModifiers(uint32_t& precision_out, uint32_t& scale_out);
             void readDependencies(std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
             core::Status resolveSchemaIdForName(const std::string& schema_path,
@@ -423,6 +424,8 @@ namespace scratchbird
             void executeDelete();           // Phase 1 Task 1.6.2
             void executeMerge();            // Alpha 1 - Advanced SQL
             void executeAnalyze();          // P1-10: Statistics & ANALYZE
+            void executeExplainPlan();      // EXPLAIN statement
+            void executeCopy();             // COPY statement (placeholder)
             void executeNestedLoopJoin();   // Phase 1 Task 3.3
             void executeHashJoin();         // Phase 1 Task 3.3
             void executeSweep();            // Phase 3 Task 3.3

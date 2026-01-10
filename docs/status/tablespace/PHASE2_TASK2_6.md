@@ -584,6 +584,6 @@ The core integration work for Task 2.6 is complete and production-ready. The rem
 **Author**: Claude (Anthropic AI)
 **Date**: October 19, 2025
 **Related Documents**:
-- `/docs/planning/INDEX_MGA_IMPLEMENTATION_PLAN.md` (Updated with Task 2.6 completion)
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/INDEX_MGA_IMPLEMENTATION_PLAN.md` (Updated with Task 2.6 completion)
 - `/docs/audit/README.md` (Audit progress tracker)
 - `/docs/guides/ERROR_HANDLING_GUIDE.md` (Error handling patterns used)

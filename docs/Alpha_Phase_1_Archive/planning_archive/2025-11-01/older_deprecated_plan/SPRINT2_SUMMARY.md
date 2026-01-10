@@ -201,8 +201,8 @@ cmake --build . --target scratchbird_core
 8. **`src/core/catalog_manager.cpp`** - Implemented TOAST migration logic (~200 lines)
 
 ### Documentation Files
-9. **`docs/planning/SPRINT2_IMPLEMENTATION_PROGRESS.md`** - Created comprehensive progress tracking
-10. **`docs/planning/SPRINT2_SUMMARY.md`** - Updated to reflect completion
+9. **`docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT2_IMPLEMENTATION_PROGRESS.md`** - Created comprehensive progress tracking
+10. **`docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT2_SUMMARY.md`** - Updated to reflect completion
 
 **Total Files Modified**: 10
 **Total Lines Added**: ~1000-1100

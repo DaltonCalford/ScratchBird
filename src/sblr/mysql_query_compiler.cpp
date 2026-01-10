@@ -8,7 +8,7 @@ namespace mysql = parser::mysql;
 MySQLQueryCompiler::MySQLQueryCompiler(core::Database* db)
     : db_(db)
     , catalog_(db ? db->catalog_manager() : nullptr)
-    , default_schema_("remote.emulated.mysql.localhost")
+    , default_schema_("emulation.mysql.localhost.databases.default")
 {
 }
 

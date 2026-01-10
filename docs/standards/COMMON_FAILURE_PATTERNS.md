@@ -1,7 +1,7 @@
 # Common Failure Patterns (MUST AVOID)
 
 **Last Updated**: 2024-12-19
-**Source**: Derived from audit findings in `docs/findings/engine_gap_report.md` and remediation plans
+**Source**: Derived from audit findings in `docs/archive/2026-01-09/findings/engine_gap_report.md` and remediation plans
 
 This document catalogs the most common failure patterns identified in implementation audits.
 **These patterns MUST be avoided in all future work.**
@@ -525,5 +525,5 @@ Before marking ANY task complete, verify NONE of these patterns exist:
 
 - `/IMPLEMENTATION_STANDARDS.md` - Overall implementation standards
 - `/COMPLETION_VERIFICATION_CHECKLIST.md` - Pre-completion checklist
-- `/docs/findings/engine_gap_report.md` - Audit findings
-- `/docs/findings/plans/plan_09_audit_methodology.md` - Audit methodology
+- `/docs/archive/2026-01-09/findings/engine_gap_report.md` - Audit findings
+- `/docs/archive/2026-01-04/planning/plan_09_audit_methodology.md` - Audit methodology

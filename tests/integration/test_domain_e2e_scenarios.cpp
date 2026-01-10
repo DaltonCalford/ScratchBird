@@ -40,9 +40,17 @@ namespace
         scratchbird::sblr::writeInt32(&out[offset], value);
     }
 
+    void appendUVarint(std::vector<uint8_t>& out, uint64_t value)
+    {
+        size_t offset = out.size();
+        out.resize(offset + 10);
+        size_t count = scratchbird::sblr::writeUVarint(&out[offset], value);
+        out.resize(offset + count);
+    }
+
     void appendString(std::vector<uint8_t>& out, const std::string& value)
     {
-        appendInt32(out, static_cast<uint32_t>(value.size()));
+        appendUVarint(out, static_cast<uint64_t>(value.size()));
         out.insert(out.end(), value.begin(), value.end());
     }
 
@@ -71,12 +79,14 @@ namespace
         appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
         appendByte(bytecode, SBLR_VERSION);
         appendByte(bytecode, static_cast<uint8_t>(Opcode::SELECT));
+        appendByte(bytecode, 0); // flags
         appendByte(bytecode, static_cast<uint8_t>(Opcode::BEGIN_LIST));
-        appendInt32(bytecode, select_count);
+        appendUVarint(bytecode, select_count);
         emit(bytecode);
         appendByte(bytecode, static_cast<uint8_t>(Opcode::END_LIST));
-        appendByte(bytecode, static_cast<uint8_t>(Opcode::TABLE_REF));
-        appendString(bytecode, "");
+        appendByte(bytecode, static_cast<uint8_t>(Opcode::BEGIN_LIST));
+        appendUVarint(bytecode, 0);
+        appendByte(bytecode, static_cast<uint8_t>(Opcode::END_LIST));
         return bytecode;
     }
 
@@ -513,6 +523,7 @@ TEST_F(DomainE2EScenariosTest, ScenarioSsnSecurity)
         appendId(out, user_id_);
         appendId(out, ssn_table_id_);
         appendId(out, ssn_column_id_);
+        appendString(out, "");
     });
     auto audit_result = executor_->execute(bytecode);
     ASSERT_TRUE(audit_result.success()) << audit_result.error();

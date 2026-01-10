@@ -517,8 +517,8 @@ The `connection_context.cpp` TODOs demonstrate a **critical conceptual error**:
 
 ### Completed Work
 
-1. `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` - 100% MGA compliance achievement
-2. `/docs/planning/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - TOAST MGA compliance
+1. `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md` - 100% MGA compliance achievement
+2. `/docs/Alpha_Phase_1_Archive/planning_archive (1)/TOAST_MGA_COMPLIANCE_FIX_PLAN.md` - TOAST MGA compliance
 3. Commit `fd61b97` - Phase 7 Complete: MGA Compliance Validation
 
 ---

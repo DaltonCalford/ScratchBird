@@ -392,7 +392,7 @@ if (status == Status::CANCELLED) {
 - Updated `executeAlterTableSetTablespace()` to pass `nullptr` for progress_callback
 - Added comment explaining future enhancement opportunities
 
-### 5. `docs/planning/PHASE4_TASK4_1_3_PROGRESS_TRACKING.md` (NEW, +445 lines)
+### 5. `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/PHASE4_TASK4_1_3_PROGRESS_TRACKING.md` (NEW, +445 lines)
 - This documentation file
 
 ---

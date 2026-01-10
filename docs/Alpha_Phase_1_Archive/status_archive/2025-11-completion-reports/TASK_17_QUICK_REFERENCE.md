@@ -29,8 +29,8 @@
 - **Session Report**: `/docs/status/TASK_17_SESSION_REPORT.md`
 
 ### Implementation
-- **Main Design**: `/docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
-- **Implementation Guide**: `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md`
+- **Main Design**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
+- **Implementation Guide**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md`
 
 ### Phase Reports
 - Phase 6: `/docs/status/TASK_17_PHASE_6_COMPLETE.md` (Index Building)
@@ -285,7 +285,7 @@ cat docs/status/TASK_17_FINAL_SESSION_SUMMARY.md | less
 
 ### Understanding Expression Indexes
 - PostgreSQL docs: Expression Indexes
-- ScratchBird design: `/docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
+- ScratchBird design: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md`
 
 ### Understanding the Code
 - ExpressionMatcher: `/include/scratchbird/optimizer/expression_matcher.h`

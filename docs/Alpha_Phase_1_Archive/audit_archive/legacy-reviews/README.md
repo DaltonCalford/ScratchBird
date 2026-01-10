@@ -37,7 +37,7 @@ Reviews followed a structured process:
 
 For current development documentation, see:
 - `docs/development/` - Current development notes and analysis
-- `docs/planning/CRITICAL_FIXES_IMPLEMENTATION_PLAN.md` - Recent fixes
+- `docs/Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/planning/CRITICAL_FIXES_IMPLEMENTATION_PLAN.md` - Recent fixes
 
 ---
 

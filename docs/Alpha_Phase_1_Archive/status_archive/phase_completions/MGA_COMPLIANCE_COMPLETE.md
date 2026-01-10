@@ -322,7 +322,7 @@ OLD Index Search Flow (REMOVED)
 ## References
 
 ### Implementation Roadmap
-- `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` - 7-phase implementation plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md` - 7-phase implementation plan
 - Phase 1-6: Index layer compliance (COMPLETE)
 - Phase 7: Testing & Validation (COMPLETE)
 - **Total Hours**: 168/220 (~76% of estimated)
@@ -339,7 +339,7 @@ OLD Index Search Flow (REMOVED)
 
 ### Validation
 - `/scripts/verify_mga_compliance.sh` - Automated compliance checks
-- `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` - Phase 7 validation results
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md` - Phase 7 validation results
 
 ---
 

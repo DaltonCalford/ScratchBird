@@ -31,10 +31,10 @@ Address the three requested tracks in a single coordinated plan:
 - `docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
 - `include/scratchbird/sblr/opcodes.h`
 - `docs/specifications/Appendix_A_SBLR_BYTECODE.md`
-- `docs/findings/engine_gap_report.md`
-- `docs/planning/plan_01_core_storage_gc.md`
-- `docs/planning/plan_02_uuid_resolution_and_rename_move.md`
-- `docs/planning/plan_03_sblr_version2_extended_opcodes.md`
+- `docs/archive/2026-01-09/findings/engine_gap_report.md`
+- `docs/archive/2026-01-04/planning/plan_01_core_storage_gc.md`
+- `docs/archive/2026-01-04/planning/plan_02_uuid_resolution_and_rename_move.md`
+- `docs/archive/2026-01-04/planning/plan_03_sblr_version2_extended_opcodes.md`
 
 ## Track 1 - Object Persistence (Catalog Durability)
 

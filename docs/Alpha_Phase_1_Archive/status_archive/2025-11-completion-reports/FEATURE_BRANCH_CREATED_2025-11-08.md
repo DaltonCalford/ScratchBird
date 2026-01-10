@@ -118,7 +118,7 @@ The following files have uncommitted changes from previous work sessions
 - PROJECT_CONTEXT.md
 - README.md
 - docs/ALPHA_ENGINE_READINESS_SUMMARY.md
-- docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md
+- docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md
 - Multiple include/src files (composite, types, parser, executor, etc.)
 
 **Untracked Files** (22):
@@ -200,7 +200,7 @@ All planning and requirements documents are on main branch and available
 on feature branch:
 
 - ✅ `docs/development/CATALOG_DESIGN_REQUIREMENTS.md`
-- ✅ `docs/planning/CATALOG_CORRECTION_IMPLEMENTATION_PLAN.md`
+- ✅ `docs/Alpha_Phase_1_Archive/planning_archive/CATALOG_CORRECTION_IMPLEMENTATION_PLAN.md`
 - ✅ `docs/status/CATALOG_CORRECTION_SESSION_2025-11-08.md`
 - ✅ This document (FEATURE_BRANCH_CREATED_2025-11-08.md)
 

@@ -411,7 +411,7 @@ All success criteria met ✅:
 
 ## RELATED DOCUMENTATION
 
-- **Action Plan**: `/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md`
+- **Action Plan**: `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md`
 - **MGA Rules**: `/MGA_RULES.md`
 - **Project Context**: `/PROJECT_CONTEXT.md`
 - **Test File**: `/tests/unit/test_hash_custom_tablespace.cpp`

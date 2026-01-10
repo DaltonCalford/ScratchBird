@@ -59,10 +59,10 @@ void Parser::parseComparisonExpr() {
     } else if (match(TokenType::NOT_EQUAL) || match(TokenType::LESS_GREATER)) {
         parseIsExpr();
         emit(sblr::Opcode::EXPR_NE);
-    } else if (match(TokenType::LESS)) {
+    } else if (match(TokenType::LESS_THAN)) {
         parseIsExpr();
         emit(sblr::Opcode::EXPR_LT);
-    } else if (match(TokenType::GREATER)) {
+    } else if (match(TokenType::GREATER_THAN)) {
         parseIsExpr();
         emit(sblr::Opcode::EXPR_GT);
     } else if (match(TokenType::LESS_EQUAL)) {

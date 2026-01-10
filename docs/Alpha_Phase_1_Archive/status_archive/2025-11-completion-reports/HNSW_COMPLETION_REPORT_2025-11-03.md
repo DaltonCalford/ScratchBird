@@ -778,7 +778,7 @@ make scratchbird_core -j4
 
 - `/MGA_RULES.md` - Firebird MGA compliance rules
 - `/PROJECT_CONTEXT.md` - Project overview and architecture
-- `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Master plan
+- `/docs/Alpha_Phase_1_Archive/planning_archive (1)/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md` - Master plan
 - `/docs/specifications/INDEX_IMPLEMENTATION_SPEC.md` - Index specification
 - `/include/scratchbird/core/vector.h` - Vector API documentation
 

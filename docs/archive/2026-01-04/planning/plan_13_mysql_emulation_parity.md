@@ -11,9 +11,9 @@ P0 (Alpha requirement).
 - `docs/specifications/MYSQL_PARSER_SPECIFICATION.md`
 - `docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md`
 - `docs/specifications/wire_protocols/mysql_wire_protocol.md`
-- `docs/findings/mysql_emulation_parity_audit.md`
-- `docs/findings/mysql_wire_protocol_gaps.md`
-- `docs/planning/appendix_mysql_catalog_columns.md`
+- `docs/archive/2026-01-09/findings/mysql_emulation_parity_audit.md`
+- `docs/archive/2026-01-09/findings/mysql_wire_protocol_gaps.md`
+- `docs/archive/2026-01-04/planning/appendix_mysql_catalog_columns.md`
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - `docs/specifications/draft_security_architecture_specification.md`
 
@@ -73,7 +73,7 @@ P0 (Alpha requirement).
   - `src/catalog/virtual_catalog.cpp` (register handlers; route by protocol)
 - Mapping:
   - `src/core/tid_resolver.*` (add MySQL ID mapping table + hash)
-  - `docs/planning/plan_02_uuid_resolution_and_rename_move.md` (resolver interface reference)
+  - `docs/archive/2026-01-04/planning/plan_02_uuid_resolution_and_rename_move.md` (resolver interface reference)
 - FDW/UDR:
   - `src/fdw/mysql_adapter.cpp` (TODOs for result parsing, auth)
   - `src/fdw/protocol_adapter.cpp` (factory TODOs)
@@ -184,7 +184,7 @@ P0 (Alpha requirement).
     - Treat as transaction-bound command; handle current transaction per ScratchBird conflict-action rules.
 
 ### 4) Catalog Coverage (information_schema, mysql, performance_schema)
-- Implement view definitions for **all** tables in `docs/planning/appendix_mysql_catalog_columns.md`.
+- Implement view definitions for **all** tables in `docs/archive/2026-01-04/planning/appendix_mysql_catalog_columns.md`.
 - All views must filter to the emulated DB schema id (`{schema_id}` placeholder).
 - Use per-table mapping rules:
   - information_schema views map to ScratchBird catalog tables (`sys.catalog.*` and `sys.catalog.domain_*` views).
@@ -226,7 +226,7 @@ P0 (Alpha requirement).
 - [ ] Autocommit ON executes per-statement transactions; OFF leaves transaction open.
 - [ ] Catalog column lists exactly match `appendix_mysql_catalog_columns.md`.
 - [ ] SHOW outputs match MySQL client expectations (column names/types).
-- [ ] All items in `docs/findings/mysql_wire_protocol_gaps.md` closed or explicitly deferred.
+- [ ] All items in `docs/archive/2026-01-09/findings/mysql_wire_protocol_gaps.md` closed or explicitly deferred.
 
 ## Testing Requirements
 - Unit tests:

@@ -301,7 +301,7 @@
   /**
    * moveTableToTablespace - Move table to different tablespace (OFFLINE)
    *
-   * See docs/planning/OFFLINE_TABLE_MIGRATION_DESIGN.md for full design.
+   * See docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/OFFLINE_TABLE_MIGRATION_DESIGN.md for full design.
    *
    * @param table_id Table ID to move
    * @param target_tablespace_id Destination tablespace

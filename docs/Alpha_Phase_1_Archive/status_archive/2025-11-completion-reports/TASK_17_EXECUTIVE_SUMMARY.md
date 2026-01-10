@@ -150,8 +150,8 @@ Task 17 **CAN** be used safely ONLY if:
 - `/docs/status/TASK_17_SESSION_REPORT.md` - Session accomplishments
 
 **Implementation Details**:
-- `/docs/planning/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` - Main design
-- `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` - Implementation guide
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_EXPRESSION_FILTERED_INDEXES_DESIGN.md` - Main design
+- `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` - Implementation guide
 - `/docs/status/TASK_17_PHASE_6_COMPLETE.md` through `PHASE_9_COMPLETE.md` - Phase reports
 
 ---

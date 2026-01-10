@@ -23,9 +23,9 @@ P1 (blocks SQL feature coverage and compatibility).
 - `docs/specifications/POSTGRESQL_PARSER_SPECIFICATION.md`
 - `docs/specifications/MYSQL_PARSER_SPECIFICATION.md`
 - `docs/specifications/firebird_spec.md`
-- `docs/findings/engine_gap_report.md` (parser gaps)
-- `docs/planning/plan_02_uuid_resolution_and_rename_move.md` (rename/move opcodes)
-- `docs/planning/plan_03_sblr_version2_extended_opcodes.md` (SBLR v2)
+- `docs/archive/2026-01-09/findings/engine_gap_report.md` (parser gaps)
+- `docs/archive/2026-01-04/planning/plan_02_uuid_resolution_and_rename_move.md` (rename/move opcodes)
+- `docs/archive/2026-01-04/planning/plan_03_sblr_version2_extended_opcodes.md` (SBLR v2)
 
 ## Order of Implementation
 1) V2 parser DDL coverage (CREATE/ALTER) - DONE.

@@ -19,8 +19,8 @@ The actual Plan 05 is about the **ScratchBird Native ODBC Driver** using the Scr
 ## Correct Plan 05 Documentation
 
 Please refer to:
-- `/docs/planning/PLAN_05.md` - Main plan document
-- `/docs/planning/PLAN_05_SCRATCHBIRD_ODBC_ANALYSIS.md` - Detailed analysis
+- `/docs/archive/2026-01-04/planning/PLAN_05.md` - Main plan document
+- `/docs/archive/2026-01-04/planning/PLAN_05_SCRATCHBIRD_ODBC_ANALYSIS.md` - Detailed analysis
 
 ---
 

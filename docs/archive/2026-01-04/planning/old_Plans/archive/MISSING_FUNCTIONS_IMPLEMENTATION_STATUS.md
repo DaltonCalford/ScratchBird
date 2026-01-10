@@ -116,7 +116,7 @@ This document tracks the implementation status of the 30 missing functions ident
 - Comprehensive test suite created (test_advanced_grouping.cpp - 428 lines)
 - 8 test cases covering ROLLUP, CUBE, GROUPING SETS, GROUPING()
 - Tests compile successfully but blocked by test infrastructure issue (unrelated to feature)
-- See: docs/planning/ADVANCED_GROUPING_TEST_STATUS.md for details
+- See: docs/archive/2026-01-04/planning/old_Plans/archive/ADVANCED_GROUPING_TEST_STATUS.md for details
 
 ---
 

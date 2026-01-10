@@ -127,3 +127,21 @@ Error messages must be structured and include value + target type when possible.
 ## Configuration
 - `server.time.date_default_time = 00:00:00` in `sb_config.ini` (section `[server.time]`).
 - Default is 00:00:00 when not configured.
+
+## Appendix: Storage Format v2 (Beta Optional)
+This appendix applies only to tables with `storage_format_version = 2`. See `ScratchBird/docs/specifications/beta_requirements/optional/STORAGE_ENCODING_OPTIMIZATIONS.md`.
+
+### Varlen Header v2
+- Short header (1 byte): `0b0LLLLLLL` for lengths 0..127.
+- Long header (5 bytes): `0x80` + `uint32` little-endian length for lengths >= 128.
+- Reserved markers: `0x81-0xFF` are reserved for future use.
+- NULL remains represented only by the tuple null bitmap.
+
+### Per-Column TOAST
+- Varlen columns may store a `ToastPointer` payload in place of the original value.
+- The varlen length equals `sizeof(ToastPointer)` (18 bytes); values are detoasted on read if the payload is a ToastPointer.
+- TOAST thresholds and strategy are configured per column or inherited from table defaults.
+
+### Packed NUMERIC (Optional)
+- NUMERIC may use a packed base-10000 digit format when configured (`numeric_storage = packed`).
+- DECIMAL always remains scaled-integer encoding; NUMERIC with precision <= 38 may remain scaled unless configured to packed.

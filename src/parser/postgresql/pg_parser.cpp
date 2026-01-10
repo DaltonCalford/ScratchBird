@@ -233,6 +233,15 @@ void Parser::emitU16(uint16_t val) {
     bytecode_.push_back((val >> 8) & 0xFF);
 }
 
+void Parser::emitUVarint(uint64_t val) {
+    if (!emit_enabled_) {
+        return;
+    }
+    uint8_t buffer[10];
+    size_t count = sblr::writeUVarint(buffer, val);
+    bytecode_.insert(bytecode_.end(), buffer, buffer + count);
+}
+
 void Parser::emitU32(uint32_t val) {
     if (!emit_enabled_) {
         return;
@@ -269,7 +278,7 @@ void Parser::emitString(std::string_view str) {
     if (!emit_enabled_) {
         return;
     }
-    emitU32(static_cast<uint32_t>(str.size()));
+    emitUVarint(static_cast<uint64_t>(str.size()));
     for (char c : str) {
         bytecode_.push_back(static_cast<uint8_t>(c));
     }
@@ -487,8 +496,8 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     }
 
     std::string normalized_schema = normalize_path(schema);
-    if (normalized_schema.rfind("remote.emulated.postgresql.", 0) == 0 ||
-        normalized_schema == "remote.emulated.postgresql")
+    if (normalized_schema.rfind("emulation.postgresql.", 0) == 0 ||
+        normalized_schema == "emulation.postgresql")
     {
         schema = normalized_schema;
         return;

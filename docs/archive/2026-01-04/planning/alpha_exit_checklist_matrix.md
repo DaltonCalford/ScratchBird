@@ -21,31 +21,31 @@
   - `tests/protocol_traces/firebird/*`
   - `tests/protocol_traces/mysql/*`
   - `tests/protocol_traces/postgresql/*`
-- [ ] All docs in `docs/findings/` are closed or explicitly deferred with reasons.
-- [ ] All plans in `docs/planning/` are fully implemented and audited.
+- [ ] All docs in `docs/archive/2026-01-09/findings/` are closed or explicitly deferred with reasons.
+- [ ] All plans in `docs/archive/2026-01-09/planning/` are fully implemented and audited.
 
 ## Plan Compliance Matrix (Summary)
 | Plan ID | File | Core Deliverables | Required Tests | Status | Evidence |
 |--------|------|------------------|----------------|--------|----------|
-| 01 | `docs/planning/plan_01_core_storage_gc.md` | Heap page ownership, columnstore persistence, index GC, shadow rebuild | Storage + restart + per-index GC | [ ] | |
-| 01C | `docs/planning/plan_01_core_storage_gc_clarifications.md` | Clarifications applied (table_id, dual meta page, shadow rebuild) | Same as Plan 01 | [ ] | |
-| 01D | `docs/planning/plan_01_task_d_index_gc_checklist.md` | Index GC coverage per type | Per-index GC tests | [ ] | |
-| 02 | `docs/planning/plan_02_uuid_resolution_and_rename_move.md` | UUID resolver view, rename/move ops | Resolver + rename/move tests | [ ] | |
-| 03A | `docs/planning/plan_03_sblr_version2_extended_opcodes.md` | SBLR v2 + 16-bit opcodes + txn payloads | Bytecode encode/decode tests | [ ] | |
-| 03B | `docs/planning/plan_03_security_context_auth_audit_quorum.md` | AuthKey, session binding, audit, quorum | Security + audit tests | [ ] | |
-| 04 | `docs/planning/plan_04_parser_and_compatibility.md` | Parser coverage + guardrails + txn syntax | Parser + bytecode tests | [ ] | |
-| 05 | `docs/planning/plan_05_protocol_odbc_pool.md` | Protocol adapters + ODBC + pool + attachment routing | Protocol + ODBC + pool tests | [ ] | |
-| 06 | `docs/planning/plan_06_metadata_show_and_catalog.md` | Catalog tables + SHOW + runtime monitoring | Catalog + SHOW tests | [ ] | |
-| 07 | `docs/planning/plan_07_emulated_protocol_compatibility.md` | Emulated wire parity + tx semantics | Native client tests | [ ] | |
-| 08 | `docs/planning/plan_08_protocol_conformance_testing.md` | Golden traces + fuzz + integration | Trace + fuzz tests | [ ] | |
-| 09 | `docs/planning/plan_09_audit_methodology.md` | Audit report + evidence | Audit checks | [ ] | |
-| 10 | `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md` | Cluster-wide domains + conflict algorithm | Domain conflict tests | [ ] | |
-| 11 | `docs/planning/plan_11_alpha_cluster_compatibility_guardrails.md` | Alpha guardrails for cluster | Guardrail tests | [ ] | |
-| 12 | `docs/planning/plan_12_domain_runtime_and_type_system.md` | Domain runtime + casting + arrays | Domain runtime tests | [ ] | |
-| 13 | `docs/planning/plan_13_mysql_emulation_parity.md` | MySQL parity (parser+protocol+catalog) | MySQL client tests | [ ] | |
-| 14 | `docs/planning/plan_14_postgresql_emulation_parity.md` | PostgreSQL parity (parser+protocol+catalog) | PostgreSQL client tests | [ ] | |
-| 15 | `docs/planning/plan_15_firebird_emulation_parity.md` | Firebird parity (parser+protocol+catalog) | Firebird client tests | [ ] | |
-| 16 | `docs/planning/plan_16_attachment_transaction_model.md` | Always-in-transaction + attachments | Attachment/txn tests | [ ] | |
+| 01 | `docs/archive/2026-01-04/planning/plan_01_core_storage_gc.md` | Heap page ownership, columnstore persistence, index GC, shadow rebuild | Storage + restart + per-index GC | [ ] | |
+| 01C | `docs/archive/2026-01-04/planning/plan_01_core_storage_gc_clarifications.md` | Clarifications applied (table_id, dual meta page, shadow rebuild) | Same as Plan 01 | [ ] | |
+| 01D | `docs/archive/2026-01-04/planning/plan_01_task_d_index_gc_checklist.md` | Index GC coverage per type | Per-index GC tests | [ ] | |
+| 02 | `docs/archive/2026-01-04/planning/plan_02_uuid_resolution_and_rename_move.md` | UUID resolver view, rename/move ops | Resolver + rename/move tests | [ ] | |
+| 03A | `docs/archive/2026-01-04/planning/plan_03_sblr_version2_extended_opcodes.md` | SBLR v2 + 16-bit opcodes + txn payloads | Bytecode encode/decode tests | [ ] | |
+| 03B | `docs/archive/2026-01-04/planning/plan_03_security_context_auth_audit_quorum.md` | AuthKey, session binding, audit, quorum | Security + audit tests | [ ] | |
+| 04 | `docs/archive/2026-01-04/planning/plan_04_parser_and_compatibility.md` | Parser coverage + guardrails + txn syntax | Parser + bytecode tests | [ ] | |
+| 05 | `docs/archive/2026-01-04/planning/plan_05_protocol_odbc_pool.md` | Protocol adapters + ODBC + pool + attachment routing | Protocol + ODBC + pool tests | [ ] | |
+| 06 | `docs/archive/2026-01-09/planning/plan_06_metadata_show_and_catalog.md` | Catalog tables + SHOW + runtime monitoring | Catalog + SHOW tests | [ ] | |
+| 07 | `docs/archive/2026-01-09/planning/plan_07_emulated_protocol_compatibility.md` | Emulated wire parity + tx semantics | Native client tests | [ ] | |
+| 08 | `docs/archive/2026-01-09/planning/plan_08_protocol_conformance_testing.md` | Golden traces + fuzz + integration | Trace + fuzz tests | [ ] | |
+| 09 | `docs/archive/2026-01-04/planning/plan_09_audit_methodology.md` | Audit report + evidence | Audit checks | [ ] | |
+| 10 | `docs/archive/2026-01-04/planning/plan_10_cluster_domains_and_conflict_resolution.md` | Cluster-wide domains + conflict algorithm | Domain conflict tests | [ ] | |
+| 11 | `docs/archive/2026-01-04/planning/plan_11_alpha_cluster_compatibility_guardrails.md` | Alpha guardrails for cluster | Guardrail tests | [ ] | |
+| 12 | `docs/archive/2026-01-04/planning/plan_12_domain_runtime_and_type_system.md` | Domain runtime + casting + arrays | Domain runtime tests | [ ] | |
+| 13 | `docs/archive/2026-01-04/planning/plan_13_mysql_emulation_parity.md` | MySQL parity (parser+protocol+catalog) | MySQL client tests | [ ] | |
+| 14 | `docs/archive/2026-01-04/planning/plan_14_postgresql_emulation_parity.md` | PostgreSQL parity (parser+protocol+catalog) | PostgreSQL client tests | [ ] | |
+| 15 | `docs/archive/2026-01-04/planning/plan_15_firebird_emulation_parity.md` | Firebird parity (parser+protocol+catalog) | Firebird client tests | [ ] | |
+| 16 | `docs/archive/2026-01-04/planning/plan_16_attachment_transaction_model.md` | Always-in-transaction + attachments | Attachment/txn tests | [ ] | |
 
 ## Detailed Plan Checklists
 
@@ -159,7 +159,7 @@
 
 ### Plan 09 - Audit Methodology
 - Implementation
-  - [ ] Audit report under `docs/findings/audit_results/` for all plans.
+  - [ ] Audit report under `docs/archive/2026-01-09/findings/audit_results/` for all plans.
 - Tests
   - [ ] Audit commands executed with outputs archived.
 - Evidence
@@ -241,16 +241,16 @@
 ## Findings Closure Matrix
 | Findings Doc | Closed By Plan(s) | Evidence | Status |
 |--------------|-------------------|----------|--------|
-| `docs/findings/engine_gap_report.md` | 01,02,03A,04,06 | | [ ] |
-| `docs/findings/domain_support_gaps.md` | 10,12 | | [ ] |
-| `docs/findings/firebird_emulation_parity_audit.md` | 15,07 | | [ ] |
-| `docs/findings/mysql_emulation_parity_audit.md` | 13,07 | | [ ] |
-| `docs/findings/postgresql_emulation_parity_audit.md` | 14,07 | | [ ] |
-| `docs/findings/firebird_wire_protocol_gaps.md` | 05,07,08 | | [ ] |
-| `docs/findings/mysql_wire_protocol_gaps.md` | 05,07,08 | | [ ] |
-| `docs/findings/postgresql_wire_protocol_gaps.md` | 05,07,08 | | [ ] |
-| `docs/findings/alpha_cluster_compatibility_audit.md` | 11,16 | | [ ] |
-| `docs/findings/database_lifecycle_upgrade_plan.md` | 11 (guardrails), 16 (attachment model) | | [ ] |
+| `docs/archive/2026-01-09/findings/engine_gap_report.md` | 01,02,03A,04,06 | | [ ] |
+| `docs/archive/2026-01-09/findings/domain_support_gaps.md` | 10,12 | | [ ] |
+| `docs/archive/2026-01-09/findings/firebird_emulation_parity_audit.md` | 15,07 | | [ ] |
+| `docs/archive/2026-01-09/findings/mysql_emulation_parity_audit.md` | 13,07 | | [ ] |
+| `docs/archive/2026-01-09/findings/postgresql_emulation_parity_audit.md` | 14,07 | | [ ] |
+| `docs/archive/2026-01-09/findings/firebird_wire_protocol_gaps.md` | 05,07,08 | | [ ] |
+| `docs/archive/2026-01-09/findings/mysql_wire_protocol_gaps.md` | 05,07,08 | | [ ] |
+| `docs/archive/2026-01-09/findings/postgresql_wire_protocol_gaps.md` | 05,07,08 | | [ ] |
+| `docs/archive/2026-01-09/findings/alpha_cluster_compatibility_audit.md` | 11,16 | | [ ] |
+| `docs/archive/2026-01-09/findings/database_lifecycle_upgrade_plan.md` | 11 (guardrails), 16 (attachment model) | | [ ] |
 
 ## Spec Coverage Matrix (Alpha-critical)
 | Spec Doc | Covered By Plan(s) | Evidence | Status |
@@ -270,5 +270,5 @@
 
 ## Alpha Exit Sign-Off
 - [ ] All matrix items PASS.
-- [ ] Audit report attached under `docs/findings/audit_results/`.
+- [ ] Audit report attached under `docs/archive/2026-01-09/findings/audit_results/`.
 - [ ] Release note for Alpha exit prepared (internal).

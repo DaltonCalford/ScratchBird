@@ -14,13 +14,14 @@ CREATE \[ { GLOBAL | LOCAL } TEMPORARY | TEMP \] TABLE \[ IF NOT EXISTS \] \<tab
     \<column\_definition\> \[ , ... \]  
     \[ , \<table\_constraint\> \[ , ... \] \]  
 )  
+\[ WITH ( \<table\_storage\_parameter\> \= \<value\> \[ , ... \] ) \]  
 \[ TABLESPACE \<tablespace\_name\> \]  
 \[ ON COMMIT { PRESERVE ROWS | DELETE ROWS | DROP } \] \-- For temporary tables  
 \[ AS \<select\_statement\> \[ WITH \[NO\] DATA \] \];
 
 ### **Column Definition**
 
-\<column\_name\> \<data\_type\> \[ \<column\_constraint\> ... \]
+\<column\_name\> \<data\_type\> \[ \<column\_constraint\> ... \] \[ WITH ( \<column\_storage\_parameter\> \= \<value\> \[ , ... \] ) \]
 
 ### **Column Constraints**
 
@@ -32,6 +33,25 @@ CREATE \[ { GLOBAL | LOCAL } TEMPORARY | TEMP \] TABLE \[ IF NOT EXISTS \] \<tab
 * REFERENCES \<other\_table\>(\<column\>): Defines a foreign key relationship.  
 * GENERATED ALWAYS AS (\<expression\>) STORED: A column computed from other columns.  
 * GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY: An auto-incrementing integer or UUID column.
+
+### **Storage Parameters (Optional)**
+
+Storage parameters configure table defaults and per-column overrides for varlen encoding, TOAST, and numeric storage. See `ScratchBird/docs/specifications/beta_requirements/optional/STORAGE_ENCODING_OPTIMIZATIONS.md`.
+
+**Table storage parameters:**
+* storage\_format: 1 or 2 (v2 enables varlen header v2 and per-column TOAST)
+* toast\_strategy: plain | extended | external | compressed
+* toast\_threshold: integer bytes
+* toast\_target: integer bytes
+* toast\_compression: none | lz4 | zstd
+* numeric\_storage: scaled | packed
+
+**Column storage parameters:**
+* toast\_strategy: plain | extended | external | compressed
+* toast\_threshold: integer bytes
+* toast\_target: integer bytes
+* toast\_compression: none | lz4 | zstd
+* numeric\_storage: scaled | packed (NUMERIC only)
 
 ### **Examples**
 
@@ -66,6 +86,22 @@ CREATE TEMPORARY TABLE session\_data (
 CREATE TABLE high\_value\_orders AS  
 SELECT \* FROM orders WHERE amount \> 1000  
 WITH DATA;
+
+**5\. Create a table with v2 storage defaults:**
+
+CREATE TABLE documents (  
+    id BIGINT PRIMARY KEY,  
+    title VARCHAR(200) WITH (toast\_strategy \= plain),  
+    body TEXT WITH (toast\_strategy \= external, toast\_compression \= lz4),  
+    price NUMERIC(50, 4) WITH (numeric\_storage \= packed)  
+)  
+WITH (storage\_format \= 2, toast\_threshold \= 2048);
+
+**6\. Update table defaults and override a column:**
+
+ALTER TABLE documents SET (toast\_strategy \= external, toast\_compression \= zstd);  
+ALTER TABLE documents ALTER COLUMN title  
+    SET (toast\_strategy \= plain);
 
 ## **ALTER TABLE**
 

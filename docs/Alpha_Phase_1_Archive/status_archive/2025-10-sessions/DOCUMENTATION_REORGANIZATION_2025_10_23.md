@@ -176,7 +176,7 @@ RESOURCE_MANAGEMENT.md → guides/RESOURCE_MANAGEMENT.md
 
 ### 3. **SPRINT7_PHASE7_PREPARATION.md**
 
-**Location**: `/docs/planning/SPRINT7_PHASE7_PREPARATION.md**
+**Location**: `/docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT7_PHASE7_PREPARATION.md**
 **Size**: ~450 lines
 **Purpose**: Preparation document for Phase 7 implementation
 

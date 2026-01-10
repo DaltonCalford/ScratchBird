@@ -26,7 +26,7 @@ Sprint 4 is a **major implementation effort** requiring 30-37 hours of careful w
 
 ### 1. Implementation Plan Created ✅
 
-**Document**: `docs/planning/SPRINT4_IMPLEMENTATION_PLAN.md`
+**Document**: `docs/Alpha_Phase_1_Archive/planning_archive/2025-11-01/older_deprecated_plan/SPRINT4_IMPLEMENTATION_PLAN.md`
 
 **Contents** (~12,000 words):
 - Part 1: State Management (detailed implementation)

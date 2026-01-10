@@ -7,19 +7,19 @@ Define a repeatable audit process to verify that work performed by other agents 
 P0 (required for governance and beta readiness).
 
 ## References
-- `docs/findings/engine_gap_report.md`
-- `docs/planning/plan_01_core_storage_gc.md`
-- `docs/planning/plan_02_uuid_resolution_and_rename_move.md`
-- `docs/planning/plan_03_security_context_auth_audit_quorum.md`
-- `docs/planning/plan_04_parser_and_compatibility.md`
-- `docs/planning/plan_05_protocol_odbc_pool.md`
-- `docs/planning/plan_06_metadata_show_and_catalog.md`
-- `docs/planning/plan_07_emulated_protocol_compatibility.md`
-- `docs/planning/plan_08_protocol_conformance_testing.md`
-- `docs/planning/plan_16_attachment_transaction_model.md`
-- `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md`
-- `docs/planning/plan_11_alpha_cluster_compatibility_guardrails.md`
-- `docs/planning/plan_12_domain_runtime_and_type_system.md`
+- `docs/archive/2026-01-09/findings/engine_gap_report.md`
+- `docs/archive/2026-01-04/planning/plan_01_core_storage_gc.md`
+- `docs/archive/2026-01-04/planning/plan_02_uuid_resolution_and_rename_move.md`
+- `docs/archive/2026-01-04/planning/plan_03_security_context_auth_audit_quorum.md`
+- `docs/archive/2026-01-04/planning/plan_04_parser_and_compatibility.md`
+- `docs/archive/2026-01-04/planning/plan_05_protocol_odbc_pool.md`
+- `docs/archive/2026-01-09/planning/plan_06_metadata_show_and_catalog.md`
+- `docs/archive/2026-01-09/planning/plan_07_emulated_protocol_compatibility.md`
+- `docs/archive/2026-01-09/planning/plan_08_protocol_conformance_testing.md`
+- `docs/archive/2026-01-04/planning/plan_16_attachment_transaction_model.md`
+- `docs/archive/2026-01-04/planning/plan_10_cluster_domains_and_conflict_resolution.md`
+- `docs/archive/2026-01-04/planning/plan_11_alpha_cluster_compatibility_guardrails.md`
+- `docs/archive/2026-01-04/planning/plan_12_domain_runtime_and_type_system.md`
 
 ## Audit Inputs (Required Artifacts)
 - Implemented code changes (diffs or commit list).
@@ -77,7 +77,7 @@ P0 (required for governance and beta readiness).
 - [ ] A final audit summary is produced with gaps and remediation steps.
 
 ## Deliverable
-An audit report under `docs/findings/audit_results/` with:
+An audit report under `docs/archive/2026-01-09/findings/audit_results/` with:
 - Per-plan compliance status (PASS/FAIL/DEFERRED).
 - Evidence: file paths, test outputs, and trace diffs.
 - Any required remediation or follow-up tasks.

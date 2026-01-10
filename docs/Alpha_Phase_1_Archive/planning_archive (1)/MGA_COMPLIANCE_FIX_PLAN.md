@@ -1357,7 +1357,7 @@ Changes:
 - Replace isSnapshotVisible() with isVersionVisible()
 - Add TIP lookups via getTransactionState()
 
-Ref: /docs/planning/MGA_COMPLIANCE_FIX_PLAN.md Phase X
+Ref: /docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md Phase X
 Ref: /docs/audit/01_MGA_COMPLIANCE_AUDIT.md (lines XXX-XXX)
 Ref: /MGA_RULES.md Rule X
 
@@ -1377,7 +1377,7 @@ Changes:
 - Add TIP lookups via getTransactionState()
 - Update all callers to pass TransactionId instead of Snapshot
 
-Ref: /docs/planning/MGA_COMPLIANCE_FIX_PLAN.md Phase 2
+Ref: /docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md Phase 2
 Ref: /docs/audit/01_MGA_COMPLIANCE_AUDIT.md (lines 551-700)
 Ref: /MGA_RULES.md Rule 1, Rule 3
 
@@ -1392,7 +1392,7 @@ Tests: tests/core/btree_mga_test.cpp
 
 1. **IMMEDIATELY READ**:
    - `/MGA_RULES.md` (650 lines)
-   - `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` (this file)
+   - `/docs/Alpha_Phase_1_Archive/planning_archive (1)/MGA_COMPLIANCE_FIX_PLAN.md` (this file)
    - `/docs/audit/01_MGA_COMPLIANCE_AUDIT.md` (relevant phase)
 
 2. **VERIFY UNDERSTANDING**:

@@ -3,7 +3,7 @@
 **Status:** COMPLETE
 **Date:** 2025-11-03
 **Phase Duration:** 3 hours
-**Plan Reference:** docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (Phase 5, lines 453-645)
+**Plan Reference:** docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md (Phase 5, lines 453-645)
 
 ## Overview
 
@@ -468,6 +468,6 @@ Phase 5 successfully created comprehensive test coverage for UTF-8 identifier ha
 
 ---
 *Generated: 2025-11-03*
-*Plan: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md*
+*Plan: docs/Alpha_Phase_1_Archive/planning_archive (1)/SQL_IDENTIFIER_UTF8_FIX_PLAN.md*
 *Previous: docs/status/PHASE4_CATALOG_READ_SAFETY_COMPLETE.md*
 *Next: Phase 6 (Documentation)*

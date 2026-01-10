@@ -349,8 +349,8 @@ Create `/docs/KNOWN_LIMITATIONS.md`:
 6. `/docs/audit/FUNCTION_VERIFICATION_REPORT.md` - Function inventory
 
 **Action Plans**:
-1. `/docs/planning/INDEX_IMPLEMENTATION_FIX_PLAN.md` - Original fix plan (32KB)
-2. `/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Comprehensive action plan (31KB) ✨ NEW
+1. `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_IMPLEMENTATION_FIX_PLAN.md` - Original fix plan (32KB)
+2. `/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` - Comprehensive action plan (31KB) ✨ NEW
 
 **Critical References**:
 1. `/MGA_RULES.md` - **MANDATORY** reading before any transaction/index work
@@ -362,7 +362,7 @@ Create `/docs/KNOWN_LIMITATIONS.md`:
 ## DETAILED ACTION PLAN
 
 **For full implementation details, see**:
-`/docs/planning/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` (31KB, 70+ pages)
+`/docs/Alpha_Phase_1_Archive/planning_archive/INDEX_CORRECTION_ACTION_PLAN_2025-11-06.md` (31KB, 70+ pages)
 
 **This comprehensive plan includes**:
 - ✅ Detailed implementation steps with code examples

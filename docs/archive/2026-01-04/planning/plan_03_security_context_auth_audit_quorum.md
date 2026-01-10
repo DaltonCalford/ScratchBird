@@ -17,8 +17,8 @@ and domain DDL enforcement. Testing and verification are pending.
 - `docs/specifications/draft_security_architecture_specification.md`
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - `docs/specifications/SECURITY_IMPLIMENTATION_DETAILS.md`
-- `docs/findings/engine_gap_report.md` (security gaps + matrix)
-- `docs/planning/plan_16_attachment_transaction_model.md` (transaction defaults + attachment scoping)
+- `docs/archive/2026-01-09/findings/engine_gap_report.md` (security gaps + matrix)
+- `docs/archive/2026-01-04/planning/plan_16_attachment_transaction_model.md` (transaction defaults + attachment scoping)
 
 ## Order of Implementation
 1) AuthKey model and storage.
