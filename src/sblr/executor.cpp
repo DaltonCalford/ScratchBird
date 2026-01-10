@@ -72,6 +72,7 @@
 #include <sstream>
 #include <iomanip>
 #include <iostream>
+#include <fstream>
 #include <algorithm>
 #include <cstring>
 #include <chrono>
@@ -43158,6 +43159,18 @@ namespace scratchbird
         {
             uint8_t flags = readByte();
             bool analyze = (flags & 0x01) != 0;
+            bool verbose = (flags & 0x02) != 0;
+            bool costs = (flags & 0x04) != 0;
+            bool buffers = (flags & 0x08) != 0;
+            bool timing = (flags & 0x10) != 0;
+            bool format_json = (flags & 0x20) != 0;
+            bool format_xml = (flags & 0x40) != 0;
+            bool format_yaml = (flags & 0x80) != 0;
+
+            if (format_json || format_xml || format_yaml)
+            {
+                error("EXPLAIN format not supported");
+            }
 
             if (pc_ >= bytecode_size_)
             {
@@ -43170,29 +43183,430 @@ namespace scratchbird
                 error("EXPLAIN currently supports SELECT only");
             }
 
+            struct ExplainJoin
+            {
+                parser::JoinType type = parser::JoinType::INNER;
+                std::string table;
+            };
+
+            struct ExplainSelectInfo
+            {
+                bool distinct = false;
+                bool has_where = false;
+                bool has_group_by = false;
+                bool has_having = false;
+                bool has_order_by = false;
+                bool has_limit = false;
+                bool has_offset = false;
+                bool has_aggregate = false;
+                std::vector<std::string> tables;
+                std::vector<ExplainJoin> joins;
+                bool has_set_op = false;
+                uint16_t set_op = 0;
+                std::vector<ExplainSelectInfo> set_children;
+            };
+
+            auto joinTypeName = [](parser::JoinType type) -> std::string {
+                switch (type)
+                {
+                    case parser::JoinType::INNER: return "INNER";
+                    case parser::JoinType::LEFT: return "LEFT";
+                    case parser::JoinType::RIGHT: return "RIGHT";
+                    case parser::JoinType::FULL: return "FULL";
+                    case parser::JoinType::CROSS: return "CROSS";
+                    case parser::JoinType::NATURAL: return "NATURAL";
+                    case parser::JoinType::NATURAL_LEFT: return "NATURAL LEFT";
+                    case parser::JoinType::NATURAL_RIGHT: return "NATURAL RIGHT";
+                    case parser::JoinType::NATURAL_FULL: return "NATURAL FULL";
+                }
+                return "JOIN";
+            };
+
+            auto displayTableRef = [](const std::string& name, const std::string& alias) -> std::string {
+                if (!alias.empty())
+                {
+                    if (!name.empty())
+                    {
+                        return alias + " (" + name + ")";
+                    }
+                    return alias;
+                }
+                if (!name.empty())
+                {
+                    return name;
+                }
+                return "<unknown>";
+            };
+
+            auto parseSelectInfo = [&](auto&& self, ExplainSelectInfo& info) -> void {
+                uint8_t select_flags = readByte();
+                info.distinct = (select_flags & 0x01) != 0;
+
+                if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                {
+                    error("Expected BEGIN_LIST for SELECT list");
+                }
+                uint64_t select_count = readUVarint();
+                for (uint64_t i = 0; i < select_count; ++i)
+                {
+                    if (pc_ >= bytecode_size_)
+                    {
+                        error("Unexpected end of bytecode in SELECT list");
+                    }
+
+                    uint8_t next = bytecode_[pc_];
+                    if (next == static_cast<uint8_t>(Opcode::SELECT_STAR))
+                    {
+                        readByte();
+                        continue;
+                    }
+
+                    if (next == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                    {
+                        size_t saved_pc = pc_;
+                        readByte();
+                        uint16_t ext = readExtendedOpcode();
+                        if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_SELECT_TABLE_STAR))
+                        {
+                            core::ID table_id{};
+                            std::string table_name;
+                            std::string table_alias;
+                            bool has_uuid = false;
+                            readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                            continue;
+                        }
+                        pc_ = saved_pc;
+                    }
+
+                    bool prev_active = aggregate_scan_active_;
+                    bool prev_found = aggregate_scan_found_;
+                    aggregate_scan_active_ = true;
+                    aggregate_scan_found_ = false;
+                    skipExpressionRange(pc_);
+                    info.has_aggregate = info.has_aggregate || aggregate_scan_found_;
+                    aggregate_scan_active_ = prev_active;
+                    aggregate_scan_found_ = prev_found || aggregate_scan_found_;
+                    readString();
+                }
+
+                if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                {
+                    error("Expected END_LIST after SELECT list");
+                }
+
+                if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                {
+                    error("Expected BEGIN_LIST for FROM clause");
+                }
+                uint64_t table_count = readUVarint();
+                for (uint64_t i = 0; i < table_count; ++i)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                    {
+                        error("Expected TABLE_REF in FROM clause");
+                    }
+                    core::ID table_id{};
+                    std::string table_name;
+                    std::string table_alias;
+                    bool has_uuid = false;
+                    readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                    info.tables.push_back(displayTableRef(table_name, table_alias));
+                }
+                if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                {
+                    error("Expected END_LIST after FROM clause");
+                }
+
+                while (pc_ < bytecode_size_ &&
+                       bytecode_[pc_] == static_cast<uint8_t>(Opcode::JOIN_TYPE))
+                {
+                    readByte();
+                    auto join_type = static_cast<parser::JoinType>(readByte());
+                    if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                    {
+                        error("Expected TABLE_REF after JOIN_TYPE");
+                    }
+                    core::ID table_id{};
+                    std::string table_name;
+                    std::string table_alias;
+                    bool has_uuid = false;
+                    readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                    info.joins.push_back({join_type, displayTableRef(table_name, table_alias)});
+
+                    if (pc_ < bytecode_size_ &&
+                        bytecode_[pc_] == static_cast<uint8_t>(Opcode::JOIN_CONDITION))
+                    {
+                        readByte();
+                        skipExpressionRange(pc_);
+                    }
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+                {
+                    readByte();
+                    skipExpressionRange(pc_);
+                    info.has_where = true;
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::GROUP_BY))
+                {
+                    readByte();
+                    uint64_t group_count = readUVarint();
+                    for (uint64_t i = 0; i < group_count; ++i)
+                    {
+                        skipExpressionRange(pc_);
+                    }
+                    info.has_group_by = true;
+                    info.has_aggregate = true;
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::HAVING))
+                {
+                    readByte();
+                    skipExpressionRange(pc_);
+                    info.has_having = true;
+                    info.has_aggregate = true;
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+                {
+                    readByte();
+                    uint64_t order_count = readUVarint();
+                    for (uint64_t i = 0; i < order_count; ++i)
+                    {
+                        if (readByte() != static_cast<uint8_t>(Opcode::SORT_KEY))
+                        {
+                            error("Expected SORT_KEY in ORDER BY");
+                        }
+                        skipExpressionRange(pc_);
+                        Opcode dir = static_cast<Opcode>(readByte());
+                        if (dir != Opcode::SORT_ASC && dir != Opcode::SORT_DESC)
+                        {
+                            error("Expected SORT_ASC or SORT_DESC in ORDER BY");
+                        }
+                        if (pc_ < bytecode_size_)
+                        {
+                            Opcode nulls = static_cast<Opcode>(bytecode_[pc_]);
+                            if (nulls == Opcode::NULLS_FIRST || nulls == Opcode::NULLS_LAST)
+                            {
+                                readByte();
+                            }
+                        }
+                    }
+                    info.has_order_by = true;
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                     bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+                {
+                    if (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT))
+                    {
+                        readByte();
+                        skipExpressionRange(pc_);
+                        info.has_limit = true;
+                    }
+                    if (pc_ < bytecode_size_ &&
+                        bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET))
+                    {
+                        readByte();
+                        skipExpressionRange(pc_);
+                        info.has_offset = true;
+                    }
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    size_t saved_pc = pc_;
+                    readByte();
+                    uint16_t ext = readExtendedOpcode();
+                    bool is_set_op = (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION) ||
+                                      ext == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION_ALL) ||
+                                      ext == static_cast<uint16_t>(ExtendedOpcode::EXT_INTERSECT) ||
+                                      ext == static_cast<uint16_t>(ExtendedOpcode::EXT_INTERSECT_ALL) ||
+                                      ext == static_cast<uint16_t>(ExtendedOpcode::EXT_EXCEPT) ||
+                                      ext == static_cast<uint16_t>(ExtendedOpcode::EXT_EXCEPT_ALL));
+                    if (is_set_op)
+                    {
+                        info.has_set_op = true;
+                        info.set_op = ext;
+                        if (readByte() != static_cast<uint8_t>(Opcode::SELECT))
+                        {
+                            error("Expected SELECT after set operation");
+                        }
+                        info.set_children.emplace_back();
+                        self(self, info.set_children.back());
+                    }
+                    else
+                    {
+                        pc_ = saved_pc;
+                    }
+                }
+            };
+
+            size_t select_start_pc = pc_;
+            ExplainSelectInfo info;
+            parseSelectInfo(parseSelectInfo, info);
+            size_t select_end_pc = pc_;
+
             size_t analyzed_rows = 0;
             if (analyze)
             {
+                size_t saved_pc = pc_;
+                pc_ = select_start_pc;
                 executeSelect();
                 if (current_result_set_)
                 {
                     analyzed_rows = current_result_set_->rowCount();
                 }
-            }
-            else
-            {
-                skipSelectStatement();
+                pc_ = select_end_pc;
+                pc_ = saved_pc;
             }
 
             current_result_set_ = std::make_unique<ResultSet>();
             current_result_set_->addColumn("QUERY PLAN", core::DataType::VARCHAR);
 
-            std::string plan_line = analyze
-                ? "EXPLAIN ANALYZE not implemented (rows=" + std::to_string(analyzed_rows) + ")"
-                : "EXPLAIN not implemented";
-            std::vector<Value> row;
-            row.push_back(Value::makeVarchar(plan_line));
-            current_result_set_->addRow(std::move(row));
+            struct PlanLine
+            {
+                int indent = 0;
+                std::string text;
+            };
+
+            auto setOpName = [](uint16_t ext) -> std::string {
+                switch (static_cast<ExtendedOpcode>(ext))
+                {
+                    case ExtendedOpcode::EXT_UNION: return "UNION";
+                    case ExtendedOpcode::EXT_UNION_ALL: return "UNION ALL";
+                    case ExtendedOpcode::EXT_INTERSECT: return "INTERSECT";
+                    case ExtendedOpcode::EXT_INTERSECT_ALL: return "INTERSECT ALL";
+                    case ExtendedOpcode::EXT_EXCEPT: return "EXCEPT";
+                    case ExtendedOpcode::EXT_EXCEPT_ALL: return "EXCEPT ALL";
+                    default: return "SETOP";
+                }
+            };
+
+            auto appendPlanLines = [&](const ExplainSelectInfo& sel,
+                                       int indent,
+                                       std::vector<PlanLine>& lines,
+                                       auto&& appendPlanLinesRef) -> void {
+                if (sel.has_set_op)
+                {
+                    lines.push_back({indent, "SetOp (" + setOpName(sel.set_op) + ")"});
+                    int child_indent = indent + 2;
+                    if (!sel.set_children.empty())
+                    {
+                        appendPlanLinesRef(sel.set_children.front(), child_indent, lines, appendPlanLinesRef);
+                    }
+                    return;
+                }
+
+                std::vector<PlanLine> base_lines;
+                if (sel.tables.empty())
+                {
+                    base_lines.push_back({0, "Result"});
+                }
+                else if (sel.joins.empty() && sel.tables.size() == 1)
+                {
+                    base_lines.push_back({0, "Seq Scan on " + sel.tables.front()});
+                }
+                else
+                {
+                    base_lines.push_back({0, "Nested Loop"});
+                    for (const auto& table : sel.tables)
+                    {
+                        base_lines.push_back({2, "Seq Scan on " + table});
+                    }
+                    for (const auto& join : sel.joins)
+                    {
+                        std::string label = "Seq Scan on " + join.table +
+                            " (" + joinTypeName(join.type) + " Join)";
+                        base_lines.push_back({2, std::move(label)});
+                    }
+                }
+
+                std::vector<std::string> wrappers;
+                if (sel.has_limit || sel.has_offset)
+                {
+                    if (sel.has_limit && sel.has_offset)
+                    {
+                        wrappers.push_back("Limit/Offset");
+                    }
+                    else if (sel.has_limit)
+                    {
+                        wrappers.push_back("Limit");
+                    }
+                    else
+                    {
+                        wrappers.push_back("Offset");
+                    }
+                }
+                if (sel.has_order_by)
+                {
+                    wrappers.push_back("Sort");
+                }
+                if (sel.has_having)
+                {
+                    wrappers.push_back("Having Filter");
+                }
+                if (sel.has_group_by || sel.has_aggregate)
+                {
+                    wrappers.push_back("Aggregate");
+                }
+                if (sel.distinct)
+                {
+                    wrappers.push_back("Unique");
+                }
+                if (sel.has_where)
+                {
+                    wrappers.push_back("Filter");
+                }
+
+                int current_indent = indent;
+                for (const auto& wrapper : wrappers)
+                {
+                    lines.push_back({current_indent, wrapper});
+                    current_indent += 2;
+                }
+
+                for (const auto& line : base_lines)
+                {
+                    lines.push_back({current_indent + line.indent, line.text});
+                }
+            };
+
+            std::vector<std::string> option_labels;
+            if (verbose) option_labels.push_back("VERBOSE");
+            if (costs) option_labels.push_back("COSTS");
+            if (buffers) option_labels.push_back("BUFFERS");
+            if (timing) option_labels.push_back("TIMING");
+
+            if (!option_labels.empty())
+            {
+                std::string option_line = "Options: ";
+                for (size_t i = 0; i < option_labels.size(); ++i)
+                {
+                    if (i > 0) option_line += ", ";
+                    option_line += option_labels[i];
+                }
+                current_result_set_->addRow({Value::makeVarchar(option_line)});
+            }
+
+            std::vector<PlanLine> plan_lines;
+            appendPlanLines(info, 0, plan_lines, appendPlanLines);
+            for (const auto& line : plan_lines)
+            {
+                current_result_set_->addRow({Value::makeVarchar(std::string(line.indent, ' ') + line.text)});
+            }
+
+            if (analyze)
+            {
+                current_result_set_->addRow({Value::makeVarchar("Actual Rows: " + std::to_string(analyzed_rows))});
+            }
         }
 
         void Executor::executeCopy()
@@ -43201,14 +43615,870 @@ namespace scratchbird
             uint8_t direction = readByte();
             std::string target = readString();
             uint32_t column_count = readInt32();
+            std::vector<std::string> column_names;
+            column_names.reserve(column_count);
             for (uint32_t i = 0; i < column_count; ++i)
             {
-                readString();
+                column_names.push_back(readString());
             }
-            (void)table_name;
-            (void)direction;
-            (void)target;
-            error("COPY is not implemented");
+
+            core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            core::CatalogManager::ResolvedObject resolved_table;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, &resolved_table, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    msg += ": " + err_ctx.message;
+                }
+                error(msg);
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to find table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    msg += ": " + err_ctx.message;
+                }
+                error(msg);
+            }
+
+            std::vector<core::CatalogManager::ColumnInfo> all_columns;
+            if (db_->catalog_manager()->getColumns(table_info.table_id, all_columns, nullptr) != core::Status::OK)
+            {
+                error("Failed to get table columns for COPY");
+            }
+
+            std::vector<size_t> col_indices;
+            if (column_names.empty())
+            {
+                col_indices.reserve(all_columns.size());
+                for (size_t i = 0; i < all_columns.size(); ++i)
+                {
+                    col_indices.push_back(i);
+                }
+            }
+            else
+            {
+                col_indices.reserve(column_names.size());
+                for (const auto& col_name : column_names)
+                {
+                    auto it = std::find_if(all_columns.begin(), all_columns.end(),
+                                           [&](const auto& c) { return c.column_name == col_name; });
+                    if (it == all_columns.end())
+                    {
+                        error("Column not found: " + col_name);
+                    }
+                    col_indices.push_back(static_cast<size_t>(std::distance(all_columns.begin(), it)));
+                }
+            }
+
+            if (direction == 2)
+            {
+                if (target == "STDOUT")
+                {
+                    error("COPY TO STDOUT is not supported in the executor");
+                }
+                if (target.empty())
+                {
+                    error("COPY TO requires a target file");
+                }
+
+                bool has_table_select = true;
+                std::vector<std::string> accessible_columns;
+                const auto& user_id = getCurrentUserID();
+                bool skip_perm_check = (user_id == core::ID{});
+
+                if (!skip_perm_check)
+                {
+                    has_table_select = checkPermission(table_info.table_id,
+                        core::CatalogManager::PermissionObjectType::TABLE,
+                        static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                    if (!has_table_select)
+                    {
+                        auto perm_status = db_->catalog_manager()->getAccessibleColumns(
+                            user_id, table_info.table_id,
+                            core::CatalogManager::Privilege::SELECT,
+                            accessible_columns, &err_ctx);
+                        if (perm_status != core::Status::OK || accessible_columns.empty())
+                        {
+                            error("Permission denied: SELECT on table " + table_name);
+                        }
+                    }
+                }
+
+                if (!accessible_columns.empty())
+                {
+                    for (size_t idx : col_indices)
+                    {
+                        const auto& col_name = all_columns[idx].column_name;
+                        if (std::find(accessible_columns.begin(),
+                                      accessible_columns.end(),
+                                      col_name) == accessible_columns.end())
+                        {
+                            error("Permission denied: SELECT on column " + col_name +
+                                  " of table " + table_name);
+                        }
+                    }
+                }
+
+                std::ofstream out(target);
+                if (!out)
+                {
+                    error("Failed to open COPY target file: " + target);
+                }
+
+                auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
+                if (!scan_iter)
+                {
+                    error("Failed to create table scan iterator for COPY");
+                }
+
+                core::Tuple tuple;
+                size_t row_count = 0;
+                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                {
+                    std::vector<Value> row_values;
+                    if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                    {
+                        continue;
+                    }
+
+                    for (size_t i = 0; i < col_indices.size(); ++i)
+                    {
+                        if (i > 0) out << '\t';
+                        out << row_values[col_indices[i]].toString();
+                    }
+                    out << '\n';
+                    row_count++;
+                }
+
+                (void)row_count;
+            }
+            else if (direction == 1)
+            {
+                if (target == "STDIN")
+                {
+                    error("COPY FROM STDIN is not supported in the executor");
+                }
+                if (target.empty())
+                {
+                    error("COPY FROM requires a source file");
+                }
+
+                bool has_table_insert = true;
+                std::vector<std::string> accessible_columns;
+                const auto& user_id = getCurrentUserID();
+                bool skip_perm_check = (user_id == core::ID{});
+
+                if (!skip_perm_check)
+                {
+                    has_table_insert = checkPermission(table_info.table_id,
+                        core::CatalogManager::PermissionObjectType::TABLE,
+                        static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT));
+                    if (!has_table_insert)
+                    {
+                        auto perm_status = db_->catalog_manager()->getAccessibleColumns(
+                            user_id, table_info.table_id,
+                            core::CatalogManager::Privilege::INSERT,
+                            accessible_columns, &err_ctx);
+                        if (perm_status != core::Status::OK || accessible_columns.empty())
+                        {
+                            error("Permission denied: INSERT on table " + table_name);
+                        }
+                    }
+                }
+
+                if (!accessible_columns.empty())
+                {
+                    for (size_t idx : col_indices)
+                    {
+                        const auto& col_name = all_columns[idx].column_name;
+                        if (std::find(accessible_columns.begin(),
+                                      accessible_columns.end(),
+                                      col_name) == accessible_columns.end())
+                        {
+                            error("Permission denied: INSERT on column " + col_name +
+                                  " of table " + table_name);
+                        }
+                    }
+                }
+
+                struct DomainDefault
+                {
+                    bool has_default = false;
+                    std::string value;
+                };
+                std::vector<DomainDefault> domain_defaults(all_columns.size());
+                if (auto* domain_mgr = db_ ? db_->domain_manager() : nullptr)
+                {
+                    for (size_t i = 0; i < all_columns.size(); ++i)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.domain_id == core::ID{} || col.has_default)
+                        {
+                            continue;
+                        }
+
+                        core::DomainInfo domain_info;
+                        core::ErrorContext dom_ctx;
+                        auto dom_status = domain_mgr->getDomain(col.domain_id, domain_info, &dom_ctx);
+                        if (dom_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to resolve domain default";
+                            if (!dom_ctx.message.empty())
+                            {
+                                err_msg += ": " + dom_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+
+                        if (!domain_info.default_value.empty())
+                        {
+                            domain_defaults[i].has_default = true;
+                            domain_defaults[i].value = domain_info.default_value;
+                        }
+                    }
+                }
+
+                auto process_copy_row = [&](const std::vector<Value>& input_values) -> bool {
+                    if (input_values.size() != col_indices.size())
+                    {
+                        error("Column count doesn't match value count");
+                    }
+
+                    std::vector<Value> row_values(all_columns.size());
+                    std::vector<bool> provided(all_columns.size(), false);
+
+                    for (size_t i = 0; i < input_values.size(); ++i)
+                    {
+                        size_t col_idx = col_indices[i];
+                        row_values[col_idx] = input_values[i];
+                        provided[col_idx] = true;
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); ++i)
+                    {
+                        const auto& col = all_columns[i];
+                        if (!col.is_identity)
+                        {
+                            continue;
+                        }
+
+                        if (provided[i])
+                        {
+                            if (col.identity_always)
+                            {
+                                error("Cannot INSERT into GENERATED ALWAYS AS IDENTITY column '" +
+                                      col.column_name + "'");
+                            }
+                        }
+                        else
+                        {
+                            if (col.identity_sequence_id == core::ID())
+                            {
+                                error("IDENTITY column '" + col.column_name +
+                                      "' has no associated sequence");
+                            }
+
+                            int64_t identity_value;
+                            core::ErrorContext seq_ctx;
+                            auto seq_status = db_->catalog_manager()->sequenceNextVal(
+                                col.identity_sequence_id, identity_value, &seq_ctx);
+
+                            if (seq_status != core::Status::OK)
+                            {
+                                error("Failed to generate IDENTITY value for column '" +
+                                      col.column_name + "': " + seq_ctx.message);
+                            }
+
+                            Value identity_val;
+                            switch (static_cast<core::DataType>(col.data_type))
+                            {
+                                case core::DataType::INT32:
+                                    identity_val = Value::makeInt32(static_cast<int32_t>(identity_value));
+                                    break;
+                                case core::DataType::INT64:
+                                    identity_val = Value::makeInt64(identity_value);
+                                    break;
+                                case core::DataType::INT16:
+                                    identity_val = Value::makeInt16(static_cast<int16_t>(identity_value));
+                                    break;
+                                case core::DataType::INT8:
+                                    identity_val = Value::makeInt8(static_cast<int8_t>(identity_value));
+                                    break;
+                                default:
+                                    error("IDENTITY column '" + col.column_name +
+                                          "' has unsupported data type for IDENTITY");
+                            }
+
+                            row_values[i] = std::move(identity_val);
+                            provided[i] = true;
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); ++i)
+                    {
+                        if (provided[i])
+                        {
+                            continue;
+                        }
+                        if (all_columns[i].generated_type ==
+                            core::CatalogManager::GeneratedColumnType::STORED)
+                        {
+                            continue;
+                        }
+
+                        if (all_columns[i].has_default &&
+                            (!all_columns[i].default_expr.empty() ||
+                             !all_columns[i].default_value.empty()))
+                        {
+                            row_values[i] = evaluateDefaultValue(all_columns[i]);
+                        }
+                        else if (domain_defaults[i].has_default)
+                        {
+                            auto temp_col = all_columns[i];
+                            temp_col.has_default = true;
+                            temp_col.default_value = domain_defaults[i].value;
+                            row_values[i] = evaluateDefaultValue(temp_col);
+                        }
+                        else
+                        {
+                            row_values[i] = Value();
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); ++i)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.generated_type != core::CatalogManager::GeneratedColumnType::STORED)
+                        {
+                            continue;
+                        }
+                        if (provided[i])
+                        {
+                            error("Cannot INSERT into GENERATED column '" + col.column_name + "'");
+                        }
+
+                        if (col.generation_expression.empty())
+                        {
+                            row_values[i] = Value::makeNull();
+                            provided[i] = true;
+                            continue;
+                        }
+
+                        std::vector<uint8_t> expr_bytecode = hexToBytes(col.generation_expression);
+                        if (expr_bytecode.empty())
+                        {
+                            DEBUG_LOG_DB("Failed to deserialize GENERATED expression for column "
+                                       << col.column_name << " - using NULL");
+                            row_values[i] = Value::makeNull();
+                            provided[i] = true;
+                            continue;
+                        }
+
+                        const uint8_t* saved_bytecode = bytecode_;
+                        size_t saved_bytecode_size = bytecode_size_;
+                        size_t saved_pc = pc_;
+                        const std::vector<Value>* saved_row_values = current_row_values_;
+                        const std::vector<core::CatalogManager::ColumnInfo>* saved_row_columns = current_row_columns_;
+
+                        current_row_values_ = &row_values;
+                        current_row_columns_ = &all_columns;
+
+                        bytecode_ = expr_bytecode.data();
+                        bytecode_size_ = expr_bytecode.size();
+                        pc_ = 0;
+
+                        Value generated_val = Value::makeNull();
+                        try
+                        {
+                            evaluateExpression();
+                            if (!stack_.empty())
+                            {
+                                generated_val = stack_.top();
+                                stack_.pop();
+                            }
+                        }
+                        catch (...)
+                        {
+                            DEBUG_LOG_DB("GENERATED expression evaluation failed for column "
+                                       << col.column_name << " - using NULL");
+                        }
+
+                        bytecode_ = saved_bytecode;
+                        bytecode_size_ = saved_bytecode_size;
+                        pc_ = saved_pc;
+                        current_row_values_ = saved_row_values;
+                        current_row_columns_ = saved_row_columns;
+
+                        row_values[i] = std::move(generated_val);
+                        provided[i] = true;
+                    }
+
+                    auto* domain_mgr = db_->domain_manager();
+                    if (!domain_mgr)
+                    {
+                        error("Domain manager unavailable for domain enforcement");
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.domain_id == core::ID())
+                        {
+                            continue;
+                        }
+
+                        core::ErrorContext domain_ctx;
+                        auto norm_status = domain_mgr->applyNormalization(col.domain_id,
+                                                                         row_values[i],
+                                                                         this,
+                                                                         &domain_ctx);
+                        if (norm_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to normalize value for column '" +
+                                                  col.column_name + "'";
+                            if (!domain_ctx.message.empty())
+                            {
+                                err_msg += ": " + domain_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+
+                        core::QualityResult quality_result;
+                        auto quality_status = domain_mgr->executeQualityPipeline(col.domain_id,
+                                                                                row_values[i],
+                                                                                this,
+                                                                                quality_result,
+                                                                                &domain_ctx);
+                        if (quality_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to apply quality pipeline for column '" +
+                                                  col.column_name + "'";
+                            if (!domain_ctx.message.empty())
+                            {
+                                err_msg += ": " + domain_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+
+                    std::vector<core::CatalogManager::TriggerInfo> before_triggers;
+                    auto trigger_status = db_->catalog_manager()->listTriggersForTable(
+                        table_info.table_id,
+                        core::CatalogManager::TriggerEvent::INSERT,
+                        core::CatalogManager::TriggerTiming::BEFORE,
+                        before_triggers,
+                        &err_ctx
+                    );
+
+                    if (trigger_status == core::Status::OK)
+                    {
+                        for (const auto& trigger : before_triggers)
+                        {
+                            if (!trigger.enabled) continue;
+
+                            TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
+                            bool should_continue = fireTrigger(ctx);
+
+                            if (!should_continue)
+                            {
+                                return false;
+                            }
+                        }
+                    }
+
+                    if (!checkRLSPolicies(table_info.table_id, row_values, all_columns,
+                                         core::CatalogManager::PolicyType::INSERT,
+                                         true /* is_with_check */))
+                    {
+                        error("Row-level security policy violation: INSERT WITH CHECK constraint failed");
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (!col.nullable && row_values[i].isNull())
+                        {
+                            error("NOT NULL constraint violation: NULL value in column '" + col.column_name + "'");
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        if (row_values[i].isNull())
+                        {
+                            continue;
+                        }
+
+                        core::TypedValue coerced;
+                        core::ErrorContext cast_ctx;
+                        if (!coerceValueForColumn(row_values[i], all_columns[i], coerced, &cast_ctx))
+                        {
+                            std::string err_msg = "Type mismatch for column '" + all_columns[i].column_name + "'";
+                            if (!cast_ctx.message.empty())
+                            {
+                                err_msg += ": " + cast_ctx.message;
+                            }
+                            if (!cast_ctx.violating_value.empty())
+                            {
+                                err_msg += " (value: " + cast_ctx.violating_value + ")";
+                            }
+                            error(err_msg);
+                        }
+                        row_values[i] = std::move(coerced);
+                    }
+
+                    std::vector<uint8_t> tuple_data;
+                    core::ErrorContext serialize_ctx;
+                    if (!serializeTupleFromValues(row_values, all_columns, tuple_data, &serialize_ctx))
+                    {
+                        std::string err_msg = "Failed to serialize tuple for COPY";
+                        if (!serialize_ctx.message.empty())
+                        {
+                            err_msg += ": " + serialize_ctx.message;
+                        }
+                        if (!serialize_ctx.column_name.empty() || !serialize_ctx.violating_value.empty())
+                        {
+                            err_msg += " (";
+                            if (!serialize_ctx.column_name.empty())
+                            {
+                                err_msg += "column: " + serialize_ctx.column_name;
+                            }
+                            if (!serialize_ctx.violating_value.empty())
+                            {
+                                if (!serialize_ctx.column_name.empty())
+                                {
+                                    err_msg += ", ";
+                                }
+                                err_msg += "value: " + serialize_ctx.violating_value;
+                            }
+                            err_msg += ")";
+                        }
+                        error(err_msg);
+                    }
+
+                    uint64_t xid = db_->storage_engine()->getCurrentXid();
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.domain_id == core::ID())
+                        {
+                            continue;
+                        }
+
+                        bool is_unique = true;
+                        core::ErrorContext uniq_ctx;
+                        auto uniq_status = domain_mgr->checkGlobalUniqueness(col.domain_id,
+                                                                            row_values[i],
+                                                                            xid,
+                                                                            is_unique,
+                                                                            &uniq_ctx);
+                        if (uniq_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to enforce domain uniqueness for column '" +
+                                                  col.column_name + "'";
+                            if (!uniq_ctx.message.empty())
+                            {
+                                err_msg += ": " + uniq_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        if (!is_unique)
+                        {
+                            std::string err_msg = "Domain uniqueness violation on column '" +
+                                                  col.column_name + "'";
+                            if (!uniq_ctx.message.empty())
+                            {
+                                err_msg += ": " + uniq_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.domain_id == core::ID())
+                        {
+                            continue;
+                        }
+
+                        bool is_valid = true;
+                        core::ErrorContext val_ctx;
+                        auto val_status = domain_mgr->validateValue(col.domain_id,
+                                                                   row_values[i],
+                                                                   this,
+                                                                   is_valid,
+                                                                   &val_ctx);
+                        if (val_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to validate domain value for column '" +
+                                                  col.column_name + "'";
+                            if (!val_ctx.message.empty())
+                            {
+                                err_msg += ": " + val_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        if (!is_valid)
+                        {
+                            std::string err_msg = "Domain validation failed for column '" +
+                                                  col.column_name + "'";
+                            if (!val_ctx.message.empty())
+                            {
+                                err_msg += ": " + val_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.domain_id == core::ID())
+                        {
+                            continue;
+                        }
+
+                        core::ErrorContext constraint_ctx;
+                        auto constraint_status = domain_mgr->validateValue(col.domain_id,
+                                                                          row_values[i],
+                                                                          &constraint_ctx);
+                        if (constraint_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Domain constraint violation for column '" +
+                                                  col.column_name + "'";
+                            if (!constraint_ctx.message.empty())
+                            {
+                                err_msg += ": " + constraint_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.is_primary_key)
+                        {
+                            if (row_values[i].isNull())
+                            {
+                                error("PRIMARY KEY constraint violation: NULL value in column '" + col.column_name + "'");
+                            }
+                            if (checkUniqueViolation(table_info.table_id, col, row_values[i], all_columns))
+                            {
+                                error("PRIMARY KEY constraint violation: duplicate value in column '" + col.column_name + "'");
+                            }
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.check_expr_oid != 0)
+                        {
+                            if (!evaluateCheckConstraint(col, row_values, all_columns))
+                            {
+                                error("CHECK constraint violation on column '" + col.column_name + "'");
+                            }
+                        }
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.is_primary_key) continue;
+
+                        if (col.is_unique && !row_values[i].isNull())
+                        {
+                            if (checkUniqueViolation(table_info.table_id, col, row_values[i], all_columns))
+                            {
+                                error("UNIQUE constraint violation on column '" + col.column_name + "'");
+                            }
+                        }
+                    }
+
+                    std::vector<core::CatalogManager::ForeignKeyInfo> fks;
+                    auto fk_status = db_->catalog_manager()->getForeignKeysForTable(table_info.table_id, fks, nullptr);
+
+                    if (fk_status == core::Status::OK)
+                    {
+                        for (const auto& fk : fks)
+                        {
+                            if (!fk.is_enabled) continue;
+
+                            std::vector<Value> fk_values;
+                            for (const auto& col_name : fk.child_columns)
+                            {
+                                for (size_t i = 0; i < all_columns.size(); i++)
+                                {
+                                    if (all_columns[i].column_name == col_name)
+                                    {
+                                        fk_values.push_back(row_values[i]);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            std::vector<core::CatalogManager::ColumnInfo> parent_cols;
+                            auto col_status = db_->catalog_manager()->getColumns(fk.parent_table_id, parent_cols, nullptr);
+
+                            if (col_status == core::Status::OK)
+                            {
+                                if (!checkForeignKeyExists(fk.parent_table_id, fk.parent_columns, fk_values, parent_cols))
+                                {
+                                    error("Foreign key constraint violation: no matching row in parent table for FK '" + fk.fk_name + "'");
+                                }
+                            }
+                        }
+                    }
+
+                    uint32_t page_id;
+                    uint16_t item_id;
+                    auto insert_status = db_->storage_engine()->insertTuple(
+                        table_info.table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()), &page_id,
+                        &item_id, nullptr);
+
+                    if (insert_status != core::Status::OK)
+                    {
+                        error("Failed to insert tuple into storage");
+                    }
+
+                    core::TID row_tid(page_id, item_id);
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (col.domain_id == core::ID())
+                        {
+                            continue;
+                        }
+
+                        core::ErrorContext uniq_ctx;
+                        auto uniq_status = domain_mgr->registerUniqueValue(col.domain_id,
+                                                                          table_info.table_id,
+                                                                          col.column_id,
+                                                                          row_tid,
+                                                                          row_values[i],
+                                                                          xid,
+                                                                          &uniq_ctx);
+                        if (uniq_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to register domain uniqueness for column '" +
+                                                  col.column_name + "'";
+                            if (!uniq_ctx.message.empty())
+                            {
+                                err_msg += ": " + uniq_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                    }
+
+                    updateIndexesOnInsert(xid, table_info.table_id, table_info,
+                                          all_columns, page_id, item_id, row_values);
+
+                    std::vector<core::CatalogManager::TriggerInfo> after_triggers;
+                    trigger_status = db_->catalog_manager()->listTriggersForTable(
+                        table_info.table_id,
+                        core::CatalogManager::TriggerEvent::INSERT,
+                        core::CatalogManager::TriggerTiming::AFTER,
+                        after_triggers,
+                        &err_ctx
+                    );
+
+                    if (trigger_status == core::Status::OK)
+                    {
+                        for (const auto& trigger : after_triggers)
+                        {
+                            if (!trigger.enabled) continue;
+
+                            TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
+                            fireTrigger(ctx);
+                        }
+                    }
+
+                    return true;
+                };
+
+                auto split_fields = [](const std::string& line, char delimiter) {
+                    std::vector<std::string> fields;
+                    std::string field;
+                    for (char c : line)
+                    {
+                        if (c == delimiter)
+                        {
+                            fields.push_back(field);
+                            field.clear();
+                        }
+                        else
+                        {
+                            field.push_back(c);
+                        }
+                    }
+                    fields.push_back(field);
+                    return fields;
+                };
+
+                std::ifstream in(target);
+                if (!in)
+                {
+                    error("Failed to open COPY source file: " + target);
+                }
+
+                std::string line;
+                int affected_count = 0;
+                while (std::getline(in, line))
+                {
+                    if (!line.empty() && line.back() == '\r')
+                    {
+                        line.pop_back();
+                    }
+                    auto fields = split_fields(line, '\t');
+                    if (fields.size() != col_indices.size())
+                    {
+                        error("COPY row has " + std::to_string(fields.size()) +
+                              " columns; expected " + std::to_string(col_indices.size()));
+                    }
+
+                    std::vector<Value> input_values;
+                    input_values.reserve(fields.size());
+                    for (const auto& field : fields)
+                    {
+                        if (field == "\\N" || field == "NULL")
+                        {
+                            input_values.push_back(Value::makeNull());
+                        }
+                        else
+                        {
+                            input_values.push_back(Value::makeVarchar(field));
+                        }
+                    }
+
+                    if (process_copy_row(input_values))
+                    {
+                        affected_count++;
+                    }
+                }
+
+                if (affected_count > 0)
+                {
+                    QueryResultCacheManager::getInstance().invalidateTable(table_info.table_id);
+                }
+            }
+            else
+            {
+                error("COPY direction not supported");
+            }
         }
 
     } // namespace sblr
