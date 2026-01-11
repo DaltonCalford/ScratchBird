@@ -307,6 +307,7 @@ private:
     ResolvedStatement* analyzeInsert(InsertStmt* stmt);
     ResolvedStatement* analyzeUpdate(UpdateStmt* stmt);
     ResolvedStatement* analyzeDelete(DeleteStmt* stmt);
+    ResolvedStatement* analyzeCopy(CopyStmt* stmt);
 
     // Transaction/Session
     ResolvedStatement* analyzeStartTransaction(StartTransactionStmt* stmt);

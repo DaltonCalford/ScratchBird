@@ -317,6 +317,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateUpdate(update);
     } else if (auto* del = dynamic_cast<ResolvedDeleteStmt*>(stmt)) {
         generateDelete(del);
+    } else if (auto* copy = dynamic_cast<ResolvedCopyStmt*>(stmt)) {
+        generateCopy(copy);
     } else if (auto* create_table = dynamic_cast<ResolvedCreateTableStmt*>(stmt)) {
         generateCreateTable(create_table);
     } else if (auto* create_index = dynamic_cast<ResolvedCreateIndexStmt*>(stmt)) {
@@ -609,6 +611,76 @@ void BytecodeGeneratorV2::generateDelete(ResolvedDeleteStmt* stmt) {
     if (!stmt->returning.empty()) {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RETURNING);
         generateSelectList(stmt->returning);
+    }
+}
+
+void BytecodeGeneratorV2::generateCopy(ResolvedCopyStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_COPY);
+    // Payload layout: docs/specifications/sblr/Appendix_A_SBLR_BYTECODE.md (EXT_COPY)
+
+    const bool has_query = (stmt->query != nullptr);
+
+    if (!has_query && stmt->table_path != StringPool::INVALID_ID) {
+        writeStringId(stmt->table_path);
+    } else {
+        current_result_->writeString("");
+    }
+
+    uint8_t direction = (stmt->direction == ResolvedCopyStmt::Direction::FROM) ? 1 : 2;
+    current_result_->writeByte(direction);
+
+    if (direction == 1) {
+        if (stmt->target_is_stdin) {
+            current_result_->writeString("STDIN");
+        } else if (stmt->target != StringPool::INVALID_ID) {
+            writeStringId(stmt->target);
+        } else {
+            current_result_->addError("COPY FROM missing target");
+            current_result_->writeString("");
+        }
+    } else {
+        if (stmt->target_is_stdout) {
+            current_result_->writeString("STDOUT");
+        } else if (stmt->target != StringPool::INVALID_ID) {
+            writeStringId(stmt->target);
+        } else {
+            current_result_->addError("COPY TO missing target");
+            current_result_->writeString("");
+        }
+    }
+
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->target_column_indexes.size()));
+    for (uint32_t col_idx : stmt->target_column_indexes) {
+        if (col_idx < stmt->target_table.columns.size()) {
+            writeStringId(stmt->target_table.columns[col_idx].name);
+        } else {
+            current_result_->addWarning("COPY column index out of range");
+            current_result_->writeString("");
+        }
+    }
+
+    if (has_query) {
+        if (direction != 2) {
+            current_result_->addError("COPY (SELECT ...) only supports TO");
+        }
+
+        BytecodeResultV2 query_result;
+        auto* saved_result = current_result_;
+        current_result_ = &query_result;
+        generateStatement(stmt->query);
+        current_result_ = saved_result;
+
+        for (const auto& err : query_result.errors()) {
+            current_result_->addError(err);
+        }
+        for (const auto& warn : query_result.warnings()) {
+            current_result_->addWarning(warn);
+        }
+
+        current_result_->writeUVarint(static_cast<uint64_t>(query_result.bytecode().size()));
+        for (uint8_t byte : query_result.bytecode()) {
+            current_result_->writeByte(byte);
+        }
     }
 }
 

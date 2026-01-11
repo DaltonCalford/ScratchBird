@@ -2948,6 +2948,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeUpdate(static_cast<UpdateStmt*>(stmt));
         case ASTKind::DeleteStmt:
             return analyzeDelete(static_cast<DeleteStmt*>(stmt));
+        case ASTKind::CopyStmt:
+            return analyzeCopy(static_cast<CopyStmt*>(stmt));
 
         // Transaction
         case ASTKind::StartTransactionStmt:
@@ -4671,6 +4673,72 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDelete(DeleteStmt* stmt) {
     analyzeReturningClause(stmt->returning, resolved->returning);
 
     popScope();
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCopy(CopyStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCopyStmt>();
+    resolved->span = stmt->span;
+    resolved->direction = (stmt->direction == CopyStmt::Direction::FROM)
+        ? ResolvedCopyStmt::Direction::FROM
+        : ResolvedCopyStmt::Direction::TO;
+    resolved->target_is_stdin = stmt->target_is_stdin;
+    resolved->target_is_stdout = stmt->target_is_stdout;
+    resolved->target = stmt->target;
+
+    if (stmt->query) {
+        if (stmt->direction == CopyStmt::Direction::FROM) {
+            error(stmt->span, "COPY (SELECT ...) only supports TO");
+        }
+        if (!stmt->columns.empty()) {
+            error(stmt->span, "COPY (SELECT ...) cannot specify a column list");
+        }
+
+        resolved->query = analyzeSelect(stmt->query);
+        if (!resolved->query) {
+            return nullptr;
+        }
+        resolved->has_table = false;
+        resolved->table_path = StringPool::INVALID_ID;
+    } else {
+        resolved->has_table = true;
+        resolved->table_path = internString(schemaPathToString(stmt->table_path, string_pool_));
+
+        // Resolve target table
+        auto table_ref = resolveTable(stmt->table_path, stmt->span);
+        if (!table_ref) {
+            return nullptr;
+        }
+        resolved->target_table = *table_ref;
+
+        // Resolve target columns
+        if (!stmt->columns.empty()) {
+            for (auto col_name : stmt->columns) {
+                bool found = false;
+                for (uint32_t i = 0; i < table_ref->columns.size(); ++i) {
+                    if (table_ref->columns[i].name == col_name) {
+                        resolved->target_column_indexes.push_back(i);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    error(stmt->span, "Column not found: " + std::string(getString(col_name)));
+                }
+            }
+        }
+    }
+
+    if (!resolved->target_is_stdin &&
+        !resolved->target_is_stdout &&
+        resolved->target == StringPool::INVALID_ID) {
+        error(stmt->span, "COPY requires a target file or STDIN/STDOUT");
+    }
+
     return resolved;
 }
 

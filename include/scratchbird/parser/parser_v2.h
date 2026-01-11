@@ -187,6 +187,9 @@ private:
     // DELETE statement
     DeleteStmt* parseDelete();
 
+    // COPY statement
+    CopyStmt* parseCopy();
+
     // RETURNING clause (shared by INSERT, UPDATE, DELETE)
     void parseReturningClause(std::vector<SelectItem*>& returning);
 

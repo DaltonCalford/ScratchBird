@@ -131,6 +131,7 @@ enum class TokenType : uint16_t {
     KW_ALTER,
     KW_DROP,
     KW_TRUNCATE,
+    KW_COPY,
     KW_GRANT,
     KW_REVOKE,
     KW_COMMIT,

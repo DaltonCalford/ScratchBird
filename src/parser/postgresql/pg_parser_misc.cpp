@@ -536,6 +536,8 @@ void Parser::parseGrantStmt() {
                 add_privilege(core::CatalogManager::Privilege::CONNECT);
             } else if (matchKeyword(TokenType::KW_TEMPORARY)) {
                 add_privilege(core::CatalogManager::Privilege::TEMPORARY);
+            } else if (matchKeyword(TokenType::KW_COPY)) {
+                add_privilege(core::CatalogManager::Privilege::COPY_FILE);
             } else {
                 error("Unsupported GRANT privilege");
                 break;
@@ -567,6 +569,8 @@ void Parser::parseGrantStmt() {
         object_type = core::CatalogManager::PermissionObjectType::SCHEMA;
     } else if (matchKeyword(TokenType::KW_VIEW)) {
         object_type = core::CatalogManager::PermissionObjectType::VIEW;
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        object_type = core::CatalogManager::PermissionObjectType::DATABASE;
     } else if (matchKeyword(TokenType::KW_ALL)) {
         error("GRANT ON ALL ... is not supported in current bytecode");
     }
@@ -660,6 +664,7 @@ void Parser::parseRevokeStmt() {
             else if (matchKeyword(TokenType::KW_CREATE)) add_privilege(core::CatalogManager::Privilege::CREATE);
             else if (matchKeyword(TokenType::KW_CONNECT)) add_privilege(core::CatalogManager::Privilege::CONNECT);
             else if (matchKeyword(TokenType::KW_TEMPORARY)) add_privilege(core::CatalogManager::Privilege::TEMPORARY);
+            else if (matchKeyword(TokenType::KW_COPY)) add_privilege(core::CatalogManager::Privilege::COPY_FILE);
             else {
                 error("Unsupported REVOKE privilege");
                 break;
@@ -691,6 +696,8 @@ void Parser::parseRevokeStmt() {
         object_type = core::CatalogManager::PermissionObjectType::SCHEMA;
     } else if (matchKeyword(TokenType::KW_VIEW)) {
         object_type = core::CatalogManager::PermissionObjectType::VIEW;
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        object_type = core::CatalogManager::PermissionObjectType::DATABASE;
     } else if (matchKeyword(TokenType::KW_ALL)) {
         error("REVOKE ON ALL ... is not supported in current bytecode");
     }

@@ -1270,6 +1270,7 @@ namespace scratchbird
             query_start_time_ = std::chrono::steady_clock::now();
             cte_recursion_depth_ = 0;
             rows_processed_ = 0;
+            last_affected_rows_ = 0;
         }
 
         Executor::~Executor() = default;
@@ -3548,6 +3549,29 @@ namespace scratchbird
             }
         }
 
+        namespace {
+            bool resolveDefaultSchemaId(core::CatalogManager* catalog, core::ID& schema_id_out)
+            {
+                if (!catalog)
+                {
+                    return false;
+                }
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext ctx;
+                auto status = catalog->getSchema("public", schema_info, &ctx);
+                if (status != core::Status::OK)
+                {
+                    status = catalog->getSchema("root", schema_info, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return false;
+                    }
+                }
+                schema_id_out = schema_info.schema_id;
+                return true;
+            }
+        }
+
         core::Status Executor::resolveSchemaIdForName(const std::string& schema_path,
                                                       core::ID& schema_id_out,
                                                       core::ErrorContext* ctx,
@@ -3689,8 +3713,14 @@ namespace scratchbird
 
             if (!allow_search_path)
             {
+                core::ID default_schema_id;
+                if (resolveDefaultSchemaId(catalog, default_schema_id))
+                {
+                    schema_id_out = default_schema_id;
+                    return core::Status::OK;
+                }
                 SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
-                                  "Current schema not set");
+                                  "Default schema not found");
                 return core::Status::NOT_FOUND;
             }
 
@@ -3778,6 +3808,11 @@ namespace scratchbird
                     {
                         return ctx_schema;
                     }
+                }
+                core::ID default_schema_id;
+                if (resolveDefaultSchemaId(catalog, default_schema_id))
+                {
+                    return default_schema_id;
                 }
                 return core::ID{};
             };
@@ -11347,6 +11382,7 @@ namespace scratchbird
             {
                 QueryResultCacheManager::getInstance().invalidateTable(table_id);
             }
+            last_affected_rows_ = affected_count;
         }
 
         void Executor::executeUpdate()
@@ -12697,6 +12733,7 @@ namespace scratchbird
 
             // P2-19: Invalidate cached query results for this table
             QueryResultCacheManager::getInstance().invalidateTable(table_id);
+            last_affected_rows_ = affected_count;
         }
 
         void Executor::executeDelete()
@@ -13560,6 +13597,7 @@ namespace scratchbird
             if (affected_count > 0) {
                 QueryResultCacheManager::getInstance().invalidateTable(table_id);
             }
+            last_affected_rows_ = affected_count;
         }
 
         void Executor::executeMerge()
@@ -31737,9 +31775,20 @@ namespace scratchbird
                 }
                 object_id = view_id;
             }
+            else if (object_type == core::CatalogManager::PermissionObjectType::DATABASE)
+            {
+                // Database-level privileges (current database only)
+                object_id = db_->uuid();
+
+                // Security Check: Only superusers can grant database privileges
+                if (conn_ctx_ && !conn_ctx_->isSuperuser())
+                {
+                    error("Permission denied: only superusers can grant database privileges");
+                }
+            }
             else
             {
-                // DATABASE, DOMAIN not yet supported
+                // DOMAIN and other object types not yet supported
                 error("Object type not yet supported: " + std::to_string(object_type_byte));
             }
 
@@ -32006,9 +32055,20 @@ namespace scratchbird
                 }
                 object_id = view_id;
             }
+            else if (object_type == core::CatalogManager::PermissionObjectType::DATABASE)
+            {
+                // Database-level privileges (current database only)
+                object_id = db_->uuid();
+
+                // Security Check: Only superusers can revoke database privileges
+                if (conn_ctx_ && !conn_ctx_->isSuperuser())
+                {
+                    error("Permission denied: only superusers can revoke database privileges");
+                }
+            }
             else
             {
-                // DATABASE, DOMAIN not yet supported
+                // DOMAIN and other object types not yet supported
                 error("Object type not yet supported: " + std::to_string(object_type_byte));
             }
 
@@ -35033,7 +35093,8 @@ namespace scratchbird
                     {core::CatalogManager::Privilege::SEQUENCE_UPDATE, "SEQUENCE_UPDATE"},
                     {core::CatalogManager::Privilege::EXECUTE, "EXECUTE"},
                     {core::CatalogManager::Privilege::CONNECT, "CONNECT"},
-                    {core::CatalogManager::Privilege::TEMPORARY, "TEMPORARY"}
+                    {core::CatalogManager::Privilege::TEMPORARY, "TEMPORARY"},
+                    {core::CatalogManager::Privilege::COPY_FILE, "COPY"}
                 };
 
                 bool any = false;
@@ -43167,9 +43228,13 @@ namespace scratchbird
             bool format_xml = (flags & 0x40) != 0;
             bool format_yaml = (flags & 0x80) != 0;
 
-            if (format_json || format_xml || format_yaml)
+            int format_count = 0;
+            format_count += format_json ? 1 : 0;
+            format_count += format_xml ? 1 : 0;
+            format_count += format_yaml ? 1 : 0;
+            if (format_count > 1)
             {
-                error("EXPLAIN format not supported");
+                error("EXPLAIN supports only one format");
             }
 
             if (pc_ >= bytecode_size_)
@@ -43178,10 +43243,8 @@ namespace scratchbird
             }
 
             Opcode next_op = static_cast<Opcode>(readByte());
-            if (next_op != Opcode::SELECT)
-            {
-                error("EXPLAIN currently supports SELECT only");
-            }
+            size_t stmt_start_pc = pc_;
+            size_t stmt_end_pc = pc_;
 
             struct ExplainJoin
             {
@@ -43204,6 +43267,14 @@ namespace scratchbird
                 bool has_set_op = false;
                 uint16_t set_op = 0;
                 std::vector<ExplainSelectInfo> set_children;
+            };
+
+            struct ExplainDmlInfo
+            {
+                std::string table;
+                bool has_where = false;
+                bool uses_select_source = false;
+                bool has_returning = false;
             };
 
             auto joinTypeName = [](parser::JoinType type) -> std::string {
@@ -43236,6 +43307,42 @@ namespace scratchbird
                     return name;
                 }
                 return "<unknown>";
+            };
+
+            auto escapeJson = [](const std::string& input) {
+                std::string out;
+                out.reserve(input.size() + 8);
+                for (char c : input)
+                {
+                    switch (c)
+                    {
+                        case '\\': out += "\\\\"; break;
+                        case '"': out += "\\\""; break;
+                        case '\n': out += "\\n"; break;
+                        case '\r': out += "\\r"; break;
+                        case '\t': out += "\\t"; break;
+                        default: out.push_back(c); break;
+                    }
+                }
+                return out;
+            };
+
+            auto escapeXml = [](const std::string& input) {
+                std::string out;
+                out.reserve(input.size() + 8);
+                for (char c : input)
+                {
+                    switch (c)
+                    {
+                        case '&': out += "&amp;"; break;
+                        case '<': out += "&lt;"; break;
+                        case '>': out += "&gt;"; break;
+                        case '"': out += "&quot;"; break;
+                        case '\'': out += "&apos;"; break;
+                        default: out.push_back(c); break;
+                    }
+                }
+                return out;
             };
 
             auto parseSelectInfo = [&](auto&& self, ExplainSelectInfo& info) -> void {
@@ -43449,24 +43556,403 @@ namespace scratchbird
                 }
             };
 
-            size_t select_start_pc = pc_;
             ExplainSelectInfo info;
-            parseSelectInfo(parseSelectInfo, info);
-            size_t select_end_pc = pc_;
+            ExplainDmlInfo dml_info;
+            int64_t analyzed_rows = 0;
+            std::string analyze_label = "Actual Rows";
 
-            size_t analyzed_rows = 0;
-            if (analyze)
-            {
-                size_t saved_pc = pc_;
-                pc_ = select_start_pc;
-                executeSelect();
-                if (current_result_set_)
+            auto skipReturningList = [&]() {
+                if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
                 {
-                    analyzed_rows = current_result_set_->rowCount();
+                    error("Expected BEGIN_LIST for RETURNING list");
                 }
-                pc_ = select_end_pc;
-                pc_ = saved_pc;
+                uint64_t count = readUVarint();
+                for (uint64_t i = 0; i < count; ++i)
+                {
+                    if (pc_ >= bytecode_size_)
+                    {
+                        error("Unexpected end of bytecode in RETURNING list");
+                    }
+
+                    uint8_t next = bytecode_[pc_];
+                    if (next == static_cast<uint8_t>(Opcode::SELECT_STAR))
+                    {
+                        readByte();
+                        continue;
+                    }
+
+                    if (next == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                    {
+                        size_t saved_pc = pc_;
+                        readByte();
+                        uint16_t ext = readExtendedOpcode();
+                        if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_SELECT_TABLE_STAR))
+                        {
+                            core::ID table_id{};
+                            std::string table_name;
+                            std::string table_alias;
+                            bool has_uuid = false;
+                            readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                            continue;
+                        }
+                        pc_ = saved_pc;
+                    }
+
+                    skipExpressionRange(pc_);
+                    readString();
+                }
+                if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                {
+                    error("Expected END_LIST after RETURNING list");
+                }
+            };
+
+            auto parseInsertInfo = [&](ExplainDmlInfo& out) {
+                if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                {
+                    error("Expected TABLE_REF in INSERT");
+                }
+
+                core::ID table_id{};
+                std::string table_name;
+                std::string table_alias;
+                bool has_uuid = false;
+                readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                out.table = displayTableRef(table_name, table_alias);
+
+                if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                {
+                    error("Expected BEGIN_LIST for INSERT columns");
+                }
+                uint64_t col_count = readUVarint();
+                for (uint64_t i = 0; i < col_count; ++i)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::COLUMN_REF))
+                    {
+                        error("Expected COLUMN_REF in INSERT column list");
+                    }
+                    readString();
+                }
+                if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                {
+                    error("Expected END_LIST after INSERT columns");
+                }
+
+                if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::SELECT))
+                {
+                    readByte();
+                    out.uses_select_source = true;
+                    skipSelectStatement();
+                }
+                else
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                    {
+                        error("Expected BEGIN_LIST for INSERT values");
+                    }
+                    uint64_t row_count = readUVarint();
+                    for (uint64_t row_idx = 0; row_idx < row_count; ++row_idx)
+                    {
+                        if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                        {
+                            error("Expected BEGIN_LIST for INSERT VALUES row");
+                        }
+                        uint64_t value_count = readUVarint();
+                        for (uint64_t value_idx = 0; value_idx < value_count; ++value_idx)
+                        {
+                            skipExpressionRange(pc_);
+                        }
+                        if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                        {
+                            error("Expected END_LIST after INSERT VALUES row");
+                        }
+                    }
+                    if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                    {
+                        error("Expected END_LIST after INSERT values");
+                    }
+                }
+
+                while (pc_ < bytecode_size_ &&
+                       bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    size_t saved_pc = pc_;
+                    readByte();
+                    uint16_t ext = readExtendedOpcode();
+                    if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_ON_CONFLICT))
+                    {
+                        if (pc_ < bytecode_size_ &&
+                            bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                        {
+                            size_t target_pc = pc_;
+                            readByte();
+                            uint16_t target_op = readExtendedOpcode();
+                            if (target_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ON_CONFLICT_COLUMN))
+                            {
+                                if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                                {
+                                    error("Expected BEGIN_LIST for ON CONFLICT columns");
+                                }
+                                uint64_t count = readUVarint();
+                                for (uint64_t i = 0; i < count; ++i)
+                                {
+                                    if (readByte() != static_cast<uint8_t>(Opcode::COLUMN_REF))
+                                    {
+                                        error("Expected COLUMN_REF in ON CONFLICT columns");
+                                    }
+                                    readString();
+                                }
+                                if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                                {
+                                    error("Expected END_LIST after ON CONFLICT columns");
+                                }
+                            }
+                            else if (target_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ON_CONFLICT_CONSTRAINT))
+                            {
+                                uint8_t has_constraint = readByte();
+                                if (has_constraint)
+                                {
+                                    readId();
+                                }
+                            }
+                            else
+                            {
+                                pc_ = target_pc;
+                            }
+                        }
+
+                        if (pc_ >= bytecode_size_ ||
+                            bytecode_[pc_] != static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                        {
+                            error("Expected ON CONFLICT action");
+                        }
+
+                        readByte();
+                        uint16_t action_op = readExtendedOpcode();
+                        if (action_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE))
+                        {
+                            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                            {
+                                error("Expected BEGIN_LIST for ON CONFLICT assignments");
+                            }
+                            uint64_t assign_count = readUVarint();
+                            for (uint64_t i = 0; i < assign_count; ++i)
+                            {
+                                if (readByte() != static_cast<uint8_t>(Opcode::ASSIGNMENT))
+                                {
+                                    error("Expected ASSIGNMENT in ON CONFLICT DO UPDATE");
+                                }
+                                if (readByte() != static_cast<uint8_t>(Opcode::COLUMN_REF))
+                                {
+                                    error("Expected COLUMN_REF in ON CONFLICT assignment");
+                                }
+                                readString();
+                                skipExpressionRange(pc_);
+                            }
+                            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                            {
+                                error("Expected END_LIST after ON CONFLICT assignments");
+                            }
+                            if (pc_ < bytecode_size_ &&
+                                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+                            {
+                                readByte();
+                                skipExpressionRange(pc_);
+                            }
+                        }
+                        continue;
+                    }
+                    if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_RETURNING))
+                    {
+                        out.has_returning = true;
+                        skipReturningList();
+                        continue;
+                    }
+                    pc_ = saved_pc;
+                    break;
+                }
+            };
+
+            auto parseUpdateInfo = [&](ExplainDmlInfo& out) {
+                if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                {
+                    error("Expected TABLE_REF in UPDATE");
+                }
+
+                core::ID table_id{};
+                std::string table_name;
+                std::string table_alias;
+                bool has_uuid = false;
+                readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                out.table = displayTableRef(table_name, table_alias);
+
+                if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                {
+                    error("Expected BEGIN_LIST for UPDATE assignments");
+                }
+                uint64_t assign_count = readUVarint();
+                for (uint64_t i = 0; i < assign_count; ++i)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::ASSIGNMENT))
+                    {
+                        error("Expected ASSIGNMENT in UPDATE");
+                    }
+                    if (readByte() != static_cast<uint8_t>(Opcode::COLUMN_REF))
+                    {
+                        error("Expected COLUMN_REF in UPDATE");
+                    }
+                    readString();
+                    skipExpressionRange(pc_);
+                }
+                if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                {
+                    error("Expected END_LIST after UPDATE assignments");
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+                {
+                    readByte();
+                    skipExpressionRange(pc_);
+                    out.has_where = true;
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    size_t saved_pc = pc_;
+                    readByte();
+                    uint16_t ext = readExtendedOpcode();
+                    if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_RETURNING))
+                    {
+                        out.has_returning = true;
+                        skipReturningList();
+                    }
+                    else
+                    {
+                        pc_ = saved_pc;
+                    }
+                }
+            };
+
+            auto parseDeleteInfo = [&](ExplainDmlInfo& out) {
+                if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                {
+                    error("Expected TABLE_REF in DELETE");
+                }
+
+                core::ID table_id{};
+                std::string table_name;
+                std::string table_alias;
+                bool has_uuid = false;
+                readTableRefPayload(table_id, table_name, table_alias, has_uuid);
+                out.table = displayTableRef(table_name, table_alias);
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+                {
+                    readByte();
+                    skipExpressionRange(pc_);
+                    out.has_where = true;
+                }
+
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    size_t saved_pc = pc_;
+                    readByte();
+                    uint16_t ext = readExtendedOpcode();
+                    if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_RETURNING))
+                    {
+                        out.has_returning = true;
+                        skipReturningList();
+                    }
+                    else
+                    {
+                        pc_ = saved_pc;
+                    }
+                }
+            };
+
+            enum class ExplainKind
+            {
+                SELECT,
+                INSERT,
+                UPDATE,
+                DELETE
+            };
+
+            ExplainKind kind = ExplainKind::SELECT;
+            switch (next_op)
+            {
+                case Opcode::SELECT:
+                    kind = ExplainKind::SELECT;
+                    parseSelectInfo(parseSelectInfo, info);
+                    stmt_end_pc = pc_;
+                    analyze_label = "Actual Rows";
+                    if (analyze)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = stmt_start_pc;
+                        executeSelect();
+                        if (current_result_set_)
+                        {
+                            analyzed_rows = static_cast<int64_t>(current_result_set_->rowCount());
+                        }
+                        pc_ = stmt_end_pc;
+                        pc_ = saved_pc;
+                    }
+                    break;
+                case Opcode::INSERT:
+                    kind = ExplainKind::INSERT;
+                    parseInsertInfo(dml_info);
+                    stmt_end_pc = pc_;
+                    analyze_label = "Rows Affected";
+                    if (analyze)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = stmt_start_pc;
+                        executeInsert();
+                        analyzed_rows = last_affected_rows_;
+                        pc_ = stmt_end_pc;
+                        pc_ = saved_pc;
+                    }
+                    break;
+                case Opcode::UPDATE:
+                    kind = ExplainKind::UPDATE;
+                    parseUpdateInfo(dml_info);
+                    stmt_end_pc = pc_;
+                    analyze_label = "Rows Affected";
+                    if (analyze)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = stmt_start_pc;
+                        executeUpdate();
+                        analyzed_rows = last_affected_rows_;
+                        pc_ = stmt_end_pc;
+                        pc_ = saved_pc;
+                    }
+                    break;
+                case Opcode::DELETE:
+                    kind = ExplainKind::DELETE;
+                    parseDeleteInfo(dml_info);
+                    stmt_end_pc = pc_;
+                    analyze_label = "Rows Affected";
+                    if (analyze)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = stmt_start_pc;
+                        executeDelete();
+                        analyzed_rows = last_affected_rows_;
+                        pc_ = stmt_end_pc;
+                        pc_ = saved_pc;
+                    }
+                    break;
+                default:
+                    error("EXPLAIN currently supports SELECT, INSERT, UPDATE, DELETE only");
             }
+
+            pc_ = stmt_end_pc;
 
             current_result_set_ = std::make_unique<ResultSet>();
             current_result_set_->addColumn("QUERY PLAN", core::DataType::VARCHAR);
@@ -43579,33 +44065,159 @@ namespace scratchbird
                 }
             };
 
+            std::vector<PlanLine> plan_lines;
+            if (kind == ExplainKind::SELECT)
+            {
+                appendPlanLines(info, 0, plan_lines, appendPlanLines);
+            }
+            else if (kind == ExplainKind::INSERT)
+            {
+                plan_lines.push_back({0, "Insert on " + dml_info.table});
+                plan_lines.push_back({2, dml_info.uses_select_source ? "Source: SELECT" : "Source: VALUES"});
+                if (dml_info.has_returning)
+                {
+                    plan_lines.push_back({2, "Returning"});
+                }
+            }
+            else if (kind == ExplainKind::UPDATE)
+            {
+                plan_lines.push_back({0, "Update on " + dml_info.table});
+                if (dml_info.has_where)
+                {
+                    plan_lines.push_back({2, "Filter"});
+                }
+                if (dml_info.has_returning)
+                {
+                    plan_lines.push_back({2, "Returning"});
+                }
+            }
+            else if (kind == ExplainKind::DELETE)
+            {
+                plan_lines.push_back({0, "Delete on " + dml_info.table});
+                if (dml_info.has_where)
+                {
+                    plan_lines.push_back({2, "Filter"});
+                }
+                if (dml_info.has_returning)
+                {
+                    plan_lines.push_back({2, "Returning"});
+                }
+            }
+
             std::vector<std::string> option_labels;
             if (verbose) option_labels.push_back("VERBOSE");
             if (costs) option_labels.push_back("COSTS");
             if (buffers) option_labels.push_back("BUFFERS");
             if (timing) option_labels.push_back("TIMING");
 
-            if (!option_labels.empty())
+            if (!format_json && !format_xml && !format_yaml)
             {
-                std::string option_line = "Options: ";
-                for (size_t i = 0; i < option_labels.size(); ++i)
+                if (!option_labels.empty())
                 {
-                    if (i > 0) option_line += ", ";
-                    option_line += option_labels[i];
+                    std::string option_line = "Options: ";
+                    for (size_t i = 0; i < option_labels.size(); ++i)
+                    {
+                        if (i > 0) option_line += ", ";
+                        option_line += option_labels[i];
+                    }
+                    current_result_set_->addRow({Value::makeVarchar(option_line)});
                 }
-                current_result_set_->addRow({Value::makeVarchar(option_line)});
-            }
 
-            std::vector<PlanLine> plan_lines;
-            appendPlanLines(info, 0, plan_lines, appendPlanLines);
-            for (const auto& line : plan_lines)
-            {
-                current_result_set_->addRow({Value::makeVarchar(std::string(line.indent, ' ') + line.text)});
-            }
+                for (const auto& line : plan_lines)
+                {
+                    current_result_set_->addRow({Value::makeVarchar(std::string(line.indent, ' ') + line.text)});
+                }
 
-            if (analyze)
+                if (analyze)
+                {
+                    current_result_set_->addRow({Value::makeVarchar(analyze_label + ": " +
+                                                                   std::to_string(analyzed_rows))});
+                }
+            }
+            else
             {
-                current_result_set_->addRow({Value::makeVarchar("Actual Rows: " + std::to_string(analyzed_rows))});
+                std::ostringstream formatted;
+                if (format_json)
+                {
+                    formatted << "{";
+                    bool wrote_section = false;
+                    if (!option_labels.empty())
+                    {
+                        formatted << "\"Options\":[";
+                        for (size_t i = 0; i < option_labels.size(); ++i)
+                        {
+                            if (i > 0) formatted << ",";
+                            formatted << "\"" << escapeJson(option_labels[i]) << "\"";
+                        }
+                        formatted << "]";
+                        wrote_section = true;
+                    }
+                    if (wrote_section) formatted << ",";
+                    formatted << "\"Plan\":[";
+                    for (size_t i = 0; i < plan_lines.size(); ++i)
+                    {
+                        if (i > 0) formatted << ",";
+                        std::string line = std::string(plan_lines[i].indent, ' ') + plan_lines[i].text;
+                        formatted << "\"" << escapeJson(line) << "\"";
+                    }
+                    formatted << "]";
+                    if (analyze)
+                    {
+                        formatted << ",\"Analyze\":{\"Rows\":" << analyzed_rows << "}";
+                    }
+                    formatted << "}";
+                }
+                else if (format_xml)
+                {
+                    formatted << "<explain>";
+                    if (!option_labels.empty())
+                    {
+                        formatted << "<options>";
+                        for (size_t i = 0; i < option_labels.size(); ++i)
+                        {
+                            if (i > 0) formatted << ",";
+                            formatted << escapeXml(option_labels[i]);
+                        }
+                        formatted << "</options>";
+                    }
+                    formatted << "<plan>";
+                    for (const auto& line : plan_lines)
+                    {
+                        formatted << "<line indent=\"" << line.indent << "\">"
+                                  << escapeXml(line.text) << "</line>";
+                    }
+                    formatted << "</plan>";
+                    if (analyze)
+                    {
+                        formatted << "<analyze rows=\"" << analyzed_rows << "\"/>";
+                    }
+                    formatted << "</explain>";
+                }
+                else
+                {
+                    if (!option_labels.empty())
+                    {
+                        formatted << "options: [";
+                        for (size_t i = 0; i < option_labels.size(); ++i)
+                        {
+                            if (i > 0) formatted << ", ";
+                            formatted << option_labels[i];
+                        }
+                        formatted << "]\n";
+                    }
+                    formatted << "plan:\n";
+                    for (const auto& line : plan_lines)
+                    {
+                        std::string line_text = std::string(line.indent, ' ') + line.text;
+                        formatted << "  - \"" << escapeJson(line_text) << "\"\n";
+                    }
+                    if (analyze)
+                    {
+                        formatted << "analyze:\n  rows: " << analyzed_rows << "\n";
+                    }
+                }
+
+                current_result_set_->addRow({Value::makeVarchar(formatted.str())});
             }
         }
 
@@ -43620,6 +44232,120 @@ namespace scratchbird
             for (uint32_t i = 0; i < column_count; ++i)
             {
                 column_names.push_back(readString());
+            }
+
+            auto require_copy_file_privilege = [&](const std::string& file_target) {
+                if (file_target.empty() ||
+                    file_target == "STDIN" ||
+                    file_target == "STDOUT")
+                {
+                    return;
+                }
+
+                const auto& user_id = getCurrentUserID();
+                if (user_id == core::ID{})
+                {
+                    return;
+                }
+
+                if (!checkPermission(db_->uuid(),
+                                     core::CatalogManager::PermissionObjectType::DATABASE,
+                                     static_cast<uint32_t>(core::CatalogManager::Privilege::COPY_FILE)))
+                {
+                    error("Permission denied: COPY file access requires COPY privilege on database");
+                }
+            };
+
+            if (table_name.empty())
+            {
+                if (direction != 2)
+                {
+                    error("COPY (SELECT ...) only supports TO");
+                }
+                if (column_count != 0)
+                {
+                    error("COPY (SELECT ...) does not support column lists");
+                }
+                if (target == "STDOUT")
+                {
+                    error("COPY TO STDOUT is not supported in the executor");
+                }
+                if (target.empty())
+                {
+                    error("COPY TO requires a target file");
+                }
+
+                require_copy_file_privilege(target);
+
+                uint64_t query_len = readUVarint();
+                if (query_len == 0)
+                {
+                    error("COPY (SELECT ...) missing query payload");
+                }
+                if (pc_ + query_len > bytecode_size_)
+                {
+                    error("COPY (SELECT ...) payload exceeds bytecode length");
+                }
+
+                const uint8_t* query_bytes = bytecode_ + pc_;
+                pc_ += query_len;
+
+                std::unique_ptr<ResultSet> query_results;
+                {
+                    auto saved_result_set = std::move(current_result_set_);
+                    auto saved_table = current_table_;
+                    const uint8_t* saved_bytecode = bytecode_;
+                    size_t saved_bytecode_size = bytecode_size_;
+                    size_t saved_pc = pc_;
+
+                    bytecode_ = query_bytes;
+                    bytecode_size_ = query_len;
+                    pc_ = 0;
+
+                    current_result_set_ = std::make_unique<ResultSet>();
+
+                    Opcode query_op = static_cast<Opcode>(readByte());
+                    if (query_op == Opcode::SELECT)
+                    {
+                        executeSelect();
+                    }
+                    else
+                    {
+                        error("COPY query must be a SELECT statement");
+                    }
+
+                    query_results = std::move(current_result_set_);
+
+                    bytecode_ = saved_bytecode;
+                    bytecode_size_ = saved_bytecode_size;
+                    pc_ = saved_pc;
+                    current_table_ = saved_table;
+                    current_result_set_ = std::move(saved_result_set);
+                }
+
+                std::ofstream out(target);
+                if (!out)
+                {
+                    error("Failed to open COPY target file: " + target);
+                }
+
+                size_t row_count = 0;
+                if (query_results)
+                {
+                    for (size_t r = 0; r < query_results->rowCount(); ++r)
+                    {
+                        for (size_t c = 0; c < query_results->columnCount(); ++c)
+                        {
+                            if (c > 0) out << '\t';
+                            out << query_results->getValue(r, c).toString();
+                        }
+                        out << '\n';
+                        row_count++;
+                    }
+                }
+
+                last_affected_rows_ = static_cast<int64_t>(row_count);
+                return;
             }
 
             core::ErrorContext err_ctx;
@@ -43692,6 +44418,8 @@ namespace scratchbird
                     error("COPY TO requires a target file");
                 }
 
+                require_copy_file_privilege(target);
+
                 bool has_table_select = true;
                 std::vector<std::string> accessible_columns;
                 const auto& user_id = getCurrentUserID();
@@ -43761,7 +44489,7 @@ namespace scratchbird
                     row_count++;
                 }
 
-                (void)row_count;
+                last_affected_rows_ = static_cast<int64_t>(row_count);
             }
             else if (direction == 1)
             {
@@ -43773,6 +44501,8 @@ namespace scratchbird
                 {
                     error("COPY FROM requires a source file");
                 }
+
+                require_copy_file_privilege(target);
 
                 bool has_table_insert = true;
                 std::vector<std::string> accessible_columns;
@@ -44474,6 +45204,8 @@ namespace scratchbird
                 {
                     QueryResultCacheManager::getInstance().invalidateTable(table_info.table_id);
                 }
+
+                last_affected_rows_ = affected_count;
             }
             else
             {

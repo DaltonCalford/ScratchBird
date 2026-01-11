@@ -3385,6 +3385,11 @@ namespace scratchbird::core
                 privilege_out = CatalogManager::Privilege::TEMPORARY;
                 return true;
             }
+            if (normalized == "COPY" || normalized == "COPY_FILE")
+            {
+                privilege_out = CatalogManager::Privilege::COPY_FILE;
+                return true;
+            }
             if (normalized == "ALL")
             {
                 privilege_out = CatalogManager::Privilege::ALL;
@@ -3402,7 +3407,7 @@ namespace scratchbird::core
         {
             has_privilege_out = false;
 
-            constexpr std::array<CatalogManager::Privilege, 14> kPrivileges = {
+            constexpr std::array<CatalogManager::Privilege, 15> kPrivileges = {
                 CatalogManager::Privilege::SELECT,
                 CatalogManager::Privilege::INSERT,
                 CatalogManager::Privilege::UPDATE,
@@ -3416,7 +3421,8 @@ namespace scratchbird::core
                 CatalogManager::Privilege::SEQUENCE_UPDATE,
                 CatalogManager::Privilege::EXECUTE,
                 CatalogManager::Privilege::CONNECT,
-                CatalogManager::Privilege::TEMPORARY
+                CatalogManager::Privilege::TEMPORARY,
+                CatalogManager::Privilege::COPY_FILE
             };
 
             for (auto privilege : kPrivileges)

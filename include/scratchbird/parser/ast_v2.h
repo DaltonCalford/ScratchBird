@@ -81,6 +81,7 @@ enum class ASTKind : uint16_t {
     InsertStmt,
     UpdateStmt,
     DeleteStmt,
+    CopyStmt,
     MergeStmt,
 
     // Statements - Transaction
@@ -991,6 +992,7 @@ enum class PrivilegeType : uint8_t {
     TRIGGER,
     EXECUTE,
     USAGE,
+    COPY,
     ALL
 };
 
@@ -1981,6 +1983,35 @@ public:
     std::vector<SelectItem*> returning;
 };
 
+/**
+ * COPY statement
+ */
+class CopyStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CopyStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    // COPY (SELECT ...) TO ...
+    SelectStmt* query = nullptr;
+
+    // Target table
+    SchemaPath table_path;
+
+    // Column list (optional)
+    std::vector<StringPool::StringId> columns;
+
+    enum class Direction {
+        FROM,
+        TO
+    };
+    Direction direction = Direction::FROM;
+
+    // Target source/destination
+    bool target_is_stdin = false;
+    bool target_is_stdout = false;
+    StringPool::StringId target = StringPool::INVALID_ID;  // File path when not STDIN/STDOUT
+};
+
 // =============================================================================
 // Session & Transaction Statements
 // =============================================================================
@@ -2524,6 +2555,7 @@ public:
     virtual void visit(InsertStmt* stmt) = 0;
     virtual void visit(UpdateStmt* stmt) = 0;
     virtual void visit(DeleteStmt* stmt) = 0;
+    virtual void visit(CopyStmt* stmt) = 0;
 
     // Transaction statements
     virtual void visit(StartTransactionStmt* stmt) = 0;

@@ -395,6 +395,25 @@ Unless noted, `value_stack_offset` is counted from the top of the execution stac
   ```
   Result: Push bool (is unique)
 
+### 7.5 DML Extended Opcodes (selected)
+
+- EXT_COPY (see `include/scratchbird/sblr/opcodes.h` for value)
+  ```
+  [table_path:string]          // empty string for COPY (SELECT ...)
+  [direction:uint8]            // 1=FROM, 2=TO
+  [target:string]              // "STDIN"/"STDOUT" or file path
+  [column_count:uint32]
+  repeat column_count:
+    [column_name:string]
+  if table_path == "":
+    [query_len:UVARINT]
+    [query_bytes:byte[query_len]]
+  ```
+  Notes:
+  - `query_bytes` is a compact stream statement with no VERSION/END sentinel.
+  - The embedded query must begin with SELECT.
+  - COPY (SELECT ...) only supports TO and does not allow a column list.
+
 ## 8. Transaction Opcodes (v2)
 
 ScratchBird is always in a transaction. Transaction opcodes always end by starting a new transaction unless an explicit conflict action says otherwise.

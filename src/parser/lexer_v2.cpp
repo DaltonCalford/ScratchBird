@@ -188,6 +188,7 @@ static const GatekeeperEntry GATEKEEPER_KEYWORDS[] = {
     {"ALTER", TokenType::KW_ALTER},
     {"DROP", TokenType::KW_DROP},
     {"TRUNCATE", TokenType::KW_TRUNCATE},
+    {"COPY", TokenType::KW_COPY},
     {"GRANT", TokenType::KW_GRANT},
     {"REVOKE", TokenType::KW_REVOKE},
     {"COMMIT", TokenType::KW_COMMIT},
@@ -1005,6 +1006,7 @@ const char* tokenTypeToString(TokenType type) {
         case TokenType::KW_ALTER: return "KW_ALTER";
         case TokenType::KW_DROP: return "KW_DROP";
         case TokenType::KW_TRUNCATE: return "KW_TRUNCATE";
+        case TokenType::KW_COPY: return "KW_COPY";
         case TokenType::KW_GRANT: return "KW_GRANT";
         case TokenType::KW_REVOKE: return "KW_REVOKE";
         case TokenType::KW_COMMIT: return "KW_COMMIT";

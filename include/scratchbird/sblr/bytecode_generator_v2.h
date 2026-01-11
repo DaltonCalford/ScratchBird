@@ -163,6 +163,7 @@ private:
     void generateInsert(ResolvedInsertStmt* stmt);
     void generateUpdate(ResolvedUpdateStmt* stmt);
     void generateDelete(ResolvedDeleteStmt* stmt);
+    void generateCopy(ResolvedCopyStmt* stmt);
 
     // DDL
     void generateCreateTable(ResolvedCreateTableStmt* stmt);

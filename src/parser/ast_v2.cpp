@@ -42,6 +42,7 @@ void SelectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void InsertStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void UpdateStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DeleteStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CopyStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // Transaction statements
 void StartTransactionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }

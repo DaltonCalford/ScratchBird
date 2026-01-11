@@ -306,6 +306,7 @@ namespace scratchbird
             std::chrono::steady_clock::time_point query_start_time_;
             uint32_t cte_recursion_depth_ = 0;
             uint64_t rows_processed_ = 0;
+            int64_t last_affected_rows_ = 0;
 
             // NET-M1: Query cancellation flag (atomic for thread-safe access)
             std::atomic<bool> cancel_requested_{false};

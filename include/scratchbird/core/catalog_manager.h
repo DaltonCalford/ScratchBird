@@ -884,6 +884,7 @@ public:
             EXECUTE   = 0x00000800,  // Execute procedure/function
             CONNECT   = 0x00001000,  // Connect to database
             TEMPORARY = 0x00002000,  // Create temp tables
+            COPY_FILE = 0x00004000,  // Server-side COPY to/from files
 
             // Special privileges
             ALL       = 0xFFFFFFFF   // All privileges

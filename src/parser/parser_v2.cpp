@@ -170,6 +170,7 @@ Statement* Parser::parseStatementInternal() {
     if (match(TokenType::KW_INSERT))    return parseInsert();
     if (match(TokenType::KW_UPDATE))    return parseUpdate();
     if (match(TokenType::KW_DELETE))    return parseDelete();
+    if (match(TokenType::KW_COPY))      return parseCopy();
 
     // Transaction statements
     if (match(TokenType::KW_BEGIN))     return parseStartTransaction();
@@ -3201,6 +3202,155 @@ DeleteStmt* Parser::parseDelete() {
 }
 
 // =============================================================================
+// COPY Statement
+// =============================================================================
+
+CopyStmt* Parser::parseCopy() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<CopyStmt>();
+
+    // Spec: docs/specifications/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md <copy_command>
+
+    bool has_query = false;
+    if (match(TokenType::LEFT_PAREN)) {
+        has_query = true;
+        if (!match(TokenType::KW_SELECT)) {
+            error("Expected SELECT after '(' in COPY");
+            return nullptr;
+        }
+        stmt->query = parseSelect();
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after COPY query");
+    } else {
+        // Target table
+        stmt->table_path = parseSchemaPath(state_);
+
+        // Optional column list
+        if (match(TokenType::LEFT_PAREN)) {
+            do {
+                stmt->columns.push_back(expectIdentifier("Expected column name"));
+            } while (match(TokenType::COMMA));
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after COPY column list");
+        }
+    }
+
+    // Direction
+    if (match(TokenType::KW_FROM)) {
+        stmt->direction = CopyStmt::Direction::FROM;
+        if (matchContextual("STDIN")) {
+            stmt->target_is_stdin = true;
+        } else if (check(TokenType::STRING_LITERAL)) {
+            stmt->target = current().value.string_id;
+            advance();
+        } else {
+            error("Expected STDIN or string literal for COPY FROM");
+            return nullptr;
+        }
+    } else if (matchContextual("TO")) {
+        stmt->direction = CopyStmt::Direction::TO;
+        if (matchContextual("STDOUT")) {
+            stmt->target_is_stdout = true;
+        } else if (check(TokenType::STRING_LITERAL)) {
+            stmt->target = current().value.string_id;
+            advance();
+        } else {
+            error("Expected STDOUT or string literal for COPY TO");
+            return nullptr;
+        }
+    } else {
+        error("Expected COPY FROM or COPY TO");
+        return nullptr;
+    }
+
+    if (has_query && stmt->direction == CopyStmt::Direction::FROM) {
+        error("COPY (SELECT ...) only supports TO");
+        return nullptr;
+    }
+
+    // Optional WITH (...) options
+    bool has_with = match(TokenType::KW_WITH);
+    if (has_with || check(TokenType::LEFT_PAREN)) {
+        if (!match(TokenType::LEFT_PAREN)) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after WITH in COPY");
+        }
+
+        auto parse_option_value = [&]() {
+            if (check(TokenType::STRING_LITERAL)) {
+                advance();
+                return true;
+            }
+            if (isIdentifier()) {
+                advance();
+                return true;
+            }
+            return false;
+        };
+
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            if (matchContextual("FORMAT")) {
+                if (!parse_option_value()) {
+                    error("Expected COPY FORMAT value");
+                    break;
+                }
+            } else if (matchContextual("DELIMITER")) {
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal for COPY DELIMITER");
+                    break;
+                }
+                advance();
+            } else if (match(TokenType::KW_NULL)) {
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal for COPY NULL");
+                    break;
+                }
+                advance();
+            } else if (matchContextual("HEADER")) {
+                if (match(TokenType::KW_TRUE) || match(TokenType::KW_FALSE) ||
+                    match(TokenType::KW_ON) || matchContextual("ON") ||
+                    matchContextual("OFF")) {
+                    // Optional boolean consumed
+                }
+            } else if (matchContextual("QUOTE")) {
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal for COPY QUOTE");
+                    break;
+                }
+                advance();
+            } else if (matchContextual("ESCAPE")) {
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal for COPY ESCAPE");
+                    break;
+                }
+                advance();
+            } else if (matchContextual("ENCODING")) {
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal for COPY ENCODING");
+                    break;
+                }
+                advance();
+            } else if (matchContextual("CSV") ||
+                       matchContextual("TEXT") ||
+                       matchContextual("BINARY")) {
+                // Shorthand formats
+            } else {
+                error("Unsupported COPY option");
+                break;
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after COPY options");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
 // Additional Expression Parsing for DML
 // =============================================================================
 
@@ -5310,6 +5460,8 @@ GrantStmt* Parser::parseGrant() {
             stmt->privileges.push_back(PrivilegeType::EXECUTE);
         } else if (matchContextual("USAGE")) {
             stmt->privileges.push_back(PrivilegeType::USAGE);
+        } else if (match(TokenType::KW_COPY)) {
+            stmt->privileges.push_back(PrivilegeType::COPY);
         } else if (matchContextual("ALL")) {
             matchContextual("PRIVILEGES");  // Optional
             stmt->privileges.push_back(PrivilegeType::ALL);
@@ -5387,6 +5539,8 @@ RevokeStmt* Parser::parseRevoke() {
             stmt->privileges.push_back(PrivilegeType::UPDATE);
         } else if (match(TokenType::KW_DELETE)) {
             stmt->privileges.push_back(PrivilegeType::DELETE);
+        } else if (match(TokenType::KW_COPY)) {
+            stmt->privileges.push_back(PrivilegeType::COPY);
         } else if (matchContextual("ALL")) {
             matchContextual("PRIVILEGES");
             stmt->privileges.push_back(PrivilegeType::ALL);
@@ -5405,6 +5559,12 @@ RevokeStmt* Parser::parseRevoke() {
         stmt->object_type = PrivilegeObjectType::SEQUENCE;
     } else if (matchContextual("FUNCTION")) {
         stmt->object_type = PrivilegeObjectType::FUNCTION;
+    } else if (matchContextual("PROCEDURE")) {
+        stmt->object_type = PrivilegeObjectType::PROCEDURE;
+    } else if (matchContextual("SCHEMA")) {
+        stmt->object_type = PrivilegeObjectType::SCHEMA;
+    } else if (matchContextual("DATABASE")) {
+        stmt->object_type = PrivilegeObjectType::DATABASE;
     } else {
         stmt->object_type = PrivilegeObjectType::TABLE;
     }

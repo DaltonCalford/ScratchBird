@@ -15,11 +15,12 @@
 #include "scratchbird/client/connection.h"
 
 #include <filesystem>
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <random>
 #include <sstream>
 #include <iomanip>
-#include <cctype>
 
 // For MD5
 #ifdef HAVE_OPENSSL
@@ -482,6 +483,26 @@ core::Status PostgresqlAdapter::handleQuery(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    CopyContext copy_ctx;
+    std::string copy_error;
+    if (parseCopyQuery(query, copy_ctx, copy_error)) {
+        if (!copy_error.empty()) {
+            sendErrorResponse(conn, "ERROR", "0A000", copy_error);
+            sendReadyForQuery(conn);
+            return sendBuffer(conn);
+        }
+        copy_ctx.from_extended = false;
+        if (copy_ctx.from_stdin) {
+            return startCopyIn(conn, copy_ctx);
+        }
+        if (copy_ctx.to_stdout) {
+            return startCopyOut(conn, copy_ctx);
+        }
+        sendErrorResponse(conn, "ERROR", "0A000", "COPY only supports STDIN/STDOUT");
+        sendReadyForQuery(conn);
+        return sendBuffer(conn);
+    }
+
     // Execute query
     QueryContext ctx;
     ctx.query = query;
@@ -772,6 +793,28 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    CopyContext copy_ctx;
+    std::string copy_error;
+    if (parseCopyQuery(stmt_it->second.query, copy_ctx, copy_error)) {
+        if (!copy_error.empty()) {
+            sendErrorResponse(conn, "ERROR", "0A000", copy_error);
+            pending_operations_.push_back('E');
+            return core::Status::OK;
+        }
+        copy_ctx.from_extended = true;
+        copy_ctx.portal_name = portal_name;
+        copy_ctx.statement_name = portal.statement_name;
+        pending_operations_.push_back('E');
+        if (copy_ctx.from_stdin) {
+            return startCopyIn(conn, copy_ctx);
+        }
+        if (copy_ctx.to_stdout) {
+            return startCopyOut(conn, copy_ctx);
+        }
+        sendErrorResponse(conn, "ERROR", "0A000", "COPY only supports STDIN/STDOUT");
+        return core::Status::OK;
+    }
+
     // Execute
     QueryContext ctx;
     ctx.query = stmt_it->second.query;
@@ -952,19 +995,43 @@ core::Status PostgresqlAdapter::handleFlush(network::Connection* conn) {
     return sendBuffer(conn);
 }
 
-core::Status PostgresqlAdapter::handleCopyData(network::Connection* /*conn*/) {
-    // TODO: Implement COPY IN handling
-    return core::Status::NOT_SUPPORTED;
+core::Status PostgresqlAdapter::handleCopyData(network::Connection* conn) {
+    if (!copy_context_.active || !copy_context_.from_stdin) {
+        sendErrorResponse(conn, "ERROR", "08P01", "COPY DATA without active COPY IN");
+        if (!copy_context_.from_extended) {
+            sendReadyForQuery(conn);
+        }
+        return sendBuffer(conn);
+    }
+    copy_context_.buffer.append(reinterpret_cast<const char*>(current_msg_data_.data()),
+                                current_msg_data_.size());
+    return core::Status::OK;
 }
 
-core::Status PostgresqlAdapter::handleCopyDone(network::Connection* /*conn*/) {
-    // TODO: Implement COPY IN completion
-    return core::Status::NOT_SUPPORTED;
+core::Status PostgresqlAdapter::handleCopyDone(network::Connection* conn) {
+    if (!copy_context_.active || !copy_context_.from_stdin) {
+        sendErrorResponse(conn, "ERROR", "08P01", "COPY DONE without active COPY IN");
+        if (!copy_context_.from_extended) {
+            sendReadyForQuery(conn);
+        }
+        return sendBuffer(conn);
+    }
+    return finishCopyIn(conn);
 }
 
-core::Status PostgresqlAdapter::handleCopyFail(network::Connection* /*conn*/) {
-    // TODO: Implement COPY IN failure
-    return core::Status::NOT_SUPPORTED;
+core::Status PostgresqlAdapter::handleCopyFail(network::Connection* conn) {
+    std::string message = readString(current_msg_data_.data(), current_msg_data_.size());
+    if (message.empty()) {
+        message = "COPY failed";
+    }
+    bool from_extended = copy_context_.from_extended;
+    sendErrorResponse(conn, "ERROR", "57014", message);
+    copy_context_ = CopyContext{};
+    pg_state_ = PgProtocolState::READY;
+    if (!from_extended) {
+        sendReadyForQuery(conn);
+    }
+    return sendBuffer(conn);
 }
 
 core::Status PostgresqlAdapter::handleTerminate(network::Connection* conn) {
@@ -1511,6 +1578,1069 @@ std::string PostgresqlAdapter::substitutePositionalParameters(const QueryContext
         if (i == 1) break;  // prevent underflow
     }
     return sql;
+}
+
+bool PostgresqlAdapter::parseCopyQuery(const std::string& sql, CopyContext& ctx, std::string& error) {
+    ctx = CopyContext{};
+    error.clear();
+
+    auto trim = [](const std::string& input) {
+        size_t start = 0;
+        while (start < input.size() &&
+               std::isspace(static_cast<unsigned char>(input[start]))) {
+            ++start;
+        }
+        size_t end = input.size();
+        while (end > start &&
+               std::isspace(static_cast<unsigned char>(input[end - 1]))) {
+            --end;
+        }
+        return input.substr(start, end - start);
+    };
+
+    auto to_upper = [](const std::string& input) {
+        std::string out;
+        out.reserve(input.size());
+        for (char c : input) {
+            out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        }
+        return out;
+    };
+
+    std::string input = trim(sql);
+    if (input.empty()) {
+        return false;
+    }
+    if (!input.empty() && input.back() == ';') {
+        input.pop_back();
+        input = trim(input);
+    }
+    if (input.size() < 4) {
+        return false;
+    }
+    auto prefix = to_upper(input.substr(0, 4));
+    if (prefix != "COPY") {
+        return false;
+    }
+    if (input.size() > 4) {
+        char next = input[4];
+        if (!std::isspace(static_cast<unsigned char>(next)) && next != '(') {
+            return false;
+        }
+    }
+
+    size_t pos = 4;
+    auto skip_ws = [&](size_t& p) {
+        while (p < input.size() &&
+               std::isspace(static_cast<unsigned char>(input[p]))) {
+            ++p;
+        }
+    };
+    skip_ws(pos);
+
+    auto parse_quoted_identifier = [&](size_t& p, std::string& out) -> bool {
+        if (p >= input.size() || input[p] != '"') {
+            return false;
+        }
+        size_t start = p;
+        ++p;
+        std::string inner;
+        while (p < input.size()) {
+            char c = input[p];
+            if (c == '"') {
+                if (p + 1 < input.size() && input[p + 1] == '"') {
+                    inner.push_back('"');
+                    p += 2;
+                    continue;
+                }
+                ++p;
+                out = "\"" + inner + "\"";
+                return true;
+            }
+            inner.push_back(c);
+            ++p;
+        }
+        error = "COPY identifier missing closing quote";
+        return false;
+    };
+
+    auto parse_unquoted_identifier = [&](size_t& p, std::string& out) -> bool {
+        size_t start = p;
+        while (p < input.size()) {
+            char c = input[p];
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '$') {
+                ++p;
+                continue;
+            }
+            break;
+        }
+        if (start == p) {
+            return false;
+        }
+        out = input.substr(start, p - start);
+        return true;
+    };
+
+    auto parse_identifier_part = [&](size_t& p, std::string& out) -> bool {
+        skip_ws(p);
+        if (p >= input.size()) {
+            return false;
+        }
+        if (input[p] == '"') {
+            return parse_quoted_identifier(p, out);
+        }
+        return parse_unquoted_identifier(p, out);
+    };
+
+    auto parse_qualified_identifier = [&](size_t& p, std::string& out) -> bool {
+        out.clear();
+        std::string part;
+        if (!parse_identifier_part(p, part)) {
+            error = "COPY expected identifier";
+            return false;
+        }
+        out = part;
+        skip_ws(p);
+        while (p < input.size() && input[p] == '.') {
+            out.push_back('.');
+            ++p;
+            if (!parse_identifier_part(p, part)) {
+                error = "COPY expected identifier after '.'";
+                return false;
+            }
+            out += part;
+            skip_ws(p);
+        }
+        return true;
+    };
+
+    if (pos < input.size() && input[pos] == '(') {
+        size_t start = pos + 1;
+        size_t depth = 1;
+        bool in_single = false;
+        bool in_double = false;
+        ++pos;
+        while (pos < input.size()) {
+            char c = input[pos];
+            if (in_single) {
+                if (c == '\'') {
+                    if (pos + 1 < input.size() && input[pos + 1] == '\'') {
+                        pos += 2;
+                        continue;
+                    }
+                    in_single = false;
+                }
+                ++pos;
+                continue;
+            }
+            if (in_double) {
+                if (c == '"') {
+                    if (pos + 1 < input.size() && input[pos + 1] == '"') {
+                        pos += 2;
+                        continue;
+                    }
+                    in_double = false;
+                }
+                ++pos;
+                continue;
+            }
+            if (c == '\'') {
+                in_single = true;
+                ++pos;
+                continue;
+            }
+            if (c == '"') {
+                in_double = true;
+                ++pos;
+                continue;
+            }
+            if (c == '(') {
+                ++depth;
+                ++pos;
+                continue;
+            }
+            if (c == ')') {
+                --depth;
+                if (depth == 0) {
+                    ctx.select_query = trim(input.substr(start, pos - start));
+                    ++pos;
+                    break;
+                }
+                ++pos;
+                continue;
+            }
+            ++pos;
+        }
+        if (depth != 0) {
+            error = "COPY missing ')' for SELECT";
+            return true;
+        }
+        if (ctx.select_query.empty() ||
+            to_upper(ctx.select_query.substr(0, std::min<size_t>(6, ctx.select_query.size()))) != "SELECT") {
+            error = "COPY requires SELECT inside parentheses";
+            return true;
+        }
+    } else {
+        if (!parse_qualified_identifier(pos, ctx.table_name)) {
+            if (error.empty()) {
+                error = "COPY expected table name";
+            }
+            return true;
+        }
+        skip_ws(pos);
+        if (pos < input.size() && input[pos] == '(') {
+            ++pos;
+            while (pos < input.size()) {
+                skip_ws(pos);
+                if (pos < input.size() && input[pos] == ')') {
+                    ++pos;
+                    break;
+                }
+                std::string col;
+                if (!parse_identifier_part(pos, col)) {
+                    error = "COPY expected column name";
+                    return true;
+                }
+                ctx.columns.push_back(col);
+                skip_ws(pos);
+                if (pos < input.size() && input[pos] == ',') {
+                    ++pos;
+                    continue;
+                }
+                if (pos < input.size() && input[pos] == ')') {
+                    ++pos;
+                    break;
+                }
+                error = "COPY expected ',' or ')' in column list";
+                return true;
+            }
+        }
+    }
+
+    skip_ws(pos);
+    auto read_word = [&](size_t& p) -> std::string {
+        skip_ws(p);
+        size_t start = p;
+        while (p < input.size()) {
+            char c = input[p];
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+                ++p;
+                continue;
+            }
+            break;
+        }
+        return input.substr(start, p - start);
+    };
+
+    std::string direction = read_word(pos);
+    std::string dir_upper = to_upper(direction);
+    if (dir_upper != "FROM" && dir_upper != "TO") {
+        error = "COPY requires FROM or TO";
+        return true;
+    }
+    bool is_from = (dir_upper == "FROM");
+    bool is_to = (dir_upper == "TO");
+
+    auto parse_target = [&](size_t& p, std::string& out) -> bool {
+        skip_ws(p);
+        if (p >= input.size()) {
+            return false;
+        }
+        if (input[p] == '\'') {
+            ++p;
+            std::string value;
+            while (p < input.size()) {
+                char c = input[p];
+                if (c == '\'') {
+                    if (p + 1 < input.size() && input[p + 1] == '\'') {
+                        value.push_back('\'');
+                        p += 2;
+                        continue;
+                    }
+                    ++p;
+                    out = value;
+                    return true;
+                }
+                value.push_back(c);
+                ++p;
+            }
+            error = "COPY target missing closing quote";
+            return false;
+        }
+        std::string word = read_word(p);
+        if (word.empty()) {
+            return false;
+        }
+        out = word;
+        return true;
+    };
+
+    std::string target;
+    if (!parse_target(pos, target)) {
+        if (error.empty()) {
+            error = "COPY requires a target";
+        }
+        return true;
+    }
+
+    std::string target_upper = to_upper(target);
+    if (is_from && target_upper == "STDIN") {
+        ctx.from_stdin = true;
+    } else if (is_to && target_upper == "STDOUT") {
+        ctx.to_stdout = true;
+    } else {
+        error = "COPY only supports STDIN/STDOUT targets";
+        return true;
+    }
+
+    struct Token {
+        enum class Kind { Identifier, String, Symbol, End };
+        Kind kind = Kind::End;
+        std::string text;
+        char symbol = 0;
+    };
+    struct Tokenizer {
+        const std::string& input;
+        size_t pos = 0;
+        bool has_peek = false;
+        Token peek_token;
+
+        static bool is_ident_char(char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        }
+
+        Token next() {
+            if (has_peek) {
+                has_peek = false;
+                return peek_token;
+            }
+            while (pos < input.size() &&
+                   std::isspace(static_cast<unsigned char>(input[pos]))) {
+                ++pos;
+            }
+            if (pos >= input.size()) {
+                return {};
+            }
+            char c = input[pos];
+            if (c == '(' || c == ')' || c == ',' || c == '=') {
+                ++pos;
+                Token tok;
+                tok.kind = Token::Kind::Symbol;
+                tok.symbol = c;
+                return tok;
+            }
+            if (c == '\'') {
+                ++pos;
+                std::string value;
+                while (pos < input.size()) {
+                    char ch = input[pos];
+                    if (ch == '\'') {
+                        if (pos + 1 < input.size() && input[pos + 1] == '\'') {
+                            value.push_back('\'');
+                            pos += 2;
+                            continue;
+                        }
+                        ++pos;
+                        Token tok;
+                        tok.kind = Token::Kind::String;
+                        tok.text = value;
+                        return tok;
+                    }
+                    value.push_back(ch);
+                    ++pos;
+                }
+                Token tok;
+                tok.kind = Token::Kind::String;
+                tok.text = value;
+                return tok;
+            }
+            if (c == '"') {
+                ++pos;
+                std::string value;
+                while (pos < input.size()) {
+                    char ch = input[pos];
+                    if (ch == '"') {
+                        if (pos + 1 < input.size() && input[pos + 1] == '"') {
+                            value.push_back('"');
+                            pos += 2;
+                            continue;
+                        }
+                        ++pos;
+                        Token tok;
+                        tok.kind = Token::Kind::Identifier;
+                        tok.text = value;
+                        return tok;
+                    }
+                    value.push_back(ch);
+                    ++pos;
+                }
+                Token tok;
+                tok.kind = Token::Kind::Identifier;
+                tok.text = value;
+                return tok;
+            }
+            size_t start = pos;
+            while (pos < input.size() && is_ident_char(input[pos])) {
+                ++pos;
+            }
+            Token tok;
+            tok.kind = Token::Kind::Identifier;
+            tok.text = input.substr(start, pos - start);
+            return tok;
+        }
+
+        Token peek() {
+            if (!has_peek) {
+                peek_token = next();
+                has_peek = true;
+            }
+            return peek_token;
+        }
+    };
+
+    auto decode_escape = [](const std::string& value) {
+        if (value.size() == 2 && value[0] == '\\') {
+            switch (value[1]) {
+                case 't': return std::string(1, '\t');
+                case 'n': return std::string(1, '\n');
+                case 'r': return std::string(1, '\r');
+                case '\\': return std::string(1, '\\');
+                default: break;
+            }
+        }
+        return value;
+    };
+
+    bool delimiter_set = false;
+    bool null_set = false;
+
+    auto parse_options = [&](const std::string& options) -> bool {
+        std::string opt_text = trim(options);
+        if (opt_text.empty()) {
+            return true;
+        }
+        Tokenizer tok{opt_text};
+        Token t = tok.next();
+        if (t.kind == Token::Kind::Identifier &&
+            to_upper(t.text) == "WITH") {
+            t = tok.next();
+        }
+
+        bool in_paren = false;
+        if (t.kind == Token::Kind::Symbol && t.symbol == '(') {
+            in_paren = true;
+            t = tok.next();
+        }
+
+        auto consume_value = [&]() -> Token {
+            Token val = tok.next();
+            if (val.kind == Token::Kind::Symbol && val.symbol == '=') {
+                val = tok.next();
+            }
+            return val;
+        };
+
+        while (t.kind != Token::Kind::End) {
+            if (t.kind == Token::Kind::Symbol && t.symbol == ')') {
+                if (!in_paren) {
+                    error = "COPY unexpected ')'";
+                    return false;
+                }
+                break;
+            }
+            if (t.kind != Token::Kind::Identifier) {
+                error = "COPY expected option name";
+                return false;
+            }
+            std::string opt = to_upper(t.text);
+
+            if (opt == "FORMAT") {
+                Token fmt = consume_value();
+                if (fmt.kind != Token::Kind::Identifier && fmt.kind != Token::Kind::String) {
+                    error = "COPY FORMAT requires a value";
+                    return false;
+                }
+                std::string fmt_upper = to_upper(fmt.text);
+                if (fmt_upper == "CSV") {
+                    ctx.options.format = CopyOptions::Format::CSV;
+                } else if (fmt_upper == "TEXT") {
+                    ctx.options.format = CopyOptions::Format::TEXT;
+                } else {
+                    error = "COPY FORMAT supports CSV or TEXT only";
+                    return false;
+                }
+            } else if (opt == "CSV" || opt == "TEXT") {
+                ctx.options.format = (opt == "CSV")
+                    ? CopyOptions::Format::CSV
+                    : CopyOptions::Format::TEXT;
+            } else if (opt == "DELIMITER") {
+                Token delim = consume_value();
+                if (delim.kind != Token::Kind::Identifier && delim.kind != Token::Kind::String) {
+                    error = "COPY DELIMITER requires a value";
+                    return false;
+                }
+                std::string decoded = decode_escape(delim.text);
+                if (decoded.size() != 1) {
+                    error = "COPY DELIMITER must be a single character";
+                    return false;
+                }
+                ctx.options.delimiter = decoded[0];
+                delimiter_set = true;
+            } else if (opt == "NULL") {
+                Token null_tok = consume_value();
+                if (null_tok.kind != Token::Kind::Identifier && null_tok.kind != Token::Kind::String) {
+                    error = "COPY NULL requires a value";
+                    return false;
+                }
+                ctx.options.null_string = null_tok.text;
+                null_set = true;
+            } else if (opt == "HEADER") {
+                Token next_tok = tok.peek();
+                if (next_tok.kind == Token::Kind::Symbol && next_tok.symbol == '=') {
+                    Token flag = consume_value();
+                    std::string flag_upper = to_upper(flag.text);
+                    if (flag_upper == "TRUE" || flag_upper == "ON" || flag_upper == "1") {
+                        ctx.options.header = true;
+                    } else if (flag_upper == "FALSE" || flag_upper == "OFF" || flag_upper == "0") {
+                        ctx.options.header = false;
+                    } else {
+                        ctx.options.header = true;
+                    }
+                } else if (next_tok.kind == Token::Kind::Identifier || next_tok.kind == Token::Kind::String) {
+                    Token flag = consume_value();
+                    std::string flag_upper = to_upper(flag.text);
+                    if (flag_upper == "TRUE" || flag_upper == "ON" || flag_upper == "1") {
+                        ctx.options.header = true;
+                    } else if (flag_upper == "FALSE" || flag_upper == "OFF" || flag_upper == "0") {
+                        ctx.options.header = false;
+                    } else {
+                        ctx.options.header = true;
+                    }
+                } else {
+                    ctx.options.header = true;
+                }
+            } else {
+                error = "COPY option not supported: " + opt;
+                return false;
+            }
+
+            t = tok.next();
+            if (t.kind == Token::Kind::Symbol && t.symbol == ',') {
+                t = tok.next();
+            }
+        }
+
+        if (in_paren) {
+            if (t.kind != Token::Kind::Symbol || t.symbol != ')') {
+                error = "COPY options missing ')'";
+                return false;
+            }
+            t = tok.next();
+        }
+        if (t.kind != Token::Kind::End) {
+            error = "COPY unexpected trailing options";
+            return false;
+        }
+        return true;
+    };
+
+    if (pos < input.size()) {
+        std::string options = trim(input.substr(pos));
+        if (!options.empty()) {
+            if (!parse_options(options)) {
+                return true;
+            }
+        }
+    }
+
+    if (ctx.options.format == CopyOptions::Format::CSV) {
+        if (!delimiter_set) {
+            ctx.options.delimiter = ',';
+        }
+        if (!null_set) {
+            ctx.options.null_string.clear();
+        }
+    }
+
+    return true;
+}
+
+core::Status PostgresqlAdapter::startCopyOut(network::Connection* conn, CopyContext& ctx) {
+    if (ctx.table_name.empty() && ctx.select_query.empty()) {
+        sendErrorResponse(conn, "ERROR", "0A000", "COPY TO STDOUT requires a table or SELECT");
+        if (!ctx.from_extended) {
+            sendReadyForQuery(conn);
+        }
+        return sendBuffer(conn);
+    }
+
+    copy_context_ = ctx;
+    copy_context_.active = true;
+    pg_state_ = PgProtocolState::COPY_OUT;
+
+    QueryContext query;
+    if (!ctx.select_query.empty()) {
+        query.query = ctx.select_query;
+    } else {
+        std::ostringstream sql;
+        sql << "SELECT ";
+        if (ctx.columns.empty()) {
+            sql << "*";
+        } else {
+            for (size_t i = 0; i < ctx.columns.size(); ++i) {
+                if (i > 0) sql << ", ";
+                sql << ctx.columns[i];
+            }
+        }
+        sql << " FROM " << ctx.table_name;
+        query.query = sql.str();
+    }
+
+    ResultContext result;
+    executeRemoteQuery(query, result);
+    if (result.has_error) {
+        sendProtocolError(conn, result.error_code, result.sqlstate,
+                          result.error_message, result.error_detail, result.error_hint);
+        copy_context_ = CopyContext{};
+        pg_state_ = PgProtocolState::READY;
+        if (!ctx.from_extended) {
+            sendReadyForQuery(conn);
+        }
+        return sendBuffer(conn);
+    }
+
+    sendCopyOutResponse(conn, 0, {});
+
+    auto escape_text_field = [&](const std::string& value) {
+        std::string out;
+        out.reserve(value.size() + 4);
+        for (char c : value) {
+            switch (c) {
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                case '\\': out += "\\\\"; break;
+                default:
+                    if (c == ctx.options.delimiter) {
+                        out.push_back('\\');
+                    }
+                    out.push_back(c);
+                    break;
+            }
+        }
+        return out;
+    };
+
+    auto escape_csv_field = [&](const std::string& value) {
+        bool needs_quotes = value.empty() && ctx.options.null_string.empty();
+        for (char c : value) {
+            if (c == ctx.options.delimiter || c == '"' || c == '\n' || c == '\r') {
+                needs_quotes = true;
+                break;
+            }
+        }
+        if (!needs_quotes) {
+            return value;
+        }
+        std::string out = "\"";
+        for (char c : value) {
+            if (c == '"') {
+                out += "\"\"";
+            } else {
+                out.push_back(c);
+            }
+        }
+        out.push_back('"');
+        return out;
+    };
+
+    auto format_field = [&](const std::string& value, bool is_null) {
+        if (is_null) {
+            return ctx.options.null_string;
+        }
+        if (ctx.options.format == CopyOptions::Format::CSV) {
+            return escape_csv_field(value);
+        }
+        return escape_text_field(value);
+    };
+
+    auto send_row = [&](const std::vector<std::string>& fields) {
+        std::string line;
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (i > 0) {
+                line.push_back(ctx.options.delimiter);
+            }
+            line += fields[i];
+        }
+        line.push_back('\n');
+        sendCopyData(conn, line.data(), line.size());
+    };
+
+    if (ctx.options.header) {
+        std::vector<std::string> header_fields;
+        header_fields.reserve(result.columns.size());
+        for (const auto& col : result.columns) {
+            header_fields.push_back(format_field(col.name, false));
+        }
+        send_row(header_fields);
+    }
+
+    for (const auto& row : result.rows) {
+        std::vector<std::string> fields;
+        fields.reserve(result.columns.size());
+        for (size_t i = 0; i < result.columns.size(); ++i) {
+            const auto& col = result.columns[i];
+            const auto& val = row[i];
+            std::string text;
+            if (!val.is_null) {
+                auto encoded = encodeTextValue(val, col.type);
+                text.assign(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+            }
+            fields.push_back(format_field(text, val.is_null));
+        }
+        send_row(fields);
+    }
+
+    sendCopyDone(conn);
+
+    copy_context_.rows = result.rows.size();
+    std::string tag = "COPY " + std::to_string(copy_context_.rows);
+    sendCommandComplete(conn, tag);
+
+    if (ctx.from_extended && !ctx.portal_name.empty()) {
+        auto it = portals_.find(ctx.portal_name);
+        if (it != portals_.end()) {
+            it->second.executed = true;
+            it->second.completed = true;
+            it->second.command_tag = tag;
+        }
+    }
+
+    copy_context_ = CopyContext{};
+    pg_state_ = PgProtocolState::READY;
+    if (!ctx.from_extended) {
+        sendReadyForQuery(conn);
+    }
+    return sendBuffer(conn);
+}
+
+core::Status PostgresqlAdapter::startCopyIn(network::Connection* conn, CopyContext& ctx) {
+    if (!ctx.select_query.empty()) {
+        sendErrorResponse(conn, "ERROR", "0A000", "COPY FROM STDIN does not accept SELECT");
+        if (!ctx.from_extended) {
+            sendReadyForQuery(conn);
+        }
+        return sendBuffer(conn);
+    }
+    if (ctx.table_name.empty()) {
+        sendErrorResponse(conn, "ERROR", "0A000", "COPY FROM STDIN requires a table");
+        if (!ctx.from_extended) {
+            sendReadyForQuery(conn);
+        }
+        return sendBuffer(conn);
+    }
+
+    copy_context_ = ctx;
+    copy_context_.active = true;
+    copy_context_.buffer.clear();
+    copy_context_.rows = 0;
+    pg_state_ = PgProtocolState::COPY_IN;
+
+    sendCopyInResponse(conn, 0, {});
+
+    if (ctx.from_extended && !ctx.portal_name.empty()) {
+        auto it = portals_.find(ctx.portal_name);
+        if (it != portals_.end()) {
+            it->second.executed = true;
+            it->second.completed = false;
+        }
+    }
+
+    return sendBuffer(conn);
+}
+
+core::Status PostgresqlAdapter::finishCopyIn(network::Connection* conn) {
+    CopyContext ctx = copy_context_;
+
+    struct ParsedValue {
+        bool is_null = false;
+        std::string value;
+        bool quoted = false;
+    };
+
+    auto parse_text = [&](const std::string& data,
+                          std::vector<std::vector<ParsedValue>>& rows,
+                          std::string& err) -> bool {
+        (void)err;
+        std::vector<ParsedValue> row;
+        std::string raw;
+        std::string decoded;
+        bool escaping = false;
+
+        auto finish_field = [&]() {
+            ParsedValue field;
+            field.is_null = (raw == ctx.options.null_string);
+            if (!field.is_null) {
+                field.value = decoded;
+            }
+            row.push_back(field);
+            raw.clear();
+            decoded.clear();
+        };
+
+        auto finish_row = [&]() {
+            finish_field();
+            rows.push_back(row);
+            row.clear();
+        };
+
+        for (size_t i = 0; i < data.size(); ++i) {
+            char c = data[i];
+            if (!escaping && c == ctx.options.delimiter) {
+                finish_field();
+                continue;
+            }
+            if (!escaping && (c == '\n' || c == '\r')) {
+                finish_row();
+                if (c == '\r' && i + 1 < data.size() && data[i + 1] == '\n') {
+                    ++i;
+                }
+                continue;
+            }
+            if (!escaping && c == '\\') {
+                raw.push_back(c);
+                escaping = true;
+                continue;
+            }
+
+            if (escaping) {
+                raw.push_back(c);
+                switch (c) {
+                    case 'n': decoded.push_back('\n'); break;
+                    case 'r': decoded.push_back('\r'); break;
+                    case 't': decoded.push_back('\t'); break;
+                    case '\\': decoded.push_back('\\'); break;
+                    default: decoded.push_back(c); break;
+                }
+                escaping = false;
+                continue;
+            }
+
+            raw.push_back(c);
+            decoded.push_back(c);
+        }
+
+        if (!raw.empty() || !row.empty()) {
+            finish_row();
+        }
+        return true;
+    };
+
+    auto parse_csv = [&](const std::string& data,
+                         std::vector<std::vector<ParsedValue>>& rows,
+                         std::string& err) -> bool {
+        std::vector<ParsedValue> row;
+        std::string field;
+        bool in_quotes = false;
+        bool quoted = false;
+
+        auto finish_field = [&]() {
+            ParsedValue value;
+            value.quoted = quoted;
+            value.is_null = (!quoted && field == ctx.options.null_string);
+            if (!value.is_null) {
+                value.value = field;
+            }
+            row.push_back(value);
+            field.clear();
+            quoted = false;
+        };
+
+        auto finish_row = [&]() {
+            finish_field();
+            rows.push_back(row);
+            row.clear();
+        };
+
+        for (size_t i = 0; i < data.size(); ++i) {
+            char c = data[i];
+            if (in_quotes) {
+                if (c == '"') {
+                    if (i + 1 < data.size() && data[i + 1] == '"') {
+                        field.push_back('"');
+                        ++i;
+                        continue;
+                    }
+                    in_quotes = false;
+                    continue;
+                }
+                field.push_back(c);
+                continue;
+            }
+
+            if (c == '"') {
+                if (field.empty()) {
+                    in_quotes = true;
+                    quoted = true;
+                    continue;
+                }
+                field.push_back(c);
+                continue;
+            }
+
+            if (c == ctx.options.delimiter) {
+                finish_field();
+                continue;
+            }
+
+            if (c == '\n' || c == '\r') {
+                finish_row();
+                if (c == '\r' && i + 1 < data.size() && data[i + 1] == '\n') {
+                    ++i;
+                }
+                continue;
+            }
+
+            field.push_back(c);
+        }
+
+        if (in_quotes) {
+            err = "COPY CSV missing closing quote";
+            return false;
+        }
+
+        if (!field.empty() || !row.empty()) {
+            finish_row();
+        }
+        return true;
+    };
+
+    std::vector<std::vector<ParsedValue>> rows;
+    std::string parse_error;
+    bool ok = false;
+    if (ctx.options.format == CopyOptions::Format::CSV) {
+        ok = parse_csv(ctx.buffer, rows, parse_error);
+    } else {
+        ok = parse_text(ctx.buffer, rows, parse_error);
+    }
+
+    if (!ok) {
+        sendErrorResponse(conn, "ERROR", "0A000",
+                          parse_error.empty() ? "COPY parsing failed" : parse_error);
+        copy_context_ = CopyContext{};
+        pg_state_ = PgProtocolState::READY;
+        if (!ctx.from_extended) {
+            sendReadyForQuery(conn);
+        }
+        return sendBuffer(conn);
+    }
+
+    size_t start_row = 0;
+    if (ctx.options.header && !rows.empty()) {
+        if (ctx.columns.empty()) {
+            std::vector<std::string> header_cols;
+            for (const auto& field : rows.front()) {
+                std::string trimmed = field.value;
+                size_t start = 0;
+                while (start < trimmed.size() &&
+                       std::isspace(static_cast<unsigned char>(trimmed[start]))) {
+                    ++start;
+                }
+                size_t end = trimmed.size();
+                while (end > start &&
+                       std::isspace(static_cast<unsigned char>(trimmed[end - 1]))) {
+                    --end;
+                }
+                std::string name = trimmed.substr(start, end - start);
+                std::string quoted = "\"";
+                for (char c : name) {
+                    if (c == '"') {
+                        quoted += "\"\"";
+                    } else {
+                        quoted.push_back(c);
+                    }
+                }
+                quoted.push_back('"');
+                header_cols.push_back(quoted);
+            }
+            ctx.columns = std::move(header_cols);
+        }
+        start_row = 1;
+    }
+
+    auto join_columns = [&](const std::vector<std::string>& cols) {
+        std::ostringstream out;
+        for (size_t i = 0; i < cols.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << cols[i];
+        }
+        return out.str();
+    };
+
+    int64_t inserted = 0;
+    for (size_t row_idx = start_row; row_idx < rows.size(); ++row_idx) {
+        const auto& row = rows[row_idx];
+        if (!ctx.columns.empty() && row.size() != ctx.columns.size()) {
+            sendErrorResponse(conn, "ERROR", "0A000", "COPY column count does not match");
+            copy_context_ = CopyContext{};
+            pg_state_ = PgProtocolState::READY;
+            if (!ctx.from_extended) {
+                sendReadyForQuery(conn);
+            }
+            return sendBuffer(conn);
+        }
+
+        std::ostringstream sql;
+        sql << "INSERT INTO " << ctx.table_name;
+        if (!ctx.columns.empty()) {
+            sql << " (" << join_columns(ctx.columns) << ")";
+        }
+        sql << " VALUES (";
+        for (size_t i = 0; i < row.size(); ++i) {
+            if (i > 0) sql << ", ";
+            if (row[i].is_null) {
+                sql << "NULL";
+            } else {
+                sql << "'" << escapeLiteral(row[i].value) << "'";
+            }
+        }
+        sql << ")";
+
+        QueryContext insert_ctx;
+        insert_ctx.query = sql.str();
+        ResultContext result;
+        executeRemoteQuery(insert_ctx, result);
+        if (result.has_error) {
+            sendProtocolError(conn, result.error_code, result.sqlstate,
+                              result.error_message, result.error_detail, result.error_hint);
+            copy_context_ = CopyContext{};
+            pg_state_ = PgProtocolState::READY;
+            if (!ctx.from_extended) {
+                sendReadyForQuery(conn);
+            }
+            return sendBuffer(conn);
+        }
+        inserted++;
+    }
+
+    std::string tag = "COPY " + std::to_string(inserted);
+    sendCommandComplete(conn, tag);
+
+    if (ctx.from_extended && !ctx.portal_name.empty()) {
+        auto it = portals_.find(ctx.portal_name);
+        if (it != portals_.end()) {
+            it->second.executed = true;
+            it->second.completed = true;
+            it->second.command_tag = tag;
+        }
+    }
+
+    copy_context_ = CopyContext{};
+    pg_state_ = PgProtocolState::READY;
+    if (!ctx.from_extended) {
+        sendReadyForQuery(conn);
+    }
+    return sendBuffer(conn);
 }
 
 void PostgresqlAdapter::sendRowDescription(network::Connection* conn,

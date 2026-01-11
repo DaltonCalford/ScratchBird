@@ -50,6 +50,11 @@ protected:
         catalog_ = db_.catalog_manager();
         ASSERT_NE(catalog_, nullptr) << "CatalogManager is null";
 
+        CatalogManager::SchemaInfo public_schema_info;
+        status = catalog_->getSchema("public", public_schema_info, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to resolve public schema: " << ctx.message;
+        public_schema_id_ = public_schema_info.schema_id;
+
         // Create a test schema
         EnsureUser(catalog_, "test_user");
         status = catalog_->createSchema("test", "test_user", test_schema_id_, &ctx);
@@ -57,14 +62,22 @@ protected:
 
         // Create compiler and executor
         compiler_ = std::make_unique<QueryCompilerV2>(&db_);
-        compiler_->setCurrentSchema(test_schema_id_);
-
         executor_ = std::make_unique<Executor>(&db_);
+
+        status = db_.connect(connection_ctx_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to create connection: " << ctx.message;
+        connection_ctx_->setCurrentSchemaId(public_schema_id_);
+        auto system_user_id = catalog_->getSystemUserId(&ctx);
+        connection_ctx_->setCurrentUser(system_user_id, true);
+        ConnectionContext::setCurrent(connection_ctx_.get());
+        executor_->setConnectionContext(connection_ctx_.get());
     }
 
     void TearDown() override {
         compiler_.reset();
         executor_.reset();
+        ConnectionContext::setCurrent(nullptr);
+        connection_ctx_.reset();
         db_.close();
         // Clean up database file and lock file
         std::filesystem::remove(test_db_path_);
@@ -87,9 +100,11 @@ protected:
     std::string test_db_path_;
     Database db_;
     CatalogManager* catalog_ = nullptr;
+    ID public_schema_id_;
     ID test_schema_id_;
     std::unique_ptr<QueryCompilerV2> compiler_;
     std::unique_ptr<Executor> executor_;
+    std::unique_ptr<ConnectionContext> connection_ctx_;
 };
 
 // =============================================================================
@@ -141,6 +156,10 @@ TEST_F(QueryCompilerV2Test, CompileSelectWithCast) {
 }
 
 TEST_F(QueryCompilerV2Test, ExecuteCreateTableWithDomainColumn) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
     auto create_domain = compileAndExecute("CREATE DOMAIN positive_int AS INT NOT NULL");
     ASSERT_TRUE(create_domain.success()) << create_domain.error();
 
@@ -158,6 +177,31 @@ TEST_F(QueryCompilerV2Test, ExecuteCreateTableWithDomainColumn) {
 
     DomainInfo domain_info;
     status = db_.domain_manager()->getDomain(test_schema_id_, "positive_int", domain_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    EXPECT_EQ(column_info.domain_id, domain_info.domain_id);
+    EXPECT_EQ(column_info.data_type, static_cast<uint16_t>(domain_info.base_type));
+}
+
+TEST_F(QueryCompilerV2Test, ExecuteCreateTableWithDomainColumn_DefaultPublicSchema) {
+    ErrorContext ctx;
+
+    auto create_domain = compileAndExecute("CREATE DOMAIN public_int AS INT NOT NULL");
+    ASSERT_TRUE(create_domain.success()) << create_domain.error();
+
+    auto create_table = compileAndExecute("CREATE TABLE public_domain_table (value public_int)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    CatalogManager::TableInfo table_info;
+    auto status = catalog_->getTable(public_schema_id_, "public_domain_table", table_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    CatalogManager::ColumnInfo column_info;
+    status = catalog_->getColumn(table_info.table_id, "value", column_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    DomainInfo domain_info;
+    status = db_.domain_manager()->getDomain(public_schema_id_, "public_int", domain_info, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
     EXPECT_EQ(column_info.domain_id, domain_info.domain_id);

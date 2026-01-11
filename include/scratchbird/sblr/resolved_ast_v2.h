@@ -576,6 +576,29 @@ struct ResolvedDeleteStmt : public ResolvedStatement {
     std::vector<ResolvedSelectItem> returning;
 };
 
+/**
+ * Resolved COPY statement
+ */
+struct ResolvedCopyStmt : public ResolvedStatement {
+    bool has_table = false;
+    ResolvedTableRef target_table;
+    StringPool::StringId table_path = StringPool::INVALID_ID;
+    ResolvedSelectStmt* query = nullptr;
+
+    // Column list (optional)
+    std::vector<uint32_t> target_column_indexes;
+
+    enum class Direction {
+        FROM,
+        TO
+    };
+    Direction direction = Direction::FROM;
+
+    bool target_is_stdin = false;
+    bool target_is_stdout = false;
+    StringPool::StringId target = StringPool::INVALID_ID;  // File path when not STDIN/STDOUT
+};
+
 // =============================================================================
 // Resolved DDL Statements
 // =============================================================================

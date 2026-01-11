@@ -399,6 +399,7 @@ def resolve_groups(user_uuid):
 | CREATEUSER | Create and manage users |
 | REPLICATION | Perform replication operations |
 | BACKUP | Perform backup operations |
+| COPY | Server-side COPY file access (grantable on DATABASE) |
 
 #### 4.1.3 Special Privileges
 
@@ -1257,6 +1258,7 @@ All denied access attempts are logged:
 | UPDATE table | UPDATE + SELECT (for WHERE) |
 | DELETE FROM table | DELETE + SELECT (for WHERE) |
 | TRUNCATE table | TRUNCATE or owner |
+| COPY TO/FROM file | COPY on database + SELECT/INSERT on table |
 | CREATE TABLE | CREATE on schema |
 | DROP TABLE | Owner or superuser |
 | ALTER TABLE | Owner or superuser |

@@ -287,6 +287,32 @@ protected:
                               std::string& error_out) override;
 
 private:
+    struct CopyOptions {
+        enum class Format {
+            TEXT,
+            CSV
+        };
+        Format format = Format::TEXT;
+        char delimiter = '\t';
+        std::string null_string = "\\N";
+        bool header = false;
+    };
+
+    struct CopyContext {
+        bool active = false;
+        bool from_stdin = false;
+        bool to_stdout = false;
+        bool from_extended = false;
+        std::string table_name;
+        std::vector<std::string> columns;
+        std::string select_query;
+        std::string buffer;
+        size_t rows = 0;
+        std::string portal_name;
+        std::string statement_name;
+        CopyOptions options;
+    };
+
     // ========================================================================
     // Message Handling
     // ========================================================================
@@ -411,6 +437,10 @@ private:
                                         size_t len);
     std::string substitutePositionalParameters(const QueryContext& query);
     std::string escapeLiteral(const std::string& input);
+    bool parseCopyQuery(const std::string& sql, CopyContext& ctx, std::string& error);
+    core::Status startCopyOut(network::Connection* conn, CopyContext& ctx);
+    core::Status startCopyIn(network::Connection* conn, CopyContext& ctx);
+    core::Status finishCopyIn(network::Connection* conn);
 
     // MD5 authentication
     std::string computeMD5Hash(const std::string& password,
@@ -465,6 +495,7 @@ private:
     // Extended query state
     bool sync_pending_ = false;
     std::deque<char> pending_operations_;  // Queue of operations before Sync
+    CopyContext copy_context_;
 
     // IPC client (bridge to engine)
     std::unique_ptr<client::Connection> client_;

@@ -1209,7 +1209,7 @@ namespace scratchbird
             EXT_MERGE_END = 0x55,  // End MERGE operation
             EXT_RETURNING = 0x56,  // RETURNING clause marker (followed by column list or *)
             EXT_ANALYZE = 0x57,  // ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]
-            EXT_COPY = 0x0100,  // COPY table [(columns)] FROM/TO target
+            EXT_COPY = 0x0100,  // COPY table or SELECT [(columns)] FROM/TO target
             EXT_SAVEPOINT = 0x58,  // SAVEPOINT savepoint_name
             EXT_RELEASE_SAVEPOINT = 0x59,  // RELEASE SAVEPOINT savepoint_name
             EXT_ROLLBACK_TO_SAVEPOINT = 0x5A,  // ROLLBACK TO SAVEPOINT savepoint_name

@@ -229,6 +229,13 @@ void QueryCompilerV2::extractInvolvedTables(ResolvedStatement* stmt,
         if (!del->target_table.table_uuid.bytes[0] == 0) {
             tables.insert(del->target_table.table_uuid);
         }
+    } else if (auto* copy = dynamic_cast<ResolvedCopyStmt*>(stmt)) {
+        if (copy->has_table && !copy->target_table.table_uuid.bytes[0] == 0) {
+            tables.insert(copy->target_table.table_uuid);
+        }
+        if (copy->query) {
+            extractInvolvedTables(copy->query, tables);
+        }
     }
 }
 
@@ -456,6 +463,13 @@ void QueryCompilerV2::collectDependencies(ResolvedStatement* stmt,
             for (auto* expr : row) walkExpr(expr);
         }
         if (insert->select_source) collectDependencies(insert->select_source, pool, deps);
+    } else if (auto* copy = dynamic_cast<ResolvedCopyStmt*>(stmt)) {
+        if (copy->has_table) {
+            add(copy->target_table.table_uuid, core::CatalogManager::ObjectType::TABLE);
+        }
+        if (copy->query) {
+            collectDependencies(copy->query, pool, deps);
+        }
     } else if (auto* update = dynamic_cast<ResolvedUpdateStmt*>(stmt)) {
         add(update->target_table.table_uuid, core::CatalogManager::ObjectType::TABLE);
         add(update->target_table.schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
