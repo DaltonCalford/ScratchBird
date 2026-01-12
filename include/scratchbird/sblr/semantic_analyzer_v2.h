@@ -289,17 +289,25 @@ private:
     ResolvedStatement* analyzeDropSchema(DropSchemaStmt* stmt);
     ResolvedStatement* analyzeAlterSchema(AlterSchemaStmt* stmt);
     ResolvedStatement* analyzeCreateDatabase(CreateDatabaseStmt* stmt);
+    ResolvedStatement* analyzeCreateFunction(CreateFunctionStmt* stmt);
+    ResolvedStatement* analyzeCreateProcedure(CreateProcedureStmt* stmt);
+    ResolvedStatement* analyzeCreateTrigger(CreateTriggerStmt* stmt);
+    ResolvedStatement* analyzeCreatePackage(CreatePackageStmt* stmt);
+    ResolvedStatement* analyzeCreateRole(CreateRoleStmt* stmt);
+    ResolvedStatement* analyzeCreateException(CreateExceptionStmt* stmt);
     ResolvedStatement* analyzeCreateDomain(CreateDomainStmt* stmt);
     ResolvedStatement* analyzeDropDatabase(DropDatabaseStmt* stmt);
     ResolvedStatement* analyzeAlterDatabase(AlterDatabaseStmt* stmt);
     ResolvedStatement* analyzeAlterDomain(AlterDomainStmt* stmt);
     ResolvedStatement* analyzeDropDomain(DropDomainStmt* stmt);
     ResolvedStatement* analyzeAlterTable(AlterTableStmt* stmt);
+    ResolvedStatement* analyzeAlterIndex(AlterIndexStmt* stmt);
     ResolvedStatement* analyzeRenameObject(RenameObjectStmt* stmt);
     ResolvedStatement* analyzeMoveObject(MoveObjectStmt* stmt);
     ResolvedStatement* analyzeDropTable(DropTableStmt* stmt);
     ResolvedStatement* analyzeDropIndex(DropIndexStmt* stmt);
     ResolvedStatement* analyzeDropView(DropViewStmt* stmt);
+    ResolvedStatement* analyzeDropSequence(DropSequenceStmt* stmt);
     ResolvedStatement* analyzeTruncateTable(TruncateTableStmt* stmt);
 
     // DML
@@ -319,6 +327,10 @@ private:
     ResolvedStatement* analyzeSet(SetStmt* stmt);
     ResolvedStatement* analyzeShow(ShowStmt* stmt);
     ResolvedStatement* analyzeExplain(ExplainStmt* stmt);
+
+    // DCL
+    ResolvedStatement* analyzeGrant(GrantStmt* stmt);
+    ResolvedStatement* analyzeRevoke(RevokeStmt* stmt);
 
     // ==========================================================================
     // Expression Analysis

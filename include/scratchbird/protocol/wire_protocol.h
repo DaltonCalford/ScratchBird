@@ -54,6 +54,23 @@ constexpr uint32_t MAX_ERROR_MESSAGE_LENGTH = 4096;
 constexpr size_t SESSION_ID_SIZE = 16;
 
 // ============================================================================
+// Authentication Methods/Status
+// ============================================================================
+
+enum class AuthMethod : uint8_t {
+    PASSWORD       = 0,
+    MD5            = 1,
+    SCRAM_SHA_256  = 2,
+    SCRAM_SHA_512  = 3
+};
+
+enum class AuthStatus : uint8_t {
+    OK        = 0,
+    ERROR     = 1,
+    CONTINUE  = 2
+};
+
+// ============================================================================
 // Message Types
 // ============================================================================
 
@@ -277,7 +294,9 @@ enum class QueryFlags : uint8_t {
     WANT_ROWCOUNT   = 0x01,  // Client wants row count in response
     STREAMING       = 0x02,  // Use streaming mode for large results
     EXPLAIN_ONLY    = 0x04,  // Don't execute, just explain
-    NO_RESULTS      = 0x08   // Don't send results (for DDL)
+    NO_RESULTS      = 0x08,  // Don't send results (for DDL)
+    BYTECODE        = 0x10,  // Payload is SBLR bytecode (not UTF-8 SQL)
+    BYTECODE_HAS_SQL = 0x20  // Payload includes original SQL after bytecode
 };
 
 /**
@@ -540,6 +559,18 @@ public:
                                          std::string& password,
                                          core::ErrorContext* ctx = nullptr);
 
+    static Message buildAuthRequest(const uint8_t session_id[16],
+                                    const std::string& username,
+                                    AuthMethod auth_method,
+                                    const std::vector<uint8_t>& payload);
+
+    static core::Status parseAuthRequest(const Message& msg,
+                                         uint8_t session_id[16],
+                                         std::string& username,
+                                         AuthMethod& auth_method,
+                                         std::vector<uint8_t>& payload,
+                                         core::ErrorContext* ctx = nullptr);
+
     static Message buildAuthResponse(bool success,
                                      uint32_t user_id = 0,
                                      const std::string& error_message = "");
@@ -550,6 +581,18 @@ public:
                                           std::string& error_message,
                                           core::ErrorContext* ctx = nullptr);
 
+    static Message buildAuthResponse(AuthStatus status,
+                                     uint32_t user_id,
+                                     const std::string& error_message,
+                                     const std::vector<uint8_t>& data = {});
+
+    static core::Status parseAuthResponse(const Message& msg,
+                                          AuthStatus& status,
+                                          uint32_t& user_id,
+                                          std::string& error_message,
+                                          std::vector<uint8_t>* data = nullptr,
+                                          core::ErrorContext* ctx = nullptr);
+
     // ========================================
     // Query Messages
     // ========================================
@@ -557,7 +600,20 @@ public:
     static Message buildQuery(const uint8_t session_id[16],
                               const std::string& query,
                               uint8_t flags = 0);
+    static Message buildQueryBytecode(const uint8_t session_id[16],
+                                      const std::vector<uint8_t>& bytecode,
+                                      const std::string& sql,
+                                      uint8_t flags = 0);
+    static Message buildQueryBytecode(const uint8_t session_id[16],
+                                      const std::vector<uint8_t>& bytecode,
+                                      uint8_t flags = 0);
 
+    static core::Status parseQuery(const Message& msg,
+                                   uint8_t session_id[16],
+                                   std::string& query,
+                                   uint8_t& flags,
+                                   std::vector<uint8_t>* bytecode_out,
+                                   core::ErrorContext* ctx = nullptr);
     static core::Status parseQuery(const Message& msg,
                                    uint8_t session_id[16],
                                    std::string& query,

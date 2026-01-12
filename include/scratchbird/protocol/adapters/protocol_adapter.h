@@ -60,6 +60,7 @@ struct ProtocolAdapterConfig {
     // Authentication
     std::string default_database;           // Default database if not specified
     bool require_authentication = true;     // Require authentication
+    AuthMethod auth_method = AuthMethod::PASSWORD;
 };
 
 // ============================================================================

@@ -591,6 +591,19 @@ TEST_F(MySQLParserTest, Replace) {
     expectSuccess("REPLACE INTO users (id, name) VALUES (1, 'John')");
 }
 
+TEST_F(MySQLParserTest, AlterTableColumnActions) {
+    expectSuccess("ALTER TABLE users ADD COLUMN age INT");
+    expectSuccess("ALTER TABLE users DROP COLUMN age");
+    expectSuccess("ALTER TABLE users MODIFY COLUMN age BIGINT");
+    expectSuccess("ALTER TABLE users CHANGE COLUMN age age BIGINT");
+    expectSuccess("ALTER TABLE users RENAME COLUMN age TO age_years");
+}
+
+TEST_F(MySQLParserTest, CreateTableWithOptions) {
+    expectSuccess("CREATE TABLE users (id INT) ENGINE=InnoDB AUTO_INCREMENT=1 "
+                  "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='test'");
+}
+
 // ============================================================================
 // Error Handling Tests
 // ============================================================================

@@ -2914,6 +2914,18 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeAlterSchema(static_cast<AlterSchemaStmt*>(stmt));
         case ASTKind::CreateDatabaseStmt:
             return analyzeCreateDatabase(static_cast<CreateDatabaseStmt*>(stmt));
+        case ASTKind::CreateFunctionStmt:
+            return analyzeCreateFunction(static_cast<CreateFunctionStmt*>(stmt));
+        case ASTKind::CreateProcedureStmt:
+            return analyzeCreateProcedure(static_cast<CreateProcedureStmt*>(stmt));
+        case ASTKind::CreateTriggerStmt:
+            return analyzeCreateTrigger(static_cast<CreateTriggerStmt*>(stmt));
+        case ASTKind::CreatePackageStmt:
+            return analyzeCreatePackage(static_cast<CreatePackageStmt*>(stmt));
+        case ASTKind::CreateRoleStmt:
+            return analyzeCreateRole(static_cast<CreateRoleStmt*>(stmt));
+        case ASTKind::CreateExceptionStmt:
+            return analyzeCreateException(static_cast<CreateExceptionStmt*>(stmt));
         case ASTKind::CreateDomainStmt:
             return analyzeCreateDomain(static_cast<CreateDomainStmt*>(stmt));
         case ASTKind::AlterDomainStmt:
@@ -2926,6 +2938,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeAlterDatabase(static_cast<AlterDatabaseStmt*>(stmt));
         case ASTKind::AlterTableStmt:
             return analyzeAlterTable(static_cast<AlterTableStmt*>(stmt));
+        case ASTKind::AlterIndexStmt:
+            return analyzeAlterIndex(static_cast<AlterIndexStmt*>(stmt));
         case ASTKind::RenameObjectStmt:
             return analyzeRenameObject(static_cast<RenameObjectStmt*>(stmt));
         case ASTKind::MoveObjectStmt:
@@ -2936,6 +2950,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeDropIndex(static_cast<DropIndexStmt*>(stmt));
         case ASTKind::DropViewStmt:
             return analyzeDropView(static_cast<DropViewStmt*>(stmt));
+        case ASTKind::DropSequenceStmt:
+            return analyzeDropSequence(static_cast<DropSequenceStmt*>(stmt));
         case ASTKind::TruncateTableStmt:
             return analyzeTruncateTable(static_cast<TruncateTableStmt*>(stmt));
 
@@ -2972,6 +2988,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeShow(static_cast<ShowStmt*>(stmt));
         case ASTKind::ExplainStmt:
             return analyzeExplain(static_cast<ExplainStmt*>(stmt));
+
+        // DCL
+        case ASTKind::GrantStmt:
+            return analyzeGrant(static_cast<GrantStmt*>(stmt));
+        case ASTKind::RevokeStmt:
+            return analyzeRevoke(static_cast<RevokeStmt*>(stmt));
 
         default:
             error(stmt->span, "Unsupported statement type for semantic analysis");
@@ -3096,6 +3118,119 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeShow(ShowStmt* stmt) {
     resolved->variable_name = stmt->name;
     resolved->from_name = stmt->from_name;
     resolved->like_pattern = stmt->like_pattern;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeGrant(GrantStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedGrantStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = stmt->object_type;
+    resolved->objects = stmt->objects;
+    resolved->grantees = stmt->grantees;
+    resolved->with_grant_option = stmt->with_grant_option;
+    resolved->is_public = stmt->is_public;
+
+    uint32_t mask = 0;
+    for (auto priv : stmt->privileges) {
+        switch (priv) {
+            case PrivilegeType::SELECT:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT);
+                break;
+            case PrivilegeType::INSERT:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT);
+                break;
+            case PrivilegeType::UPDATE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE);
+                break;
+            case PrivilegeType::DELETE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE);
+                break;
+            case PrivilegeType::TRUNCATE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::TRUNCATE);
+                break;
+            case PrivilegeType::REFERENCES:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::REFERENCES);
+                break;
+            case PrivilegeType::TRIGGER:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::TRIGGER);
+                break;
+            case PrivilegeType::EXECUTE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE);
+                break;
+            case PrivilegeType::USAGE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE);
+                break;
+            case PrivilegeType::COPY:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::COPY_FILE);
+                break;
+            case PrivilegeType::ALL:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::ALL);
+                break;
+        }
+    }
+    resolved->privileges = mask;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeRevoke(RevokeStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedRevokeStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = stmt->object_type;
+    resolved->objects = stmt->objects;
+    resolved->grantees = stmt->grantees;
+    resolved->grant_option_for = stmt->grant_option_for;
+    resolved->cascade = stmt->cascade;
+    resolved->is_public = stmt->is_public;
+
+    uint32_t mask = 0;
+    for (auto priv : stmt->privileges) {
+        switch (priv) {
+            case PrivilegeType::SELECT:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT);
+                break;
+            case PrivilegeType::INSERT:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT);
+                break;
+            case PrivilegeType::UPDATE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE);
+                break;
+            case PrivilegeType::DELETE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE);
+                break;
+            case PrivilegeType::TRUNCATE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::TRUNCATE);
+                break;
+            case PrivilegeType::REFERENCES:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::REFERENCES);
+                break;
+            case PrivilegeType::TRIGGER:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::TRIGGER);
+                break;
+            case PrivilegeType::EXECUTE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE);
+                break;
+            case PrivilegeType::USAGE:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE);
+                break;
+            case PrivilegeType::COPY:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::COPY_FILE);
+                break;
+            case PrivilegeType::ALL:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::ALL);
+                break;
+        }
+    }
+    resolved->privileges = mask;
+
     return resolved;
 }
 
@@ -3348,6 +3483,176 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDatabase(CreateDatabaseStmt*
             continue;
         }
         resolved->aliases.emplace_back(string_pool_.get(alias_id));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateFunction(CreateFunctionStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateFunctionStmt>();
+    resolved->span = stmt->span;
+    resolved->or_replace = stmt->or_replace;
+    resolved->deterministic = stmt->deterministic;
+    resolved->sql_security = stmt->sql_security;
+
+    if (stmt->function_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->function_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->function_path.components[0];
+        }
+        resolved->function_name = stmt->function_path.components[1];
+    } else if (stmt->function_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->function_name = stmt->function_path.components[0];
+    }
+
+    for (const auto& param : stmt->params) {
+        ResolvedRoutineParam resolved_param;
+        resolved_param.mode = static_cast<uint8_t>(param.mode);
+        resolved_param.name = param.name;
+        resolved_param.type = resolveTypeName(param.type);
+        resolved->params.push_back(std::move(resolved_param));
+    }
+
+    resolved->return_type = resolveTypeName(stmt->return_type);
+    if (stmt->body != StringPool::INVALID_ID) {
+        resolved->body = std::string(string_pool_.get(stmt->body));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateProcedure(CreateProcedureStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateProcedureStmt>();
+    resolved->span = stmt->span;
+    resolved->or_replace = stmt->or_replace;
+    resolved->sql_security = stmt->sql_security;
+
+    if (stmt->procedure_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->procedure_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->procedure_path.components[0];
+        }
+        resolved->procedure_name = stmt->procedure_path.components[1];
+    } else if (stmt->procedure_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->procedure_name = stmt->procedure_path.components[0];
+    }
+
+    for (const auto& param : stmt->params) {
+        ResolvedRoutineParam resolved_param;
+        resolved_param.mode = static_cast<uint8_t>(param.mode);
+        resolved_param.name = param.name;
+        resolved_param.type = resolveTypeName(param.type);
+        resolved->params.push_back(std::move(resolved_param));
+    }
+
+    if (stmt->body != StringPool::INVALID_ID) {
+        resolved->body = std::string(string_pool_.get(stmt->body));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTrigger(CreateTriggerStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateTriggerStmt>();
+    resolved->span = stmt->span;
+    resolved->trigger_name = stmt->trigger_name;
+    resolved->table_path = stmt->table_path;
+    resolved->active = stmt->active;
+    resolved->timing = stmt->timing;
+    resolved->event = stmt->event;
+    resolved->granularity = stmt->granularity;
+    if (stmt->body != StringPool::INVALID_ID) {
+        resolved->body = std::string(string_pool_.get(stmt->body));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreatePackage(CreatePackageStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreatePackageStmt>();
+    resolved->span = stmt->span;
+    resolved->or_replace = stmt->or_replace;
+    resolved->is_body = stmt->is_body;
+
+    if (stmt->package_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->package_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->package_path.components[0];
+        }
+        resolved->package_name = stmt->package_path.components[1];
+    } else if (stmt->package_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->package_name = stmt->package_path.components[0];
+    }
+
+    if (stmt->header != StringPool::INVALID_ID) {
+        resolved->header = std::string(string_pool_.get(stmt->header));
+    }
+    if (stmt->body != StringPool::INVALID_ID) {
+        resolved->body = std::string(string_pool_.get(stmt->body));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateRole(CreateRoleStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateRoleStmt>();
+    resolved->span = stmt->span;
+    resolved->role_name = stmt->role_name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateException(CreateExceptionStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateExceptionStmt>();
+    resolved->span = stmt->span;
+
+    if (stmt->exception_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->exception_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->exception_path.components[0];
+        }
+        resolved->exception_name = stmt->exception_path.components[1];
+    } else if (stmt->exception_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->exception_name = stmt->exception_path.components[0];
+    }
+
+    if (stmt->message != StringPool::INVALID_ID) {
+        resolved->message = std::string(string_pool_.get(stmt->message));
     }
 
     return resolved;
@@ -4273,13 +4578,26 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropTable(DropTableStmt* stmt) {
 
     // Resolve each table
     for (const auto& table_path : stmt->tables) {
+        resolved->object_paths.push_back(table_path);
         auto table_ref = resolveTable(table_path, stmt->span, false);
         if (table_ref) {
-            resolved->object_uuids.push_back(table_ref->table_uuid);
         } else if (!stmt->if_exists) {
             // Error already reported by resolveTable
         }
     }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterIndex(AlterIndexStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterIndexStmt>();
+    resolved->span = stmt->span;
+    resolved->index_path = stmt->index_path;
+    resolved->active = (stmt->action == AlterIndexAction::ACTIVE);
 
     return resolved;
 }
@@ -4298,6 +4616,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropIndex(DropIndexStmt* stmt) {
     // Index resolution would require looking up indexes in catalog
     // For now, we just note the index names
     for (const auto& index_path : stmt->indexes) {
+        resolved->object_paths.push_back(index_path);
         if (!index_path.components.empty()) {
             // Would need catalog_.getIndex() or similar
             warning(stmt->span, "Index resolution not fully implemented");
@@ -4320,12 +4639,30 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropView(DropViewStmt* stmt) {
 
     // View resolution - views are treated like tables in catalog
     for (const auto& view_path : stmt->views) {
+        resolved->object_paths.push_back(view_path);
         auto view_ref = resolveTable(view_path, stmt->span, false);
         if (view_ref) {
-            resolved->object_uuids.push_back(view_ref->table_uuid);
         } else if (!stmt->if_exists) {
             // Error already reported
         }
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropSequence(DropSequenceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = ResolvedDropStmt::ObjectType::SEQUENCE;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = stmt->cascade;
+
+    for (const auto& sequence_path : stmt->sequences) {
+        resolved->object_paths.push_back(sequence_path);
     }
 
     return resolved;
@@ -4343,16 +4680,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeTruncateTable(TruncateTableStmt* s
     resolved->async_mode = !stmt->sync_mode;  // ASYNC is default (sync_mode = false)
 
     for (const auto& table_path : stmt->tables) {
+        resolved->table_paths.push_back(table_path);
         auto table_ref = resolveTable(table_path, stmt->span, false);
         if (table_ref) {
-            resolved->table_uuids.push_back(table_ref->table_uuid);
         } else {
             // Table resolution failed - error already reported
             return nullptr;
         }
     }
 
-    if (resolved->table_uuids.empty()) {
+    if (resolved->table_paths.empty()) {
         error(stmt->span, "TRUNCATE TABLE requires at least one table");
         return nullptr;
     }
@@ -6250,6 +6587,7 @@ ResolvedTableConstraint SemanticAnalyzerV2::analyzeTableConstraint(
             }
             // Resolve referenced table and columns
             if (!constraint->ref_table.components.empty()) {
+                resolved.fk_table_path = constraint->ref_table;
                 auto ref_table = resolveTable(constraint->ref_table, SourceSpan{}, false);
                 if (ref_table) {
                     resolved.fk_table_uuid = ref_table->table_uuid;
@@ -6259,6 +6597,14 @@ ResolvedTableConstraint SemanticAnalyzerV2::analyzeTableConstraint(
                                 resolved.fk_column_indexes.push_back(i);
                                 break;
                             }
+                        }
+                        if (ref_col_name != StringPool::INVALID_ID) {
+                            resolved.fk_column_names.push_back(ref_col_name);
+                        }
+                    }
+                    if (resolved.fk_column_names.empty()) {
+                        for (auto col_name : constraint->columns) {
+                            resolved.fk_column_names.push_back(col_name);
                         }
                     }
                 }

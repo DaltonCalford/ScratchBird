@@ -238,6 +238,10 @@ namespace scratchbird
                                      const std::vector<Value>& args,
                                      Value& result_out,
                                      core::ErrorContext* ctx = nullptr) -> core::Status;
+            void recordObjectDefinition(core::CatalogManager::ObjectType object_type,
+                                         const core::ID& object_id);
+            void deleteObjectDefinition(core::CatalogManager::ObjectType object_type,
+                                         const core::ID& object_id);
 
             core::Database *db_;
             core::CharsetManager charset_manager_;
@@ -250,6 +254,7 @@ namespace scratchbird
             // Execution state
             // Note: bytecode_ is a raw pointer that must remain valid during execute()
             const uint8_t *bytecode_;
+            const std::vector<uint8_t> *current_bytecode_vec_ = nullptr;
             size_t bytecode_size_;
             size_t pc_; // Program counter
             std::stack<Value> stack_;
@@ -411,6 +416,7 @@ namespace scratchbird
             void executeAlterTableSetTablespace(); // Phase 4 Task 4.1.6
             void executeDropTable();               // ALPHA Phase 1 - DDL Modifications
             void executeDropIndex();               // ALPHA Phase 1 - DDL Modifications
+            void executeAlterIndex();
             void executeAlterTable();              // ALPHA Phase 1 - DDL Modifications
             void executeRenameObject();
             void executeMoveObject();
@@ -494,6 +500,7 @@ namespace scratchbird
             void executeCreateFunctionStatement();
             void executeCreateProcedureStatement();
             void executeCreatePackageStatement();
+            void executeCreateExceptionStatement();
             void executeDropFunctionStatement();
             void executeDropProcedureStatement();
             void executeDropPackageStatement();
@@ -846,6 +853,9 @@ namespace scratchbird
             void executeShowSqlDialect();    // Execute SHOW SQL DIALECT
             void executeShowVersion();       // Execute SHOW VERSION
             void executeShowDatabase();      // Execute SHOW DATABASE
+            void executeShowVariable();      // Execute SHOW variable_name
+            void executeShowAll();           // Execute SHOW ALL
+            void executeShowTransactionLevel(); // Execute SHOW TRANSACTION ISOLATION LEVEL
 
             // Schema Navigation Commands
             void executeShowSchemaPath();    // Execute SHOW SCHEMA PATH

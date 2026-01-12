@@ -301,6 +301,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Phase 1.4-1.5: Dependencies and Comments (Catalog Corrections)
         uint32_t dependencies_page;   // Page containing dependencies table
         uint32_t comments_page;       // Page containing comments table
+        uint32_t object_definitions_page; // Page containing DDL definitions table
 
         // Phase 2: Security tables (Catalog Corrections)
         uint32_t users_page;          // Page containing users table
@@ -357,7 +358,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         ID policy_toast_table_id;     // UUID for policy expression TOAST storage
 
-        uint8_t reserved[3812];       // Padding for 4KB page (284 bytes used)
+        uint8_t reserved[3808];       // Padding for 4KB page (288 bytes used)
     };
 
     // Schema record on disk
@@ -819,6 +820,20 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t reserved[7];        // Alignment
         ID owner_id;                // Owner UUID reference
         uint32_t comment_text_oid;  // TOAST reference - unlimited size comment text
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Object definition record on disk (DDL source + bytecode)
+    struct ObjectDefinitionRecord
+    {
+        ID object_id;
+        uint8_t object_type;        // CatalogManager::ObjectType
+        uint8_t reserved[7];        // Alignment
+        uint32_t ddl_text_oid;      // TOAST reference for original DDL SQL
+        uint32_t bytecode_oid;      // TOAST reference for compiled SBLR bytecode
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1671,6 +1686,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = db_->write_page(comments_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
+        // Object definitions table (DDL source + bytecode)
+        status = pm->allocatePage(object_definitions_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = object_definitions_table_page_;
+        status = db_->write_page(object_definitions_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
         // Users table (Phase 2)
         status = pm->allocatePage(users_table_page_, ctx);
         if (status != Status::OK) return status;
@@ -2261,6 +2283,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 {
                     return status;
                 }
+                status = backfill_catalog_page(object_definitions_table_page_, "object_definitions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
                 status = backfill_catalog_page(users_table_page_, "users");
                 if (status != Status::OK)
                 {
@@ -2601,6 +2628,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 else
                 {
                     DEBUG_LOG_DB("Loaded " << comment_cache_.size() << " comments");
+                }
+
+                // Load object definitions (DDL source + bytecode)
+                status = readObjectDefinitionRecords(ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(CATALOG, "Failed to load object definitions: %d (continuing)",
+                                static_cast<int>(status));
+                }
+                else
+                {
+                    DEBUG_LOG_DB("Loaded " << object_definition_cache_.size()
+                                 << " object definitions");
                 }
 
                 // Phase D: Load foreign keys
@@ -4082,7 +4122,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return st;
         }
 
-        std::lock_guard<std::mutex> lock(resolver_cache_mutex_);
+        std::unique_lock<std::mutex> lock(resolver_cache_mutex_);
         auto it = resolver_by_id_.find(object_id);
         if (it == resolver_by_id_.end())
         {
@@ -4103,7 +4143,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return st;
         }
 
-        std::lock_guard<std::mutex> lock(resolver_cache_mutex_);
+        std::unique_lock<std::mutex> lock(resolver_cache_mutex_);
         out.clear();
         out.reserve(resolver_by_id_.size());
 
@@ -4168,7 +4208,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return st;
         }
 
-        std::lock_guard<std::mutex> lock(resolver_cache_mutex_);
+        std::unique_lock<std::mutex> lock(resolver_cache_mutex_);
 
         ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
         ID current_schema_id = conn_ctx ? conn_ctx->getCurrentSchemaId() : ID{};
@@ -4184,6 +4224,165 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             dialect_tag = "scratchbird";
         }
         bool allow_search_path = opts.allow_search_path && !path.no_search_path;
+
+        struct PermissionTarget
+        {
+            ID object_id;
+            ObjectType object_type = ObjectType::UNKNOWN;
+            ID parent_object_id;
+            std::string object_name;
+        };
+
+        auto build_permission_target = [&](const ID& object_id, ObjectType object_type) {
+            PermissionTarget target{};
+            target.object_id = object_id;
+            target.object_type = object_type;
+            auto it = resolver_by_id_.find(object_id);
+            if (it != resolver_by_id_.end())
+            {
+                target.parent_object_id = it->second.parent_object_id;
+                target.object_name = it->second.object_name;
+            }
+            return target;
+        };
+
+        auto enforce_permissions = [&](const PermissionTarget& target,
+                                       ErrorContext* perm_ctx) -> Status {
+            if (opts.required_privilege == 0)
+            {
+                return Status::OK;
+            }
+
+            if (!conn_ctx)
+            {
+                return Status::OK;
+            }
+
+            if (conn_ctx->isSuperuser())
+            {
+                return Status::OK;
+            }
+
+            const ID& user_id = conn_ctx->getCurrentUserId();
+            if (isZeroUuidLocal(user_id))
+            {
+                return Status::OK;
+            }
+
+            auto privilege = static_cast<Privilege>(opts.required_privilege);
+
+            auto privilege_name = [&](uint32_t priv) -> std::string {
+                switch (static_cast<Privilege>(priv))
+                {
+                    case Privilege::SELECT: return "SELECT";
+                    case Privilege::INSERT: return "INSERT";
+                    case Privilege::UPDATE: return "UPDATE";
+                    case Privilege::DELETE: return "DELETE";
+                    case Privilege::TRUNCATE: return "TRUNCATE";
+                    case Privilege::REFERENCES: return "REFERENCES";
+                    case Privilege::TRIGGER: return "TRIGGER";
+                    case Privilege::CREATE: return "CREATE";
+                    case Privilege::USAGE: return "USAGE";
+                    case Privilege::SEQUENCE_USAGE: return "SEQUENCE USAGE";
+                    case Privilege::SEQUENCE_UPDATE: return "SEQUENCE UPDATE";
+                    case Privilege::EXECUTE: return "EXECUTE";
+                    case Privilege::CONNECT: return "CONNECT";
+                    case Privilege::TEMPORARY: return "TEMPORARY";
+                    case Privilege::COPY_FILE: return "COPY_FILE";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            ObjectType object_type = target.object_type;
+
+            if (object_type == ObjectType::COLUMN)
+            {
+                if (isZeroUuidLocal(target.parent_object_id) || target.object_name.empty())
+                {
+                    SET_ERROR_CONTEXT(perm_ctx, Status::INVALID_ARGUMENT,
+                                      "Column permission metadata unavailable");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                bool has_perm = false;
+                Status st = hasColumnPermission(user_id, target.parent_object_id,
+                                                target.object_name, privilege,
+                                                has_perm, perm_ctx);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+                if (!has_perm)
+                {
+                    std::string msg = "Permission denied: " + privilege_name(opts.required_privilege) +
+                                      " on column " + target.object_name;
+                    SET_ERROR_CONTEXT(perm_ctx, Status::INSUFFICIENT_PRIVILEGE, msg.c_str());
+                    return Status::INSUFFICIENT_PRIVILEGE;
+                }
+                return Status::OK;
+            }
+
+            PermissionObjectType perm_type = PermissionObjectType::TABLE;
+            ID perm_object_id = target.object_id;
+
+            switch (object_type)
+            {
+                case ObjectType::TABLE:
+                    perm_type = PermissionObjectType::TABLE;
+                    break;
+                case ObjectType::VIEW:
+                    perm_type = PermissionObjectType::VIEW;
+                    break;
+                case ObjectType::SEQUENCE:
+                    perm_type = PermissionObjectType::SEQUENCE;
+                    break;
+                case ObjectType::PROCEDURE:
+                    perm_type = PermissionObjectType::PROCEDURE;
+                    break;
+                case ObjectType::FUNCTION:
+                    perm_type = PermissionObjectType::FUNCTION;
+                    break;
+                case ObjectType::DOMAIN:
+                    perm_type = PermissionObjectType::DOMAIN;
+                    break;
+                case ObjectType::DATABASE:
+                    perm_type = PermissionObjectType::DATABASE;
+                    break;
+                case ObjectType::INDEX:
+                case ObjectType::TRIGGER:
+                case ObjectType::CONSTRAINT:
+                    if (!isZeroUuidLocal(target.parent_object_id))
+                    {
+                        perm_object_id = target.parent_object_id;
+                    }
+                    perm_type = PermissionObjectType::TABLE;
+                    break;
+                default:
+                    return Status::OK;
+            }
+
+            bool has_perm = false;
+            Status perm_status = hasPermission(user_id, perm_object_id, perm_type,
+                                               privilege, has_perm, perm_ctx);
+            if (perm_status != Status::OK)
+            {
+                return perm_status;
+            }
+            if (!has_perm)
+            {
+                std::string obj_label = target.object_id.toString();
+                if (!target.object_name.empty())
+                {
+                    obj_label = target.object_name;
+                }
+                std::string msg = "Permission denied: " + privilege_name(opts.required_privilege) +
+                                  " on object " + obj_label;
+                SET_ERROR_CONTEXT(perm_ctx, Status::INSUFFICIENT_PRIVILEGE, msg.c_str());
+                return Status::INSUFFICIENT_PRIVILEGE;
+            }
+
+            return Status::OK;
+        };
 
         const std::string root_name = "root";
         ID root_schema_id{};
@@ -4329,6 +4528,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 case ObjectType::TRIGGER:
                 case ObjectType::CONSTRAINT:
                 case ObjectType::COLUMN:
+                case ObjectType::POLICY:
                     return true;
                 default:
                     return false;
@@ -4681,6 +4881,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 }
                 object_id_out = id_out;
                 type_out = expected_type;
+                PermissionTarget target = build_permission_target(object_id_out, type_out);
+                lock.unlock();
+                Status perm_status = enforce_permissions(target, ctx);
+                if (perm_status != Status::OK)
+                {
+                    return perm_status;
+                }
                 return Status::OK;
             }
 
@@ -4696,6 +4903,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 }
                 object_id_out = id_out;
                 type_out = type_local;
+                PermissionTarget target = build_permission_target(object_id_out, type_out);
+                lock.unlock();
+                Status perm_status = enforce_permissions(target, ctx);
+                if (perm_status != Status::OK)
+                {
+                    return perm_status;
+                }
                 return Status::OK;
             }
 
@@ -4709,6 +4923,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
             object_id_out = id_out;
             type_out = type_local;
+            PermissionTarget target = build_permission_target(object_id_out, type_out);
+            lock.unlock();
+            Status perm_status = enforce_permissions(target, ctx);
+            if (perm_status != Status::OK)
+            {
+                return perm_status;
+            }
             return Status::OK;
         }
 
@@ -4783,6 +5004,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         object_id_out = matches.front().first;
         type_out = matches.front().second;
+        PermissionTarget target = build_permission_target(object_id_out, type_out);
+        lock.unlock();
+        Status perm_status = enforce_permissions(target, ctx);
+        if (perm_status != Status::OK)
+        {
+            return perm_status;
+        }
         return Status::OK;
     }
 
@@ -5832,8 +6060,54 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     }
 
     auto CatalogManager::getColumns(const ID &table_id, std::vector<ColumnInfo> &columns,
-                                    ErrorContext *ctx) -> Status
+                                    ErrorContext *ctx,
+                                    uint32_t required_privilege) -> Status
     {
+        if (required_privilege != 0)
+        {
+            ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+            if (conn_ctx && !conn_ctx->isSuperuser())
+            {
+                bool has_perm = false;
+                Status perm_status = hasPermission(conn_ctx->getCurrentUserId(), table_id,
+                                                   PermissionObjectType::TABLE,
+                                                   static_cast<Privilege>(required_privilege),
+                                                   has_perm, ctx);
+                if (perm_status != Status::OK)
+                {
+                    return perm_status;
+                }
+                if (!has_perm)
+                {
+                    auto privilege_name = [&](uint32_t priv) -> std::string {
+                        switch (static_cast<Privilege>(priv))
+                        {
+                            case Privilege::SELECT: return "SELECT";
+                            case Privilege::INSERT: return "INSERT";
+                            case Privilege::UPDATE: return "UPDATE";
+                            case Privilege::DELETE: return "DELETE";
+                            case Privilege::TRUNCATE: return "TRUNCATE";
+                            case Privilege::REFERENCES: return "REFERENCES";
+                            case Privilege::TRIGGER: return "TRIGGER";
+                            case Privilege::CREATE: return "CREATE";
+                            case Privilege::USAGE: return "USAGE";
+                            case Privilege::SEQUENCE_USAGE: return "SEQUENCE USAGE";
+                            case Privilege::SEQUENCE_UPDATE: return "SEQUENCE UPDATE";
+                            case Privilege::EXECUTE: return "EXECUTE";
+                            case Privilege::CONNECT: return "CONNECT";
+                            case Privilege::TEMPORARY: return "TEMPORARY";
+                            case Privilege::COPY_FILE: return "COPY_FILE";
+                            default: return "UNKNOWN";
+                        }
+                    };
+                    std::string msg = "Permission denied: " +
+                        privilege_name(required_privilege) + " on table";
+                    SET_ERROR_CONTEXT(ctx, Status::INSUFFICIENT_PRIVILEGE, msg.c_str());
+                    return Status::INSUFFICIENT_PRIVILEGE;
+                }
+            }
+        }
+
         std::lock_guard<CatalogMutex> lock(mutex_);
         auto it = column_cache_.find(table_id);
         if (it == column_cache_.end())
@@ -6320,7 +6594,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     }
 
     auto CatalogManager::listIndexesForTable(const ID &table_id, std::vector<IndexInfo> &indexes,
-                                             ErrorContext *ctx) -> Status
+                                             ErrorContext *ctx, bool include_inactive) -> Status
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
         indexes.clear();
@@ -6329,6 +6603,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             if (info.table_id == table_id)
             {
+                if (!include_inactive &&
+                    info.state != static_cast<uint8_t>(IndexState::ACTIVE))
+                {
+                    continue;
+                }
                 indexes.push_back(info);
             }
         }
@@ -6409,6 +6688,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Phase 6.1: New system tables
         root->dependencies_page = dependencies_table_page_;
         root->comments_page = comments_table_page_;
+        root->object_definitions_page = object_definitions_table_page_;
         root->users_page = users_table_page_;
         root->roles_page = roles_table_page_;
         root->groups_page = groups_table_page_;
@@ -6505,6 +6785,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Phase 6.1: New system tables
         dependencies_table_page_ = root->dependencies_page;
         comments_table_page_ = root->comments_page;
+        object_definitions_table_page_ = root->object_definitions_page;
         users_table_page_ = root->users_page;
         roles_table_page_ = root->roles_page;
         groups_table_page_ = root->groups_page;
@@ -7266,6 +7547,75 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         bp->unpinPage(tables_table_page_, found, ctx);
+        return found ? Status::OK : Status::NOT_FOUND;
+    }
+
+    auto CatalogManager::updateTableStorageParams(const ID& table_id,
+                                                  const std::string& storage_params,
+                                                  ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        BufferPool* bp = db_->buffer_pool();
+        void* page_data;
+        Status status = bp->pinPage(tables_table_page_, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
+        auto* mutable_page_data = static_cast<uint8_t*>(page_data);
+        bool found = false;
+        uint32_t new_oid = 0;
+        uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+        for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+        {
+            const uint8_t* tuple_data;
+            uint32_t tuple_size;
+
+            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            {
+                if (tuple_size >= sizeof(TupleHeader) + sizeof(TableRecord))
+                {
+                    const ptrdiff_t offset =
+                        tuple_data - static_cast<const uint8_t*>(page_data);
+                    auto* record = reinterpret_cast<TableRecord*>(
+                        mutable_page_data + offset + sizeof(TupleHeader));
+
+                    if (record->table_id == table_id && record->is_valid == 1)
+                    {
+                        if (!storage_params.empty())
+                        {
+                            uint64_t xmin = 0;
+                            status = storeStringInToast(storage_params, xmin, new_oid, ctx);
+                            if (status != Status::OK)
+                            {
+                                bp->unpinPage(tables_table_page_, false, ctx);
+                                return status;
+                            }
+                        }
+                        record->storage_params_oid = new_oid;
+                        record->last_modified_time = now;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        bp->unpinPage(tables_table_page_, found, ctx);
+        if (found)
+        {
+            auto it = table_cache_.find(table_id);
+            if (it != table_cache_.end())
+            {
+                it->second.storage_params_oid = new_oid;
+                it->second.last_modified_time = now;
+            }
+        }
+
         return found ? Status::OK : Status::NOT_FOUND;
     }
 
@@ -13169,14 +13519,39 @@ Status CatalogManager::dropIndexInternal(const ID &index_id, ErrorContext *ctx)
     return Status::OK;
 }
 
-Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
-{
-    // DROP INDEX implementation (ALPHA Phase 1 - DDL Modifications)
-    // Implements soft delete with MGA compliance
+    Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
+    {
+        // DROP INDEX implementation (ALPHA Phase 1 - DDL Modifications)
+        // Implements soft delete with MGA compliance
 
-    std::unique_lock<CatalogMutex> lock(mutex_);
-    return dropIndexInternal(index_id, ctx);
-}
+        std::unique_lock<CatalogMutex> lock(mutex_);
+        return dropIndexInternal(index_id, ctx);
+    }
+
+    Status CatalogManager::alterIndexState(const ID &index_id, IndexState state, ErrorContext *ctx)
+    {
+        std::unique_lock<CatalogMutex> lock(mutex_);
+
+        auto it = index_cache_.find(index_id);
+        if (it == index_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index not found");
+            return Status::NOT_FOUND;
+        }
+
+        IndexInfo updated = it->second;
+        updated.state = static_cast<uint8_t>(state);
+
+        Status status = writeIndexRecord(updated, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update index state");
+            return status;
+        }
+
+        it->second = updated;
+        return Status::OK;
+    }
 
 // ============================================================================
 // Plan 01 Task E: Shadow Index Rebuild + Versioning
@@ -19545,6 +19920,7 @@ auto CatalogManager::objectTypeToString(ObjectType type) -> std::string
         case ObjectType::COMMENT: return "comment";
         case ObjectType::DEPENDENCY: return "dependency";
         case ObjectType::PERMISSION: return "permission";
+        case ObjectType::POLICY: return "policy";
         case ObjectType::STATISTIC: return "statistic";
         case ObjectType::TIMEZONE: return "timezone";
         case ObjectType::EXTENSION: return "extension";
@@ -19720,6 +20096,30 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
             ConstraintInfo info;
             if (getConstraint(object_id, info, ctx) == Status::OK) {
                 return info.constraint_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::POLICY: {
+            {
+                std::lock_guard<std::mutex> lock(policy_cache_mutex_);
+                auto it = policy_cache_.find(object_id);
+                if (it != policy_cache_.end()) {
+                    return it->second.policy_name;
+                }
+            }
+
+            if (policies_table_page_ == 0) {
+                return "<unknown>";
+            }
+
+            std::lock_guard<CatalogMutex> lock(mutex_);
+            auto predicate = [&](const PolicyRecord& rec) {
+                return rec.is_valid && rec.policy_id == object_id;
+            };
+            auto result = findRecordInHeapPage<PolicyRecord>(policies_table_page_, predicate, ctx);
+            if (result.status == Status::OK) {
+                return std::string(result.record.policy_name);
             }
             return "<unknown>";
         }
@@ -19977,6 +20377,11 @@ auto CatalogManager::getObjectNameInternal(const ID& object_id, ObjectType type,
             return "<unknown>";
         }
 
+        case ObjectType::POLICY: {
+            auto it = policy_cache_.find(object_id);
+            return it != policy_cache_.end() ? it->second.policy_name : "<unknown>";
+        }
+
         case ObjectType::PACKAGE: {
             PackageInfo info;
             if (getPackage(object_id, info, ctx) == Status::OK) {
@@ -20139,6 +20544,7 @@ void CatalogManager::resolveDependencyNamesInternal(const std::vector<Dependency
                                                      ErrorContext* ctx)
 {
     // NO LOCK - caller must hold appropriate mutexes for the object types being queried
+    std::lock_guard<std::mutex> policy_lock(policy_cache_mutex_);
     names_out.clear();
     names_out.reserve(deps.size());
 
@@ -20296,6 +20702,80 @@ auto CatalogManager::deleteComment(const ID& object_id, ErrorContext* ctx) -> St
 }
 
 // ========================================================================
+// Object Definition Operations (DDL source + bytecode)
+// ========================================================================
+
+auto CatalogManager::setObjectDefinition(const ObjectDefinitionInfo& info,
+                                         ErrorContext* ctx) -> Status
+{
+    if (isZeroUuidLocal(info.object_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid object ID for definition");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ObjectDefinitionInfo stored = info;
+    uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
+                       std::chrono::system_clock::now().time_since_epoch()).count();
+
+    {
+        std::lock_guard<std::mutex> lock(object_definition_cache_mutex_);
+        auto it = object_definition_cache_.find(info.object_id);
+        if (it != object_definition_cache_.end())
+        {
+            stored.created_time = it->second.created_time;
+        }
+        else if (stored.created_time == 0)
+        {
+            stored.created_time = now;
+        }
+        stored.last_modified_time = now;
+
+        object_definition_cache_[info.object_id] = stored;
+    }
+
+    Status status = writeObjectDefinitionRecord(stored, ctx);
+    if (status != Status::OK)
+    {
+        std::lock_guard<std::mutex> lock(object_definition_cache_mutex_);
+        if (stored.created_time == now)
+        {
+            object_definition_cache_.erase(info.object_id);
+        }
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getObjectDefinition(const ID& object_id,
+                                         ObjectDefinitionInfo& info_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(object_definition_cache_mutex_);
+    auto it = object_definition_cache_.find(object_id);
+    if (it == object_definition_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Object definition not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::deleteObjectDefinition(const ID& object_id,
+                                            ErrorContext* ctx) -> Status
+{
+    {
+        std::lock_guard<std::mutex> lock(object_definition_cache_mutex_);
+        object_definition_cache_.erase(object_id);
+    }
+
+    return deleteObjectDefinitionRecord(object_id, ctx);
+}
+
+// ========================================================================
 // Dependency Persistence (Phase 6.2)
 // ========================================================================
 
@@ -20411,6 +20891,112 @@ auto CatalogManager::readCommentRecords(ErrorContext *ctx) -> Status
 
     return readRecordsFromHeapPage<CommentRecord, CommentInfo, ID>(
         comments_table_page_, comment_cache_, converter, key_extractor, ctx);
+}
+
+// ============================================================================
+// Object Definition Persistence (DDL source + bytecode)
+// ============================================================================
+
+auto CatalogManager::writeObjectDefinitionRecord(const ObjectDefinitionInfo &definition,
+                                                 ErrorContext *ctx) -> Status
+{
+    ObjectDefinitionRecord record{};
+    record.object_id = definition.object_id;
+    record.object_type = static_cast<uint8_t>(definition.object_type);
+    record.ddl_text_oid = 0;
+    record.bytecode_oid = 0;
+    record.created_time = definition.created_time;
+    record.last_modified_time = definition.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!definition.ddl_text.empty())
+    {
+        Status toast_status = storeStringInToast(definition.ddl_text, xmin,
+                                                 record.ddl_text_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store DDL text in TOAST");
+            return toast_status;
+        }
+    }
+
+    if (!definition.bytecode.empty())
+    {
+        std::string bytecode_blob(definition.bytecode.begin(), definition.bytecode.end());
+        Status toast_status = storeStringInToast(bytecode_blob, xmin,
+                                                 record.bytecode_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store DDL bytecode in TOAST");
+            return toast_status;
+        }
+    }
+
+    auto matcher = [&definition](const ObjectDefinitionRecord &rec) {
+        return rec.object_id == definition.object_id &&
+               rec.object_type == static_cast<uint8_t>(definition.object_type);
+    };
+
+    auto result = findRecordInHeapPage<ObjectDefinitionRecord>(
+        object_definitions_table_page_, matcher, ctx);
+    if (result.status == Status::OK)
+    {
+        return updateRecordInHeapPage(object_definitions_table_page_, result.slot_index,
+                                      record, ctx);
+    }
+
+    return writeRecordToHeapPage(object_definitions_table_page_, record, ctx);
+}
+
+auto CatalogManager::deleteObjectDefinitionRecord(const ID &object_id,
+                                                  ErrorContext *ctx) -> Status
+{
+    auto matcher = [&object_id](const ObjectDefinitionRecord &record) {
+        return record.object_id == object_id;
+    };
+    return deleteRecordFromHeapPage<ObjectDefinitionRecord>(
+        object_definitions_table_page_, matcher, ctx);
+}
+
+auto CatalogManager::readObjectDefinitionRecords(ErrorContext *ctx) -> Status
+{
+    if (object_definitions_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+
+    auto converter = [this, xmin, ctx](const ObjectDefinitionRecord &record,
+                                       ObjectDefinitionInfo &info) {
+        info.object_id = record.object_id;
+        info.object_type = static_cast<ObjectType>(record.object_type);
+        info.ddl_text.clear();
+        info.bytecode.clear();
+
+        if (record.ddl_text_oid != 0)
+        {
+            loadStringFromToast(record.ddl_text_oid, xmin, info.ddl_text, ctx);
+        }
+        if (record.bytecode_oid != 0)
+        {
+            std::string bytecode_blob;
+            loadStringFromToast(record.bytecode_oid, xmin, bytecode_blob, ctx);
+            if (!bytecode_blob.empty())
+            {
+                info.bytecode.assign(bytecode_blob.begin(), bytecode_blob.end());
+            }
+        }
+
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    auto key_extractor = [](const ObjectDefinitionInfo &info) { return info.object_id; };
+
+    return readRecordsFromHeapPage<ObjectDefinitionRecord, ObjectDefinitionInfo, ID>(
+        object_definitions_table_page_, object_definition_cache_, converter, key_extractor, ctx);
 }
 
 // ============================================================================

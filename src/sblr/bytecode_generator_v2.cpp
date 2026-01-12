@@ -333,6 +333,18 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateAlterSchema(alter_schema);
     } else if (auto* create_database = dynamic_cast<ResolvedCreateDatabaseStmt*>(stmt)) {
         generateCreateDatabase(create_database);
+    } else if (auto* create_function = dynamic_cast<ResolvedCreateFunctionStmt*>(stmt)) {
+        generateCreateFunction(create_function);
+    } else if (auto* create_procedure = dynamic_cast<ResolvedCreateProcedureStmt*>(stmt)) {
+        generateCreateProcedure(create_procedure);
+    } else if (auto* create_trigger = dynamic_cast<ResolvedCreateTriggerStmt*>(stmt)) {
+        generateCreateTrigger(create_trigger);
+    } else if (auto* create_package = dynamic_cast<ResolvedCreatePackageStmt*>(stmt)) {
+        generateCreatePackage(create_package);
+    } else if (auto* create_role = dynamic_cast<ResolvedCreateRoleStmt*>(stmt)) {
+        generateCreateRole(create_role);
+    } else if (auto* create_exception = dynamic_cast<ResolvedCreateExceptionStmt*>(stmt)) {
+        generateCreateException(create_exception);
     } else if (auto* create_domain = dynamic_cast<ResolvedCreateDomainStmt*>(stmt)) {
         generateCreateDomain(create_domain);
     } else if (auto* alter_domain = dynamic_cast<ResolvedAlterDomainStmt*>(stmt)) {
@@ -345,6 +357,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateAlterDatabase(alter_database);
     } else if (auto* alter_table = dynamic_cast<ResolvedAlterTableStmt*>(stmt)) {
         generateAlterTable(alter_table);
+    } else if (auto* alter_index = dynamic_cast<ResolvedAlterIndexStmt*>(stmt)) {
+        generateAlterIndex(alter_index);
     } else if (auto* rename_obj = dynamic_cast<ResolvedRenameObjectStmt*>(stmt)) {
         generateRenameObject(rename_obj);
     } else if (auto* move_obj = dynamic_cast<ResolvedMoveObjectStmt*>(stmt)) {
@@ -365,6 +379,10 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateSet(set);
     } else if (auto* show = dynamic_cast<ResolvedShowStmt*>(stmt)) {
         generateShow(show);
+    } else if (auto* grant = dynamic_cast<ResolvedGrantStmt*>(stmt)) {
+        generateGrant(grant);
+    } else if (auto* revoke = dynamic_cast<ResolvedRevokeStmt*>(stmt)) {
+        generateRevoke(revoke);
     } else if (auto* truncate = dynamic_cast<ResolvedTruncateTableStmt*>(stmt)) {
         generateTruncateTable(truncate);
     } else if (auto* explain = dynamic_cast<ResolvedExplainStmt*>(stmt)) {
@@ -781,8 +799,16 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
     // Write END_LIST opcode
     current_result_->writeOpcode(sblr::Opcode::END_LIST);
 
-    // Write tablespace name (empty string if none)
-    current_result_->writeString("");  // No tablespace support in v2 yet
+    auto fk_action_string = [](ForeignKeyAction action) -> const char* {
+        switch (action) {
+            case ForeignKeyAction::CASCADE: return "CASCADE";
+            case ForeignKeyAction::SET_NULL: return "SET NULL";
+            case ForeignKeyAction::SET_DEFAULT: return "SET DEFAULT";
+            case ForeignKeyAction::RESTRICT: return "RESTRICT";
+            case ForeignKeyAction::NO_ACTION:
+            default: return "NO ACTION";
+        }
+    };
 
     // Write table-level FK constraints
     for (const auto& constraint : stmt->constraints) {
@@ -797,21 +823,24 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
                 }
             }
 
-            // Write parent table name (we need to look this up - use UUID for now)
-            // For simplicity, write a placeholder - FK support needs more work
-            current_result_->writeString("");  // Parent table name placeholder
+            // Write parent table name
+            if (!constraint.fk_table_path.components.empty()) {
+                current_result_->writeString(schemaPathToString(constraint.fk_table_path, string_pool_));
+            } else {
+                current_result_->writeString("");
+            }
 
             // Write parent column count and names
-            current_result_->writeByte(static_cast<uint8_t>(constraint.fk_column_indexes.size()));
-            for (uint32_t idx : constraint.fk_column_indexes) {
-                current_result_->writeInt32(idx);  // Column index in parent
+            current_result_->writeByte(static_cast<uint8_t>(constraint.fk_column_names.size()));
+            for (auto col_name : constraint.fk_column_names) {
+                writeStringId(col_name);
             }
 
             // Write ON DELETE action
-            current_result_->writeString("NO ACTION");  // Default
+            current_result_->writeString(fk_action_string(constraint.on_delete));
 
             // Write ON UPDATE action
-            current_result_->writeString("NO ACTION");  // Default
+            current_result_->writeString(fk_action_string(constraint.on_update));
 
             // Write constraint name
             if (constraint.name != StringPool::INVALID_ID) {
@@ -824,6 +853,9 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
             current_result_->writeByte(0);  // Not deferrable
         }
     }
+
+    // Write tablespace name (empty string if none)
+    current_result_->writeString("");  // No tablespace support in v2 yet
 }
 
 void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
@@ -899,41 +931,112 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
 }
 
 void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
-    if (stmt->materialized) {
-        current_result_->writeOpcode(sblr::Opcode::REFRESH_MATERIALIZED_VIEW);
-    } else {
-        current_result_->writeOpcode(sblr::Opcode::CREATE_VIEW);
-    }
+    current_result_->writeOpcode(sblr::Opcode::CREATE_VIEW);
 
     std::vector<std::pair<scratchbird::core::ID, ObjectType>> deps;
     if (stmt->query) {
         deps = collectDependencies(stmt->query);
     }
 
+    std::string view_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        view_name = std::string(getString(stmt->schema.schema_name));
+        view_name += ".";
+        view_name += std::string(getString(stmt->view_name));
+    } else {
+        view_name = std::string(getString(stmt->view_name));
+    }
+
+    // Write view name
+    current_result_->writeString(view_name);
+
     // Write flags
     uint8_t flags = 0;
     if (stmt->or_replace) flags |= 0x01;
-    if (stmt->materialized) flags |= 0x02;
-    if (stmt->check_option) flags |= 0x04;
+    if (stmt->check_option) flags |= 0x02;
+    if (!stmt->column_names.empty()) flags |= 0x04;
+    if (stmt->materialized) flags |= 0x08;
     if (!deps.empty()) flags |= 0x10;
     current_result_->writeByte(flags);
 
-    // Write schema UUID
-    current_result_->writeUUID(stmt->schema.schema_uuid);
-
-    // Write view name
-    writeStringId(stmt->view_name);
-
     // Write column names if specified
-    current_result_->writeListCount(static_cast<uint64_t>(stmt->column_names.size()));
-    for (auto col_name : stmt->column_names) {
-        writeStringId(col_name);
+    if (!stmt->column_names.empty()) {
+        if (stmt->column_names.size() > std::numeric_limits<uint8_t>::max()) {
+            current_result_->addError("CREATE VIEW column list exceeds 255 entries");
+            current_result_->writeByte(0);
+        } else {
+            current_result_->writeByte(static_cast<uint8_t>(stmt->column_names.size()));
+            for (auto col_name : stmt->column_names) {
+                writeStringId(col_name);
+            }
+        }
     }
 
-    // Write query
+    auto extract_sql = [&](const SourceSpan& span) -> std::string {
+        if (source_sql_.empty() || span.length == 0) {
+            return {};
+        }
+        size_t start = span.start.offset;
+        if (start >= source_sql_.size()) {
+            return {};
+        }
+        size_t len = span.length;
+        if (start + len > source_sql_.size()) {
+            len = source_sql_.size() - start;
+        }
+        std::string_view slice = source_sql_.substr(start, len);
+        auto ltrim = [](std::string_view in) -> std::string_view {
+            size_t pos = 0;
+            while (pos < in.size() && std::isspace(static_cast<unsigned char>(in[pos]))) {
+                ++pos;
+            }
+            return in.substr(pos);
+        };
+        auto rtrim = [](std::string_view in) -> std::string_view {
+            size_t end = in.size();
+            while (end > 0 && std::isspace(static_cast<unsigned char>(in[end - 1]))) {
+                --end;
+            }
+            if (end > 0 && in[end - 1] == ';') {
+                --end;
+                while (end > 0 && std::isspace(static_cast<unsigned char>(in[end - 1]))) {
+                    --end;
+                }
+            }
+            return in.substr(0, end);
+        };
+        std::string_view trimmed = rtrim(ltrim(slice));
+        return std::string(trimmed);
+    };
+
+    std::string definition;
     if (stmt->query) {
-        generateSelect(stmt->query);
+        definition = extract_sql(stmt->query->span);
+        if (definition.empty()) {
+            current_result_->addWarning("CREATE VIEW definition could not be extracted from source SQL");
+        } else {
+            auto starts_with_keyword = [](const std::string& text, const char* keyword) -> bool {
+                size_t i = 0;
+                while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) {
+                    ++i;
+                }
+                size_t k = 0;
+                while (keyword[k] != '\0' && i + k < text.size()) {
+                    if (std::tolower(static_cast<unsigned char>(text[i + k])) !=
+                        std::tolower(static_cast<unsigned char>(keyword[k]))) {
+                        return false;
+                    }
+                    ++k;
+                }
+                return keyword[k] == '\0';
+            };
+            if (!starts_with_keyword(definition, "select") &&
+                !starts_with_keyword(definition, "with")) {
+                definition = "SELECT " + definition;
+            }
+        }
     }
+    current_result_->writeString(definition);
 
     if (!deps.empty()) {
         current_result_->writeListCount(static_cast<uint64_t>(deps.size()));
@@ -991,6 +1094,182 @@ void BytecodeGeneratorV2::generateCreateDatabase(ResolvedCreateDatabaseStmt* stm
     for (const auto& alias : stmt->aliases) {
         current_result_->writeString(alias);
     }
+}
+
+void BytecodeGeneratorV2::generateCreateFunction(ResolvedCreateFunctionStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_FUNCTION_STMT));
+
+    uint8_t flags = 0;
+    if (stmt->or_replace) flags |= 0x01;
+    if (stmt->deterministic) flags |= 0x02;
+    if (stmt->sql_security == RoutineSqlSecurity::DEFINER) flags |= 0x04;
+    current_result_->writeByte(flags);
+
+    std::string func_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        func_name = std::string(getString(stmt->schema.schema_name));
+        func_name += ".";
+        func_name += std::string(getString(stmt->function_name));
+    } else {
+        func_name = std::string(getString(stmt->function_name));
+    }
+    current_result_->writeString(func_name);
+
+    if (stmt->params.size() > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("CREATE FUNCTION parameter list exceeds 255 entries");
+        current_result_->writeByte(0);
+    } else {
+        current_result_->writeByte(static_cast<uint8_t>(stmt->params.size()));
+    }
+
+    auto type_precision = [](const ResolvedType& type) -> uint32_t {
+        if (type.precision.has_value()) return static_cast<uint32_t>(*type.precision);
+        if (type.length.has_value()) return static_cast<uint32_t>(*type.length);
+        return 0;
+    };
+    auto type_scale = [](const ResolvedType& type) -> uint32_t {
+        if (type.scale.has_value()) return static_cast<uint32_t>(*type.scale);
+        return 0;
+    };
+
+    for (const auto& param : stmt->params) {
+        current_result_->writeByte(param.mode);
+        writeStringId(param.name);
+        current_result_->writeByte(static_cast<uint8_t>(param.type.data_type));
+        current_result_->writeInt32(type_precision(param.type));
+        current_result_->writeInt32(type_scale(param.type));
+    }
+
+    current_result_->writeByte(static_cast<uint8_t>(stmt->return_type.data_type));
+    current_result_->writeInt32(type_precision(stmt->return_type));
+    current_result_->writeInt32(type_scale(stmt->return_type));
+
+    current_result_->writeString(stmt->body);
+}
+
+void BytecodeGeneratorV2::generateCreateProcedure(ResolvedCreateProcedureStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
+
+    uint8_t flags = 0;
+    if (stmt->or_replace) flags |= 0x01;
+    if (stmt->sql_security == RoutineSqlSecurity::DEFINER) flags |= 0x04;
+    current_result_->writeByte(flags);
+
+    std::string proc_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        proc_name = std::string(getString(stmt->schema.schema_name));
+        proc_name += ".";
+        proc_name += std::string(getString(stmt->procedure_name));
+    } else {
+        proc_name = std::string(getString(stmt->procedure_name));
+    }
+    current_result_->writeString(proc_name);
+
+    if (stmt->params.size() > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("CREATE PROCEDURE parameter list exceeds 255 entries");
+        current_result_->writeByte(0);
+    } else {
+        current_result_->writeByte(static_cast<uint8_t>(stmt->params.size()));
+    }
+
+    auto type_precision = [](const ResolvedType& type) -> uint32_t {
+        if (type.precision.has_value()) return static_cast<uint32_t>(*type.precision);
+        if (type.length.has_value()) return static_cast<uint32_t>(*type.length);
+        return 0;
+    };
+    auto type_scale = [](const ResolvedType& type) -> uint32_t {
+        if (type.scale.has_value()) return static_cast<uint32_t>(*type.scale);
+        return 0;
+    };
+
+    for (const auto& param : stmt->params) {
+        current_result_->writeByte(param.mode);
+        writeStringId(param.name);
+        current_result_->writeByte(static_cast<uint8_t>(param.type.data_type));
+        current_result_->writeInt32(type_precision(param.type));
+        current_result_->writeInt32(type_scale(param.type));
+    }
+
+    current_result_->writeString(stmt->body);
+}
+
+void BytecodeGeneratorV2::generateCreateTrigger(ResolvedCreateTriggerStmt* stmt) {
+    std::string trigger_name = std::string(getString(stmt->trigger_name));
+    std::string proc_name = "__trigger_" + trigger_name;
+
+    std::string schema_name;
+    if (!stmt->table_path.components.empty()) {
+        if (stmt->table_path.components.size() >= 2) {
+            schema_name = std::string(getString(stmt->table_path.components[0]));
+        }
+    }
+
+    std::string proc_path = schema_name.empty()
+        ? proc_name
+        : (schema_name + "." + proc_name);
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
+    current_result_->writeByte(0);  // flags
+    current_result_->writeString(proc_path);
+    current_result_->writeByte(0);  // no parameters
+    current_result_->writeString(stmt->body);
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_TRIGGER));
+    current_result_->writeString(trigger_name);
+    current_result_->writeString(schemaPathToString(stmt->table_path, string_pool_));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->timing));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->event));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->granularity));
+    current_result_->writeString(proc_path);
+}
+
+void BytecodeGeneratorV2::generateCreatePackage(ResolvedCreatePackageStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PACKAGE_STMT));
+
+    uint8_t flags = 0;
+    if (stmt->or_replace) flags |= 0x01;
+    current_result_->writeByte(flags);
+
+    std::string package_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        package_name = std::string(getString(stmt->schema.schema_name));
+        package_name += ".";
+        package_name += std::string(getString(stmt->package_name));
+    } else {
+        package_name = std::string(getString(stmt->package_name));
+    }
+
+    current_result_->writeString(package_name);
+    current_result_->writeString(stmt->header);
+    current_result_->writeString(stmt->body);
+}
+
+void BytecodeGeneratorV2::generateCreateRole(ResolvedCreateRoleStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_ROLE));
+    writeStringId(stmt->role_name);
+}
+
+void BytecodeGeneratorV2::generateCreateException(ResolvedCreateExceptionStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_EXCEPTION_STMT));
+
+    std::string exception_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        exception_name = std::string(getString(stmt->schema.schema_name));
+        exception_name += ".";
+        exception_name += std::string(getString(stmt->exception_name));
+    } else {
+        exception_name = std::string(getString(stmt->exception_name));
+    }
+
+    current_result_->writeString(exception_name);
+    current_result_->writeString(stmt->message);
 }
 
 void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
@@ -1381,6 +1660,13 @@ void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
     }
 }
 
+void BytecodeGeneratorV2::generateAlterIndex(ResolvedAlterIndexStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_INDEX));
+    current_result_->writeString(schemaPathToString(stmt->index_path, string_pool_));
+    current_result_->writeByte(stmt->active ? 1 : 0);
+}
+
 void BytecodeGeneratorV2::generateRenameObject(ResolvedRenameObjectStmt* stmt) {
     current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RENAME_OBJECT);
 
@@ -1421,31 +1707,38 @@ void BytecodeGeneratorV2::generateMoveObject(ResolvedMoveObjectStmt* stmt) {
 }
 
 void BytecodeGeneratorV2::generateDrop(ResolvedDropStmt* stmt) {
-    switch (stmt->object_type) {
-        case ResolvedDropStmt::ObjectType::TABLE:
-            current_result_->writeOpcode(sblr::Opcode::DROP_TABLE);
-            break;
-        case ResolvedDropStmt::ObjectType::VIEW:
-            current_result_->writeOpcode(sblr::Opcode::DROP_VIEW);
-            break;
-        case ResolvedDropStmt::ObjectType::INDEX:
-            current_result_->writeOpcode(sblr::Opcode::DROP_INDEX);
-            break;
-        case ResolvedDropStmt::ObjectType::SEQUENCE:
-            current_result_->writeOpcode(sblr::Opcode::DROP_SEQUENCE);
-            break;
-    }
-
-    // Write flags
-    uint8_t flags = 0;
-    if (stmt->if_exists) flags |= 0x01;
-    if (stmt->cascade) flags |= 0x02;
-    current_result_->writeByte(flags);
-
-    // Write object count and UUIDs
-    current_result_->writeListCount(static_cast<uint64_t>(stmt->object_uuids.size()));
-    for (const auto& uuid : stmt->object_uuids) {
-        current_result_->writeUUID(uuid);
+    for (const auto& path : stmt->object_paths) {
+        std::string object_name = schemaPathToString(path, string_pool_);
+        switch (stmt->object_type) {
+            case ResolvedDropStmt::ObjectType::TABLE: {
+                current_result_->writeOpcode(sblr::Opcode::DROP_TABLE);
+                current_result_->writeString(object_name);
+                uint8_t flags = 0;
+                if (stmt->if_exists) flags |= 0x01;
+                if (stmt->cascade) flags |= 0x02;
+                current_result_->writeByte(flags);
+                break;
+            }
+            case ResolvedDropStmt::ObjectType::VIEW: {
+                current_result_->writeOpcode(sblr::Opcode::DROP_VIEW);
+                current_result_->writeString(object_name);
+                uint8_t flags = 0;
+                if (stmt->if_exists) flags |= 0x01;
+                if (stmt->cascade) flags |= 0x02;
+                current_result_->writeByte(flags);
+                break;
+            }
+            case ResolvedDropStmt::ObjectType::INDEX:
+                current_result_->writeOpcode(sblr::Opcode::DROP_INDEX);
+                current_result_->writeString(object_name);
+                current_result_->writeByte(stmt->if_exists ? 1 : 0);
+                break;
+            case ResolvedDropStmt::ObjectType::SEQUENCE:
+                current_result_->writeOpcode(sblr::Opcode::DROP_SEQUENCE);
+                current_result_->writeString(object_name);
+                current_result_->writeByte(stmt->cascade ? 1 : 0);
+                break;
+        }
     }
 }
 
@@ -1875,20 +2168,150 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
     }
 }
 
-void BytecodeGeneratorV2::generateTruncateTable(ResolvedTruncateTableStmt* stmt) {
-    current_result_->writeOpcode(sblr::Opcode::TRUNCATE_TABLE);
+void BytecodeGeneratorV2::generateGrant(ResolvedGrantStmt* stmt) {
+    auto map_object_type = [&](PrivilegeObjectType obj_type) -> uint8_t {
+        switch (obj_type) {
+            case PrivilegeObjectType::TABLE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::TABLE);
+            case PrivilegeObjectType::VIEW:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::VIEW);
+            case PrivilegeObjectType::SEQUENCE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SEQUENCE);
+            case PrivilegeObjectType::FUNCTION:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::FUNCTION);
+            case PrivilegeObjectType::PROCEDURE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::PROCEDURE);
+            case PrivilegeObjectType::SCHEMA:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SCHEMA);
+            case PrivilegeObjectType::DATABASE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::DATABASE);
+            default:
+                current_result_->addError("Unsupported GRANT object type for bytecode emission");
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::TABLE);
+        }
+    };
 
-    // Write flags
+    uint8_t object_type = map_object_type(stmt->object_type);
+    uint8_t flags = 0;
+    if (stmt->with_grant_option) flags |= 0x01;
+
+    if (stmt->objects.empty()) {
+        current_result_->addError("GRANT requires at least one object");
+        return;
+    }
+
+    if (stmt->is_public) {
+        for (const auto& object_path : stmt->objects) {
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GRANT_PRIVILEGE));
+            current_result_->writeInt32(stmt->privileges);
+            current_result_->writeByte(object_type);
+            current_result_->writeString(schemaPathToString(object_path, string_pool_));
+            current_result_->writeByte(static_cast<uint8_t>(core::CatalogManager::GranteeType::PUBLIC));
+            current_result_->writeString("");
+            current_result_->writeByte(flags);
+        }
+        return;
+    }
+
+    if (stmt->grantees.empty()) {
+        current_result_->addError("GRANT requires at least one grantee");
+        return;
+    }
+
+    for (const auto& object_path : stmt->objects) {
+        for (auto grantee : stmt->grantees) {
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GRANT_PRIVILEGE));
+            current_result_->writeInt32(stmt->privileges);
+            current_result_->writeByte(object_type);
+            current_result_->writeString(schemaPathToString(object_path, string_pool_));
+            current_result_->writeByte(static_cast<uint8_t>(core::CatalogManager::GranteeType::USER));
+            writeStringId(grantee);
+            current_result_->writeByte(flags);
+        }
+    }
+}
+
+void BytecodeGeneratorV2::generateRevoke(ResolvedRevokeStmt* stmt) {
+    auto map_object_type = [&](PrivilegeObjectType obj_type) -> uint8_t {
+        switch (obj_type) {
+            case PrivilegeObjectType::TABLE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::TABLE);
+            case PrivilegeObjectType::VIEW:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::VIEW);
+            case PrivilegeObjectType::SEQUENCE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SEQUENCE);
+            case PrivilegeObjectType::FUNCTION:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::FUNCTION);
+            case PrivilegeObjectType::PROCEDURE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::PROCEDURE);
+            case PrivilegeObjectType::SCHEMA:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SCHEMA);
+            case PrivilegeObjectType::DATABASE:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::DATABASE);
+            default:
+                current_result_->addError("Unsupported REVOKE object type for bytecode emission");
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::TABLE);
+        }
+    };
+
+    uint8_t object_type = map_object_type(stmt->object_type);
     uint8_t flags = 0;
     if (stmt->cascade) flags |= 0x01;
-    if (stmt->restart_identity) flags |= 0x02;
-    if (stmt->async_mode) flags |= 0x04;  // ASYNC is default
-    current_result_->writeByte(flags);
 
-    // Write table count and UUIDs
-    current_result_->writeListCount(static_cast<uint64_t>(stmt->table_uuids.size()));
-    for (const auto& uuid : stmt->table_uuids) {
-        current_result_->writeUUID(uuid);
+    if (stmt->objects.empty()) {
+        current_result_->addError("REVOKE requires at least one object");
+        return;
+    }
+
+    if (stmt->is_public) {
+        for (const auto& object_path : stmt->objects) {
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_REVOKE_PRIVILEGE));
+            current_result_->writeInt32(stmt->privileges);
+            current_result_->writeByte(object_type);
+            current_result_->writeString(schemaPathToString(object_path, string_pool_));
+            current_result_->writeByte(static_cast<uint8_t>(core::CatalogManager::GranteeType::PUBLIC));
+            current_result_->writeString("");
+            current_result_->writeByte(flags);
+        }
+        return;
+    }
+
+    if (stmt->grantees.empty()) {
+        current_result_->addError("REVOKE requires at least one grantee");
+        return;
+    }
+
+    for (const auto& object_path : stmt->objects) {
+        for (auto grantee : stmt->grantees) {
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_REVOKE_PRIVILEGE));
+            current_result_->writeInt32(stmt->privileges);
+            current_result_->writeByte(object_type);
+            current_result_->writeString(schemaPathToString(object_path, string_pool_));
+            current_result_->writeByte(static_cast<uint8_t>(core::CatalogManager::GranteeType::USER));
+            writeStringId(grantee);
+            current_result_->writeByte(flags);
+        }
+    }
+}
+
+void BytecodeGeneratorV2::generateTruncateTable(ResolvedTruncateTableStmt* stmt) {
+    if (stmt->cascade) {
+        current_result_->addWarning("TRUNCATE TABLE CASCADE is not supported; proceeding without cascade");
+    }
+    if (stmt->restart_identity) {
+        current_result_->addWarning("TRUNCATE TABLE RESTART IDENTITY is not supported; proceeding without restart");
+    }
+
+    uint8_t mode = stmt->async_mode ? 0 : 1;  // 0=ASYNC, 1=SYNC
+
+    for (const auto& table_path : stmt->table_paths) {
+        current_result_->writeOpcode(sblr::Opcode::TRUNCATE_TABLE);
+        current_result_->writeString(schemaPathToString(table_path, string_pool_));
+        current_result_->writeByte(mode);
     }
 }
 
@@ -3111,6 +3534,7 @@ BytecodeResultV2 generateBytecode(
 
     // Generate bytecode
     BytecodeGeneratorV2 generator(string_pool);
+    generator.setSourceSql(sql);
     return generator.generate(sem_result.statement());
 }
 

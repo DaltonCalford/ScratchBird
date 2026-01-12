@@ -95,6 +95,21 @@ struct StartupMessage {
 00                    // Final terminator
 ```
 
+#### Startup Parameter Matrix (ScratchBird Alpha)
+
+| Parameter | Required | Behavior |
+| --- | --- | --- |
+| user | yes | Used as the login username. |
+| database | no | Defaults to user if omitted. |
+| application_name | no | Stored but not enforced in Alpha. |
+| client_encoding | no | Accepted but ignored (server always reports UTF8). |
+| options | no | Accepted but ignored. |
+| other keys | no | Accepted and ignored unless used by the adapter. |
+
+Notes:
+- GSSENCRequest is not supported in Alpha. Clients must not send it.
+- SSLRequest is answered with 'N' (SSL not supported yet); clients must retry in plaintext.
+
 ### 2. Authentication and Startup Response
 
 Server responds with authentication request:
@@ -219,6 +234,11 @@ struct SASLInitialResponse {
 // 3. Client-final: "c=channel-binding,r=combined-nonce,p=client-proof"
 // 4. Server-final: "v=server-signature"
 ```
+
+ScratchBird SASL support in Alpha:
+- Server advertises only SCRAM-SHA-256.
+- SCRAM-SHA-256-PLUS (channel binding) is not supported.
+- If the client selects any other SASL mechanism, the server returns a FATAL error (SQLSTATE 0A000).
 
 ## Message Types
 
@@ -358,6 +378,15 @@ struct ParameterStatus {
     char  value[];         // Null-terminated
 };
 ```
+
+ScratchBird sends the following ParameterStatus keys on successful startup:
+- server_version = "15.0.0 ScratchBird"
+- server_encoding = "UTF8"
+- client_encoding = "UTF8"
+- DateStyle = "ISO, MDY"
+- TimeZone = "UTC"
+- integer_datetimes = "on"
+- standard_conforming_strings = "on"
 
 #### BackendKeyData
 ```c
@@ -529,6 +558,26 @@ Client                          Server
   |                               |
 ```
 
+### Extended Query Edge Cases (ScratchBird Alpha)
+
+- Unnamed statement/portal: empty name ("") is allowed; a new Parse/Bind with empty name overwrites the previous unnamed entry.
+- Describe before execute: if a statement has not been executed yet, ScratchBird may return NoData because result columns are unknown. After first execute, result columns are cached for subsequent Describe calls.
+- Parameter format codes:
+  - If num_format_codes is 0, all parameters are treated as text.
+  - If num_format_codes is 1, that format applies to all parameters.
+  - Only format 0 (text) and 1 (binary) are supported. Other values are treated as text.
+- Result format codes:
+  - If num_result_formats is 0, all results are text.
+  - If num_result_formats is 1, that format applies to all columns.
+  - Only format 0 (text) and 1 (binary) are supported. Other values are treated as text.
+- Execute with max_rows:
+  - ScratchBird buffers up to max_rows and returns PortalSuspended when more rows remain.
+  - Subsequent Execute calls on the same portal return remaining buffered rows without re-executing the statement.
+  - When exhausted, the portal returns CommandComplete and remains complete until Closed.
+- Error handling:
+  - On Parse/Bind/Describe/Execute errors, ScratchBird sends ErrorResponse and waits for Sync to return to ReadyForQuery.
+  - Flush only sends queued output; it does not change protocol state.
+
 ## COPY Protocol
 
 ### COPY IN (Client → Server)
@@ -562,6 +611,14 @@ struct CopyFail {
 };
 ```
 
+COPY IN flow:
+1) Server sends CopyInResponse.
+2) Client streams CopyData messages.
+3) Client terminates with CopyDone (success) or CopyFail (error).
+4) Server replies with CommandComplete + ReadyForQuery on success, or ErrorResponse + ReadyForQuery on failure.
+
+The COPY payload format (CSV, DELIMITER, NULL, HEADER, etc.) is defined by the SQL COPY statement; the wire protocol only frames CopyData chunks.
+
 ### COPY OUT (Server → Client)
 
 ```c
@@ -574,6 +631,11 @@ struct CopyOutResponse {
 };
 // Server then sends CopyData messages, followed by CopyDone
 ```
+
+COPY OUT flow:
+1) Server sends CopyOutResponse.
+2) Server streams CopyData messages.
+3) Server terminates with CopyDone, then CommandComplete + ReadyForQuery.
 
 ### COPY BOTH (Streaming Replication)
 
@@ -623,6 +685,12 @@ struct ErrorResponse {
 #define ERR_LINE             'L'  // Line number
 #define ERR_ROUTINE          'R'  // Routine name
 ```
+
+ScratchBird emits the following fields today:
+- Required: ERR_SEVERITY, ERR_CODE, ERR_MESSAGE
+- Optional: ERR_DETAIL, ERR_HINT
+
+Severity strings used by ScratchBird: ERROR, FATAL, PANIC, WARNING, NOTICE. Other fields may be added as catalog/context mapping expands.
 
 Example Error Message:
 ```

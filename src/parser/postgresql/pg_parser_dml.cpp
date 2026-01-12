@@ -869,6 +869,8 @@ void Parser::parseInsertStmt() {
             path.type = schema.empty() ? core::PathType::UNQUALIFIED : core::PathType::ABSOLUTE;
 
             core::CatalogManager::ResolveOptions opts;
+            opts.required_privilege =
+                static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT);
             core::CatalogManager::ObjectType resolved_type;
             core::ID table_id;
             core::ErrorContext ctx;
@@ -876,7 +878,8 @@ void Parser::parseInsertStmt() {
                                                          core::CatalogManager::ObjectType::TABLE,
                                                          opts, table_id, resolved_type, &ctx) == core::Status::OK) {
                 std::vector<core::CatalogManager::ColumnInfo> cols;
-                if (db_->catalog_manager()->getColumns(table_id, cols, &ctx) == core::Status::OK) {
+                if (db_->catalog_manager()->getColumns(table_id, cols, &ctx,
+                                                       opts.required_privilege) == core::Status::OK) {
                     for (const auto& col : cols) {
                         columns.push_back(col.column_name);
                     }
@@ -1425,13 +1428,10 @@ void Parser::parseWithClause() {
 
     // RECURSIVE keyword
     bool is_recursive = matchKeyword(TokenType::KW_RECURSIVE);
-    emitByte(is_recursive ? 1 : 0);
-
-    // Parse CTE definitions
-    emit(sblr::Opcode::BEGIN_LIST);
     size_t count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t count = 0;
+    emitU16(0);
+    emitByte(is_recursive ? 1 : 0);
+    uint16_t count = 0;
 
     do {
         emit(sblr::Opcode::EXTENDED_OPCODE);
@@ -1442,34 +1442,23 @@ void Parser::parseWithClause() {
 
         // Optional column list
         if (match(TokenType::LEFT_PAREN)) {
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t col_count_pos = bytecode_.size();
-            emitU32(0);
-            uint32_t col_count = 0;
-
             do {
-                std::string col = parseIdentifier();
-                emitString(col);
-                col_count++;
+                parseIdentifier();
             } while (match(TokenType::COMMA));
 
-            sblr::writeInt32(&bytecode_[col_count_pos], col_count);
-            emit(sblr::Opcode::END_LIST);
             consume(TokenType::RIGHT_PAREN, "Expected )");
         } else {
-            emitU32(0);  // No column list
+            // No column list
         }
 
         consumeKeyword(TokenType::KW_AS, "Expected AS");
 
         // MATERIALIZED / NOT MATERIALIZED (PostgreSQL 12+)
         if (matchKeyword(TokenType::KW_MATERIALIZED)) {
-            emitByte(1);
+            // Ignored for now
         } else if (matchKeyword(TokenType::KW_NOT)) {
             consumeKeyword(TokenType::KW_MATERIALIZED, "Expected MATERIALIZED");
-            emitByte(2);
-        } else {
-            emitByte(0);  // Default
+            // Ignored for now
         }
 
         consume(TokenType::LEFT_PAREN, "Expected (");
@@ -1479,8 +1468,7 @@ void Parser::parseWithClause() {
         count++;
     } while (match(TokenType::COMMA));
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
+    sblr::writeInt16(&bytecode_[count_pos], count);
 }
 
 // Helper for frame bounds - moved earlier in the file

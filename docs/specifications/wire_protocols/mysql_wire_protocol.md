@@ -191,6 +191,47 @@ struct HandshakeResponse41 {
 #define CLIENT_DEPRECATE_EOF     0x01000000  // No EOF packets
 ```
 
+##### Capability Flags (Full Matrix)
+```c
+#define CLIENT_LONG_PASSWORD             0x00000001
+#define CLIENT_FOUND_ROWS                0x00000002
+#define CLIENT_LONG_FLAG                 0x00000004
+#define CLIENT_CONNECT_WITH_DB           0x00000008
+#define CLIENT_NO_SCHEMA                 0x00000010
+#define CLIENT_COMPRESS                  0x00000020
+#define CLIENT_ODBC                      0x00000040
+#define CLIENT_LOCAL_FILES               0x00000080
+#define CLIENT_IGNORE_SPACE              0x00000100
+#define CLIENT_PROTOCOL_41               0x00000200
+#define CLIENT_INTERACTIVE               0x00000400
+#define CLIENT_SSL                       0x00000800
+#define CLIENT_IGNORE_SIGPIPE            0x00001000
+#define CLIENT_TRANSACTIONS              0x00002000
+#define CLIENT_RESERVED                  0x00004000
+#define CLIENT_SECURE_CONNECTION         0x00008000
+#define CLIENT_MULTI_STATEMENTS          0x00010000
+#define CLIENT_MULTI_RESULTS             0x00020000
+#define CLIENT_PS_MULTI_RESULTS          0x00040000
+#define CLIENT_PLUGIN_AUTH               0x00080000
+#define CLIENT_CONNECT_ATTRS             0x00100000
+#define CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA 0x00200000
+#define CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS   0x00400000
+#define CLIENT_SESSION_TRACK             0x00800000
+#define CLIENT_DEPRECATE_EOF             0x01000000
+#define CLIENT_OPTIONAL_RESULTSET_METADATA    0x02000000
+#define CLIENT_ZSTD_COMPRESSION          0x04000000
+#define CLIENT_QUERY_ATTRIBUTES          0x08000000
+#define CLIENT_MULTI_FACTOR_AUTH         0x10000000
+```
+
+Server behavior rules:
+- The server must echo back the negotiated capability flags in OK packets and
+  during `HandshakeResponse41` handling.
+- If `CLIENT_MULTI_RESULTS` or `CLIENT_PS_MULTI_RESULTS` is set, the server
+  must set `SERVER_MORE_RESULTS_EXISTS` in status flags when more result sets
+  follow.
+- If `CLIENT_SESSION_TRACK` is set, OK packets include session state tracking.
+
 ### 3. Authentication Methods
 
 #### MySQL Native Password (mysql_native_password)
@@ -270,6 +311,16 @@ If the server sends plugin data starting with `0x00`, `0xFE`, or `0xFF`, it may 
 
 Client response to `AuthSwitchRequest` is the raw auth response data for the named plugin (payload only, length-encoded by the packet header).
 
+AuthMoreData payloads for `caching_sha2_password`:
+- `0x03` = fast auth success (server will send OK next)
+- `0x04` = full auth required
+- `0x01` + PEM bytes = server public key (after client request)
+
+Client full-auth steps when `0x04` received:
+- If TLS is active, send cleartext password (null-terminated).
+- Otherwise send `0x02` (public key request), receive key, then send RSA-OAEP
+  encrypted password (XOR with seed as required by plugin).
+
 ## Command Phase
 
 ### Command Packet Structure
@@ -316,6 +367,37 @@ struct CommandPacket {
 };
 ```
 
+### COM_CHANGE_USER
+```c
+struct ComChangeUser {
+    uint8  command = 0x11;
+    char   user[];                // Null-terminated
+    lenenc auth_response_length;  // If CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+    uint8  auth_response[];       // Auth response
+    char   database[];            // Null-terminated (optional)
+    char   auth_plugin_name[];    // Null-terminated (optional)
+    lenenc attrs_length;          // Optional attributes
+    uint8  attrs[];               // Key/value attributes
+};
+```
+
+Behavior:
+- Resets session state (autocommit, temp tables, user variables) and re-authenticates.
+- Server may respond with `AuthSwitchRequest` / `AuthMoreData` during re-auth.
+- Capabilities are preserved; the new user inherits capability limits.
+
+### COM_RESET_CONNECTION
+```c
+struct ComResetConnection {
+    uint8 command = 0x1F;
+};
+```
+
+Behavior:
+- Resets session state to defaults while keeping the authenticated user.
+- Cleans up open prepared statements, temp tables, and session variables.
+- Returns OK or ERR; does not renegotiate capabilities.
+
 ### Text Protocol (COM_QUERY)
 
 #### Query Request
@@ -335,6 +417,18 @@ The server responds with one of:
 - Local Infile Request (0xFB) for `LOAD DATA LOCAL INFILE`
 
 When the server sends `0xFB` as the first byte of the payload, the packet is a Local Infile Request. The client must send the file contents as raw data packets, then a zero-length packet to terminate.
+
+Local Infile Request payload:
+```c
+uint8  header = 0xFB;
+char   filename[];  // Null-terminated path or identifier
+```
+
+Rules:
+- Requires `CLIENT_LOCAL_FILES` capability on both sides.
+- Client streams file data in packet payloads (no command byte) and ends with
+  a zero-length packet.
+- Server replies with OK or ERR after ingesting the stream.
 
 ##### OK Packet
 ```c
@@ -360,6 +454,39 @@ struct OKPacket {
     } session_states[];
 };
 ```
+
+##### Server Status Flags (Common)
+```c
+#define SERVER_STATUS_IN_TRANS             0x0001  // Transaction active
+#define SERVER_STATUS_AUTOCOMMIT           0x0002  // Autocommit enabled
+#define SERVER_MORE_RESULTS_EXISTS         0x0008  // More result sets follow
+#define SERVER_STATUS_NO_GOOD_INDEX_USED   0x0010
+#define SERVER_STATUS_NO_INDEX_USED        0x0020
+#define SERVER_STATUS_CURSOR_EXISTS        0x0040
+#define SERVER_STATUS_LAST_ROW_SENT        0x0080
+#define SERVER_STATUS_DB_DROPPED           0x0100
+#define SERVER_STATUS_NO_BACKSLASH_ESCAPES 0x0200
+#define SERVER_STATUS_METADATA_CHANGED     0x0400
+#define SERVER_SESSION_STATE_CHANGED       0x4000
+```
+
+##### Session State Tracking (CLIENT_SESSION_TRACK)
+When `CLIENT_SESSION_TRACK` is enabled and `SERVER_SESSION_STATE_CHANGED` is set,
+the OK packet includes session state items:
+
+```c
+// Session state types
+#define SESSION_TRACK_SYSTEM_VARIABLES 0x00
+#define SESSION_TRACK_SCHEMA           0x01
+#define SESSION_TRACK_STATE_CHANGE     0x02
+#define SESSION_TRACK_GTIDS            0x03
+```
+
+Each item contains type-specific payload:
+- `SYSTEM_VARIABLES`: key/value pairs for updated session variables.
+- `SCHEMA`: the current default schema name.
+- `STATE_CHANGE`: a single byte (0x00 or 0x01).
+- `GTIDS`: GTID set string.
 
 ##### Error Packet
 ```c
@@ -440,6 +567,20 @@ struct TextResultRow {
 };
 ```
 
+#### Multi-Result Sets
+
+When `CLIENT_MULTI_RESULTS` (text protocol) or `CLIENT_PS_MULTI_RESULTS`
+(binary protocol) is enabled, the server may return multiple result sets:
+- Each result set uses the standard framing: column count, column definitions,
+  EOF/OK terminator (depending on `CLIENT_DEPRECATE_EOF`), then row packets,
+  and a final EOF/OK for that result set.
+- The `SERVER_MORE_RESULTS_EXISTS` flag is set in the status flags of the
+  terminating EOF/OK packet when additional result sets follow.
+- The final result set terminator clears `SERVER_MORE_RESULTS_EXISTS`.
+
+For `CLIENT_MULTI_STATEMENTS`, a single `COM_QUERY` may produce multiple
+result sets in sequence.
+
 ### Binary Protocol (Prepared Statements)
 
 #### COM_STMT_PREPARE
@@ -486,6 +627,36 @@ struct ComStmtExecute {
     uint8  param_values[];      // Binary encoded based on type
 };
 ```
+
+#### COM_STMT_SEND_LONG_DATA
+```c
+struct ComStmtSendLongData {
+    uint8  command = 0x18;   // COM_STMT_SEND_LONG_DATA
+    uint32 statement_id;
+    uint16 param_id;         // 0-based parameter index
+    uint8  data[];           // Raw chunk
+};
+```
+
+Semantics:
+- Allows streaming large parameter values in multiple chunks.
+- Chunks are appended in order for the parameter until COM_STMT_EXECUTE.
+- Data is cleared after execution or COM_STMT_RESET.
+
+#### COM_STMT_FETCH
+```c
+struct ComStmtFetch {
+    uint8  command = 0x1C;   // COM_STMT_FETCH
+    uint32 statement_id;
+    uint32 num_rows;         // Requested rows
+};
+```
+
+Semantics:
+- Requires server-side cursor (COM_STMT_EXECUTE flags).
+- Server returns up to `num_rows` rows using the binary protocol.
+- Uses `SERVER_STATUS_CURSOR_EXISTS` and `SERVER_STATUS_LAST_ROW_SENT` to
+  signal cursor state.
 
 #### Binary Protocol Value Encoding
 
@@ -564,6 +735,13 @@ struct CompressedPacket {
 
 If `uncompressed_length` is 0, the payload is uncompressed and can be treated as normal packets.
 
+Compression edge cases:
+- Large payloads may be split into multiple compressed packets; each compressed
+  packet contains one or more full MySQL packets after decompression.
+- `compressed_seq_id` is independent of the inner packet sequence ids.
+- If decompression fails, the server should return an error and close the
+  connection (no resynchronization is possible).
+
 ## Replication Protocol
 
 ### COM_BINLOG_DUMP
@@ -576,6 +754,23 @@ struct ComBinlogDump {
     char   binlog_filename[];   // Binlog file name
 };
 ```
+
+### COM_BINLOG_DUMP_GTID
+```c
+struct ComBinlogDumpGtid {
+    uint8  command = 0x1E;      // COM_BINLOG_DUMP_GTID
+    uint16 flags;
+    uint32 server_id;
+    uint32 binlog_filename_length;
+    char   binlog_filename[];
+    uint64 binlog_pos;
+    uint32 data_size;           // Length of following GTID set
+    uint8  gtid_set[];          // Encoded GTID set
+};
+```
+
+Alpha note: replication is deferred; these commands may return a clear error
+until replication support is enabled.
 
 ### Binlog Event Structure
 ```c

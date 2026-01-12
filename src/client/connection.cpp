@@ -697,7 +697,7 @@ public:
         }
 
         // Authenticate if credentials provided
-        if (!config_.username.empty()) {
+        if (!config_.username.empty() && !config_.manual_auth) {
             status = doAuthenticate(ctx);
             if (!isOk(status)) {
                 return status;
@@ -748,21 +748,72 @@ public:
         return core::Status::OK;
     }
 
-    core::Status doExecuteQuery(const std::string& sql, ResultSet* results,
-                                 core::ErrorContext* ctx) {
+    core::Status doSendAuthRequest(protocol::AuthMethod method,
+                                   const std::vector<uint8_t>& payload,
+                                   Connection::AuthResponse& response,
+                                   core::ErrorContext* ctx) {
+        if (!protocol_session_) {
+            last_error_ = "Not connected";
+            return core::Status::CONNECTION_FAILURE;
+        }
+
+        auto auth_msg = protocol::ProtocolCodec::buildAuthRequest(
+            session_id_,
+            config_.username,
+            method,
+            payload
+        );
+
+        auto status = protocol_session_->sendMessage(auth_msg, ctx);
+        if (!isOk(status)) {
+            last_error_ = "Failed to send auth request";
+            return status;
+        }
+
+        protocol::Message response_msg;
+        status = protocol_session_->receiveMessage(response_msg, ctx);
+        if (!isOk(status)) {
+            last_error_ = "Failed to receive auth response";
+            return status;
+        }
+
+        if (response_msg.getType() != protocol::MessageType::AUTH_RESPONSE) {
+            last_error_ = "Unexpected response type";
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        protocol::AuthStatus auth_status = protocol::AuthStatus::ERROR;
+        uint32_t user_id;
+        std::string error_msg;
+        std::vector<uint8_t> data;
+        status = protocol::ProtocolCodec::parseAuthResponse(
+            response_msg, auth_status, user_id, error_msg, &data, ctx
+        );
+        if (!isOk(status)) {
+            last_error_ = "Failed to parse auth response";
+            return status;
+        }
+
+        response.status = auth_status;
+        response.user_id = user_id;
+        response.error_message = error_msg;
+        response.data = std::move(data);
+        return core::Status::OK;
+    }
+
+    core::Status doExecuteQueryMessage(const protocol::Message& query_msg,
+                                       ResultSet* results,
+                                       core::ErrorContext* ctx) {
         if (results) {
             results->impl_->clear();
         }
 
-        // Build and send query message
-        auto query_msg = protocol::ProtocolCodec::buildQuery(session_id_, sql, 0);
         auto status = protocol_session_->sendMessage(query_msg, ctx);
         if (!isOk(status)) {
             last_error_ = "Failed to send query";
             return status;
         }
 
-        // Receive response messages
         while (true) {
             protocol::Message response;
             status = protocol_session_->receiveMessage(response, ctx);
@@ -853,6 +904,20 @@ public:
                     break;
             }
         }
+    }
+
+    core::Status doExecuteQuery(const std::string& sql, ResultSet* results,
+                                core::ErrorContext* ctx) {
+        auto query_msg = protocol::ProtocolCodec::buildQuery(session_id_, sql, 0);
+        return doExecuteQueryMessage(query_msg, results, ctx);
+    }
+
+    core::Status doExecuteBytecode(const std::vector<uint8_t>& bytecode,
+                                   const std::string& sql,
+                                   ResultSet* results,
+                                   core::ErrorContext* ctx) {
+        auto query_msg = protocol::ProtocolCodec::buildQueryBytecode(session_id_, bytecode, sql, 0);
+        return doExecuteQueryMessage(query_msg, results, ctx);
     }
 
     core::Status doBeginTransaction(core::ErrorContext* ctx) {
@@ -1053,6 +1118,23 @@ core::Status Connection::ping(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
+core::Status Connection::sendAuthRequest(protocol::AuthMethod method,
+                                         const std::vector<uint8_t>& payload,
+                                         AuthResponse& response,
+                                         core::ErrorContext* ctx) {
+    if (!impl_) {
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    if (impl_->state_ != ConnectionState::CONNECTED &&
+        impl_->state_ != ConnectionState::CONNECTING) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    return impl_->doSendAuthRequest(method, payload, response, ctx);
+}
+
 core::Status Connection::executeQuery(const std::string& sql,
                                        ResultSet* results,
                                        core::ErrorContext* ctx) {
@@ -1062,6 +1144,29 @@ core::Status Connection::executeQuery(const std::string& sql,
     }
 
     return impl_->doExecuteQuery(sql, results, ctx);
+}
+
+core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
+                                         const std::string& sql,
+                                         ResultSet* results,
+                                         core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    return impl_->doExecuteBytecode(bytecode, sql, results, ctx);
+}
+
+core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
+                                         ResultSet* results,
+                                         core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    return impl_->doExecuteBytecode(bytecode, std::string(), results, ctx);
 }
 
 core::Status Connection::execute(const std::string& sql,

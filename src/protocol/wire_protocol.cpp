@@ -389,13 +389,39 @@ core::Status ProtocolCodec::parseConnectResponse(const Message& msg,
 Message ProtocolCodec::buildAuthRequest(const uint8_t session_id[16],
                                         const std::string& username,
                                         const std::string& password) {
+    std::vector<uint8_t> payload(password.begin(), password.end());
+    return buildAuthRequest(session_id, username, AuthMethod::PASSWORD, payload);
+}
+
+core::Status ProtocolCodec::parseAuthRequest(const Message& msg,
+                                             uint8_t session_id[16],
+                                             std::string& username,
+                                             std::string& password,
+                                             core::ErrorContext* ctx) {
+    AuthMethod auth_method = AuthMethod::PASSWORD;
+    std::vector<uint8_t> payload;
+    auto status = parseAuthRequest(msg, session_id, username, auth_method, payload, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    password.assign(reinterpret_cast<const char*>(payload.data()), payload.size());
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildAuthRequest(const uint8_t session_id[16],
+                                        const std::string& username,
+                                        AuthMethod auth_method,
+                                        const std::vector<uint8_t>& payload) {
     Message msg(MessageType::AUTH_REQUEST);
 
     msg.writeBytes(session_id, 16);
     msg.writeNullTerminatedString(username, 64);
-    msg.writeUInt8(0);  // auth_method = password
-    msg.writeUInt16(static_cast<uint16_t>(password.size()));
-    msg.writeString(password);
+    msg.writeUInt8(static_cast<uint8_t>(auth_method));
+    msg.writeUInt16(static_cast<uint16_t>(payload.size()));
+    if (!payload.empty()) {
+        msg.writeBytes(payload.data(), payload.size());
+    }
 
     return msg;
 }
@@ -403,7 +429,8 @@ Message ProtocolCodec::buildAuthRequest(const uint8_t session_id[16],
 core::Status ProtocolCodec::parseAuthRequest(const Message& msg,
                                              uint8_t session_id[16],
                                              std::string& username,
-                                             std::string& password,
+                                             AuthMethod& auth_method,
+                                             std::vector<uint8_t>& payload,
                                              core::ErrorContext* ctx) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
@@ -420,33 +447,31 @@ core::Status ProtocolCodec::parseAuthRequest(const Message& msg,
         return core::Status::PROTOCOL_VIOLATION;
     }
 
-    uint8_t auth_method;
+    uint8_t auth_method_byte;
     uint16_t cred_length;
-    if (!m.readUInt8(auth_method) || !m.readUInt16(cred_length)) {
+    if (!m.readUInt8(auth_method_byte) || !m.readUInt16(cred_length)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Invalid AUTH_REQUEST credentials header");
         return core::Status::PROTOCOL_VIOLATION;
     }
 
-    if (!m.readString(password, cred_length)) {
+    payload.resize(cred_length);
+    if (cred_length > 0 && !m.readBytes(payload.data(), cred_length)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Invalid AUTH_REQUEST password");
         return core::Status::PROTOCOL_VIOLATION;
     }
 
+    auth_method = static_cast<AuthMethod>(auth_method_byte);
     return core::Status::OK;
 }
 
 Message ProtocolCodec::buildAuthResponse(bool success,
                                          uint32_t user_id,
                                          const std::string& error_message) {
-    Message msg(MessageType::AUTH_RESPONSE);
-
-    msg.writeUInt8(success ? 0 : 1);
-    msg.writeUInt32(user_id);
-    msg.writeNullTerminatedString(error_message, 256);
-
-    return msg;
+    return buildAuthResponse(success ? AuthStatus::OK : AuthStatus::ERROR,
+                             user_id,
+                             error_message);
 }
 
 core::Status ProtocolCodec::parseAuthResponse(const Message& msg,
@@ -454,19 +479,64 @@ core::Status ProtocolCodec::parseAuthResponse(const Message& msg,
                                               uint32_t& user_id,
                                               std::string& error_message,
                                               core::ErrorContext* ctx) {
+    AuthStatus status = AuthStatus::ERROR;
+    auto parse_status = parseAuthResponse(msg, status, user_id, error_message, nullptr, ctx);
+    if (parse_status != core::Status::OK) {
+        return parse_status;
+    }
+
+    success = (status == AuthStatus::OK);
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildAuthResponse(AuthStatus status,
+                                         uint32_t user_id,
+                                         const std::string& error_message,
+                                         const std::vector<uint8_t>& data) {
+    Message msg(MessageType::AUTH_RESPONSE);
+
+    msg.writeUInt8(static_cast<uint8_t>(status));
+    msg.writeUInt32(user_id);
+    msg.writeNullTerminatedString(error_message, 256);
+    if (!data.empty()) {
+        msg.writeBytes(data.data(), data.size());
+    }
+
+    return msg;
+}
+
+core::Status ProtocolCodec::parseAuthResponse(const Message& msg,
+                                              AuthStatus& status,
+                                              uint32_t& user_id,
+                                              std::string& error_message,
+                                              std::vector<uint8_t>* data,
+                                              core::ErrorContext* ctx) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
 
-    uint8_t status;
-    if (!m.readUInt8(status) || !m.readUInt32(user_id)) {
+    uint8_t status_byte;
+    if (!m.readUInt8(status_byte) || !m.readUInt32(user_id)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Truncated AUTH_RESPONSE");
         return core::Status::PROTOCOL_VIOLATION;
     }
 
-    success = (status == 0);
+    status = static_cast<AuthStatus>(status_byte);
 
     m.readNullTerminatedString(error_message, 256);
+
+    if (data) {
+        size_t remaining = m.getRemainingBytes();
+        data->clear();
+        if (remaining > 0) {
+            data->resize(remaining);
+            if (!m.readBytes(data->data(), remaining)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated AUTH_RESPONSE payload");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+        }
+    }
 
     return core::Status::OK;
 }
@@ -490,6 +560,7 @@ core::Status ProtocolCodec::parseQuery(const Message& msg,
                                        uint8_t session_id[16],
                                        std::string& query,
                                        uint8_t& flags,
+                                       std::vector<uint8_t>* bytecode_out,
                                        core::ErrorContext* ctx) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
@@ -513,6 +584,44 @@ core::Status ProtocolCodec::parseQuery(const Message& msg,
         return core::Status::PROTOCOL_VIOLATION;
     }
 
+    if (flags & static_cast<uint8_t>(QueryFlags::BYTECODE)) {
+        if (!bytecode_out) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Missing bytecode output for QUERY");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        bytecode_out->clear();
+        if (query_length > 0) {
+            bytecode_out->resize(query_length);
+            if (!m.readBytes(bytecode_out->data(), query_length)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated QUERY bytecode");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+        }
+        if (flags & static_cast<uint8_t>(QueryFlags::BYTECODE_HAS_SQL)) {
+            uint32_t sql_length;
+            if (!m.readUInt32(sql_length)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated QUERY SQL length");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            if (sql_length > MAX_QUERY_LENGTH) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Query SQL too long");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            if (!m.readString(query, sql_length)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated QUERY SQL text");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+        } else {
+            query.clear();
+        }
+        return core::Status::OK;
+    }
+
     if (!m.readString(query, query_length)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Truncated QUERY text");
@@ -522,6 +631,43 @@ core::Status ProtocolCodec::parseQuery(const Message& msg,
     return core::Status::OK;
 }
 
+core::Status ProtocolCodec::parseQuery(const Message& msg,
+                                       uint8_t session_id[16],
+                                       std::string& query,
+                                       uint8_t& flags,
+                                       core::ErrorContext* ctx) {
+    return parseQuery(msg, session_id, query, flags, nullptr, ctx);
+}
+
+Message ProtocolCodec::buildQueryBytecode(const uint8_t session_id[16],
+                                          const std::vector<uint8_t>& bytecode,
+                                          const std::string& sql,
+                                          uint8_t flags) {
+    Message msg(MessageType::QUERY);
+    uint8_t out_flags = flags | static_cast<uint8_t>(QueryFlags::BYTECODE);
+    if (!sql.empty()) {
+        out_flags |= static_cast<uint8_t>(QueryFlags::BYTECODE_HAS_SQL);
+    }
+
+    msg.writeBytes(session_id, 16);
+    msg.writeUInt32(static_cast<uint32_t>(bytecode.size()));
+    msg.writeUInt8(out_flags);
+    if (!bytecode.empty()) {
+        msg.writeBytes(bytecode.data(), bytecode.size());
+    }
+    if (!sql.empty()) {
+        msg.writeUInt32(static_cast<uint32_t>(sql.size()));
+        msg.writeString(sql);
+    }
+
+    return msg;
+}
+
+Message ProtocolCodec::buildQueryBytecode(const uint8_t session_id[16],
+                                          const std::vector<uint8_t>& bytecode,
+                                          uint8_t flags) {
+    return buildQueryBytecode(session_id, bytecode, std::string(), flags);
+}
 Message ProtocolCodec::buildQueryError(uint32_t error_code,
                                        const std::string& sqlstate,
                                        const std::string& message,

@@ -180,13 +180,13 @@ private:
     Statement* parseCreateIndex();
     Statement* parseCreateView();
     Statement* parseCreateSequence();    // CREATE GENERATOR/SEQUENCE
-    Statement* parseCreateProcedure();
-    Statement* parseCreateFunction();
-    Statement* parseCreateTrigger();
+    Statement* parseCreateProcedure(bool or_replace);
+    Statement* parseCreateFunction(bool or_replace);
+    Statement* parseCreateTrigger(bool or_replace);
     Statement* parseCreateDomain();
-    Statement* parseCreateException();
-    Statement* parseCreateRole();
-    Statement* parseCreatePackage();
+    Statement* parseCreateException(bool or_replace);
+    Statement* parseCreateRole(bool or_replace);
+    Statement* parseCreatePackage(bool or_replace);
 
     // DDL - DROP variants
     Statement* parseDropDatabase();
@@ -348,8 +348,14 @@ private:
     // Check if current token is a non-reserved keyword (can be used as identifier)
     bool isNonReservedKeyword() const;
 
+    // Match a non-reserved keyword by text (case-insensitive)
+    bool matchIdentifierText(const char* keyword);
+
     // Parse an identifier (or non-reserved keyword used as identifier)
     v2::StringPool::StringId parseIdentifier();
+
+    // Capture raw SQL body text for procedures/functions/triggers
+    std::string captureStatementBody();
 
     // Allocate AST node (for future arena allocation)
     template<typename T, typename... Args>

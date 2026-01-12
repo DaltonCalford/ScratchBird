@@ -20,6 +20,7 @@
 #include "scratchbird/parser/parser_v2.h"
 #include <vector>
 #include <string>
+#include <string_view>
 #include <memory>
 #include <unordered_map>
 #include <cstring>
@@ -146,11 +147,13 @@ public:
      * Enable/disable optimization passes
      */
     void setOptimizationsEnabled(bool enabled) { optimizations_enabled_ = enabled; }
+    void setSourceSql(std::string_view sql) { source_sql_ = sql; }
 
 private:
     const StringPool& string_pool_;
     BytecodeResultV2* current_result_ = nullptr;
     bool optimizations_enabled_ = true;
+    std::string_view source_sql_;
 
     // ==========================================================================
     // Statement Generation
@@ -173,12 +176,19 @@ private:
     void generateDropSchema(ResolvedDropSchemaStmt* stmt);
     void generateAlterSchema(ResolvedAlterSchemaStmt* stmt);
     void generateCreateDatabase(ResolvedCreateDatabaseStmt* stmt);
+    void generateCreateFunction(ResolvedCreateFunctionStmt* stmt);
+    void generateCreateProcedure(ResolvedCreateProcedureStmt* stmt);
+    void generateCreateTrigger(ResolvedCreateTriggerStmt* stmt);
+    void generateCreatePackage(ResolvedCreatePackageStmt* stmt);
+    void generateCreateRole(ResolvedCreateRoleStmt* stmt);
+    void generateCreateException(ResolvedCreateExceptionStmt* stmt);
     void generateCreateDomain(ResolvedCreateDomainStmt* stmt);
     void generateDropDatabase(ResolvedDropDatabaseStmt* stmt);
     void generateAlterDomain(ResolvedAlterDomainStmt* stmt);
     void generateDropDomain(ResolvedDropDomainStmt* stmt);
     void generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt);
     void generateAlterTable(ResolvedAlterTableStmt* stmt);
+    void generateAlterIndex(ResolvedAlterIndexStmt* stmt);
     void generateRenameObject(ResolvedRenameObjectStmt* stmt);
     void generateMoveObject(ResolvedMoveObjectStmt* stmt);
     void generateDrop(ResolvedDropStmt* stmt);
@@ -191,6 +201,8 @@ private:
     void generateSavepoint(ResolvedSavepointStmt* stmt);
     void generateSet(ResolvedSetStmt* stmt);
     void generateShow(ResolvedShowStmt* stmt);
+    void generateGrant(ResolvedGrantStmt* stmt);
+    void generateRevoke(ResolvedRevokeStmt* stmt);
     void generateTruncateTable(ResolvedTruncateTableStmt* stmt);
     void generateExplain(ResolvedExplainStmt* stmt);
 

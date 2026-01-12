@@ -138,6 +138,7 @@ CompilationResultV2 QueryCompilerV2::compileInternal(const std::string& sql) {
 
     BytecodeGeneratorV2 generator(parser.stringPool());
     generator.setOptimizationsEnabled(optimizations_enabled_);
+    generator.setSourceSql(sql);
 
     BytecodeResultV2 bc_result = generator.generate(sem_result.statement());
 

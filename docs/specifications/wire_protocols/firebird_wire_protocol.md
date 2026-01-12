@@ -500,6 +500,77 @@ uint8_t* build_dpb(const char* user, const char* password) {
 }
 ```
 
+### Character Set and Collation Negotiation
+
+The connection character set is negotiated via the DPB and applies to:
+- SQL text in DSQL statements.
+- String parameter values when BLR does not specify an explicit charset.
+- Metadata strings returned in info items (relation names, field names, etc.).
+
+Rules:
+- Prefer `isc_dpb_charset` when provided.
+- If `isc_dpb_charset` is not present, fall back to legacy `isc_dpb_lc_ctype`
+  (where available) or the database default character set.
+- Column-level character set and collation are defined by metadata; BLR uses
+  `blr_text2`/`blr_varying2` to encode explicit character set ids.
+- If an unknown charset/collation is requested, return the appropriate Firebird
+  error (e.g., `isc_charset_not_found`, `isc_collation_not_found`).
+
+### Service Manager (op_service_*)
+
+Service Manager requests use the same wire framing as database attach, but
+`op_service_attach`/`op_service_detach`/`op_service_info`/`op_service_start`
+operate on the **service handle** instead of a database handle.
+
+Service attach uses `P_ATCH` with `p_atch_file` set to `service_mgr`
+(optionally prefixed with host name) and the parameter block encoded as SPB
+instead of DPB.
+
+#### Service Parameter Block (SPB)
+
+SPB format matches DPB encoding: `byte version` followed by repeated items
+`<item><length><value...>`. ScratchBird uses Firebird-compatible SPB constants
+from `ibase.h`.
+
+Common attach items:
+- `isc_spb_user_name`
+- `isc_spb_password` / `isc_spb_password_enc`
+- `isc_spb_trusted_auth`
+- `isc_spb_auth_plugin_list` / `isc_spb_auth_plugin_name`
+
+#### Service Actions (op_service_start)
+
+The action block begins with `isc_action_svc_*` followed by action-specific
+arguments encoded as TLV items. For Alpha, ScratchBird accepts the common
+actions used by Firebird clients and returns a clear error for unsupported
+actions:
+- `isc_action_svc_db_stats`
+- `isc_action_svc_properties`
+- `isc_action_svc_backup` / `isc_action_svc_restore`
+- `isc_action_svc_repair` / `isc_action_svc_validate`
+- `isc_action_svc_trace_start` / `isc_action_svc_trace_stop`
+
+#### Service Info (op_service_info)
+
+`op_service_info` uses `P_INFO` and returns a TLV response in `p_resp_data`
+containing `isc_info_svc_*` items. The response buffer ends with
+`isc_info_end` or `isc_info_truncated` and is followed by a status vector.
+
+### Protocol Version Quirks (10-13)
+
+ScratchBird accepts versions 10-13 and will choose the highest version offered
+by the client. Behavior differences to honor:
+
+| Version | Notes |
+| --- | --- |
+| 10 | Uses `op_prepare`/`op_exec_immediate`/`op_execute` only; no packed messages; no inline blobs. |
+| 11 | Adds `op_prepare2`/`op_execute2`/`op_exec_immediate2` and statement flags. |
+| 12 | Adds `op_fetch_scroll`, cursor flags, and broader cancel semantics. |
+| 13 | Adds packed message encoding and inline blob size fields. |
+
+When a legacy client uses v10 opcodes, ScratchBird maps them to the v13
+internal path (no packed message, no inline blob).
+
 ## Authentication
 
 ### SRP (Secure Remote Password) Authentication
@@ -540,6 +611,19 @@ struct P_AUTH_CONT {
     CSTRING p_keys;   // Keys available on server
 };
 ```
+
+### Authentication Plugin Negotiation Rules
+
+- The client advertises supported plugins in `CNCT_plugin_list` (connect) and
+  `isc_dpb_auth_plugin_list` (attach).
+- The server selects a plugin and returns it in `P_ACPD.p_acpt_plugin`.
+- If authentication is not complete, the server uses `op_accept_data` or
+  `op_cond_accept` with `p_acpt_authenticated = 0`, followed by one or more
+  `op_cont_auth` exchanges.
+- The client must echo the selected plugin name in each `op_cont_auth` packet.
+- On completion, the server sets `p_acpt_authenticated = 1` and the attach
+  proceeds.
+- Protocol 10 clients may only use legacy authentication (no `op_cont_auth`).
 
 ### Legacy Authentication
 
@@ -810,6 +894,30 @@ struct xsqlda {  // eXtended SQL Descriptor Area
 };
 ```
 
+### XSQLDA Wire Packing and Alignment
+
+When `isc_info_sql_sqlda_*` items are requested, XSQLDA is returned as a packed
+sequence of XDR values:
+- All 16-bit fields are encoded as XDR `short` and padded to 4 bytes.
+- Strings are encoded as `xdr_short` length followed by bytes and XDR padding.
+- Pointer fields (`sqldata`, `sqlind`) are **not** transmitted on the wire.
+
+Field order per `xsqlvar` (wire):
+1. `sqltype`
+2. `sqlscale`
+3. `sqlsubtype`
+4. `sqllen`
+5. `sqlname_length` + `sqlname`
+6. `relname_length` + `relname`
+7. `ownname_length` + `ownname`
+8. `aliasname_length` + `aliasname`
+
+Array/BLOB specifics:
+- `SQL_ARRAY` and `SQL_BLOB` use `sqllen = 8` (quad id size).
+- `sqlsubtype` carries the subtype (text/binary) where applicable.
+- Nullable fields set `SQL_NULLABLE` in `sqltype`; null indicators appear in
+  the message stream, not in XSQLDA.
+
 ### Binary Data Encoding
 
 ```c
@@ -904,6 +1012,17 @@ struct op_get_segment_packet {
     uint32_t op_segment;      // Segment number (0 = next)
 };
 ```
+
+### BLOB Segmentation Rules
+
+- Segment length is limited to 16-bit (max 65535). `op_put_segment` must not
+  send a segment larger than 65535 bytes.
+- `op_get_segment` returns the next segment (or part of it) in `p_resp_data`.
+- If the segment is longer than the requested length, return warning
+  `isc_segment` and include the partial bytes.
+- When the end of the blob is reached, return warning `isc_segstr_eof`.
+- Segment lengths are encoded as XDR values; segment payload is padded to a
+  4-byte boundary.
 
 ## Transaction Management
 
@@ -1001,6 +1120,23 @@ struct op_event_packet {
 };
 ```
 
+### Event Parameter Block (EPB) Format
+
+The EPB is the buffer built by `isc_event_block` and should be treated as an
+opaque Firebird-compatible structure. ScratchBird interprets it as:
+
+```
+uint8  event_count;
+repeat event_count times:
+  uint8  name_length;
+  char   name[name_length];
+  uint32 event_count;  // XDR, initial value 0
+```
+
+`op_event` returns a buffer of the same length with updated event counts. The
+client computes deltas using `isc_event_counts` and should re-arm the event
+with a new `op_que_events` after each notification.
+
 ## Status Vector
 
 ```c
@@ -1030,6 +1166,22 @@ struct status_vector {
 #define isc_arg_win32        17 // Win32 error
 #define isc_arg_warning      18 // Warning
 #define isc_arg_sql_state    19 // SQLSTATE
+```
+
+### Status Vector Mapping and SQLSTATE
+
+ScratchBird returns a Firebird-compatible status vector for all responses:
+- The first error is emitted as `isc_arg_gds` with a Firebird GDS code.
+- If available, include `isc_arg_sql_state` with a 5-character SQLSTATE.
+- Optional message parameters use `isc_arg_string` / `isc_arg_cstring`.
+- Warnings are appended with `isc_arg_warning` after the primary error.
+
+Example (SQLSTATE + message parameter):
+```
+isc_arg_gds, <gds_code>,
+isc_arg_sql_state, "42000",
+isc_arg_string, "duplicate key value violates unique constraint",
+isc_arg_end
 ```
 
 ## Protocol State Machine
@@ -1080,6 +1232,18 @@ struct compressed_packet {
 #define isc_dpb_wire_compression 126
 #define isc_dpb_wire_compression_level 127
 ```
+
+### Compression Negotiation and Framing
+
+- Clients request compression via `isc_dpb_wire_compression` (and optionally
+  `isc_dpb_wire_compression_level`).
+- If the server accepts compression, all subsequent packets on that connection
+  are framed as `compressed_packet` records.
+- If compression is not enabled or the compressed output is larger than the
+  input, the server may send the uncompressed payload with
+  `compressed_length = 0`.
+- Invalid compressed payloads yield a protocol error and the connection is
+  closed.
 
 ## Example: Complete Query Execution
 

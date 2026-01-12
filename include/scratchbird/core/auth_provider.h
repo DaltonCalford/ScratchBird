@@ -4,8 +4,13 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstdint>
 
 namespace scratchbird {
+namespace security {
+    enum class ScramAlgorithm : uint8_t;
+}
+
 namespace core {
 
 /**
@@ -55,6 +60,22 @@ struct AuthUserInfo {
     bool is_locked = false;
     bool is_superuser = false;
     ID authkey_id{};
+};
+
+struct ScramAuthState {
+    std::string username;
+    security::ScramAlgorithm algorithm;
+    uint32_t iterations = 0;
+    std::vector<uint8_t> salt;
+    std::vector<uint8_t> stored_key;
+    std::vector<uint8_t> server_key;
+    std::string client_first_bare;
+    std::string server_first;
+    std::string full_nonce;
+    ID user_id{};
+    bool user_exists = false;
+    bool is_active = true;
+    bool is_superuser = false;
 };
 
 /**
@@ -132,6 +153,62 @@ public:
      * For local provider, always returns true.
      */
     virtual bool testConnection(std::string& error_msg_out) = 0;
+
+    /**
+     * Authenticate using MD5 challenge-response
+     */
+    virtual AuthResult authenticateMd5(
+        const std::string& username,
+        const uint8_t salt[4],
+        const std::string& client_response,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out)
+    {
+        (void)username;
+        (void)salt;
+        (void)client_response;
+        (void)user_info_out;
+        error_msg_out = "MD5 authentication not supported";
+        return AuthResult::NOT_IMPLEMENTED;
+    }
+
+    /**
+     * Begin SCRAM authentication (client-first -> server-first)
+     */
+    virtual AuthResult beginScramAuth(
+        const std::string& username,
+        const std::string& client_first,
+        security::ScramAlgorithm algorithm,
+        ScramAuthState& state_out,
+        std::string& server_first_out,
+        std::string& error_msg_out)
+    {
+        (void)username;
+        (void)client_first;
+        (void)algorithm;
+        (void)state_out;
+        (void)server_first_out;
+        error_msg_out = "SCRAM authentication not supported";
+        return AuthResult::NOT_IMPLEMENTED;
+    }
+
+    /**
+     * Finish SCRAM authentication (client-final -> server-final)
+     */
+    virtual AuthResult finishScramAuth(
+        ScramAuthState& state,
+        const std::string& client_final,
+        AuthUserInfo& user_info_out,
+        std::string& server_final_out,
+        std::string& error_msg_out)
+    {
+        (void)state;
+        (void)client_final;
+        (void)user_info_out;
+        (void)server_final_out;
+        error_msg_out = "SCRAM authentication not supported";
+        return AuthResult::NOT_IMPLEMENTED;
+    }
 };
 
 /**
@@ -152,6 +229,28 @@ public:
         const std::string& username,
         const std::string& password,
         AuthUserInfo& user_info_out,
+        std::string& error_msg_out) override;
+
+    AuthResult authenticateMd5(
+        const std::string& username,
+        const uint8_t salt[4],
+        const std::string& client_response,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out) override;
+
+    AuthResult beginScramAuth(
+        const std::string& username,
+        const std::string& client_first,
+        security::ScramAlgorithm algorithm,
+        ScramAuthState& state_out,
+        std::string& server_first_out,
+        std::string& error_msg_out) override;
+
+    AuthResult finishScramAuth(
+        ScramAuthState& state,
+        const std::string& client_final,
+        AuthUserInfo& user_info_out,
+        std::string& server_final_out,
         std::string& error_msg_out) override;
 
     bool userExists(

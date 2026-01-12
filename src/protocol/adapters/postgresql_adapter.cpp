@@ -33,6 +33,9 @@
 namespace scratchbird {
 namespace protocol {
 
+std::mutex PostgresqlAdapter::backend_registry_mutex_;
+std::unordered_map<int32_t, PostgresqlAdapter::BackendEntry> PostgresqlAdapter::backend_registry_;
+
 // ============================================================================
 // Constructor/Destructor
 // ============================================================================
@@ -60,10 +63,48 @@ PostgresqlAdapter::PostgresqlAdapter(const ProtocolAdapterConfig& config)
     for (int i = 0; i < 4; ++i) {
         md5_salt_[i] = static_cast<uint8_t>(dist(gen) & 0xFF);
     }
+
+    registerBackend();
 }
 
-PostgresqlAdapter::~PostgresqlAdapter() = default;
-core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
+PostgresqlAdapter::~PostgresqlAdapter() {
+    unregisterBackend();
+}
+
+void PostgresqlAdapter::registerBackend() {
+    std::lock_guard<std::mutex> lock(backend_registry_mutex_);
+    backend_registry_[backend_pid_] = BackendEntry{this, backend_secret_key_};
+}
+
+void PostgresqlAdapter::unregisterBackend() {
+    std::lock_guard<std::mutex> lock(backend_registry_mutex_);
+    auto it = backend_registry_.find(backend_pid_);
+    if (it != backend_registry_.end() && it->second.adapter == this) {
+        backend_registry_.erase(it);
+    }
+}
+
+PostgresqlAdapter* PostgresqlAdapter::findBackend(int32_t pid, int32_t key) {
+    std::lock_guard<std::mutex> lock(backend_registry_mutex_);
+    auto it = backend_registry_.find(pid);
+    if (it == backend_registry_.end()) {
+        return nullptr;
+    }
+    if (it->second.secret_key != key) {
+        return nullptr;
+    }
+    return it->second.adapter;
+}
+
+void PostgresqlAdapter::requestCancel() {
+    cancel_requested_.store(true, std::memory_order_release);
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+        search_path_set_ = false;
+    }
+}
+core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
     if (client_) {
         return core::Status::OK;
     }
@@ -82,6 +123,15 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     auto status = client_->connect(client_config_, ctx);
     if (status != core::Status::OK) {
         client_.reset();
+        return status;
+    }
+
+    return core::Status::OK;
+}
+
+core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
+    auto status = connectRemoteClient(ctx);
+    if (status != core::Status::OK) {
         return status;
     }
 
@@ -111,12 +161,38 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
         return status;
     }
 
+    if (cancel_requested_.load(std::memory_order_acquire)) {
+        cancel_requested_.store(false, std::memory_order_release);
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(core::Status::QUERY_CANCELED);
+        result.error_message = "Query canceled";
+        return core::Status::QUERY_CANCELED;
+    }
+
     client::ResultSet rs;
     QueryContext rewritten = query;
     if (!query.parameter_values.empty()) {
         rewritten.query = substitutePositionalParameters(query);
     }
-    status = client_->executeQuery(rewritten.query, &rs, ctx);
+
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    auto compile_status = compileQuery(rewritten.query, bytecode, compile_error);
+    if (compile_status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(compile_status);
+        result.error_message = compile_error.empty() ? "Compilation failed" : compile_error;
+        return compile_status;
+    }
+
+    status = client_->executeBytecode(bytecode, query.query, &rs, ctx);
+    if (cancel_requested_.load(std::memory_order_acquire)) {
+        cancel_requested_.store(false, std::memory_order_release);
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(core::Status::QUERY_CANCELED);
+        result.error_message = "Query canceled";
+        return core::Status::QUERY_CANCELED;
+    }
     if (status != core::Status::OK) {
         result.has_error = true;
         result.error_code = static_cast<uint32_t>(status);
@@ -145,10 +221,39 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
 
     result.rows_affected = rs.getRowsAffected();
     result.command_tag = rs.getCommandTag();
-    if (result.command_tag.empty()) {
+    if (result.command_tag.empty() || result.command_tag == "OK") {
+        auto ltrim_upper = [](const std::string& input) {
+            size_t pos = 0;
+            while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
+                ++pos;
+            }
+            std::string upper;
+            upper.reserve(input.size() - pos);
+            for (; pos < input.size(); ++pos) {
+                upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(input[pos]))));
+            }
+            return upper;
+        };
+        std::string normalized = ltrim_upper(rewritten.query);
+        auto starts_with = [&](const std::string& prefix) {
+            return normalized.rfind(prefix, 0) == 0;
+        };
+
         if (row_count > 0) {
             result.command_tag = "SELECT " + std::to_string(row_count);
-        } else if (result.rows_affected > 0) {
+        } else if (starts_with("INSERT")) {
+            result.command_tag = "INSERT";
+        } else if (starts_with("UPDATE")) {
+            result.command_tag = "UPDATE";
+        } else if (starts_with("DELETE")) {
+            result.command_tag = "DELETE";
+        } else if (starts_with("CREATE")) {
+            result.command_tag = "CREATE";
+        } else if (starts_with("DROP")) {
+            result.command_tag = "DROP";
+        } else if (starts_with("ALTER")) {
+            result.command_tag = "ALTER";
+        } else {
             result.command_tag = "OK";
         }
     }
@@ -401,9 +506,27 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
 
     // Request authentication
     if (config_.require_authentication) {
-        // Use MD5 authentication
-        sendAuthenticationMD5Password(conn, md5_salt_);
-        pg_state_ = PgProtocolState::AUTH_MD5;
+        auth_method_ = config_.auth_method;
+        if (auth_method_ == AuthMethod::SCRAM_SHA_512) {
+            auth_method_ = AuthMethod::SCRAM_SHA_256;
+        }
+        client_config_.manual_auth = true;
+
+        if (auth_method_ == AuthMethod::MD5) {
+            std::random_device rd;
+            for (int i = 0; i < 4; ++i) {
+                md5_salt_[i] = static_cast<uint8_t>(rd() & 0xFF);
+            }
+            sendAuthenticationMD5Password(conn, md5_salt_);
+            pg_state_ = PgProtocolState::AUTH_MD5;
+        } else if (auth_method_ == AuthMethod::SCRAM_SHA_256) {
+            sendAuthenticationSASL(conn, {"SCRAM-SHA-256"});
+            scram_step_ = 0;
+            pg_state_ = PgProtocolState::AUTH_SCRAM;
+        } else {
+            sendAuthenticationCleartextPassword(conn);
+            pg_state_ = PgProtocolState::AUTH_REQUESTED;
+        }
     } else {
         // Trust authentication
         sendAuthResult(conn, true);
@@ -433,36 +556,139 @@ core::Status PostgresqlAdapter::handleCancelRequest(network::Connection* /*conn*
     int32_t pid = readInt32(current_msg_data_.data() + 8);
     int32_t key = readInt32(current_msg_data_.data() + 12);
 
-    // TODO: Implement cancel request handling
-    // For now, just close the connection
-    (void)pid;
-    (void)key;
+    auto* target = findBackend(pid, key);
+    if (target) {
+        target->requestCancel();
+    }
 
     return core::Status::OK;
 }
 
 core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn) {
-    // Password is null-terminated string
-    std::string password = readString(current_msg_data_.data(), current_msg_data_.size());
+    core::ErrorContext ctx;
 
-    // Validate password based on auth method
-    if (pg_state_ == PgProtocolState::AUTH_MD5) {
-        // Expected format: "md5" + MD5(MD5(password + user) + salt)
-        std::string expected = computeMD5Hash(password, username_, md5_salt_);
-
-        // For testing, accept any password
-        // TODO: Implement proper password validation
-        bool valid = true;  // password == expected or trust mode
-
-        if (valid) {
-            return sendAuthResult(conn, true);
-        } else {
-            return sendAuthResult(conn, false, "Password authentication failed for user \"" + username_ + "\"");
+    if (pg_state_ == PgProtocolState::AUTH_REQUESTED) {
+        std::string password = readString(current_msg_data_.data(), current_msg_data_.size());
+        std::vector<uint8_t> payload(password.begin(), password.end());
+        auto status = connectRemoteClient(&ctx);
+        if (status != core::Status::OK) {
+            std::string msg = ctx.message.empty()
+                ? "Authentication failed for user \"" + username_ + "\""
+                : ctx.message;
+            return sendAuthResult(conn, false, msg);
         }
-    } else if (pg_state_ == PgProtocolState::AUTH_REQUESTED) {
-        // Cleartext password
-        // TODO: Validate password
+        client::Connection::AuthResponse auth_resp;
+        status = client_->sendAuthRequest(AuthMethod::PASSWORD, payload, auth_resp, &ctx);
+        if (status != core::Status::OK || auth_resp.status != AuthStatus::OK) {
+            std::string msg = auth_resp.error_message.empty()
+                ? "Authentication failed for user \"" + username_ + "\""
+                : auth_resp.error_message;
+            return sendAuthResult(conn, false, msg);
+        }
         return sendAuthResult(conn, true);
+    }
+
+    if (pg_state_ == PgProtocolState::AUTH_MD5) {
+        std::string response = readString(current_msg_data_.data(), current_msg_data_.size());
+        std::vector<uint8_t> payload;
+        payload.insert(payload.end(), md5_salt_, md5_salt_ + 4);
+        payload.insert(payload.end(), response.begin(), response.end());
+
+        auto status = connectRemoteClient(&ctx);
+        if (status != core::Status::OK) {
+            std::string msg = ctx.message.empty()
+                ? "Authentication failed for user \"" + username_ + "\""
+                : ctx.message;
+            return sendAuthResult(conn, false, msg);
+        }
+
+        client::Connection::AuthResponse auth_resp;
+        status = client_->sendAuthRequest(AuthMethod::MD5, payload, auth_resp, &ctx);
+        if (status != core::Status::OK || auth_resp.status != AuthStatus::OK) {
+            std::string msg = auth_resp.error_message.empty()
+                ? "Authentication failed for user \"" + username_ + "\""
+                : auth_resp.error_message;
+            return sendAuthResult(conn, false, msg);
+        }
+        return sendAuthResult(conn, true);
+    }
+
+    if (pg_state_ == PgProtocolState::AUTH_SCRAM) {
+        if (scram_step_ == 0) {
+            size_t offset = 0;
+            std::string mechanism = readString(current_msg_data_.data() + offset,
+                                                current_msg_data_.size() - offset);
+            offset += mechanism.size() + 1;
+
+            if (offset + 4 > current_msg_data_.size()) {
+                sendErrorResponse(conn, "FATAL", "08P01", "Invalid SASL response");
+                return sendBuffer(conn);
+            }
+            int32_t resp_len = readInt32(current_msg_data_.data() + offset);
+            offset += 4;
+            if (resp_len < 0 || offset + static_cast<size_t>(resp_len) > current_msg_data_.size()) {
+                sendErrorResponse(conn, "FATAL", "08P01", "Invalid SASL response");
+                return sendBuffer(conn);
+            }
+
+            std::string client_first(reinterpret_cast<const char*>(current_msg_data_.data() + offset),
+                                     static_cast<size_t>(resp_len));
+
+            if (mechanism != "SCRAM-SHA-256") {
+                sendErrorResponse(conn, "FATAL", "0A000", "Unsupported SASL mechanism");
+                return sendBuffer(conn);
+            }
+
+            auto status = connectRemoteClient(&ctx);
+            if (status != core::Status::OK) {
+                std::string msg = ctx.message.empty()
+                    ? "Authentication failed for user \"" + username_ + "\""
+                    : ctx.message;
+                return sendAuthResult(conn, false, msg);
+            }
+
+            std::vector<uint8_t> payload(client_first.begin(), client_first.end());
+            client::Connection::AuthResponse auth_resp;
+            status = client_->sendAuthRequest(AuthMethod::SCRAM_SHA_256, payload, auth_resp, &ctx);
+            if (status != core::Status::OK || auth_resp.status != AuthStatus::CONTINUE) {
+                std::string msg = auth_resp.error_message.empty()
+                    ? "Authentication failed for user \"" + username_ + "\""
+                    : auth_resp.error_message;
+                return sendAuthResult(conn, false, msg);
+            }
+
+            std::string server_first(auth_resp.data.begin(), auth_resp.data.end());
+            sendAuthenticationSASLContinue(conn, server_first);
+            scram_step_ = 1;
+            return sendBuffer(conn);
+        }
+
+        if (scram_step_ == 1) {
+            std::string client_final(reinterpret_cast<const char*>(current_msg_data_.data()),
+                                     current_msg_data_.size());
+            auto status = connectRemoteClient(&ctx);
+            if (status != core::Status::OK) {
+                std::string msg = ctx.message.empty()
+                    ? "Authentication failed for user \"" + username_ + "\""
+                    : ctx.message;
+                return sendAuthResult(conn, false, msg);
+            }
+
+            std::vector<uint8_t> payload(client_final.begin(), client_final.end());
+            client::Connection::AuthResponse auth_resp;
+            status = client_->sendAuthRequest(AuthMethod::SCRAM_SHA_256, payload, auth_resp, &ctx);
+            scram_step_ = 0;
+            if (status != core::Status::OK || auth_resp.status != AuthStatus::OK) {
+                std::string msg = auth_resp.error_message.empty()
+                    ? "Authentication failed for user \"" + username_ + "\""
+                    : auth_resp.error_message;
+                return sendAuthResult(conn, false, msg);
+            }
+
+            std::string server_final(auth_resp.data.begin(), auth_resp.data.end());
+            sendAuthenticationSASLFinal(conn, server_final);
+            return sendAuthResult(conn, true);
+        }
     }
 
     return core::Status::INTERNAL_ERROR;
@@ -1076,6 +1302,32 @@ void PostgresqlAdapter::sendAuthenticationMD5Password(network::Connection* conn,
 void PostgresqlAdapter::sendAuthenticationCleartextPassword(network::Connection* conn) {
     std::vector<uint8_t> payload;
     writeInt32(payload, pg::AuthType::CLEARTEXT_PASSWORD);
+    sendMessage(conn, pg::BackendMsg::AUTHENTICATION, payload);
+}
+
+void PostgresqlAdapter::sendAuthenticationSASL(network::Connection* conn,
+                                               const std::vector<std::string>& mechanisms) {
+    std::vector<uint8_t> payload;
+    writeInt32(payload, pg::AuthType::SASL);
+    for (const auto& mech : mechanisms) {
+        writeString(payload, mech);
+        writeByte(payload, 0);
+    }
+    writeByte(payload, 0);
+    sendMessage(conn, pg::BackendMsg::AUTHENTICATION, payload);
+}
+
+void PostgresqlAdapter::sendAuthenticationSASLContinue(network::Connection* conn, const std::string& data) {
+    std::vector<uint8_t> payload;
+    writeInt32(payload, pg::AuthType::SASL_CONTINUE);
+    writeBytes(payload, data.data(), data.size());
+    sendMessage(conn, pg::BackendMsg::AUTHENTICATION, payload);
+}
+
+void PostgresqlAdapter::sendAuthenticationSASLFinal(network::Connection* conn, const std::string& data) {
+    std::vector<uint8_t> payload;
+    writeInt32(payload, pg::AuthType::SASL_FINAL);
+    writeBytes(payload, data.data(), data.size());
     sendMessage(conn, pg::BackendMsg::AUTHENTICATION, payload);
 }
 

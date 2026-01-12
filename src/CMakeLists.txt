@@ -108,6 +108,12 @@ file(GLOB_RECURSE SCRATCHBIRD_SBLR_SOURCES
 list(FILTER SCRATCHBIRD_SBLR_SOURCES EXCLUDE REGEX
     ".*/(bytecode_generator_v2|semantic_analyzer_v2|query_compiler_v2|firebird_query_compiler|mysql_query_compiler|postgresql_query_compiler)\\.cpp$"
 )
+list(REMOVE_ITEM SCRATCHBIRD_SBLR_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/bytecode_validator.cpp
+)
+list(APPEND SCRATCHBIRD_SBLR_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/bytecode_validator.cpp
+)
 
 add_library(scratchbird_sblr STATIC
     ${SCRATCHBIRD_SBLR_SOURCES}
@@ -259,7 +265,7 @@ endif()
 
 # Thread support for auth state management
 find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_security PUBLIC Threads::Threads scratchbird_core)
+target_link_libraries(scratchbird_security PUBLIC Threads::Threads)
 
 set_target_properties(scratchbird_security PROPERTIES
     CXX_STANDARD 17
@@ -269,6 +275,9 @@ set_target_properties(scratchbird_security PROPERTIES
 )
 
 message(STATUS "Security library: scratchbird_security (TLS, auth, HBA, audit)")
+
+# Core needs security helpers (SCRAM/base64) but security only depends on core headers.
+target_link_libraries(scratchbird_core PUBLIC scratchbird_security)
 
 # ==============================================================================
 # Network Library: scratchbird_network (Alpha 3 Phase 3.1)

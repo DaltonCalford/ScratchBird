@@ -24,17 +24,25 @@ void CreateSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateFunctionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateTriggerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreatePackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void RenameObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void MoveObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void TruncateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // DML statements
@@ -43,6 +51,9 @@ void InsertStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void UpdateStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DeleteStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CopyStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void MergeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExecuteProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExecuteStatementStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // Transaction statements
 void StartTransactionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -69,9 +80,6 @@ void DisconnectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 // Metadata statements
 void CommentStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
-// DML (additional)
-void MergeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
-
 // =============================================================================
 // PSQL accept() implementations
 // =============================================================================
@@ -83,6 +91,7 @@ void AssignmentStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void IfStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void WhileStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ForSelectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ForExecuteStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void LoopStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void LeaveStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ContinueStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -232,14 +241,19 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateFunctionStmt: return "CreateFunctionStmt";
         case ASTKind::CreateProcedureStmt: return "CreateProcedureStmt";
         case ASTKind::CreateTriggerStmt: return "CreateTriggerStmt";
+        case ASTKind::CreatePackageStmt: return "CreatePackageStmt";
+        case ASTKind::CreateRoleStmt: return "CreateRoleStmt";
+        case ASTKind::CreateExceptionStmt: return "CreateExceptionStmt";
         case ASTKind::CreateTypeStmt: return "CreateTypeStmt";
         case ASTKind::CreateDomainStmt: return "CreateDomainStmt";
         case ASTKind::AlterTableStmt: return "AlterTableStmt";
+        case ASTKind::AlterIndexStmt: return "AlterIndexStmt";
         case ASTKind::RenameObjectStmt: return "RenameObjectStmt";
         case ASTKind::MoveObjectStmt: return "MoveObjectStmt";
         case ASTKind::DropTableStmt: return "DropTableStmt";
         case ASTKind::DropIndexStmt: return "DropIndexStmt";
         case ASTKind::DropViewStmt: return "DropViewStmt";
+        case ASTKind::DropSequenceStmt: return "DropSequenceStmt";
         case ASTKind::TruncateTableStmt: return "TruncateTableStmt";
 
         // DML
@@ -247,7 +261,10 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::InsertStmt: return "InsertStmt";
         case ASTKind::UpdateStmt: return "UpdateStmt";
         case ASTKind::DeleteStmt: return "DeleteStmt";
+        case ASTKind::CopyStmt: return "CopyStmt";
         case ASTKind::MergeStmt: return "MergeStmt";
+        case ASTKind::ExecuteProcedureStmt: return "ExecuteProcedureStmt";
+        case ASTKind::ExecuteStatementStmt: return "ExecuteStatementStmt";
 
         // Transaction
         case ASTKind::StartTransactionStmt: return "StartTransactionStmt";
@@ -273,6 +290,28 @@ const char* astKindToString(ASTKind kind) {
 
         // Metadata
         case ASTKind::CommentStmt: return "CommentStmt";
+
+        case ASTKind::ExecuteBlockStmt: return "ExecuteBlockStmt";
+        case ASTKind::CompoundStmt: return "CompoundStmt";
+        case ASTKind::DeclareVariableStmt: return "DeclareVariableStmt";
+        case ASTKind::AssignmentStmt: return "AssignmentStmt";
+        case ASTKind::IfStmt: return "IfStmt";
+        case ASTKind::WhileStmt: return "WhileStmt";
+        case ASTKind::ForSelectStmt: return "ForSelectStmt";
+        case ASTKind::ForExecuteStmt: return "ForExecuteStmt";
+        case ASTKind::LoopStmt: return "LoopStmt";
+        case ASTKind::LeaveStmt: return "LeaveStmt";
+        case ASTKind::ContinueStmt: return "ContinueStmt";
+        case ASTKind::ExitStmt: return "ExitStmt";
+        case ASTKind::SuspendStmt: return "SuspendStmt";
+        case ASTKind::ReturnStmt: return "ReturnStmt";
+        case ASTKind::ExceptionRaiseStmt: return "ExceptionRaiseStmt";
+        case ASTKind::WhenExceptionStmt: return "WhenExceptionStmt";
+        case ASTKind::PostEventStmt: return "PostEventStmt";
+        case ASTKind::DeclareCursorStmt: return "DeclareCursorStmt";
+        case ASTKind::OpenCursorStmt: return "OpenCursorStmt";
+        case ASTKind::FetchCursorStmt: return "FetchCursorStmt";
+        case ASTKind::CloseCursorStmt: return "CloseCursorStmt";
 
         // Expressions
         case ASTKind::LiteralExpr: return "LiteralExpr";

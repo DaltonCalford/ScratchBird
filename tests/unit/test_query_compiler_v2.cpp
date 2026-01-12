@@ -208,6 +208,24 @@ TEST_F(QueryCompilerV2Test, ExecuteCreateTableWithDomainColumn_DefaultPublicSche
     EXPECT_EQ(column_info.data_type, static_cast<uint16_t>(domain_info.base_type));
 }
 
+TEST_F(QueryCompilerV2Test, ExecuteCreateViewStoresDefinition) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_table = compileAndExecute("CREATE TABLE view_base (id INT)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto create_view = compileAndExecute("CREATE VIEW view_v AS SELECT id FROM view_base");
+    ASSERT_TRUE(create_view.success()) << create_view.error();
+
+    ErrorContext ctx;
+    CatalogManager::ViewInfo view_info;
+    auto status = catalog_->getView(test_schema_id_, "view_v", view_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(view_info.definition, "SELECT id FROM view_base");
+}
+
 // =============================================================================
 // Error Handling Tests
 // =============================================================================

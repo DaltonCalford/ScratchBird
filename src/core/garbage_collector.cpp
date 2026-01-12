@@ -847,7 +847,7 @@ namespace scratchbird::core
 
             // Get indexes for this table
             std::vector<CatalogManager::IndexInfo> indexes;
-            status = catalog->listIndexesForTable(table.table_id, indexes, ctx);
+            status = catalog->listIndexesForTable(table.table_id, indexes, ctx, false);
             if (status != Status::OK)
             {
                 LOG_WARNING(VACUUM, "Failed to list indexes for table %s (status %d)",

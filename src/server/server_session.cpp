@@ -6,6 +6,7 @@
 
 #include "scratchbird/server/server_session.h"
 #include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/firebird_query_compiler.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
@@ -14,8 +15,10 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/auth_provider.h"
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/security/scram_auth.h"
 
 #include <cstring>
+#include <cctype>
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -219,22 +222,20 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
 
     // Parse auth request using ProtocolCodec
     uint8_t session_id[16];
-    std::string username, password;
+    std::string username;
+    protocol::AuthMethod auth_method = protocol::AuthMethod::PASSWORD;
+    std::vector<uint8_t> auth_payload;
 
     core::Status status = protocol::ProtocolCodec::parseAuthRequest(
-        msg, session_id, username, password, ctx);
+        msg, session_id, username, auth_method, auth_payload, ctx);
 
     if (status != core::Status::OK) {
         sendError("Invalid auth request");
         return status;
     }
 
-    // Attempt authentication
-    core::AuthUserInfo user_info;
-    std::string auth_error;
-    core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
-
-    if (auth_result == core::AuthResult::SUCCESS) {
+    auto finish_auth = [&](const core::AuthUserInfo& user_info,
+                           const std::vector<uint8_t>& response_data) -> core::Status {
         username_ = user_info.username.empty() ? username : user_info.username;
         state_ = SessionState::AUTHENTICATED;
 
@@ -304,15 +305,83 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         uint32_t user_id_wire = 0;
         std::memcpy(&user_id_wire, user_info.user_id.bytes.data(),
                     std::min<size_t>(4, user_info.user_id.bytes.size()));
-        protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(true, user_id_wire, "");
+        protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+            protocol::AuthStatus::OK, user_id_wire, "", response_data);
         return protocol_session_->sendMessage(response, ctx);
+    };
+
+    core::AuthUserInfo user_info;
+    std::string auth_error;
+
+    auto* catalog = database_ ? database_->catalog_manager() : nullptr;
+    auto* audit_logger = database_ ? database_->audit_logger() : nullptr;
+    std::unique_ptr<core::AuthProvider> provider;
+    if (catalog) {
+        provider = core::AuthProviderFactory::createDefault(catalog, audit_logger);
+    }
+
+    if (auth_method == protocol::AuthMethod::PASSWORD) {
+        std::string password(reinterpret_cast<const char*>(auth_payload.data()), auth_payload.size());
+        core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
+
+        if (auth_result == core::AuthResult::SUCCESS) {
+            return finish_auth(user_info, {});
+        }
+    } else if (auth_method == protocol::AuthMethod::MD5) {
+        if (auth_payload.size() < 4 || !provider) {
+            auth_error = "Authentication failed";
+        } else {
+            uint8_t salt[4];
+            std::memcpy(salt, auth_payload.data(), 4);
+            std::string response(reinterpret_cast<const char*>(auth_payload.data() + 4),
+                                 auth_payload.size() - 4);
+            core::AuthResult auth_result = provider->authenticateMd5(
+                username, salt, response, user_info, auth_error);
+            if (auth_result == core::AuthResult::SUCCESS) {
+                return finish_auth(user_info, {});
+            }
+        }
+    } else if (auth_method == protocol::AuthMethod::SCRAM_SHA_256 ||
+               auth_method == protocol::AuthMethod::SCRAM_SHA_512) {
+        if (!provider) {
+            auth_error = "Authentication failed";
+        } else if (!scram_state_) {
+            core::ScramAuthState state;
+            std::string server_first;
+            std::string client_first(reinterpret_cast<const char*>(auth_payload.data()),
+                                     auth_payload.size());
+            auto algo = (auth_method == protocol::AuthMethod::SCRAM_SHA_256)
+                ? security::ScramAlgorithm::SHA_256
+                : security::ScramAlgorithm::SHA_512;
+            core::AuthResult auth_result = provider->beginScramAuth(
+                username, client_first, algo, state, server_first, auth_error);
+            if (auth_result == core::AuthResult::SUCCESS) {
+                scram_state_ = std::move(state);
+                std::vector<uint8_t> response_data(server_first.begin(), server_first.end());
+                protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                    protocol::AuthStatus::CONTINUE, 0, "", response_data);
+                return protocol_session_->sendMessage(response, ctx);
+            }
+        } else {
+            std::string server_final;
+            std::string client_final(reinterpret_cast<const char*>(auth_payload.data()),
+                                     auth_payload.size());
+            core::AuthResult auth_result = provider->finishScramAuth(
+                *scram_state_, client_final, user_info, server_final, auth_error);
+            scram_state_.reset();
+            if (auth_result == core::AuthResult::SUCCESS) {
+                std::vector<uint8_t> response_data(server_final.begin(), server_final.end());
+                return finish_auth(user_info, response_data);
+            }
+        }
+    } else {
+        auth_error = "Authentication failed";
     }
 
     stats_.queries_failed++;
 
-    // Send failure response
     protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-        false, 0, "Authentication failed");
+        protocol::AuthStatus::ERROR, 0, "Authentication failed");
     protocol_session_->sendMessage(response, ctx);
     return core::Status::INVALID_PASSWORD;
 }
@@ -355,8 +424,10 @@ core::Status ServerSession::handleQuery(const protocol::Message& msg, core::Erro
     uint8_t session_id[16];
     std::string sql;
     uint8_t flags;
+    std::vector<uint8_t> bytecode;
 
-    core::Status status = protocol::ProtocolCodec::parseQuery(msg, session_id, sql, flags, ctx);
+    core::Status status = protocol::ProtocolCodec::parseQuery(
+        msg, session_id, sql, flags, &bytecode, ctx);
     if (status != core::Status::OK) {
         sendError("Invalid query");
         return status;
@@ -365,7 +436,11 @@ core::Status ServerSession::handleQuery(const protocol::Message& msg, core::Erro
     // Execute the query
     SessionState prev_state = state_;
     state_ = SessionState::EXECUTING;
-    status = executeQuery(sql, ctx);
+    if (flags & static_cast<uint8_t>(protocol::QueryFlags::BYTECODE)) {
+        status = executeBytecode(bytecode, sql, ctx);
+    } else {
+        status = executeQuery(sql, ctx);
+    }
 
     // Restore state
     state_ = prev_state;
@@ -661,6 +736,98 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         }
         return protocol_session_->sendMessage(response, ctx);
     }
+}
+
+core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode,
+                                            const std::string& sql,
+                                            core::ErrorContext* ctx) {
+    stats_.queries_executed++;
+
+    if (executor_) {
+        executor_->resetCancellation();
+    }
+    query_executing_.store(true, std::memory_order_release);
+
+    if (conn_ctx_) {
+        conn_ctx_->beginStatementTracking(sql.empty() ? "SBLR" : sql);
+    }
+
+    struct QueryExecutingGuard {
+        std::atomic<bool>& flag;
+        explicit QueryExecutingGuard(std::atomic<bool>& f) : flag(f) {}
+        ~QueryExecutingGuard() { flag.store(false, std::memory_order_release); }
+    } guard(query_executing_);
+
+    struct ConnectionContextGuard {
+        core::ConnectionContext* previous = nullptr;
+        bool changed = false;
+
+        explicit ConnectionContextGuard(core::ConnectionContext* current)
+            : previous(core::ConnectionContext::getCurrent())
+        {
+            if (current && current != previous) {
+                core::ConnectionContext::setCurrent(current);
+                changed = true;
+            }
+        }
+
+        ~ConnectionContextGuard() {
+            if (changed) {
+                core::ConnectionContext::setCurrent(previous);
+            }
+        }
+    } ctx_guard(conn_ctx_.get());
+
+    if (executor_) {
+        core::ErrorContext validate_ctx;
+        core::Status validate_status = sblr::validateBytecode(bytecode, &validate_ctx);
+        if (validate_status != core::Status::OK) {
+            stats_.queries_failed++;
+            if (conn_ctx_) {
+                conn_ctx_->endStatementTrackingFailure(
+                    static_cast<uint32_t>(validate_status), "0A000");
+            }
+            std::string err = validate_ctx.message.empty()
+                ? "Invalid bytecode"
+                : validate_ctx.message;
+            return sendError(err, "0A000", ctx);
+        }
+    }
+
+    sblr::ExecutionResult exec_result = executor_->execute(bytecode);
+
+    if (!exec_result.success()) {
+        stats_.queries_failed++;
+        if (conn_ctx_) {
+            conn_ctx_->endStatementTrackingFailure(
+                static_cast<uint32_t>(core::Status::INTERNAL_ERROR), "42000");
+        }
+        return sendError(exec_result.error(), "42000", ctx);
+    }
+
+    if (exec_result.hasResultSet()) {
+        return sendResultSet(exec_result.resultSet(), ctx);
+    }
+
+    std::string command = "OK";
+    if (!sql.empty()) {
+        std::string sql_upper = sql;
+        for (auto& c : sql_upper) c = static_cast<char>(std::toupper(c));
+
+        if (sql_upper.find("INSERT") == 0) command = "INSERT";
+        else if (sql_upper.find("UPDATE") == 0) command = "UPDATE";
+        else if (sql_upper.find("DELETE") == 0) command = "DELETE";
+        else if (sql_upper.find("CREATE") == 0) command = "CREATE";
+        else if (sql_upper.find("DROP") == 0) command = "DROP";
+        else if (sql_upper.find("ALTER") == 0) command = "ALTER";
+    }
+
+    protocol::Message response = protocol::ProtocolCodec::buildCommandComplete(
+        command, exec_result.affectedCount());
+    if (conn_ctx_) {
+        conn_ctx_->endStatementTrackingSuccess(exec_result.affectedCount());
+    }
+    return protocol_session_->sendMessage(response, ctx);
 }
 
 // Helper function to convert DataType to WireType

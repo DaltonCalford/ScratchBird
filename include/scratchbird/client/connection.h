@@ -74,6 +74,7 @@ struct ConnectionConfig {
 
     // Behavior settings
     bool auto_commit = true;                // Auto-commit mode (no explicit transaction)
+    bool manual_auth = false;               // Caller handles AUTH_REQUEST/RESPONSE
 
     // Default constructor
     ConnectionConfig() = default;
@@ -474,6 +475,21 @@ public:
      */
     core::Status ping(core::ErrorContext* ctx = nullptr);
 
+    struct AuthResponse {
+        protocol::AuthStatus status = protocol::AuthStatus::ERROR;
+        uint32_t user_id = 0;
+        std::string error_message;
+        std::vector<uint8_t> data;
+    };
+
+    /**
+     * Send an authentication request (manual auth mode)
+     */
+    core::Status sendAuthRequest(protocol::AuthMethod method,
+                                 const std::vector<uint8_t>& payload,
+                                 AuthResponse& response,
+                                 core::ErrorContext* ctx = nullptr);
+
     // ============================
     // Query Execution
     // ============================
@@ -489,6 +505,22 @@ public:
     core::Status executeQuery(const std::string& sql,
                               ResultSet* results,
                               core::ErrorContext* ctx = nullptr);
+
+    /**
+     * Execute a precompiled SBLR bytecode program
+     *
+     * @param bytecode SBLR bytecode payload
+     * @param results Output result set
+     * @param ctx Error context
+     * @return Status::OK on success
+     */
+    core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
+                                 const std::string& sql,
+                                 ResultSet* results,
+                                 core::ErrorContext* ctx = nullptr);
+    core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
+                                 ResultSet* results,
+                                 core::ErrorContext* ctx = nullptr);
 
     /**
      * Execute a statement without results (INSERT/UPDATE/DELETE/DDL)

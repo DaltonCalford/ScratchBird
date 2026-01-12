@@ -64,16 +64,21 @@ enum class ASTKind : uint16_t {
     CreateFunctionStmt,
     CreateProcedureStmt,
     CreateTriggerStmt,
+    CreatePackageStmt,
+    CreateRoleStmt,
+    CreateExceptionStmt,
     CreateTypeStmt,
     CreateDomainStmt,
     AlterDomainStmt,
     DropDomainStmt,
     AlterTableStmt,
+    AlterIndexStmt,
     RenameObjectStmt,
     MoveObjectStmt,
     DropTableStmt,
     DropIndexStmt,
     DropViewStmt,
+    DropSequenceStmt,
     TruncateTableStmt,
 
     // Statements - DML
@@ -83,6 +88,8 @@ enum class ASTKind : uint16_t {
     DeleteStmt,
     CopyStmt,
     MergeStmt,
+    ExecuteProcedureStmt,
+    ExecuteStatementStmt,
 
     // Statements - Transaction
     StartTransactionStmt,
@@ -117,6 +124,7 @@ enum class ASTKind : uint16_t {
     IfStmt,
     WhileStmt,
     ForSelectStmt,
+    ForExecuteStmt,
     LoopStmt,
     LeaveStmt,
     ContinueStmt,
@@ -601,6 +609,138 @@ public:
 };
 
 /**
+ * Routine parameter definition (procedures/functions)
+ */
+enum class RoutineParamMode : uint8_t {
+    IN = 0,
+    OUT = 1,
+    INOUT = 2
+};
+
+struct RoutineParam {
+    RoutineParamMode mode = RoutineParamMode::IN;
+    StringPool::StringId name = StringPool::INVALID_ID;
+    TypeName type;
+    Expression* default_value = nullptr;
+    bool has_default = false;
+};
+
+enum class RoutineSqlSecurity : uint8_t {
+    INVOKER = 0,
+    DEFINER = 1
+};
+
+/**
+ * CREATE FUNCTION statement
+ */
+class CreateFunctionStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateFunctionStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool or_replace = false;
+    bool deterministic = false;
+    RoutineSqlSecurity sql_security = RoutineSqlSecurity::INVOKER;
+
+    SchemaPath function_path;
+    std::vector<RoutineParam> params;
+    TypeName return_type;
+    StringPool::StringId body = StringPool::INVALID_ID;
+};
+
+/**
+ * CREATE PROCEDURE statement
+ */
+class CreateProcedureStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateProcedureStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool or_replace = false;
+    RoutineSqlSecurity sql_security = RoutineSqlSecurity::INVOKER;
+
+    SchemaPath procedure_path;
+    std::vector<RoutineParam> params;
+    StringPool::StringId body = StringPool::INVALID_ID;
+};
+
+enum class TriggerTiming : uint8_t {
+    BEFORE = 0,
+    AFTER = 1
+};
+
+enum class TriggerEvent : uint8_t {
+    INSERT = 0,
+    UPDATE = 1,
+    DELETE = 2
+};
+
+enum class TriggerGranularity : uint8_t {
+    FOR_EACH_ROW = 0,
+    FOR_EACH_STATEMENT = 1
+};
+
+/**
+ * CREATE TRIGGER statement
+ */
+class CreateTriggerStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateTriggerStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool or_replace = false;
+    bool active = true;
+
+    StringPool::StringId trigger_name = StringPool::INVALID_ID;
+    SchemaPath table_path;
+
+    TriggerTiming timing = TriggerTiming::BEFORE;
+    TriggerEvent event = TriggerEvent::INSERT;
+    TriggerGranularity granularity = TriggerGranularity::FOR_EACH_ROW;
+
+    StringPool::StringId body = StringPool::INVALID_ID;
+};
+
+/**
+ * CREATE PACKAGE statement
+ */
+class CreatePackageStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreatePackageStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool or_replace = false;
+    bool is_body = false;  // CREATE PACKAGE BODY
+
+    SchemaPath package_path;
+    StringPool::StringId header = StringPool::INVALID_ID;
+    StringPool::StringId body = StringPool::INVALID_ID;
+};
+
+/**
+ * CREATE ROLE statement
+ */
+class CreateRoleStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateRoleStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId role_name = StringPool::INVALID_ID;
+};
+
+/**
+ * CREATE EXCEPTION statement
+ */
+class CreateExceptionStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateExceptionStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    SchemaPath exception_path;
+    StringPool::StringId message = StringPool::INVALID_ID;
+};
+
+/**
  * CREATE SCHEMA statement
  */
 class CreateSchemaStmt : public Statement {
@@ -864,6 +1004,26 @@ public:
 };
 
 /**
+ * ALTER INDEX action types
+ */
+enum class AlterIndexAction : uint8_t {
+    ACTIVE,
+    INACTIVE,
+};
+
+/**
+ * ALTER INDEX statement
+ */
+class AlterIndexStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterIndexStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    SchemaPath index_path;
+    AlterIndexAction action = AlterIndexAction::ACTIVE;
+};
+
+/**
  * RENAME OBJECT statement (generic)
  */
 class RenameObjectStmt : public Statement {
@@ -932,6 +1092,19 @@ public:
     bool if_exists = false;
     bool materialized = false;
     std::vector<SchemaPath> views;
+    bool cascade = false;
+};
+
+/**
+ * DROP SEQUENCE statement
+ */
+class DropSequenceStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropSequenceStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> sequences;
     bool cascade = false;
 };
 
@@ -1177,6 +1350,32 @@ public:
     std::vector<WhenNotMatchedBySource> when_not_matched_by_source;
 };
 
+/**
+ * EXECUTE PROCEDURE statement (Firebird)
+ */
+class ExecuteProcedureStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::ExecuteProcedureStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    SchemaPath procedure_path;
+    std::vector<Expression*> arguments;
+    std::vector<StringPool::StringId> returning_variables;
+};
+
+/**
+ * EXECUTE STATEMENT (dynamic SQL)
+ */
+class ExecuteStatementStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::ExecuteStatementStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    Expression* sql = nullptr;
+    std::vector<Expression*> parameters;
+    std::vector<StringPool::StringId> into_variables;
+};
+
 // =============================================================================
 // PSQL Statements (Procedural SQL)
 // =============================================================================
@@ -1288,6 +1487,20 @@ public:
     void accept(ASTVisitor& visitor) override;
 
     Statement* select_stmt = nullptr;
+    std::vector<StringPool::StringId> into_variables;
+    Statement* body = nullptr;
+};
+
+/**
+ * FOR EXECUTE STATEMENT ... DO
+ */
+class ForExecuteStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::ForExecuteStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    Expression* sql = nullptr;
+    std::vector<Expression*> parameters;
     std::vector<StringPool::StringId> into_variables;
     Statement* body = nullptr;
 };
@@ -2537,17 +2750,25 @@ public:
     virtual void visit(DropSchemaStmt* stmt) = 0;
     virtual void visit(AlterSchemaStmt* stmt) = 0;
     virtual void visit(CreateDatabaseStmt* stmt) = 0;
+    virtual void visit(CreateFunctionStmt* stmt) = 0;
+    virtual void visit(CreateProcedureStmt* stmt) = 0;
+    virtual void visit(CreateTriggerStmt* stmt) = 0;
+    virtual void visit(CreatePackageStmt* stmt) = 0;
+    virtual void visit(CreateRoleStmt* stmt) = 0;
+    virtual void visit(CreateExceptionStmt* stmt) = 0;
     virtual void visit(CreateDomainStmt* stmt) = 0;
     virtual void visit(AlterDomainStmt* stmt) = 0;
     virtual void visit(DropDomainStmt* stmt) = 0;
     virtual void visit(DropDatabaseStmt* stmt) = 0;
     virtual void visit(AlterDatabaseStmt* stmt) = 0;
     virtual void visit(AlterTableStmt* stmt) = 0;
+    virtual void visit(AlterIndexStmt* stmt) = 0;
     virtual void visit(RenameObjectStmt* stmt) = 0;
     virtual void visit(MoveObjectStmt* stmt) = 0;
     virtual void visit(DropTableStmt* stmt) = 0;
     virtual void visit(DropIndexStmt* stmt) = 0;
     virtual void visit(DropViewStmt* stmt) = 0;
+    virtual void visit(DropSequenceStmt* stmt) = 0;
     virtual void visit(TruncateTableStmt* stmt) = 0;
 
     // DML statements
@@ -2556,6 +2777,9 @@ public:
     virtual void visit(UpdateStmt* stmt) = 0;
     virtual void visit(DeleteStmt* stmt) = 0;
     virtual void visit(CopyStmt* stmt) = 0;
+    virtual void visit(MergeStmt* stmt) = 0;
+    virtual void visit(ExecuteProcedureStmt* stmt) = 0;
+    virtual void visit(ExecuteStatementStmt* stmt) = 0;
 
     // Transaction statements
     virtual void visit(StartTransactionStmt* stmt) = 0;
@@ -2582,9 +2806,6 @@ public:
     // Metadata statements
     virtual void visit(CommentStmt* stmt) = 0;
 
-    // DML (additional)
-    virtual void visit(MergeStmt* stmt) = 0;
-
     // PSQL statements
     virtual void visit(ExecuteBlockStmt* stmt) = 0;
     virtual void visit(CompoundStmt* stmt) = 0;
@@ -2593,6 +2814,7 @@ public:
     virtual void visit(IfStmt* stmt) = 0;
     virtual void visit(WhileStmt* stmt) = 0;
     virtual void visit(ForSelectStmt* stmt) = 0;
+    virtual void visit(ForExecuteStmt* stmt) = 0;
     virtual void visit(LoopStmt* stmt) = 0;
     virtual void visit(LeaveStmt* stmt) = 0;
     virtual void visit(ContinueStmt* stmt) = 0;

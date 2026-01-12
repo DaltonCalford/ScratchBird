@@ -563,7 +563,8 @@ public:
             BUILDING = 0,   // Index is being built (not yet visible to queries)
             ACTIVE = 1,     // Index is active and available for use
             RETIRED = 2,    // Index is retired (old version after rebuild)
-            FAILED = 3      // Index build failed
+            FAILED = 3,     // Index build failed
+            INACTIVE = 4    // Index disabled via ALTER INDEX
         };
 
         // Index information
@@ -605,7 +606,7 @@ public:
 
             // Plan 01 Task E: Shadow index rebuild + versioning
             ID logical_index_id;                   // Stable logical index UUID across rebuilds
-            uint8_t state = 1;                     // 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED (default ACTIVE)
+            uint8_t state = 1;                     // 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED, 4=INACTIVE (default ACTIVE)
             uint64_t valid_from_xid = 0;           // XID when new txns can use this index (0 = immediately)
             uint64_t retired_xid = 0;              // XID after which no new txns use this index (0 = not retired)
             uint64_t build_started_time = 0;
@@ -654,6 +655,7 @@ public:
             UDR_MODULE = 36,        // Phase B: UDR module
             CLUSTER = 37,           // Phase B: Distributed MVCC cluster
             SYNONYM = 38,           // Phase B: Cross-schema pointer/alias
+            POLICY = 39,            // Row-level security policy
             UNKNOWN = 255           // Sentinel for resolver filters/unknown type
         };
 
@@ -686,6 +688,17 @@ public:
             ObjectType object_type;    // Type of object
             ID owner_id;               // Owner UUID reference
             std::string comment_text;  // Comment text (stored in TOAST on disk)
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // Object definition storage (DDL source + bytecode)
+        struct ObjectDefinitionInfo
+        {
+            ID object_id;
+            ObjectType object_type;
+            std::string ddl_text;              // Original DDL SQL
+            std::vector<uint8_t> bytecode;     // Compiled SBLR bytecode
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
         };
@@ -1536,7 +1549,8 @@ public:
 
         // Column operations
         auto getColumns(const ID &table_id, std::vector<ColumnInfo> &columns,
-                        ErrorContext *ctx = nullptr) -> Status;
+                        ErrorContext *ctx = nullptr,
+                        uint32_t required_privilege = 0) -> Status;
 
         auto getColumn(const ID &table_id, const std::string &column_name, ColumnInfo &info,
                        ErrorContext *ctx = nullptr) -> Status;
@@ -1567,7 +1581,11 @@ public:
                       ErrorContext *ctx = nullptr) -> Status;
 
         auto listIndexesForTable(const ID &table_id, std::vector<IndexInfo> &indexes,
-                                 ErrorContext *ctx = nullptr) -> Status;
+                                 ErrorContext *ctx = nullptr,
+                                 bool include_inactive = true) -> Status;
+
+        auto alterIndexState(const ID &index_id, IndexState state,
+                             ErrorContext *ctx = nullptr) -> Status;
 
         // LSM Integration Phase 3.3: Index object cache management
         /**
@@ -1625,6 +1643,8 @@ public:
         auto alterColumnType(const ID &table_id, const std::string &column_name,
                              DataType new_type, uint32_t new_precision, uint32_t new_scale,
                              ErrorContext *ctx = nullptr) -> Status;
+        auto updateTableStorageParams(const ID& table_id, const std::string& storage_params,
+                                      ErrorContext* ctx = nullptr) -> Status;
         auto renameObject(ObjectType object_type, const ID& object_id,
                           const std::string& new_name, ErrorContext* ctx = nullptr) -> Status;
         auto moveObject(ObjectType object_type, const ID& object_id,
@@ -1784,6 +1804,15 @@ public:
 
         auto deleteComment(const ID& object_id,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Object definition storage (DDL source + bytecode)
+        auto setObjectDefinition(const ObjectDefinitionInfo& info,
+                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getObjectDefinition(const ID& object_id,
+                                 ObjectDefinitionInfo& info_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deleteObjectDefinition(const ID& object_id,
+                                    ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // Domain dependency checking (Domain CRUD now in DomainManager)
@@ -2012,6 +2041,7 @@ public:
             bool follow_synonyms = false;
             bool allow_search_path = true;
             std::string dialect_tag = "scratchbird";
+            uint32_t required_privilege = 0;  // CatalogManager::Privilege bitmask (0 = no check)
         };
 
         struct ResolveFilter
@@ -3711,6 +3741,10 @@ public:
         std::unordered_map<ID, CommentInfo> comment_cache_;  // object_id -> CommentInfo
         std::mutex comment_cache_mutex_;
 
+        // Object definition cache (DDL source + bytecode)
+        std::unordered_map<ID, ObjectDefinitionInfo> object_definition_cache_;
+        std::mutex object_definition_cache_mutex_;
+
         // Session cache (Phase 1.4 - Security System)
         std::unordered_map<ID, SessionInfo> session_cache_;  // session_id -> SessionInfo
         std::mutex session_cache_mutex_;
@@ -3911,6 +3945,7 @@ public:
         // Phase 6.1: New system table pages (16 new tables - added group_memberships and group_mappings)
         uint32_t dependencies_table_page_ = 0;      // Dependencies tracking (Phase 1.4)
         uint32_t comments_table_page_ = 0;          // Object comments (Phase 1.5)
+        uint32_t object_definitions_table_page_ = 0; // Object DDL definitions (SQL + bytecode)
         uint32_t users_table_page_ = 0;             // Users (Phase 2)
         uint32_t roles_table_page_ = 0;             // Roles (Phase 2)
         uint32_t groups_table_page_ = 0;            // Groups (Phase 2)
@@ -4255,6 +4290,12 @@ public:
         auto writeCommentRecord(const CommentInfo &comment, ErrorContext *ctx) -> Status;
         auto deleteCommentRecord(const ID &object_id, ErrorContext *ctx) -> Status;
         auto readCommentRecords(ErrorContext *ctx) -> Status;
+
+        // Object definition persistence (DDL source + bytecode)
+        auto writeObjectDefinitionRecord(const ObjectDefinitionInfo &definition,
+                                         ErrorContext *ctx) -> Status;
+        auto deleteObjectDefinitionRecord(const ID &object_id, ErrorContext *ctx) -> Status;
+        auto readObjectDefinitionRecords(ErrorContext *ctx) -> Status;
 
         // Object persistence for sequences/views/triggers/procedures
         auto writeSequenceRecord(const SequenceState &state, ErrorContext *ctx) -> Status;

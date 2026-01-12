@@ -15,6 +15,8 @@
 #include "scratchbird/client/connection.h"
 #include "scratchbird/server/ipc_server.h"
 
+#include <atomic>
+#include <mutex>
 #include <unordered_map>
 #include <deque>
 
@@ -225,7 +227,7 @@ struct PgPortal {
  * Implements PostgreSQL v3 protocol including:
  * - Simple Query protocol
  * - Extended Query protocol (Parse, Bind, Describe, Execute, Sync)
- * - MD5 password authentication
+ * - Cleartext password authentication (engine delegated; MD5 pending)
  * - COPY protocol (basic support)
  *
  * Future:
@@ -354,6 +356,10 @@ private:
     void sendAuthenticationOk(network::Connection* conn);
     void sendAuthenticationMD5Password(network::Connection* conn, const uint8_t salt[4]);
     void sendAuthenticationCleartextPassword(network::Connection* conn);
+    void sendAuthenticationSASL(network::Connection* conn,
+                                const std::vector<std::string>& mechanisms);
+    void sendAuthenticationSASLContinue(network::Connection* conn, const std::string& data);
+    void sendAuthenticationSASLFinal(network::Connection* conn, const std::string& data);
 
     // Startup messages
     void sendBackendKeyData(network::Connection* conn);
@@ -454,10 +460,16 @@ private:
     void sendMessage(network::Connection* conn, char type, const std::vector<uint8_t>& payload);
 
     // IPC bridge helpers
+    core::Status connectRemoteClient(core::ErrorContext* ctx = nullptr);
     core::Status ensureRemoteClient(core::ErrorContext* ctx = nullptr);
     core::Status executeRemoteQuery(const QueryContext& query,
                                     ResultContext& result,
                                     core::ErrorContext* ctx = nullptr);
+
+    void registerBackend();
+    void unregisterBackend();
+    void requestCancel();
+    static PostgresqlAdapter* findBackend(int32_t pid, int32_t key);
 
     // ========================================================================
     // State
@@ -473,9 +485,19 @@ private:
     // Backend key data (for cancel requests)
     int32_t backend_pid_ = 0;
     int32_t backend_secret_key_ = 0;
+    std::atomic<bool> cancel_requested_{false};
+
+    struct BackendEntry {
+        PostgresqlAdapter* adapter = nullptr;
+        int32_t secret_key = 0;
+    };
+    static std::mutex backend_registry_mutex_;
+    static std::unordered_map<int32_t, BackendEntry> backend_registry_;
 
     // MD5 auth salt
     uint8_t md5_salt_[4] = {0};
+    uint8_t scram_step_ = 0;
+    AuthMethod auth_method_ = AuthMethod::PASSWORD;
 
     // Startup parameters from client
     std::unordered_map<std::string, std::string> client_parameters_;

@@ -236,14 +236,11 @@ set(SCRATCHBIRD_SMOKE_TESTS
     SemanticAnalyzerV2Test.*
     ParserSessionV2Test.*
     ParserV2DDLTest.*
-    FirebirdParserTest.*
     ShowSetCommandsTest.*
-    PostgreSQLParserTest.*
     LexerV2Test.*
     SchemaPathV2Test.*
     ParserDMLV2Test.*
     BytecodeGeneratorV2Test.*
-    MySQLParserTest.*
     ConditionalFunctionTest.*
     ArithmeticOverflow.*
     NaNInfinityHandling.*
@@ -255,6 +252,13 @@ set(SCRATCHBIRD_SMOKE_TESTS
     ConfigTest.*
 )
 list(JOIN SCRATCHBIRD_SMOKE_TESTS ":" SCRATCHBIRD_SMOKE_FILTER)
+
+set(SCRATCHBIRD_DIALECT_PARSER_TESTS
+    FirebirdParserTest.*
+    PostgreSQLParserTest.*
+    MySQLParserTest.*
+)
+list(JOIN SCRATCHBIRD_DIALECT_PARSER_TESTS ":" SCRATCHBIRD_DIALECT_PARSER_FILTER)
 
 set(SCRATCHBIRD_STRESS_TESTS
     StorageStressTest.*
@@ -292,6 +296,11 @@ set(SCRATCHBIRD_INTEGRATION_TESTS
 list(JOIN SCRATCHBIRD_INTEGRATION_TESTS ":" SCRATCHBIRD_INTEGRATION_FILTER)
 
 set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER "${SCRATCHBIRD_SMOKE_FILTER}")
+if(SCRATCHBIRD_DIALECT_PARSER_FILTER)
+    set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
+        "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_DIALECT_PARSER_FILTER}"
+    )
+endif()
 if(SCRATCHBIRD_STRESS_FILTER)
     set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
         "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_STRESS_FILTER}"
@@ -326,6 +335,27 @@ gtest_discover_tests(scratchbird_tests
         LABELS "unit\\;smoke"
     TEST_FILTER "${SCRATCHBIRD_SMOKE_FILTER}"
 )
+
+if(SCRATCHBIRD_DIALECT_PARSER_FILTER)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT 60
+            LABELS "unit\\;smoke\\;parser\\;firebird"
+        TEST_FILTER "FirebirdParserTest.*"
+    )
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT 60
+            LABELS "unit\\;smoke\\;parser\\;postgresql"
+        TEST_FILTER "PostgreSQLParserTest.*"
+    )
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT 60
+            LABELS "unit\\;smoke\\;parser\\;mysql"
+        TEST_FILTER "MySQLParserTest.*"
+    )
+endif()
 
 if(SCRATCHBIRD_STRESS_FILTER)
     gtest_discover_tests(scratchbird_tests

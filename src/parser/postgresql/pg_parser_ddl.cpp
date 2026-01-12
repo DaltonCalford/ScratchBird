@@ -300,16 +300,40 @@ void Parser::parseCreateTable() {
             if (matchKeyword(TokenType::KW_PRIMARY)) {
                 consumeKeyword(TokenType::KW_KEY, "Expected KEY");
                 consume(TokenType::LEFT_PAREN, "Expected (");
+                std::vector<std::string> key_columns;
                 do {
-                    parseIdentifier();
+                    key_columns.push_back(parseIdentifier());
                 } while (match(TokenType::COMMA));
                 consume(TokenType::RIGHT_PAREN, "Expected )");
+                emit(sblr::Opcode::PRIMARY_KEY);
+                emit(sblr::Opcode::BEGIN_LIST);
+                emitUVarint(static_cast<uint64_t>(key_columns.size()));
+                for (const auto& col : key_columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString("");
+                    emitString(col);
+                }
+                emit(sblr::Opcode::END_LIST);
+                emitString(constraint_name);
+                emitted_entry = true;
             } else if (matchKeyword(TokenType::KW_UNIQUE)) {
                 consume(TokenType::LEFT_PAREN, "Expected (");
+                std::vector<std::string> key_columns;
                 do {
-                    parseIdentifier();
+                    key_columns.push_back(parseIdentifier());
                 } while (match(TokenType::COMMA));
                 consume(TokenType::RIGHT_PAREN, "Expected )");
+                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
+                emit(sblr::Opcode::BEGIN_LIST);
+                emitUVarint(static_cast<uint64_t>(key_columns.size()));
+                for (const auto& col : key_columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString("");
+                    emitString(col);
+                }
+                emit(sblr::Opcode::END_LIST);
+                emitString(constraint_name);
+                emitted_entry = true;
             } else if (matchKeyword(TokenType::KW_FOREIGN)) {
                 consumeKeyword(TokenType::KW_KEY, "Expected KEY");
                 ForeignKeyDef fk = parseForeignKeyDef();
@@ -322,6 +346,7 @@ void Parser::parseCreateTable() {
                 parseExpression();
                 emit_enabled_ = prev_emit;
                 consume(TokenType::RIGHT_PAREN, "Expected )");
+                error("Table-level CHECK constraints are not supported yet");
             }
         } else {
             // Column definition
@@ -334,8 +359,14 @@ void Parser::parseCreateTable() {
             emitTypeDefinition(col.type);
 
             // Constraints
-            if (col.not_null) {
+            if (col.not_null || col.primary_key) {
                 emit(sblr::Opcode::NOT_NULL);
+            }
+            if (col.primary_key) {
+                emit(sblr::Opcode::PRIMARY_KEY);
+            }
+            if (col.unique) {
+                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
             }
             if (col.has_default) {
                 emit(sblr::Opcode::DEFAULT_VALUE);
@@ -2384,57 +2415,147 @@ void Parser::parseAlterStmt() {
             }
         }
 
-        // Fallback to legacy ALTER TABLE encoding
-        emit(sblr::Opcode::ALTER_TABLE);
         resolveTableName(schema, table);
-        emit(sblr::Opcode::TABLE_REF);
-        emitString(schema + "/" + table);
+        std::string table_path = schema.empty() ? table : (schema + "/" + table);
+
+        auto emit_alter = [&](uint8_t action, const auto& emit_payload) {
+            emit(sblr::Opcode::ALTER_TABLE);
+            emitString(table_path);
+            emitByte(action);
+            emit_payload();
+        };
+
+        auto emit_type_payload = [&](const PgDataType& type,
+                                     uint16_t& type_code,
+                                     uint32_t& precision,
+                                     uint32_t& scale) {
+            type_code = static_cast<uint16_t>(encodeDataType(type));
+            precision = 0;
+            scale = 0;
+            switch (type.kind) {
+                case PgDataType::Kind::CHAR:
+                case PgDataType::Kind::VARCHAR:
+                case PgDataType::Kind::BIT:
+                case PgDataType::Kind::VARBIT:
+                    precision = static_cast<uint32_t>(type.length);
+                    break;
+                case PgDataType::Kind::DECIMAL:
+                case PgDataType::Kind::NUMERIC:
+                case PgDataType::Kind::MONEY:
+                    precision = static_cast<uint32_t>(type.precision);
+                    scale = static_cast<uint32_t>(type.scale);
+                    break;
+                case PgDataType::Kind::TIME:
+                case PgDataType::Kind::TIMETZ:
+                case PgDataType::Kind::TIMESTAMP:
+                case PgDataType::Kind::TIMESTAMPTZ:
+                    precision = static_cast<uint32_t>(type.precision);
+                    break;
+                default:
+                    break;
+            }
+        };
 
         do {
             if (matchKeyword(TokenType::KW_ADD)) {
-                if (matchKeyword(TokenType::KW_COLUMN)) {
-                    ColumnDef col = parseColumnDef();
-                    emit(sblr::Opcode::COLUMN_DEF);
-                    emitString(col.name);
-                    emitTypeDefinition(col.type);
-                } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
-                    parseIdentifier();  // constraint name
-                } else {
-                    ColumnDef col = parseColumnDef();
-                    emit(sblr::Opcode::COLUMN_DEF);
-                    emitString(col.name);
-                    emitTypeDefinition(col.type);
+                matchKeyword(TokenType::KW_COLUMN);
+                ColumnDef col = parseColumnDef();
+                if (col.has_default || col.primary_key || col.unique ||
+                    col.is_identity || col.is_generated) {
+                    error("ALTER TABLE ADD COLUMN does not support constraints yet");
+                    return;
                 }
+                if (col.type.kind == PgDataType::Kind::DOMAIN ||
+                    col.type.kind == PgDataType::Kind::ARRAY) {
+                    error("ALTER TABLE ADD COLUMN does not support domain or array types yet");
+                    return;
+                }
+                emit_alter(0, [&]() {
+                    uint16_t type_code = 0;
+                    uint32_t precision = 0;
+                    uint32_t scale = 0;
+                    emit_type_payload(col.type, type_code, precision, scale);
+                    emitString(col.name);
+                    emitU16(type_code);
+                    emitU32(precision);
+                    emitU32(scale);
+                    emitByte(col.not_null ? 0 : 1);
+                });
             } else if (matchKeyword(TokenType::KW_DROP)) {
                 if (matchKeyword(TokenType::KW_COLUMN)) {
-                    matchKeyword(TokenType::KW_IF) && matchKeyword(TokenType::KW_EXISTS);
+                    bool if_exists = false;
+                    if (matchKeyword(TokenType::KW_IF)) {
+                        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+                        if_exists = true;
+                    }
                     std::string col_name = parseIdentifier();
-                    emitString(col_name);
-                    matchKeyword(TokenType::KW_CASCADE) || matchKeyword(TokenType::KW_RESTRICT);
+                    bool cascade = false;
+                    if (matchKeyword(TokenType::KW_CASCADE)) {
+                        cascade = true;
+                    } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+                        cascade = false;
+                    }
+                    emit_alter(1, [&]() {
+                        emitString(col_name);
+                        emitByte(if_exists ? 1 : 0);
+                        emitByte(cascade ? 1 : 0);
+                    });
                 } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
-                    matchKeyword(TokenType::KW_IF) && matchKeyword(TokenType::KW_EXISTS);
-                    std::string constraint_name = parseIdentifier();
-                    emitString(constraint_name);
+                    error("ALTER TABLE DROP CONSTRAINT is not supported yet");
+                    return;
+                } else {
+                    error("Expected COLUMN after DROP");
+                    return;
                 }
             } else if (matchKeyword(TokenType::KW_ALTER)) {
                 consumeKeyword(TokenType::KW_COLUMN, "Expected COLUMN");
                 std::string col_name = parseIdentifier();
-                emitString(col_name);
-                if (matchKeyword(TokenType::KW_SET)) {
-                    if (matchKeyword(TokenType::KW_DEFAULT)) {
-                        parseExpression();
-                    } else if (matchKeyword(TokenType::KW_NOT)) {
-                        consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+                bool alter_type = false;
+                if (matchKeyword(TokenType::KW_TYPE)) {
+                    alter_type = true;
+                } else if (matchKeyword(TokenType::KW_SET)) {
+                    if (matchKeyword(TokenType::KW_DATA)) {
+                        consumeKeyword(TokenType::KW_TYPE, "Expected TYPE");
+                        alter_type = true;
+                    } else if (matchKeyword(TokenType::KW_DEFAULT) || matchKeyword(TokenType::KW_NOT)) {
+                        error("ALTER TABLE ALTER COLUMN SET DEFAULT/NOT NULL is not supported yet");
+                        return;
                     }
                 } else if (matchKeyword(TokenType::KW_DROP)) {
-                    if (matchKeyword(TokenType::KW_DEFAULT)) {
-                        // Drop default
-                    } else if (matchKeyword(TokenType::KW_NOT)) {
-                        consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+                    if (matchKeyword(TokenType::KW_DEFAULT) || matchKeyword(TokenType::KW_NOT)) {
+                        error("ALTER TABLE ALTER COLUMN DROP DEFAULT/NOT NULL is not supported yet");
+                        return;
                     }
-                } else if (matchKeyword(TokenType::KW_TYPE)) {
-                    parseDataType();
                 }
+
+                if (alter_type) {
+                    PgDataType type = parseDataType();
+                    if (type.kind == PgDataType::Kind::DOMAIN ||
+                        type.kind == PgDataType::Kind::ARRAY) {
+                        error("ALTER TABLE ALTER COLUMN does not support domain or array types yet");
+                        return;
+                    }
+                    if (matchKeyword(TokenType::KW_USING)) {
+                        error("ALTER TABLE ALTER COLUMN ... USING is not supported yet");
+                        return;
+                    }
+                    emit_alter(2, [&]() {
+                        uint16_t type_code = 0;
+                        uint32_t precision = 0;
+                        uint32_t scale = 0;
+                        emit_type_payload(type, type_code, precision, scale);
+                        emitString(col_name);
+                        emitU16(type_code);
+                        emitU32(precision);
+                        emitU32(scale);
+                    });
+                } else if (!alter_type) {
+                    error("Expected TYPE, SET, or DROP after ALTER COLUMN");
+                    return;
+                }
+            } else {
+                error("Unsupported ALTER TABLE action");
+                return;
             }
         } while (match(TokenType::COMMA));
         return;
@@ -2716,16 +2837,14 @@ void Parser::parseDropStmt() {
     }
 
     if (matchKeyword(TokenType::KW_TABLE)) {
-        emit(sblr::Opcode::DROP_TABLE);
-
         bool if_exists = false;
         if (matchKeyword(TokenType::KW_IF)) {
             consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
             if_exists = true;
         }
-        emitByte(if_exists ? 1 : 0);
 
         // Table names
+        std::vector<std::string> tables;
         do {
             std::string schema;
             std::string table = parseIdentifier();
@@ -2734,55 +2853,126 @@ void Parser::parseDropStmt() {
                 table = parseIdentifier();
             }
             resolveTableName(schema, table);
-            emit(sblr::Opcode::TABLE_REF);
-            emitString(schema + "/" + table);
+            std::string path = schema.empty() ? table : (schema + "/" + table);
+            tables.push_back(std::move(path));
         } while (match(TokenType::COMMA));
 
         // CASCADE/RESTRICT
+        bool cascade = false;
         if (matchKeyword(TokenType::KW_CASCADE)) {
-            emitByte(1);
+            cascade = true;
         } else if (matchKeyword(TokenType::KW_RESTRICT)) {
-            emitByte(2);
+            cascade = false;
+        }
+
+        uint8_t flags = 0;
+        if (if_exists) {
+            flags |= 0x01;
+        }
+        if (cascade) {
+            flags |= 0x02;
+        }
+
+        for (const auto& table_name : tables) {
+            emit(sblr::Opcode::DROP_TABLE);
+            emitString(table_name);
+            emitByte(flags);
         }
     } else if (matchKeyword(TokenType::KW_INDEX)) {
-        emit(sblr::Opcode::DROP_INDEX);
-
-        bool concurrent = matchKeyword(TokenType::KW_CONCURRENTLY);
-        emitByte(concurrent ? 1 : 0);
+        matchKeyword(TokenType::KW_CONCURRENTLY);
 
         bool if_exists = false;
         if (matchKeyword(TokenType::KW_IF)) {
             consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
             if_exists = true;
         }
-        emitByte(if_exists ? 1 : 0);
+        std::vector<std::string> indexes;
+        do {
+            auto name_pair = splitQualifiedName(parseQualifiedName());
+            std::string schema = name_pair.first;
+            std::string index_name = name_pair.second;
+            resolveTableName(schema, index_name);
+            std::string path = schema.empty() ? index_name : (schema + "/" + index_name);
+            indexes.push_back(std::move(path));
+        } while (match(TokenType::COMMA));
 
-        std::string index_name = parseQualifiedName();
-        emitString(index_name);
+        for (const auto& index_name : indexes) {
+            emit(sblr::Opcode::DROP_INDEX);
+            emitString(index_name);
+            emitByte(if_exists ? 1 : 0);
+        }
     } else if (matchKeyword(TokenType::KW_VIEW)) {
-        emit(sblr::Opcode::DROP_VIEW);
-
         bool if_exists = false;
         if (matchKeyword(TokenType::KW_IF)) {
             consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
             if_exists = true;
         }
-        emitByte(if_exists ? 1 : 0);
+        std::vector<std::string> views;
+        do {
+            auto name_pair = splitQualifiedName(parseQualifiedName());
+            std::string schema = name_pair.first;
+            std::string view_name = name_pair.second;
+            resolveTableName(schema, view_name);
+            std::string path = schema.empty() ? view_name : (schema + "/" + view_name);
+            views.push_back(std::move(path));
+        } while (match(TokenType::COMMA));
 
-        std::string view_name = parseQualifiedName();
-        emitString(view_name);
+        bool cascade = false;
+        if (matchKeyword(TokenType::KW_CASCADE)) {
+            cascade = true;
+        } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+            cascade = false;
+        }
+
+        uint8_t flags = 0;
+        if (if_exists) {
+            flags |= 0x01;
+        }
+        if (cascade) {
+            flags |= 0x02;
+        }
+
+        for (const auto& view_name : views) {
+            emit(sblr::Opcode::DROP_VIEW);
+            emitString(view_name);
+            emitByte(flags);
+        }
     } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
-        emit(sblr::Opcode::DROP_SEQUENCE);
-
         bool if_exists = false;
         if (matchKeyword(TokenType::KW_IF)) {
             consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
             if_exists = true;
         }
-        emitByte(if_exists ? 1 : 0);
+        std::vector<std::string> sequences;
+        do {
+            auto name_pair = splitQualifiedName(parseQualifiedName());
+            std::string schema = name_pair.first;
+            std::string seq_name = name_pair.second;
+            resolveTableName(schema, seq_name);
+            std::string path = schema.empty() ? seq_name : (schema + "/" + seq_name);
+            sequences.push_back(std::move(path));
+        } while (match(TokenType::COMMA));
 
-        std::string seq_name = parseQualifiedName();
-        emitString(seq_name);
+        bool cascade = false;
+        if (matchKeyword(TokenType::KW_CASCADE)) {
+            cascade = true;
+        } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+            cascade = false;
+        }
+
+        uint8_t flags = 0;
+        if (cascade) {
+            flags |= 0x01;
+        }
+        if (if_exists) {
+            flags |= 0x02;
+        }
+
+        for (const auto& seq_name : sequences) {
+            emit(sblr::Opcode::DROP_SEQUENCE);
+            emitString(seq_name);
+            emitByte(flags);
+        }
     } else if (matchKeyword(TokenType::KW_FUNCTION)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNCTION));
@@ -2816,9 +3006,8 @@ void Parser::parseTruncateStmt() {
     consume(TokenType::KW_TRUNCATE, "Expected TRUNCATE");
     matchKeyword(TokenType::KW_TABLE);  // Optional
 
-    emit(sblr::Opcode::TRUNCATE_TABLE);
-
     // Table names
+    std::vector<std::string> tables;
     do {
         std::string schema;
         std::string table = parseIdentifier();
@@ -2827,24 +3016,37 @@ void Parser::parseTruncateStmt() {
             table = parseIdentifier();
         }
         resolveTableName(schema, table);
-        emit(sblr::Opcode::TABLE_REF);
-        emitString(schema + "/" + table);
+        std::string path = schema.empty() ? table : (schema + "/" + table);
+        tables.push_back(std::move(path));
     } while (match(TokenType::COMMA));
 
     // RESTART IDENTITY / CONTINUE IDENTITY
+    bool has_identity_option = false;
     if (matchKeyword(TokenType::KW_RESTART)) {
         consumeKeyword(TokenType::KW_IDENTITY, "Expected IDENTITY");
-        emitByte(1);
+        has_identity_option = true;
     } else if (matchKeyword(TokenType::KW_CONTINUE)) {
         consumeKeyword(TokenType::KW_IDENTITY, "Expected IDENTITY");
-        emitByte(2);
+        has_identity_option = true;
     }
 
     // CASCADE/RESTRICT
+    bool has_cascade = false;
     if (matchKeyword(TokenType::KW_CASCADE)) {
-        emitByte(1);
+        has_cascade = true;
     } else if (matchKeyword(TokenType::KW_RESTRICT)) {
-        emitByte(2);
+        has_cascade = true;
+    }
+
+    if (has_identity_option || has_cascade) {
+        error("TRUNCATE options are not supported in PostgreSQL emulation yet");
+        return;
+    }
+
+    for (const auto& table_name : tables) {
+        emit(sblr::Opcode::TRUNCATE_TABLE);
+        emitString(table_name);
+        emitByte(0);  // ASYNC mode
     }
 }
 

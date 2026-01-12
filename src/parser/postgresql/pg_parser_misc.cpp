@@ -114,27 +114,40 @@ void Parser::parseSetStmt() {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_CONSTRAINTS));
 
+        bool all_constraints = false;
+        std::vector<std::string> names;
         if (matchKeyword(TokenType::KW_ALL)) {
-            emitByte(0);  // All constraints
+            all_constraints = true;
         } else {
-            // List of constraint names
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t count_pos = bytecode_.size();
-            emitU32(0);
-            uint32_t count = 0;
             do {
-                std::string name = parseIdentifier();
-                emitString(name);
-                count++;
+                names.push_back(parseIdentifier());
             } while (match(TokenType::COMMA));
-            sblr::writeInt32(&bytecode_[count_pos], count);
-            emit(sblr::Opcode::END_LIST);
         }
 
+        bool deferred = false;
         if (matchKeyword(TokenType::KW_DEFERRED)) {
-            emitByte(1);
+            deferred = true;
         } else if (matchKeyword(TokenType::KW_IMMEDIATE)) {
-            emitByte(2);
+            deferred = false;
+        }
+
+        uint8_t flags = 0;
+        if (all_constraints) {
+            flags |= 0x01;
+        }
+        if (deferred) {
+            flags |= 0x02;
+        }
+        emitByte(flags);
+
+        if (!all_constraints) {
+            if (names.size() > 255) {
+                error("Too many constraint names in SET CONSTRAINTS");
+            }
+            emitByte(static_cast<uint8_t>(names.size()));
+            for (const auto& name : names) {
+                emitString(name);
+            }
         }
     } else if (matchKeyword(TokenType::KW_ROLE)) {
         // SET ROLE

@@ -12,6 +12,8 @@
 #include <cctype>
 #include <cstring>
 #include <algorithm>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <limits>
 #include <unordered_set>
@@ -109,6 +111,94 @@ static std::string tokenToString(TokenType type) {
         case TokenType::KW_WARNINGS: return "warnings";
         case TokenType::KW_ERRORS: return "errors";
         default: return "";
+    }
+}
+
+static core::DataType mysqlTypeToCoreDataType(const MySQLDataType& type) {
+    switch (type.kind) {
+        case MySQLDataType::Kind::TINYINT:
+            return type.unsigned_ ? core::DataType::UINT8 : core::DataType::INT8;
+        case MySQLDataType::Kind::SMALLINT:
+            return type.unsigned_ ? core::DataType::UINT16 : core::DataType::INT16;
+        case MySQLDataType::Kind::MEDIUMINT:
+        case MySQLDataType::Kind::INT:
+            return type.unsigned_ ? core::DataType::UINT32 : core::DataType::INT32;
+        case MySQLDataType::Kind::BIGINT:
+            return type.unsigned_ ? core::DataType::UINT64 : core::DataType::INT64;
+        case MySQLDataType::Kind::INT128:
+            return type.unsigned_ ? core::DataType::UINT128 : core::DataType::INT128;
+        case MySQLDataType::Kind::UINT128:
+            return core::DataType::UINT128;
+        case MySQLDataType::Kind::FLOAT:
+            return core::DataType::FLOAT32;
+        case MySQLDataType::Kind::DOUBLE:
+            return core::DataType::FLOAT64;
+        case MySQLDataType::Kind::DECIMAL:
+            return core::DataType::DECIMAL;
+        case MySQLDataType::Kind::CHAR:
+            return core::DataType::CHAR;
+        case MySQLDataType::Kind::VARCHAR:
+        case MySQLDataType::Kind::TINYTEXT:
+        case MySQLDataType::Kind::MEDIUMTEXT:
+        case MySQLDataType::Kind::LONGTEXT:
+            return core::DataType::VARCHAR;
+        case MySQLDataType::Kind::TEXT:
+            return core::DataType::TEXT;
+        case MySQLDataType::Kind::BINARY:
+            return core::DataType::BINARY;
+        case MySQLDataType::Kind::VARBINARY:
+        case MySQLDataType::Kind::TINYBLOB:
+        case MySQLDataType::Kind::MEDIUMBLOB:
+        case MySQLDataType::Kind::LONGBLOB:
+            return core::DataType::VARBINARY;
+        case MySQLDataType::Kind::BLOB:
+            return core::DataType::BLOB;
+        case MySQLDataType::Kind::DATE:
+            return core::DataType::DATE;
+        case MySQLDataType::Kind::TIME:
+            return core::DataType::TIME;
+        case MySQLDataType::Kind::DATETIME:
+        case MySQLDataType::Kind::TIMESTAMP:
+            return core::DataType::TIMESTAMP;
+        case MySQLDataType::Kind::YEAR:
+            return core::DataType::INT16;
+        case MySQLDataType::Kind::BIT:
+        case MySQLDataType::Kind::BOOL:
+            return core::DataType::BOOLEAN;
+        case MySQLDataType::Kind::ENUM:
+        case MySQLDataType::Kind::SET:
+            return core::DataType::VARCHAR;
+        case MySQLDataType::Kind::JSON:
+            return core::DataType::JSON;
+        case MySQLDataType::Kind::GEOMETRY:
+        case MySQLDataType::Kind::POINT:
+        case MySQLDataType::Kind::LINESTRING:
+        case MySQLDataType::Kind::POLYGON:
+            return core::DataType::BLOB;
+        default:
+            return core::DataType::VARCHAR;
+    }
+}
+
+static void resolveMySQLTypeModifiers(const MySQLDataType& type,
+                                      uint32_t& precision,
+                                      uint32_t& scale) {
+    precision = 0;
+    scale = 0;
+    switch (type.kind) {
+        case MySQLDataType::Kind::CHAR:
+        case MySQLDataType::Kind::VARCHAR:
+        case MySQLDataType::Kind::TINYTEXT:
+        case MySQLDataType::Kind::MEDIUMTEXT:
+        case MySQLDataType::Kind::LONGTEXT:
+            precision = type.length > 0 ? static_cast<uint32_t>(type.length) : 255;
+            break;
+        case MySQLDataType::Kind::DECIMAL:
+            precision = type.precision > 0 ? static_cast<uint32_t>(type.precision) : 18;
+            scale = static_cast<uint32_t>(type.scale);
+            break;
+        default:
+            break;
     }
 }
 
@@ -2131,6 +2221,8 @@ void Parser::parseInsertStmt() {
             path.type = schema.empty() ? core::PathType::UNQUALIFIED : core::PathType::ABSOLUTE;
 
             core::CatalogManager::ResolveOptions opts;
+            opts.required_privilege =
+                static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT);
             core::CatalogManager::ObjectType resolved_type;
             core::ID table_id;
             core::ErrorContext ctx;
@@ -2138,7 +2230,8 @@ void Parser::parseInsertStmt() {
                                                          core::CatalogManager::ObjectType::TABLE,
                                                          opts, table_id, resolved_type, &ctx) == core::Status::OK) {
                 std::vector<core::CatalogManager::ColumnInfo> cols;
-                if (db_->catalog_manager()->getColumns(table_id, cols, &ctx) == core::Status::OK) {
+                if (db_->catalog_manager()->getColumns(table_id, cols, &ctx,
+                                                       opts.required_privilege) == core::Status::OK) {
                     for (const auto& col : cols) {
                         columns.push_back(col.column_name);
                     }
@@ -2452,18 +2545,13 @@ void Parser::parseDeleteStmt() {
 void Parser::parseReplaceStmt() {
     consume(TokenType::KW_REPLACE, "Expected REPLACE");
 
-    // REPLACE is similar to INSERT
     matchKeyword(TokenType::KW_LOW_PRIORITY);
     matchKeyword(TokenType::KW_DELAYED);
 
     consumeKeyword(TokenType::KW_INTO, "Expected INTO");
 
-    // For now, treat as INSERT with conflict handling
     emit(sblr::Opcode::INSERT);
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE));
 
-    // Table name
     std::string schema;
     std::string table = parseIdentifier();
     if (match(TokenType::DOT)) {
@@ -2472,64 +2560,265 @@ void Parser::parseReplaceStmt() {
     }
     resolveTableName(schema, table);
 
+    std::string table_path = schema.empty() ? table : schema + "/" + table;
     emit(sblr::Opcode::TABLE_REF);
-    emitByte(0);
-    emitString(schema.empty() ? table : schema + "/" + table);
+    emitByte(0);  // name-based reference
+    emitString(table_path);
     emitString("");
 
-    // Column list
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t col_count_pos = bytecode_.size();
-    emitU32(0);
-
-    uint32_t col_count = 0;
+    std::vector<std::string> columns;
+    bool has_column_list = false;
     if (match(TokenType::LEFT_PAREN)) {
+        has_column_list = true;
         do {
-            std::string col = parseIdentifier();
-            emit(sblr::Opcode::COLUMN_REF);
-            emitString("");
-            emitString("");
-            emitString(col);
-            col_count++;
+            columns.push_back(parseIdentifier());
         } while (match(TokenType::COMMA));
         consume(TokenType::RIGHT_PAREN, "Expected )");
     }
 
-    sblr::writeInt32(&bytecode_[col_count_pos], col_count);
-    emit(sblr::Opcode::END_LIST);
+    struct InsertValue {
+        bool is_default = false;
+        std::vector<uint8_t> expr;
+    };
+    std::vector<std::vector<InsertValue>> rows;
+    bool default_values_only = false;
+    bool has_select = false;
+    std::vector<uint8_t> select_bytecode;
 
-    // VALUES
-    if (matchKeyword(TokenType::KW_VALUES) || matchKeyword(TokenType::KW_VALUE)) {
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t row_count_pos = bytecode_.size();
-        emitU32(0);
-
-        uint32_t row_count = 0;
+    if (matchKeyword(TokenType::KW_DEFAULT)) {
+        matchKeyword(TokenType::KW_VALUES);
+        default_values_only = true;
+    } else if (matchKeyword(TokenType::KW_VALUES) || matchKeyword(TokenType::KW_VALUE)) {
         do {
             consume(TokenType::LEFT_PAREN, "Expected (");
-
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t val_count_pos = bytecode_.size();
-            emitU32(0);
-
-            uint32_t val_count = 0;
-            do {
-                parseExpression();
-                val_count++;
-            } while (match(TokenType::COMMA));
-
-            sblr::writeInt32(&bytecode_[val_count_pos], val_count);
-            emit(sblr::Opcode::END_LIST);
-
+            std::vector<InsertValue> row;
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do {
+                    InsertValue val;
+                    if (matchKeyword(TokenType::KW_DEFAULT)) {
+                        val.is_default = true;
+                    } else {
+                        val.expr = captureExpressionBytecode();
+                    }
+                    row.push_back(std::move(val));
+                } while (match(TokenType::COMMA));
+            }
             consume(TokenType::RIGHT_PAREN, "Expected )");
-            row_count++;
+            rows.push_back(std::move(row));
         } while (match(TokenType::COMMA));
-
-        sblr::writeInt32(&bytecode_[row_count_pos], row_count);
-        emit(sblr::Opcode::END_LIST);
     } else if (check(TokenType::KW_SELECT)) {
-        parseSelectStmt();
+        auto capture_select = [&]() {
+            std::vector<uint8_t> saved;
+            saved.swap(bytecode_);
+            bool saved_emit = emit_enabled_;
+            emit_enabled_ = true;
+            bytecode_.clear();
+            parseSelectStmt();
+            std::vector<uint8_t> stmt;
+            stmt.swap(bytecode_);
+            bytecode_.swap(saved);
+            emit_enabled_ = saved_emit;
+            return stmt;
+        };
+        has_select = true;
+        select_bytecode = capture_select();
     }
+
+    if (!has_column_list) {
+        auto split_components = [](const std::string& path) {
+            std::vector<std::string> parts;
+            std::string current;
+            for (char ch : path) {
+                if (ch == '/' || ch == '.') {
+                    if (!current.empty()) {
+                        parts.push_back(current);
+                        current.clear();
+                    }
+                } else {
+                    current.push_back(ch);
+                }
+            }
+            if (!current.empty()) {
+                parts.push_back(current);
+            }
+            return parts;
+        };
+
+        if (db_ && !rows.empty()) {
+            core::ObjectPath path;
+            path.components = split_components(schema);
+            path.components.push_back(table);
+            path.type = schema.empty() ? core::PathType::UNQUALIFIED : core::PathType::ABSOLUTE;
+
+            core::CatalogManager::ResolveOptions opts;
+            opts.required_privilege =
+                static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT);
+            core::CatalogManager::ObjectType resolved_type;
+            core::ID table_id;
+            core::ErrorContext ctx;
+            if (db_->catalog_manager()->resolveObjectPath(path,
+                                                         core::CatalogManager::ObjectType::TABLE,
+                                                         opts, table_id, resolved_type, &ctx) == core::Status::OK) {
+                std::vector<core::CatalogManager::ColumnInfo> cols;
+                if (db_->catalog_manager()->getColumns(table_id, cols, &ctx,
+                                                       opts.required_privilege) == core::Status::OK) {
+                    for (const auto& col : cols) {
+                        columns.push_back(col.column_name);
+                    }
+                }
+            }
+        }
+    }
+
+    std::vector<std::string> emit_columns;
+    std::vector<std::vector<std::vector<uint8_t>>> emit_rows;
+
+    bool has_default = false;
+    for (const auto& row : rows) {
+        for (const auto& val : row) {
+            if (val.is_default) {
+                has_default = true;
+                break;
+            }
+        }
+    }
+
+    if (rows.size() > 1 && has_default) {
+        error("DEFAULT values in multi-row REPLACE are not supported yet");
+    }
+
+    if (!rows.empty()) {
+        if (has_default && columns.empty()) {
+            error("DEFAULT values require a resolved column list");
+        }
+
+        if (has_default) {
+            const auto& row = rows.front();
+            std::vector<std::vector<uint8_t>> row_exprs;
+            for (size_t i = 0; i < row.size() && i < columns.size(); ++i) {
+                if (row[i].is_default) {
+                    continue;
+                }
+                emit_columns.push_back(columns[i]);
+                row_exprs.push_back(row[i].expr);
+            }
+            emit_rows.push_back(std::move(row_exprs));
+        } else {
+            emit_columns = columns;
+            for (const auto& row : rows) {
+                if (!columns.empty() && row.size() != columns.size()) {
+                    error("Column count doesn't match value count");
+                }
+                std::vector<std::vector<uint8_t>> row_exprs;
+                row_exprs.reserve(row.size());
+                for (const auto& val : row) {
+                    row_exprs.push_back(val.expr);
+                }
+                emit_rows.push_back(std::move(row_exprs));
+            }
+        }
+    }
+
+    emit(sblr::Opcode::BEGIN_LIST);
+    emitUVarint(emit_columns.size());
+    for (const auto& col : emit_columns) {
+        emit(sblr::Opcode::COLUMN_REF);
+        emitString(col);
+    }
+    emit(sblr::Opcode::END_LIST);
+
+    if (has_select) {
+        if (emit_enabled_) {
+            bytecode_.insert(bytecode_.end(), select_bytecode.begin(), select_bytecode.end());
+        }
+    } else {
+        emit(sblr::Opcode::BEGIN_LIST);
+        if (default_values_only) {
+            emitUVarint(0);
+        } else {
+            emitUVarint(emit_rows.size());
+            for (const auto& row : emit_rows) {
+                emit(sblr::Opcode::BEGIN_LIST);
+                emitUVarint(row.size());
+                for (const auto& expr : row) {
+                    if (emit_enabled_) {
+                        bytecode_.insert(bytecode_.end(), expr.begin(), expr.end());
+                    }
+                }
+                emit(sblr::Opcode::END_LIST);
+            }
+        }
+        emit(sblr::Opcode::END_LIST);
+    }
+
+    std::vector<std::string> update_columns;
+    if (db_) {
+        auto split_components = [](const std::string& path) {
+            std::vector<std::string> parts;
+            std::string current;
+            for (char ch : path) {
+                if (ch == '/' || ch == '.') {
+                    if (!current.empty()) {
+                        parts.push_back(current);
+                        current.clear();
+                    }
+                } else {
+                    current.push_back(ch);
+                }
+            }
+            if (!current.empty()) {
+                parts.push_back(current);
+            }
+            return parts;
+        };
+
+        core::ObjectPath path;
+        path.components = split_components(schema);
+        path.components.push_back(table);
+        path.type = schema.empty() ? core::PathType::UNQUALIFIED : core::PathType::ABSOLUTE;
+
+        core::CatalogManager::ResolveOptions opts;
+        opts.required_privilege =
+            static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE);
+        core::CatalogManager::ObjectType resolved_type;
+        core::ID table_id;
+        core::ErrorContext ctx;
+        if (db_->catalog_manager()->resolveObjectPath(path,
+                                                     core::CatalogManager::ObjectType::TABLE,
+                                                     opts, table_id, resolved_type, &ctx) == core::Status::OK) {
+            std::vector<core::CatalogManager::ColumnInfo> cols;
+            if (db_->catalog_manager()->getColumns(table_id, cols, &ctx,
+                                                   opts.required_privilege) == core::Status::OK) {
+                update_columns.reserve(cols.size());
+                for (const auto& col : cols) {
+                    update_columns.push_back(col.column_name);
+                }
+            }
+        }
+    }
+
+    if (update_columns.empty()) {
+        update_columns = columns;
+    }
+    if (update_columns.empty()) {
+        update_columns = emit_columns;
+    }
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT));
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE));
+    emit(sblr::Opcode::BEGIN_LIST);
+    emitUVarint(update_columns.size());
+    for (const auto& col : update_columns) {
+        emit(sblr::Opcode::ASSIGNMENT);
+        emit(sblr::Opcode::COLUMN_REF);
+        emitString(col);
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_INSERTED_COLUMN_REF));
+        emitString(col);
+    }
+    emit(sblr::Opcode::END_LIST);
 }
 
 // ============================================================================
@@ -2861,6 +3150,72 @@ void Parser::parseAlterStmt() {
     }
 
     auto components = build_object_path(schema, table);
+    std::string resolved_schema = schema;
+    std::string resolved_table = table;
+    resolveTableName(resolved_schema, resolved_table);
+    std::string table_path = resolved_schema.empty() ? resolved_table : resolved_schema + "/" + resolved_table;
+
+    auto reject_column_extras = [&](const ColumnDef& col, const char* context,
+                                    bool allow_not_null) -> bool {
+        if (col.has_default || col.default_is_expr || col.default_is_null) {
+            error(std::string(context) + " does not support DEFAULT yet");
+            return false;
+        }
+        if (col.auto_increment) {
+            error(std::string(context) + " does not support AUTO_INCREMENT");
+            return false;
+        }
+        if (col.primary_key || col.unique) {
+            error(std::string(context) + " does not support PRIMARY/UNIQUE");
+            return false;
+        }
+        if (col.is_generated) {
+            error(std::string(context) + " does not support GENERATED columns");
+            return false;
+        }
+        if (!col.comment.empty()) {
+            error(std::string(context) + " does not support COMMENT");
+            return false;
+        }
+        if (!col.type.charset.empty() || !col.type.collation.empty()) {
+            error(std::string(context) + " does not support CHARSET/COLLATE yet");
+            return false;
+        }
+        if (!allow_not_null && !col.type.nullable) {
+            error(std::string(context) + " does not support NOT NULL");
+            return false;
+        }
+        return true;
+    };
+
+    auto emit_add_column = [&](const ColumnDef& col) {
+        emit(sblr::Opcode::ALTER_TABLE);
+        emitString(table_path);
+        emitByte(0);  // ADD_COLUMN
+        emitString(col.name);
+        core::DataType dtype = mysqlTypeToCoreDataType(col.type);
+        emitU16(static_cast<uint16_t>(dtype));
+        uint32_t precision = 0;
+        uint32_t scale = 0;
+        resolveMySQLTypeModifiers(col.type, precision, scale);
+        emitU32(precision);
+        emitU32(scale);
+        emitByte(col.type.nullable ? 1 : 0);
+    };
+
+    auto emit_alter_column_type = [&](const std::string& col_name, const MySQLDataType& type) {
+        emit(sblr::Opcode::ALTER_TABLE);
+        emitString(table_path);
+        emitByte(2);  // ALTER_COLUMN_TYPE
+        emitString(col_name);
+        core::DataType dtype = mysqlTypeToCoreDataType(type);
+        emitU16(static_cast<uint16_t>(dtype));
+        uint32_t precision = 0;
+        uint32_t scale = 0;
+        resolveMySQLTypeModifiers(type, precision, scale);
+        emitU32(precision);
+        emitU32(scale);
+    };
 
     if (matchKeyword(TokenType::KW_RENAME)) {
         if (matchKeyword(TokenType::KW_TO)) {
@@ -2878,9 +3233,104 @@ void Parser::parseAlterStmt() {
             }
             return;
         }
+        if (matchKeyword(TokenType::KW_COLUMN)) {
+            std::string old_name = parseIdentifier();
+            if (matchKeyword(TokenType::KW_TO)) {
+                std::string new_name = parseIdentifier();
+                emit(sblr::Opcode::ALTER_TABLE);
+                emitString(table_path);
+                emitByte(5);  // RENAME_COLUMN
+                emitString(old_name);
+                emitString(new_name);
+                return;
+            }
+            error("Expected TO after RENAME COLUMN");
+            synchronize();
+            return;
+        }
+        error("Expected TO or COLUMN after RENAME");
+        synchronize();
+        return;
     }
 
-    error("ALTER TABLE supports only RENAME TO [schema.table] in MySQL parser");
+    if (matchKeyword(TokenType::KW_ADD)) {
+        if (matchKeyword(TokenType::KW_INDEX) || matchKeyword(TokenType::KW_KEY) ||
+            matchKeyword(TokenType::KW_UNIQUE) || matchKeyword(TokenType::KW_FULLTEXT) ||
+            matchKeyword(TokenType::KW_SPATIAL)) {
+            error("ALTER TABLE ADD INDEX is not supported yet; use CREATE INDEX");
+            synchronize();
+            return;
+        }
+        matchKeyword(TokenType::KW_COLUMN);
+        ColumnDef col = parseColumnDef();
+        if (!reject_column_extras(col, "ALTER TABLE ADD COLUMN", true)) {
+            synchronize();
+            return;
+        }
+        emit_add_column(col);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_DROP)) {
+        if (matchKeyword(TokenType::KW_INDEX) || matchKeyword(TokenType::KW_KEY)) {
+            error("ALTER TABLE DROP INDEX is not supported yet; use DROP INDEX");
+            synchronize();
+            return;
+        }
+        matchKeyword(TokenType::KW_COLUMN);
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+        std::string col_name = parseIdentifier();
+        emit(sblr::Opcode::ALTER_TABLE);
+        emitString(table_path);
+        emitByte(1);  // DROP_COLUMN
+        emitString(col_name);
+        emitByte(if_exists ? 1 : 0);
+        emitByte(0);  // cascade
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_MODIFY)) {
+        matchKeyword(TokenType::KW_COLUMN);
+        ColumnDef col = parseColumnDef();
+        if (!reject_column_extras(col, "ALTER TABLE MODIFY COLUMN", false)) {
+            synchronize();
+            return;
+        }
+        emit_alter_column_type(col.name, col.type);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_CHANGE)) {
+        matchKeyword(TokenType::KW_COLUMN);
+        std::string old_name = parseIdentifier();
+        ColumnDef col = parseColumnDef();
+        if (old_name != col.name) {
+            error("ALTER TABLE CHANGE COLUMN rename is not supported yet; use RENAME COLUMN");
+            synchronize();
+            return;
+        }
+        if (!reject_column_extras(col, "ALTER TABLE CHANGE COLUMN", false)) {
+            synchronize();
+            return;
+        }
+        emit_alter_column_type(old_name, col.type);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_ALTER)) {
+        if (matchKeyword(TokenType::KW_COLUMN)) {
+            parseIdentifier();
+            error("ALTER TABLE ALTER COLUMN is not supported yet");
+            synchronize();
+            return;
+        }
+    }
+
+    error("ALTER TABLE supports RENAME, ADD COLUMN, DROP COLUMN, MODIFY COLUMN, and CHANGE COLUMN");
     synchronize();
 }
 
@@ -3199,40 +3649,52 @@ void Parser::parseCreateTable() {
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
     // Table options (ENGINE, CHARSET, etc.)
+    std::vector<std::pair<std::string, std::string>> table_options;
     auto to_upper = [](std::string value) {
         std::transform(value.begin(), value.end(), value.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
         return value;
     };
-    auto parse_table_option_value = [&]() {
+    auto parse_table_option_value = [&]() -> std::optional<std::string> {
         match(TokenType::EQUAL);
         if (check(TokenType::STRING_LITERAL) || check(TokenType::INTEGER_LITERAL) ||
             check(TokenType::FLOAT_LITERAL)) {
+            std::string value;
+            if (check(TokenType::STRING_LITERAL)) {
+                auto view = lexer_.stringPool().get(current_token_.value.string_id);
+                value.assign(view.data(), view.size());
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                value = std::to_string(current_token_.value.int_value);
+            } else {
+                std::ostringstream out;
+                out << current_token_.value.float_value;
+                value = out.str();
+            }
             advance();
-            return true;
+            return value;
         }
         if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
-            parseIdentifier();
-            return true;
+            return parseIdentifier();
         }
         if (isNonReservedKeyword(current_token_.type)) {
-            tokenToString(current_token_.type);
+            std::string name = tokenToString(current_token_.type);
             advance();
-            return true;
+            return name;
         }
         if (check(TokenType::KW_DEFAULT)) {
             advance();
-            return true;
+            return std::string("DEFAULT");
         }
-        return false;
+        return std::nullopt;
     };
-    auto require_table_option_value = [&](std::string_view option) {
-        if (!parse_table_option_value()) {
+    auto require_table_option_value = [&](std::string_view option) -> std::optional<std::string> {
+        auto value = parse_table_option_value();
+        if (!value) {
             error("Expected value for table option " + std::string(option));
             synchronize();
-            return false;
+            return std::nullopt;
         }
-        return true;
+        return value;
     };
     auto parse_option_identifier = [&]() -> std::string {
         if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
@@ -3285,21 +3747,27 @@ void Parser::parseCreateTable() {
             return;
         }
         if (matchKeyword(TokenType::KW_ENGINE)) {
-            if (!require_table_option_value("ENGINE")) {
+            auto value = require_table_option_value("ENGINE");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("ENGINE", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_AUTO_INCREMENT)) {
-            if (!require_table_option_value("AUTO_INCREMENT")) {
+            auto value = require_table_option_value("AUTO_INCREMENT");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("AUTO_INCREMENT", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_CHARSET)) {
-            if (!require_table_option_value("CHARSET")) {
+            auto value = require_table_option_value("CHARSET");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("CHARSET", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_CHARACTER)) {
@@ -3308,41 +3776,53 @@ void Parser::parseCreateTable() {
                 synchronize();
                 return;
             }
-            if (!require_table_option_value("CHARACTER SET")) {
+            auto value = require_table_option_value("CHARACTER SET");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("CHARSET", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_COLLATE)) {
-            if (!require_table_option_value("COLLATE")) {
+            auto value = require_table_option_value("COLLATE");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("COLLATE", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_COMMENT)) {
-            if (!require_table_option_value("COMMENT")) {
+            auto value = require_table_option_value("COMMENT");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("COMMENT", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_DEFAULT)) {
             if (matchKeyword(TokenType::KW_CHARSET)) {
-                if (!require_table_option_value("DEFAULT CHARSET")) {
+                auto value = require_table_option_value("DEFAULT CHARSET");
+                if (!value) {
                     return;
                 }
+                table_options.emplace_back("DEFAULT_CHARSET", *value);
                 continue;
             }
             if (matchKeyword(TokenType::KW_CHARACTER)) {
                 matchKeyword(TokenType::KW_SET) || matchIdentifierKeyword("SET");
-                if (!require_table_option_value("DEFAULT CHARACTER SET")) {
+                auto value = require_table_option_value("DEFAULT CHARACTER SET");
+                if (!value) {
                     return;
                 }
+                table_options.emplace_back("DEFAULT_CHARSET", *value);
                 continue;
             }
             if (matchKeyword(TokenType::KW_COLLATE)) {
-                if (!require_table_option_value("DEFAULT COLLATE")) {
+                auto value = require_table_option_value("DEFAULT COLLATE");
+                if (!value) {
                     return;
                 }
+                table_options.emplace_back("DEFAULT_COLLATE", *value);
                 continue;
             }
             error("Unsupported DEFAULT table option");
@@ -3355,9 +3835,11 @@ void Parser::parseCreateTable() {
                 synchronize();
                 return;
             }
-            if (!require_table_option_value("DATA DIRECTORY")) {
+            auto value = require_table_option_value("DATA DIRECTORY");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("DATA_DIRECTORY", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_INDEX)) {
@@ -3366,26 +3848,45 @@ void Parser::parseCreateTable() {
                 synchronize();
                 return;
             }
-            if (!require_table_option_value("INDEX DIRECTORY")) {
+            auto value = require_table_option_value("INDEX DIRECTORY");
+            if (!value) {
                 return;
             }
+            table_options.emplace_back("INDEX_DIRECTORY", *value);
             continue;
         }
         if (matchKeyword(TokenType::KW_UNION)) {
             match(TokenType::EQUAL);
+            std::string union_value;
             if (match(TokenType::LEFT_PAREN)) {
-                int depth = 1;
-                while (depth > 0 && !check(TokenType::END_OF_FILE)) {
-                    if (match(TokenType::LEFT_PAREN)) {
-                        depth++;
-                    } else if (match(TokenType::RIGHT_PAREN)) {
-                        depth--;
-                    } else {
-                        advance();
+                std::vector<std::string> names;
+                auto parse_union_name = [&]() -> std::string {
+                    std::string name = parseIdentifier();
+                    if (match(TokenType::DOT)) {
+                        name += "." + parseIdentifier();
+                    }
+                    return name;
+                };
+                if (!check(TokenType::RIGHT_PAREN)) {
+                    names.push_back(parse_union_name());
+                    while (match(TokenType::COMMA)) {
+                        names.push_back(parse_union_name());
                     }
                 }
-            } else if (!require_table_option_value("UNION")) {
-                return;
+                consume(TokenType::RIGHT_PAREN, "Expected ) after UNION");
+                for (size_t i = 0; i < names.size(); ++i) {
+                    if (i) union_value += ",";
+                    union_value += names[i];
+                }
+            } else {
+                auto value = require_table_option_value("UNION");
+                if (!value) {
+                    return;
+                }
+                union_value = *value;
+            }
+            if (!union_value.empty()) {
+                table_options.emplace_back("UNION", union_value);
             }
             continue;
         }
@@ -3407,9 +3908,11 @@ void Parser::parseCreateTable() {
             synchronize();
             return;
         }
-        if (!require_table_option_value(option_name)) {
+        auto value = require_table_option_value(option_name);
+        if (!value) {
             return;
         }
+        table_options.emplace_back(upper, *value);
     }
 
     for (const auto& fk : pending_fks) {
@@ -3434,6 +3937,17 @@ void Parser::parseCreateTable() {
     }
 
     emitString("");
+    if (!table_options.empty()) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TABLE_OPTIONS));
+        emit(sblr::Opcode::BEGIN_LIST);
+        emitUVarint(table_options.size());
+        for (const auto& opt : table_options) {
+            emitString(opt.first);
+            emitString(opt.second);
+        }
+        emit(sblr::Opcode::END_LIST);
+    }
 
     auto resolve_index_type = [&](const IndexDef& idx) -> uint8_t {
         if (idx.type == IndexDef::Type::FULLTEXT) {

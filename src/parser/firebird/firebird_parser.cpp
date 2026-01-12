@@ -285,6 +285,29 @@ ast::StringPool::StringId Parser::parseIdentifier() {
     return id;
 }
 
+bool Parser::matchIdentifierText(const char* keyword) {
+    if (!check(TokenType::IDENTIFIER) && !isNonReservedKeyword()) {
+        return false;
+    }
+
+    std::string_view text = lexer_.getTokenText(current_token_);
+    size_t len = std::strlen(keyword);
+    if (text.size() != len) {
+        return false;
+    }
+
+    for (size_t i = 0; i < len; ++i) {
+        char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+        char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+        if (a != b) {
+            return false;
+        }
+    }
+
+    advance();
+    return true;
+}
+
 std::string_view Parser::currentText() {
     return lexer_.getTokenText(current_token_);
 }
@@ -306,6 +329,67 @@ std::string Parser::extractExpressionText(ast::Expression* expr) {
     }
     size_t end = text.find_last_not_of(" \t\r\n");
     return std::string(text.substr(start, end - start + 1));
+}
+
+std::string Parser::captureStatementBody() {
+    std::string_view input = lexer_.input();
+    if (input.empty() || atEnd()) {
+        return {};
+    }
+
+    size_t start = current_token_.span.start.offset;
+    size_t end = start;
+    bool saw_begin = false;
+    int begin_depth = 0;
+    Token last = current_token_;
+
+    auto trim = [](std::string_view text) -> std::string {
+        size_t first = text.find_first_not_of(" \t\r\n");
+        if (first == std::string_view::npos) {
+            return {};
+        }
+        size_t last = text.find_last_not_of(" \t\r\n");
+        return std::string(text.substr(first, last - first + 1));
+    };
+
+    while (!atEnd()) {
+        if (checkKeyword(TokenType::KW_BEGIN)) {
+            saw_begin = true;
+            begin_depth++;
+        } else if (checkKeyword(TokenType::KW_END)) {
+            if (saw_begin && begin_depth > 0) {
+                begin_depth--;
+                if (begin_depth == 0) {
+                    end = current_token_.span.start.offset + current_token_.span.length;
+                    advance();
+                    if (end > input.size()) {
+                        end = input.size();
+                    }
+                    return trim(input.substr(start, end - start));
+                }
+            }
+        }
+
+        if (!saw_begin && check(TokenType::SEMICOLON)) {
+            end = last.span.start.offset + last.span.length;
+            if (end > input.size()) {
+                end = input.size();
+            }
+            return trim(input.substr(start, end - start));
+        }
+
+        last = current_token_;
+        advance();
+    }
+
+    if (end == start) {
+        end = last.span.start.offset + last.span.length;
+        if (end > input.size()) {
+            end = input.size();
+        }
+    }
+
+    return trim(input.substr(start, end - start));
 }
 
 // =============================================================================
@@ -567,8 +651,9 @@ Statement* Parser::parseStatementInternal() {
         return parseCommentStatement();
     }
 
-    // Note: Firebird doesn't have SHOW - it uses ISQL-specific commands
-    // Session commands are typically SET-based in Firebird
+    if (matchKeyword(TokenType::KW_SHOW)) {
+        return parseShowStatement();
+    }
 
     // PSQL blocks
     if (matchKeyword(TokenType::KW_DECLARE)) {
@@ -1723,25 +1808,25 @@ Statement* Parser::parseCreateStatement() {
         return parseCreateSequenceImpl();
     }
     if (matchKeyword(TokenType::KW_PROCEDURE)) {
-        return parseCreateProcedure();
+        return parseCreateProcedure(or_replace);
     }
     if (matchKeyword(TokenType::KW_FUNCTION)) {
-        return parseCreateFunction();
+        return parseCreateFunction(or_replace);
     }
     if (matchKeyword(TokenType::KW_TRIGGER)) {
-        return parseCreateTrigger();
+        return parseCreateTrigger(or_replace);
     }
     if (matchKeyword(TokenType::KW_DOMAIN)) {
         return parseCreateDomain();
     }
     if (matchKeyword(TokenType::KW_EXCEPTION)) {
-        return parseCreateException();
+        return parseCreateException(or_replace);
     }
     if (matchKeyword(TokenType::KW_ROLE)) {
-        return parseCreateRole();
+        return parseCreateRole(or_replace);
     }
     if (matchKeyword(TokenType::KW_PACKAGE)) {
-        return parseCreatePackage();
+        return parseCreatePackage(or_replace);
     }
 
     error("Unknown CREATE object type");
@@ -2336,8 +2421,20 @@ Statement* Parser::parseAlterDomainImpl() {
 
 // Stub for ALTER INDEX
 Statement* Parser::parseAlterIndexImpl() {
-    error("ALTER INDEX is not supported in Firebird parser");
-    return nullptr;
+    auto* stmt = allocate<ast::AlterIndexStmt>();
+    stmt->span = toV2Span(current_token_.span);
+
+    stmt->index_path = parseSchemaPath();
+
+    if (matchKeyword(TokenType::KW_ACTIVE)) {
+        stmt->action = ast::AlterIndexAction::ACTIVE;
+    } else if (matchKeyword(TokenType::KW_INACTIVE)) {
+        stmt->action = ast::AlterIndexAction::INACTIVE;
+    } else {
+        error("Expected ACTIVE or INACTIVE after ALTER INDEX");
+    }
+
+    return stmt;
 }
 
 Statement* Parser::parseAlterRenameMoveImpl(ast::DdlObjectType object_type) {
@@ -2455,9 +2552,23 @@ ast::DropDomainStmt* Parser::parseDropDomainImpl(bool if_exists) {
 }
 
 Statement* Parser::parseDropSequenceImpl(bool if_exists) {
-    // No DropSequenceStmt in AST yet, use error for now
-    error("DROP SEQUENCE/GENERATOR not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::DropSequenceStmt>();
+    stmt->if_exists = if_exists;
+
+    if (!if_exists && matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->sequences.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    if (matchKeyword(TokenType::KW_CASCADE)) {
+        stmt->cascade = true;
+    }
+
+    return stmt;
 }
 
 // Wrappers that delegate to impl methods
@@ -2466,17 +2577,185 @@ Statement* Parser::parseCreateOrAlterTable() { return parseCreateTableImpl(true,
 Statement* Parser::parseCreateIndex() { return parseCreateIndexImpl(false, false); }
 Statement* Parser::parseCreateView() { return parseCreateViewImpl(false); }
 Statement* Parser::parseCreateSequence() { return parseCreateSequenceImpl(); }
-Statement* Parser::parseCreateProcedure() {
-    error("CREATE PROCEDURE not yet implemented");
-    return nullptr;
+Statement* Parser::parseCreateProcedure(bool or_replace) {
+    auto* stmt = allocate<ast::CreateProcedureStmt>();
+    stmt->or_replace = or_replace;
+    stmt->procedure_path = parseSchemaPath();
+
+    if (match(TokenType::LEFT_PAREN)) {
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                ast::RoutineParam param;
+                if (matchKeyword(TokenType::KW_IN)) {
+                    param.mode = ast::RoutineParamMode::IN;
+                } else if (matchIdentifierText("OUT")) {
+                    param.mode = ast::RoutineParamMode::OUT;
+                } else if (matchIdentifierText("INOUT")) {
+                    param.mode = ast::RoutineParamMode::INOUT;
+                }
+                param.name = parseIdentifier();
+                param.type = parseTypeName();
+                if (matchKeyword(TokenType::KW_DEFAULT) || match(TokenType::EQUAL)) {
+                    param.default_value = parseExpression();
+                    param.has_default = true;
+                }
+                stmt->params.push_back(std::move(param));
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after procedure parameters");
+    }
+
+    if (matchKeyword(TokenType::KW_RETURNS)) {
+        consume(TokenType::LEFT_PAREN, "Expected '(' after RETURNS");
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                ast::RoutineParam param;
+                param.mode = ast::RoutineParamMode::OUT;
+                param.name = parseIdentifier();
+                param.type = parseTypeName();
+                stmt->params.push_back(std::move(param));
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after RETURNS");
+    }
+
+    if (matchKeyword(TokenType::KW_SQL)) {
+        consume(TokenType::KW_SECURITY, "Expected SECURITY after SQL");
+        if (matchKeyword(TokenType::KW_DEFINER)) {
+            stmt->sql_security = ast::RoutineSqlSecurity::DEFINER;
+        } else if (matchKeyword(TokenType::KW_INVOKER)) {
+            stmt->sql_security = ast::RoutineSqlSecurity::INVOKER;
+        }
+    }
+
+    consume(TokenType::KW_AS, "Expected AS before procedure body");
+    std::string body = captureStatementBody();
+    if (!body.empty()) {
+        stmt->body = string_pool_.intern(body);
+    }
+    return stmt;
 }
-Statement* Parser::parseCreateFunction() {
-    error("CREATE FUNCTION not yet implemented");
-    return nullptr;
+Statement* Parser::parseCreateFunction(bool or_replace) {
+    auto* stmt = allocate<ast::CreateFunctionStmt>();
+    stmt->or_replace = or_replace;
+    stmt->function_path = parseSchemaPath();
+
+    if (match(TokenType::LEFT_PAREN)) {
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                ast::RoutineParam param;
+                if (matchKeyword(TokenType::KW_IN)) {
+                    param.mode = ast::RoutineParamMode::IN;
+                } else if (matchIdentifierText("OUT")) {
+                    param.mode = ast::RoutineParamMode::OUT;
+                } else if (matchIdentifierText("INOUT")) {
+                    param.mode = ast::RoutineParamMode::INOUT;
+                }
+                param.name = parseIdentifier();
+                param.type = parseTypeName();
+                if (matchKeyword(TokenType::KW_DEFAULT) || match(TokenType::EQUAL)) {
+                    param.default_value = parseExpression();
+                    param.has_default = true;
+                }
+                stmt->params.push_back(std::move(param));
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after function parameters");
+    }
+
+    consume(TokenType::KW_RETURNS, "Expected RETURNS");
+    stmt->return_type = parseTypeName();
+
+    while (matchKeyword(TokenType::KW_DETERMINISTIC)) {
+        stmt->deterministic = true;
+    }
+
+    if (matchKeyword(TokenType::KW_SQL)) {
+        consume(TokenType::KW_SECURITY, "Expected SECURITY after SQL");
+        if (matchKeyword(TokenType::KW_DEFINER)) {
+            stmt->sql_security = ast::RoutineSqlSecurity::DEFINER;
+        } else if (matchKeyword(TokenType::KW_INVOKER)) {
+            stmt->sql_security = ast::RoutineSqlSecurity::INVOKER;
+        }
+    }
+
+    consume(TokenType::KW_AS, "Expected AS before function body");
+    std::string body = captureStatementBody();
+    if (!body.empty()) {
+        stmt->body = string_pool_.intern(body);
+    }
+    return stmt;
 }
-Statement* Parser::parseCreateTrigger() {
-    error("CREATE TRIGGER not yet implemented");
-    return nullptr;
+Statement* Parser::parseCreateTrigger(bool or_replace) {
+    auto* stmt = allocate<ast::CreateTriggerStmt>();
+    stmt->or_replace = or_replace;
+    stmt->trigger_name = parseIdentifier();
+
+    if (matchKeyword(TokenType::KW_FOR)) {
+        stmt->table_path = parseSchemaPath();
+    } else {
+        stmt->table_path = parseSchemaPath();
+    }
+
+    if (matchKeyword(TokenType::KW_ACTIVE)) {
+        stmt->active = true;
+    } else if (matchKeyword(TokenType::KW_INACTIVE)) {
+        stmt->active = false;
+    }
+
+    if (matchKeyword(TokenType::KW_BEFORE)) {
+        stmt->timing = ast::TriggerTiming::BEFORE;
+    } else if (matchKeyword(TokenType::KW_AFTER)) {
+        stmt->timing = ast::TriggerTiming::AFTER;
+    } else {
+        error("Expected BEFORE or AFTER in CREATE TRIGGER");
+    }
+
+    bool have_event = false;
+    if (matchKeyword(TokenType::KW_INSERT)) {
+        stmt->event = ast::TriggerEvent::INSERT;
+        have_event = true;
+    } else if (matchKeyword(TokenType::KW_UPDATE)) {
+        stmt->event = ast::TriggerEvent::UPDATE;
+        have_event = true;
+    } else if (matchKeyword(TokenType::KW_DELETE)) {
+        stmt->event = ast::TriggerEvent::DELETE;
+        have_event = true;
+    }
+
+    if (!have_event) {
+        error("Expected INSERT, UPDATE, or DELETE in CREATE TRIGGER");
+    }
+
+    if (matchKeyword(TokenType::KW_OR)) {
+        error("Multiple trigger events are not supported yet");
+        while (matchKeyword(TokenType::KW_INSERT) ||
+               matchKeyword(TokenType::KW_UPDATE) ||
+               matchKeyword(TokenType::KW_DELETE) ||
+               matchKeyword(TokenType::KW_OR)) {
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_FOR)) {
+        matchIdentifierText("EACH");
+        if (matchKeyword(TokenType::KW_ROW)) {
+            stmt->granularity = ast::TriggerGranularity::FOR_EACH_ROW;
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_POSITION)) {
+        if (check(TokenType::INTEGER_LITERAL)) {
+            advance();
+        }
+    }
+
+    consume(TokenType::KW_AS, "Expected AS before trigger body");
+    std::string body = captureStatementBody();
+    if (!body.empty()) {
+        stmt->body = string_pool_.intern(body);
+    }
+
+    return stmt;
 }
 Statement* Parser::parseCreateDomain() {
     auto* stmt = allocate<ast::CreateDomainStmt>();
@@ -2545,17 +2824,48 @@ Statement* Parser::parseCreateDomain() {
     stmt->dialect_tag = "firebird";
     return stmt;
 }
-Statement* Parser::parseCreateException() {
-    error("CREATE EXCEPTION not yet implemented");
-    return nullptr;
+Statement* Parser::parseCreateException(bool /*or_replace*/) {
+    auto* stmt = allocate<ast::CreateExceptionStmt>();
+    stmt->exception_path = parseSchemaPath();
+
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        stmt->message = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else if (check(TokenType::IDENTIFIER)) {
+        stmt->message = parseIdentifier();
+    } else {
+        error("Expected exception message");
+    }
+
+    return stmt;
 }
-Statement* Parser::parseCreateRole() {
-    error("CREATE ROLE not yet implemented");
-    return nullptr;
+
+Statement* Parser::parseCreateRole(bool /*or_replace*/) {
+    auto* stmt = allocate<ast::CreateRoleStmt>();
+    stmt->role_name = parseIdentifier();
+    return stmt;
 }
-Statement* Parser::parseCreatePackage() {
-    error("CREATE PACKAGE not yet implemented");
-    return nullptr;
+
+Statement* Parser::parseCreatePackage(bool or_replace) {
+    auto* stmt = allocate<ast::CreatePackageStmt>();
+    stmt->or_replace = or_replace;
+
+    if (matchKeyword(TokenType::KW_BODY)) {
+        stmt->is_body = true;
+    }
+
+    stmt->package_path = parseSchemaPath();
+    consume(TokenType::KW_AS, "Expected AS before package body");
+    std::string body = captureStatementBody();
+    if (!body.empty()) {
+        if (stmt->is_body) {
+            stmt->body = string_pool_.intern(body);
+        } else {
+            stmt->header = string_pool_.intern(body);
+        }
+    }
+
+    return stmt;
 }
 
 // =============================================================================
@@ -2780,11 +3090,139 @@ Statement* Parser::parseDeleteStatement() {
 }
 
 Statement* Parser::parseMergeStatement() {
-    // MERGE INTO target USING source ON condition
-    // WHEN MATCHED THEN UPDATE SET ...
-    // WHEN NOT MATCHED THEN INSERT ...
-    error("MERGE statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::MergeStmt>();
+
+    auto matchIdentifierText = [&](const char* keyword) -> bool {
+        if (!check(TokenType::IDENTIFIER)) {
+            return false;
+        }
+        std::string_view text = lexer_.getTokenText(current_token_);
+        size_t len = std::strlen(keyword);
+        if (text.size() != len) {
+            return false;
+        }
+        for (size_t i = 0; i < len; ++i) {
+            char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+            char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+            if (a != b) {
+                return false;
+            }
+        }
+        advance();
+        return true;
+    };
+
+    consume(TokenType::KW_INTO, "Expected INTO after MERGE");
+    stmt->target_table = parseSchemaPath();
+
+    if (matchKeyword(TokenType::KW_AS) ||
+        (check(TokenType::IDENTIFIER) && !checkKeyword(TokenType::KW_USING))) {
+        stmt->target_alias = parseIdentifier();
+    }
+
+    consume(TokenType::KW_USING, "Expected USING");
+    if (match(TokenType::LEFT_PAREN)) {
+        if (checkKeyword(TokenType::KW_SELECT)) {
+            advance();
+            stmt->source_query = parseSelectStatement();
+        } else {
+            error("Expected SELECT after '(' in USING");
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after USING subquery");
+    } else {
+        stmt->source_table = parseSchemaPath();
+    }
+
+    if (matchKeyword(TokenType::KW_AS) ||
+        (check(TokenType::IDENTIFIER) && !checkKeyword(TokenType::KW_ON))) {
+        stmt->source_alias = parseIdentifier();
+    }
+
+    consume(TokenType::KW_ON, "Expected ON");
+    stmt->on_condition = parseExpression();
+
+    while (matchKeyword(TokenType::KW_WHEN)) {
+        if (matchKeyword(TokenType::KW_MATCHED)) {
+            ast::MergeStmt::WhenMatched when;
+
+            if (matchKeyword(TokenType::KW_AND)) {
+                when.and_condition = parseExpression();
+            }
+
+            consume(TokenType::KW_THEN, "Expected THEN");
+
+            if (matchKeyword(TokenType::KW_UPDATE)) {
+                consume(TokenType::KW_SET, "Expected SET");
+                do {
+                    auto col = parseIdentifier();
+                    consume(TokenType::EQUAL, "Expected '=' in assignment");
+                    auto* expr = parseExpression();
+                    when.assignments.emplace_back(col, expr);
+                } while (match(TokenType::COMMA));
+            } else if (matchKeyword(TokenType::KW_DELETE)) {
+                when.is_delete = true;
+            } else {
+                error("Expected UPDATE or DELETE after THEN");
+                return stmt;
+            }
+
+            stmt->when_matched.push_back(std::move(when));
+        } else if (matchKeyword(TokenType::KW_NOT)) {
+            consume(TokenType::KW_MATCHED, "Expected MATCHED after NOT");
+
+            if (matchKeyword(TokenType::KW_BY)) {
+                consume(TokenType::KW_SOURCE, "Expected SOURCE after BY");
+                ast::MergeStmt::WhenNotMatchedBySource when;
+                if (matchKeyword(TokenType::KW_AND)) {
+                    when.and_condition = parseExpression();
+                }
+                consume(TokenType::KW_THEN, "Expected THEN");
+                if (matchKeyword(TokenType::KW_UPDATE)) {
+                    consume(TokenType::KW_SET, "Expected SET");
+                    do {
+                        auto col = parseIdentifier();
+                        consume(TokenType::EQUAL, "Expected '=' in assignment");
+                        auto* expr = parseExpression();
+                        when.assignments.emplace_back(col, expr);
+                    } while (match(TokenType::COMMA));
+                } else if (matchKeyword(TokenType::KW_DELETE)) {
+                    when.is_delete = true;
+                }
+                stmt->when_not_matched_by_source.push_back(std::move(when));
+            } else {
+                matchKeyword(TokenType::KW_BY);
+                matchIdentifierText("TARGET");
+
+                ast::MergeStmt::WhenNotMatched when;
+                if (matchKeyword(TokenType::KW_AND)) {
+                    when.and_condition = parseExpression();
+                }
+                consume(TokenType::KW_THEN, "Expected THEN");
+                consume(TokenType::KW_INSERT, "Expected INSERT");
+
+                if (match(TokenType::LEFT_PAREN)) {
+                    do {
+                        when.columns.push_back(parseIdentifier());
+                    } while (match(TokenType::COMMA));
+                    consume(TokenType::RIGHT_PAREN, "Expected ')'");
+                }
+
+                consume(TokenType::KW_VALUES, "Expected VALUES");
+                consume(TokenType::LEFT_PAREN, "Expected '('");
+                do {
+                    when.values.push_back(parseExpression());
+                } while (match(TokenType::COMMA));
+                consume(TokenType::RIGHT_PAREN, "Expected ')'");
+
+                stmt->when_not_matched.push_back(std::move(when));
+            }
+        } else {
+            error("Expected MATCHED or NOT MATCHED after WHEN");
+            return stmt;
+        }
+    }
+
+    return stmt;
 }
 
 Statement* Parser::parseUpdateOrInsertStatement() {
@@ -2832,9 +3270,37 @@ Statement* Parser::parseUpdateOrInsertStatement() {
 }
 
 Statement* Parser::parseExecuteProcedure() {
-    // EXECUTE PROCEDURE name(args) [RETURNING_VALUES vars]
-    error("EXECUTE PROCEDURE statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::ExecuteProcedureStmt>();
+
+    stmt->procedure_path = parseSchemaPath();
+
+    if (match(TokenType::LEFT_PAREN)) {
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                stmt->arguments.push_back(parseExpression());
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after arguments");
+    } else if (!checkKeyword(TokenType::KW_RETURNING_VALUES) &&
+               !check(TokenType::SEMICOLON) && !atEnd()) {
+        do {
+            stmt->arguments.push_back(parseExpression());
+        } while (match(TokenType::COMMA));
+    }
+
+    if (matchKeyword(TokenType::KW_RETURNING_VALUES)) {
+        do {
+            stmt->returning_variables.push_back(parseIdentifier());
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_RETURNING)) {
+        if (matchKeyword(TokenType::KW_VALUES)) {
+            do {
+                stmt->returning_variables.push_back(parseIdentifier());
+            } while (match(TokenType::COMMA));
+        }
+    }
+
+    return stmt;
 }
 
 // Transaction statements
@@ -3029,30 +3495,514 @@ Statement* Parser::parseReleaseSavepoint() {
 
 // Session statements
 Statement* Parser::parseSetStatement() {
-    error("SET statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::SetStmt>();
+    stmt->set_type = ast::SetStmt::SetType::VARIABLE;
+
+    auto matchIdentifierText = [&](const char* keyword) -> bool {
+        if (!check(TokenType::IDENTIFIER)) {
+            return false;
+        }
+        std::string_view text = lexer_.getTokenText(current_token_);
+        size_t len = std::strlen(keyword);
+        if (text.size() != len) {
+            return false;
+        }
+        for (size_t i = 0; i < len; ++i) {
+            char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+            char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+            if (a != b) {
+                return false;
+            }
+        }
+        advance();
+        return true;
+    };
+
+    auto parseAutocommitMode = [&]() -> ast::AutocommitMode {
+        if (matchKeyword(TokenType::KW_ON)) {
+            return ast::AutocommitMode::ON;
+        }
+        if (matchIdentifierText("OFF")) {
+            return ast::AutocommitMode::OFF;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            int64_t value = current_token_.value.int_value;
+            advance();
+            return value == 0 ? ast::AutocommitMode::OFF : ast::AutocommitMode::ON;
+        }
+        error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
+        return ast::AutocommitMode::UNCHANGED;
+    };
+
+    if (matchKeyword(TokenType::KW_SQL)) {
+        if (!matchIdentifierText("DIALECT")) {
+            error("Expected DIALECT after SET SQL");
+            return stmt;
+        }
+        stmt->set_type = ast::SetStmt::SetType::SQL_DIALECT;
+        if (check(TokenType::INTEGER_LITERAL)) {
+            stmt->sql_dialect = static_cast<uint8_t>(current_token_.value.int_value);
+            advance();
+        } else {
+            error("Expected SQL dialect number");
+        }
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_NAMES)) {
+        stmt->set_type = ast::SetStmt::SetType::NAMES;
+        stmt->value = parseExpression();
+        return stmt;
+    }
+
+    if (matchIdentifierText("LOCAL_TIMEOUT")) {
+        stmt->set_type = ast::SetStmt::SetType::LOCAL_TIMEOUT;
+        if (check(TokenType::INTEGER_LITERAL)) {
+            stmt->local_timeout_seconds = static_cast<uint32_t>(current_token_.value.int_value);
+            advance();
+        } else {
+            error("Expected integer after SET LOCAL_TIMEOUT");
+        }
+        return stmt;
+    }
+
+    if (matchIdentifierText("AUTOCOMMIT")) {
+        stmt->set_type = ast::SetStmt::SetType::AUTOCOMMIT;
+        stmt->has_autocommit = true;
+        stmt->autocommit_mode = parseAutocommitMode();
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_ROLE)) {
+        stmt->set_type = ast::SetStmt::SetType::ROLE;
+        if (matchIdentifierText("NONE")) {
+            stmt->is_default = true;
+        } else {
+            stmt->value = parseExpression();
+        }
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_SESSION)) {
+        if (matchIdentifierText("AUTHORIZATION")) {
+            stmt->set_type = ast::SetStmt::SetType::SESSION_AUTHORIZATION;
+            if (matchIdentifierText("DEFAULT")) {
+                stmt->is_default = true;
+            } else {
+                stmt->value = parseExpression();
+            }
+            return stmt;
+        }
+    }
+
+    stmt->name = parseIdentifier();
+    if (match(TokenType::EQUAL) || matchKeyword(TokenType::KW_TO)) {
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            stmt->is_default = true;
+        } else {
+            stmt->value = parseExpression();
+        }
+    }
+
+    return stmt;
 }
 
 Statement* Parser::parseShowStatement() {
-    error("SHOW statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::ShowStmt>();
+
+    auto matchIdentifierText = [&](const char* keyword) -> bool {
+        if (!check(TokenType::IDENTIFIER)) {
+            return false;
+        }
+        std::string_view text = lexer_.getTokenText(current_token_);
+        size_t len = std::strlen(keyword);
+        if (text.size() != len) {
+            return false;
+        }
+        for (size_t i = 0; i < len; ++i) {
+            char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+            char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+            if (a != b) {
+                return false;
+            }
+        }
+        advance();
+        return true;
+    };
+
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        stmt->show_type = ast::ShowStmt::ShowType::TABLE;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_INDEX)) {
+        stmt->show_type = ast::ShowStmt::ShowType::INDEX;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_TRIGGER)) {
+        stmt->show_type = ast::ShowStmt::ShowType::TRIGGER;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_VIEW)) {
+        stmt->show_type = ast::ShowStmt::ShowType::VIEW;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        stmt->show_type = ast::ShowStmt::ShowType::PROCEDURE;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_FUNCTION)) {
+        stmt->show_type = ast::ShowStmt::ShowType::FUNCTION;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_DOMAIN)) {
+        stmt->show_type = ast::ShowStmt::ShowType::DOMAIN;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_GENERATOR) || matchKeyword(TokenType::KW_SEQUENCE)) {
+        stmt->show_type = ast::ShowStmt::ShowType::GENERATOR;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_SCHEMA)) {
+        stmt->show_type = ast::ShowStmt::ShowType::SCHEMA;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_ROLE)) {
+        stmt->show_type = ast::ShowStmt::ShowType::ROLE;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchIdentifierText("GRANTS")) {
+        stmt->show_type = ast::ShowStmt::ShowType::GRANTS;
+        if (matchKeyword(TokenType::KW_FOR)) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchIdentifierText("CHECKS")) {
+        stmt->show_type = ast::ShowStmt::ShowType::CHECKS;
+        stmt->name = parseIdentifier();
+        return stmt;
+    }
+    if (matchIdentifierText("COLLATIONS")) {
+        stmt->show_type = ast::ShowStmt::ShowType::COLLATIONS;
+        if (matchKeyword(TokenType::KW_LIKE)) {
+            if (check(TokenType::STRING_LITERAL)) {
+                stmt->like_pattern = internFromLexer(current_token_.value.string_id);
+                advance();
+            }
+        }
+        return stmt;
+    }
+    if (matchIdentifierText("COMMENTS") || matchIdentifierText("COMMENT")) {
+        stmt->show_type = ast::ShowStmt::ShowType::COMMENTS;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchIdentifierText("DEPENDENCIES")) {
+        stmt->show_type = ast::ShowStmt::ShowType::DEPENDENCIES;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_PACKAGE)) {
+        stmt->show_type = ast::ShowStmt::ShowType::PACKAGE;
+        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+            stmt->name = parseIdentifier();
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_SQL)) {
+        if (matchIdentifierText("DIALECT")) {
+            stmt->show_type = ast::ShowStmt::ShowType::SQL_DIALECT;
+            return stmt;
+        }
+    }
+    if (matchIdentifierText("VERSION")) {
+        stmt->show_type = ast::ShowStmt::ShowType::VERSION;
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_DATABASE)) {
+        stmt->show_type = ast::ShowStmt::ShowType::DATABASE;
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_SYSTEM)) {
+        stmt->show_type = ast::ShowStmt::ShowType::SYSTEM;
+        return stmt;
+    }
+
+    stmt->show_type = ast::ShowStmt::ShowType::VARIABLE;
+    if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+        stmt->name = parseIdentifier();
+    } else {
+        error("Expected SHOW option");
+    }
+    return stmt;
 }
 
 // DCL statements
 Statement* Parser::parseGrantStatement() {
-    error("GRANT statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::GrantStmt>();
+
+    do {
+        if (matchKeyword(TokenType::KW_SELECT)) {
+            stmt->privileges.push_back(ast::PrivilegeType::SELECT);
+        } else if (matchKeyword(TokenType::KW_INSERT)) {
+            stmt->privileges.push_back(ast::PrivilegeType::INSERT);
+        } else if (matchKeyword(TokenType::KW_UPDATE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::UPDATE);
+        } else if (matchKeyword(TokenType::KW_DELETE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::DELETE);
+        } else if (matchIdentifierText("TRUNCATE")) {
+            stmt->privileges.push_back(ast::PrivilegeType::TRUNCATE);
+        } else if (matchKeyword(TokenType::KW_REFERENCES)) {
+            stmt->privileges.push_back(ast::PrivilegeType::REFERENCES);
+        } else if (matchKeyword(TokenType::KW_TRIGGER)) {
+            stmt->privileges.push_back(ast::PrivilegeType::TRIGGER);
+        } else if (matchKeyword(TokenType::KW_EXECUTE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::EXECUTE);
+        } else if (matchIdentifierText("USAGE")) {
+            stmt->privileges.push_back(ast::PrivilegeType::USAGE);
+        } else if (matchIdentifierText("COPY")) {
+            stmt->privileges.push_back(ast::PrivilegeType::COPY);
+        } else if (matchKeyword(TokenType::KW_ALL)) {
+            stmt->privileges.push_back(ast::PrivilegeType::ALL);
+        } else {
+            error("Expected privilege type");
+            return nullptr;
+        }
+    } while (match(TokenType::COMMA));
+
+    consume(TokenType::KW_ON, "Expected ON");
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        stmt->object_type = ast::PrivilegeObjectType::TABLE;
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        stmt->object_type = ast::PrivilegeObjectType::VIEW;
+    } else if (matchKeyword(TokenType::KW_SEQUENCE) || matchKeyword(TokenType::KW_GENERATOR)) {
+        stmt->object_type = ast::PrivilegeObjectType::SEQUENCE;
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        stmt->object_type = ast::PrivilegeObjectType::FUNCTION;
+    } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        stmt->object_type = ast::PrivilegeObjectType::PROCEDURE;
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        stmt->object_type = ast::PrivilegeObjectType::SCHEMA;
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        stmt->object_type = ast::PrivilegeObjectType::DATABASE;
+    }
+
+    do {
+        stmt->objects.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    consume(TokenType::KW_TO, "Expected TO");
+    do {
+        if (matchIdentifierText("PUBLIC")) {
+            stmt->is_public = true;
+        } else {
+            stmt->grantees.push_back(parseIdentifier());
+        }
+    } while (match(TokenType::COMMA));
+
+    if (matchKeyword(TokenType::KW_WITH)) {
+        consume(TokenType::KW_GRANT, "Expected GRANT");
+        if (!matchKeyword(TokenType::KW_OPTION)) {
+            if (!check(TokenType::IDENTIFIER)) {
+                error("Expected OPTION after WITH GRANT");
+            } else {
+                advance();
+            }
+        }
+        stmt->with_grant_option = true;
+    }
+
+    return stmt;
 }
 
 Statement* Parser::parseRevokeStatement() {
-    error("REVOKE statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::RevokeStmt>();
+
+    if (matchKeyword(TokenType::KW_GRANT)) {
+        if (!matchKeyword(TokenType::KW_OPTION)) {
+            if (!check(TokenType::IDENTIFIER)) {
+                error("Expected OPTION after GRANT");
+            } else {
+                advance();
+            }
+        }
+        if (!matchKeyword(TokenType::KW_FOR)) {
+            if (!check(TokenType::IDENTIFIER)) {
+                error("Expected FOR after GRANT OPTION");
+            } else {
+                advance();
+            }
+        }
+        stmt->grant_option_for = true;
+    }
+
+    do {
+        if (matchKeyword(TokenType::KW_SELECT)) {
+            stmt->privileges.push_back(ast::PrivilegeType::SELECT);
+        } else if (matchKeyword(TokenType::KW_INSERT)) {
+            stmt->privileges.push_back(ast::PrivilegeType::INSERT);
+        } else if (matchKeyword(TokenType::KW_UPDATE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::UPDATE);
+        } else if (matchKeyword(TokenType::KW_DELETE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::DELETE);
+        } else if (matchIdentifierText("TRUNCATE")) {
+            stmt->privileges.push_back(ast::PrivilegeType::TRUNCATE);
+        } else if (matchKeyword(TokenType::KW_REFERENCES)) {
+            stmt->privileges.push_back(ast::PrivilegeType::REFERENCES);
+        } else if (matchKeyword(TokenType::KW_TRIGGER)) {
+            stmt->privileges.push_back(ast::PrivilegeType::TRIGGER);
+        } else if (matchKeyword(TokenType::KW_EXECUTE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::EXECUTE);
+        } else if (matchIdentifierText("USAGE")) {
+            stmt->privileges.push_back(ast::PrivilegeType::USAGE);
+        } else if (matchIdentifierText("COPY")) {
+            stmt->privileges.push_back(ast::PrivilegeType::COPY);
+        } else if (matchKeyword(TokenType::KW_ALL)) {
+            stmt->privileges.push_back(ast::PrivilegeType::ALL);
+        } else {
+            error("Expected privilege type");
+            return nullptr;
+        }
+    } while (match(TokenType::COMMA));
+
+    consume(TokenType::KW_ON, "Expected ON");
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        stmt->object_type = ast::PrivilegeObjectType::TABLE;
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        stmt->object_type = ast::PrivilegeObjectType::VIEW;
+    } else if (matchKeyword(TokenType::KW_SEQUENCE) || matchKeyword(TokenType::KW_GENERATOR)) {
+        stmt->object_type = ast::PrivilegeObjectType::SEQUENCE;
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        stmt->object_type = ast::PrivilegeObjectType::FUNCTION;
+    } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        stmt->object_type = ast::PrivilegeObjectType::PROCEDURE;
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        stmt->object_type = ast::PrivilegeObjectType::SCHEMA;
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        stmt->object_type = ast::PrivilegeObjectType::DATABASE;
+    }
+
+    do {
+        stmt->objects.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    consume(TokenType::KW_FROM, "Expected FROM");
+    do {
+        if (matchIdentifierText("PUBLIC")) {
+            stmt->is_public = true;
+        } else {
+            stmt->grantees.push_back(parseIdentifier());
+        }
+    } while (match(TokenType::COMMA));
+
+    if (matchKeyword(TokenType::KW_CASCADE)) {
+        stmt->cascade = true;
+    } else {
+        matchKeyword(TokenType::KW_RESTRICT);
+    }
+
+    return stmt;
 }
 
 // Metadata statements
 Statement* Parser::parseCommentStatement() {
-    error("COMMENT statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::CommentStmt>();
+
+    consume(TokenType::KW_ON, "Expected ON after COMMENT");
+
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        stmt->object_type = ast::CommentObjectType::TABLE;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_COLUMN)) {
+        stmt->object_type = ast::CommentObjectType::COLUMN;
+        ast::SchemaPath path;
+        if (check(TokenType::IDENTIFIER)) {
+            path.components.push_back(parseIdentifier());
+            if (match(TokenType::DOT)) {
+                stmt->column_name = parseIdentifier();
+            }
+        }
+        stmt->object_path = path;
+    } else if (matchKeyword(TokenType::KW_INDEX)) {
+        stmt->object_type = ast::CommentObjectType::INDEX;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        stmt->object_type = ast::CommentObjectType::VIEW;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_SEQUENCE) || matchKeyword(TokenType::KW_GENERATOR)) {
+        stmt->object_type = ast::CommentObjectType::SEQUENCE;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        stmt->object_type = ast::CommentObjectType::FUNCTION;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        stmt->object_type = ast::CommentObjectType::PROCEDURE;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_TRIGGER)) {
+        stmt->object_type = ast::CommentObjectType::TRIGGER;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        stmt->object_type = ast::CommentObjectType::SCHEMA;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        stmt->object_type = ast::CommentObjectType::DATABASE;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_ROLE)) {
+        stmt->object_type = ast::CommentObjectType::ROLE;
+        stmt->object_path = parseSchemaPath();
+    } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+        stmt->object_type = ast::CommentObjectType::CONSTRAINT;
+        stmt->object_path = parseSchemaPath();
+    } else {
+        error("Expected object type after COMMENT ON");
+        return nullptr;
+    }
+
+    consume(TokenType::KW_IS, "Expected IS after COMMENT ON");
+    if (matchKeyword(TokenType::KW_NULL)) {
+        stmt->is_null = true;
+    } else if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        stmt->comment_text = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        error("Expected string literal or NULL after IS");
+    }
+
+    return stmt;
 }
 
 // =============================================================================
@@ -3073,6 +4023,10 @@ Statement* Parser::parsePSQLBlock() {
     if (checkKeyword(TokenType::KW_FOR)) {
         advance();
         return parseForStatement();
+    }
+    if (checkKeyword(TokenType::KW_LOOP)) {
+        advance();
+        return parseLoopStatement();
     }
     // Note: LOOP keyword not in Firebird token set - use WHILE instead
     if (checkKeyword(TokenType::KW_LEAVE)) {
@@ -3314,8 +4268,36 @@ Statement* Parser::parseForStatement() {
 
     // FOR EXECUTE STATEMENT ... INTO ... DO
     if (checkKeyword(TokenType::KW_EXECUTE)) {
-        error("FOR EXECUTE STATEMENT not yet implemented");
-        return nullptr;
+        advance();
+        auto* stmt = allocate<ast::ForExecuteStmt>();
+
+        consume(TokenType::KW_STATEMENT, "Expected STATEMENT after EXECUTE");
+        stmt->sql = parseExpression();
+
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do {
+                    stmt->parameters.push_back(parseExpression());
+                } while (match(TokenType::COMMA));
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ')' after parameters");
+        }
+
+        if (matchKeyword(TokenType::KW_INTO)) {
+            do {
+                stmt->into_variables.push_back(parseIdentifier());
+            } while (match(TokenType::COMMA));
+        }
+
+        consume(TokenType::KW_DO, "Expected DO");
+        if (checkKeyword(TokenType::KW_BEGIN)) {
+            advance();
+            stmt->body = parseBeginEndBlock();
+        } else {
+            stmt->body = parsePSQLBlock();
+        }
+
+        return stmt;
     }
 
     error("Expected SELECT or EXECUTE after FOR");
@@ -3324,9 +4306,28 @@ Statement* Parser::parseForStatement() {
 
 // Parse LOOP statement
 Statement* Parser::parseLoopStatement() {
-    // LOOP statement END LOOP
-    error("LOOP statement not yet implemented");
-    return nullptr;
+    auto* loop = allocate<ast::LoopStmt>();
+    auto* body = allocate<ast::CompoundStmt>();
+
+    while (!atEnd()) {
+        if (checkKeyword(TokenType::KW_END)) {
+            Token next = peek();
+            if (next.type == TokenType::KW_LOOP) {
+                advance();
+                consume(TokenType::KW_LOOP, "Expected LOOP after END");
+                break;
+            }
+        }
+
+        Statement* inner = parsePSQLBlock();
+        if (inner) {
+            body->statements.push_back(inner);
+        }
+        match(TokenType::SEMICOLON);
+    }
+
+    loop->body = body;
+    return loop;
 }
 
 // Parse LEAVE statement (break)
@@ -3518,9 +4519,25 @@ Statement* Parser::parseExecuteStatement() {
     }
 
     if (matchKeyword(TokenType::KW_STATEMENT)) {
-        // EXECUTE STATEMENT 'dynamic sql'
-        error("EXECUTE STATEMENT not yet implemented");
-        return nullptr;
+        auto* stmt = allocate<ast::ExecuteStatementStmt>();
+        stmt->sql = parseExpression();
+
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do {
+                    stmt->parameters.push_back(parseExpression());
+                } while (match(TokenType::COMMA));
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ')' after parameters");
+        }
+
+        if (matchKeyword(TokenType::KW_INTO)) {
+            do {
+                stmt->into_variables.push_back(parseIdentifier());
+            } while (match(TokenType::COMMA));
+        }
+
+        return stmt;
     }
 
     error("Expected BLOCK, PROCEDURE, or STATEMENT after EXECUTE");

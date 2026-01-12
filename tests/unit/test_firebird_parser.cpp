@@ -24,6 +24,13 @@ using ast::CreateTableStmt;
 using ast::CreateIndexStmt;
 using ast::CreateViewStmt;
 using ast::CreateSequenceStmt;
+using ast::CreateProcedureStmt;
+using ast::CreateFunctionStmt;
+using ast::CreateTriggerStmt;
+using ast::CreateExceptionStmt;
+using ast::AlterIndexStmt;
+using ast::AlterIndexAction;
+using ast::DropSequenceStmt;
 using ast::CreateDomainStmt;
 using ast::AlterDomainStmt;
 using ast::DropDomainStmt;
@@ -35,9 +42,17 @@ using ast::SelectItem;
 using ast::InsertStmt;
 using ast::UpdateStmt;
 using ast::DeleteStmt;
+using ast::ExecuteProcedureStmt;
+using ast::ExecuteStatementStmt;
+using ast::MergeStmt;
 using ast::JoinType;
 using ast::DomainKind;
 using ast::AlterDomainAction;
+using ast::SetStmt;
+using ast::ShowStmt;
+using ast::GrantStmt;
+using ast::RevokeStmt;
+using ast::CommentStmt;
 using ast::ExecuteBlockStmt;
 using ast::CompoundStmt;
 using ast::DeclareVariableStmt;
@@ -332,6 +347,15 @@ TEST_F(FirebirdParserTest, CreateSequence) {
     EXPECT_EQ(result.statement->kind(), ASTKind::CreateSequenceStmt);
 }
 
+TEST_F(FirebirdParserTest, DropSequence) {
+    Parser parser("DROP SEQUENCE seq_order_id");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropSequenceStmt);
+    auto* stmt = static_cast<DropSequenceStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->sequences.size(), 1u);
+}
+
 // =============================================================================
 // DDL Tests - DOMAIN
 // =============================================================================
@@ -371,6 +395,60 @@ TEST_F(FirebirdParserTest, DropDomain) {
 
 TEST_F(FirebirdParserTest, CreateDomainRejectsWithBlocks) {
     expectError("CREATE DOMAIN email AS VARCHAR(255) WITH SECURITY (MASKING = FULL)");
+}
+
+TEST_F(FirebirdParserTest, CreateProcedureSimple) {
+    Parser parser("CREATE PROCEDURE my_proc (a INTEGER) RETURNS (b INTEGER) AS BEGIN b = a; SUSPEND; END");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::CreateProcedureStmt);
+    auto* stmt = static_cast<CreateProcedureStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->params.size(), 2u);
+    EXPECT_NE(stmt->body, StringPool::INVALID_ID);
+}
+
+TEST_F(FirebirdParserTest, CreateFunctionSimple) {
+    Parser parser("CREATE FUNCTION my_fn (a INTEGER) RETURNS INTEGER AS BEGIN RETURN a; END");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::CreateFunctionStmt);
+    auto* stmt = static_cast<CreateFunctionStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->params.size(), 1u);
+    EXPECT_NE(stmt->body, StringPool::INVALID_ID);
+}
+
+TEST_F(FirebirdParserTest, CreateTriggerSimple) {
+    Parser parser("CREATE TRIGGER trg_emp FOR employees BEFORE INSERT AS BEGIN END");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::CreateTriggerStmt);
+    auto* stmt = static_cast<CreateTriggerStmt*>(result.statement.get());
+    EXPECT_NE(stmt->trigger_name, StringPool::INVALID_ID);
+    EXPECT_NE(stmt->body, StringPool::INVALID_ID);
+}
+
+TEST_F(FirebirdParserTest, CreateExceptionSimple) {
+    Parser parser("CREATE EXCEPTION ex_test 'boom'");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::CreateExceptionStmt);
+
+    auto* stmt = static_cast<CreateExceptionStmt*>(result.statement.get());
+    ASSERT_EQ(stmt->exception_path.components.size(), 1u);
+    EXPECT_NE(stmt->exception_path.components[0], StringPool::INVALID_ID);
+    EXPECT_NE(stmt->message, StringPool::INVALID_ID);
+}
+
+TEST_F(FirebirdParserTest, AlterIndexActive) {
+    Parser parser("ALTER INDEX idx_test ACTIVE");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::AlterIndexStmt);
+
+    auto* stmt = static_cast<AlterIndexStmt*>(result.statement.get());
+    ASSERT_EQ(stmt->index_path.components.size(), 1u);
+    EXPECT_NE(stmt->index_path.components[0], StringPool::INVALID_ID);
+    EXPECT_EQ(stmt->action, AlterIndexAction::ACTIVE);
 }
 
 // =============================================================================
@@ -565,6 +643,68 @@ TEST_F(FirebirdParserTest, DeleteWithReturning) {
     EXPECT_TRUE(result.success);
     auto* stmt = static_cast<ast::DeleteStmt*>(result.statement.get());
     EXPECT_EQ(stmt->returning.size(), 1u);
+}
+
+TEST_F(FirebirdParserTest, MergeStatement) {
+    Parser parser("MERGE INTO t USING s ON t.id = s.id "
+                  "WHEN MATCHED THEN UPDATE SET a = 1 "
+                  "WHEN NOT MATCHED THEN INSERT (a) VALUES (1)");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::MergeStmt);
+}
+
+TEST_F(FirebirdParserTest, ExecuteProcedureStatement) {
+    Parser parser("EXECUTE PROCEDURE my_proc(1, 2)");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::ExecuteProcedureStmt);
+}
+
+TEST_F(FirebirdParserTest, ExecuteStatementStatement) {
+    Parser parser("EXECUTE STATEMENT 'select 1' INTO x");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::ExecuteStatementStmt);
+}
+
+TEST_F(FirebirdParserTest, SetSqlDialect) {
+    Parser parser("SET SQL DIALECT 3");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::SetStmt);
+    auto* stmt = static_cast<SetStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->set_type, SetStmt::SetType::SQL_DIALECT);
+}
+
+TEST_F(FirebirdParserTest, ShowTable) {
+    Parser parser("SHOW TABLE employees");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::ShowStmt);
+    auto* stmt = static_cast<ShowStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->show_type, ShowStmt::ShowType::TABLE);
+}
+
+TEST_F(FirebirdParserTest, GrantStatement) {
+    Parser parser("GRANT SELECT ON TABLE employees TO PUBLIC");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::GrantStmt);
+}
+
+TEST_F(FirebirdParserTest, RevokeStatement) {
+    Parser parser("REVOKE SELECT ON TABLE employees FROM PUBLIC");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::RevokeStmt);
+}
+
+TEST_F(FirebirdParserTest, CommentStatement) {
+    Parser parser("COMMENT ON TABLE employees IS 'note'");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::CommentStmt);
 }
 
 // =============================================================================

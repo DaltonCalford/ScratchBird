@@ -18,7 +18,9 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <vector>
 #include <chrono>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -227,6 +229,13 @@ private:
     core::Status executeQuery(const std::string& sql, core::ErrorContext* ctx);
 
     /**
+     * Execute an SBLR bytecode program and send results
+     */
+    core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
+                                 const std::string& sql,
+                                 core::ErrorContext* ctx);
+
+    /**
      * Send a result set to the client
      */
     core::Status sendResultSet(const sblr::ResultSet* results, core::ErrorContext* ctx);
@@ -286,6 +295,7 @@ private:
     std::string client_info_;                       // Client connection info
     core::ID session_id_uuid_{};                    // Catalog session UUID
     core::ID authkey_id_{};                         // AuthKey UUID
+    std::optional<core::ScramAuthState> scram_state_;
 
     // Connection context for security and transactions
     std::unique_ptr<core::ConnectionContext> conn_ctx_;

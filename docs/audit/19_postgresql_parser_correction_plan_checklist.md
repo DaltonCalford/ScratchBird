@@ -12,17 +12,17 @@ Status: derived from static code review; no runtime execution performed.
 - [x] CREATE SEQUENCE: emit payload expected by executor (options + name ordering).
 - [x] CREATE USER: emit flags byte (has_password/is_superuser) before optional password to match executor.
 - [x] SET ROLE / SET SESSION AUTHORIZATION: emit flags byte (RESET) + optional name to match executor expectations.
-- [ ] SET CONSTRAINTS: emit flags byte (ALL/DEFERRED) and name_count byte + names to match executor layout.
-- [ ] ALTER TABLE: replace legacy ALTER_TABLE emission with executor’s expected payload (table name string + action code + fields), or add executor support for legacy format.
-- [ ] DROP TABLE/INDEX/VIEW/SEQUENCE: switch from TABLE_REF lists to single name string + flags byte; align CASCADE/RESTRICT encoding.
-- [ ] TRUNCATE: emit single table name + flags, not TABLE_REF lists and optional extra bytes.
+- [x] SET CONSTRAINTS: emit flags byte (ALL/DEFERRED) and name_count byte + names to match executor layout.
+- [x] ALTER TABLE: replace legacy ALTER_TABLE emission with executor’s expected payload (table name string + action code + fields), or add executor support for legacy format.
+- [x] DROP TABLE/INDEX/VIEW/SEQUENCE: switch from TABLE_REF lists to single name string + flags byte; align CASCADE/RESTRICT encoding.
+- [x] TRUNCATE: emit single table name + flags, not TABLE_REF lists and optional extra bytes.
 - [x] SELECT: emit flags byte + BEGIN_LIST select list with alias strings to match executor.
 - [x] SELECT: emit BEGIN_LIST for FROM with TABLE_REF entries + JOIN_TYPE sequences (aligned with executor).
 - [x] INSERT: emit TABLE_REF payload with ref_kind + alias, column list as COLUMN_REF + name, and row_count/row lists; support DEFAULT VALUES and INSERT ... SELECT.
 - [x] UPDATE: emit TABLE_REF payload with ref_kind + alias and assignments as ASSIGNMENT + COLUMN_REF + expression.
 - [x] DELETE: emit TABLE_REF payload with ref_kind + alias; ignore USING clause in bytecode (executor has no support).
 - [ ] MERGE: add executor handling for EXT_MERGE_* or drop support in parser.
-- [ ] WITH/CTE: align EXT_WITH_CLAUSE payload layout with executor (executor expects count + recursive flag, not list).
+- [x] WITH/CTE: align EXT_WITH_CLAUSE payload layout with executor (executor expects count + recursive flag, not list).
 
 ## Missing executor handlers (opcode gaps)
 - [ ] SHOW ALL / SHOW VARIABLE / SHOW TRANSACTION LEVEL: executor has no EXT_SHOW_* handlers for these PostgreSQL opcodes.

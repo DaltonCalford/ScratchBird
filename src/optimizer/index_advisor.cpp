@@ -64,7 +64,7 @@ void IndexAdvisor::initializeIndexStats()
 
         for (const auto& table : tables) {
             std::vector<CatalogManager::IndexInfo> indexes;
-            status = catalog_->listIndexesForTable(table.table_id, indexes, &ctx);
+            status = catalog_->listIndexesForTable(table.table_id, indexes, &ctx, false);
             if (status != Status::OK) continue;
 
             for (const auto& idx : indexes) {
@@ -1196,7 +1196,7 @@ bool IndexAdvisor::isIndexExisting(const ID& table_id, const std::vector<ID>& co
     // Check if an index already covers these columns
     std::vector<CatalogManager::IndexInfo> indexes;
     ErrorContext ctx;
-    auto status = catalog_->listIndexesForTable(table_id, indexes, &ctx);
+    auto status = catalog_->listIndexesForTable(table_id, indexes, &ctx, false);
     if (status != Status::OK) return false;
 
     for (const auto& idx : indexes) {

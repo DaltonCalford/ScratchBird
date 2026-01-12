@@ -644,7 +644,9 @@ struct ResolvedTableConstraint {
 
     // For FOREIGN KEY
     ID fk_table_uuid;
+    SchemaPath fk_table_path;
     std::vector<uint32_t> fk_column_indexes;
+    std::vector<StringPool::StringId> fk_column_names;
     ForeignKeyAction on_delete = ForeignKeyAction::NO_ACTION;
     ForeignKeyAction on_update = ForeignKeyAction::NO_ACTION;
 
@@ -729,6 +731,79 @@ struct ResolvedCreateViewStmt : public ResolvedStatement {
     ResolvedSelectStmt* query = nullptr;
 
     bool check_option = false;
+};
+
+struct ResolvedRoutineParam {
+    uint8_t mode = 0;  // 0=IN, 1=OUT, 2=INOUT
+    StringPool::StringId name = StringPool::INVALID_ID;
+    ResolvedType type;
+};
+
+/**
+ * Resolved CREATE FUNCTION statement
+ */
+struct ResolvedCreateFunctionStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId function_name;
+    bool or_replace = false;
+    bool deterministic = false;
+    RoutineSqlSecurity sql_security = RoutineSqlSecurity::INVOKER;
+    std::vector<ResolvedRoutineParam> params;
+    ResolvedType return_type;
+    std::string body;
+};
+
+/**
+ * Resolved CREATE PROCEDURE statement
+ */
+struct ResolvedCreateProcedureStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId procedure_name;
+    bool or_replace = false;
+    RoutineSqlSecurity sql_security = RoutineSqlSecurity::INVOKER;
+    std::vector<ResolvedRoutineParam> params;
+    std::string body;
+};
+
+/**
+ * Resolved CREATE TRIGGER statement
+ */
+struct ResolvedCreateTriggerStmt : public ResolvedStatement {
+    StringPool::StringId trigger_name;
+    SchemaPath table_path;
+    bool active = true;
+    TriggerTiming timing = TriggerTiming::BEFORE;
+    TriggerEvent event = TriggerEvent::INSERT;
+    TriggerGranularity granularity = TriggerGranularity::FOR_EACH_ROW;
+    std::string body;
+};
+
+/**
+ * Resolved CREATE PACKAGE statement
+ */
+struct ResolvedCreatePackageStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId package_name;
+    bool or_replace = false;
+    bool is_body = false;
+    std::string header;
+    std::string body;
+};
+
+/**
+ * Resolved CREATE ROLE statement
+ */
+struct ResolvedCreateRoleStmt : public ResolvedStatement {
+    StringPool::StringId role_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved CREATE EXCEPTION statement
+ */
+struct ResolvedCreateExceptionStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId exception_name = StringPool::INVALID_ID;
+    std::string message;
 };
 
 /**
@@ -879,6 +954,14 @@ struct ResolvedAlterTableStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved ALTER INDEX statement
+ */
+struct ResolvedAlterIndexStmt : public ResolvedStatement {
+    SchemaPath index_path;
+    bool active = true;
+};
+
+/**
  * Resolved RENAME OBJECT statement
  */
 struct ResolvedRenameObjectStmt : public ResolvedStatement {
@@ -916,7 +999,7 @@ struct ResolvedDropStmt : public ResolvedStatement {
     };
 
     ObjectType object_type;
-    std::vector<ID> object_uuids;
+    std::vector<SchemaPath> object_paths;
     bool if_exists = false;
     bool cascade = false;
 };
@@ -928,7 +1011,7 @@ struct ResolvedDropStmt : public ResolvedStatement {
  * thread that deletes all rows and sweeps garbage.
  */
 struct ResolvedTruncateTableStmt : public ResolvedStatement {
-    std::vector<ID> table_uuids;      // Tables to truncate
+    std::vector<SchemaPath> table_paths; // Tables to truncate
     bool cascade = false;             // CASCADE to dependent tables
     bool restart_identity = false;    // RESTART IDENTITY for sequences
     bool async_mode = true;           // ASYNC (default) or SYNC mode
@@ -1085,6 +1168,29 @@ struct ResolvedShowStmt : public ResolvedStatement {
 
     // For LIKE pattern filtering
     StringPool::StringId like_pattern = StringPool::INVALID_ID;
+};
+
+// =============================================================================
+// Resolved DCL Statements
+// =============================================================================
+
+struct ResolvedGrantStmt : public ResolvedStatement {
+    uint32_t privileges = 0;
+    PrivilegeObjectType object_type = PrivilegeObjectType::TABLE;
+    std::vector<SchemaPath> objects;
+    std::vector<StringPool::StringId> grantees;
+    bool with_grant_option = false;
+    bool is_public = false;
+};
+
+struct ResolvedRevokeStmt : public ResolvedStatement {
+    uint32_t privileges = 0;
+    PrivilegeObjectType object_type = PrivilegeObjectType::TABLE;
+    std::vector<SchemaPath> objects;
+    std::vector<StringPool::StringId> grantees;
+    bool grant_option_for = false;
+    bool cascade = false;
+    bool is_public = false;
 };
 
 /**

@@ -418,7 +418,7 @@ namespace scratchbird::core
             // Phase 3 Task 3.2: Update indexes with detoasted values
             // Get all indexes for this table
             std::vector<CatalogManager::IndexInfo> indexes;
-            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx);
+            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
 
             if (index_status == Status::OK && !indexes.empty())
             {
@@ -784,7 +784,7 @@ namespace scratchbird::core
 
             // LSM Integration Phase 4: Remove from all indexes
             std::vector<CatalogManager::IndexInfo> indexes;
-            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx);
+            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
 
             if (index_status == Status::OK && !indexes.empty())
             {
@@ -1429,7 +1429,7 @@ namespace scratchbird::core
 
             // Get all indexes for this table
             std::vector<CatalogManager::IndexInfo> indexes;
-            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx);
+            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
 
             if (index_status == Status::OK && !indexes.empty())
             {
@@ -2010,7 +2010,7 @@ namespace scratchbird::core
     {
         // Get all indexes for this table
         std::vector<CatalogManager::IndexInfo> indexes;
-        Status status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx);
+        Status status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
         if (status != Status::OK)
         {
             // If no indexes or error, just warn and continue

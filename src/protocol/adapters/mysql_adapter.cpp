@@ -186,7 +186,17 @@ core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
     }
 
     client::ResultSet rs;
-    status = client_->executeQuery(query.query, &rs, ctx);
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    auto compile_status = compileQuery(query.query, bytecode, compile_error);
+    if (compile_status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(compile_status);
+        result.error_message = compile_error.empty() ? "Compilation failed" : compile_error;
+        return compile_status;
+    }
+
+    status = client_->executeBytecode(bytecode, query.query, &rs, ctx);
     if (status != core::Status::OK) {
         result.has_error = true;
         result.error_code = static_cast<uint32_t>(status);
@@ -215,10 +225,39 @@ core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
 
     result.rows_affected = rs.getRowsAffected();
     result.command_tag = rs.getCommandTag();
-    if (result.command_tag.empty()) {
+    if (result.command_tag.empty() || result.command_tag == "OK") {
+        auto ltrim_upper = [](const std::string& input) {
+            size_t pos = 0;
+            while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
+                ++pos;
+            }
+            std::string upper;
+            upper.reserve(input.size() - pos);
+            for (; pos < input.size(); ++pos) {
+                upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(input[pos]))));
+            }
+            return upper;
+        };
+        std::string normalized = ltrim_upper(query.query);
+        auto starts_with = [&](const std::string& prefix) {
+            return normalized.rfind(prefix, 0) == 0;
+        };
+
         if (row_count > 0) {
             result.command_tag = "SELECT " + std::to_string(row_count);
-        } else if (result.rows_affected > 0) {
+        } else if (starts_with("INSERT")) {
+            result.command_tag = "INSERT";
+        } else if (starts_with("UPDATE")) {
+            result.command_tag = "UPDATE";
+        } else if (starts_with("DELETE")) {
+            result.command_tag = "DELETE";
+        } else if (starts_with("CREATE")) {
+            result.command_tag = "CREATE";
+        } else if (starts_with("DROP")) {
+            result.command_tag = "DROP";
+        } else if (starts_with("ALTER")) {
+            result.command_tag = "ALTER";
+        } else {
             result.command_tag = "OK";
         }
     }
