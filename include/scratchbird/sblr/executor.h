@@ -22,6 +22,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <atomic>
+#include <iosfwd>
 
 namespace scratchbird
 {
@@ -183,6 +184,10 @@ namespace scratchbird
                 conn_ctx_ = conn_ctx;
             }
 
+            // Optional COPY STDIN/STDOUT streams (defaults to std::cin/std::cout when unset).
+            void setCopyInputStream(std::istream* in) { copy_input_stream_ = in; }
+            void setCopyOutputStream(std::ostream* out) { copy_output_stream_ = out; }
+
             // SECURITY ENHANCEMENT (MEDIUM-3): Query execution limits management
             void setQueryLimits(const QueryLimits& limits) { query_limits_ = limits; }
             const QueryLimits& getQueryLimits() const { return query_limits_; }
@@ -202,6 +207,8 @@ namespace scratchbird
             // Task 17 MGA Phase 2.2: Access index maintenance statistics
             const IndexMaintenanceStats& getIndexStats() const { return index_stats_; }
             void resetIndexStats() { index_stats_.reset(); }
+
+            int64_t getLastAffectedRows() const { return last_affected_rows_; }
 
             // NET-M1: Query cancellation support
             // Request cancellation of the currently executing query
@@ -250,6 +257,8 @@ namespace scratchbird
             // Connection context for security and transaction state (Phase 2 - Security System)
             // NOTE: This is a non-owning pointer that must be set before executing security-related operations
             core::ConnectionContext *conn_ctx_ = nullptr;
+            std::istream* copy_input_stream_ = nullptr;
+            std::ostream* copy_output_stream_ = nullptr;
 
             // Execution state
             // Note: bytecode_ is a raw pointer that must remain valid during execute()
@@ -274,6 +283,7 @@ namespace scratchbird
             // Row context for expression evaluation (during SELECT WHERE)
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
+            bool current_row_case_insensitive_ = false;
             // Insert-row context (for VALUES(col) in ON CONFLICT updates)
             const std::vector<Value> *current_insert_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_insert_columns_ = nullptr;
@@ -341,7 +351,9 @@ namespace scratchbird
             core::DataType readDataTypeWithModifiers(uint32_t& precision_out, uint32_t& scale_out);
             core::DataType readColumnTypeWithDomain(core::ID& domain_id_out,
                                                     uint32_t& precision_out,
-                                                    uint32_t& scale_out);
+                                                    uint32_t& scale_out,
+                                                    bool& is_array_out,
+                                                    uint32_t& array_size_out);
             void readDependencies(std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
             core::Status resolveSchemaIdForName(const std::string& schema_path,
                                                 core::ID& schema_id_out,
@@ -504,6 +516,7 @@ namespace scratchbird
             void executeDropFunctionStatement();
             void executeDropProcedureStatement();
             void executeDropPackageStatement();
+            void executeDropExceptionStatement();
 
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);
@@ -866,11 +879,17 @@ namespace scratchbird
             void executeShowObjects();       // Execute SHOW OBJECTS
             void executeObjectResolverQuery(
                 const std::vector<std::pair<std::string, std::string>>& select_items,
-                bool is_select_star);
+                bool is_select_star,
+                bool has_where,
+                size_t where_start_pc,
+                size_t where_end_pc);
             bool executeVirtualCatalogQuery(
                 const std::string& table_name,
                 const std::vector<std::pair<std::string, std::string>>& select_items,
-                bool is_select_star);
+                bool is_select_star,
+                bool has_where,
+                size_t where_start_pc,
+                size_t where_end_pc);
 
             // Session SET Commands (Firebird ISQL compatibility)
             void executeSetSqlDialect();     // Execute SET SQL DIALECT n

@@ -28,6 +28,9 @@ using ast::CreateProcedureStmt;
 using ast::CreateFunctionStmt;
 using ast::CreateTriggerStmt;
 using ast::CreateExceptionStmt;
+using ast::AlterTableStmt;
+using ast::AlterTableAction;
+using ast::AlterDatabaseStmt;
 using ast::AlterIndexStmt;
 using ast::AlterIndexAction;
 using ast::DropSequenceStmt;
@@ -37,6 +40,12 @@ using ast::DropDomainStmt;
 using ast::DropTableStmt;
 using ast::DropIndexStmt;
 using ast::DropViewStmt;
+using ast::DropFunctionStmt;
+using ast::DropProcedureStmt;
+using ast::DropTriggerStmt;
+using ast::DropPackageStmt;
+using ast::DropRoleStmt;
+using ast::DropExceptionStmt;
 using ast::SelectStmt;
 using ast::SelectItem;
 using ast::InsertStmt;
@@ -316,6 +325,61 @@ TEST_F(FirebirdParserTest, DropView) {
     EXPECT_EQ(result.statement->kind(), ASTKind::DropViewStmt);
 }
 
+TEST_F(FirebirdParserTest, DropProcedure) {
+    Parser parser("DROP PROCEDURE my_proc");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropProcedureStmt);
+    auto* stmt = static_cast<DropProcedureStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->procedures.size(), 1u);
+}
+
+TEST_F(FirebirdParserTest, DropFunction) {
+    Parser parser("DROP FUNCTION my_func");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropFunctionStmt);
+    auto* stmt = static_cast<DropFunctionStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->functions.size(), 1u);
+}
+
+TEST_F(FirebirdParserTest, DropTrigger) {
+    Parser parser("DROP TRIGGER trig_test");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropTriggerStmt);
+    auto* stmt = static_cast<DropTriggerStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->triggers.size(), 1u);
+}
+
+TEST_F(FirebirdParserTest, DropPackage) {
+    Parser parser("DROP PACKAGE pkg_test");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropPackageStmt);
+    auto* stmt = static_cast<DropPackageStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->packages.size(), 1u);
+}
+
+TEST_F(FirebirdParserTest, DropRole) {
+    Parser parser("DROP ROLE role_test CASCADE");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropRoleStmt);
+    auto* stmt = static_cast<DropRoleStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->roles.size(), 1u);
+    EXPECT_TRUE(stmt->cascade);
+}
+
+TEST_F(FirebirdParserTest, DropException) {
+    Parser parser("DROP EXCEPTION ex_test");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropExceptionStmt);
+    auto* stmt = static_cast<DropExceptionStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->exceptions.size(), 1u);
+}
+
 // =============================================================================
 // DDL Tests - RECREATE
 // =============================================================================
@@ -425,6 +489,39 @@ TEST_F(FirebirdParserTest, CreateTriggerSimple) {
     auto* stmt = static_cast<CreateTriggerStmt*>(result.statement.get());
     EXPECT_NE(stmt->trigger_name, StringPool::INVALID_ID);
     EXPECT_NE(stmt->body, StringPool::INVALID_ID);
+    EXPECT_NE(stmt->event_mask & (1u << static_cast<uint8_t>(ast::TriggerEvent::INSERT)), 0u);
+}
+
+TEST_F(FirebirdParserTest, CreateTriggerMultiEvent) {
+    Parser parser("CREATE TRIGGER trg_emp FOR employees BEFORE INSERT OR UPDATE OR DELETE AS BEGIN END");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::CreateTriggerStmt);
+    auto* stmt = static_cast<CreateTriggerStmt*>(result.statement.get());
+    uint8_t mask = stmt->event_mask;
+    EXPECT_NE(mask & (1u << static_cast<uint8_t>(ast::TriggerEvent::INSERT)), 0u);
+    EXPECT_NE(mask & (1u << static_cast<uint8_t>(ast::TriggerEvent::UPDATE)), 0u);
+    EXPECT_NE(mask & (1u << static_cast<uint8_t>(ast::TriggerEvent::DELETE)), 0u);
+}
+
+TEST_F(FirebirdParserTest, AlterTableRename) {
+    Parser parser("ALTER TABLE employees RENAME TO employees_new");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::AlterTableStmt);
+    auto* stmt = static_cast<AlterTableStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->action, AlterTableAction::RENAME_TABLE);
+    EXPECT_NE(stmt->new_name, StringPool::INVALID_ID);
+}
+
+TEST_F(FirebirdParserTest, AlterDatabaseOwner) {
+    Parser parser("ALTER DATABASE '/data/legacy/employees.fdb' OWNER TO SYSDBA");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::AlterDatabaseStmt);
+    auto* stmt = static_cast<AlterDatabaseStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->action, ast::AlterDatabaseAction::SET_OWNER);
+    EXPECT_NE(stmt->owner, StringPool::INVALID_ID);
 }
 
 TEST_F(FirebirdParserTest, CreateExceptionSimple) {

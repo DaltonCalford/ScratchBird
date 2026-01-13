@@ -1009,33 +1009,41 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
                 if (!trig.enabled) {
                     continue;
                 }
-                int32_t trigger_type = 0;
-                if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE &&
-                    trig.event == core::CatalogManager::TriggerEvent::INSERT) {
-                    trigger_type = 1;
-                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER &&
-                           trig.event == core::CatalogManager::TriggerEvent::INSERT) {
-                    trigger_type = 2;
-                } else if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE &&
-                           trig.event == core::CatalogManager::TriggerEvent::UPDATE) {
-                    trigger_type = 3;
-                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER &&
-                           trig.event == core::CatalogManager::TriggerEvent::UPDATE) {
-                    trigger_type = 4;
-                } else if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE &&
-                           trig.event == core::CatalogManager::TriggerEvent::DELETE) {
-                    trigger_type = 5;
-                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER &&
-                           trig.event == core::CatalogManager::TriggerEvent::DELETE) {
-                    trigger_type = 6;
-                }
+                auto emit_trigger = [&](int32_t trigger_type) {
+                    if (!tr_first) tr << " UNION ALL ";
+                    tr << "SELECT '" << escape_literal(trig.trigger_name) << "' AS RDB$TRIGGER_NAME, '"
+                       << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
+                       << seq++ << " AS RDB$TRIGGER_SEQUENCE, "
+                       << trigger_type << " AS RDB$TRIGGER_TYPE";
+                    tr_first = false;
+                };
 
-                if (!tr_first) tr << " UNION ALL ";
-                tr << "SELECT '" << escape_literal(trig.trigger_name) << "' AS RDB$TRIGGER_NAME, '"
-                   << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
-                   << seq++ << " AS RDB$TRIGGER_SEQUENCE, "
-                   << trigger_type << " AS RDB$TRIGGER_TYPE";
-                tr_first = false;
+                auto has_event = [&](core::CatalogManager::TriggerEvent event) {
+                    return (trig.event_mask &
+                            (1u << static_cast<uint8_t>(event))) != 0;
+                };
+
+                if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE) {
+                    if (has_event(core::CatalogManager::TriggerEvent::INSERT)) {
+                        emit_trigger(1);
+                    }
+                    if (has_event(core::CatalogManager::TriggerEvent::UPDATE)) {
+                        emit_trigger(3);
+                    }
+                    if (has_event(core::CatalogManager::TriggerEvent::DELETE)) {
+                        emit_trigger(5);
+                    }
+                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER) {
+                    if (has_event(core::CatalogManager::TriggerEvent::INSERT)) {
+                        emit_trigger(2);
+                    }
+                    if (has_event(core::CatalogManager::TriggerEvent::UPDATE)) {
+                        emit_trigger(4);
+                    }
+                    if (has_event(core::CatalogManager::TriggerEvent::DELETE)) {
+                        emit_trigger(6);
+                    }
+                }
             }
         }
         if (tr_first) {
@@ -1543,7 +1551,36 @@ core::Status FirebirdAdapter::handleDropDatabase(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    // TODO: Actually drop database
+    if (database_name_.empty()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "No database name available");
+        return sendBuffer(conn);
+    }
+
+    auto escape_literal = [](const std::string& in) {
+        std::string out;
+        out.reserve(in.size());
+        for (char ch : in) {
+            if (ch == '\'') {
+                out.push_back('\'');
+            }
+            out.push_back(ch);
+        }
+        return out;
+    };
+
+    QueryContext ctx;
+    ctx.query = "DROP DATABASE '" + escape_literal(database_name_) + "'";
+
+    ResultContext result;
+    core::ErrorContext err;
+    auto status = executeRemoteQuery(ctx, result, &err);
+    if (status != core::Status::OK || result.has_error) {
+        std::string message = result.error_message.empty() ? err.message : result.error_message;
+        int32_t code = result.error_code ? static_cast<int32_t>(result.error_code)
+                                         : mapStatusToFirebird(status);
+        sendErrorResponse(conn, code, message.empty() ? "DROP DATABASE failed" : message, result.sqlstate);
+        return sendBuffer(conn);
+    }
 
     if (client_) {
         client_->disconnect();
@@ -1552,6 +1589,9 @@ core::Status FirebirdAdapter::handleDropDatabase(network::Connection* conn) {
     db_handle_ = 0;
     active_transactions_.clear();
     fb_state_ = FirebirdProtocolState::AUTHENTICATED;
+    database_name_.clear();
+    firebird_schema_name_.clear();
+    firebird_schema_id_ = core::ID{};
 
     std::vector<uint8_t> data;
     sendResponse(conn, 0, 0, data);

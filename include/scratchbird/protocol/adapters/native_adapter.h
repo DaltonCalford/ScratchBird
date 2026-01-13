@@ -26,6 +26,8 @@ enum class NativeProtocolState {
     AUTHENTICATED,      // Authentication complete
     READY,              // Ready for queries
     QUERY_PROCESSING,   // Processing a query
+    COPY_IN,            // COPY FROM STDIN streaming
+    COPY_OUT,           // COPY TO STDOUT streaming
     CLOSING,            // Connection closing
     ERROR               // Protocol error
 };
@@ -101,6 +103,9 @@ private:
     core::Status handlePing(network::Connection* conn);
     core::Status handleStatusRequest(network::Connection* conn);
 
+    core::Status handleCopyQuery(network::Connection* conn, const QueryContext& ctx,
+                                 bool from_stdin, bool to_stdout);
+
     // ========================================================================
     // Message Sending
     // ========================================================================
@@ -132,6 +137,16 @@ private:
     // ========================================================================
 
     void sendMessage(network::Connection* conn, const Message& msg);
+    core::Status flushWriteBuffer(network::Connection* conn);
+    core::Status receiveMessageBlocking(network::Connection* conn, Message& msg);
+
+    bool parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout) const;
+    bool sendCopyOutChunk(network::Connection* conn, const uint8_t* data, size_t len,
+                          std::string& error);
+    bool readCopyInChunk(network::Connection* conn, std::string& out, bool& done,
+                         std::string& error);
+    bool waitForCopyOutWindow(network::Connection* conn, std::string& error);
+    core::Status grantCopyInWindow(network::Connection* conn, uint32_t window_bytes);
 
     // ========================================================================
     // State
@@ -149,6 +164,16 @@ private:
     // Prepared statements (id -> query)
     uint32_t next_stmt_id_ = 1;
     std::unordered_map<uint32_t, std::string> native_prepared_statements_;
+
+    // COPY streaming state
+    uint64_t next_stream_id_ = 1;
+    uint64_t copy_stream_id_ = 0;
+    uint64_t copy_total_bytes_ = 0;
+    uint32_t copy_out_window_bytes_ = 0;
+    uint32_t copy_in_window_bytes_ = 0;
+    uint32_t copy_in_window_grant_ = 0;
+    uint32_t copy_in_low_watermark_ = 0;
+    bool copy_out_paused_ = false;
 };
 
 } // namespace protocol

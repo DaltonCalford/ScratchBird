@@ -1961,6 +1961,24 @@ Statement* Parser::parseAlterStatement() {
     if (matchKeyword(TokenType::KW_INDEX)) {
         return parseAlterIndexImpl();
     }
+    if (matchKeyword(TokenType::KW_VIEW)) {
+        return parseCreateViewImpl(true);
+    }
+    if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        return parseCreateProcedure(true);
+    }
+    if (matchKeyword(TokenType::KW_FUNCTION)) {
+        return parseCreateFunction(true);
+    }
+    if (matchKeyword(TokenType::KW_TRIGGER)) {
+        return parseCreateTrigger(true);
+    }
+    if (matchKeyword(TokenType::KW_PACKAGE)) {
+        return parseCreatePackage(true);
+    }
+    if (matchKeyword(TokenType::KW_EXCEPTION)) {
+        return parseCreateException(true);
+    }
     error("ALTER statement for this object type not yet implemented");
     return nullptr;
 }
@@ -2003,6 +2021,48 @@ Statement* Parser::parseDropStatement() {
     }
     if (matchKeyword(TokenType::KW_GENERATOR) || matchKeyword(TokenType::KW_SEQUENCE)) {
         return parseDropSequenceImpl(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropProcedureImpl(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_FUNCTION)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropFunctionImpl(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_TRIGGER)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropTriggerImpl(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_PACKAGE)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropPackageImpl(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_ROLE)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropRoleImpl(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_EXCEPTION)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropExceptionImpl(if_exists);
     }
 
     error("DROP statement for this object type not yet implemented");
@@ -2131,13 +2191,12 @@ Statement* Parser::parseAlterDatabase() {
         return stmt;
     }
 
-    // TODO: Add OWNER keyword support
-    // if (matchKeyword(TokenType::KW_OWNER)) {
-    //     consume(TokenType::KW_TO, "Expected TO after OWNER");
-    //     stmt->action = ast::AlterDatabaseAction::SET_OWNER;
-    //     stmt->owner = parseIdentifier();
-    //     return stmt;
-    // }
+    if (matchIdentifierText("OWNER")) {
+        consume(TokenType::KW_TO, "Expected TO after OWNER");
+        stmt->action = ast::AlterDatabaseAction::SET_OWNER;
+        stmt->owner = parseIdentifier();
+        return stmt;
+    }
 
     error("ALTER DATABASE options are not supported in Firebird parser");
     return stmt;
@@ -2351,8 +2410,12 @@ ast::AlterTableStmt* Parser::parseAlterTableImpl() {
             // Parse column alteration (TYPE, SET DEFAULT, DROP DEFAULT, etc.)
         }
     } else if (matchKeyword(TokenType::KW_RENAME)) {
-        error("ALTER TABLE RENAME is not supported in Firebird parser");
-        return nullptr;
+        stmt->action = ast::AlterTableAction::RENAME_TABLE;
+        if (matchKeyword(TokenType::KW_TO)) {
+            stmt->new_name = parseIdentifier();
+        } else {
+            stmt->new_name = parseIdentifier();
+        }
     } else if (matchKeyword(TokenType::KW_SET)) {
         error("ALTER TABLE SET is not supported in Firebird parser");
         return nullptr;
@@ -2571,6 +2634,105 @@ Statement* Parser::parseDropSequenceImpl(bool if_exists) {
     return stmt;
 }
 
+Statement* Parser::parseDropFunctionImpl(bool if_exists) {
+    auto* stmt = allocate<ast::DropFunctionStmt>();
+    stmt->if_exists = if_exists;
+
+    if (!if_exists && matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->functions.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    return stmt;
+}
+
+Statement* Parser::parseDropProcedureImpl(bool if_exists) {
+    auto* stmt = allocate<ast::DropProcedureStmt>();
+    stmt->if_exists = if_exists;
+
+    if (!if_exists && matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->procedures.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    return stmt;
+}
+
+Statement* Parser::parseDropTriggerImpl(bool if_exists) {
+    auto* stmt = allocate<ast::DropTriggerStmt>();
+    stmt->if_exists = if_exists;
+
+    if (stmt->if_exists) {
+        error("DROP TRIGGER does not support IF EXISTS");
+    }
+
+    do {
+        stmt->triggers.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    return stmt;
+}
+
+Statement* Parser::parseDropPackageImpl(bool if_exists) {
+    auto* stmt = allocate<ast::DropPackageStmt>();
+    stmt->if_exists = if_exists;
+
+    if (!if_exists && matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->packages.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    return stmt;
+}
+
+Statement* Parser::parseDropRoleImpl(bool if_exists) {
+    auto* stmt = allocate<ast::DropRoleStmt>();
+    stmt->if_exists = if_exists;
+
+    if (!if_exists && matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->roles.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    if (matchKeyword(TokenType::KW_CASCADE)) {
+        stmt->cascade = true;
+    }
+
+    return stmt;
+}
+
+Statement* Parser::parseDropExceptionImpl(bool if_exists) {
+    auto* stmt = allocate<ast::DropExceptionStmt>();
+    stmt->if_exists = if_exists;
+
+    if (!if_exists && matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->exceptions.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    return stmt;
+}
+
 // Wrappers that delegate to impl methods
 Statement* Parser::parseCreateTable() { return parseCreateTableImpl(false, false, false); }
 Statement* Parser::parseCreateOrAlterTable() { return parseCreateTableImpl(true, false, false); }
@@ -2711,28 +2873,33 @@ Statement* Parser::parseCreateTrigger(bool or_replace) {
         error("Expected BEFORE or AFTER in CREATE TRIGGER");
     }
 
-    bool have_event = false;
+    stmt->event_mask = 0;
+    auto add_event = [&](ast::TriggerEvent event) {
+        stmt->event_mask |= static_cast<uint8_t>(1u << static_cast<uint8_t>(event));
+    };
+
     if (matchKeyword(TokenType::KW_INSERT)) {
-        stmt->event = ast::TriggerEvent::INSERT;
-        have_event = true;
+        add_event(ast::TriggerEvent::INSERT);
     } else if (matchKeyword(TokenType::KW_UPDATE)) {
-        stmt->event = ast::TriggerEvent::UPDATE;
-        have_event = true;
+        add_event(ast::TriggerEvent::UPDATE);
     } else if (matchKeyword(TokenType::KW_DELETE)) {
-        stmt->event = ast::TriggerEvent::DELETE;
-        have_event = true;
+        add_event(ast::TriggerEvent::DELETE);
     }
 
-    if (!have_event) {
+    if (stmt->event_mask == 0) {
         error("Expected INSERT, UPDATE, or DELETE in CREATE TRIGGER");
     }
 
-    if (matchKeyword(TokenType::KW_OR)) {
-        error("Multiple trigger events are not supported yet");
-        while (matchKeyword(TokenType::KW_INSERT) ||
-               matchKeyword(TokenType::KW_UPDATE) ||
-               matchKeyword(TokenType::KW_DELETE) ||
-               matchKeyword(TokenType::KW_OR)) {
+    while (matchKeyword(TokenType::KW_OR)) {
+        if (matchKeyword(TokenType::KW_INSERT)) {
+            add_event(ast::TriggerEvent::INSERT);
+        } else if (matchKeyword(TokenType::KW_UPDATE)) {
+            add_event(ast::TriggerEvent::UPDATE);
+        } else if (matchKeyword(TokenType::KW_DELETE)) {
+            add_event(ast::TriggerEvent::DELETE);
+        } else {
+            error("Expected trigger event after OR");
+            break;
         }
     }
 
@@ -2824,8 +2991,9 @@ Statement* Parser::parseCreateDomain() {
     stmt->dialect_tag = "firebird";
     return stmt;
 }
-Statement* Parser::parseCreateException(bool /*or_replace*/) {
+Statement* Parser::parseCreateException(bool or_replace) {
     auto* stmt = allocate<ast::CreateExceptionStmt>();
+    stmt->or_replace = or_replace;
     stmt->exception_path = parseSchemaPath();
 
     if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {

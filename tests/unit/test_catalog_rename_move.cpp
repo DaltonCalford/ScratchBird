@@ -139,7 +139,7 @@ protected:
         trigger.table_id = table_id;
         trigger.table_name = table_name;
         trigger.timing = CatalogManager::TriggerTiming::BEFORE;
-        trigger.event = CatalogManager::TriggerEvent::INSERT;
+        trigger.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::INSERT);
         trigger.granularity = CatalogManager::TriggerGranularity::FOR_EACH_ROW;
 
         auto status = catalog_->createTrigger(trigger, &ctx);

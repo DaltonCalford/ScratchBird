@@ -159,22 +159,15 @@ void Parser::parseInExpr() {
             parseSubquery();
         } else {
             // Value list
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IN_LIST));
-            emitByte(is_not ? 1 : 0);
-
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t count_pos = bytecode_.size();
-            emitU32(0);
-
-            uint32_t count = 0;
+            uint64_t count = 0;
             do {
                 parseExpression();
                 count++;
             } while (match(TokenType::COMMA));
-
-            sblr::writeInt32(&bytecode_[count_pos], count);
-            emit(sblr::Opcode::END_LIST);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IN_LIST));
+            emitByte(is_not ? 1 : 0);
+            emitUVarint(count);
         }
 
         consume(TokenType::RIGHT_PAREN, "Expected ) after IN list");
@@ -1023,23 +1016,16 @@ void Parser::parseArrayConstructor() {
 
     if (match(TokenType::LEFT_BRACKET)) {
         // ARRAY[val1, val2, ...]
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT));
-
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
-
-        uint32_t count = 0;
+        uint64_t count = 0;
         if (!check(TokenType::RIGHT_BRACKET)) {
             do {
                 parseExpression();
                 count++;
             } while (match(TokenType::COMMA));
         }
-
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT));
+        emitUVarint(count);
         consume(TokenType::RIGHT_BRACKET, "Expected ]");
     } else if (match(TokenType::LEFT_PAREN)) {
         // ARRAY(SELECT ...) - array subquery

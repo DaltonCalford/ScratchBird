@@ -935,6 +935,254 @@ core::Status ProtocolCodec::parseCommandComplete(const Message& msg,
     return core::Status::OK;
 }
 
+// COPY Messages
+
+Message ProtocolCodec::buildCopyInResponse(CopyFormat format,
+                                           const std::vector<uint16_t>& column_formats) {
+    Message msg(MessageType::COPY_IN_RESPONSE);
+
+    msg.writeUInt8(static_cast<uint8_t>(format));
+    msg.writeUInt8(0);
+    msg.writeUInt16(static_cast<uint16_t>(column_formats.size()));
+    for (uint16_t fmt : column_formats) {
+        msg.writeUInt16(fmt);
+    }
+
+    return msg;
+}
+
+Message ProtocolCodec::buildCopyOutResponse(CopyFormat format,
+                                            const std::vector<uint16_t>& column_formats) {
+    Message msg(MessageType::COPY_OUT_RESPONSE);
+
+    msg.writeUInt8(static_cast<uint8_t>(format));
+    msg.writeUInt8(0);
+    msg.writeUInt16(static_cast<uint16_t>(column_formats.size()));
+    for (uint16_t fmt : column_formats) {
+        msg.writeUInt16(fmt);
+    }
+
+    return msg;
+}
+
+Message ProtocolCodec::buildCopyBothResponse(CopyFormat format,
+                                             const std::vector<uint16_t>& column_formats) {
+    Message msg(MessageType::COPY_BOTH_RESPONSE);
+
+    msg.writeUInt8(static_cast<uint8_t>(format));
+    msg.writeUInt8(0);
+    msg.writeUInt16(static_cast<uint16_t>(column_formats.size()));
+    for (uint16_t fmt : column_formats) {
+        msg.writeUInt16(fmt);
+    }
+
+    return msg;
+}
+
+Message ProtocolCodec::buildCopyData(const uint8_t* data, size_t length) {
+    Message msg(MessageType::COPY_DATA);
+    if (data && length > 0) {
+        msg.writeBytes(data, length);
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseCopyData(const Message& msg,
+                                          const uint8_t** data,
+                                          size_t* length,
+                                          core::ErrorContext* ctx) {
+    if (!data || !length) {
+        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                          "Missing output buffers for COPY_DATA");
+        return core::Status::INVALID_ARGUMENT;
+    }
+    *data = msg.getPayloadData();
+    *length = msg.getPayloadSize();
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildCopyDone() {
+    return Message(MessageType::COPY_DONE);
+}
+
+Message ProtocolCodec::buildCopyFail(const std::string& error_message) {
+    Message msg(MessageType::COPY_FAIL);
+    msg.writeUInt32(static_cast<uint32_t>(error_message.size()));
+    if (!error_message.empty()) {
+        msg.writeString(error_message);
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseCopyFail(const Message& msg,
+                                          std::string& error_message,
+                                          core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint32_t length = 0;
+    if (!m.readUInt32(length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated COPY_FAIL length");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (length > m.getRemainingBytes()) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated COPY_FAIL message");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (!m.readString(error_message, length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated COPY_FAIL message");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
+// Streaming Messages
+
+Message ProtocolCodec::buildStreamControl(StreamControlType control_type,
+                                          uint32_t window_size,
+                                          uint32_t timeout_ms) {
+    Message msg(MessageType::STREAM_CONTROL);
+    msg.writeUInt8(static_cast<uint8_t>(control_type));
+    msg.writeUInt8(0);
+    msg.writeUInt8(0);
+    msg.writeUInt8(0);
+    msg.writeUInt32(window_size);
+    msg.writeUInt32(timeout_ms);
+    return msg;
+}
+
+core::Status ProtocolCodec::parseStreamControl(const Message& msg,
+                                               StreamControlType& control_type,
+                                               uint32_t& window_size,
+                                               uint32_t& timeout_ms,
+                                               core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint8_t type = 0;
+    uint8_t reserved = 0;
+    if (!m.readUInt8(type) ||
+        !m.readUInt8(reserved) ||
+        !m.readUInt8(reserved) ||
+        !m.readUInt8(reserved) ||
+        !m.readUInt32(window_size) ||
+        !m.readUInt32(timeout_ms)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated STREAM_CONTROL");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    control_type = static_cast<StreamControlType>(type);
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildStreamReady(uint64_t stream_id,
+                                        uint64_t total_rows,
+                                        uint64_t estimated_bytes) {
+    Message msg(MessageType::STREAM_READY);
+    msg.writeUInt64(stream_id);
+    msg.writeUInt64(total_rows);
+    msg.writeUInt64(estimated_bytes);
+    return msg;
+}
+
+core::Status ProtocolCodec::parseStreamReady(const Message& msg,
+                                             uint64_t& stream_id,
+                                             uint64_t& total_rows,
+                                             uint64_t& estimated_bytes,
+                                             core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    if (!m.readUInt64(stream_id) ||
+        !m.readUInt64(total_rows) ||
+        !m.readUInt64(estimated_bytes)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated STREAM_READY");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildStreamData(uint64_t stream_id,
+                                       uint32_t chunk_rows,
+                                       const uint8_t* data,
+                                       size_t length) {
+    Message msg(MessageType::STREAM_DATA);
+    msg.writeUInt64(stream_id);
+    msg.writeUInt32(chunk_rows);
+    msg.writeUInt32(static_cast<uint32_t>(length));
+    if (data && length > 0) {
+        msg.writeBytes(data, length);
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseStreamData(const Message& msg,
+                                            uint64_t& stream_id,
+                                            uint32_t& chunk_rows,
+                                            const uint8_t** data,
+                                            size_t* length,
+                                            core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint32_t chunk_bytes = 0;
+    if (!m.readUInt64(stream_id) ||
+        !m.readUInt32(chunk_rows) ||
+        !m.readUInt32(chunk_bytes)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated STREAM_DATA header");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    if (!data || !length) {
+        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                          "Missing output buffers for STREAM_DATA");
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    if (chunk_bytes > m.getRemainingBytes()) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated STREAM_DATA payload");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    *data = m.getPayloadData() + m.getReadOffset();
+    *length = chunk_bytes;
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildStreamEnd(uint64_t stream_id,
+                                      uint64_t total_rows,
+                                      uint64_t total_bytes) {
+    Message msg(MessageType::STREAM_END);
+    msg.writeUInt64(stream_id);
+    msg.writeUInt64(total_rows);
+    msg.writeUInt64(total_bytes);
+    return msg;
+}
+
+core::Status ProtocolCodec::parseStreamEnd(const Message& msg,
+                                           uint64_t& stream_id,
+                                           uint64_t& total_rows,
+                                           uint64_t& total_bytes,
+                                           core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    if (!m.readUInt64(stream_id) ||
+        !m.readUInt64(total_rows) ||
+        !m.readUInt64(total_bytes)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated STREAM_END");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
 // Transaction Messages
 
 Message ProtocolCodec::buildBeginTransaction(const uint8_t session_id[16],
@@ -1153,6 +1401,16 @@ const char* messageTypeToString(MessageType type) {
         case MessageType::PONG:               return "PONG";
         case MessageType::STATUS_REQUEST:     return "STATUS_REQUEST";
         case MessageType::STATUS_RESPONSE:    return "STATUS_RESPONSE";
+        case MessageType::COPY_DATA:          return "COPY_DATA";
+        case MessageType::COPY_DONE:          return "COPY_DONE";
+        case MessageType::COPY_FAIL:          return "COPY_FAIL";
+        case MessageType::COPY_IN_RESPONSE:   return "COPY_IN_RESPONSE";
+        case MessageType::COPY_OUT_RESPONSE:  return "COPY_OUT_RESPONSE";
+        case MessageType::COPY_BOTH_RESPONSE: return "COPY_BOTH_RESPONSE";
+        case MessageType::STREAM_CONTROL:     return "STREAM_CONTROL";
+        case MessageType::STREAM_READY:       return "STREAM_READY";
+        case MessageType::STREAM_DATA:        return "STREAM_DATA";
+        case MessageType::STREAM_END:         return "STREAM_END";
         case MessageType::DEBUG_MESSAGE:      return "DEBUG_MESSAGE";
         case MessageType::PROTOCOL_ERROR:     return "PROTOCOL_ERROR";
         default:                              return "UNKNOWN";

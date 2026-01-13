@@ -529,6 +529,8 @@ public:
             bool with_timezone = false;     // For TIMESTAMP: WITH TIME ZONE
             uint16_t charset = 0;           // Character set (0 = inherit from table)
             ID domain_id;                   // WP-2 CAT-M7: Domain ID (zero if not domain-based)
+            bool is_array = false;          // Array column flag (true when column stores array values)
+            uint32_t array_size = 0;        // Fixed array size (0 = unspecified/unbounded)
             uint16_t timezone_hint = 0;     // Timezone ID for display (0 = use connection default)
             uint32_t collation_id = 0;      // Collation ID (0 = inherit from table)
             std::string default_value;      // Serialized default (simple literals)
@@ -3365,7 +3367,7 @@ public:
             ID table_id;
             std::string table_name;
             TriggerTiming timing;
-            TriggerEvent event;
+            uint8_t event_mask = 1u << static_cast<uint8_t>(TriggerEvent::INSERT);
             TriggerGranularity granularity;
             std::string procedure_name;
             bool enabled = true;  // Can be disabled without dropping

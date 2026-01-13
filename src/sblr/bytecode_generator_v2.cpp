@@ -677,6 +677,26 @@ void BytecodeGeneratorV2::generateCopy(ResolvedCopyStmt* stmt) {
         }
     }
 
+    uint8_t format = 1;
+    switch (stmt->options.format) {
+        case ResolvedCopyOptions::Format::TEXT:
+            format = 1;
+            break;
+        case ResolvedCopyOptions::Format::CSV:
+            format = 2;
+            break;
+        case ResolvedCopyOptions::Format::BINARY:
+            format = 3;
+            break;
+    }
+    current_result_->writeByte(format);
+    current_result_->writeString(std::string(1, stmt->options.delimiter));
+    current_result_->writeString(stmt->options.null_string);
+    current_result_->writeByte(stmt->options.header ? 1 : 0);
+    current_result_->writeString(std::string(1, stmt->options.quote));
+    current_result_->writeString(std::string(1, stmt->options.escape));
+    current_result_->writeString(stmt->options.encoding);
+
     if (has_query) {
         if (direction != 2) {
             current_result_->addError("COPY (SELECT ...) only supports TO");
@@ -1222,7 +1242,7 @@ void BytecodeGeneratorV2::generateCreateTrigger(ResolvedCreateTriggerStmt* stmt)
     current_result_->writeString(trigger_name);
     current_result_->writeString(schemaPathToString(stmt->table_path, string_pool_));
     current_result_->writeByte(static_cast<uint8_t>(stmt->timing));
-    current_result_->writeByte(static_cast<uint8_t>(stmt->event));
+    current_result_->writeByte(stmt->event_mask);
     current_result_->writeByte(static_cast<uint8_t>(stmt->granularity));
     current_result_->writeString(proc_path);
 }
@@ -1258,6 +1278,12 @@ void BytecodeGeneratorV2::generateCreateRole(ResolvedCreateRoleStmt* stmt) {
 void BytecodeGeneratorV2::generateCreateException(ResolvedCreateExceptionStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_EXCEPTION_STMT));
+
+    uint8_t flags = 0;
+    if (stmt->or_replace) {
+        flags |= 0x01;
+    }
+    current_result_->writeByte(flags);
 
     std::string exception_name;
     if (stmt->schema.schema_name != StringPool::INVALID_ID) {
@@ -1738,6 +1764,55 @@ void BytecodeGeneratorV2::generateDrop(ResolvedDropStmt* stmt) {
                 current_result_->writeString(object_name);
                 current_result_->writeByte(stmt->cascade ? 1 : 0);
                 break;
+            case ResolvedDropStmt::ObjectType::FUNCTION: {
+                current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+                current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_FUNCTION_STMT));
+                uint8_t flags = stmt->if_exists ? 0x01 : 0x00;
+                current_result_->writeByte(flags);
+                current_result_->writeString(object_name);
+                break;
+            }
+            case ResolvedDropStmt::ObjectType::PROCEDURE: {
+                current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+                current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_PROCEDURE_STMT));
+                uint8_t flags = stmt->if_exists ? 0x01 : 0x00;
+                current_result_->writeByte(flags);
+                current_result_->writeString(object_name);
+                break;
+            }
+            case ResolvedDropStmt::ObjectType::TRIGGER: {
+                current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+                current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_TRIGGER));
+                current_result_->writeString(object_name);
+                current_result_->writeString(std::string());
+                break;
+            }
+            case ResolvedDropStmt::ObjectType::PACKAGE: {
+                current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+                current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_PACKAGE_STMT));
+                uint8_t flags = stmt->if_exists ? 0x01 : 0x00;
+                current_result_->writeByte(flags);
+                current_result_->writeString(object_name);
+                break;
+            }
+            case ResolvedDropStmt::ObjectType::ROLE: {
+                current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+                current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_ROLE));
+                current_result_->writeString(object_name);
+                uint8_t flags = 0;
+                if (stmt->if_exists) flags |= 0x01;
+                if (stmt->cascade) flags |= 0x02;
+                current_result_->writeByte(flags);
+                break;
+            }
+            case ResolvedDropStmt::ObjectType::EXCEPTION: {
+                current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+                current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_EXCEPTION_STMT));
+                uint8_t flags = stmt->if_exists ? 0x01 : 0x00;
+                current_result_->writeByte(flags);
+                current_result_->writeString(object_name);
+                break;
+            }
         }
     }
 }
@@ -2961,13 +3036,13 @@ void BytecodeGeneratorV2::generateIn(ResolvedInExpr* expr) {
             sblr::ExtendedOpcode::EXT_SUBQUERY_END);
     } else {
         // IN with value list
+        for (auto* val : expr->values) {
+            generateExpression(val);
+        }
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_IN_LIST);
         current_result_->writeByte(expr->negated ? 1 : 0);
         current_result_->writeListCount(static_cast<uint64_t>(expr->values.size()));
-        for (auto* val : expr->values) {
-            generateExpression(val);
-        }
     }
 }
 
@@ -3063,12 +3138,12 @@ void BytecodeGeneratorV2::generateArray(ResolvedArrayExpr* expr) {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_SUBQUERY_END);
     } else {
-        current_result_->writeExtendedOpcode(
-            sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT);
-        current_result_->writeListCount(static_cast<uint64_t>(expr->elements.size()));
         for (auto* elem : expr->elements) {
             generateExpression(elem);
         }
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT);
+        current_result_->writeListCount(static_cast<uint64_t>(expr->elements.size()));
     }
 }
 

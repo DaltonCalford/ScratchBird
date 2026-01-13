@@ -99,15 +99,16 @@ struct StartupMessage {
 
 | Parameter | Required | Behavior |
 | --- | --- | --- |
-| user | yes | Used as the login username. |
+| user | yes | Used as the login username; missing user is a FATAL error. |
 | database | no | Defaults to user if omitted. |
 | application_name | no | Stored but not enforced in Alpha. |
-| client_encoding | no | Accepted but ignored (server always reports UTF8). |
+| client_encoding | no | UTF8/UTF-8 accepted; other values are rejected. |
+| replication | no | Any truthy value is rejected (replication not supported). |
 | options | no | Accepted but ignored. |
 | other keys | no | Accepted and ignored unless used by the adapter. |
 
 Notes:
-- GSSENCRequest is not supported in Alpha. Clients must not send it.
+- GSSENCRequest is answered with 'N' (GSSENC not supported yet); clients must retry in plaintext.
 - SSLRequest is answered with 'N' (SSL not supported yet); clients must retry in plaintext.
 
 ### 2. Authentication and Startup Response
@@ -237,7 +238,8 @@ struct SASLInitialResponse {
 
 ScratchBird SASL support in Alpha:
 - Server advertises only SCRAM-SHA-256.
-- SCRAM-SHA-256-PLUS (channel binding) is not supported.
+- SCRAM-SHA-256-PLUS (channel binding) is not supported and is rejected.
+- SCRAM client-first messages with channel binding (GS2 "p=") are rejected.
 - If the client selects any other SASL mechanism, the server returns a FATAL error (SQLSTATE 0A000).
 
 ## Message Types

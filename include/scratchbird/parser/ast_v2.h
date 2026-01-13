@@ -79,6 +79,12 @@ enum class ASTKind : uint16_t {
     DropIndexStmt,
     DropViewStmt,
     DropSequenceStmt,
+    DropFunctionStmt,
+    DropProcedureStmt,
+    DropTriggerStmt,
+    DropPackageStmt,
+    DropRoleStmt,
+    DropExceptionStmt,
     TruncateTableStmt,
 
     // Statements - DML
@@ -695,7 +701,7 @@ public:
     SchemaPath table_path;
 
     TriggerTiming timing = TriggerTiming::BEFORE;
-    TriggerEvent event = TriggerEvent::INSERT;
+    uint8_t event_mask = 1u << static_cast<uint8_t>(TriggerEvent::INSERT);
     TriggerGranularity granularity = TriggerGranularity::FOR_EACH_ROW;
 
     StringPool::StringId body = StringPool::INVALID_ID;
@@ -736,6 +742,7 @@ public:
     ASTKind kind() const override { return ASTKind::CreateExceptionStmt; }
     void accept(ASTVisitor& visitor) override;
 
+    bool or_replace = false;
     SchemaPath exception_path;
     StringPool::StringId message = StringPool::INVALID_ID;
 };
@@ -1106,6 +1113,79 @@ public:
     bool if_exists = false;
     std::vector<SchemaPath> sequences;
     bool cascade = false;
+};
+
+/**
+ * DROP FUNCTION statement
+ */
+class DropFunctionStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropFunctionStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> functions;
+};
+
+/**
+ * DROP PROCEDURE statement
+ */
+class DropProcedureStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropProcedureStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> procedures;
+};
+
+/**
+ * DROP TRIGGER statement
+ */
+class DropTriggerStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropTriggerStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> triggers;
+};
+
+/**
+ * DROP PACKAGE statement
+ */
+class DropPackageStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropPackageStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> packages;
+};
+
+/**
+ * DROP ROLE statement
+ */
+class DropRoleStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropRoleStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    bool cascade = false;
+    std::vector<SchemaPath> roles;
+};
+
+/**
+ * DROP EXCEPTION statement
+ */
+class DropExceptionStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropExceptionStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> exceptions;
 };
 
 /**
@@ -2199,6 +2279,35 @@ public:
 /**
  * COPY statement
  */
+struct CopyOptions {
+    enum class Format : uint8_t {
+        TEXT = 0,
+        CSV = 1,
+        BINARY = 2
+    };
+
+    bool format_set = false;
+    Format format = Format::TEXT;
+
+    bool delimiter_set = false;
+    StringPool::StringId delimiter = StringPool::INVALID_ID;
+
+    bool null_set = false;
+    StringPool::StringId null_string = StringPool::INVALID_ID;
+
+    bool header_set = false;
+    bool header = false;
+
+    bool quote_set = false;
+    StringPool::StringId quote = StringPool::INVALID_ID;
+
+    bool escape_set = false;
+    StringPool::StringId escape = StringPool::INVALID_ID;
+
+    bool encoding_set = false;
+    StringPool::StringId encoding = StringPool::INVALID_ID;
+};
+
 class CopyStmt : public Statement {
 public:
     ASTKind kind() const override { return ASTKind::CopyStmt; }
@@ -2223,6 +2332,8 @@ public:
     bool target_is_stdin = false;
     bool target_is_stdout = false;
     StringPool::StringId target = StringPool::INVALID_ID;  // File path when not STDIN/STDOUT
+
+    CopyOptions options;
 };
 
 // =============================================================================
@@ -2769,6 +2880,12 @@ public:
     virtual void visit(DropIndexStmt* stmt) = 0;
     virtual void visit(DropViewStmt* stmt) = 0;
     virtual void visit(DropSequenceStmt* stmt) = 0;
+    virtual void visit(DropFunctionStmt* stmt) = 0;
+    virtual void visit(DropProcedureStmt* stmt) = 0;
+    virtual void visit(DropTriggerStmt* stmt) = 0;
+    virtual void visit(DropPackageStmt* stmt) = 0;
+    virtual void visit(DropRoleStmt* stmt) = 0;
+    virtual void visit(DropExceptionStmt* stmt) = 0;
     virtual void visit(TruncateTableStmt* stmt) = 0;
 
     // DML statements

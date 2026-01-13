@@ -378,6 +378,12 @@ private:
     v2::DropViewStmt* parseDropViewImpl(bool if_exists);
     v2::DropDomainStmt* parseDropDomainImpl(bool if_exists);
     Statement* parseDropSequenceImpl(bool if_exists);
+    Statement* parseDropFunctionImpl(bool if_exists);
+    Statement* parseDropProcedureImpl(bool if_exists);
+    Statement* parseDropTriggerImpl(bool if_exists);
+    Statement* parseDropPackageImpl(bool if_exists);
+    Statement* parseDropRoleImpl(bool if_exists);
+    Statement* parseDropExceptionImpl(bool if_exists);
 };
 
 } // namespace scratchbird::parser::firebird

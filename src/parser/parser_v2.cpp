@@ -2217,6 +2217,12 @@ Statement* Parser::parseDrop() {
     if (matchContextual("INDEX")) return parseDropIndex();
     if (matchContextual("VIEW")) return parseDropView();
     if (matchContextual("DOMAIN")) return parseDropDomain();
+    if (matchContextual("FUNCTION")) return parseDropFunction();
+    if (matchContextual("PROCEDURE")) return parseDropProcedure();
+    if (matchContextual("TRIGGER")) return parseDropTrigger();
+    if (matchContextual("PACKAGE")) return parseDropPackage();
+    if (matchContextual("ROLE")) return parseDropRole();
+    if (matchContextual("EXCEPTION")) return parseDropException();
     if (matchContextual("MATERIALIZED")) {
         expectContextual("VIEW", "Expected VIEW after MATERIALIZED");
         auto* stmt = parseDropView();
@@ -2380,6 +2386,118 @@ DropViewStmt* Parser::parseDropView() {
 
     // CASCADE
     if (matchContextual("CASCADE")) stmt->cascade = true;
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropFunctionStmt* Parser::parseDropFunction() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropFunctionStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->functions.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropProcedureStmt* Parser::parseDropProcedure() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropProcedureStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->procedures.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropTriggerStmt* Parser::parseDropTrigger() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropTriggerStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->triggers.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropPackageStmt* Parser::parseDropPackage() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropPackageStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->packages.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropRoleStmt* Parser::parseDropRole() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropRoleStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->roles.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropExceptionStmt* Parser::parseDropException() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropExceptionStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->exceptions.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -3273,66 +3391,99 @@ CopyStmt* Parser::parseCopy() {
             expect(TokenType::LEFT_PAREN, "Expected '(' after WITH in COPY");
         }
 
-        auto parse_option_value = [&]() {
-            if (check(TokenType::STRING_LITERAL)) {
+        auto read_option_value = [&]() -> StringPool::StringId {
+            if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+                auto id = current().value.string_id;
                 advance();
-                return true;
+                return id;
             }
-            if (isIdentifier()) {
-                advance();
-                return true;
+            return StringPool::INVALID_ID;
+        };
+
+        auto parse_format = [&](StringPool::StringId id) {
+            if (id == StringPool::INVALID_ID) {
+                error("Expected COPY FORMAT value");
+                return;
             }
-            return false;
+            auto text = stringPool().get(id);
+            if (caseInsensitiveEquals(text, "CSV")) {
+                stmt->options.format = CopyOptions::Format::CSV;
+                stmt->options.format_set = true;
+            } else if (caseInsensitiveEquals(text, "TEXT")) {
+                stmt->options.format = CopyOptions::Format::TEXT;
+                stmt->options.format_set = true;
+            } else if (caseInsensitiveEquals(text, "BINARY")) {
+                stmt->options.format = CopyOptions::Format::BINARY;
+                stmt->options.format_set = true;
+            } else {
+                error("Unsupported COPY FORMAT value");
+            }
         };
 
         while (!check(TokenType::RIGHT_PAREN) &&
                !check(TokenType::SEMICOLON) &&
                !check(TokenType::END_OF_FILE)) {
             if (matchContextual("FORMAT")) {
-                if (!parse_option_value()) {
+                auto id = read_option_value();
+                if (id == StringPool::INVALID_ID) {
                     error("Expected COPY FORMAT value");
                     break;
                 }
+                parse_format(id);
             } else if (matchContextual("DELIMITER")) {
+                matchContextual("AS");
                 if (!check(TokenType::STRING_LITERAL)) {
                     error("Expected string literal for COPY DELIMITER");
                     break;
                 }
+                stmt->options.delimiter = current().value.string_id;
+                stmt->options.delimiter_set = true;
                 advance();
             } else if (match(TokenType::KW_NULL)) {
+                matchContextual("AS");
                 if (!check(TokenType::STRING_LITERAL)) {
                     error("Expected string literal for COPY NULL");
                     break;
                 }
+                stmt->options.null_string = current().value.string_id;
+                stmt->options.null_set = true;
                 advance();
             } else if (matchContextual("HEADER")) {
-                if (match(TokenType::KW_TRUE) || match(TokenType::KW_FALSE) ||
-                    match(TokenType::KW_ON) || matchContextual("ON") ||
-                    matchContextual("OFF")) {
-                    // Optional boolean consumed
+                stmt->options.header = true;
+                stmt->options.header_set = true;
+                if (match(TokenType::KW_TRUE) || match(TokenType::KW_ON) || matchContextual("ON")) {
+                    stmt->options.header = true;
+                } else if (match(TokenType::KW_FALSE) || matchContextual("OFF")) {
+                    stmt->options.header = false;
                 }
             } else if (matchContextual("QUOTE")) {
                 if (!check(TokenType::STRING_LITERAL)) {
                     error("Expected string literal for COPY QUOTE");
                     break;
                 }
+                stmt->options.quote = current().value.string_id;
+                stmt->options.quote_set = true;
                 advance();
             } else if (matchContextual("ESCAPE")) {
                 if (!check(TokenType::STRING_LITERAL)) {
                     error("Expected string literal for COPY ESCAPE");
                     break;
                 }
+                stmt->options.escape = current().value.string_id;
+                stmt->options.escape_set = true;
                 advance();
             } else if (matchContextual("ENCODING")) {
                 if (!check(TokenType::STRING_LITERAL)) {
                     error("Expected string literal for COPY ENCODING");
                     break;
                 }
+                stmt->options.encoding = current().value.string_id;
+                stmt->options.encoding_set = true;
                 advance();
             } else if (matchContextual("CSV") ||
                        matchContextual("TEXT") ||
                        matchContextual("BINARY")) {
-                // Shorthand formats
+                parse_format(previous().value.string_id);
             } else {
                 error("Unsupported COPY option");
                 break;

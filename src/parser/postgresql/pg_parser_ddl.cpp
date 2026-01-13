@@ -1688,21 +1688,24 @@ void Parser::parseCreateTrigger() {
     emitString(trigger_name);
 
     // BEFORE/AFTER/INSTEAD OF
+    uint8_t timing = 0;
     if (matchKeyword(TokenType::KW_BEFORE)) {
-        emitByte(1);
+        timing = static_cast<uint8_t>(core::CatalogManager::TriggerTiming::BEFORE);
     } else if (matchKeyword(TokenType::KW_AFTER)) {
-        emitByte(2);
+        timing = static_cast<uint8_t>(core::CatalogManager::TriggerTiming::AFTER);
     } else if (matchKeyword(TokenType::KW_INSTEAD)) {
         consumeKeyword(TokenType::KW_OF, "Expected OF");
-        emitByte(3);
+        timing = 2;  // Unsupported INSTEAD OF (kept distinct from BEFORE/AFTER)
     }
+    emitByte(timing);
 
     // Event (INSERT/UPDATE/DELETE/TRUNCATE)
+    uint8_t event_mask = 0;
     do {
         if (matchKeyword(TokenType::KW_INSERT)) {
-            emitByte(1);
+            event_mask |= 1u << static_cast<uint8_t>(core::CatalogManager::TriggerEvent::INSERT);
         } else if (matchKeyword(TokenType::KW_UPDATE)) {
-            emitByte(2);
+            event_mask |= 1u << static_cast<uint8_t>(core::CatalogManager::TriggerEvent::UPDATE);
             // OF columns
             if (matchKeyword(TokenType::KW_OF)) {
                 do {
@@ -1710,11 +1713,12 @@ void Parser::parseCreateTrigger() {
                 } while (match(TokenType::COMMA));
             }
         } else if (matchKeyword(TokenType::KW_DELETE)) {
-            emitByte(3);
+            event_mask |= 1u << static_cast<uint8_t>(core::CatalogManager::TriggerEvent::DELETE);
         } else if (matchKeyword(TokenType::KW_TRUNCATE)) {
-            emitByte(4);
+            event_mask |= 1u << 3;
         }
     } while (matchKeyword(TokenType::KW_OR));
+    emitByte(event_mask);
 
     consumeKeyword(TokenType::KW_ON, "Expected ON");
     std::string table_name = parseQualifiedName();

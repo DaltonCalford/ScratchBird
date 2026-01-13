@@ -308,6 +308,12 @@ private:
     ResolvedStatement* analyzeDropIndex(DropIndexStmt* stmt);
     ResolvedStatement* analyzeDropView(DropViewStmt* stmt);
     ResolvedStatement* analyzeDropSequence(DropSequenceStmt* stmt);
+    ResolvedStatement* analyzeDropFunction(DropFunctionStmt* stmt);
+    ResolvedStatement* analyzeDropProcedure(DropProcedureStmt* stmt);
+    ResolvedStatement* analyzeDropTrigger(DropTriggerStmt* stmt);
+    ResolvedStatement* analyzeDropPackage(DropPackageStmt* stmt);
+    ResolvedStatement* analyzeDropRole(DropRoleStmt* stmt);
+    ResolvedStatement* analyzeDropException(DropExceptionStmt* stmt);
     ResolvedStatement* analyzeTruncateTable(TruncateTableStmt* stmt);
 
     // DML

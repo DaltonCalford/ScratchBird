@@ -289,20 +289,81 @@ namespace scratchbird::core
 
     auto TimezoneLoader::clearAllTimezones(ErrorContext *ctx) -> Status
     {
-        // Phase 4 Enhancement: Implement when CatalogManager provides a clearAllTimezones method
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "clearAllTimezones not implemented in CatalogManager");
-        return Status::NOT_IMPLEMENTED;
+        if (!catalog_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::TimezoneInfo> timezones;
+        Status status = catalog_->listTimezones(timezones, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        for (const auto& tz : timezones)
+        {
+            ErrorContext local_ctx;
+            status = catalog_->deleteTimezone(tz.timezone_id, &local_ctx);
+            if (status != Status::OK)
+            {
+                if (ctx && ctx->message.empty())
+                {
+                    ctx->code = local_ctx.code;
+                    ctx->sqlstate = local_ctx.sqlstate;
+                    ctx->message = local_ctx.message;
+                    ctx->error_message = ctx->message;
+                    ctx->file = local_ctx.file;
+                    ctx->line = local_ctx.line;
+                    ctx->function = local_ctx.function;
+                    ctx->constraint_name = local_ctx.constraint_name;
+                    ctx->table_name = local_ctx.table_name;
+                    ctx->column_name = local_ctx.column_name;
+                    ctx->violating_value = local_ctx.violating_value;
+                    ctx->referenced_table = local_ctx.referenced_table;
+                    ctx->referenced_column = local_ctx.referenced_column;
+                    ctx->check_expression = local_ctx.check_expression;
+                    ctx->hint = local_ctx.hint;
+                    ctx->cause = nullptr;
+                }
+                return status;
+            }
+        }
+
+        return Status::OK;
     }
 
     auto TimezoneLoader::getLoadedTimezoneStats(size_t &total_count,
                                                 size_t &with_dst_count,
                                                 ErrorContext *ctx) -> Status
     {
-        // Phase 4 Enhancement: Implement when CatalogManager provides methods to iterate timezones
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "getLoadedTimezoneStats not implemented");
-        return Status::NOT_IMPLEMENTED;
+        total_count = 0;
+        with_dst_count = 0;
+
+        if (!catalog_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::TimezoneInfo> timezones;
+        Status status = catalog_->listTimezones(timezones, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        total_count = timezones.size();
+        for (const auto& tz : timezones)
+        {
+            if (tz.observes_dst)
+            {
+                ++with_dst_count;
+            }
+        }
+
+        return Status::OK;
     }
 
 } // namespace scratchbird::core

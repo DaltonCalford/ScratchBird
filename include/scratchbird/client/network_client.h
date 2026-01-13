@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <istream>
+#include <ostream>
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
@@ -70,6 +72,9 @@ public:
     core::Status commit(core::ErrorContext* ctx = nullptr);
     core::Status rollback(core::ErrorContext* ctx = nullptr);
 
+    void setCopyInputStream(std::istream* in) { copy_input_stream_ = in; }
+    void setCopyOutputStream(std::ostream* out) { copy_output_stream_ = out; }
+
 private:
     core::Status sendMessage(const protocol::Message& msg,
                              core::ErrorContext* ctx = nullptr);
@@ -86,6 +91,9 @@ private:
     bool connected_{false};
     bool in_transaction_{false};
     std::string last_error_;
+
+    std::istream* copy_input_stream_{nullptr};
+    std::ostream* copy_output_stream_{nullptr};
 };
 
 } // namespace client

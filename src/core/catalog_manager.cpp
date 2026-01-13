@@ -432,6 +432,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t type_scale;     // For DECIMAL scale
         uint32_t max_length;     // Legacy field, use type_precision instead
         ID domain_id;            // Domain ID (zero if not domain-based)
+        uint8_t is_array;        // 1 if column stores array values
+        uint32_t array_size;     // Fixed array size (0 = unspecified/unbounded)
         uint8_t nullable;
         uint8_t has_default;
         uint8_t is_primary_key;
@@ -690,7 +692,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t scope;          // 0=TABLE trigger, 1=DATABASE trigger
         uint8_t name_is_delimited; // 1 if quoted identifier
         uint8_t trigger_timing; // Table triggers: BEFORE/AFTER
-        uint8_t trigger_event;  // Table: TriggerEvent, DB: DatabaseTriggerEvent
+        uint8_t trigger_event;  // Table: event mask, DB: DatabaseTriggerEvent
         uint8_t granularity;    // Table: FOR_EACH_ROW/FOR_EACH_STATEMENT
         uint8_t enabled;        // 1 if enabled/active
         uint8_t reserved[2];
@@ -7732,6 +7734,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             record.type_scale = col.type_scale;
             record.max_length = col.max_length;
             record.domain_id = col.domain_id;
+            record.is_array = col.is_array ? 1 : 0;
+            record.array_size = col.array_size;
             record.nullable = col.nullable ? 1 : 0;
             record.has_default = col.has_default ? 1 : 0;
             record.is_primary_key = col.is_primary_key ? 1 : 0;
@@ -7779,6 +7783,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.type_scale = record.type_scale;
             info.max_length = record.max_length;
             info.domain_id = record.domain_id;
+            info.is_array = record.is_array != 0;
+            info.array_size = record.array_size;
             info.nullable = record.nullable != 0;
             info.has_default = record.has_default != 0;
             info.is_primary_key = record.is_primary_key != 0;
@@ -12578,7 +12584,10 @@ auto CatalogManager::listTriggersForTable(const ID &table_id, TriggerEvent event
         const auto& trigger = trigger_cache_[it->second];
         
         // Filter by event, timing, and enabled status
-        if (trigger.event == event && trigger.timing == timing && trigger.enabled)
+        uint8_t mask = static_cast<uint8_t>(1u << static_cast<uint8_t>(event));
+        if ((trigger.event_mask & mask) != 0 &&
+            trigger.timing == timing &&
+            trigger.enabled)
         {
             triggers.push_back(trigger);
         }
@@ -13880,6 +13889,8 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.type_scale = new_column.type_scale;
     record.max_length = new_column.max_length;
     record.domain_id = new_column.domain_id;
+    record.is_array = new_column.is_array ? 1 : 0;
+    record.array_size = new_column.array_size;
     record.nullable = new_column.nullable ? 1 : 0;
     record.has_default = new_column.has_default ? 1 : 0;
     record.is_primary_key = new_column.is_primary_key ? 1 : 0;
@@ -21297,7 +21308,7 @@ auto CatalogManager::writeTriggerRecord(const TriggerInfo &trigger, ErrorContext
     record.scope = 0;
     record.name_is_delimited = trigger.name_is_delimited ? 1 : 0;
     record.trigger_timing = static_cast<uint8_t>(trigger.timing);
-    record.trigger_event = static_cast<uint8_t>(trigger.event);
+    record.trigger_event = trigger.event_mask;
     record.granularity = static_cast<uint8_t>(trigger.granularity);
     record.enabled = trigger.enabled ? 1 : 0;
     record.position = 0;
@@ -21434,7 +21445,7 @@ auto CatalogManager::readTriggerRecords(ErrorContext *ctx) -> Status
         info.table_id = record.table_id;
         info.table_name = table_it->second.table_name;
         info.timing = static_cast<TriggerTiming>(record.trigger_timing);
-        info.event = static_cast<TriggerEvent>(record.trigger_event);
+        info.event_mask = record.trigger_event;
         info.granularity = static_cast<TriggerGranularity>(record.granularity);
         info.enabled = record.enabled != 0;
         info.created_time = record.created_time;

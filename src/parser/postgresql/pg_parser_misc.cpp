@@ -927,6 +927,37 @@ void Parser::parseCopyStmt() {
         error("Expected COPY FROM or COPY TO");
     }
 
+    struct CopyOptions {
+        enum class Format : uint8_t {
+            TEXT = 1,
+            CSV = 2,
+            BINARY = 3
+        };
+
+        Format format = Format::TEXT;
+        bool delimiter_set = false;
+        char delimiter = '\t';
+        bool null_set = false;
+        std::string null_string = "\\N";
+        bool header = false;
+        bool header_set = false;
+        char quote = '"';
+        char escape = '\\';
+        std::string encoding;
+        bool encoding_set = false;
+    };
+
+    auto to_upper = [](const std::string& input) {
+        std::string out;
+        out.reserve(input.size());
+        for (char c : input) {
+            out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        }
+        return out;
+    };
+
+    CopyOptions options;
+
     // Options
     if (matchKeyword(TokenType::KW_WITH)) {
         match(TokenType::LEFT_PAREN);
@@ -934,29 +965,94 @@ void Parser::parseCopyStmt() {
         while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::SEMICOLON) &&
                !check(TokenType::END_OF_FILE)) {
             if (matchKeyword(TokenType::KW_FORMAT)) {
-                parseIdentifier();  // csv, text, binary
+                std::string fmt;
+                if (matchKeyword(TokenType::KW_CSV)) {
+                    fmt = "CSV";
+                } else if (matchKeyword(TokenType::KW_TEXT)) {
+                    fmt = "TEXT";
+                } else if (matchIdentifierKeyword("BINARY")) {
+                    fmt = "BINARY";
+                } else if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    fmt = std::string(lexer_.stringPool().get(id));
+                    advance();
+                } else {
+                    fmt = parseIdentifier();
+                }
+                auto fmt_upper = to_upper(fmt);
+                if (fmt_upper == "CSV") {
+                    options.format = CopyOptions::Format::CSV;
+                } else if (fmt_upper == "TEXT") {
+                    options.format = CopyOptions::Format::TEXT;
+                } else if (fmt_upper == "BINARY") {
+                    options.format = CopyOptions::Format::BINARY;
+                } else {
+                    error("Unsupported COPY FORMAT value");
+                }
             } else if (matchKeyword(TokenType::KW_DELIMITER)) {
+                matchKeyword(TokenType::KW_AS);
                 if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    std::string value = std::string(lexer_.stringPool().get(id));
+                    if (value.size() != 1) {
+                        error("COPY DELIMITER must be a single character");
+                    } else {
+                        options.delimiter = value[0];
+                        options.delimiter_set = true;
+                    }
                     advance();
                 }
             } else if (matchKeyword(TokenType::KW_NULL)) {
+                matchKeyword(TokenType::KW_AS);
                 if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    options.null_string = std::string(lexer_.stringPool().get(id));
+                    options.null_set = true;
                     advance();
                 }
             } else if (matchKeyword(TokenType::KW_HEADER)) {
-                matchKeyword(TokenType::KW_TRUE) || matchKeyword(TokenType::KW_FALSE);
+                options.header = true;
+                options.header_set = true;
+                if (matchKeyword(TokenType::KW_FALSE)) {
+                    options.header = false;
+                } else {
+                    matchKeyword(TokenType::KW_TRUE);
+                }
             } else if (matchKeyword(TokenType::KW_QUOTE)) {
                 if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    std::string value = std::string(lexer_.stringPool().get(id));
+                    if (value.size() != 1) {
+                        error("COPY QUOTE must be a single character");
+                    } else {
+                        options.quote = value[0];
+                    }
                     advance();
                 }
             } else if (matchKeyword(TokenType::KW_ESCAPE)) {
                 if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    std::string value = std::string(lexer_.stringPool().get(id));
+                    if (value.size() != 1) {
+                        error("COPY ESCAPE must be a single character");
+                    } else {
+                        options.escape = value[0];
+                    }
                     advance();
                 }
             } else if (matchKeyword(TokenType::KW_ENCODING)) {
                 if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    options.encoding = std::string(lexer_.stringPool().get(id));
+                    options.encoding_set = true;
                     advance();
                 }
+            } else if (matchKeyword(TokenType::KW_CSV)) {
+                options.format = CopyOptions::Format::CSV;
+            } else if (matchKeyword(TokenType::KW_TEXT)) {
+                options.format = CopyOptions::Format::TEXT;
+            } else if (matchIdentifierKeyword("BINARY")) {
+                options.format = CopyOptions::Format::BINARY;
             } else {
                 break;
             }
@@ -964,6 +1060,15 @@ void Parser::parseCopyStmt() {
         }
 
         match(TokenType::RIGHT_PAREN);
+    }
+
+    if (options.format == CopyOptions::Format::CSV) {
+        if (!options.delimiter_set) {
+            options.delimiter = ',';
+        }
+        if (!options.null_set) {
+            options.null_string.clear();
+        }
     }
 
     // WHERE clause (for COPY FROM)
@@ -983,6 +1088,13 @@ void Parser::parseCopyStmt() {
     for (const auto& name : column_names) {
         emitString(name);
     }
+    emitByte(static_cast<uint8_t>(options.format));
+    emitString(std::string(1, options.delimiter));
+    emitString(options.null_string);
+    emitByte(options.header ? 1 : 0);
+    emitString(std::string(1, options.quote));
+    emitString(std::string(1, options.escape));
+    emitString(options.encoding);
 }
 
 } // namespace scratchbird::parser::postgresql

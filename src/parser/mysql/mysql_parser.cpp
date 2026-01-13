@@ -1267,21 +1267,15 @@ void Parser::parseComparisonExpr() {
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_END));
         } else {
             // Value list
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IN_LIST));
-            emit(sblr::Opcode::BEGIN_LIST);
-
-            size_t count_pos = bytecode_.size();
-            emitU32(0);
-
-            uint32_t count = 0;
+            uint64_t count = 0;
             do {
                 parseExpression();
                 count++;
             } while (match(TokenType::COMMA));
-
-            sblr::writeInt32(&bytecode_[count_pos], count);
-            emit(sblr::Opcode::END_LIST);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IN_LIST));
+            emitByte(0);
+            emitUVarint(count);
         }
 
         consume(TokenType::RIGHT_PAREN, "Expected ) after IN list");
@@ -4805,13 +4799,16 @@ void Parser::parseCreateTrigger() {
         return;
     }
 
-    uint8_t event = 0;
+    uint8_t event_mask = 0;
     if (matchKeyword(TokenType::KW_INSERT)) {
-        event = static_cast<uint8_t>(core::CatalogManager::TriggerEvent::INSERT);
+        event_mask = static_cast<uint8_t>(1u << static_cast<uint8_t>(
+            core::CatalogManager::TriggerEvent::INSERT));
     } else if (matchKeyword(TokenType::KW_UPDATE)) {
-        event = static_cast<uint8_t>(core::CatalogManager::TriggerEvent::UPDATE);
+        event_mask = static_cast<uint8_t>(1u << static_cast<uint8_t>(
+            core::CatalogManager::TriggerEvent::UPDATE));
     } else if (matchKeyword(TokenType::KW_DELETE)) {
-        event = static_cast<uint8_t>(core::CatalogManager::TriggerEvent::DELETE);
+        event_mask = static_cast<uint8_t>(1u << static_cast<uint8_t>(
+            core::CatalogManager::TriggerEvent::DELETE));
     } else {
         error("Expected INSERT, UPDATE, or DELETE in CREATE TRIGGER");
         synchronize();
@@ -4870,7 +4867,7 @@ void Parser::parseCreateTrigger() {
     emitString(trigger_name);
     emitString(table_path);
     emitByte(timing);
-    emitByte(event);
+    emitByte(event_mask);
     emitByte(static_cast<uint8_t>(core::CatalogManager::TriggerGranularity::FOR_EACH_ROW));
     emitString(proc_path);
 }

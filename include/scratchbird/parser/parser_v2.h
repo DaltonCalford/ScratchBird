@@ -150,6 +150,12 @@ private:
     DropSchemaStmt* parseDropSchema();
     DropDatabaseStmt* parseDropDatabase();
     DropDomainStmt* parseDropDomain();
+    DropFunctionStmt* parseDropFunction();
+    DropProcedureStmt* parseDropProcedure();
+    DropTriggerStmt* parseDropTrigger();
+    DropPackageStmt* parseDropPackage();
+    DropRoleStmt* parseDropRole();
+    DropExceptionStmt* parseDropException();
 
     // TRUNCATE statement
     TruncateTableStmt* parseTruncateTable();

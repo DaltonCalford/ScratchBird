@@ -316,8 +316,14 @@ Defined extended opcodes:
 - EXT_PREPARE_TRANSACTION = 0x0105
 - EXT_COMMIT_PREPARED     = 0x0106
 - EXT_ROLLBACK_PREPARED   = 0x0107
+- EXT_DROP_FUNCTION_STMT  = 0x0033
+- EXT_DROP_PROCEDURE_STMT = 0x0034
+- EXT_DROP_PACKAGE_STMT   = 0x0035
+- EXT_DROP_TRIGGER        = 0x0071
+- EXT_DROP_ROLE           = 0x00CE
 - EXT_ALTER_DOMAIN        = 0x010E
 - EXT_DROP_DOMAIN         = 0x010F
+- EXT_CREATE_EXCEPTION_STMT = 0x0318
 - EXT_CHECK_DOMAIN_CONSTRAINT = 0x0204
 - EXT_APPLY_DOMAIN_MASKING    = 0x0205
 - EXT_ENCRYPT_DOMAIN_VALUE    = 0x0206
@@ -328,6 +334,7 @@ Defined extended opcodes:
 - EXT_VALIDATE_DOMAIN_VALUE   = 0x020B
 - EXT_APPLY_QUALITY_PIPELINE  = 0x020C
 - EXT_CHECK_GLOBAL_UNIQUENESS = 0x020D
+- EXT_DROP_EXCEPTION_STMT = 0x031A
 
 Domain DDL payloads are defined in `docs/specifications/SBLR_DOMAIN_PAYLOADS.md`.
 
@@ -405,6 +412,13 @@ Unless noted, `value_stack_offset` is counted from the top of the execution stac
   [column_count:uint32]
   repeat column_count:
     [column_name:string]
+  [format:uint8]               // 1=TEXT,2=CSV,3=BINARY
+  [delimiter:string]           // single-character string
+  [null_string:string]
+  [header:uint8]               // 0/1
+  [quote:string]               // single-character string
+  [escape:string]              // single-character string
+  [encoding:string]
   if table_path == "":
     [query_len:UVARINT]
     [query_bytes:byte[query_len]]
@@ -413,6 +427,7 @@ Unless noted, `value_stack_offset` is counted from the top of the execution stac
   - `query_bytes` is a compact stream statement with no VERSION/END sentinel.
   - The embedded query must begin with SELECT.
   - COPY (SELECT ...) only supports TO and does not allow a column list.
+  - `format`/`delimiter`/`null_string`/`header` are honored by the executor; BINARY is rejected in Alpha.
 
 ## 8. Transaction Opcodes (v2)
 

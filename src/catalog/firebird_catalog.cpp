@@ -36,6 +36,8 @@ void FirebirdCatalogHandler::initializeTableNames() {
         "RDB$TRIGGERS",
         "RDB$EXCEPTIONS",
         "RDB$CONSTRAINTS",
+        "RDB$RELATION_CONSTRAINTS",
+        "RDB$VIEW_RELATIONS",
         "RDB$CHECK_CONSTRAINTS",
         "RDB$REF_CONSTRAINTS",
         "RDB$USER_PRIVILEGES",
@@ -158,24 +160,42 @@ Status FirebirdCatalogHandler::queryTable(const std::string& /* schema_name */,
     if (upper == "RDB$INDEX_SEGMENTS") return queryRdbIndexSegments(results, ctx);
     if (upper == "RDB$GENERATORS") return queryRdbGenerators(results, ctx);
     if (upper == "RDB$PROCEDURES") return queryRdbProcedures(results, ctx);
+    if (upper == "RDB$PROCEDURE_PARAMETERS") return queryRdbProcedureParameters(results, ctx);
     if (upper == "RDB$FUNCTIONS") return queryRdbFunctions(results, ctx);
+    if (upper == "RDB$FUNCTION_ARGUMENTS") return queryRdbFunctionArguments(results, ctx);
     if (upper == "RDB$TRIGGERS") return queryRdbTriggers(results, ctx);
     if (upper == "RDB$CONSTRAINTS") return queryRdbConstraints(results, ctx);
+    if (upper == "RDB$RELATION_CONSTRAINTS") return queryRdbRelationConstraints(results, ctx);
+    if (upper == "RDB$VIEW_RELATIONS") return queryRdbViewRelations(results, ctx);
+    if (upper == "RDB$CHECK_CONSTRAINTS") return queryRdbCheckConstraints(results, ctx);
+    if (upper == "RDB$REF_CONSTRAINTS") return queryRdbRefConstraints(results, ctx);
+    if (upper == "RDB$EXCEPTIONS") return queryRdbExceptions(results, ctx);
     if (upper == "RDB$CHARACTER_SETS") return queryRdbCharacterSets(results, ctx);
     if (upper == "RDB$COLLATIONS") return queryRdbCollations(results, ctx);
     if (upper == "RDB$TYPES") return queryRdbTypes(results, ctx);
     if (upper == "RDB$USER_PRIVILEGES") return queryRdbUserPrivileges(results, ctx);
     if (upper == "RDB$ROLES") return queryRdbRoles(results, ctx);
+    if (upper == "RDB$DEPENDENCIES") return queryRdbDependencies(results, ctx);
+    if (upper == "RDB$PACKAGES") return queryRdbPackages(results, ctx);
+    if (upper == "RDB$KEYWORDS") return queryRdbKeywords(results, ctx);
 
     // MON$ tables
     if (upper == "MON$DATABASE") return queryMonDatabase(results, ctx);
     if (upper == "MON$ATTACHMENTS") return queryMonAttachments(results, ctx);
     if (upper == "MON$TRANSACTIONS") return queryMonTransactions(results, ctx);
     if (upper == "MON$STATEMENTS") return queryMonStatements(results, ctx);
+    if (upper == "MON$CALL_STACK") return queryMonCallStack(results, ctx);
+    if (upper == "MON$IO_STATS") return queryMonIoStats(results, ctx);
+    if (upper == "MON$RECORD_STATS") return queryMonRecordStats(results, ctx);
+    if (upper == "MON$MEMORY_USAGE") return queryMonMemoryUsage(results, ctx);
+    if (upper == "MON$TABLE_STATS") return queryMonTableStats(results, ctx);
+    if (upper == "MON$CONTEXT_VARIABLES") return queryMonContextVariables(results, ctx);
 
     // SEC$ tables
     if (upper == "SEC$USERS") return querySecUsers(results, ctx);
     if (upper == "SEC$USER_ATTRIBUTES") return querySecUserAttributes(results, ctx);
+    if (upper == "SEC$DB_CREATORS") return querySecDbCreators(results, ctx);
+    if (upper == "SEC$GLOBAL_AUTH_MAPPING") return querySecGlobalAuthMapping(results, ctx);
 
     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, ("Unknown Firebird system table: " + table_name).c_str());
     return Status::NOT_FOUND;
@@ -198,11 +218,39 @@ Status FirebirdCatalogHandler::getTableColumns(const std::string& /* schema_name
     if (upper == "RDB$INDICES") { getRdbIndicesColumns(columns); return Status::OK; }
     if (upper == "RDB$INDEX_SEGMENTS") { getRdbIndexSegmentsColumns(columns); return Status::OK; }
     if (upper == "RDB$GENERATORS") { getRdbGeneratorsColumns(columns); return Status::OK; }
+    if (upper == "RDB$PROCEDURES") { getRdbProceduresColumns(columns); return Status::OK; }
+    if (upper == "RDB$PROCEDURE_PARAMETERS") { getRdbProcedureParametersColumns(columns); return Status::OK; }
+    if (upper == "RDB$FUNCTIONS") { getRdbFunctionsColumns(columns); return Status::OK; }
+    if (upper == "RDB$FUNCTION_ARGUMENTS") { getRdbFunctionArgumentsColumns(columns); return Status::OK; }
+    if (upper == "RDB$TRIGGERS") { getRdbTriggersColumns(columns); return Status::OK; }
+    if (upper == "RDB$CONSTRAINTS") { getRdbConstraintsColumns(columns); return Status::OK; }
+    if (upper == "RDB$RELATION_CONSTRAINTS") { getRdbRelationConstraintsColumns(columns); return Status::OK; }
+    if (upper == "RDB$VIEW_RELATIONS") { getRdbViewRelationsColumns(columns); return Status::OK; }
+    if (upper == "RDB$CHECK_CONSTRAINTS") { getRdbCheckConstraintsColumns(columns); return Status::OK; }
+    if (upper == "RDB$REF_CONSTRAINTS") { getRdbRefConstraintsColumns(columns); return Status::OK; }
+    if (upper == "RDB$EXCEPTIONS") { getRdbExceptionsColumns(columns); return Status::OK; }
     if (upper == "MON$DATABASE") { getMonDatabaseColumns(columns); return Status::OK; }
     if (upper == "MON$ATTACHMENTS") { getMonAttachmentsColumns(columns); return Status::OK; }
     if (upper == "MON$TRANSACTIONS") { getMonTransactionsColumns(columns); return Status::OK; }
     if (upper == "MON$STATEMENTS") { getMonStatementsColumns(columns); return Status::OK; }
+    if (upper == "MON$CALL_STACK") { getMonCallStackColumns(columns); return Status::OK; }
+    if (upper == "MON$IO_STATS") { getMonIoStatsColumns(columns); return Status::OK; }
+    if (upper == "MON$RECORD_STATS") { getMonRecordStatsColumns(columns); return Status::OK; }
+    if (upper == "MON$MEMORY_USAGE") { getMonMemoryUsageColumns(columns); return Status::OK; }
+    if (upper == "MON$TABLE_STATS") { getMonTableStatsColumns(columns); return Status::OK; }
+    if (upper == "MON$CONTEXT_VARIABLES") { getMonContextVariablesColumns(columns); return Status::OK; }
     if (upper == "SEC$USERS") { getSecUsersColumns(columns); return Status::OK; }
+    if (upper == "SEC$USER_ATTRIBUTES") { getSecUserAttributesColumns(columns); return Status::OK; }
+    if (upper == "SEC$DB_CREATORS") { getSecDbCreatorsColumns(columns); return Status::OK; }
+    if (upper == "SEC$GLOBAL_AUTH_MAPPING") { getSecGlobalAuthMappingColumns(columns); return Status::OK; }
+    if (upper == "RDB$CHARACTER_SETS") { getRdbCharacterSetsColumns(columns); return Status::OK; }
+    if (upper == "RDB$COLLATIONS") { getRdbCollationsColumns(columns); return Status::OK; }
+    if (upper == "RDB$TYPES") { getRdbTypesColumns(columns); return Status::OK; }
+    if (upper == "RDB$USER_PRIVILEGES") { getRdbUserPrivilegesColumns(columns); return Status::OK; }
+    if (upper == "RDB$ROLES") { getRdbRolesColumns(columns); return Status::OK; }
+    if (upper == "RDB$DEPENDENCIES") { getRdbDependenciesColumns(columns); return Status::OK; }
+    if (upper == "RDB$PACKAGES") { getRdbPackagesColumns(columns); return Status::OK; }
+    if (upper == "RDB$KEYWORDS") { getRdbKeywordsColumns(columns); return Status::OK; }
 
     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, ("Unknown Firebird system table: " + table_name).c_str());
     return Status::NOT_FOUND;
@@ -271,9 +319,8 @@ Status FirebirdCatalogHandler::queryRdbRelations(VirtualResultSet& results, Erro
 
         for (const auto& table : tables) {
             VirtualRow row;
-            std::string upperName = toUpperCase(table.table_name);
             row.columns = {
-                {"RDB$RELATION_NAME", TypedValue::makeVarchar(upperName)},
+                {"RDB$RELATION_NAME", TypedValue::makeVarchar(table.table_name)},
                 {"RDB$SYSTEM_FLAG", TypedValue::makeInt64(0)},  // User table
                 {"RDB$RELATION_TYPE", TypedValue::makeInt64(0)},  // 0 = table
                 {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
@@ -568,15 +615,13 @@ Status FirebirdCatalogHandler::queryRdbRelationFields(VirtualResultSet& results,
                 continue;
             }
 
-            std::string upperTableName = toUpperCase(table.table_name);
             int64_t position = 0;
             for (const auto& col : columns) {
                 VirtualRow row;
-                std::string upperColName = toUpperCase(col.column_name);
                 row.columns = {
-                    {"RDB$RELATION_NAME", TypedValue::makeVarchar(upperTableName)},
-                    {"RDB$FIELD_NAME", TypedValue::makeVarchar(upperColName)},
-                    {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(upperColName)},  // Field source = column name
+                    {"RDB$RELATION_NAME", TypedValue::makeVarchar(table.table_name)},
+                    {"RDB$FIELD_NAME", TypedValue::makeVarchar(col.column_name)},
+                    {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(col.column_name)},  // Field source = column name
                     {"RDB$FIELD_POSITION", TypedValue::makeInt64(position++)},
                     {"RDB$NULL_FLAG", col.nullable ? TypedValue() : TypedValue::makeInt64(1)},
                     {"RDB$DEFAULT_SOURCE", TypedValue()},  // NULL
@@ -603,9 +648,47 @@ Status FirebirdCatalogHandler::queryRdbIndices(VirtualResultSet& results, ErrorC
         DataType::TEXT, DataType::INT16
     };
 
-    // TODO: Implement proper index listing using listIndexes with table IDs
-    // For now return empty result - catalog access requires table_id not string
-    (void)ctx;  // Unused for now
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        status = catalog_manager_->listTables(schema.schema_id, tables, ctx);
+        if (status != Status::OK) {
+            continue;
+        }
+
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::IndexInfo> indexes;
+            status = catalog_manager_->listIndexesForTable(table.table_id, indexes, ctx);
+            if (status != Status::OK) {
+                continue;
+            }
+
+            for (const auto& index : indexes) {
+                VirtualRow row;
+                row.columns = {
+                    {"RDB$INDEX_NAME", TypedValue::makeVarchar(index.index_name)},
+                    {"RDB$RELATION_NAME", TypedValue::makeVarchar(table.table_name)},
+                    {"RDB$UNIQUE_FLAG", TypedValue::makeInt16(index.is_unique ? 1 : 0)},
+                    {"RDB$INDEX_INACTIVE", TypedValue::makeInt16(0)},
+                    {"RDB$INDEX_TYPE", TypedValue::makeInt16(0)},
+                    {"RDB$SEGMENT_COUNT", TypedValue::makeInt16(static_cast<int16_t>(index.column_ids.size()))},
+                    {"RDB$DESCRIPTION", TypedValue()},
+                    {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
     return Status::OK;
 }
 
@@ -617,9 +700,61 @@ Status FirebirdCatalogHandler::queryRdbIndexSegments(VirtualResultSet& results, 
         DataType::TEXT, DataType::TEXT, DataType::INT16
     };
 
-    // TODO: Implement proper index segment listing
-    // For now return empty result - catalog access requires proper ID resolution
-    (void)ctx;  // Unused for now
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        status = catalog_manager_->listTables(schema.schema_id, tables, ctx);
+        if (status != Status::OK) {
+            continue;
+        }
+
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::ColumnInfo> columns;
+            status = catalog_manager_->getColumns(table.table_id, columns, ctx);
+            if (status != Status::OK) {
+                continue;
+            }
+
+            std::unordered_map<ID, std::string, IDHash> column_names;
+            for (const auto& col : columns) {
+                column_names[col.column_id] = col.column_name;
+            }
+
+            std::vector<CatalogManager::IndexInfo> indexes;
+            status = catalog_manager_->listIndexesForTable(table.table_id, indexes, ctx);
+            if (status != Status::OK) {
+                continue;
+            }
+
+            for (const auto& index : indexes) {
+                for (size_t pos = 0; pos < index.column_ids.size(); ++pos) {
+                    const auto& col_id = index.column_ids[pos];
+                    auto it = column_names.find(col_id);
+                    std::string col_name = (it != column_names.end())
+                        ? it->second
+                        : ("COLUMN_" + std::to_string(pos));
+
+                    VirtualRow row;
+                    row.columns = {
+                        {"RDB$INDEX_NAME", TypedValue::makeVarchar(index.index_name)},
+                        {"RDB$FIELD_NAME", TypedValue::makeVarchar(col_name)},
+                        {"RDB$FIELD_POSITION", TypedValue::makeInt16(static_cast<int16_t>(pos))}
+                    };
+                    results.rows.push_back(std::move(row));
+                }
+            }
+        }
+    }
+
     return Status::OK;
 }
 
@@ -635,9 +770,39 @@ Status FirebirdCatalogHandler::queryRdbGenerators(VirtualResultSet& results, Err
         DataType::INT64
     };
 
-    // TODO: Implement proper sequence listing using listSequencesBySchema
-    // For now return empty result - requires schema ID iteration
-    (void)ctx;  // Unused for now
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    int64_t generator_id = 0;
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::SequenceInfo> sequences;
+        status = catalog_manager_->listSequences(schema.schema_id, sequences, ctx);
+        if (status != Status::OK) {
+            continue;
+        }
+
+        for (const auto& seq : sequences) {
+            VirtualRow row;
+            row.columns = {
+                {"RDB$GENERATOR_NAME", TypedValue::makeVarchar(seq.name)},
+                {"RDB$GENERATOR_ID", TypedValue::makeInt64(generator_id++)},
+                {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)},
+                {"RDB$DESCRIPTION", TypedValue()},
+                {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
+                {"RDB$INITIAL_VALUE", TypedValue::makeInt64(seq.start_value)},
+                {"RDB$GENERATOR_INCREMENT", TypedValue::makeInt64(seq.increment_by)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
     return Status::OK;
 }
 
@@ -653,7 +818,87 @@ Status FirebirdCatalogHandler::queryRdbProcedures(VirtualResultSet& results, Err
         DataType::TEXT, DataType::INT16
     };
 
-    // Procedures will be populated when PSQL support is fully implemented
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::ProcedureInfo> procedures;
+    if (catalog_manager_->listProcedures(procedures, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    int64_t proc_id = 0;
+    for (const auto& proc : procedures) {
+        int16_t inputs = 0;
+        int16_t outputs = 0;
+        for (const auto& param : proc.parameters) {
+            if (param.mode == CatalogManager::ParameterMode::IN ||
+                param.mode == CatalogManager::ParameterMode::INOUT) {
+                ++inputs;
+            }
+            if (param.mode == CatalogManager::ParameterMode::OUT) {
+                ++outputs;
+            }
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"RDB$PROCEDURE_NAME", TypedValue::makeVarchar(proc.name)},
+            {"RDB$PROCEDURE_ID", TypedValue::makeInt64(proc_id++)},
+            {"RDB$PROCEDURE_INPUTS", TypedValue::makeInt16(inputs)},
+            {"RDB$PROCEDURE_OUTPUTS", TypedValue::makeInt16(outputs)},
+            {"RDB$DESCRIPTION", TypedValue()},
+            {"RDB$PROCEDURE_SOURCE", proc.source_text.empty() ? TypedValue()
+                                                              : TypedValue::makeText(proc.source_text)},
+            {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
+            {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbProcedureParameters(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$PROCEDURE_NAME", "RDB$PARAMETER_NAME", "RDB$PARAMETER_TYPE",
+        "RDB$FIELD_SOURCE", "RDB$DEFAULT_SOURCE", "RDB$DESCRIPTION",
+        "RDB$PARAMETER_NUMBER"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::TEXT, DataType::INT16,
+        DataType::TEXT, DataType::TEXT, DataType::TEXT,
+        DataType::INT16
+    };
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::ProcedureInfo> procedures;
+    if (catalog_manager_->listProcedures(procedures, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& proc : procedures) {
+        int16_t param_index = 0;
+        for (const auto& param : proc.parameters) {
+            int16_t param_type = (param.mode == CatalogManager::ParameterMode::OUT) ? 1 : 0;
+            VirtualRow row;
+            row.columns = {
+                {"RDB$PROCEDURE_NAME", TypedValue::makeVarchar(proc.name)},
+                {"RDB$PARAMETER_NAME", TypedValue::makeVarchar(param.name)},
+                {"RDB$PARAMETER_TYPE", TypedValue::makeInt16(param_type)},
+                {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(param.name)},
+                {"RDB$DEFAULT_SOURCE", param.has_default ? TypedValue::makeText(param.default_value)
+                                                         : TypedValue()},
+                {"RDB$DESCRIPTION", TypedValue()},
+                {"RDB$PARAMETER_NUMBER", TypedValue::makeInt16(param_index++)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
     return Status::OK;
 }
 
@@ -669,7 +914,67 @@ Status FirebirdCatalogHandler::queryRdbFunctions(VirtualResultSet& results, Erro
         DataType::TEXT, DataType::INT16
     };
 
-    // UDFs will be populated when UDF support is implemented
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::FunctionInfo> functions;
+    if (catalog_manager_->listFunctions(functions, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& func : functions) {
+        VirtualRow row;
+        row.columns = {
+            {"RDB$FUNCTION_NAME", TypedValue::makeVarchar(func.name)},
+            {"RDB$FUNCTION_TYPE", TypedValue::makeInt16(0)},
+            {"RDB$RETURN_ARGUMENT", TypedValue::makeInt16(0)},
+            {"RDB$DESCRIPTION", TypedValue()},
+            {"RDB$MODULE_NAME", TypedValue()},
+            {"RDB$ENTRYPOINT", TypedValue()},
+            {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
+            {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbFunctionArguments(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$FUNCTION_NAME", "RDB$ARGUMENT_NAME", "RDB$ARGUMENT_POSITION",
+        "RDB$MECHANISM", "RDB$FIELD_SOURCE"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::TEXT, DataType::INT16,
+        DataType::INT16, DataType::TEXT
+    };
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::FunctionInfo> functions;
+    if (catalog_manager_->listFunctions(functions, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& func : functions) {
+        int16_t arg_pos = 0;
+        for (const auto& param : func.parameters) {
+            VirtualRow row;
+            row.columns = {
+                {"RDB$FUNCTION_NAME", TypedValue::makeVarchar(func.name)},
+                {"RDB$ARGUMENT_NAME", TypedValue::makeVarchar(param.name)},
+                {"RDB$ARGUMENT_POSITION", TypedValue::makeInt16(arg_pos++)},
+                {"RDB$MECHANISM", TypedValue::makeInt16(0)},
+                {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(param.name)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
     return Status::OK;
 }
 
@@ -685,7 +990,62 @@ Status FirebirdCatalogHandler::queryRdbTriggers(VirtualResultSet& results, Error
         DataType::INT16, DataType::INT16
     };
 
-    // Triggers will be populated when trigger support is implemented
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, nullptr) != Status::OK) {
+            continue;
+        }
+
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::TriggerInfo> triggers;
+            if (catalog_manager_->listAllTriggersForTable(table.table_id, triggers, nullptr) != Status::OK) {
+                continue;
+            }
+
+            int16_t seq = 0;
+            for (const auto& trigger : triggers) {
+                auto has_event = [&](CatalogManager::TriggerEvent event) {
+                    return (trigger.event_mask &
+                            (1u << static_cast<uint8_t>(event))) != 0;
+                };
+
+                auto emit_trigger = [&](int32_t trigger_type) {
+                    VirtualRow row;
+                    row.columns = {
+                        {"RDB$TRIGGER_NAME", TypedValue::makeVarchar(trigger.trigger_name)},
+                        {"RDB$RELATION_NAME", TypedValue::makeVarchar(table.table_name)},
+                        {"RDB$TRIGGER_SEQUENCE", TypedValue::makeInt16(seq++)},
+                        {"RDB$TRIGGER_TYPE", TypedValue::makeInt64(trigger_type)},
+                        {"RDB$TRIGGER_SOURCE", TypedValue()},
+                        {"RDB$DESCRIPTION", TypedValue()},
+                        {"RDB$TRIGGER_INACTIVE", TypedValue::makeInt16(trigger.enabled ? 0 : 1)},
+                        {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
+                    };
+                    results.rows.push_back(std::move(row));
+                };
+
+                if (trigger.timing == CatalogManager::TriggerTiming::BEFORE) {
+                    if (has_event(CatalogManager::TriggerEvent::INSERT)) emit_trigger(1);
+                    if (has_event(CatalogManager::TriggerEvent::UPDATE)) emit_trigger(3);
+                    if (has_event(CatalogManager::TriggerEvent::DELETE)) emit_trigger(5);
+                } else if (trigger.timing == CatalogManager::TriggerTiming::AFTER) {
+                    if (has_event(CatalogManager::TriggerEvent::INSERT)) emit_trigger(2);
+                    if (has_event(CatalogManager::TriggerEvent::UPDATE)) emit_trigger(4);
+                    if (has_event(CatalogManager::TriggerEvent::DELETE)) emit_trigger(6);
+                }
+            }
+        }
+    }
+
     return Status::OK;
 }
 
@@ -699,7 +1059,526 @@ Status FirebirdCatalogHandler::queryRdbConstraints(VirtualResultSet& results, Er
         DataType::TEXT, DataType::TEXT, DataType::TEXT
     };
 
-    // Constraints will be populated in full implementation
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    auto constraintTypeName = [](CatalogManager::ConstraintType type) -> std::string {
+        switch (type) {
+            case CatalogManager::ConstraintType::PRIMARY_KEY: return "PRIMARY KEY";
+            case CatalogManager::ConstraintType::UNIQUE: return "UNIQUE";
+            case CatalogManager::ConstraintType::FOREIGN_KEY: return "FOREIGN KEY";
+            case CatalogManager::ConstraintType::CHECK: return "CHECK";
+            case CatalogManager::ConstraintType::NOT_NULL: return "NOT NULL";
+            case CatalogManager::ConstraintType::EXCLUSION: return "EXCLUSION";
+        }
+        return "UNKNOWN";
+    };
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, nullptr) != Status::OK) {
+            continue;
+        }
+
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::ConstraintInfo> constraints;
+            if (catalog_manager_->getConstraintsForTable(table.table_id, constraints, nullptr) != Status::OK) {
+                continue;
+            }
+            for (const auto& constraint : constraints) {
+                VirtualRow row;
+                row.columns = {
+                    {"RDB$CONSTRAINT_NAME", TypedValue::makeVarchar(constraint.constraint_name)},
+                    {"RDB$CONSTRAINT_TYPE", TypedValue::makeVarchar(constraintTypeName(constraint.constraint_type))},
+                    {"RDB$RELATION_NAME", TypedValue::makeVarchar(table.table_name)},
+                    {"RDB$INDEX_NAME", TypedValue::makeVarchar(constraint.constraint_name)},
+                    {"RDB$DEFERRABLE", TypedValue::makeVarchar(constraint.is_deferrable ? "YES" : "NO")},
+                    {"RDB$INITIALLY_DEFERRED", TypedValue::makeVarchar(constraint.initially_deferred ? "YES" : "NO")}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbRelationConstraints(VirtualResultSet& results, ErrorContext* ctx) {
+    return queryRdbConstraints(results, ctx);
+}
+
+Status FirebirdCatalogHandler::queryRdbCheckConstraints(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$CONSTRAINT_NAME", "RDB$TRIGGER_NAME"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::TEXT
+    };
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, nullptr) != Status::OK) {
+            continue;
+        }
+
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::ConstraintInfo> constraints;
+            if (catalog_manager_->getConstraintsForTable(table.table_id, constraints, nullptr) != Status::OK) {
+                continue;
+            }
+            for (const auto& constraint : constraints) {
+                if (constraint.constraint_type != CatalogManager::ConstraintType::CHECK) {
+                    continue;
+                }
+                VirtualRow row;
+                row.columns = {
+                    {"RDB$CONSTRAINT_NAME", TypedValue::makeVarchar(constraint.constraint_name)},
+                    {"RDB$TRIGGER_NAME", TypedValue::makeVarchar(constraint.constraint_name)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbRefConstraints(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$CONSTRAINT_NAME", "RDB$CONST_NAME_UQ", "RDB$MATCH_OPTION",
+        "RDB$UPDATE_RULE", "RDB$DELETE_RULE"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::TEXT, DataType::TEXT,
+        DataType::TEXT, DataType::TEXT
+    };
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    auto fkActionName = [](CatalogManager::FKAction action) -> std::string {
+        switch (action) {
+            case CatalogManager::FKAction::NO_ACTION: return "NO ACTION";
+            case CatalogManager::FKAction::RESTRICT: return "RESTRICT";
+            case CatalogManager::FKAction::CASCADE: return "CASCADE";
+            case CatalogManager::FKAction::SET_NULL: return "SET NULL";
+            case CatalogManager::FKAction::SET_DEFAULT: return "SET DEFAULT";
+        }
+        return "NO ACTION";
+    };
+
+    auto fkMatchName = [](CatalogManager::FKMatchType match) -> std::string {
+        switch (match) {
+            case CatalogManager::FKMatchType::FULL: return "FULL";
+            case CatalogManager::FKMatchType::PARTIAL: return "PARTIAL";
+            case CatalogManager::FKMatchType::SIMPLE:
+            default: return "SIMPLE";
+        }
+    };
+
+    auto findMatchingConstraint = [&](const CatalogManager::ConstraintInfo& fk) -> std::string {
+        if (fk.referenced_table_id == ID{}) {
+            return {};
+        }
+        std::vector<CatalogManager::ConstraintInfo> target;
+        if (catalog_manager_->getConstraintsByType(
+                fk.referenced_table_id,
+                CatalogManager::ConstraintType::PRIMARY_KEY,
+                target, nullptr) != Status::OK) {
+            target.clear();
+        }
+        if (target.empty()) {
+            catalog_manager_->getConstraintsByType(
+                fk.referenced_table_id,
+                CatalogManager::ConstraintType::UNIQUE,
+                target, nullptr);
+        }
+        for (const auto& c : target) {
+            if (c.column_names == fk.referenced_columns) {
+                return c.constraint_name;
+            }
+        }
+        return {};
+    };
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, nullptr) != Status::OK) {
+            continue;
+        }
+
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::ConstraintInfo> constraints;
+            if (catalog_manager_->getConstraintsForTable(table.table_id, constraints, nullptr) != Status::OK) {
+                continue;
+            }
+            for (const auto& constraint : constraints) {
+                if (constraint.constraint_type != CatalogManager::ConstraintType::FOREIGN_KEY) {
+                    continue;
+                }
+                std::string ref_name = findMatchingConstraint(constraint);
+                VirtualRow row;
+                row.columns = {
+                    {"RDB$CONSTRAINT_NAME", TypedValue::makeVarchar(constraint.constraint_name)},
+                    {"RDB$CONST_NAME_UQ", ref_name.empty() ? TypedValue() : TypedValue::makeVarchar(ref_name)},
+                    {"RDB$MATCH_OPTION", TypedValue::makeVarchar(fkMatchName(constraint.match_type))},
+                    {"RDB$UPDATE_RULE", TypedValue::makeVarchar(fkActionName(constraint.on_update))},
+                    {"RDB$DELETE_RULE", TypedValue::makeVarchar(fkActionName(constraint.on_delete))}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbViewRelations(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {"RDB$VIEW_NAME", "RDB$RELATION_NAME"};
+    results.column_types = {DataType::TEXT, DataType::TEXT};
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    auto resolveTableName = [&](const core::ID& table_id) -> std::string {
+        CatalogManager::TableInfo table_info;
+        if (catalog_manager_->getTable(table_id, table_info, nullptr) == Status::OK) {
+            return table_info.table_name;
+        }
+        return {};
+    };
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::DependencyInfo> deps;
+    catalog_manager_->listDependencies(deps, nullptr);
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::ViewInfo> views;
+        if (catalog_manager_->listViewsForSchema(schema.schema_id, views, nullptr) != Status::OK) {
+            continue;
+        }
+
+        for (const auto& view : views) {
+            bool emitted = false;
+            if (!view.base_table_ids.empty()) {
+                for (const auto& base_id : view.base_table_ids) {
+                    std::string rel_name = resolveTableName(base_id);
+                    VirtualRow row;
+                    row.columns = {
+                        {"RDB$VIEW_NAME", TypedValue::makeVarchar(view.name)},
+                        {"RDB$RELATION_NAME", TypedValue::makeVarchar(rel_name)}
+                    };
+                    results.rows.push_back(std::move(row));
+                    emitted = true;
+                }
+            }
+
+            for (const auto& dep : deps) {
+                if (dep.dependent_type != CatalogManager::ObjectType::VIEW ||
+                    dep.dependent_object_id != view.view_id ||
+                    dep.referenced_type != CatalogManager::ObjectType::TABLE) {
+                    continue;
+                }
+                std::string rel_name = resolveTableName(dep.referenced_object_id);
+                VirtualRow row;
+                row.columns = {
+                    {"RDB$VIEW_NAME", TypedValue::makeVarchar(view.name)},
+                    {"RDB$RELATION_NAME", TypedValue::makeVarchar(rel_name)}
+                };
+                results.rows.push_back(std::move(row));
+                emitted = true;
+            }
+
+            if (!emitted) {
+                VirtualRow row;
+                row.columns = {
+                    {"RDB$VIEW_NAME", TypedValue::makeVarchar(view.name)},
+                    {"RDB$RELATION_NAME", TypedValue()}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbExceptions(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$EXCEPTION_NAME", "RDB$MESSAGE", "RDB$DESCRIPTION", "RDB$SYSTEM_FLAG"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::INT16
+    };
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::ExceptionInfo> exceptions;
+        if (catalog_manager_->listExceptions(schema.schema_id, exceptions, nullptr) != Status::OK) {
+            continue;
+        }
+        for (const auto& ex : exceptions) {
+            VirtualRow row;
+            row.columns = {
+                {"RDB$EXCEPTION_NAME", TypedValue::makeVarchar(ex.name)},
+                {"RDB$MESSAGE", TypedValue::makeVarchar(ex.message)},
+                {"RDB$DESCRIPTION", TypedValue()},
+                {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbDependencies(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$DEPENDENT_NAME", "RDB$DEPENDENT_TYPE",
+        "RDB$DEPENDED_ON_NAME", "RDB$DEPENDED_ON_TYPE",
+        "RDB$FIELD_NAME"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::INT16,
+        DataType::TEXT, DataType::INT16,
+        DataType::TEXT
+    };
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::ProcedureInfo> procedures;
+    catalog_manager_->listProcedures(procedures, nullptr);
+    std::vector<CatalogManager::ViewInfo> all_views;
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) == Status::OK) {
+        for (const auto& schema : schemas) {
+            std::vector<CatalogManager::ViewInfo> views;
+            if (catalog_manager_->listViewsForSchema(schema.schema_id, views, nullptr) == Status::OK) {
+                all_views.insert(all_views.end(), views.begin(), views.end());
+            }
+        }
+    }
+
+    auto resolveObjectName = [&](const core::ID& object_id,
+                                 CatalogManager::ObjectType type) -> std::string {
+        switch (type) {
+            case CatalogManager::ObjectType::SCHEMA: {
+                CatalogManager::SchemaInfo info;
+                if (catalog_manager_->getSchema(object_id, info, nullptr) == Status::OK) {
+                    return info.full_path.empty() ? info.schema_name : info.full_path;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::TABLE: {
+                CatalogManager::TableInfo info;
+                if (catalog_manager_->getTable(object_id, info, nullptr) == Status::OK) {
+                    return info.table_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::VIEW: {
+                for (const auto& view : all_views) {
+                    if (view.view_id == object_id) {
+                        return view.name;
+                    }
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::INDEX: {
+                CatalogManager::IndexInfo info;
+                if (catalog_manager_->getIndex(object_id, info, nullptr) == Status::OK) {
+                    return info.index_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::SEQUENCE: {
+                CatalogManager::SequenceInfo info;
+                if (catalog_manager_->getSequenceById(object_id, info, nullptr) == Status::OK) {
+                    return info.name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::CONSTRAINT: {
+                CatalogManager::ConstraintInfo info;
+                if (catalog_manager_->getConstraint(object_id, info, nullptr) == Status::OK) {
+                    return info.constraint_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::TRIGGER: {
+                CatalogManager::TriggerInfo info;
+                if (catalog_manager_->getTrigger(object_id, info, nullptr) == Status::OK) {
+                    return info.trigger_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::FUNCTION: {
+                CatalogManager::FunctionInfo info;
+                if (catalog_manager_->getFunctionById(object_id, info, nullptr) == Status::OK) {
+                    return info.name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::PROCEDURE: {
+                for (const auto& proc : procedures) {
+                    if (proc.procedure_id == object_id) {
+                        return proc.name;
+                    }
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::DOMAIN: {
+                DomainInfo info;
+                if (catalog_manager_->getDomainById(object_id, info, nullptr) == Status::OK) {
+                    return info.domain_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::ROLE: {
+                CatalogManager::RoleInfo info;
+                if (catalog_manager_->getRole(object_id, info, nullptr) == Status::OK) {
+                    return info.role_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::USER: {
+                CatalogManager::UserInfo info;
+                if (catalog_manager_->getUser(object_id, info, nullptr) == Status::OK) {
+                    return info.username;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::GROUP: {
+                CatalogManager::GroupInfo info;
+                if (catalog_manager_->getGroup(object_id, info, nullptr) == Status::OK) {
+                    return info.group_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::PACKAGE: {
+                CatalogManager::PackageInfo info;
+                if (catalog_manager_->getPackage(object_id, info, nullptr) == Status::OK) {
+                    return info.package_name;
+                }
+                break;
+            }
+            case CatalogManager::ObjectType::EXCEPTION: {
+                CatalogManager::ExceptionInfo info;
+                if (catalog_manager_->getException(object_id, info, nullptr) == Status::OK) {
+                    return info.name;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+
+        return {};
+    };
+
+    std::vector<CatalogManager::DependencyInfo> deps;
+    if (catalog_manager_->listDependencies(deps, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& dep : deps) {
+        std::string dependent_name = resolveObjectName(dep.dependent_object_id, dep.dependent_type);
+        std::string referenced_name = resolveObjectName(dep.referenced_object_id, dep.referenced_type);
+        VirtualRow row;
+        row.columns = {
+            {"RDB$DEPENDENT_NAME", TypedValue::makeVarchar(dependent_name)},
+            {"RDB$DEPENDENT_TYPE", TypedValue::makeInt16(static_cast<int16_t>(dep.dependent_type))},
+            {"RDB$DEPENDED_ON_NAME", TypedValue::makeVarchar(referenced_name)},
+            {"RDB$DEPENDED_ON_TYPE", TypedValue::makeInt16(static_cast<int16_t>(dep.referenced_type))},
+            {"RDB$FIELD_NAME", TypedValue()}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbPackages(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$PACKAGE_NAME", "RDB$DESCRIPTION", "RDB$OWNER_NAME", "RDB$SYSTEM_FLAG"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::INT16
+    };
+
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    if (catalog_manager_->listSchemas(schemas, nullptr) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::PackageInfo> packages;
+        if (catalog_manager_->listPackages(schema.schema_id, packages, nullptr) != Status::OK) {
+            continue;
+        }
+        for (const auto& pkg : packages) {
+            VirtualRow row;
+            row.columns = {
+                {"RDB$PACKAGE_NAME", TypedValue::makeVarchar(pkg.package_name)},
+                {"RDB$DESCRIPTION", TypedValue()},
+                {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
+                {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryRdbKeywords(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "RDB$KEYWORD_NAME", "RDB$KEYWORD_TYPE"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::INT16
+    };
+
     return Status::OK;
 }
 
@@ -1043,6 +1922,72 @@ Status FirebirdCatalogHandler::queryMonStatements(VirtualResultSet& results, Err
     return Status::OK;
 }
 
+Status FirebirdCatalogHandler::queryMonCallStack(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$STAT_ID", "MON$CALL_ID", "MON$STATEMENT_ID",
+        "MON$CALL_TYPE", "MON$OBJECT_NAME"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::INT64, DataType::INT64,
+        DataType::INT16, DataType::TEXT
+    };
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryMonIoStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$STAT_ID", "MON$PAGE_READS", "MON$PAGE_WRITES",
+        "MON$PAGE_FETCHES", "MON$PAGE_MARKS"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::INT64, DataType::INT64,
+        DataType::INT64, DataType::INT64
+    };
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryMonRecordStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$STAT_ID", "MON$RECORD_IDX_READS", "MON$RECORD_INSERTS",
+        "MON$RECORD_UPDATES", "MON$RECORD_DELETES"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::INT64, DataType::INT64,
+        DataType::INT64, DataType::INT64
+    };
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryMonMemoryUsage(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$STAT_ID", "MON$MEMORY_USED", "MON$MEMORY_ALLOCATED"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::INT64, DataType::INT64
+    };
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryMonTableStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$STAT_ID", "MON$TABLE_NAME"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::TEXT
+    };
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryMonContextVariables(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$ATTACHMENT_ID", "MON$TRANSACTION_ID", "MON$VARIABLE_NAME", "MON$VARIABLE_VALUE"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::INT64, DataType::TEXT, DataType::TEXT
+    };
+    return Status::OK;
+}
+
 // ============================================================================
 // SEC$ Table Queries
 // ============================================================================
@@ -1076,13 +2021,42 @@ Status FirebirdCatalogHandler::querySecUsers(VirtualResultSet& results, ErrorCon
 
 Status FirebirdCatalogHandler::querySecUserAttributes(VirtualResultSet& results, ErrorContext* /* ctx */) {
     results.column_names = {
-        "SEC$USER_NAME", "SEC$KEY", "SEC$VALUE", "SEC$PLUGIN"
+        "SEC$USER_NAME", "SEC$ATTR_NAME", "SEC$ATTR_VALUE", "SEC$PLUGIN"
     };
     results.column_types = {
         DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT
     };
 
     // No extended attributes by default
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::querySecDbCreators(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "SEC$USER_NAME"
+    };
+    results.column_types = {
+        DataType::TEXT
+    };
+
+    // Default SYSDBA creator for compatibility
+    VirtualRow row;
+    row.columns = {
+        {"SEC$USER_NAME", TypedValue::makeVarchar("SYSDBA")}
+    };
+    results.rows.push_back(row);
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::querySecGlobalAuthMapping(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "SEC$MAP_NAME", "SEC$MAP_USING", "SEC$MAP_PLUGIN", "SEC$MAP_FROM", "SEC$MAP_TO"
+    };
+    results.column_types = {
+        DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT
+    };
+
     return Status::OK;
 }
 
@@ -1176,6 +2150,177 @@ void FirebirdCatalogHandler::getRdbGeneratorsColumns(std::vector<CatalogManager:
     cols.push_back(makeCol("RDB$GENERATOR_INCREMENT", DataType::INT64, true));
 }
 
+void FirebirdCatalogHandler::getRdbProceduresColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$PROCEDURE_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$PROCEDURE_ID", DataType::INT64, true));
+    cols.push_back(makeCol("RDB$PROCEDURE_INPUTS", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$PROCEDURE_OUTPUTS", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$PROCEDURE_SOURCE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$OWNER_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbProcedureParametersColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$PROCEDURE_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$PARAMETER_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$PARAMETER_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$FIELD_SOURCE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DEFAULT_SOURCE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$PARAMETER_NUMBER", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbFunctionsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$FUNCTION_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$FUNCTION_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$RETURN_ARGUMENT", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$MODULE_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$ENTRYPOINT", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$OWNER_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbFunctionArgumentsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$FUNCTION_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$ARGUMENT_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$ARGUMENT_POSITION", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$MECHANISM", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$FIELD_SOURCE", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getRdbTriggersColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$TRIGGER_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$RELATION_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$TRIGGER_SEQUENCE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$TRIGGER_TYPE", DataType::INT64, true));
+    cols.push_back(makeCol("RDB$TRIGGER_SOURCE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$TRIGGER_INACTIVE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$CONSTRAINT_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$CONSTRAINT_TYPE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$RELATION_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$INDEX_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DEFERRABLE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$INITIALLY_DEFERRED", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getRdbRelationConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    getRdbConstraintsColumns(cols);
+}
+
+void FirebirdCatalogHandler::getRdbViewRelationsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$VIEW_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$RELATION_NAME", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getRdbCheckConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$CONSTRAINT_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$TRIGGER_NAME", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getRdbRefConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$CONSTRAINT_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$CONST_NAME_UQ", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$MATCH_OPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$UPDATE_RULE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DELETE_RULE", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getRdbExceptionsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$EXCEPTION_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$MESSAGE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbUserPrivilegesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$USER", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$GRANTOR", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$PRIVILEGE", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$GRANT_OPTION", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$RELATION_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$FIELD_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$USER_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$OBJECT_TYPE", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbRolesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$ROLE_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$OWNER_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbDependenciesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$DEPENDENT_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DEPENDENT_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$DEPENDED_ON_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DEPENDED_ON_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$FIELD_NAME", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getRdbPackagesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$PACKAGE_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$OWNER_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbKeywordsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$KEYWORD_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$KEYWORD_TYPE", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbCharacterSetsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$CHARACTER_SET_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$CHARACTER_SET_ID", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$BYTES_PER_CHARACTER", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$DEFAULT_COLLATE_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbCollationsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$COLLATION_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$COLLATION_ID", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$CHARACTER_SET_ID", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$COLLATION_ATTRIBUTES", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
+void FirebirdCatalogHandler::getRdbTypesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("RDB$TYPE_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("RDB$TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$FIELD_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));
+    cols.push_back(makeCol("RDB$SYSTEM_FLAG", DataType::INT16, true));
+}
+
 void FirebirdCatalogHandler::getMonDatabaseColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
     cols.clear();
     cols.push_back(makeCol("MON$DATABASE_NAME", DataType::TEXT, true));
@@ -1250,6 +2395,54 @@ void FirebirdCatalogHandler::getMonStatementsColumns(std::vector<CatalogManager:
     cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
 }
 
+void FirebirdCatalogHandler::getMonCallStackColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$CALL_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$STATEMENT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$CALL_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$OBJECT_NAME", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getMonIoStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$PAGE_READS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$PAGE_WRITES", DataType::INT64, true));
+    cols.push_back(makeCol("MON$PAGE_FETCHES", DataType::INT64, true));
+    cols.push_back(makeCol("MON$PAGE_MARKS", DataType::INT64, true));
+}
+
+void FirebirdCatalogHandler::getMonRecordStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_IDX_READS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_INSERTS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_UPDATES", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_DELETES", DataType::INT64, true));
+}
+
+void FirebirdCatalogHandler::getMonMemoryUsageColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$MEMORY_USED", DataType::INT64, true));
+    cols.push_back(makeCol("MON$MEMORY_ALLOCATED", DataType::INT64, true));
+}
+
+void FirebirdCatalogHandler::getMonTableStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$TABLE_NAME", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getMonContextVariablesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$ATTACHMENT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$TRANSACTION_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$VARIABLE_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$VARIABLE_VALUE", DataType::TEXT, true));
+}
+
 void FirebirdCatalogHandler::getSecUsersColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
     cols.clear();
     cols.push_back(makeCol("SEC$USER_NAME", DataType::TEXT, false));
@@ -1260,6 +2453,28 @@ void FirebirdCatalogHandler::getSecUsersColumns(std::vector<CatalogManager::Colu
     cols.push_back(makeCol("SEC$ADMIN", DataType::BOOLEAN, true));
     cols.push_back(makeCol("SEC$DESCRIPTION", DataType::TEXT, true));
     cols.push_back(makeCol("SEC$PLUGIN", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getSecUserAttributesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("SEC$USER_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("SEC$ATTR_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("SEC$ATTR_VALUE", DataType::TEXT, true));
+    cols.push_back(makeCol("SEC$PLUGIN", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getSecDbCreatorsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("SEC$USER_NAME", DataType::TEXT, false));
+}
+
+void FirebirdCatalogHandler::getSecGlobalAuthMappingColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("SEC$MAP_NAME", DataType::TEXT, false));
+    cols.push_back(makeCol("SEC$MAP_USING", DataType::TEXT, true));
+    cols.push_back(makeCol("SEC$MAP_PLUGIN", DataType::TEXT, true));
+    cols.push_back(makeCol("SEC$MAP_FROM", DataType::TEXT, true));
+    cols.push_back(makeCol("SEC$MAP_TO", DataType::TEXT, true));
 }
 
 } // namespace scratchbird::catalog

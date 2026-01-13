@@ -1425,71 +1425,99 @@ namespace scratchbird::core
 
         const DomainInfo& domain = it->second;
 
-        // Check NULL constraint
-        if (!domain.nullable && value.isNull())
-        {
-            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "NULL value not allowed");
-            return Status::CONSTRAINT_VIOLATION;
-        }
-
-        // Check type compatibility
-        if (!value.isNull() && !isDomainTypeCompatible(value.type(), domain.base_type))
-        {
-            SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Value type does not match domain type");
-            return Status::TYPE_MISMATCH;
-        }
-
-        // Validate constraints
-        for (const auto& constraint : domain.constraints)
-        {
-            Status status = Status::OK;
-
-            switch (constraint.type)
-            {
-                case ConstraintType::NOT_NULL:
-                    status = validateNotNullConstraint(value, ctx);
-                    break;
-
-                case ConstraintType::CHECK:
-                    status = validateCheckConstraint(domain, value, constraint, ctx);
-                    break;
-
-                case ConstraintType::DEFAULT:
-                case ConstraintType::UNIQUE:
-                    // These are handled elsewhere
-                    break;
-            }
-
-            if (status != Status::OK)
-            {
-                return status;
-            }
-        }
-
-        // Check inherited constraints
+        std::vector<DomainConstraint> inherited;
+        bool has_inherited = false;
         if (domain.parent_domain_id != ID{})
         {
-            std::vector<DomainConstraint> inherited;
             Status status = resolveInheritedConstraints(domain_id, inherited, ctx);
             if (status != Status::OK)
             {
                 return status;
             }
+            has_inherited = true;
+        }
 
-            for (const auto& constraint : inherited)
+        auto validate_scalar = [&](const TypedValue& scalar) -> Status
+        {
+            // Check NULL constraint
+            if (!domain.nullable && scalar.isNull())
             {
-                if (constraint.type == ConstraintType::CHECK)
+                SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "NULL value not allowed");
+                return Status::CONSTRAINT_VIOLATION;
+            }
+
+            // Check type compatibility
+            if (!scalar.isNull() && !isDomainTypeCompatible(scalar.type(), domain.base_type))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Value type does not match domain type");
+                return Status::TYPE_MISMATCH;
+            }
+
+            // Validate constraints
+            for (const auto& constraint : domain.constraints)
+            {
+                Status status = Status::OK;
+
+                switch (constraint.type)
                 {
-                    status = validateCheckConstraint(domain, value, constraint, ctx);
-                    if (status != Status::OK)
+                    case ConstraintType::NOT_NULL:
+                        status = validateNotNullConstraint(scalar, ctx);
+                        break;
+
+                    case ConstraintType::CHECK:
+                        status = validateCheckConstraint(domain, scalar, constraint, ctx);
+                        break;
+
+                    case ConstraintType::DEFAULT:
+                    case ConstraintType::UNIQUE:
+                        // These are handled elsewhere
+                        break;
+                }
+
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            // Check inherited constraints
+            if (has_inherited)
+            {
+                for (const auto& constraint : inherited)
+                {
+                    if (constraint.type == ConstraintType::CHECK)
                     {
-                        return status;
+                        Status status = validateCheckConstraint(domain, scalar, constraint, ctx);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
                     }
                 }
             }
+
+            return Status::OK;
+        };
+
+        if (value.type() == DataType::ARRAY)
+        {
+            if (value.isNull())
+            {
+                return validate_scalar(value);
+            }
+
+            for (const auto& element : value.getArray())
+            {
+                Status status = validate_scalar(element);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+            return Status::OK;
         }
 
-        return Status::OK;
+        return validate_scalar(value);
     }
 
     auto DomainManager::applyNormalization(const ID& domain_id,
@@ -1499,6 +1527,27 @@ namespace scratchbird::core
     {
         if (domain_id == ID{})
         {
+            return Status::OK;
+        }
+
+        if (value.type() == DataType::ARRAY)
+        {
+            if (value.isNull())
+            {
+                return Status::OK;
+            }
+
+            std::vector<TypedValue> elements = value.getArray();
+            for (auto& element : elements)
+            {
+                Status status = applyNormalization(domain_id, element, invoker, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            value = TypedValue::makeArray(elements);
             return Status::OK;
         }
 
@@ -1559,6 +1608,40 @@ namespace scratchbird::core
         ValidationConfig config;
         config.function_name = domain.validation.validation_function;
         config.error_message = domain.validation.error_message;
+
+        if (value.type() == DataType::ARRAY)
+        {
+            if (value.isNull())
+            {
+                is_valid_out = true;
+                return Status::OK;
+            }
+
+            bool all_valid = true;
+            for (const auto& element : value.getArray())
+            {
+                bool element_valid = true;
+                status = DomainValidation::validateValue(element, config, invoker,
+                                                        element_valid, ctx);
+                if (status != Status::OK)
+                {
+                    if (ctx && ctx->message.empty())
+                    {
+                        SET_ERROR_CONTEXT(ctx, status, "Domain validation failed");
+                    }
+                    return status;
+                }
+                if (!element_valid)
+                {
+                    all_valid = false;
+                    break;
+                }
+            }
+
+            is_valid_out = all_valid;
+            return Status::OK;
+        }
+
         status = DomainValidation::validateValue(value, config, invoker, is_valid_out, ctx);
         if (status != Status::OK)
         {
@@ -1610,6 +1693,41 @@ namespace scratchbird::core
         config.standardize_function = domain.quality.standardize_function;
         config.enrich_function = domain.quality.enrich_function;
 
+        if (value.type() == DataType::ARRAY)
+        {
+            if (value.isNull())
+            {
+                result_out.parsed_value = value;
+                result_out.standardized_value = value;
+                result_out.enriched_value = value;
+                result_out.metadata.clear();
+                return Status::OK;
+            }
+
+            std::vector<TypedValue> elements = value.getArray();
+            for (auto& element : elements)
+            {
+                QualityResult element_result;
+                status = QualityPipeline::executePipeline(element, config, invoker, element_result, ctx);
+                if (status != Status::OK)
+                {
+                    if (ctx && ctx->message.empty())
+                    {
+                        SET_ERROR_CONTEXT(ctx, status, "Domain quality pipeline failed");
+                    }
+                    return status;
+                }
+                element = element_result.enriched_value;
+            }
+
+            value = TypedValue::makeArray(elements);
+            result_out.parsed_value = value;
+            result_out.standardized_value = value;
+            result_out.enriched_value = value;
+            result_out.metadata.clear();
+            return Status::OK;
+        }
+
         status = QualityPipeline::executePipeline(value, config, invoker, result_out, ctx);
         if (status != Status::OK)
         {
@@ -1654,6 +1772,41 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
                               "Global uniqueness index unavailable");
             return Status::INTERNAL_ERROR;
+        }
+
+        if (value.type() == DataType::ARRAY)
+        {
+            if (value.isNull())
+            {
+                return Status::OK;
+            }
+
+            for (const auto& element : value.getArray())
+            {
+                if (element.isNull())
+                {
+                    continue;
+                }
+
+                bool element_unique = true;
+                status = uniqueness_index_->checkUniqueness(domain_id, element, tx_id,
+                                                            element_unique, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                if (!element_unique)
+                {
+                    is_unique_out = false;
+                    if (ctx && ctx->message.empty())
+                    {
+                        ctx->message = "Domain uniqueness violation";
+                    }
+                    return Status::OK;
+                }
+            }
+
+            return Status::OK;
         }
 
         status = uniqueness_index_->checkUniqueness(domain_id, value, tx_id, is_unique_out, ctx);
@@ -1702,6 +1855,35 @@ namespace scratchbird::core
             return Status::INTERNAL_ERROR;
         }
 
+        if (value.type() == DataType::ARRAY)
+        {
+            if (value.isNull())
+            {
+                return Status::OK;
+            }
+
+            for (const auto& element : value.getArray())
+            {
+                if (element.isNull())
+                {
+                    continue;
+                }
+
+                status = uniqueness_index_->insertValue(domain_id, table_id, column_id,
+                                                        row_id, element, tx_id, ctx);
+                if (status == Status::UNIQUE_VIOLATION && ctx && ctx->message.empty())
+                {
+                    ctx->message = "Domain uniqueness violation";
+                }
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            return Status::OK;
+        }
+
         status = uniqueness_index_->insertValue(domain_id, table_id, column_id,
                                                  row_id, value, tx_id, ctx);
         if (status == Status::UNIQUE_VIOLATION && ctx && ctx->message.empty())
@@ -1741,6 +1923,31 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
                               "Global uniqueness index unavailable");
             return Status::INTERNAL_ERROR;
+        }
+
+        if (value.type() == DataType::ARRAY)
+        {
+            if (value.isNull())
+            {
+                return Status::OK;
+            }
+
+            for (const auto& element : value.getArray())
+            {
+                if (element.isNull())
+                {
+                    continue;
+                }
+
+                status = uniqueness_index_->deleteValue(domain_id, table_id, column_id,
+                                                        row_id, element, tx_id, ctx);
+                if (status != Status::OK && status != Status::NOT_FOUND)
+                {
+                    return status;
+                }
+            }
+
+            return Status::OK;
         }
 
         status = uniqueness_index_->deleteValue(domain_id, table_id, column_id,

@@ -85,7 +85,7 @@ enum class AuthStatus : uint8_t {
  * - 0x40-0x4F: Transactions
  * - 0x50-0x5F: Result streaming
  * - 0x60-0x6F: Administrative
- * - 0x70-0x7F: Extended features (future)
+ * - 0x70-0x7F: Extended features (streaming/COPY)
  * - 0xF0-0xFF: Internal/Debug
  */
 enum class MessageType : uint8_t {
@@ -134,6 +134,18 @@ enum class MessageType : uint8_t {
     PONG                = 0x62,
     STATUS_REQUEST      = 0x63,
     STATUS_RESPONSE     = 0x64,
+
+    // Streaming/COPY (0x70-0x7F)
+    COPY_DATA           = 0x70,
+    COPY_DONE           = 0x71,
+    COPY_FAIL           = 0x72,
+    COPY_IN_RESPONSE    = 0x73,
+    COPY_OUT_RESPONSE   = 0x74,
+    COPY_BOTH_RESPONSE  = 0x75,
+    STREAM_CONTROL      = 0x76,
+    STREAM_READY        = 0x77,
+    STREAM_DATA         = 0x78,
+    STREAM_END          = 0x79,
 
     // Internal/Debug (0xF0-0xFF)
     DEBUG_MESSAGE       = 0xF0,
@@ -360,6 +372,87 @@ struct CommandCompletePayload {
     int64_t  rows_affected;         // Number of rows affected
 };
 #pragma pack(pop)
+
+/**
+ * COPY response payload (COPY_IN/OUT/BOTH_RESPONSE)
+ */
+#pragma pack(push, 1)
+struct CopyResponsePayload {
+    uint8_t  format;                // 0 = text, 1 = binary
+    uint8_t  reserved;
+    uint16_t column_count;
+    // Followed by: uint16_t column_formats[column_count]
+};
+#pragma pack(pop)
+
+/**
+ * COPY_FAIL payload
+ */
+#pragma pack(push, 1)
+struct CopyFailPayload {
+    uint32_t error_length;
+    // Followed by: error string (UTF-8, not null-terminated)
+};
+#pragma pack(pop)
+
+/**
+ * Stream control payload
+ */
+#pragma pack(push, 1)
+struct StreamControlPayload {
+    uint8_t  control_type;          // StreamControlType
+    uint8_t  reserved[3];
+    uint32_t window_size;           // Bytes (COPY) or rows (result streaming)
+    uint32_t timeout_ms;
+};
+#pragma pack(pop)
+
+/**
+ * Stream ready payload
+ */
+#pragma pack(push, 1)
+struct StreamReadyPayload {
+    uint64_t stream_id;
+    uint64_t total_rows;            // 0 if unknown
+    uint64_t estimated_bytes;
+};
+#pragma pack(pop)
+
+/**
+ * Stream data payload header
+ */
+#pragma pack(push, 1)
+struct StreamDataHeader {
+    uint64_t stream_id;
+    uint32_t chunk_rows;            // 0 if not row-based
+    uint32_t chunk_bytes;
+    // Followed by: data bytes
+};
+#pragma pack(pop)
+
+/**
+ * Stream end payload
+ */
+#pragma pack(push, 1)
+struct StreamEndPayload {
+    uint64_t stream_id;
+    uint64_t total_rows;
+    uint64_t total_bytes;
+};
+#pragma pack(pop)
+
+enum class CopyFormat : uint8_t {
+    TEXT = 0,
+    BINARY = 1
+};
+
+enum class StreamControlType : uint8_t {
+    START  = 0,
+    PAUSE  = 1,
+    RESUME = 2,
+    CANCEL = 3,
+    ACK    = 4
+};
 
 /**
  * TRANSACTION control payloads
@@ -690,6 +783,66 @@ public:
                                              std::string& command_tag,
                                              int64_t& rows_affected,
                                              core::ErrorContext* ctx = nullptr);
+
+    // ========================================
+    // COPY Messages
+    // ========================================
+
+    static Message buildCopyInResponse(CopyFormat format,
+                                       const std::vector<uint16_t>& column_formats);
+    static Message buildCopyOutResponse(CopyFormat format,
+                                        const std::vector<uint16_t>& column_formats);
+    static Message buildCopyBothResponse(CopyFormat format,
+                                         const std::vector<uint16_t>& column_formats);
+    static Message buildCopyData(const uint8_t* data, size_t length);
+    static core::Status parseCopyData(const Message& msg,
+                                      const uint8_t** data,
+                                      size_t* length,
+                                      core::ErrorContext* ctx = nullptr);
+    static Message buildCopyDone();
+    static Message buildCopyFail(const std::string& error_message);
+    static core::Status parseCopyFail(const Message& msg,
+                                      std::string& error_message,
+                                      core::ErrorContext* ctx = nullptr);
+
+    // ========================================
+    // Streaming Messages
+    // ========================================
+
+    static Message buildStreamControl(StreamControlType control_type,
+                                      uint32_t window_size,
+                                      uint32_t timeout_ms);
+    static core::Status parseStreamControl(const Message& msg,
+                                           StreamControlType& control_type,
+                                           uint32_t& window_size,
+                                           uint32_t& timeout_ms,
+                                           core::ErrorContext* ctx = nullptr);
+    static Message buildStreamReady(uint64_t stream_id,
+                                    uint64_t total_rows,
+                                    uint64_t estimated_bytes);
+    static core::Status parseStreamReady(const Message& msg,
+                                         uint64_t& stream_id,
+                                         uint64_t& total_rows,
+                                         uint64_t& estimated_bytes,
+                                         core::ErrorContext* ctx = nullptr);
+    static Message buildStreamData(uint64_t stream_id,
+                                   uint32_t chunk_rows,
+                                   const uint8_t* data,
+                                   size_t length);
+    static core::Status parseStreamData(const Message& msg,
+                                        uint64_t& stream_id,
+                                        uint32_t& chunk_rows,
+                                        const uint8_t** data,
+                                        size_t* length,
+                                        core::ErrorContext* ctx = nullptr);
+    static Message buildStreamEnd(uint64_t stream_id,
+                                  uint64_t total_rows,
+                                  uint64_t total_bytes);
+    static core::Status parseStreamEnd(const Message& msg,
+                                       uint64_t& stream_id,
+                                       uint64_t& total_rows,
+                                       uint64_t& total_bytes,
+                                       core::ErrorContext* ctx = nullptr);
 
     // ========================================
     // Transaction Messages

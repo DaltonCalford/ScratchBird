@@ -34,6 +34,8 @@ constexpr int32_t PROTOCOL_VERSION_3 = 196608;  // (3 << 16)
 
 // SSL request code
 constexpr int32_t SSL_REQUEST = 80877103;
+// GSS encryption request code
+constexpr int32_t GSSENC_REQUEST = 80877104;
 
 // Cancel request code
 constexpr int32_t CANCEL_REQUEST = 80877102;
@@ -322,6 +324,7 @@ private:
     // Startup phase
     core::Status handleStartupMessage(network::Connection* conn);
     core::Status handleSSLRequest(network::Connection* conn);
+    core::Status handleGSSENCRequest(network::Connection* conn);
     core::Status handleCancelRequest(network::Connection* conn);
 
     // Authentication

@@ -5,7 +5,6 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/charset_parser.h"
-#include "scratchbird/core/uuidv7.h"
 
 namespace scratchbird::core
 {
@@ -48,17 +47,11 @@ public:
     bool collationExists(const std::string &collation_name, ErrorContext *ctx);
 
     // Get character set ID by name
-    Status getCharsetID(const std::string &charset_name, UuidV7Bytes &charset_id, ErrorContext *ctx);
+    Status getCharsetID(const std::string &charset_name, uint16_t &charset_id, ErrorContext *ctx);
 
 private:
     CatalogManager *catalog_;
     Database *db_;
-
-    // Generate UUID for a charset based on its name
-    UuidV7Bytes generateCharsetID(const std::string &charset_name);
-
-    // Generate UUID for a collation based on its name
-    UuidV7Bytes generateCollationID(const std::string &collation_name);
 
     // Get current timestamp in microseconds
     uint64_t getCurrentTimestamp();

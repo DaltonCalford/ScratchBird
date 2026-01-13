@@ -336,6 +336,12 @@ core::Status PostgresqlAdapter::processMessage(network::Connection* conn) {
         return handleStartupMessage(conn);
     }
 
+    if (sync_pending_ &&
+        current_msg_type_ != pg::FrontendMsg::SYNC &&
+        current_msg_type_ != pg::FrontendMsg::TERMINATE) {
+        return core::Status::OK;
+    }
+
     switch (current_msg_type_) {
         case pg::FrontendMsg::PASSWORD:
             return handlePasswordMessage(conn);
@@ -466,6 +472,10 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
         return handleSSLRequest(conn);
     }
 
+    if (protocol_version == pg::GSSENC_REQUEST) {
+        return handleGSSENCRequest(conn);
+    }
+
     if (protocol_version == pg::CANCEL_REQUEST) {
         return handleCancelRequest(conn);
     }
@@ -496,6 +506,35 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
             username_ = value;
         } else if (key == "database") {
             database_name_ = value;
+        }
+    }
+
+    auto normalize = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return value;
+    };
+
+    if (username_.empty()) {
+        sendErrorResponse(conn, "FATAL", "28000", "user name missing in startup packet");
+        return core::Status::NOT_SUPPORTED;
+    }
+
+    auto repl_it = client_parameters_.find("replication");
+    if (repl_it != client_parameters_.end()) {
+        std::string repl = normalize(repl_it->second);
+        if (!repl.empty() && repl != "0" && repl != "FALSE" && repl != "OFF") {
+            sendErrorResponse(conn, "FATAL", "0A000", "Replication is not supported");
+            return core::Status::NOT_SUPPORTED;
+        }
+    }
+
+    auto enc_it = client_parameters_.find("client_encoding");
+    if (enc_it != client_parameters_.end()) {
+        std::string enc = normalize(enc_it->second);
+        if (!enc.empty() && enc != "UTF8" && enc != "UTF-8") {
+            sendErrorResponse(conn, "FATAL", "0A000", "Unsupported client_encoding");
+            return core::Status::NOT_SUPPORTED;
         }
     }
 
@@ -538,6 +577,17 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
 
 core::Status PostgresqlAdapter::handleSSLRequest(network::Connection* conn) {
     // SSL not supported yet - send 'N' (no SSL)
+    uint8_t response = 'N';
+    writeToBuffer(conn, &response, 1);
+    sendBuffer(conn);
+
+    // Reset state to wait for another startup message
+    pg_state_ = PgProtocolState::STARTUP;
+    return core::Status::OK;
+}
+
+core::Status PostgresqlAdapter::handleGSSENCRequest(network::Connection* conn) {
+    // GSSENC not supported yet - send 'N' (no GSS encryption)
     uint8_t response = 'N';
     writeToBuffer(conn, &response, 1);
     sendBuffer(conn);
@@ -636,6 +686,10 @@ core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn)
 
             if (mechanism != "SCRAM-SHA-256") {
                 sendErrorResponse(conn, "FATAL", "0A000", "Unsupported SASL mechanism");
+                return sendBuffer(conn);
+            }
+            if (client_first.rfind("p=", 0) == 0) {
+                sendErrorResponse(conn, "FATAL", "0A000", "SCRAM-PLUS channel binding is not supported");
                 return sendBuffer(conn);
             }
 
@@ -766,6 +820,7 @@ core::Status PostgresqlAdapter::handleParse(network::Connection* conn) {
 
     // Number of parameter types
     if (offset + 2 > current_msg_data_.size()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "08P01", "Invalid Parse message");
         return core::Status::INVALID_ARGUMENT;
     }
@@ -807,12 +862,14 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
     // Check statement exists
     auto stmt_it = statements_.find(stmt_name);
     if (stmt_it == statements_.end()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "26000", "Prepared statement does not exist: " + stmt_name);
         return core::Status::NOT_FOUND;
     }
 
     // Number of parameter format codes
     if (offset + 2 > current_msg_data_.size()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "08P01", "Invalid Bind message");
         return core::Status::INVALID_ARGUMENT;
     }
@@ -822,13 +879,22 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
     // Format codes
     std::vector<int16_t> param_formats;
     for (int16_t i = 0; i < num_format_codes; ++i) {
-        if (offset + 2 > current_msg_data_.size()) break;
-        param_formats.push_back(readInt16(current_msg_data_.data() + offset));
+        if (offset + 2 > current_msg_data_.size()) {
+            sync_pending_ = true;
+            sendErrorResponse(conn, "ERROR", "08P01", "Invalid Bind message");
+            return core::Status::INVALID_ARGUMENT;
+        }
+        int16_t format_code = readInt16(current_msg_data_.data() + offset);
+        if (format_code != 1) {
+            format_code = 0;
+        }
+        param_formats.push_back(format_code);
         offset += 2;
     }
 
     // Number of parameters
     if (offset + 2 > current_msg_data_.size()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "08P01", "Invalid Bind message");
         return core::Status::INVALID_ARGUMENT;
     }
@@ -852,7 +918,11 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
                 fmt = param_formats[i];
             }
         }
-        if (offset + 4 > current_msg_data_.size()) break;
+        if (offset + 4 > current_msg_data_.size()) {
+            sync_pending_ = true;
+            sendErrorResponse(conn, "ERROR", "08P01", "Invalid Bind message");
+            return core::Status::INVALID_ARGUMENT;
+        }
         int32_t len = readInt32(current_msg_data_.data() + offset);
         offset += 4;
 
@@ -863,7 +933,11 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
             portal.param_formats.push_back(fmt);
         } else {
             // Value
-            if (offset + static_cast<size_t>(len) > current_msg_data_.size()) break;
+            if (len < 0 || offset + static_cast<size_t>(len) > current_msg_data_.size()) {
+                sync_pending_ = true;
+                sendErrorResponse(conn, "ERROR", "08P01", "Invalid Bind message");
+                return core::Status::INVALID_ARGUMENT;
+            }
             WireType ptype = WireType::UNKNOWN;
             if (static_cast<size_t>(i) < stmt_it->second.param_types.size()) {
                 ptype = oidToWireType(stmt_it->second.param_types[i]);
@@ -890,8 +964,16 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
         offset += 2;
 
         for (int16_t i = 0; i < num_result_formats; ++i) {
-            if (offset + 2 > current_msg_data_.size()) break;
-            portal.result_formats.push_back(readInt16(current_msg_data_.data() + offset));
+            if (offset + 2 > current_msg_data_.size()) {
+                sync_pending_ = true;
+                sendErrorResponse(conn, "ERROR", "08P01", "Invalid Bind message");
+                return core::Status::INVALID_ARGUMENT;
+            }
+            int16_t format_code = readInt16(current_msg_data_.data() + offset);
+            if (format_code != 1) {
+                format_code = 0;
+            }
+            portal.result_formats.push_back(format_code);
             offset += 2;
         }
     }
@@ -906,6 +988,7 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
 
 core::Status PostgresqlAdapter::handleDescribe(network::Connection* conn) {
     if (current_msg_data_.empty()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "08P01", "Invalid Describe message");
         return core::Status::INVALID_ARGUMENT;
     }
@@ -917,6 +1000,7 @@ core::Status PostgresqlAdapter::handleDescribe(network::Connection* conn) {
         // Describe statement
         auto it = statements_.find(name);
         if (it == statements_.end()) {
+            sync_pending_ = true;
             sendErrorResponse(conn, "ERROR", "26000", "Prepared statement does not exist: " + name);
             return core::Status::NOT_FOUND;
         }
@@ -934,6 +1018,7 @@ core::Status PostgresqlAdapter::handleDescribe(network::Connection* conn) {
         // Describe portal
         auto it = portals_.find(name);
         if (it == portals_.end()) {
+            sync_pending_ = true;
             sendErrorResponse(conn, "ERROR", "34000", "Portal does not exist: " + name);
             return core::Status::NOT_FOUND;
         }
@@ -967,6 +1052,7 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
     // Find portal
     auto it = portals_.find(portal_name);
     if (it == portals_.end()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "34000", "Portal does not exist: " + portal_name);
         return core::Status::NOT_FOUND;
     }
@@ -975,6 +1061,7 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
     // Find statement
     auto stmt_it = statements_.find(portal.statement_name);
     if (stmt_it == statements_.end()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "26000", "Prepared statement does not exist");
         return core::Status::NOT_FOUND;
     }
@@ -1023,6 +1110,7 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
     std::string copy_error;
     if (parseCopyQuery(stmt_it->second.query, copy_ctx, copy_error)) {
         if (!copy_error.empty()) {
+            sync_pending_ = true;
             sendErrorResponse(conn, "ERROR", "0A000", copy_error);
             pending_operations_.push_back('E');
             return core::Status::OK;
@@ -1037,6 +1125,7 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
         if (copy_ctx.to_stdout) {
             return startCopyOut(conn, copy_ctx);
         }
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "0A000", "COPY only supports STDIN/STDOUT");
         return core::Status::OK;
     }
@@ -1080,6 +1169,7 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
     updateTransactionStatus(stmt_it->second.query, result.has_error);
 
     if (result.has_error) {
+        sync_pending_ = true;
         sendProtocolError(conn, result.error_code, result.sqlstate,
                   result.error_message, result.error_detail, result.error_hint);
     } else {
@@ -1146,6 +1236,7 @@ core::Status PostgresqlAdapter::handleFetch(network::Connection* conn) {
 
     auto it = portals_.find(portal_name);
     if (it == portals_.end()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "34000", "Portal does not exist: " + portal_name);
         return core::Status::NOT_FOUND;
     }
@@ -1153,6 +1244,7 @@ core::Status PostgresqlAdapter::handleFetch(network::Connection* conn) {
     PgPortal& portal = it->second;
     auto stmt_it = statements_.find(portal.statement_name);
     if (stmt_it == statements_.end()) {
+        sync_pending_ = true;
         sendErrorResponse(conn, "ERROR", "26000", "Prepared statement does not exist");
         return core::Status::NOT_FOUND;
     }
@@ -1480,6 +1572,9 @@ int16_t PostgresqlAdapter::selectFormatForColumn(size_t idx,
         } else if (idx < formats.size()) {
             format = formats[idx];
         }
+    }
+    if (format != 1) {
+        format = 0;
     }
     if (format == 1 && !supportsBinaryFormat(type)) {
         format = 0;

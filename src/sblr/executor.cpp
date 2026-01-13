@@ -4,6 +4,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <iostream>
 #include "scratchbird/parser/shared_types.h"
 #include "scratchbird/sblr/resolved_ast_v2.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
@@ -109,6 +110,7 @@ namespace scratchbird
             std::string joinSchemaComponents(const std::vector<std::string>& components,
                                              size_t start_index = 0);
             bool isAggregateOpcode(Opcode op);
+            void copyErrorContext(core::ErrorContext* dst, const core::ErrorContext& src);
             core::Status buildAbsoluteSchemaPath(core::CatalogManager* catalog,
                                                  const core::ConnectionContext* conn_ctx,
                                                  const core::ObjectPath& path,
@@ -417,6 +419,11 @@ namespace scratchbird
             core::TypeInfo buildTypeInfo(const core::CatalogManager::ColumnInfo& column)
             {
                 core::TypeInfo info(static_cast<core::DataType>(column.data_type));
+                if (column.is_array)
+                {
+                    info.type = core::DataType::ARRAY;
+                    info.element_type = static_cast<core::DataType>(column.data_type);
+                }
                 uint32_t precision = column.type_precision != 0 ? column.type_precision
                                                                 : column.max_length;
                 info.precision = precision;
@@ -424,6 +431,154 @@ namespace scratchbird
                 info.with_timezone = column.with_timezone;
                 info.timezone_hint = column.timezone_hint;
                 return info;
+            }
+
+            core::TypeInfo buildElementTypeInfo(const core::CatalogManager::ColumnInfo& column)
+            {
+                core::TypeInfo info(static_cast<core::DataType>(column.data_type));
+                uint32_t precision = column.type_precision != 0 ? column.type_precision
+                                                                : column.max_length;
+                info.precision = precision;
+                info.scale = column.type_scale;
+                info.with_timezone = column.with_timezone;
+                info.timezone_hint = column.timezone_hint;
+                return info;
+            }
+
+            bool jsonElementToValue(const json& element,
+                                    core::TypedValue& value_out,
+                                    core::ErrorContext* ctx)
+            {
+                if (element.is_null())
+                {
+                    value_out = core::TypedValue::makeNull();
+                    return true;
+                }
+                if (element.is_boolean())
+                {
+                    value_out = core::TypedValue::makeBool(element.get<bool>());
+                    return true;
+                }
+                if (element.is_number_integer())
+                {
+                    value_out = core::TypedValue::makeInt64(element.get<int64_t>());
+                    return true;
+                }
+                if (element.is_number_unsigned())
+                {
+                    value_out = core::TypedValue::makeUInt64(element.get<uint64_t>());
+                    return true;
+                }
+                if (element.is_number_float())
+                {
+                    value_out = core::TypedValue::makeFloat64(element.get<double>());
+                    return true;
+                }
+                if (element.is_string())
+                {
+                    value_out = core::TypedValue::makeText(element.get<std::string>());
+                    return true;
+                }
+
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Array elements must be scalar values");
+                return false;
+            }
+
+            bool coerceArrayValueForColumn(const core::TypedValue& value,
+                                           const core::CatalogManager::ColumnInfo& column,
+                                           core::TypedValue& coerced_out,
+                                           core::ErrorContext* ctx)
+            {
+                if (value.isNull())
+                {
+                    coerced_out = core::TypedValue::makeNull(core::DataType::ARRAY);
+                    return true;
+                }
+
+                core::TypeInfo element_type = buildElementTypeInfo(column);
+                std::vector<core::TypedValue> elements;
+
+                auto coerce_element = [&](const core::TypedValue& element) -> bool
+                {
+                    if (element.isNull())
+                    {
+                        elements.push_back(core::TypedValue::makeNull(element_type.type));
+                        return true;
+                    }
+
+                    core::TypedValue coerced_element;
+                    core::ErrorContext local_ctx;
+                    core::Status status = element.convertTo(element_type,
+                                                            coerced_element,
+                                                            core::CastFormat::DEFAULT,
+                                                            &local_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        copyErrorContext(ctx, local_ctx);
+                        return false;
+                    }
+                    elements.push_back(std::move(coerced_element));
+                    return true;
+                };
+
+                if (value.type() == core::DataType::ARRAY)
+                {
+                    const auto& array_values = value.getArray();
+                    elements.reserve(array_values.size());
+                    for (const auto& element : array_values)
+                    {
+                        if (!coerce_element(element))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                else
+                {
+                    json parsed;
+                    try
+                    {
+                        parsed = json::parse(value.toString());
+                    }
+                    catch (const std::exception&)
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_TEXT_REPRESENTATION,
+                                          "Invalid JSON array literal");
+                        return false;
+                    }
+
+                    if (!parsed.is_array())
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_TEXT_REPRESENTATION,
+                                          "Expected JSON array literal");
+                        return false;
+                    }
+
+                    elements.reserve(parsed.size());
+                    for (const auto& element_json : parsed)
+                    {
+                        core::TypedValue raw_element;
+                        if (!jsonElementToValue(element_json, raw_element, ctx))
+                        {
+                            return false;
+                        }
+                        if (!coerce_element(raw_element))
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                if (column.array_size > 0 && elements.size() > column.array_size)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::OUT_OF_RANGE,
+                                      "Array value exceeds declared size");
+                    return false;
+                }
+
+                coerced_out = core::TypedValue::makeArray(elements);
+                return true;
             }
 
             void copyErrorContext(core::ErrorContext* dst, const core::ErrorContext& src)
@@ -454,6 +609,11 @@ namespace scratchbird
                                       core::TypedValue& coerced_out,
                                       core::ErrorContext* ctx)
             {
+                if (column.is_array)
+                {
+                    return coerceArrayValueForColumn(value, column, coerced_out, ctx);
+                }
+
                 core::TypeInfo target = buildTypeInfo(column);
                 core::Status status = value.convertTo(target, coerced_out,
                                                       core::CastFormat::DEFAULT, ctx);
@@ -556,6 +716,13 @@ namespace scratchbird
 
         static bool isIntegerType(core::DataType type) {
             return isSignedIntegerType(type) || isUnsignedIntegerType(type);
+        }
+
+        static bool isNumericType(core::DataType type) {
+            return isIntegerType(type) ||
+                   type == core::DataType::FLOAT32 ||
+                   type == core::DataType::FLOAT64 ||
+                   type == core::DataType::DECIMAL;
         }
 
         static core::int128_t toSigned128(const core::TypedValue& value) {
@@ -1807,6 +1974,11 @@ namespace scratchbird
                             executeDropPackageStatement();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_EXCEPTION_STMT))
+                        {
+                            executeDropExceptionStatement();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_INDEX))
                         {
                             executeAlterIndex();
@@ -2734,21 +2906,27 @@ namespace scratchbird
 
         core::DataType Executor::readColumnTypeWithDomain(core::ID& domain_id_out,
                                                           uint32_t& precision_out,
-                                                          uint32_t& scale_out)
+                                                          uint32_t& scale_out,
+                                                          bool& is_array_out,
+                                                          uint32_t& array_size_out)
         {
             precision_out = 0;
             scale_out = 0;
             domain_id_out = core::ID{};
+            is_array_out = false;
+            array_size_out = 0;
 
             Opcode type_op = static_cast<Opcode>(readByte());
             if (type_op == Opcode::TYPE_DOMAIN)
             {
                 domain_id_out = readId();
                 bool is_array = readByte() != 0;
+                uint32_t array_size = 0;
                 if (is_array)
                 {
-                    (void)readInt32();
-                    error("Array domains are not supported for column definitions yet");
+                    array_size = readInt32();
+                    is_array_out = true;
+                    array_size_out = array_size;
                 }
 
                 auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
@@ -3319,20 +3497,12 @@ namespace scratchbird
                             case ExtendedOpcode::EXT_ARRAY_CONSTRUCT:
                             {
                                 uint64_t elem_count = readUVarint();
-                                for (uint64_t i = 0; i < elem_count; ++i)
-                                {
-                                    skipExpressionRange(pc_);
-                                }
                                 break;
                             }
                             case ExtendedOpcode::EXT_IN_LIST:
                             {
                                 readByte();
                                 uint64_t value_count = readUVarint();
-                                for (uint64_t i = 0; i < value_count; ++i)
-                                {
-                                    skipExpressionRange(pc_);
-                                }
                                 break;
                             }
                             case ExtendedOpcode::EXT_SUBQUERY_SCALAR:
@@ -4703,7 +4873,13 @@ namespace scratchbird
                 uint32_t precision = 0;
                 uint32_t scale = 0;
                 core::ID domain_id{};
-                core::DataType col_type = readColumnTypeWithDomain(domain_id, precision, scale);
+                bool is_array = false;
+                uint32_t array_size = 0;
+                core::DataType col_type = readColumnTypeWithDomain(domain_id,
+                                                                   precision,
+                                                                   scale,
+                                                                   is_array,
+                                                                   array_size);
 
                 // Check for NOT_NULL constraint
                 bool nullable = true;
@@ -4879,6 +5055,8 @@ namespace scratchbird
                 col_info.type_scale = scale;
                 col_info.max_length = precision;
                 col_info.domain_id = domain_id;
+                col_info.is_array = is_array;
+                col_info.array_size = array_size;
                 col_info.nullable = nullable;
                 col_info.has_default = !default_expr_hex.empty();
                 col_info.is_primary_key = is_primary_key;
@@ -10896,6 +11074,32 @@ namespace scratchbird
                     provided[i] = true;
                 }
 
+                for (size_t i = 0; i < all_columns.size(); i++)
+                {
+                    const auto& col = all_columns[i];
+                    if (!col.is_array || row_values[i].isNull())
+                    {
+                        continue;
+                    }
+
+                    core::TypedValue coerced;
+                    core::ErrorContext cast_ctx;
+                    if (!coerceValueForColumn(row_values[i], col, coerced, &cast_ctx))
+                    {
+                        std::string err_msg = "Type mismatch for column '" + col.column_name + "'";
+                        if (!cast_ctx.message.empty())
+                        {
+                            err_msg += ": " + cast_ctx.message;
+                        }
+                        if (!cast_ctx.violating_value.empty())
+                        {
+                            err_msg += " (value: " + cast_ctx.violating_value + ")";
+                        }
+                        error(err_msg);
+                    }
+                    row_values[i] = std::move(coerced);
+                }
+
                 auto* domain_mgr = db_->domain_manager();
                 if (!domain_mgr)
                 {
@@ -11152,6 +11356,34 @@ namespace scratchbird
 
                             current_insert_values_ = saved_insert_values;
                             current_insert_columns_ = saved_insert_columns;
+
+                            for (const auto& assign : on_conflict.update_assignments)
+                            {
+                                const auto& col = all_columns[assign.column_index];
+                                if (!col.is_array || conflict_row[assign.column_index].isNull())
+                                {
+                                    continue;
+                                }
+
+                                core::TypedValue coerced;
+                                core::ErrorContext cast_ctx;
+                                if (!coerceValueForColumn(conflict_row[assign.column_index], col,
+                                                          coerced, &cast_ctx))
+                                {
+                                    std::string err_msg = "Type mismatch for column '" +
+                                                          col.column_name + "'";
+                                    if (!cast_ctx.message.empty())
+                                    {
+                                        err_msg += ": " + cast_ctx.message;
+                                    }
+                                    if (!cast_ctx.violating_value.empty())
+                                    {
+                                        err_msg += " (value: " + cast_ctx.violating_value + ")";
+                                    }
+                                    error(err_msg);
+                                }
+                                conflict_row[assign.column_index] = std::move(coerced);
+                            }
 
                             for (const auto& assign : on_conflict.update_assignments)
                             {
@@ -12945,6 +13177,33 @@ namespace scratchbird
                         pc_ = saved_pc;
                         throw;
                     }
+                }
+
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    if (!col.is_array || row_values[assign.column_index].isNull())
+                    {
+                        continue;
+                    }
+
+                    core::TypedValue coerced;
+                    core::ErrorContext cast_ctx;
+                    if (!coerceValueForColumn(row_values[assign.column_index], col,
+                                              coerced, &cast_ctx))
+                    {
+                        std::string err_msg = "Type mismatch for column '" + col.column_name + "'";
+                        if (!cast_ctx.message.empty())
+                        {
+                            err_msg += ": " + cast_ctx.message;
+                        }
+                        if (!cast_ctx.violating_value.empty())
+                        {
+                            err_msg += " (value: " + cast_ctx.violating_value + ")";
+                        }
+                        error(err_msg);
+                    }
+                    row_values[assign.column_index] = std::move(coerced);
                 }
 
                 auto* domain_mgr = db_->domain_manager();
@@ -17504,7 +17763,10 @@ namespace scratchbird
 
         void Executor::executeObjectResolverQuery(
             const std::vector<std::pair<std::string, std::string>>& select_items,
-            bool is_select_star)
+            bool is_select_star,
+            bool has_where,
+            size_t where_start_pc,
+            size_t where_end_pc)
         {
             if (!current_result_set_)
             {
@@ -17537,6 +17799,9 @@ namespace scratchbird
 
             std::vector<size_t> projection_indices;
             std::vector<std::string> projection_names;
+            auto normalize_name = [](const std::string& name) {
+                return core::IdentifierUtils::toUpper(name);
+            };
 
             if (is_select_star)
             {
@@ -17549,9 +17814,10 @@ namespace scratchbird
             {
                 for (const auto& [col_name, alias] : select_items)
                 {
+                    std::string target = normalize_name(col_name);
                     auto it = std::find_if(columns.begin(), columns.end(),
-                                           [&col_name](const auto& c) {
-                                               return c.column_name == col_name;
+                                           [&target, &normalize_name](const auto& c) {
+                                               return normalize_name(c.column_name) == target;
                                            });
                     if (it == columns.end())
                     {
@@ -17565,73 +17831,6 @@ namespace scratchbird
                 {
                     current_result_set_->addColumn(projection_names[i], core::DataType::VARCHAR);
                 }
-            }
-
-            size_t where_start_pc = 0;
-            size_t where_end_pc = 0;
-            bool has_where = false;
-
-            if (pc_ < bytecode_size_ &&
-                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
-            {
-                has_where = true;
-                readByte(); // Consume WHERE_CLAUSE opcode
-                where_start_pc = pc_;
-
-                int depth = 1;
-                while (pc_ < bytecode_size_ && depth > 0)
-                {
-                    Opcode op = static_cast<Opcode>(readByte());
-
-                    if (op == Opcode::LITERAL_INT32)
-                    {
-                        pc_ += 4;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_INT64)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_DOUBLE)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
-                    {
-                        uint32_t len = readInt32();
-                        pc_ += len;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_NULL)
-                    {
-                        depth++;
-                    }
-                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
-                    {
-                        depth--;
-                    }
-                    else if (op == Opcode::EXPR_CAST)
-                    {
-                        readByte();
-                        Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::EXTENDED_OPCODE)
-                        {
-                            pc_ += 2;
-                        }
-                        else if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
-                        {
-                            pc_ += 4;
-                        }
-                        else if (type_op == Opcode::TYPE_DECIMAL)
-                        {
-                            pc_ += 8;
-                        }
-                        pc_ += 1;  // Cast format
-                    }
-                }
-                where_end_pc = pc_;
             }
 
             bool has_aggregation = false;
@@ -17766,7 +17965,10 @@ namespace scratchbird
         bool Executor::executeVirtualCatalogQuery(
             const std::string& table_name,
             const std::vector<std::pair<std::string, std::string>>& select_items,
-            bool is_select_star)
+            bool is_select_star,
+            bool has_where,
+            size_t where_start_pc,
+            size_t where_end_pc)
         {
             catalog::VirtualCatalogRouter& router = catalog::VirtualCatalogRouter::getInstance();
             if (!router.isInitialized())
@@ -17856,6 +18058,9 @@ namespace scratchbird
 
             std::vector<size_t> projection_indices;
             std::vector<std::string> projection_names;
+            auto normalize_name = [](const std::string& name) {
+                return core::IdentifierUtils::toUpper(name);
+            };
 
             if (is_select_star)
             {
@@ -17869,9 +18074,10 @@ namespace scratchbird
             {
                 for (const auto& [col_name, alias] : select_items)
                 {
+                    std::string target = normalize_name(col_name);
                     auto it = std::find_if(columns.begin(), columns.end(),
-                                           [&col_name](const auto& c) {
-                                               return c.column_name == col_name;
+                                           [&target, &normalize_name](const auto& c) {
+                                               return normalize_name(c.column_name) == target;
                                            });
                     if (it == columns.end())
                     {
@@ -17887,73 +18093,6 @@ namespace scratchbird
                     current_result_set_->addColumn(projection_names[i],
                                                    static_cast<core::DataType>(col.data_type));
                 }
-            }
-
-            size_t where_start_pc = 0;
-            size_t where_end_pc = 0;
-            bool has_where = false;
-
-            if (pc_ < bytecode_size_ &&
-                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
-            {
-                has_where = true;
-                readByte(); // Consume WHERE_CLAUSE opcode
-                where_start_pc = pc_;
-
-                int depth = 1;
-                while (pc_ < bytecode_size_ && depth > 0)
-                {
-                    Opcode op = static_cast<Opcode>(readByte());
-
-                    if (op == Opcode::LITERAL_INT32)
-                    {
-                        pc_ += 4;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_INT64)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_DOUBLE)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
-                    {
-                        uint32_t len = readInt32();
-                        pc_ += len;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_NULL)
-                    {
-                        depth++;
-                    }
-                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
-                    {
-                        depth--;
-                    }
-                    else if (op == Opcode::EXPR_CAST)
-                    {
-                        readByte();
-                        Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::EXTENDED_OPCODE)
-                        {
-                            pc_ += 2;
-                        }
-                        else if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
-                        {
-                            pc_ += 4;
-                        }
-                        else if (type_op == Opcode::TYPE_DECIMAL)
-                        {
-                            pc_ += 8;
-                        }
-                        pc_ += 1;  // Cast format
-                    }
-                }
-                where_end_pc = pc_;
             }
 
             bool has_aggregation = false;
@@ -17975,15 +18114,26 @@ namespace scratchbird
             column_index.reserve(columns.size());
             for (size_t i = 0; i < columns.size(); ++i)
             {
-                column_index.emplace(columns[i].column_name, i);
+                column_index.emplace(normalize_name(columns[i].column_name), i);
             }
+
+            struct RowCaseGuard
+            {
+                Executor* exec;
+                bool prev;
+                ~RowCaseGuard()
+                {
+                    exec->current_row_case_insensitive_ = prev;
+                }
+            } row_case_guard{this, current_row_case_insensitive_};
+            current_row_case_insensitive_ = true;
 
             for (const auto& row : vrs.rows)
             {
                 std::vector<Value> row_values(columns.size(), Value::makeNull());
                 for (const auto& [name, value] : row.columns)
                 {
-                    auto it = column_index.find(name);
+                    auto it = column_index.find(normalize_name(name));
                     if (it != column_index.end())
                     {
                         row_values[it->second] = value;
@@ -18571,7 +18721,8 @@ namespace scratchbird
                             std::string alias = item.alias.empty() ? col_name : item.alias;
                             projection_items.push_back({col_name, alias});
                         }
-                        executeObjectResolverQuery(projection_items, has_star);
+                        executeObjectResolverQuery(projection_items, has_star,
+                                                  has_where, where_start_pc, where_end_pc);
                         return;
                     }
                 }
@@ -18638,6 +18789,40 @@ namespace scratchbird
                             }
                         }
 
+                        if (!table_name.empty())
+                        {
+                            bool has_star = false;
+                            std::vector<std::pair<std::string, std::string>> projection_items;
+                            bool has_expr = false;
+
+                            for (const auto& item : select_items)
+                            {
+                                if (item.kind == SelectItemInfo::Kind::STAR)
+                                {
+                                    has_star = true;
+                                    continue;
+                                }
+                                if (item.kind == SelectItemInfo::Kind::TABLE_STAR)
+                                {
+                                    error("TABLE.* not supported for virtual catalogs");
+                                }
+                                std::string col_name;
+                                if (!infer_simple_column_ref(item.expr_start, item.expr_end, col_name))
+                                {
+                                    has_expr = true;
+                                    break;
+                                }
+                                std::string alias = item.alias.empty() ? col_name : item.alias;
+                                projection_items.push_back({col_name, alias});
+                            }
+
+                            if (!has_expr && executeVirtualCatalogQuery(table_name, projection_items, has_star,
+                                                                       has_where, where_start_pc, where_end_pc))
+                            {
+                                return;
+                            }
+                        }
+
                         error("Table or view not found: " + table_name);
                     }
                     else
@@ -18678,7 +18863,8 @@ namespace scratchbird
                         projection_items.push_back({col_name, alias});
                     }
 
-                    if (!has_expr && executeVirtualCatalogQuery(table_name, projection_items, has_star))
+                    if (!has_expr && executeVirtualCatalogQuery(table_name, projection_items, has_star,
+                                                               has_where, where_start_pc, where_end_pc))
                     {
                         return;
                     }
@@ -20501,7 +20687,7 @@ namespace scratchbird
             std::string table_name = readString();
 
             auto timing = static_cast<core::CatalogManager::TriggerTiming>(readByte());
-            auto event = static_cast<core::CatalogManager::TriggerEvent>(readByte());
+            uint8_t event_mask = readByte();
             auto granularity = static_cast<core::CatalogManager::TriggerGranularity>(readByte());
 
             std::string procedure_name = readString();
@@ -20536,7 +20722,7 @@ namespace scratchbird
             trigger_info.table_id = table_info.table_id;
             trigger_info.table_name = table_info.table_name;
             trigger_info.timing = timing;
-            trigger_info.event = event;
+            trigger_info.event_mask = event_mask;
             trigger_info.granularity = granularity;
             trigger_info.procedure_name = procedure_name;
             trigger_info.enabled = true;
@@ -21053,6 +21239,16 @@ namespace scratchbird
                     auto it = std::find_if(current_row_columns_->begin(),
                                            current_row_columns_->end(), [&col_name](const auto &c)
                                            { return c.column_name == col_name; });
+
+                    if (it == current_row_columns_->end() && current_row_case_insensitive_)
+                    {
+                        std::string target = scratchbird::core::IdentifierUtils::toUpper(col_name);
+                        it = std::find_if(current_row_columns_->begin(),
+                                          current_row_columns_->end(),
+                                          [&target](const auto& c) {
+                                              return scratchbird::core::IdentifierUtils::toUpper(c.column_name) == target;
+                                          });
+                    }
 
                     if (it == current_row_columns_->end())
                     {
@@ -23502,12 +23698,12 @@ namespace scratchbird
                     // Array construction (Phase 2 Task 12)
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_CONSTRUCT))
                     {
-                        uint8_t count = readByte();
+                        uint64_t count = readUVarint();
 
                         // Pop all elements from stack (in reverse order)
                         std::vector<Value> elements;
-                        elements.reserve(count);
-                        for (uint8_t i = 0; i < count; i++)
+                        elements.reserve(static_cast<size_t>(count));
+                        for (uint64_t i = 0; i < count; i++)
                         {
                             elements.push_back(pop());
                         }
@@ -25756,12 +25952,18 @@ namespace scratchbird
                     // WP-6 PARSE-3: IN value list operator
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_IN_LIST))
                     {
-                        // Format: EXT_IN_LIST | negated (1 byte) | array_value on stack | test_value on stack
+                        // Format: EXT_IN_LIST | negated (1 byte) | count (varint) | list values on stack | test value
                         uint8_t negated = readByte();
+                        uint64_t value_count = readUVarint();
 
-                        // Pop values: RHS is an array of values to check membership in
-                        // Stack order: bottom=[test_value] top=[array_value]
-                        Value array_value = pop();
+                        // Pop list values (reverse order) then test value.
+                        std::vector<Value> values;
+                        values.reserve(static_cast<size_t>(value_count));
+                        for (uint64_t i = 0; i < value_count; ++i)
+                        {
+                            values.push_back(pop());
+                        }
+                        std::reverse(values.begin(), values.end());
                         Value test_value = pop();
 
                         if (test_value.isNull())
@@ -25769,68 +25971,57 @@ namespace scratchbird
                             // NULL IN (...) is NULL (SQL semantics)
                             push(Value::makeNull());
                         }
-                        else if (array_value.isNull())
-                        {
-                            // x IN (NULL) is NULL
-                            push(Value::makeNull());
-                        }
                         else
                         {
-                            // Parse the array value as JSON array
-                            try {
-                                json j_array = json::parse(array_value.toString());
-                                if (!j_array.is_array())
+                            bool found = false;
+                            bool saw_null = false;
+                            std::string test_str = test_value.toString();
+
+                            for (const auto& val : values)
+                            {
+                                if (val.isNull())
                                 {
-                                    // If not an array, single value comparison
-                                    bool found = (test_value.toString() == array_value.toString());
-                                    push(Value::makeBoolean(negated ? !found : found));
+                                    saw_null = true;
+                                    continue;
                                 }
-                                else
+
+                                std::string elem_str = val.toString();
+                                if (test_str == elem_str)
                                 {
-                                    // Check if test_value is in the array
-                                    bool found = false;
-                                    std::string test_str = test_value.toString();
+                                    found = true;
+                                    break;
+                                }
 
-                                    for (const auto& elem : j_array)
+                                if (isNumericType(val.type()) && isNumericType(test_value.type()))
+                                {
+                                    try
                                     {
-                                        std::string elem_str;
-                                        if (elem.is_string())
-                                            elem_str = elem.get<std::string>();
-                                        else if (elem.is_null())
-                                            continue; // NULL in list doesn't match
-                                        else
-                                            elem_str = elem.dump();
-
-                                        // Compare values (type-aware comparison would be better)
-                                        if (test_str == elem_str)
+                                        double test_num = std::stod(test_str);
+                                        double elem_num = std::stod(elem_str);
+                                        if (test_num == elem_num)
                                         {
                                             found = true;
                                             break;
                                         }
-
-                                        // Try numeric comparison for numbers
-                                        if (elem.is_number())
-                                        {
-                                            try {
-                                                double test_num = std::stod(test_str);
-                                                double elem_num = elem.get<double>();
-                                                if (test_num == elem_num)
-                                                {
-                                                    found = true;
-                                                    break;
-                                                }
-                                            } catch (...) {
-                                                // Not a number, continue with string comparison
-                                            }
-                                        }
                                     }
-
-                                    push(Value::makeBoolean(negated ? !found : found));
+                                    catch (...)
+                                    {
+                                        // Fall back to string comparison
+                                    }
                                 }
-                            } catch (const json::exception& e) {
-                                // If not valid JSON, treat as single value comparison
-                                bool found = (test_value.toString() == array_value.toString());
-                                push(Value::makeBoolean(negated ? !found : found));
+                            }
+
+                            if (found)
+                            {
+                                push(Value::makeBoolean(!negated));
+                            }
+                            else if (saw_null)
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                push(Value::makeBoolean(negated != 0));
                             }
                         }
                     }
@@ -29736,6 +29927,9 @@ namespace scratchbird
 
                 // Deserialize value based on column type
                 core::DataType col_type = static_cast<core::DataType>(columns[i].data_type);
+                core::DataType storage_type = columns[i].is_array
+                                                  ? core::DataType::ARRAY
+                                                  : col_type;
 
                 core::ErrorContext enc_ctx;
                 auto enc_state = getColumnEncryptionState(db_, columns[i], &enc_ctx);
@@ -29745,7 +29939,7 @@ namespace scratchbird
                 }
                 if (enc_state == ColumnEncryptionState::ENCRYPTED)
                 {
-                    Value enc_value(col_type);
+                    Value enc_value(storage_type);
                     if (!readEncryptedValue(tuple_data, tuple_size, data_offset, enc_value, &enc_ctx))
                     {
                         return false;
@@ -29759,7 +29953,7 @@ namespace scratchbird
                 }
 
                 core::ErrorContext local_ctx;
-                core::TypedValue value(static_cast<core::DataType>(columns[i].data_type));
+                core::TypedValue value(storage_type);
                 if (value.type() == core::DataType::DECIMAL)
                 {
                     uint32_t precision = columns[i].type_precision != 0
@@ -29797,7 +29991,8 @@ namespace scratchbird
                 }
 
                 // Enforce VARCHAR/CHAR length if metadata exists (character count, UTF-8)
-                if ((col_type == core::DataType::CHAR ||
+                if (!columns[i].is_array &&
+                    (col_type == core::DataType::CHAR ||
                      col_type == core::DataType::VARCHAR) &&
                     columns[i].type_precision > 0)
                 {
@@ -34190,15 +34385,41 @@ namespace scratchbird
             return out.str();
         }
 
-        static std::string triggerEventToString(core::CatalogManager::TriggerEvent event)
+        static std::string triggerEventMaskToString(uint8_t mask)
         {
-            switch (event)
+            std::vector<std::string> parts;
+            if (mask & (1u << static_cast<uint8_t>(core::CatalogManager::TriggerEvent::INSERT)))
             {
-                case core::CatalogManager::TriggerEvent::INSERT: return "INSERT";
-                case core::CatalogManager::TriggerEvent::UPDATE: return "UPDATE";
-                case core::CatalogManager::TriggerEvent::DELETE: return "DELETE";
-                default: return "UNKNOWN";
+                parts.emplace_back("INSERT");
             }
+            if (mask & (1u << static_cast<uint8_t>(core::CatalogManager::TriggerEvent::UPDATE)))
+            {
+                parts.emplace_back("UPDATE");
+            }
+            if (mask & (1u << static_cast<uint8_t>(core::CatalogManager::TriggerEvent::DELETE)))
+            {
+                parts.emplace_back("DELETE");
+            }
+            if (mask & (1u << 3))
+            {
+                parts.emplace_back("TRUNCATE");
+            }
+
+            if (parts.empty())
+            {
+                return "UNKNOWN";
+            }
+
+            std::ostringstream out;
+            for (size_t i = 0; i < parts.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    out << " OR ";
+                }
+                out << parts[i];
+            }
+            return out.str();
         }
 
         static std::string triggerTimingToString(core::CatalogManager::TriggerTiming timing)
@@ -35269,7 +35490,7 @@ namespace scratchbird
             current_result_set_->addRow({Value::makeVarchar("Table"),
                                          Value::makeVarchar(redact_trigger ? "Redacted" : table_path)});
             current_result_set_->addRow({Value::makeVarchar("Event"),
-                                         Value::makeVarchar(triggerEventToString(trigger_info.event))});
+                                         Value::makeVarchar(triggerEventMaskToString(trigger_info.event_mask))});
             current_result_set_->addRow({Value::makeVarchar("Timing"),
                                          Value::makeVarchar(triggerTimingToString(trigger_info.timing))});
             current_result_set_->addRow({Value::makeVarchar("Granularity"),
@@ -44429,6 +44650,8 @@ namespace scratchbird
 
         void Executor::executeCreateExceptionStatement()
         {
+            uint8_t flags = readByte();
+            bool or_replace = (flags & 0x01) != 0;
             std::string exception_name = readString();
             std::string message = readString();
 
@@ -44448,6 +44671,26 @@ namespace scratchbird
             }
 
             core::ID exception_id;
+            core::CatalogManager::ExceptionInfo existing;
+            auto existing_status = db_->catalog_manager()->getExceptionByName(schema_id,
+                                                                              resolved_exception_name,
+                                                                              existing,
+                                                                              &ctx);
+            if (existing_status == core::Status::OK) {
+                if (!or_replace) {
+                    error("Exception already exists: '" + resolved_exception_name + "'");
+                }
+                auto drop_status = db_->catalog_manager()->dropException(existing.exception_id, false, &ctx);
+                if (drop_status != core::Status::OK) {
+                    std::string err_msg = "Failed to replace exception '" + resolved_exception_name + "'";
+                    if (!ctx.message.empty()) {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+                deleteObjectDefinition(core::CatalogManager::ObjectType::EXCEPTION, existing.exception_id);
+            }
+
             auto status = db_->catalog_manager()->createException(schema_id, resolved_exception_name,
                                                                   message, exception_id, &ctx);
             if (status != core::Status::OK)
@@ -44613,6 +44856,56 @@ namespace scratchbird
                                                         core::CatalogManager::ObjectType::PACKAGE,
                                                         {},
                                                         &ctx);
+        }
+
+        void Executor::executeDropExceptionStatement()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            std::string exception_name = readString();
+
+            core::ErrorContext ctx;
+            core::ID exception_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                exception_name, core::CatalogManager::ObjectType::EXCEPTION,
+                exception_id, resolved_type, nullptr, &ctx, false);
+            if (status != core::Status::OK)
+            {
+                if (if_exists && status == core::Status::NOT_FOUND)
+                {
+                    return;
+                }
+                std::string msg = "Exception not found: '" + exception_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            core::CatalogManager::ExceptionInfo ex_info;
+            status = db_->catalog_manager()->getException(exception_id, ex_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (if_exists && status == core::Status::NOT_FOUND)
+                {
+                    return;
+                }
+                std::string msg = "Failed to drop exception '" + exception_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            status = db_->catalog_manager()->dropException(ex_info.exception_id, false, &ctx);
+            if (status != core::Status::OK && !(if_exists && status == core::Status::NOT_FOUND))
+            {
+                std::string msg = "Failed to drop exception '" + exception_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            if (status == core::Status::OK)
+            {
+                deleteObjectDefinition(core::CatalogManager::ObjectType::EXCEPTION, ex_info.exception_id);
+            }
         }
 
         void Executor::executeExplainPlan()
@@ -45633,6 +45926,176 @@ namespace scratchbird
                 column_names.push_back(readString());
             }
 
+            struct CopyOptions
+            {
+                enum class Format : uint8_t
+                {
+                    TEXT = 1,
+                    CSV = 2,
+                    BINARY = 3
+                };
+
+                Format format = Format::TEXT;
+                char delimiter = '\t';
+                std::string null_string = "\\N";
+                bool header = false;
+                char quote = '"';
+                char escape = '\\';
+                std::string encoding;
+            };
+
+            auto to_upper = [](const std::string& input) {
+                std::string out;
+                out.reserve(input.size());
+                for (char c : input)
+                {
+                    out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                }
+                return out;
+            };
+
+            CopyOptions options;
+            uint8_t format_raw = readByte();
+            if (format_raw == static_cast<uint8_t>(CopyOptions::Format::TEXT))
+            {
+                options.format = CopyOptions::Format::TEXT;
+            }
+            else if (format_raw == static_cast<uint8_t>(CopyOptions::Format::CSV))
+            {
+                options.format = CopyOptions::Format::CSV;
+            }
+            else if (format_raw == static_cast<uint8_t>(CopyOptions::Format::BINARY))
+            {
+                error("COPY FORMAT BINARY is not supported");
+            }
+            else
+            {
+                error("Unsupported COPY format");
+            }
+
+            std::string delimiter_str = readString();
+            if (delimiter_str.size() != 1)
+            {
+                error("COPY DELIMITER must be a single character");
+            }
+            options.delimiter = delimiter_str[0];
+
+            options.null_string = readString();
+            options.header = readByte() != 0;
+
+            std::string quote_str = readString();
+            if (!quote_str.empty() && quote_str.size() != 1)
+            {
+                error("COPY QUOTE must be a single character");
+            }
+            if (!quote_str.empty())
+            {
+                options.quote = quote_str[0];
+            }
+
+            std::string escape_str = readString();
+            const bool escape_explicit = !escape_str.empty();
+            if (!escape_str.empty() && escape_str.size() != 1)
+            {
+                error("COPY ESCAPE must be a single character");
+            }
+            if (!escape_str.empty())
+            {
+                options.escape = escape_str[0];
+            }
+            if (options.format == CopyOptions::Format::CSV && !escape_explicit)
+            {
+                options.escape = options.quote;
+            }
+
+            options.encoding = readString();
+            if (!options.encoding.empty())
+            {
+                auto enc_upper = to_upper(options.encoding);
+                if (enc_upper != "UTF8" && enc_upper != "UTF-8")
+                {
+                    error("COPY ENCODING is not supported");
+                }
+            }
+
+            auto escape_text_field = [&](const std::string& value) {
+                std::string out;
+                out.reserve(value.size() + 8);
+                for (char c : value)
+                {
+                    switch (c)
+                    {
+                        case '\n': out += "\\n"; break;
+                        case '\r': out += "\\r"; break;
+                        case '\t': out += "\\t"; break;
+                        case '\\': out += "\\\\"; break;
+                        default:
+                            if (c == options.delimiter)
+                            {
+                                out.push_back('\\');
+                            }
+                            out.push_back(c);
+                            break;
+                    }
+                }
+                return out;
+            };
+
+            auto escape_csv_field = [&](const std::string& value) {
+                bool needs_quotes = value.empty() && options.null_string.empty();
+                for (char c : value)
+                {
+                    if (c == options.delimiter || c == options.quote || c == '\n' || c == '\r')
+                    {
+                        needs_quotes = true;
+                        break;
+                    }
+                }
+                if (!needs_quotes)
+                {
+                    return value;
+                }
+                std::string out;
+                out.push_back(options.quote);
+                for (char c : value)
+                {
+                    if (c == options.quote)
+                    {
+                        if (options.escape == options.quote)
+                        {
+                            out.push_back(options.quote);
+                        }
+                        else
+                        {
+                            out.push_back(options.escape);
+                        }
+                        out.push_back(c);
+                        continue;
+                    }
+                    if (options.escape != options.quote && c == options.escape)
+                    {
+                        out.push_back(options.escape);
+                        out.push_back(c);
+                        continue;
+                    }
+                    out.push_back(c);
+                }
+                out.push_back(options.quote);
+                return out;
+            };
+
+            auto format_field = [&](const std::string& value, bool is_null) {
+                if (is_null)
+                {
+                    return options.null_string;
+                }
+                if (options.format == CopyOptions::Format::CSV)
+                {
+                    return escape_csv_field(value);
+                }
+                return escape_text_field(value);
+            };
+
             auto require_copy_file_privilege = [&](const std::string& file_target) {
                 if (file_target.empty() ||
                     file_target == "STDIN" ||
@@ -45665,16 +46128,27 @@ namespace scratchbird
                 {
                     error("COPY (SELECT ...) does not support column lists");
                 }
-                if (target == "STDOUT")
-                {
-                    error("COPY TO STDOUT is not supported in the executor");
-                }
                 if (target.empty())
                 {
                     error("COPY TO requires a target file");
                 }
 
-                require_copy_file_privilege(target);
+                std::ofstream file_out;
+                std::ostream* out = nullptr;
+                if (target == "STDOUT")
+                {
+                    out = copy_output_stream_ ? copy_output_stream_ : &std::cout;
+                }
+                else
+                {
+                    require_copy_file_privilege(target);
+                    file_out.open(target);
+                    if (!file_out)
+                    {
+                        error("Failed to open COPY target file: " + target);
+                    }
+                    out = &file_out;
+                }
 
                 uint64_t query_len = readUVarint();
                 if (query_len == 0)
@@ -45722,23 +46196,29 @@ namespace scratchbird
                     current_result_set_ = std::move(saved_result_set);
                 }
 
-                std::ofstream out(target);
-                if (!out)
-                {
-                    error("Failed to open COPY target file: " + target);
-                }
-
                 size_t row_count = 0;
                 if (query_results)
                 {
+                    if (options.header)
+                    {
+                        for (size_t c = 0; c < query_results->columnCount(); ++c)
+                        {
+                            if (c > 0) (*out) << options.delimiter;
+                            (*out) << format_field(query_results->columnName(c), false);
+                        }
+                        (*out) << '\n';
+                    }
+
                     for (size_t r = 0; r < query_results->rowCount(); ++r)
                     {
                         for (size_t c = 0; c < query_results->columnCount(); ++c)
                         {
-                            if (c > 0) out << '\t';
-                            out << query_results->getValue(r, c).toString();
+                            const auto& val = query_results->getValue(r, c);
+                            std::string text = val.isNull() ? std::string() : val.toString();
+                            if (c > 0) (*out) << options.delimiter;
+                            (*out) << format_field(text, val.isNull());
                         }
-                        out << '\n';
+                        (*out) << '\n';
                         row_count++;
                     }
                 }
@@ -45808,16 +46288,27 @@ namespace scratchbird
 
             if (direction == 2)
             {
-                if (target == "STDOUT")
-                {
-                    error("COPY TO STDOUT is not supported in the executor");
-                }
                 if (target.empty())
                 {
                     error("COPY TO requires a target file");
                 }
 
-                require_copy_file_privilege(target);
+                std::ofstream file_out;
+                std::ostream* out = nullptr;
+                if (target == "STDOUT")
+                {
+                    out = copy_output_stream_ ? copy_output_stream_ : &std::cout;
+                }
+                else
+                {
+                    require_copy_file_privilege(target);
+                    file_out.open(target);
+                    if (!file_out)
+                    {
+                        error("Failed to open COPY target file: " + target);
+                    }
+                    out = &file_out;
+                }
 
                 bool has_table_select = true;
                 std::vector<std::string> accessible_columns;
@@ -45857,12 +46348,6 @@ namespace scratchbird
                     }
                 }
 
-                std::ofstream out(target);
-                if (!out)
-                {
-                    error("Failed to open COPY target file: " + target);
-                }
-
                 auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
                 if (!scan_iter)
                 {
@@ -45871,6 +46356,16 @@ namespace scratchbird
 
                 core::Tuple tuple;
                 size_t row_count = 0;
+                if (options.header)
+                {
+                    for (size_t i = 0; i < col_indices.size(); ++i)
+                    {
+                        const auto& col_name = all_columns[col_indices[i]].column_name;
+                        if (i > 0) (*out) << options.delimiter;
+                        (*out) << format_field(col_name, false);
+                    }
+                    (*out) << '\n';
+                }
                 while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
                 {
                     std::vector<Value> row_values;
@@ -45881,10 +46376,12 @@ namespace scratchbird
 
                     for (size_t i = 0; i < col_indices.size(); ++i)
                     {
-                        if (i > 0) out << '\t';
-                        out << row_values[col_indices[i]].toString();
+                        const auto& val = row_values[col_indices[i]];
+                        std::string text = val.isNull() ? std::string() : val.toString();
+                        if (i > 0) (*out) << options.delimiter;
+                        (*out) << format_field(text, val.isNull());
                     }
-                    out << '\n';
+                    (*out) << '\n';
                     row_count++;
                 }
 
@@ -45892,16 +46389,27 @@ namespace scratchbird
             }
             else if (direction == 1)
             {
-                if (target == "STDIN")
-                {
-                    error("COPY FROM STDIN is not supported in the executor");
-                }
                 if (target.empty())
                 {
                     error("COPY FROM requires a source file");
                 }
 
-                require_copy_file_privilege(target);
+                std::ifstream file_in;
+                std::istream* in = nullptr;
+                if (target == "STDIN")
+                {
+                    in = copy_input_stream_ ? copy_input_stream_ : &std::cin;
+                }
+                else
+                {
+                    require_copy_file_privilege(target);
+                    file_in.open(target);
+                    if (!file_in)
+                    {
+                        error("Failed to open COPY source file: " + target);
+                    }
+                    in = &file_in;
+                }
 
                 bool has_table_insert = true;
                 std::vector<std::string> accessible_columns;
@@ -46151,6 +46659,32 @@ namespace scratchbird
 
                         row_values[i] = std::move(generated_val);
                         provided[i] = true;
+                    }
+
+                    for (size_t i = 0; i < all_columns.size(); i++)
+                    {
+                        const auto& col = all_columns[i];
+                        if (!col.is_array || row_values[i].isNull())
+                        {
+                            continue;
+                        }
+
+                        core::TypedValue coerced;
+                        core::ErrorContext cast_ctx;
+                        if (!coerceValueForColumn(row_values[i], col, coerced, &cast_ctx))
+                        {
+                            std::string err_msg = "Type mismatch for column '" + col.column_name + "'";
+                            if (!cast_ctx.message.empty())
+                            {
+                                err_msg += ": " + cast_ctx.message;
+                            }
+                            if (!cast_ctx.violating_value.empty())
+                            {
+                                err_msg += " (value: " + cast_ctx.violating_value + ")";
+                            }
+                            error(err_msg);
+                        }
+                        row_values[i] = std::move(coerced);
                     }
 
                     auto* domain_mgr = db_->domain_manager();
@@ -46539,40 +47073,168 @@ namespace scratchbird
                     return true;
                 };
 
-                auto split_fields = [](const std::string& line, char delimiter) {
-                    std::vector<std::string> fields;
-                    std::string field;
-                    for (char c : line)
-                    {
-                        if (c == delimiter)
-                        {
-                            fields.push_back(field);
-                            field.clear();
-                        }
-                        else
-                        {
-                            field.push_back(c);
-                        }
-                    }
-                    fields.push_back(field);
-                    return fields;
+                struct ParsedField
+                {
+                    bool is_null = false;
+                    bool quoted = false;
+                    std::string value;
                 };
 
-                std::ifstream in(target);
-                if (!in)
-                {
-                    error("Failed to open COPY source file: " + target);
-                }
+                auto parse_text_line = [&](const std::string& line,
+                                           std::vector<ParsedField>& fields) {
+                    std::string raw;
+                    std::string decoded;
+                    bool escaping = false;
+
+                    auto finish_field = [&]() {
+                        ParsedField field;
+                        field.is_null = (raw == options.null_string);
+                        if (!field.is_null)
+                        {
+                            field.value = decoded;
+                        }
+                        fields.push_back(std::move(field));
+                        raw.clear();
+                        decoded.clear();
+                    };
+
+                    for (char c : line)
+                    {
+                        if (!escaping && c == options.delimiter)
+                        {
+                            finish_field();
+                            continue;
+                        }
+                        if (!escaping && c == '\\')
+                        {
+                            raw.push_back(c);
+                            escaping = true;
+                            continue;
+                        }
+                        if (escaping)
+                        {
+                            raw.push_back(c);
+                            switch (c)
+                            {
+                                case 'n': decoded.push_back('\n'); break;
+                                case 'r': decoded.push_back('\r'); break;
+                                case 't': decoded.push_back('\t'); break;
+                                case '\\': decoded.push_back('\\'); break;
+                                default: decoded.push_back(c); break;
+                            }
+                            escaping = false;
+                            continue;
+                        }
+                        raw.push_back(c);
+                        decoded.push_back(c);
+                    }
+                    finish_field();
+                };
+
+                auto parse_csv_line = [&](const std::string& line,
+                                          std::vector<ParsedField>& fields,
+                                          std::string& err) -> bool {
+                    std::string field;
+                    bool in_quotes = false;
+                    bool quoted = false;
+
+                    auto finish_field = [&]() {
+                        ParsedField pf;
+                        pf.quoted = quoted;
+                        pf.is_null = (!quoted && field == options.null_string);
+                        if (!pf.is_null)
+                        {
+                            pf.value = field;
+                        }
+                        fields.push_back(std::move(pf));
+                        field.clear();
+                        quoted = false;
+                    };
+
+                    for (size_t i = 0; i < line.size(); ++i)
+                    {
+                        char c = line[i];
+                        if (in_quotes)
+                        {
+                            if (options.escape != options.quote && c == options.escape)
+                            {
+                                if (i + 1 < line.size())
+                                {
+                                    field.push_back(line[i + 1]);
+                                    ++i;
+                                    continue;
+                                }
+                            }
+                            if (c == options.quote)
+                            {
+                                if (i + 1 < line.size() && line[i + 1] == options.quote)
+                                {
+                                    field.push_back(options.quote);
+                                    ++i;
+                                    continue;
+                                }
+                                in_quotes = false;
+                                continue;
+                            }
+                            field.push_back(c);
+                            continue;
+                        }
+
+                        if (c == options.quote && field.empty())
+                        {
+                            in_quotes = true;
+                            quoted = true;
+                            continue;
+                        }
+
+                        if (c == options.delimiter)
+                        {
+                            finish_field();
+                            continue;
+                        }
+
+                        field.push_back(c);
+                    }
+
+                    if (in_quotes)
+                    {
+                        err = "COPY CSV missing closing quote";
+                        return false;
+                    }
+                    finish_field();
+                    return true;
+                };
 
                 std::string line;
                 int affected_count = 0;
-                while (std::getline(in, line))
+                bool skipped_header = false;
+                while (std::getline(*in, line))
                 {
                     if (!line.empty() && line.back() == '\r')
                     {
                         line.pop_back();
                     }
-                    auto fields = split_fields(line, '\t');
+
+                    if (options.header && !skipped_header)
+                    {
+                        skipped_header = true;
+                        continue;
+                    }
+
+                    std::vector<ParsedField> fields;
+                    std::string parse_error;
+                    if (options.format == CopyOptions::Format::CSV)
+                    {
+                        if (!parse_csv_line(line, fields, parse_error))
+                        {
+                            error(parse_error.empty() ? "COPY CSV parse error" : parse_error);
+                        }
+                    }
+                    else
+                    {
+                        parse_text_line(line, fields);
+                    }
+
                     if (fields.size() != col_indices.size())
                     {
                         error("COPY row has " + std::to_string(fields.size()) +
@@ -46583,13 +47245,13 @@ namespace scratchbird
                     input_values.reserve(fields.size());
                     for (const auto& field : fields)
                     {
-                        if (field == "\\N" || field == "NULL")
+                        if (field.is_null)
                         {
                             input_values.push_back(Value::makeNull());
                         }
                         else
                         {
-                            input_values.push_back(Value::makeVarchar(field));
+                            input_values.push_back(Value::makeVarchar(field.value));
                         }
                     }
 

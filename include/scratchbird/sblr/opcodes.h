@@ -986,6 +986,7 @@ namespace scratchbird
             EXT_ALTER_INDEX = 0x0317,  // ALTER INDEX index_name {ACTIVE|INACTIVE}
             EXT_CREATE_EXCEPTION_STMT = 0x0318,  // CREATE EXCEPTION exception_name 'message'
             EXT_TABLE_OPTIONS = 0x0319,  // CREATE TABLE table options payload (MySQL emulation)
+            EXT_DROP_EXCEPTION_STMT = 0x031A,  // DROP EXCEPTION [IF EXISTS] exception_name
             EXT_CREATE_DB_TRIGGER = 0x6D,  // CREATE TRIGGER (database trigger)
             EXT_DROP_DB_TRIGGER = 0x6E,  // DROP TRIGGER (database trigger)
             EXT_FIRE_DB_TRIGGER = 0x6F,  // Internal: Fire database trigger

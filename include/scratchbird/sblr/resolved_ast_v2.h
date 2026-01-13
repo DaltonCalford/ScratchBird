@@ -579,6 +579,23 @@ struct ResolvedDeleteStmt : public ResolvedStatement {
 /**
  * Resolved COPY statement
  */
+struct ResolvedCopyOptions {
+    enum class Format : uint8_t {
+        TEXT = 0,
+        CSV = 1,
+        BINARY = 2
+    };
+
+    Format format = Format::TEXT;
+    char delimiter = '\t';
+    std::string null_string = "\\N";
+    bool header = false;
+
+    char quote = '"';
+    char escape = '\\';
+    std::string encoding;
+};
+
 struct ResolvedCopyStmt : public ResolvedStatement {
     bool has_table = false;
     ResolvedTableRef target_table;
@@ -597,6 +614,8 @@ struct ResolvedCopyStmt : public ResolvedStatement {
     bool target_is_stdin = false;
     bool target_is_stdout = false;
     StringPool::StringId target = StringPool::INVALID_ID;  // File path when not STDIN/STDOUT
+
+    ResolvedCopyOptions options;
 };
 
 // =============================================================================
@@ -773,7 +792,7 @@ struct ResolvedCreateTriggerStmt : public ResolvedStatement {
     SchemaPath table_path;
     bool active = true;
     TriggerTiming timing = TriggerTiming::BEFORE;
-    TriggerEvent event = TriggerEvent::INSERT;
+    uint8_t event_mask = 1u << static_cast<uint8_t>(TriggerEvent::INSERT);
     TriggerGranularity granularity = TriggerGranularity::FOR_EACH_ROW;
     std::string body;
 };
@@ -803,6 +822,7 @@ struct ResolvedCreateRoleStmt : public ResolvedStatement {
 struct ResolvedCreateExceptionStmt : public ResolvedStatement {
     ResolvedSchemaRef schema;
     StringPool::StringId exception_name = StringPool::INVALID_ID;
+    bool or_replace = false;
     std::string message;
 };
 
@@ -996,6 +1016,12 @@ struct ResolvedDropStmt : public ResolvedStatement {
         VIEW,
         INDEX,
         SEQUENCE,
+        FUNCTION,
+        PROCEDURE,
+        TRIGGER,
+        PACKAGE,
+        ROLE,
+        EXCEPTION,
     };
 
     ObjectType object_type;

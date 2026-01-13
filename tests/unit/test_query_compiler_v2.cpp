@@ -208,6 +208,106 @@ TEST_F(QueryCompilerV2Test, ExecuteCreateTableWithDomainColumn_DefaultPublicSche
     EXPECT_EQ(column_info.data_type, static_cast<uint16_t>(domain_info.base_type));
 }
 
+TEST_F(QueryCompilerV2Test, DomainDefaultAppliedWhenColumnDefaultMissing) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_domain = compileAndExecute("CREATE DOMAIN d_text AS VARCHAR(10) DEFAULT 'alpha'");
+    ASSERT_TRUE(create_domain.success()) << create_domain.error();
+
+    auto create_table = compileAndExecute("CREATE TABLE domain_default_table (val d_text)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto insert_row = compileAndExecute("INSERT INTO domain_default_table DEFAULT VALUES");
+    ASSERT_TRUE(insert_row.success()) << insert_row.error();
+
+    auto select_row = compileAndExecute("SELECT val FROM domain_default_table");
+    ASSERT_TRUE(select_row.success()) << select_row.error();
+    ASSERT_TRUE(select_row.hasResultSet());
+
+    auto* results = select_row.resultSet();
+    ASSERT_EQ(results->rowCount(), 1u);
+    EXPECT_EQ(results->getValue(0, 0).toString(), "alpha");
+}
+
+TEST_F(QueryCompilerV2Test, InformationSchemaColumnsReportsDomainName) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_domain = compileAndExecute("CREATE DOMAIN d_info AS INT");
+    ASSERT_TRUE(create_domain.success()) << create_domain.error();
+
+    auto create_table = compileAndExecute("CREATE TABLE domain_info_table (val d_info)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    ErrorContext ctx;
+    CatalogManager::SchemaInfo schema_info;
+    auto status = catalog_->getSchema(test_schema_id_, schema_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    std::string schema_name = schema_info.full_path.empty()
+        ? schema_info.schema_name
+        : schema_info.full_path;
+
+    std::string sql =
+        "SELECT domain_name FROM information_schema.columns "
+        "WHERE table_schema = '" + schema_name +
+        "' AND table_name = 'domain_info_table' AND column_name = 'val'";
+    auto select_row = compileAndExecute(sql);
+    ASSERT_TRUE(select_row.success()) << select_row.error();
+    ASSERT_TRUE(select_row.hasResultSet());
+
+    auto* results = select_row.resultSet();
+    ASSERT_EQ(results->rowCount(), 1u);
+    EXPECT_EQ(results->getValue(0, 0).toString(), "d_info");
+}
+
+TEST_F(QueryCompilerV2Test, DomainArrayEnforcesConstraintsAndSize) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_domain = compileAndExecute("CREATE DOMAIN positive_int AS INT CHECK (VALUE > 0)");
+    ASSERT_TRUE(create_domain.success()) << create_domain.error();
+
+    auto create_table = compileAndExecute("CREATE TABLE domain_array_table (vals positive_int[2])");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    auto status = catalog_->getTable(test_schema_id_, "domain_array_table", table_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    CatalogManager::ColumnInfo column_info;
+    status = catalog_->getColumn(table_info.table_id, "vals", column_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_TRUE(column_info.is_array);
+    EXPECT_EQ(column_info.array_size, 2u);
+
+    DomainInfo domain_info;
+    status = db_.domain_manager()->getDomain(test_schema_id_, "positive_int", domain_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(column_info.domain_id, domain_info.domain_id);
+
+    auto insert_ok = compileAndExecute("INSERT INTO domain_array_table (vals) VALUES (ARRAY[1, 2])");
+    ASSERT_TRUE(insert_ok.success()) << insert_ok.error();
+
+    auto select_row = compileAndExecute("SELECT vals FROM domain_array_table");
+    ASSERT_TRUE(select_row.success()) << select_row.error();
+    ASSERT_TRUE(select_row.hasResultSet());
+
+    auto* results = select_row.resultSet();
+    ASSERT_EQ(results->rowCount(), 1u);
+    EXPECT_EQ(results->getValue(0, 0).toString(), "{1, 2}");
+
+    auto insert_bad_size = compileAndExecute("INSERT INTO domain_array_table (vals) VALUES (ARRAY[1, 2, 3])");
+    EXPECT_FALSE(insert_bad_size.success());
+
+    auto insert_bad_value = compileAndExecute("INSERT INTO domain_array_table (vals) VALUES (ARRAY[1, -5])");
+    EXPECT_FALSE(insert_bad_value.success());
+}
+
 TEST_F(QueryCompilerV2Test, ExecuteCreateViewStoresDefinition) {
     compiler_->setCurrentSchema(test_schema_id_);
     executor_->setCurrentSchema(test_schema_id_);

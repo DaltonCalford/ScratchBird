@@ -167,22 +167,40 @@ private:
     Status queryRdbIndexSegments(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbGenerators(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbProcedures(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbProcedureParameters(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbFunctions(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbFunctionArguments(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbTriggers(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbConstraints(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbRelationConstraints(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbViewRelations(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbCheckConstraints(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbRefConstraints(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbExceptions(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbCharacterSets(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbCollations(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbTypes(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbUserPrivileges(VirtualResultSet& results, ErrorContext* ctx);
     Status queryRdbRoles(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbDependencies(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbPackages(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryRdbKeywords(VirtualResultSet& results, ErrorContext* ctx);
 
     Status queryMonDatabase(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonAttachments(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonTransactions(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonStatements(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonCallStack(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonIoStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonRecordStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonMemoryUsage(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonTableStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonContextVariables(VirtualResultSet& results, ErrorContext* ctx);
 
     Status querySecUsers(VirtualResultSet& results, ErrorContext* ctx);
     Status querySecUserAttributes(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySecDbCreators(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySecGlobalAuthMapping(VirtualResultSet& results, ErrorContext* ctx);
 
     // Helper to get columns for a specific table
     void getRdbDatabaseColumns(std::vector<CatalogManager::ColumnInfo>& cols);
@@ -192,11 +210,39 @@ private:
     void getRdbIndicesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getRdbIndexSegmentsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getRdbGeneratorsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbProceduresColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbProcedureParametersColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbFunctionsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbFunctionArgumentsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbTriggersColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbRelationConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbViewRelationsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbCheckConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbRefConstraintsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbExceptionsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbCharacterSetsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbCollationsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbTypesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbUserPrivilegesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbRolesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbDependenciesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbPackagesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getRdbKeywordsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonDatabaseColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonAttachmentsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonTransactionsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonStatementsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonCallStackColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonIoStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonRecordStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonMemoryUsageColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonTableStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonContextVariablesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getSecUsersColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getSecUserAttributesColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getSecDbCreatorsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getSecGlobalAuthMappingColumns(std::vector<CatalogManager::ColumnInfo>& cols);
 
     // Helper to uppercase a name (Firebird convention)
     static std::string toUpperCase(const std::string& s);

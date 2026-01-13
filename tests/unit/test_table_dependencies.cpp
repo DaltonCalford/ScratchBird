@@ -95,7 +95,7 @@ protected:
         trigger.trigger_id = generateUuidV7();
         trigger.trigger_name = trigger_name;
         trigger.table_id = table_id;
-        trigger.event = CatalogManager::TriggerEvent::INSERT;
+        trigger.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::INSERT);
         trigger.timing = CatalogManager::TriggerTiming::BEFORE;
         trigger.enabled = true;
 

@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
+#include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/domain_manager.h"
@@ -2097,6 +2098,53 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
     std::string table_name = components.back();
     std::string schema_path = components.size() > 1 ? join_components(components.size() - 1)
                                                     : std::string();
+    auto resolve_virtual_table = [&](const std::string& schema_name,
+                                     const std::string& base_name,
+                                     const std::string& full_name) -> std::optional<ResolvedTableRef> {
+        scratchbird::catalog::VirtualCatalogRouter& router =
+            scratchbird::catalog::VirtualCatalogRouter::getInstance();
+        if (!router.isInitialized())
+        {
+            return std::nullopt;
+        }
+
+        if (!scratchbird::catalog::isVirtualTable(schema_name, base_name))
+        {
+            return std::nullopt;
+        }
+
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        core::ErrorContext err_ctx;
+        auto status = router.getVirtualTableColumns(scratchbird::catalog::ProtocolType::SCRATCHBIRD,
+                                                    schema_name,
+                                                    base_name,
+                                                    columns,
+                                                    &err_ctx);
+        if (status != Status::OK || columns.empty())
+        {
+            error(span, "Virtual table not found: " + full_name);
+            return std::nullopt;
+        }
+
+        ResolvedTableRef ref;
+        ref.table_uuid = ID{};
+        ref.schema_uuid = ID{};
+        ref.name = internString(full_name);
+        ref.object_type = ResolvedTableRef::ObjectType::TABLE;
+        ref.columns.reserve(columns.size());
+        uint32_t index = 0;
+        for (const auto& col : columns)
+        {
+            ResolvedTableRef::ColumnInfo col_info;
+            col_info.name = internString(col.column_name);
+            col_info.data_type = static_cast<DataType>(col.data_type);
+            col_info.is_nullable = col.nullable;
+            col_info.column_index = index++;
+            ref.columns.push_back(col_info);
+        }
+
+        return ref;
+    };
 
     if (path.type == PathType::UNQUALIFIED && components.size() == 1)
     {
@@ -2275,6 +2323,12 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
             status = catalog_.getSchema(resolved_schema_path, schema_info);
             if (status != Status::OK)
             {
+                if (auto virtual_ref = resolve_virtual_table(resolved_schema_path,
+                                                            table_name,
+                                                            resolved_schema_path + "." + table_name))
+                {
+                    return virtual_ref;
+                }
                 error(span, "Schema not found: " + resolved_schema_path);
                 return std::nullopt;
             }
@@ -2349,9 +2403,23 @@ std::optional<ResolvedColumnRef> SemanticAnalyzerV2::resolveColumn(
         return std::nullopt;
     }
 
+    auto normalize_name = [&](StringPool::StringId name_id) {
+        return core::IdentifierUtils::toUpper(std::string(getString(name_id)));
+    };
+
     if (table_alias != StringPool::INVALID_ID) {
         // Qualified column reference
         const auto* col = currentScope().findColumn(table_alias, column_name);
+        const auto* table = currentScope().findTable(table_alias);
+        if (!col && table && isZeroUuidLocal(table->table_uuid)) {
+            std::string target = normalize_name(column_name);
+            for (const auto& candidate : table->columns) {
+                if (normalize_name(candidate.name) == target) {
+                    col = &candidate;
+                    break;
+                }
+            }
+        }
         if (!col) {
             std::string col_str = std::string(getString(column_name));
             std::string table_str = std::string(getString(table_alias));
@@ -2359,7 +2427,6 @@ std::optional<ResolvedColumnRef> SemanticAnalyzerV2::resolveColumn(
             return std::nullopt;
         }
 
-        const auto* table = currentScope().findTable(table_alias);
         ResolvedColumnRef ref;
         ref.table_uuid = table->table_uuid;
         ref.column_index = col->column_index;
@@ -2372,6 +2439,35 @@ std::optional<ResolvedColumnRef> SemanticAnalyzerV2::resolveColumn(
 
     // Unqualified - search all tables
     auto result = currentScope().findColumn(column_name);
+    if (!result.column) {
+        std::string target = normalize_name(column_name);
+        const ResolutionScope::TableEntry* match_table = nullptr;
+        const ResolvedTableRef::ColumnInfo* match_col = nullptr;
+
+        for (const auto& table : currentScope().tables()) {
+            if (!isZeroUuidLocal(table.table_uuid)) {
+                continue;
+            }
+            for (const auto& candidate : table.columns) {
+                if (normalize_name(candidate.name) == target) {
+                    if (match_col != nullptr) {
+                        result.ambiguous = true;
+                        break;
+                    }
+                    match_table = &table;
+                    match_col = &candidate;
+                }
+            }
+            if (result.ambiguous) {
+                break;
+            }
+        }
+
+        if (match_col) {
+            result.table = match_table;
+            result.column = match_col;
+        }
+    }
     if (result.ambiguous) {
         error(span, "Ambiguous column reference: " + std::string(getString(column_name)));
         return std::nullopt;
@@ -2952,6 +3048,18 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeDropView(static_cast<DropViewStmt*>(stmt));
         case ASTKind::DropSequenceStmt:
             return analyzeDropSequence(static_cast<DropSequenceStmt*>(stmt));
+        case ASTKind::DropFunctionStmt:
+            return analyzeDropFunction(static_cast<DropFunctionStmt*>(stmt));
+        case ASTKind::DropProcedureStmt:
+            return analyzeDropProcedure(static_cast<DropProcedureStmt*>(stmt));
+        case ASTKind::DropTriggerStmt:
+            return analyzeDropTrigger(static_cast<DropTriggerStmt*>(stmt));
+        case ASTKind::DropPackageStmt:
+            return analyzeDropPackage(static_cast<DropPackageStmt*>(stmt));
+        case ASTKind::DropRoleStmt:
+            return analyzeDropRole(static_cast<DropRoleStmt*>(stmt));
+        case ASTKind::DropExceptionStmt:
+            return analyzeDropException(static_cast<DropExceptionStmt*>(stmt));
         case ASTKind::TruncateTableStmt:
             return analyzeTruncateTable(static_cast<TruncateTableStmt*>(stmt));
 
@@ -3577,7 +3685,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTrigger(CreateTriggerStmt* s
     resolved->table_path = stmt->table_path;
     resolved->active = stmt->active;
     resolved->timing = stmt->timing;
-    resolved->event = stmt->event;
+    resolved->event_mask = stmt->event_mask;
     resolved->granularity = stmt->granularity;
     if (stmt->body != StringPool::INVALID_ID) {
         resolved->body = std::string(string_pool_.get(stmt->body));
@@ -3637,6 +3745,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateException(CreateExceptionStm
 
     auto* resolved = arena_.create<ResolvedCreateExceptionStmt>();
     resolved->span = stmt->span;
+    resolved->or_replace = stmt->or_replace;
 
     if (stmt->exception_path.components.size() >= 2) {
         std::string schema_name = std::string(string_pool_.get(stmt->exception_path.components[0]));
@@ -4668,6 +4777,96 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropSequence(DropSequenceStmt* stm
     return resolved;
 }
 
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropFunction(DropFunctionStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = ResolvedDropStmt::ObjectType::FUNCTION;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = false;
+    resolved->object_paths = stmt->functions;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropProcedure(DropProcedureStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = ResolvedDropStmt::ObjectType::PROCEDURE;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = false;
+    resolved->object_paths = stmt->procedures;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropTrigger(DropTriggerStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = ResolvedDropStmt::ObjectType::TRIGGER;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = false;
+    resolved->object_paths = stmt->triggers;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropPackage(DropPackageStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = ResolvedDropStmt::ObjectType::PACKAGE;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = false;
+    resolved->object_paths = stmt->packages;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropRole(DropRoleStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = ResolvedDropStmt::ObjectType::ROLE;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = stmt->cascade;
+    resolved->object_paths = stmt->roles;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropException(DropExceptionStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = ResolvedDropStmt::ObjectType::EXCEPTION;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = false;
+    resolved->object_paths = stmt->exceptions;
+
+    return resolved;
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeTruncateTable(TruncateTableStmt* stmt) {
     if (!stmt) {
         return nullptr;
@@ -5074,6 +5273,96 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCopy(CopyStmt* stmt) {
         !resolved->target_is_stdout &&
         resolved->target == StringPool::INVALID_ID) {
         error(stmt->span, "COPY requires a target file or STDIN/STDOUT");
+    }
+
+    {
+        auto to_upper = [](std::string_view input) {
+            std::string out;
+            out.reserve(input.size());
+            for (char c : input) {
+                out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+            }
+            return out;
+        };
+
+        ResolvedCopyOptions opts;
+        if (stmt->options.format_set) {
+            switch (stmt->options.format) {
+                case CopyOptions::Format::CSV:
+                    opts.format = ResolvedCopyOptions::Format::CSV;
+                    break;
+                case CopyOptions::Format::TEXT:
+                    opts.format = ResolvedCopyOptions::Format::TEXT;
+                    break;
+                case CopyOptions::Format::BINARY:
+                    opts.format = ResolvedCopyOptions::Format::BINARY;
+                    break;
+            }
+        }
+
+        if (opts.format == ResolvedCopyOptions::Format::CSV) {
+            opts.delimiter = ',';
+            opts.null_string.clear();
+        } else {
+            opts.delimiter = '\t';
+            opts.null_string = "\\N";
+        }
+
+        if (stmt->options.delimiter_set) {
+            auto delim = getString(stmt->options.delimiter);
+            if (delim.size() != 1) {
+                error(stmt->span, "COPY DELIMITER must be a single character");
+            } else {
+                opts.delimiter = delim[0];
+            }
+        }
+
+        if (stmt->options.null_set) {
+            opts.null_string = std::string(getString(stmt->options.null_string));
+        }
+
+        if (stmt->options.header_set) {
+            opts.header = stmt->options.header;
+        }
+
+        const bool quote_set = stmt->options.quote_set;
+        const bool escape_set = stmt->options.escape_set;
+
+        if (quote_set) {
+            auto quote = getString(stmt->options.quote);
+            if (quote.size() != 1) {
+                error(stmt->span, "COPY QUOTE must be a single character");
+            } else {
+                opts.quote = quote[0];
+            }
+        }
+
+        if (escape_set) {
+            auto escape = getString(stmt->options.escape);
+            if (escape.size() != 1) {
+                error(stmt->span, "COPY ESCAPE must be a single character");
+            } else {
+                opts.escape = escape[0];
+            }
+        }
+
+        if (opts.format == ResolvedCopyOptions::Format::CSV && !escape_set) {
+            opts.escape = opts.quote;
+        }
+
+        if (stmt->options.encoding_set) {
+            opts.encoding = std::string(getString(stmt->options.encoding));
+            auto enc_upper = to_upper(opts.encoding);
+            if (!enc_upper.empty() && enc_upper != "UTF8" && enc_upper != "UTF-8") {
+                error(stmt->span, "COPY ENCODING is not supported");
+            }
+        }
+
+        if (opts.format == ResolvedCopyOptions::Format::BINARY) {
+            error(stmt->span, "COPY FORMAT BINARY is not supported");
+        }
+
+        resolved->options = std::move(opts);
     }
 
     return resolved;

@@ -1,7 +1,7 @@
 # Implementation Status Dashboard
 
-**Last updated:** 2026-01-06  
-**Tests:** `ctest --test-dir build` → 2,007 passed, 42 skipped (network/socket gating, protocol/session pre-reqs).
+**Last updated:** 2026-01-12  
+**Tests:** `ctest --test-dir build` → 2,053 passed, 42 skipped (network/socket gating, protocol/session pre-reqs).
 
 ## Phase Summary (history + todo)
 - **Alpha 1 – Engine/Core**  
@@ -16,7 +16,7 @@
   - [x] Wire adapters (FB/MySQL/PG/native), pooling, FDW/UDR, ODBC/JDBC  
 - **Alpha (Completion) – Parser Alignment & Audit Repairs** *(current)*  
   - [x] MySQL/PostgreSQL DML bytecode alignment (SBLR v2 format)  
-  - [ ] Firebird DDL/DML alignment (via v2 → SBLR v2 or executor extensions)  
+  - [x] Firebird DDL/DML alignment (via v2 → SBLR v2 or executor extensions)  
   - [ ] Executor gaps for emulated dialects (see list below)  
   - [ ] Dialect parity + adapter e2e suites per dialect; no cross-dialect fallbacks; Firebird→MySQL→PostgreSQL order  
 
@@ -26,7 +26,7 @@
 
 ## Plan Progress (Active)
 - Plan 02 (UUID Resolution/Rename/Move): complete (resolver cache/view, rename/move across object types, resolver rebuild + test coverage).
-- Plan 04 (Emulated parser alignment): in progress (see `docs/archive/2026-01-09/planning/PLAN_04_PARSER_BYTECODE_ALIGNMENT_PROGRESS.md`).
+- Plan 04 (Emulated parser alignment): complete (see `docs/archive/2026-01-09/planning/PLAN_04_PARSER_BYTECODE_ALIGNMENT_PROGRESS.md`).
 - Plan 06–08 (ISQL clients, protocol conformance, test automation): pending start after parser alignment.
 
 ## Executor Gaps (Documented for Follow-up)

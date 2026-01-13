@@ -1,19 +1,112 @@
 #include "scratchbird/core/charset_loader.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
-#include "scratchbird/core/uuidv7.h"
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 
 namespace scratchbird::core
 {
 
+namespace {
+
+std::string normalizeName(std::string value)
+{
+    std::string out;
+    out.reserve(value.size());
+    for (char c : value)
+    {
+        if (std::isalnum(static_cast<unsigned char>(c)))
+        {
+            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+    }
+    return out;
+}
+
+bool resolveBuiltinCharsetId(const std::string& name, uint16_t& id_out)
+{
+    std::string normalized = normalizeName(name);
+    if (normalized == "ascii")
+    {
+        id_out = 0; // CharacterSet::ASCII
+        return true;
+    }
+    if (normalized == "latin1" || normalized == "iso88591")
+    {
+        id_out = 1; // CharacterSet::LATIN1
+        return true;
+    }
+    if (normalized == "utf8" || normalized == "utf8mb4")
+    {
+        id_out = 2; // CharacterSet::UTF8
+        return true;
+    }
+    if (normalized == "utf16")
+    {
+        id_out = 3; // CharacterSet::UTF16
+        return true;
+    }
+    if (normalized == "utf32")
+    {
+        id_out = 4; // CharacterSet::UTF32
+        return true;
+    }
+    return false;
+}
+
+uint32_t resolveBuiltinCollationId(const std::string& name)
+{
+    std::string normalized = normalizeName(name);
+    if (normalized == "asciibin") return 1;
+    if (normalized == "asciigeneralci") return 2;
+    if (normalized == "latin1bin") return 10;
+    if (normalized == "latin1generalci") return 11;
+    if (normalized == "latin1generalcs") return 12;
+    if (normalized == "utf8bin") return 100;
+    if (normalized == "utf8generalci") return 101;
+    if (normalized == "utf8unicodeci") return 102;
+    if (normalized == "utf8unicodecs") return 103;
+    if (normalized == "utf8enusci") return 110;
+    if (normalized == "utf8dedeci") return 111;
+    if (normalized == "utf16bin") return 200;
+    if (normalized == "utf16generalci") return 201;
+    if (normalized == "utf32bin") return 300;
+    if (normalized == "utf32generalci") return 301;
+    return 0;
+}
+
+uint32_t resolveDefaultCollationId(const std::string& charset_name)
+{
+    std::string normalized = normalizeName(charset_name);
+    if (normalized == "ascii")
+    {
+        return 1;
+    }
+    if (normalized == "latin1" || normalized == "iso88591")
+    {
+        return 11;
+    }
+    if (normalized == "utf8" || normalized == "utf8mb4")
+    {
+        return 101;
+    }
+    if (normalized == "utf16")
+    {
+        return 201;
+    }
+    if (normalized == "utf32")
+    {
+        return 301;
+    }
+    return 0;
+}
+
+} // namespace
+
 Status CharsetLoader::loadCharset(const CharacterSet &charset, ErrorContext *ctx)
 {
-    // Phase 4 Enhancement: Implement catalog insertion for sb_charsets table
-    // Requires catalog manager to expose insertCharset() method
-    // Current implementation validates charset data and skips if exists (correct)
-
     if (charset.name.empty())
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -35,33 +128,57 @@ Status CharsetLoader::loadCharset(const CharacterSet &charset, ErrorContext *ctx
         return Status::INVALID_ARGUMENT;
     }
 
-    // Check if charset already exists
+    if (!catalog_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Check if charset already exists (case-insensitive)
     if (charsetExists(charset.name, ctx))
     {
         // Character set already exists - skip
         return Status::OK;
     }
 
-    // Generate UUID for this charset
-    UuidV7Bytes charset_id = generateCharsetID(charset.name);
-    uint64_t created_at = getCurrentTimestamp();
+    uint16_t charset_id = 0;
+    if (!resolveBuiltinCharsetId(charset.name, charset_id))
+    {
+        std::vector<CatalogManager::CharsetInfo> existing;
+        Status status = catalog_->listCharsets(existing, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+        uint16_t max_id = 0;
+        for (const auto& info : existing)
+        {
+            max_id = std::max(max_id, info.charset_id);
+        }
+        charset_id = static_cast<uint16_t>(max_id + 1);
+        if (charset_id == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Charset ID space exhausted");
+            return Status::OUT_OF_RANGE;
+        }
+    }
 
-    // Phase 4 Enhancement: Call catalog manager to insert into sb_charsets table
-    // catalog_->insertCharset(charset_id, charset.name, charset.description,
-    //                         charset.max_bytes, charset.min_bytes,
-    //                         charset.is_variable_width, charset.aliases,
-    //                         created_at, ctx);
+    CatalogManager::CharsetInfo info;
+    info.charset_id = charset_id;
+    info.name = charset.name;
+    info.description = charset.description;
+    info.min_bytes = charset.min_bytes;
+    info.max_bytes = charset.max_bytes;
+    info.variable_width = charset.is_variable_width ? 1 : 0;
+    info.default_collation_id = resolveDefaultCollationId(charset.name);
+    info.created_time = getCurrentTimestamp();
+    info.last_modified_time = info.created_time;
 
-    // Charset validation passed - returns OK (catalog persistence deferred)
-    return Status::OK;
+    return catalog_->createCharset(info, ctx);
 }
 
 Status CharsetLoader::loadCollation(const Collation &collation, ErrorContext *ctx)
 {
-    // Phase 4 Enhancement: Implement catalog insertion for sb_collations table
-    // Requires catalog manager to expose insertCollation() method
-    // Current implementation validates collation data (correct)
-
     if (collation.name.empty())
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -76,7 +193,13 @@ Status CharsetLoader::loadCollation(const Collation &collation, ErrorContext *ct
         return Status::INVALID_ARGUMENT;
     }
 
-    // Check if charset exists
+    if (!catalog_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Check if charset exists (case-insensitive)
     if (!charsetExists(collation.charset_name, ctx))
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -92,24 +215,77 @@ Status CharsetLoader::loadCollation(const Collation &collation, ErrorContext *ct
     }
 
     // Get charset ID
-    UuidV7Bytes charset_id;
+    uint16_t charset_id = 0;
     Status status = getCharsetID(collation.charset_name, charset_id, ctx);
     if (status != Status::OK)
     {
         return status;
     }
 
-    // Generate UUID for this collation
-    UuidV7Bytes collation_id = generateCollationID(collation.name);
-    uint64_t created_at = getCurrentTimestamp();
+    uint32_t collation_id = resolveBuiltinCollationId(collation.name);
+    if (collation_id == 0)
+    {
+        std::vector<CatalogManager::CollationCatalogInfo> existing;
+        status = catalog_->listCollations(existing, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+        uint32_t max_id = 0;
+        for (const auto& info : existing)
+        {
+            max_id = std::max(max_id, info.collation_id);
+        }
+        collation_id = max_id + 1;
+        if (collation_id == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Collation ID space exhausted");
+            return Status::OUT_OF_RANGE;
+        }
+    }
 
-    // Phase 4 Enhancement: Call catalog manager to insert into sb_collations table
-    // catalog_->insertCollation(collation_id, collation.name, charset_id,
-    //                           collation.case_insensitive, collation.accent_insensitive,
-    //                           collation.language, created_at, ctx);
+    auto lower_name = normalizeName(collation.name);
+    uint8_t collation_type = 1; // CollationType::CASE_SENSITIVE
+    if (lower_name.find("bin") != std::string::npos)
+    {
+        collation_type = 0; // CollationType::BINARY
+    }
+    else if (collation.case_insensitive && collation.accent_insensitive)
+    {
+        collation_type = 4; // CollationType::CI_AI
+    }
+    else if (collation.case_insensitive)
+    {
+        collation_type = 2; // CollationType::CASE_INSENSITIVE
+    }
+    else if (collation.accent_insensitive)
+    {
+        collation_type = 3; // CollationType::ACCENT_INSENSITIVE
+    }
 
-    // Collation validation passed - returns OK (catalog persistence deferred)
-    return Status::OK;
+    uint8_t strength = 3; // CollationStrength::TERTIARY
+    if (collation_type == 0)
+    {
+        strength = 5; // CollationStrength::IDENTICAL
+    }
+
+    CatalogManager::CollationCatalogInfo info;
+    info.collation_id = collation_id;
+    info.name = collation.name;
+    info.charset_id = charset_id;
+    info.collation_type = collation_type;
+    info.strength = strength;
+    info.pad_space = 1;
+    info.is_default = (collation_id == resolveDefaultCollationId(collation.charset_name)) ? 1 : 0;
+    std::memset(info.locale, 0, sizeof(info.locale));
+    if (!collation.language.empty())
+    {
+        std::strncpy(info.locale, collation.language.c_str(), sizeof(info.locale) - 1);
+    }
+    info.created_time = getCurrentTimestamp();
+    info.last_modified_time = info.created_time;
+
+    return catalog_->createCollation(info, ctx);
 }
 
 Status CharsetLoader::loadBuiltinCharsets(ErrorContext *ctx)
@@ -237,50 +413,85 @@ Status CharsetLoader::loadFromDirectory(const std::string &charset_dir, ErrorCon
 
 bool CharsetLoader::charsetExists(const std::string &charset_name, ErrorContext *ctx)
 {
-    // Phase 4 Enhancement: Query catalog to check if charset exists
-    // For now, return false - allows re-registration (idempotent)
+    if (!catalog_)
+    {
+        return false;
+    }
+
+    std::vector<CatalogManager::CharsetInfo> existing;
+    Status status = catalog_->listCharsets(existing, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return false;
+    }
+
+    std::string needle = normalizeName(charset_name);
+    for (const auto& info : existing)
+    {
+        if (normalizeName(info.name) == needle)
+        {
+            return true;
+        }
+    }
+
     return false;
 }
 
 bool CharsetLoader::collationExists(const std::string &collation_name, ErrorContext *ctx)
 {
-    // Phase 4 Enhancement: Query catalog to check if collation exists
-    // For now, return false - allows re-registration (idempotent)
+    if (!catalog_)
+    {
+        return false;
+    }
+
+    std::vector<CatalogManager::CollationCatalogInfo> existing;
+    Status status = catalog_->listCollations(existing, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return false;
+    }
+
+    std::string needle = normalizeName(collation_name);
+    for (const auto& info : existing)
+    {
+        if (normalizeName(info.name) == needle)
+        {
+            return true;
+        }
+    }
+
     return false;
 }
 
-Status CharsetLoader::getCharsetID(const std::string &charset_name, UuidV7Bytes &charset_id, ErrorContext *ctx)
+Status CharsetLoader::getCharsetID(const std::string &charset_name,
+                                   uint16_t &charset_id,
+                                   ErrorContext *ctx)
 {
-    // Phase 4 Enhancement: Query catalog to get charset ID by name
-    // For now, generate deterministic ID (correct fallback behavior)
-    charset_id = generateCharsetID(charset_name);
-    return Status::OK;
-}
+    if (!catalog_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
 
-UuidV7Bytes CharsetLoader::generateCharsetID(const std::string &charset_name)
-{
-    // Generate deterministic UUID based on charset name
-    // This ensures the same charset always gets the same ID
-    UuidV7Bytes id = generateUuidV7();
+    std::vector<CatalogManager::CharsetInfo> existing;
+    Status status = catalog_->listCharsets(existing, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
 
-    // Hash the charset name into the UUID's node section
-    // This is a simple approach - in production, use a proper hash function
-    size_t hash = std::hash<std::string>{}(charset_name);
-    std::memcpy(&id.bytes[10], &hash, std::min(sizeof(hash), size_t(6)));
+    std::string needle = normalizeName(charset_name);
+    for (const auto& info : existing)
+    {
+        if (normalizeName(info.name) == needle)
+        {
+            charset_id = info.charset_id;
+            return Status::OK;
+        }
+    }
 
-    return id;
-}
-
-UuidV7Bytes CharsetLoader::generateCollationID(const std::string &collation_name)
-{
-    // Generate deterministic UUID based on collation name
-    UuidV7Bytes id = generateUuidV7();
-
-    // Hash the collation name into the UUID's node section
-    size_t hash = std::hash<std::string>{}(collation_name);
-    std::memcpy(&id.bytes[10], &hash, std::min(sizeof(hash), size_t(6)));
-
-    return id;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Charset not found");
+    return Status::NOT_FOUND;
 }
 
 uint64_t CharsetLoader::getCurrentTimestamp()

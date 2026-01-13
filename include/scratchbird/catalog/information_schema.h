@@ -1109,19 +1109,37 @@ private:
                 }
 
                 for (const auto& trigger : triggers) {
-                    VirtualRow row;
-                    row.columns = {
-                        {"TRIGGER_CATALOG", TypedValue::makeVarchar(defaultCatalogName())},
-                        {"TRIGGER_SCHEMA", TypedValue::makeVarchar(schema_name)},
-                        {"TRIGGER_NAME", TypedValue::makeVarchar(trigger.trigger_name)},
-                        {"EVENT_MANIPULATION", TypedValue::makeVarchar(triggerEventName(trigger.event))},
-                        {"EVENT_OBJECT_CATALOG", TypedValue::makeVarchar(defaultCatalogName())},
-                        {"EVENT_OBJECT_SCHEMA", TypedValue::makeVarchar(schema_name)},
-                        {"EVENT_OBJECT_TABLE", TypedValue::makeVarchar(table.table_name)},
-                        {"ACTION_TIMING", TypedValue::makeVarchar(triggerTimingName(trigger.timing))},
-                        {"ACTION_STATEMENT", trigger.procedure_name.empty() ? TypedValue() : TypedValue::makeText(trigger.procedure_name)}
+                    auto emit_row = [&](const std::string& event_name) {
+                        VirtualRow row;
+                        row.columns = {
+                            {"TRIGGER_CATALOG", TypedValue::makeVarchar(defaultCatalogName())},
+                            {"TRIGGER_SCHEMA", TypedValue::makeVarchar(schema_name)},
+                            {"TRIGGER_NAME", TypedValue::makeVarchar(trigger.trigger_name)},
+                            {"EVENT_MANIPULATION", TypedValue::makeVarchar(event_name)},
+                            {"EVENT_OBJECT_CATALOG", TypedValue::makeVarchar(defaultCatalogName())},
+                            {"EVENT_OBJECT_SCHEMA", TypedValue::makeVarchar(schema_name)},
+                            {"EVENT_OBJECT_TABLE", TypedValue::makeVarchar(table.table_name)},
+                            {"ACTION_TIMING", TypedValue::makeVarchar(triggerTimingName(trigger.timing))},
+                            {"ACTION_STATEMENT", trigger.procedure_name.empty() ? TypedValue() : TypedValue::makeText(trigger.procedure_name)}
+                        };
+                        results.rows.push_back(row);
                     };
-                    results.rows.push_back(row);
+
+                    const uint8_t mask = trigger.event_mask;
+                    bool emitted = false;
+                    for (CatalogManager::TriggerEvent event : {
+                             CatalogManager::TriggerEvent::INSERT,
+                             CatalogManager::TriggerEvent::UPDATE,
+                             CatalogManager::TriggerEvent::DELETE}) {
+                        const uint8_t bit = 1u << static_cast<uint8_t>(event);
+                        if ((mask & bit) != 0) {
+                            emit_row(triggerEventName(event));
+                            emitted = true;
+                        }
+                    }
+                    if (!emitted) {
+                        emit_row("UNKNOWN");
+                    }
                 }
             }
         }

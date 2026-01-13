@@ -43,6 +43,12 @@ void DropTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropFunctionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropTriggerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropPackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void TruncateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // DML statements
