@@ -9,7 +9,7 @@
  * Options:
  *   --create            Create database if it doesn't exist
  *   --page-size=<n>     Page size for new database (default: 16384)
- *   --port=<n>          TCP port (if using TCP, default: 5433)
+ *   --port=<n>          TCP port (if using TCP, default: 3092)
  *   --tcp               Force TCP transport
  *   --unix              Force Unix socket transport
  *   --pid-file=<path>   Custom PID file path
@@ -36,7 +36,7 @@ void printUsage(const char* program) {
     std::cout << "Options:\n";
     std::cout << "  --create              Create database if it doesn't exist\n";
     std::cout << "  --page-size=<n>       Page size for new database (default: 16384)\n";
-    std::cout << "  --port=<n>            TCP port (default: 5433)\n";
+    std::cout << "  --port=<n>            TCP port (default: 3092)\n";
     std::cout << "  --tcp                 Force TCP transport\n";
     std::cout << "  --unix                Force Unix socket transport\n";
     std::cout << "  --pid-file=<path>     Custom PID file path\n";

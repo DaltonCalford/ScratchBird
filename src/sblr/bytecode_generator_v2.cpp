@@ -7,9 +7,11 @@
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/expression_serializer.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <functional>
 #include <sstream>
 #include <cmath>
 #include <iostream>
@@ -81,6 +83,213 @@ void collectDependenciesFromStatement(ResolvedStatement* stmt,
 void collectDependenciesFromExpression(ResolvedExpression* expr,
                                        std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
                                        std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen);
+
+bool isSameIdentifier(StringPool::StringId lhs,
+                      StringPool::StringId rhs,
+                      const StringPool& pool) {
+    if (lhs == rhs) {
+        return true;
+    }
+    if (lhs == StringPool::INVALID_ID || rhs == StringPool::INVALID_ID) {
+        return false;
+    }
+    std::string lhs_str = core::IdentifierUtils::toUpper(std::string(pool.get(lhs)));
+    std::string rhs_str = core::IdentifierUtils::toUpper(std::string(pool.get(rhs)));
+    return lhs_str == rhs_str;
+}
+
+bool hasCTEReferenceInStatement(ResolvedStatement* stmt,
+                                StringPool::StringId cte_name,
+                                const StringPool& pool);
+
+bool hasCTEReferenceInExpression(ResolvedExpression* expr,
+                                 StringPool::StringId cte_name,
+                                 const StringPool& pool) {
+    if (!expr) {
+        return false;
+    }
+
+    if (auto* binary = dynamic_cast<ResolvedBinaryExpr*>(expr)) {
+        return hasCTEReferenceInExpression(binary->left, cte_name, pool) ||
+               hasCTEReferenceInExpression(binary->right, cte_name, pool);
+    }
+    if (auto* unary = dynamic_cast<ResolvedUnaryExpr*>(expr)) {
+        return hasCTEReferenceInExpression(unary->operand, cte_name, pool);
+    }
+    if (auto* fn = dynamic_cast<ResolvedFunctionCall*>(expr)) {
+        for (auto* arg : fn->arguments) {
+            if (hasCTEReferenceInExpression(arg, cte_name, pool)) {
+                return true;
+            }
+        }
+        if (hasCTEReferenceInExpression(fn->filter, cte_name, pool) ||
+            hasCTEReferenceInExpression(fn->separator, cte_name, pool)) {
+            return true;
+        }
+        for (auto* item : fn->internal_order_by) {
+            if (hasCTEReferenceInExpression(item->expr, cte_name, pool)) {
+                return true;
+            }
+        }
+        if (fn->is_window && fn->window) {
+            for (auto* expr_item : fn->window->partition_by) {
+                if (hasCTEReferenceInExpression(expr_item, cte_name, pool)) {
+                    return true;
+                }
+            }
+            for (auto* order_item : fn->window->order_by) {
+                if (hasCTEReferenceInExpression(order_item->expr, cte_name, pool)) {
+                    return true;
+                }
+            }
+            if (fn->window->has_frame) {
+                if (hasCTEReferenceInExpression(fn->window->frame_start.offset, cte_name, pool) ||
+                    hasCTEReferenceInExpression(fn->window->frame_end.offset, cte_name, pool)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    if (auto* cast = dynamic_cast<ResolvedCast*>(expr)) {
+        return hasCTEReferenceInExpression(cast->expr, cte_name, pool);
+    }
+    if (auto* case_expr = dynamic_cast<ResolvedCase*>(expr)) {
+        if (hasCTEReferenceInExpression(case_expr->operand, cte_name, pool)) {
+            return true;
+        }
+        for (const auto& when : case_expr->when_clauses) {
+            if (hasCTEReferenceInExpression(when.when_expr, cte_name, pool) ||
+                hasCTEReferenceInExpression(when.then_expr, cte_name, pool)) {
+                return true;
+            }
+        }
+        return hasCTEReferenceInExpression(case_expr->else_expr, cte_name, pool);
+    }
+    if (auto* sub = dynamic_cast<ResolvedSubqueryExpr*>(expr)) {
+        return hasCTEReferenceInStatement(sub->subquery, cte_name, pool);
+    }
+    if (auto* exists_expr = dynamic_cast<ResolvedExistsExpr*>(expr)) {
+        return hasCTEReferenceInStatement(exists_expr->subquery, cte_name, pool);
+    }
+    if (auto* in_expr = dynamic_cast<ResolvedInExpr*>(expr)) {
+        if (hasCTEReferenceInExpression(in_expr->expr, cte_name, pool)) {
+            return true;
+        }
+        for (auto* value : in_expr->values) {
+            if (hasCTEReferenceInExpression(value, cte_name, pool)) {
+                return true;
+            }
+        }
+        if (in_expr->has_subquery) {
+            return hasCTEReferenceInStatement(in_expr->subquery, cte_name, pool);
+        }
+        return false;
+    }
+    if (auto* between = dynamic_cast<ResolvedBetweenExpr*>(expr)) {
+        return hasCTEReferenceInExpression(between->expr, cte_name, pool) ||
+               hasCTEReferenceInExpression(between->low, cte_name, pool) ||
+               hasCTEReferenceInExpression(between->high, cte_name, pool);
+    }
+    if (auto* like_expr = dynamic_cast<ResolvedLikeExpr*>(expr)) {
+        return hasCTEReferenceInExpression(like_expr->expr, cte_name, pool) ||
+               hasCTEReferenceInExpression(like_expr->pattern, cte_name, pool) ||
+               hasCTEReferenceInExpression(like_expr->escape, cte_name, pool);
+    }
+    if (auto* is_null = dynamic_cast<ResolvedIsNullExpr*>(expr)) {
+        return hasCTEReferenceInExpression(is_null->expr, cte_name, pool);
+    }
+    if (auto* array_expr = dynamic_cast<ResolvedArrayExpr*>(expr)) {
+        for (auto* element : array_expr->elements) {
+            if (hasCTEReferenceInExpression(element, cte_name, pool)) {
+                return true;
+            }
+        }
+        if (array_expr->has_subquery) {
+            return hasCTEReferenceInStatement(array_expr->subquery, cte_name, pool);
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool hasCTEReferenceInTableRef(ResolvedTableRef* ref,
+                               StringPool::StringId cte_name,
+                               const StringPool& pool) {
+    if (!ref) {
+        return false;
+    }
+    if (ref->object_type == ResolvedTableRef::ObjectType::CTE &&
+        isSameIdentifier(ref->name, cte_name, pool)) {
+        return true;
+    }
+    if (ref->subquery) {
+        return hasCTEReferenceInStatement(ref->subquery, cte_name, pool);
+    }
+    return false;
+}
+
+bool hasCTEReferenceInSelect(ResolvedSelectStmt* select,
+                             StringPool::StringId cte_name,
+                             const StringPool& pool) {
+    if (!select) {
+        return false;
+    }
+
+    for (auto* table_ref : select->from_tables) {
+        if (hasCTEReferenceInTableRef(table_ref, cte_name, pool)) {
+            return true;
+        }
+    }
+    for (auto* join : select->joins) {
+        if (!join) {
+            continue;
+        }
+        if (hasCTEReferenceInTableRef(join->left, cte_name, pool) ||
+            hasCTEReferenceInTableRef(join->right, cte_name, pool) ||
+            hasCTEReferenceInExpression(join->on_condition, cte_name, pool)) {
+            return true;
+        }
+    }
+    for (auto& item : select->select_list) {
+        if (item.item_type == ResolvedSelectItem::ItemType::EXPRESSION &&
+            hasCTEReferenceInExpression(item.expr, cte_name, pool)) {
+            return true;
+        }
+    }
+    if (hasCTEReferenceInExpression(select->where, cte_name, pool) ||
+        hasCTEReferenceInExpression(select->having, cte_name, pool) ||
+        hasCTEReferenceInExpression(select->limit, cte_name, pool) ||
+        hasCTEReferenceInExpression(select->offset, cte_name, pool)) {
+        return true;
+    }
+    for (auto* expr : select->group_by) {
+        if (hasCTEReferenceInExpression(expr, cte_name, pool)) {
+            return true;
+        }
+    }
+    for (auto* order : select->order_by) {
+        if (order && hasCTEReferenceInExpression(order->expr, cte_name, pool)) {
+            return true;
+        }
+    }
+    if (select->set_op_right &&
+        hasCTEReferenceInSelect(select->set_op_right, cte_name, pool)) {
+        return true;
+    }
+
+    return false;
+}
+
+bool hasCTEReferenceInStatement(ResolvedStatement* stmt,
+                                StringPool::StringId cte_name,
+                                const StringPool& pool) {
+    if (auto* select = dynamic_cast<ResolvedSelectStmt*>(stmt)) {
+        return hasCTEReferenceInSelect(select, cte_name, pool);
+    }
+    return false;
+}
 
 void collectDependenciesFromOrderBy(ResolvedOrderByItem* item,
                                     std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
@@ -325,6 +534,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateIndex(create_index);
     } else if (auto* create_view = dynamic_cast<ResolvedCreateViewStmt*>(stmt)) {
         generateCreateView(create_view);
+    } else if (auto* create_sequence = dynamic_cast<ResolvedCreateSequenceStmt*>(stmt)) {
+        generateCreateSequence(create_sequence);
     } else if (auto* create_schema = dynamic_cast<ResolvedCreateSchemaStmt*>(stmt)) {
         generateCreateSchema(create_schema);
     } else if (auto* drop_schema = dynamic_cast<ResolvedDropSchemaStmt*>(stmt)) {
@@ -341,6 +552,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateTrigger(create_trigger);
     } else if (auto* create_package = dynamic_cast<ResolvedCreatePackageStmt*>(stmt)) {
         generateCreatePackage(create_package);
+    } else if (auto* create_user = dynamic_cast<ResolvedCreateUserStmt*>(stmt)) {
+        generateCreateUser(create_user);
     } else if (auto* create_role = dynamic_cast<ResolvedCreateRoleStmt*>(stmt)) {
         generateCreateRole(create_role);
     } else if (auto* create_exception = dynamic_cast<ResolvedCreateExceptionStmt*>(stmt)) {
@@ -375,6 +588,10 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateRollback(rollback);
     } else if (auto* savepoint = dynamic_cast<ResolvedSavepointStmt*>(stmt)) {
         generateSavepoint(savepoint);
+    } else if (auto* connect = dynamic_cast<ResolvedConnectStmt*>(stmt)) {
+        generateConnect(connect);
+    } else if (auto* disconnect = dynamic_cast<ResolvedDisconnectStmt*>(stmt)) {
+        generateDisconnect(disconnect);
     } else if (auto* set = dynamic_cast<ResolvedSetStmt*>(stmt)) {
         generateSet(set);
     } else if (auto* show = dynamic_cast<ResolvedShowStmt*>(stmt)) {
@@ -396,7 +613,57 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
 // DML Statement Generation
 // =============================================================================
 
+void BytecodeGeneratorV2::generateWithClause(ResolvedWithClause* with) {
+    if (!with) {
+        return;
+    }
+
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_WITH_CLAUSE);
+    current_result_->writeInt16(static_cast<uint16_t>(with->ctes.size()));
+    current_result_->writeByte(with->recursive ? 1 : 0);
+
+    for (const auto& cte : with->ctes) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_CTE_DEF);
+        writeStringId(cte.name);
+
+        if (!cte.query) {
+            current_result_->addError("CTE definition missing SELECT query");
+            continue;
+        }
+
+        bool has_union_all = cte.query->set_op == SetOpType::UNION &&
+                             cte.query->set_op_all &&
+                             cte.query->set_op_right;
+        bool has_any_self_ref = hasCTEReferenceInSelect(cte.query, cte.name, string_pool_);
+        bool has_recursive_ref = has_union_all &&
+                                 hasCTEReferenceInSelect(cte.query->set_op_right, cte.name, string_pool_);
+
+        if (!with->recursive && has_any_self_ref) {
+            current_result_->addError("CTE recursion requires WITH RECURSIVE");
+        }
+
+        if (with->recursive && has_recursive_ref) {
+            if (!has_union_all) {
+                current_result_->addError("Recursive CTE requires UNION ALL");
+            } else {
+                current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_UNION_ALL);
+                generateSelectCore(cte.query, false);
+                generateSelectCore(cte.query->set_op_right, false);
+                continue;
+            }
+        }
+
+        generateSelect(cte.query);
+    }
+}
+
 void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
+    generateSelectCore(stmt, true);
+}
+
+void BytecodeGeneratorV2::generateSelectCore(ResolvedSelectStmt* stmt, bool emit_set_ops) {
+    generateWithClause(stmt->with);
+
     current_result_->writeOpcode(sblr::Opcode::SELECT);
 
     // Compact stream layout (v2): flags + select list + FROM list (Appendix_A_SBLR_BYTECODE.md).
@@ -412,6 +679,56 @@ void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
     }
     current_result_->writeByte(flags);
 
+    std::vector<AggregateSpec> aggregates;
+    std::unordered_set<const ResolvedFunctionCall*> aggregate_seen;
+    for (const auto& item : stmt->select_list) {
+        if (item.expr) {
+            collectAggregates(item.expr, aggregates, aggregate_seen);
+        }
+    }
+    if (stmt->having) {
+        collectAggregates(stmt->having, aggregates, aggregate_seen);
+    }
+    for (const auto& item : stmt->order_by) {
+        if (item && item->expr) {
+            collectAggregates(item->expr, aggregates, aggregate_seen);
+        }
+    }
+
+    bool has_grouping =
+        !stmt->group_by.empty() ||
+        stmt->grouping_type != GroupingType::STANDARD ||
+        !stmt->grouping_sets.empty();
+    bool needs_aggregation = has_grouping || !aggregates.empty();
+
+    std::unordered_map<const ResolvedFunctionCall*, std::string> aggregate_output_map;
+    if (needs_aggregation) {
+        aggregate_output_map.reserve(aggregates.size());
+        for (const auto& agg : aggregates) {
+            if (agg.expr) {
+                aggregate_output_map.emplace(agg.expr, agg.output_name);
+            }
+        }
+    }
+
+    struct AggregateContextGuard {
+        BytecodeGeneratorV2* gen;
+        bool prev_mode;
+        std::unordered_map<const ResolvedFunctionCall*, std::string> prev_map;
+        AggregateContextGuard(BytecodeGeneratorV2* g,
+                              std::unordered_map<const ResolvedFunctionCall*, std::string>&& map)
+            : gen(g),
+              prev_mode(g->aggregate_ref_mode_),
+              prev_map(std::move(g->aggregate_output_map_)) {
+            gen->aggregate_output_map_ = std::move(map);
+        }
+        ~AggregateContextGuard() {
+            gen->aggregate_output_map_ = std::move(prev_map);
+            gen->aggregate_ref_mode_ = prev_mode;
+        }
+    } aggregate_guard(this, std::move(aggregate_output_map));
+
+    aggregate_ref_mode_ = needs_aggregation;
     generateSelectList(stmt->select_list);
     generateFromClause(stmt->from_tables, stmt->joins);
 
@@ -420,14 +737,69 @@ void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
         generateWhereClause(stmt->where);
     }
 
-    // Generate GROUP BY clause
-    if (!stmt->group_by.empty()) {
-        generateGroupByClause(stmt->group_by);
-    }
+    if (needs_aggregation) {
+        bool prev_mode = aggregate_ref_mode_;
+        aggregate_ref_mode_ = false;
 
-    // Generate HAVING clause
-    if (stmt->having) {
-        generateHavingClause(stmt->having);
+        // Generate GROUP BY clause (including advanced grouping)
+        if (has_grouping) {
+            generateGroupByClause(*stmt);
+        }
+
+        auto write_agg_arg = [&](ResolvedExpression* arg) {
+            if (!arg) {
+                current_result_->writeUVarint(0);
+                return;
+            }
+
+            BytecodeResultV2 temp;
+            BytecodeResultV2* saved = current_result_;
+            current_result_ = &temp;
+            generateExpression(arg);
+            current_result_ = saved;
+
+            for (const auto& err : temp.errors()) {
+                current_result_->addError(err);
+            }
+            for (const auto& warn : temp.warnings()) {
+                current_result_->addWarning(warn);
+            }
+
+            current_result_->writeUVarint(static_cast<uint64_t>(temp.bytecode().size()));
+            for (uint8_t byte : temp.bytecode()) {
+                current_result_->writeByte(byte);
+            }
+        };
+
+        // Emit AGG_INIT with aggregate definitions (if any)
+        current_result_->writeOpcode(sblr::Opcode::AGG_INIT);
+        current_result_->writeListCount(static_cast<uint64_t>(aggregates.size()));
+        for (const auto& agg : aggregates) {
+            current_result_->writeOpcode(agg.opcode);
+            if (agg.args.size() > std::numeric_limits<uint8_t>::max()) {
+                current_result_->addError("Aggregate argument count exceeds byte limit");
+                current_result_->writeByte(0);
+            } else {
+                current_result_->writeByte(static_cast<uint8_t>(agg.args.size()));
+            }
+            for (auto* arg : agg.args) {
+                write_agg_arg(arg);
+            }
+        }
+
+        aggregate_ref_mode_ = prev_mode;
+
+        // Generate HAVING clause
+        if (stmt->having) {
+            generateHavingClause(stmt->having);
+        }
+
+        current_result_->writeOpcode(sblr::Opcode::AGG_FINALIZE);
+    } else {
+        // Generate HAVING clause
+        if (stmt->having) {
+            generateHavingClause(stmt->having);
+        }
     }
 
     // Generate ORDER BY clause
@@ -441,7 +813,7 @@ void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
     }
 
     // Handle set operations (UNION, INTERSECT, EXCEPT)
-    if (stmt->set_op != SetOpType::NONE && stmt->set_op_right) {
+    if (emit_set_ops && stmt->set_op != SetOpType::NONE && stmt->set_op_right) {
         switch (stmt->set_op) {
             case SetOpType::UNION:
                 if (stmt->set_op_all) {
@@ -479,6 +851,8 @@ void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
 
 
 void BytecodeGeneratorV2::generateInsert(ResolvedInsertStmt* stmt) {
+    generateWithClause(stmt->with);
+
     // Compact stream layout (v2): INSERT + target + column list + source + optional ON CONFLICT/RETURNING.
     current_result_->writeOpcode(sblr::Opcode::INSERT);
 
@@ -579,6 +953,8 @@ void BytecodeGeneratorV2::generateInsert(ResolvedInsertStmt* stmt) {
 }
 
 void BytecodeGeneratorV2::generateUpdate(ResolvedUpdateStmt* stmt) {
+    generateWithClause(stmt->with);
+
     current_result_->writeOpcode(sblr::Opcode::UPDATE);
 
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
@@ -613,6 +989,8 @@ void BytecodeGeneratorV2::generateUpdate(ResolvedUpdateStmt* stmt) {
 }
 
 void BytecodeGeneratorV2::generateDelete(ResolvedDeleteStmt* stmt) {
+    generateWithClause(stmt->with);
+
     current_result_->writeOpcode(sblr::Opcode::DELETE);
 
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
@@ -727,9 +1105,17 @@ void BytecodeGeneratorV2::generateCopy(ResolvedCopyStmt* stmt) {
 // =============================================================================
 
 void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
-    // Compact stream layout (v2): CREATE_TABLE, TABLE_REF, column list, tablespace, constraints.
+    // Compact stream layout (v2): CREATE_TABLE, flags, TABLE_REF, column list, tablespace, constraints.
 
     current_result_->writeOpcode(sblr::Opcode::CREATE_TABLE);
+
+    uint8_t flags = 0;
+    flags |= static_cast<uint8_t>(stmt->temp_type) & 0x03;
+    flags |= (static_cast<uint8_t>(stmt->on_commit) & 0x03) << 2;
+    if (stmt->unlogged) {
+        flags |= 0x10;
+    }
+    current_result_->writeByte(flags);
 
     // Write table name with TABLE_REF opcode
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
@@ -737,7 +1123,20 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
 
     // Write BEGIN_LIST opcode for columns
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
-    current_result_->writeListCount(static_cast<uint64_t>(stmt->columns.size()));
+    size_t table_constraint_entries = 0;
+    for (const auto& constraint : stmt->constraints) {
+        if (constraint.constraint_type == ResolvedTableConstraint::Type::PRIMARY_KEY ||
+            constraint.constraint_type == ResolvedTableConstraint::Type::UNIQUE ||
+            constraint.constraint_type == ResolvedTableConstraint::Type::CHECK) {
+            if ((constraint.constraint_type == ResolvedTableConstraint::Type::CHECK &&
+                 constraint.check_expr) ||
+                (constraint.constraint_type != ResolvedTableConstraint::Type::CHECK &&
+                 !constraint.column_indexes.empty())) {
+                table_constraint_entries++;
+            }
+        }
+    }
+    current_result_->writeListCount(static_cast<uint64_t>(stmt->columns.size() + table_constraint_entries));
 
     auto write_column_type = [&](const ResolvedType& type) {
         if (type.is_domain && type.domain_id != ID{}) {
@@ -754,6 +1153,75 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
         generateDataType(type);
     };
 
+    auto fk_action_string = [](ForeignKeyAction action) -> const char* {
+        switch (action) {
+            case ForeignKeyAction::CASCADE: return "CASCADE";
+            case ForeignKeyAction::SET_NULL: return "SET NULL";
+            case ForeignKeyAction::SET_DEFAULT: return "SET DEFAULT";
+            case ForeignKeyAction::RESTRICT: return "RESTRICT";
+            case ForeignKeyAction::NO_ACTION:
+            default: return "NO ACTION";
+        }
+    };
+
+    // Emit table-level PK/UNIQUE/CHECK constraints before columns.
+    for (const auto& constraint : stmt->constraints) {
+        if (constraint.constraint_type == ResolvedTableConstraint::Type::PRIMARY_KEY ||
+            constraint.constraint_type == ResolvedTableConstraint::Type::UNIQUE) {
+            if (constraint.column_indexes.empty()) {
+                current_result_->addError("Table constraint requires at least one column");
+                continue;
+            }
+            current_result_->writeOpcode(
+                constraint.constraint_type == ResolvedTableConstraint::Type::PRIMARY_KEY
+                    ? sblr::Opcode::PRIMARY_KEY
+                    : sblr::Opcode::UNIQUE_CONSTRAINT);
+
+            current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+            current_result_->writeListCount(static_cast<uint64_t>(constraint.column_indexes.size()));
+            for (uint32_t idx : constraint.column_indexes) {
+                if (idx < stmt->columns.size()) {
+                    current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
+                    current_result_->writeString("");  // Empty qualifier
+                    writeStringId(stmt->columns[idx].name);
+                } else {
+                    current_result_->addError("Table constraint references invalid column index");
+                }
+            }
+            current_result_->writeOpcode(sblr::Opcode::END_LIST);
+
+            if (constraint.name != StringPool::INVALID_ID) {
+                writeStringId(constraint.name);
+            } else {
+                current_result_->writeString("");
+            }
+        } else if (constraint.constraint_type == ResolvedTableConstraint::Type::CHECK) {
+            if (!constraint.check_expr) {
+                current_result_->addError("Table CHECK constraint requires an expression");
+                continue;
+            }
+            current_result_->writeOpcode(sblr::Opcode::CHECK_CONSTRAINT);
+
+            BytecodeResultV2 temp_result;
+            BytecodeResultV2* saved_result = current_result_;
+            current_result_ = &temp_result;
+            generateExpression(constraint.check_expr);
+            current_result_ = saved_result;
+
+            const auto& bytecode = temp_result.bytecode();
+            current_result_->writeInt32(static_cast<uint32_t>(bytecode.size()));
+            for (uint8_t b : bytecode) {
+                current_result_->writeByte(b);
+            }
+
+            if (constraint.name != StringPool::INVALID_ID) {
+                writeStringId(constraint.name);
+            } else {
+                current_result_->writeString("");
+            }
+        }
+    }
+
     // Write each column definition in the current format
     for (const auto& col : stmt->columns) {
         current_result_->writeOpcode(sblr::Opcode::COLUMN_DEF);
@@ -769,6 +1237,13 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
         // Write NOT NULL constraint if column is not nullable
         if (!col.is_nullable) {
             current_result_->writeOpcode(sblr::Opcode::NOT_NULL);
+        }
+
+        // Write PRIMARY KEY / UNIQUE constraints if present
+        if (col.is_primary_key) {
+            current_result_->writeOpcode(sblr::Opcode::PRIMARY_KEY);
+        } else if (col.is_unique) {
+            current_result_->writeOpcode(sblr::Opcode::UNIQUE_CONSTRAINT);
         }
 
         // Write DEFAULT value as serialized bytecode
@@ -808,8 +1283,24 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
                 current_result_->writeByte(b);
             }
 
-            // Write constraint name (empty for column-level)
-            current_result_->writeString("");
+        }
+
+        if (col.has_fk) {
+            current_result_->writeOpcode(sblr::Opcode::FOREIGN_KEY);
+
+            if (!col.fk_table_path.components.empty()) {
+                current_result_->writeString(schemaPathToString(col.fk_table_path, string_pool_));
+            } else {
+                current_result_->writeString("");
+            }
+
+            current_result_->writeByte(static_cast<uint8_t>(col.fk_column_names.size()));
+            for (auto col_name : col.fk_column_names) {
+                writeStringId(col_name);
+            }
+
+            current_result_->writeString(fk_action_string(col.on_delete));
+            current_result_->writeString(fk_action_string(col.on_update));
         }
 
         // Note: PRIMARY KEY and UNIQUE at column level are handled via table constraints
@@ -818,17 +1309,6 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
 
     // Write END_LIST opcode
     current_result_->writeOpcode(sblr::Opcode::END_LIST);
-
-    auto fk_action_string = [](ForeignKeyAction action) -> const char* {
-        switch (action) {
-            case ForeignKeyAction::CASCADE: return "CASCADE";
-            case ForeignKeyAction::SET_NULL: return "SET NULL";
-            case ForeignKeyAction::SET_DEFAULT: return "SET DEFAULT";
-            case ForeignKeyAction::RESTRICT: return "RESTRICT";
-            case ForeignKeyAction::NO_ACTION:
-            default: return "NO ACTION";
-        }
-    };
 
     // Write table-level FK constraints
     for (const auto& constraint : stmt->constraints) {
@@ -896,6 +1376,11 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
         writeStringId(col_name);
     }
 
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->include_column_names.size()));
+    for (const auto& col_name : stmt->include_column_names) {
+        writeStringId(col_name);
+    }
+
     if (stmt->tablespace_name != StringPool::INVALID_ID) {
         writeStringId(stmt->tablespace_name);
     } else {
@@ -920,17 +1405,154 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
             index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BRIN);
         } else if (lower == "spgist") {
             index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::SPGIST);
+        } else if (lower == "rtree") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::RTREE);
+        } else if (lower == "hnsw") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::HNSW);
         } else if (lower == "bitmap") {
             index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BITMAP);
+        } else if (lower == "columnstore") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::COLUMNSTORE);
+        } else if (lower == "lsm") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::LSM);
         }
     }
 
     current_result_->writeByte(index_type);
 
-    bool has_expressions = false;
+    std::function<std::unique_ptr<core::Expression>(ResolvedExpression*)> to_core_expr;
+    to_core_expr = [&](ResolvedExpression* expr) -> std::unique_ptr<core::Expression> {
+        if (!expr) {
+            return nullptr;
+        }
+        if (auto* literal = dynamic_cast<ResolvedLiteral*>(expr)) {
+            using CoreLiteral = core::LiteralExpr;
+            auto type = literal->literal_type;
+            if (literal->is_null || type == LiteralType::NULL_VALUE) {
+                return std::make_unique<CoreLiteral>(CoreLiteral::LiteralType::NULL_LITERAL);
+            }
+            switch (type) {
+                case LiteralType::INTEGER: {
+                    auto node = std::make_unique<CoreLiteral>(CoreLiteral::LiteralType::INTEGER);
+                    node->setIntValue(literal->int_value);
+                    return node;
+                }
+                case LiteralType::FLOAT: {
+                    auto node = std::make_unique<CoreLiteral>(CoreLiteral::LiteralType::FLOAT);
+                    node->setFloatValue(literal->float_value);
+                    return node;
+                }
+                case LiteralType::STRING:
+                case LiteralType::BLOB: {
+                    auto node = std::make_unique<CoreLiteral>(CoreLiteral::LiteralType::STRING);
+                    node->setStringValue(std::string(getString(literal->string_value)));
+                    return node;
+                }
+                case LiteralType::BOOLEAN: {
+                    auto node = std::make_unique<CoreLiteral>(CoreLiteral::LiteralType::INTEGER);
+                    node->setIntValue(literal->bool_value ? 1 : 0);
+                    return node;
+                }
+                default:
+                    return nullptr;
+            }
+        }
+        if (auto* col_ref = dynamic_cast<ResolvedColumnRefExpr*>(expr)) {
+            std::string name(getString(col_ref->column.column_name));
+            return std::make_unique<core::IdentifierExpr>(std::move(name));
+        }
+        if (auto* binary = dynamic_cast<ResolvedBinaryExpr*>(expr)) {
+            auto left = to_core_expr(binary->left);
+            auto right = to_core_expr(binary->right);
+            if (!left || !right) {
+                return nullptr;
+            }
+            core::BinaryOp op;
+            switch (binary->op) {
+                case BinaryOp::ADD: op = core::BinaryOp::ADD; break;
+                case BinaryOp::SUB: op = core::BinaryOp::SUBTRACT; break;
+                case BinaryOp::MUL: op = core::BinaryOp::MULTIPLY; break;
+                case BinaryOp::DIV: op = core::BinaryOp::DIVIDE; break;
+                case BinaryOp::MOD: op = core::BinaryOp::MODULO; break;
+                case BinaryOp::EQ: op = core::BinaryOp::EQ; break;
+                case BinaryOp::NE: op = core::BinaryOp::NE; break;
+                case BinaryOp::LT: op = core::BinaryOp::LT; break;
+                case BinaryOp::LE: op = core::BinaryOp::LE; break;
+                case BinaryOp::GT: op = core::BinaryOp::GT; break;
+                case BinaryOp::GE: op = core::BinaryOp::GE; break;
+                case BinaryOp::AND: op = core::BinaryOp::AND; break;
+                case BinaryOp::OR: op = core::BinaryOp::OR; break;
+                default:
+                    return nullptr;
+            }
+            return std::make_unique<core::BinaryOpExpr>(op, std::move(left), std::move(right));
+        }
+        if (auto* func = dynamic_cast<ResolvedFunctionCall*>(expr)) {
+            std::vector<std::unique_ptr<core::Expression>> args;
+            args.reserve(func->arguments.size());
+            for (auto* arg : func->arguments) {
+                auto arg_expr = to_core_expr(arg);
+                if (!arg_expr) {
+                    return nullptr;
+                }
+                args.push_back(std::move(arg_expr));
+            }
+            std::string name(getString(func->function.function_name));
+            return std::make_unique<core::FunctionCallExpr>(std::move(name), std::move(args));
+        }
+        if (auto* cast_expr = dynamic_cast<ResolvedCast*>(expr)) {
+            auto inner = to_core_expr(cast_expr->expr);
+            if (!inner) {
+                return nullptr;
+            }
+            core::TypeInfo target(cast_expr->target_type.data_type);
+            if (cast_expr->target_type.precision) {
+                target.precision = static_cast<uint32_t>(*cast_expr->target_type.precision);
+            }
+            if (cast_expr->target_type.scale) {
+                target.scale = static_cast<uint32_t>(*cast_expr->target_type.scale);
+            }
+            if (cast_expr->target_type.length) {
+                target.precision = static_cast<uint32_t>(*cast_expr->target_type.length);
+            }
+            target.with_timezone = cast_expr->target_type.with_time_zone;
+            return std::make_unique<core::CastExpr>(std::move(inner), target, false, cast_expr->format);
+        }
+        return nullptr;
+    };
+
+    bool has_expressions = !stmt->expressions.empty();
     bool has_predicate = (stmt->where_clause != nullptr);
     current_result_->writeByte(has_expressions ? 1 : 0);
     current_result_->writeByte(has_predicate ? 1 : 0);
+
+    if (has_expressions)
+    {
+        std::vector<std::unique_ptr<core::Expression>> expr_nodes;
+        std::vector<core::Expression*> expr_ptrs;
+        expr_nodes.reserve(stmt->expressions.size());
+        expr_ptrs.reserve(stmt->expressions.size());
+
+        for (auto* expr : stmt->expressions)
+        {
+            auto node = to_core_expr(expr);
+            if (!node)
+            {
+                current_result_->addError("Expression index contains unsupported expression");
+                return;
+            }
+            expr_ptrs.push_back(node.get());
+            expr_nodes.push_back(std::move(node));
+        }
+
+        std::vector<uint8_t> expr_data = core::ExpressionSerializer::serializeList(expr_ptrs);
+        current_result_->writeInt32(static_cast<uint32_t>(expr_data.size()));
+        for (uint8_t b : expr_data)
+        {
+            current_result_->writeByte(b);
+        }
+        current_result_->writeInt32(0);
+    }
 
     if (has_predicate)
     {
@@ -977,6 +1599,8 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
     if (!stmt->column_names.empty()) flags |= 0x04;
     if (stmt->materialized) flags |= 0x08;
     if (!deps.empty()) flags |= 0x10;
+    if (stmt->temporary) flags |= 0x20;
+    if (stmt->if_not_exists) flags |= 0x40;
     current_result_->writeByte(flags);
 
     // Write column names if specified
@@ -1064,6 +1688,47 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
             current_result_->writeUUID(dep.first);
             current_result_->writeByte(static_cast<uint8_t>(dep.second));
         }
+    }
+}
+
+void BytecodeGeneratorV2::generateCreateSequence(ResolvedCreateSequenceStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::CREATE_SEQUENCE);
+
+    std::string sequence_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        sequence_name = std::string(getString(stmt->schema.schema_name));
+        sequence_name += ".";
+        sequence_name += std::string(getString(stmt->sequence_name));
+    } else {
+        sequence_name = std::string(getString(stmt->sequence_name));
+    }
+
+    current_result_->writeString(sequence_name);
+
+    uint8_t flags = 0;
+    if (stmt->increment_by.has_value()) flags |= 0x01;
+    if (stmt->min_value.has_value()) flags |= 0x02;
+    if (stmt->max_value.has_value()) flags |= 0x04;
+    if (stmt->start_with.has_value()) flags |= 0x08;
+    if (stmt->cache.has_value()) flags |= 0x10;
+    if (stmt->cycle) flags |= 0x20;
+    if (stmt->if_not_exists) flags |= 0x40;
+    if (stmt->temporary) flags |= 0x80;
+
+    current_result_->writeByte(flags);
+    if (stmt->increment_by.has_value()) current_result_->writeInt64(*stmt->increment_by);
+    if (stmt->min_value.has_value()) current_result_->writeInt64(*stmt->min_value);
+    if (stmt->max_value.has_value()) current_result_->writeInt64(*stmt->max_value);
+    if (stmt->start_with.has_value()) current_result_->writeInt64(*stmt->start_with);
+    if (stmt->cache.has_value()) current_result_->writeInt64(*stmt->cache);
+    if (stmt->cycle) current_result_->writeByte(1);
+
+    uint8_t flags2 = 0;
+    if (stmt->has_owned_by) flags2 |= 0x01;
+    current_result_->writeByte(flags2);
+    if (stmt->has_owned_by) {
+        writeStringId(stmt->owned_by_table);
+        writeStringId(stmt->owned_by_column);
     }
 }
 
@@ -1267,6 +1932,24 @@ void BytecodeGeneratorV2::generateCreatePackage(ResolvedCreatePackageStmt* stmt)
     current_result_->writeString(package_name);
     current_result_->writeString(stmt->header);
     current_result_->writeString(stmt->body);
+}
+
+void BytecodeGeneratorV2::generateCreateUser(ResolvedCreateUserStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_USER));
+    writeStringId(stmt->user_name);
+
+    uint8_t flags = 0;
+    if (stmt->has_password) {
+        flags |= 0x01;
+    }
+    if (stmt->is_superuser) {
+        flags |= 0x02;
+    }
+    current_result_->writeByte(flags);
+    if (stmt->has_password) {
+        current_result_->writeString(stmt->password);
+    }
 }
 
 void BytecodeGeneratorV2::generateCreateRole(ResolvedCreateRoleStmt* stmt) {
@@ -1563,6 +2246,17 @@ void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
         return;
     }
 
+    auto fk_action_string = [](ForeignKeyAction action) -> const char* {
+        switch (action) {
+            case ForeignKeyAction::CASCADE: return "CASCADE";
+            case ForeignKeyAction::SET_NULL: return "SET NULL";
+            case ForeignKeyAction::SET_DEFAULT: return "SET DEFAULT";
+            case ForeignKeyAction::RESTRICT: return "RESTRICT";
+            case ForeignKeyAction::NO_ACTION:
+            default: return "NO ACTION";
+        }
+    };
+
     auto writeQualifiedTableName = [&]() -> bool {
         if (stmt->qualified_table_name == StringPool::INVALID_ID) {
             current_result_->addError("ALTER TABLE requires a qualified table name");
@@ -1670,6 +2364,112 @@ void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
             if (!writeQualifiedTableName()) return;
             writeStringId(stmt->tablespace_name);
             current_result_->writeByte(stmt->tablespace_online ? 1 : 0);
+            break;
+        }
+        case AlterTableAction::ADD_CONSTRAINT: {
+            if (!stmt->has_constraint) {
+                current_result_->addError("ALTER TABLE ADD CONSTRAINT missing constraint definition");
+                return;
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+
+            current_result_->writeByte(3);  // ADD_CONSTRAINT
+
+            uint8_t constraint_type = 0xFF;
+            switch (stmt->constraint.constraint_type) {
+                case ResolvedTableConstraint::Type::PRIMARY_KEY:
+                    constraint_type = 0;
+                    break;
+                case ResolvedTableConstraint::Type::UNIQUE:
+                    constraint_type = 1;
+                    break;
+                case ResolvedTableConstraint::Type::FOREIGN_KEY:
+                    constraint_type = 2;
+                    break;
+                case ResolvedTableConstraint::Type::CHECK:
+                    constraint_type = 3;
+                    break;
+            }
+            current_result_->writeByte(constraint_type);
+
+            if (stmt->constraint.name != StringPool::INVALID_ID) {
+                writeStringId(stmt->constraint.name);
+            } else {
+                current_result_->writeString("");
+            }
+
+            if (stmt->constraint.constraint_type == ResolvedTableConstraint::Type::PRIMARY_KEY ||
+                stmt->constraint.constraint_type == ResolvedTableConstraint::Type::UNIQUE) {
+                current_result_->writeListCount(
+                    static_cast<uint64_t>(stmt->constraint.column_names.size()));
+                for (auto col_name : stmt->constraint.column_names) {
+                    writeStringId(col_name);
+                }
+                break;
+            }
+
+            if (stmt->constraint.constraint_type == ResolvedTableConstraint::Type::FOREIGN_KEY) {
+                current_result_->writeListCount(
+                    static_cast<uint64_t>(stmt->constraint.column_names.size()));
+                for (auto col_name : stmt->constraint.column_names) {
+                    writeStringId(col_name);
+                }
+
+                if (!stmt->constraint.fk_table_path.components.empty()) {
+                    current_result_->writeString(schemaPathToString(stmt->constraint.fk_table_path, string_pool_));
+                } else {
+                    current_result_->writeString("");
+                }
+
+                current_result_->writeListCount(
+                    static_cast<uint64_t>(stmt->constraint.fk_column_names.size()));
+                for (auto col_name : stmt->constraint.fk_column_names) {
+                    writeStringId(col_name);
+                }
+
+                current_result_->writeString(fk_action_string(stmt->constraint.on_delete));
+                current_result_->writeString(fk_action_string(stmt->constraint.on_update));
+                current_result_->writeByte(0);  // deferrable flags
+                break;
+            }
+
+            if (stmt->constraint.constraint_type == ResolvedTableConstraint::Type::CHECK) {
+                if (!stmt->constraint.check_expr) {
+                    current_result_->addError("ALTER TABLE ADD CONSTRAINT CHECK requires an expression");
+                    return;
+                }
+
+                BytecodeResultV2 temp_result;
+                BytecodeResultV2* saved_result = current_result_;
+                current_result_ = &temp_result;
+                generateExpression(stmt->constraint.check_expr);
+                current_result_ = saved_result;
+
+                const auto& bytecode = temp_result.bytecode();
+                current_result_->writeInt32(static_cast<uint32_t>(bytecode.size()));
+                for (uint8_t b : bytecode) {
+                    current_result_->writeByte(b);
+                }
+                break;
+            }
+
+            current_result_->addError("ALTER TABLE ADD CONSTRAINT has unsupported constraint type");
+            break;
+        }
+        case AlterTableAction::DROP_CONSTRAINT: {
+            if (stmt->constraint_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE DROP CONSTRAINT requires a constraint name");
+                return;
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+
+            current_result_->writeByte(4);  // DROP_CONSTRAINT
+            writeStringId(stmt->constraint_name);
+            current_result_->writeByte(stmt->cascade ? 1 : 0);
             break;
         }
         case AlterTableAction::ENABLE_RLS:
@@ -1939,6 +2739,41 @@ void BytecodeGeneratorV2::generateSavepoint(ResolvedSavepointStmt* stmt) {
     current_result_->writeExtendedOpcode(
         sblr::ExtendedOpcode::EXT_SAVEPOINT);
     writeStringId(stmt->name);
+}
+
+void BytecodeGeneratorV2::generateConnect(ResolvedConnectStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_CONNECT);
+    writeStringId(stmt->database);
+
+    uint8_t flags = 0;
+    if (stmt->user != StringPool::INVALID_ID) flags |= 0x01;
+    if (stmt->has_password) flags |= 0x02;
+    if (stmt->role != StringPool::INVALID_ID) flags |= 0x04;
+    if (stmt->charset != StringPool::INVALID_ID) flags |= 0x08;
+    current_result_->writeByte(flags);
+
+    if (stmt->user != StringPool::INVALID_ID) {
+        writeStringId(stmt->user);
+    }
+    if (stmt->has_password) {
+        current_result_->writeString(stmt->password);
+    }
+    if (stmt->role != StringPool::INVALID_ID) {
+        writeStringId(stmt->role);
+    }
+    if (stmt->charset != StringPool::INVALID_ID) {
+        writeStringId(stmt->charset);
+    }
+}
+
+void BytecodeGeneratorV2::generateDisconnect(ResolvedDisconnectStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_DISCONNECT);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->target));
+    if (stmt->target == DisconnectStmt::Target::NAMED) {
+        writeStringId(stmt->connection_name);
+    } else {
+        writeStringId(StringPool::INVALID_ID);
+    }
 }
 
 void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
@@ -2580,6 +3415,7 @@ void BytecodeGeneratorV2::generateUnaryExpr(ResolvedUnaryExpr* expr) {
         case UnaryOp::BIT_NOT:
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_BIT_NOT);
+            current_result_->writeByte(1);
             break;
 
         default:
@@ -2589,6 +3425,16 @@ void BytecodeGeneratorV2::generateUnaryExpr(ResolvedUnaryExpr* expr) {
 }
 
 void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
+    if (expr->function.is_aggregate && aggregate_ref_mode_) {
+        auto it = aggregate_output_map_.find(expr);
+        if (it == aggregate_output_map_.end()) {
+            current_result_->addError("Aggregate expression not mapped for output");
+            return;
+        }
+        writeColumnRefName(it->second);
+        return;
+    }
+
     auto arg_count = expr->arguments.size();
     auto write_arg_count = [&]() {
         if (arg_count > std::numeric_limits<uint8_t>::max()) {
@@ -2713,6 +3559,18 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     } else if (func_name == "CONCAT_WS") {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_CONCAT_WS);
         write_arg_count();
+    } else if (func_name == "ASCII") {
+        if (arg_count != 1) {
+            current_result_->addError("ASCII expects 1 argument");
+            return;
+        }
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ASCII);
+    } else if (func_name == "CHR") {
+        if (arg_count != 1) {
+            current_result_->addError("CHR expects 1 argument");
+            return;
+        }
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_CHR);
     } else if (func_name == "FORMAT_TYPE") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_FORMAT_TYPE);
@@ -2741,6 +3599,15 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_CURRENT_TIME);
         write_arg_count();
+    } else if (func_name == "GROUPING") {
+        if (arg_count != 1) {
+            current_result_->addError("GROUPING expects 1 argument");
+            return;
+        }
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_GROUPING_FUNC);
+        write_arg_count();
+        return;
     } else if (func_name == "DATE_ADD") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_DATE_ADD);
         write_arg_count();
@@ -2904,6 +3771,50 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
             sblr::ExtendedOpcode::EXT_FUNC_COT);
         write_arg_count();
     }
+    // Bit manipulation functions
+    else if (func_name == "GET_BYTE") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_GET_BYTE);
+        write_arg_count();
+    } else if (func_name == "SET_BYTE") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_SET_BYTE);
+        write_arg_count();
+    } else if (func_name == "GET_BIT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_GET_BIT);
+        write_arg_count();
+    } else if (func_name == "SET_BIT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_SET_BIT);
+        write_arg_count();
+    } else if (func_name == "BIT_AND") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_AND);
+        write_arg_count();
+    } else if (func_name == "BIT_OR") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_OR);
+        write_arg_count();
+    } else if (func_name == "BIT_XOR") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_XOR);
+        write_arg_count();
+    } else if (func_name == "BIT_NOT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_NOT);
+        write_arg_count();
+    } else if (func_name == "BIT_SHIFT_LEFT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_SHIFT_LEFT);
+        write_arg_count();
+    } else if (func_name == "BIT_SHIFT_RIGHT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_SHIFT_RIGHT);
+        write_arg_count();
+    } else if (func_name == "BIT_SHIFT_RIGHT_LOGICAL") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_SHIFT_RIGHT_LOGICAL);
+        write_arg_count();
+    } else if (func_name == "BIT_COUNT") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_COUNT);
+        write_arg_count();
+    } else if (func_name == "BIT_LENGTH") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_LENGTH);
+        write_arg_count();
+    } else if (func_name == "BIT_MASK") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_MASK);
+        write_arg_count();
+    }
     // JSON functions
     else if (func_name == "JSON_EXTRACT") {
         current_result_->writeOpcode(sblr::Opcode::JSON_EXTRACT);
@@ -2947,6 +3858,186 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     else {
         current_result_->addError("Unsupported built-in function: " + func_name);
     }
+}
+
+void BytecodeGeneratorV2::collectAggregates(
+    ResolvedExpression* expr,
+    std::vector<AggregateSpec>& aggregates,
+    std::unordered_set<const ResolvedFunctionCall*>& seen)
+{
+    if (!expr) {
+        return;
+    }
+
+    if (auto* func = dynamic_cast<ResolvedFunctionCall*>(expr)) {
+        if (func->function.is_aggregate) {
+            if (seen.insert(func).second) {
+                AggregateSpec spec;
+                if (buildAggregateSpec(func, spec)) {
+                    aggregates.push_back(std::move(spec));
+                }
+            }
+            return;
+        }
+        for (auto* arg : func->arguments) {
+            collectAggregates(arg, aggregates, seen);
+        }
+        if (func->filter) {
+            collectAggregates(func->filter, aggregates, seen);
+        }
+        if (func->separator) {
+            collectAggregates(func->separator, aggregates, seen);
+        }
+        for (auto* ob : func->internal_order_by) {
+            if (ob && ob->expr) {
+                collectAggregates(ob->expr, aggregates, seen);
+            }
+        }
+        return;
+    }
+
+    if (auto* binary = dynamic_cast<ResolvedBinaryExpr*>(expr)) {
+        collectAggregates(binary->left, aggregates, seen);
+        collectAggregates(binary->right, aggregates, seen);
+        return;
+    }
+    if (auto* unary = dynamic_cast<ResolvedUnaryExpr*>(expr)) {
+        collectAggregates(unary->operand, aggregates, seen);
+        return;
+    }
+    if (auto* cast = dynamic_cast<ResolvedCast*>(expr)) {
+        collectAggregates(cast->expr, aggregates, seen);
+        return;
+    }
+    if (auto* case_expr = dynamic_cast<ResolvedCase*>(expr)) {
+        if (case_expr->operand) {
+            collectAggregates(case_expr->operand, aggregates, seen);
+        }
+        for (const auto& when_clause : case_expr->when_clauses) {
+            collectAggregates(when_clause.when_expr, aggregates, seen);
+            collectAggregates(when_clause.then_expr, aggregates, seen);
+        }
+        if (case_expr->else_expr) {
+            collectAggregates(case_expr->else_expr, aggregates, seen);
+        }
+        return;
+    }
+    if (auto* in = dynamic_cast<ResolvedInExpr*>(expr)) {
+        collectAggregates(in->expr, aggregates, seen);
+        for (auto* value : in->values) {
+            collectAggregates(value, aggregates, seen);
+        }
+        return;
+    }
+    if (auto* between = dynamic_cast<ResolvedBetweenExpr*>(expr)) {
+        collectAggregates(between->expr, aggregates, seen);
+        collectAggregates(between->low, aggregates, seen);
+        collectAggregates(between->high, aggregates, seen);
+        return;
+    }
+    if (auto* like = dynamic_cast<ResolvedLikeExpr*>(expr)) {
+        collectAggregates(like->expr, aggregates, seen);
+        collectAggregates(like->pattern, aggregates, seen);
+        if (like->escape) {
+            collectAggregates(like->escape, aggregates, seen);
+        }
+        return;
+    }
+    if (auto* is_null = dynamic_cast<ResolvedIsNullExpr*>(expr)) {
+        collectAggregates(is_null->expr, aggregates, seen);
+        return;
+    }
+    if (auto* array = dynamic_cast<ResolvedArrayExpr*>(expr)) {
+        for (auto* elem : array->elements) {
+            collectAggregates(elem, aggregates, seen);
+        }
+        return;
+    }
+    if (auto* extract = dynamic_cast<ResolvedExtractExpr*>(expr)) {
+        for (auto* arg : extract->selector.args) {
+            collectAggregates(arg, aggregates, seen);
+        }
+        collectAggregates(extract->source, aggregates, seen);
+        return;
+    }
+    if (auto* alter = dynamic_cast<ResolvedAlterElementExpr*>(expr)) {
+        for (auto* arg : alter->selector.args) {
+            collectAggregates(arg, aggregates, seen);
+        }
+        collectAggregates(alter->source, aggregates, seen);
+        collectAggregates(alter->new_value, aggregates, seen);
+        return;
+    }
+}
+
+bool BytecodeGeneratorV2::buildAggregateSpec(const ResolvedFunctionCall* expr, AggregateSpec& out) {
+    if (!expr) {
+        return false;
+    }
+
+    std::string func_name(getString(expr->function.function_name));
+    std::transform(func_name.begin(), func_name.end(), func_name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+
+    sblr::Opcode agg_op{};
+    if (func_name == "COUNT") {
+        agg_op = sblr::Opcode::AGG_COUNT;
+    } else if (func_name == "SUM") {
+        agg_op = sblr::Opcode::AGG_SUM;
+    } else if (func_name == "AVG") {
+        agg_op = sblr::Opcode::AGG_AVG;
+    } else if (func_name == "MIN") {
+        agg_op = sblr::Opcode::AGG_MIN;
+    } else if (func_name == "MAX") {
+        agg_op = sblr::Opcode::AGG_MAX;
+    } else if (func_name == "STDDEV" || func_name == "STDDEV_SAMP") {
+        agg_op = sblr::Opcode::AGG_STDDEV_SAMP;
+    } else if (func_name == "STDDEV_POP") {
+        agg_op = sblr::Opcode::AGG_STDDEV_POP;
+    } else if (func_name == "VARIANCE" || func_name == "VAR_SAMP") {
+        agg_op = sblr::Opcode::AGG_VAR_SAMP;
+    } else if (func_name == "VAR_POP") {
+        agg_op = sblr::Opcode::AGG_VAR_POP;
+    } else if (func_name == "CORR") {
+        agg_op = sblr::Opcode::AGG_CORR;
+    } else if (func_name == "COVAR_POP") {
+        agg_op = sblr::Opcode::AGG_COVAR_POP;
+    } else if (func_name == "ARRAY_AGG") {
+        agg_op = sblr::Opcode::ARRAY_AGG;
+    } else if (func_name == "REGR_SLOPE") {
+        agg_op = sblr::Opcode::AGG_REGR_SLOPE;
+    } else if (func_name == "REGR_INTERCEPT") {
+        agg_op = sblr::Opcode::AGG_REGR_INTERCEPT;
+    } else if (func_name == "REGR_COUNT") {
+        agg_op = sblr::Opcode::AGG_REGR_COUNT;
+    } else if (func_name == "REGR_R2") {
+        agg_op = sblr::Opcode::AGG_REGR_R2;
+    } else if (func_name == "REGR_AVGX") {
+        agg_op = sblr::Opcode::AGG_REGR_AVGX;
+    } else if (func_name == "REGR_AVGY") {
+        agg_op = sblr::Opcode::AGG_REGR_AVGY;
+    } else if (func_name == "REGR_SXX") {
+        agg_op = sblr::Opcode::AGG_REGR_SXX;
+    } else if (func_name == "REGR_SYY") {
+        agg_op = sblr::Opcode::AGG_REGR_SYY;
+    } else if (func_name == "REGR_SXY") {
+        agg_op = sblr::Opcode::AGG_REGR_SXY;
+    } else {
+        current_result_->addError("Unknown aggregate function: " + func_name);
+        return false;
+    }
+
+    out.expr = expr;
+    out.opcode = agg_op;
+    out.args = expr->arguments;
+    if (func_name == "STDDEV") {
+        out.output_name = "STDDEV_SAMP";
+    } else if (func_name == "VARIANCE") {
+        out.output_name = "VAR_SAMP";
+    } else {
+        out.output_name = func_name;
+    }
+    return true;
 }
 
 void BytecodeGeneratorV2::generateCast(ResolvedCast* expr) {
@@ -3262,12 +4353,86 @@ void BytecodeGeneratorV2::generateWhereClause(ResolvedExpression* where) {
     generateExpression(where);
 }
 
-void BytecodeGeneratorV2::generateGroupByClause(const std::vector<ResolvedExpression*>& group_by) {
-    current_result_->writeOpcode(sblr::Opcode::GROUP_BY);
-    current_result_->writeListCount(static_cast<uint64_t>(group_by.size()));
-
-    for (auto* expr : group_by) {
+void BytecodeGeneratorV2::generateGroupByClause(const ResolvedSelectStmt& stmt) {
+    auto write_group_expr = [&](ResolvedExpression* expr) {
+        BytecodeResultV2 temp_result;
+        BytecodeResultV2* saved_result = current_result_;
+        current_result_ = &temp_result;
         generateExpression(expr);
+        current_result_ = saved_result;
+
+        for (const auto& err : temp_result.errors()) {
+            current_result_->addError(err);
+        }
+        for (const auto& warning : temp_result.warnings()) {
+            current_result_->addWarning(warning);
+        }
+
+        current_result_->writeListCount(static_cast<uint64_t>(temp_result.bytecode().size()));
+        for (uint8_t byte : temp_result.bytecode()) {
+            current_result_->writeByte(byte);
+        }
+    };
+
+    if (stmt.grouping_type == GroupingType::STANDARD) {
+        current_result_->writeOpcode(sblr::Opcode::GROUP_BY);
+        current_result_->writeListCount(static_cast<uint64_t>(stmt.group_by.size()));
+        for (auto* expr : stmt.group_by) {
+            write_group_expr(expr);
+        }
+        return;
+    }
+
+    std::vector<std::vector<ResolvedExpression*>> grouping_sets;
+    uint64_t total_grouping_columns = 0;
+    sblr::ExtendedOpcode ext_op = sblr::ExtendedOpcode::EXT_GROUP_GROUPING_SETS;
+
+    if (stmt.grouping_type == GroupingType::ROLLUP) {
+        ext_op = sblr::ExtendedOpcode::EXT_GROUP_ROLLUP;
+        total_grouping_columns = static_cast<uint64_t>(stmt.group_by.size());
+        for (size_t i = stmt.group_by.size(); i > 0; --i) {
+            grouping_sets.emplace_back(stmt.group_by.begin(),
+                                       stmt.group_by.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+        grouping_sets.emplace_back();  // grand total
+    } else if (stmt.grouping_type == GroupingType::CUBE) {
+        ext_op = sblr::ExtendedOpcode::EXT_GROUP_CUBE;
+        total_grouping_columns = static_cast<uint64_t>(stmt.group_by.size());
+        const size_t n = stmt.group_by.size();
+        const size_t total = n >= 63 ? 0 : (static_cast<size_t>(1) << n);
+        if (total == 0 && n > 0) {
+            current_result_->addError("CUBE grouping set size exceeds limit");
+        } else {
+            for (size_t mask = total; mask-- > 0;) {
+                std::vector<ResolvedExpression*> set;
+                for (size_t idx = 0; idx < n; ++idx) {
+                    if (mask & (static_cast<size_t>(1) << idx)) {
+                        set.push_back(stmt.group_by[idx]);
+                    }
+                }
+                grouping_sets.push_back(std::move(set));
+            }
+        }
+    } else if (stmt.grouping_type == GroupingType::GROUPING_SETS) {
+        ext_op = sblr::ExtendedOpcode::EXT_GROUP_GROUPING_SETS;
+        grouping_sets = stmt.grouping_sets;
+        for (const auto& set : grouping_sets) {
+            if (set.size() > total_grouping_columns) {
+                total_grouping_columns = static_cast<uint64_t>(set.size());
+            }
+        }
+    }
+
+    current_result_->writeExtendedOpcode(ext_op);
+    current_result_->writeListCount(static_cast<uint64_t>(grouping_sets.size()));
+    current_result_->writeListCount(total_grouping_columns);
+
+    for (const auto& set : grouping_sets) {
+        current_result_->writeOpcode(sblr::Opcode::GROUP_BY);
+        current_result_->writeListCount(static_cast<uint64_t>(set.size()));
+        for (auto* expr : set) {
+            write_group_expr(expr);
+        }
     }
 }
 
@@ -3317,11 +4482,21 @@ void BytecodeGeneratorV2::generateLimitOffset(ResolvedExpression* limit, Resolve
 void BytecodeGeneratorV2::generateDataType(const ResolvedType& type) {
     // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md for SBLR type encoding.
     if (type.data_type == DataType::INT128 || type.data_type == DataType::UINT128) {
-        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
         current_result_->writeExtendedOpcode(
             type.data_type == DataType::INT128
                 ? sblr::ExtendedOpcode::EXT_TYPE_INT128
                 : sblr::ExtendedOpcode::EXT_TYPE_UINT128);
+        return;
+    }
+    if (type.data_type == DataType::VECTOR) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_VECTOR);
+        int32_t dimension = 0;
+        if (type.length) {
+            dimension = *type.length;
+        } else if (type.precision) {
+            dimension = *type.precision;
+        }
+        current_result_->writeInt32(dimension);
         return;
     }
 
@@ -3403,6 +4578,11 @@ std::string_view BytecodeGeneratorV2::getString(StringPool::StringId id) const {
 void BytecodeGeneratorV2::writeStringId(StringPool::StringId id) {
     std::string_view str = getString(id);
     current_result_->writeString(std::string(str));
+}
+
+void BytecodeGeneratorV2::writeColumnRefName(const std::string& name) {
+    current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
+    current_result_->writeString(name);
 }
 
 void BytecodeGeneratorV2::writeString16(std::string_view str) {

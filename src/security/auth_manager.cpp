@@ -64,7 +64,8 @@ static bool matchIPv6(const struct in6_addr& addr, const struct in6_addr& networ
 }
 
 bool HBARule::matches(const ConnectionInfo& conn, const std::string& username,
-                      const std::string& database_name) const
+                      const std::string& database_name,
+                      const std::vector<std::string>& roles) const
 {
     // Check connection type
     switch (connection_type) {
@@ -94,8 +95,14 @@ bool HBARule::matches(const ConnectionInfo& conn, const std::string& username,
         if (database == "sameuser") {
             if (database_name != username) return false;
         } else if (database == "samerole") {
-            // TODO: Check role membership
-            return false;
+            bool found = false;
+            for (const auto& role : roles) {
+                if (role == database_name) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
         } else if (database[0] == '@') {
             // Database list from file
             bool found = false;
@@ -128,8 +135,15 @@ bool HBARule::matches(const ConnectionInfo& conn, const std::string& username,
     // Check user
     if (user != "all") {
         if (user[0] == '+') {
-            // Role membership - TODO
-            return false;
+            std::string role_name = user.substr(1);
+            bool found = false;
+            for (const auto& role : roles) {
+                if (role == role_name) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
         } else if (user[0] == '@') {
             // User list from file
             bool found = false;
@@ -204,8 +218,41 @@ bool HBARule::matches(const ConnectionInfo& conn, const std::string& username,
                 break;
 
             case IPMatchType::SAMENET:
-                // TODO: Check same network
+            {
+                if (conn.server_address.empty()) {
+                    return false;
+                }
+
+                struct in_addr client_ipv4, server_ipv4;
+                struct in6_addr client_ipv6, server_ipv6;
+                bool client_is_ipv6, server_is_ipv6;
+
+                if (!parseIPAddress(conn.client_address, &client_ipv4,
+                                   &client_ipv6, client_is_ipv6)) {
+                    return false;
+                }
+
+                if (!parseIPAddress(conn.server_address, &server_ipv4,
+                                   &server_ipv6, server_is_ipv6)) {
+                    return false;
+                }
+
+                if (client_is_ipv6 != server_is_ipv6) {
+                    return false;
+                }
+
+                uint8_t prefix = client_is_ipv6 ? 64 : 24;
+                if (client_is_ipv6) {
+                    if (!matchIPv6(client_ipv6, server_ipv6, prefix)) {
+                        return false;
+                    }
+                } else {
+                    if (!matchIPv4(client_ipv4, server_ipv4, prefix)) {
+                        return false;
+                    }
+                }
                 break;
+            }
         }
     }
 
@@ -395,10 +442,11 @@ void HBAConfig::clear() {
 
 const HBARule* HBAConfig::findMatchingRule(const ConnectionInfo& conn,
                                             const std::string& username,
-                                            const std::string& database) const {
+                                            const std::string& database,
+                                            const std::vector<std::string>& roles) const {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& rule : rules_) {
-        if (rule.matches(conn, username, database)) {
+        if (rule.matches(conn, username, database, roles)) {
             return &rule;
         }
     }
@@ -812,8 +860,16 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
     // Find matching HBA rule
     const HBARule* rule = nullptr;
     if (config_.hba_enabled) {
+        std::vector<std::string> roles;
+        if (credential_store_) {
+            UserCredential cred;
+            if (credential_store_->getCredential(ctx.username(), cred) == core::Status::OK) {
+                roles = cred.roles;
+            }
+        }
+
         rule = hba_config_.findMatchingRule(conn, ctx.username(),
-                                            conn.database_name);
+                                            conn.database_name, roles);
         if (!rule) {
             stats_.hba_rejected++;
             ctx.setFailure(AuthFailReason::NOT_ALLOWED,

@@ -12,6 +12,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include <algorithm>
@@ -1222,11 +1223,23 @@ Status SPGiSTIndex::loadPage(uint64_t page_num, SBSPGiSTPage** page, ErrorContex
 
 Status SPGiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
 {
-    static uint64_t next_page = 100000; // Offset from other indexes
-    *page_num = next_page++;
+    if (!db_ || !db_->page_manager())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database has no page manager");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint32_t allocated_page = 0;
+    Status status = db_->page_manager()->allocatePage(allocated_page, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    *page_num = allocated_page;
 
     void* page_buffer = nullptr;
-    Status status = buffer_pool_->pinPage(static_cast<uint32_t>(*page_num), &page_buffer, ctx);
+    status = buffer_pool_->pinPage(static_cast<uint32_t>(*page_num), &page_buffer, ctx);
     if (status != Status::OK)
     {
         if (ctx)

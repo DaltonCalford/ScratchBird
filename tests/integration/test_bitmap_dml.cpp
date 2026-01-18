@@ -14,6 +14,7 @@
 #include "scratchbird/core/bitmap_index.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/gpid.h"
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -21,6 +22,26 @@
 #include <string>
 
 using namespace scratchbird::core;
+
+namespace {
+class ConnectionContextGuard
+{
+public:
+    explicit ConnectionContextGuard(ConnectionContext* ctx)
+        : prev_(ConnectionContext::getCurrent())
+    {
+        ConnectionContext::setCurrent(ctx);
+    }
+
+    ~ConnectionContextGuard()
+    {
+        ConnectionContext::setCurrent(prev_);
+    }
+
+private:
+    ConnectionContext* prev_;
+};
+} // namespace
 
 class BitmapDMLTest : public ::testing::Test
 {
@@ -116,16 +137,17 @@ TEST_F(BitmapDMLTest, DirectInsertViaBitmapIndex)
     status = db_->connect(conn, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
     uint64_t xid = conn->getCurrentXid();
+    ConnectionContextGuard conn_guard(conn.get());
 
     // Insert low-cardinality values (e.g., status column: 'active', 'inactive', 'pending')
     std::vector<uint8_t> value_active = serializeString("active");
     std::vector<uint8_t> value_inactive = serializeString("inactive");
     std::vector<uint8_t> value_pending = serializeString("pending");
 
-    TID tid1 = makeTID(1, 1, 1);
-    TID tid2 = makeTID(1, 2, 1);
-    TID tid3 = makeTID(1, 3, 1);
-    TID tid4 = makeTID(1, 4, 1);
+    TID tid1 = makeTID(PRIMARY_TABLESPACE_ID, 1, 1);
+    TID tid2 = makeTID(PRIMARY_TABLESPACE_ID, 2, 1);
+    TID tid3 = makeTID(PRIMARY_TABLESPACE_ID, 3, 1);
+    TID tid4 = makeTID(PRIMARY_TABLESPACE_ID, 4, 1);
 
     // Insert tuples with different values
     status = bitmap->insert(value_active.data(), value_active.size(), tid1, &ctx);
@@ -186,9 +208,10 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     std::unique_ptr<ConnectionContext> insert_conn;
     status = db_->connect(insert_conn, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to connect for insert: " << ctx.message;
+    ConnectionContextGuard insert_guard(insert_conn.get());
 
     std::vector<uint8_t> value = serializeInt32(42);
-    TID tid = makeTID(1, 10, 1);
+    TID tid = makeTID(PRIMARY_TABLESPACE_ID, 10, 1);
 
     status = bitmap->insert(value.data(), value.size(), tid, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -212,6 +235,7 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     std::unique_ptr<ConnectionContext> delete_conn;
     status = db_->connect(delete_conn, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to connect for delete: " << ctx.message;
+    ConnectionContextGuard delete_guard(delete_conn.get());
 
     status = bitmap->remove(tid, &ctx);
     EXPECT_EQ(status, Status::OK) << "Remove should succeed: " << ctx.message;
@@ -254,16 +278,17 @@ TEST_F(BitmapDMLTest, LogicalOperations)
     std::unique_ptr<ConnectionContext> conn;
     status = db_->connect(conn, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
+    ConnectionContextGuard conn_guard(conn.get());
 
     // Insert entries with values 1, 2, 3
     std::vector<uint8_t> value1 = serializeInt32(1);
     std::vector<uint8_t> value2 = serializeInt32(2);
     std::vector<uint8_t> value3 = serializeInt32(3);
 
-    bitmap->insert(value1.data(), value1.size(), makeTID(1, 1, 1), &ctx);
-    bitmap->insert(value2.data(), value2.size(), makeTID(1, 2, 1), &ctx);
-    bitmap->insert(value1.data(), value1.size(), makeTID(1, 3, 1), &ctx);
-    bitmap->insert(value3.data(), value3.size(), makeTID(1, 4, 1), &ctx);
+    bitmap->insert(value1.data(), value1.size(), makeTID(PRIMARY_TABLESPACE_ID, 1, 1), &ctx);
+    bitmap->insert(value2.data(), value2.size(), makeTID(PRIMARY_TABLESPACE_ID, 2, 1), &ctx);
+    bitmap->insert(value1.data(), value1.size(), makeTID(PRIMARY_TABLESPACE_ID, 3, 1), &ctx);
+    bitmap->insert(value3.data(), value3.size(), makeTID(PRIMARY_TABLESPACE_ID, 4, 1), &ctx);
 
     status = conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
@@ -313,10 +338,11 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     std::unique_ptr<ConnectionContext> conn;
     status = db_->connect(conn, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
+    ConnectionContextGuard conn_guard(conn.get());
 
     // Initial insert with value "draft"
     std::vector<uint8_t> value_draft = serializeString("draft");
-    TID tid = makeTID(1, 5, 1);
+    TID tid = makeTID(PRIMARY_TABLESPACE_ID, 5, 1);
 
     bitmap->insert(value_draft.data(), value_draft.size(), tid, &ctx);
     status = conn->commit(&ctx);
@@ -326,6 +352,7 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     std::unique_ptr<ConnectionContext> update_conn;
     status = db_->connect(update_conn, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to connect for update: " << ctx.message;
+    ConnectionContextGuard update_guard(update_conn.get());
 
     // Remove old value (marks with xmax)
     bitmap->remove(tid, &ctx);

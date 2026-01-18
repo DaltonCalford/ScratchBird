@@ -1059,7 +1059,7 @@ void RTree::condenseTree(RTreeNode* leaf, size_t entry_index, uint64_t current_x
     // Tree condensation and physical removal occur later during
     // garbage collection via removeDeadEntries() when xmax < OIT.
 
-    LOG_WARNING(BTREE, "condenseTree stub called - use remove() for logical deletion");
+    LOG_DEBUG(BTREE, "condenseTree invoked - MGA logical delete path");
 
     // For compatibility, mark entry as deleted instead of physical removal
     if (entry_index < leaf->getEntryCount())

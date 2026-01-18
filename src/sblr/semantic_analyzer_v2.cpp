@@ -1993,6 +1993,43 @@ ResolutionScope& SemanticAnalyzerV2::currentScope() {
     return scope_stack_.back();
 }
 
+void SemanticAnalyzerV2::pushCTEScope() {
+    cte_scopes_.emplace_back();
+}
+
+void SemanticAnalyzerV2::popCTEScope() {
+    if (!cte_scopes_.empty()) {
+        cte_scopes_.pop_back();
+    }
+}
+
+void SemanticAnalyzerV2::registerCTE(const CTEEntry& entry) {
+    if (cte_scopes_.empty()) {
+        pushCTEScope();
+    }
+
+    std::string key = core::IdentifierUtils::toUpper(std::string(getString(entry.name)));
+    StringPool::StringId key_id = internString(key);
+    cte_scopes_.back()[key_id] = entry;
+}
+
+const SemanticAnalyzerV2::CTEEntry* SemanticAnalyzerV2::findCTE(StringPool::StringId name) {
+    if (name == StringPool::INVALID_ID) {
+        return nullptr;
+    }
+
+    std::string key = core::IdentifierUtils::toUpper(std::string(getString(name)));
+    StringPool::StringId key_id = string_pool_.intern(key);
+
+    for (auto it = cte_scopes_.rbegin(); it != cte_scopes_.rend(); ++it) {
+        auto found = it->find(key_id);
+        if (found != it->end()) {
+            return &found->second;
+        }
+    }
+    return nullptr;
+}
+
 // =============================================================================
 // Name Resolution
 // =============================================================================
@@ -2004,6 +2041,22 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
     {
         error(span, "Invalid table reference: empty path");
         return std::nullopt;
+    }
+
+    if (path.components.size() == 1 && path.type != PathType::ABSOLUTE)
+    {
+        auto* cte = findCTE(path.components.back());
+        if (cte)
+        {
+            ResolvedTableRef ref;
+            ref.table_uuid = ID{};
+            ref.schema_uuid = ID{};
+            ref.name = cte->name;
+            ref.object_type = ResolvedTableRef::ObjectType::CTE;
+            ref.subquery = cte->query;
+            ref.columns = cte->columns;
+            return ref;
+        }
     }
 
     std::vector<std::string> components;
@@ -2393,6 +2446,150 @@ bool SemanticAnalyzerV2::loadTableColumns(ResolvedTableRef& ref) {
     return true;
 }
 
+ResolvedWithClause* SemanticAnalyzerV2::analyzeWithClause(WithClause* with) {
+    if (!with) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedWithClause>();
+    resolved->recursive = with->recursive;
+
+    pushCTEScope();
+
+    if (with->recursive) {
+        for (const auto& cte : with->ctes) {
+            if (cte.column_names.empty()) {
+                error(cte.query ? cte.query->span : SourceSpan{},
+                      "Recursive CTE requires an explicit column list");
+                continue;
+            }
+
+            CTEEntry entry;
+            entry.name = cte.name;
+            entry.columns.reserve(cte.column_names.size());
+            uint32_t index = 0;
+            for (auto name_id : cte.column_names) {
+                ResolvedTableRef::ColumnInfo col_info;
+                col_info.name = name_id;
+                col_info.data_type = DataType::UNKNOWN;
+                col_info.is_nullable = true;
+                col_info.column_index = index++;
+                entry.columns.push_back(col_info);
+            }
+            registerCTE(entry);
+        }
+    }
+
+    for (const auto& cte : with->ctes) {
+        auto* query_stmt = dynamic_cast<SelectStmt*>(cte.query);
+        if (!query_stmt) {
+            error(cte.query ? cte.query->span : SourceSpan{}, "CTE query must be a SELECT statement");
+            continue;
+        }
+
+        auto* resolved_query = analyzeSelect(query_stmt);
+        if (!resolved_query) {
+            continue;
+        }
+
+        applyCTEColumnAliases(resolved_query, cte.column_names, query_stmt->span);
+        auto columns = buildCTEColumns(resolved_query, cte.column_names);
+
+        CTEEntry entry;
+        entry.name = cte.name;
+        entry.columns = columns;
+        entry.query = resolved_query;
+        registerCTE(entry);
+
+        ResolvedCTE resolved_cte;
+        resolved_cte.name = cte.name;
+        resolved_cte.column_names = cte.column_names;
+        resolved_cte.query = resolved_query;
+        resolved->ctes.push_back(std::move(resolved_cte));
+    }
+
+    return resolved;
+}
+
+void SemanticAnalyzerV2::applyCTEColumnAliases(
+    ResolvedSelectStmt* query,
+    const std::vector<StringPool::StringId>& column_names,
+    SourceSpan span)
+{
+    if (!query || column_names.empty()) {
+        return;
+    }
+
+    if (query->select_list.size() != column_names.size()) {
+        error(span, "CTE column list count does not match SELECT output columns");
+        return;
+    }
+
+    for (size_t i = 0; i < query->select_list.size(); ++i) {
+        auto& item = query->select_list[i];
+        if (item.item_type == ResolvedSelectItem::ItemType::TABLE_STAR) {
+            error(span, "CTE column list cannot be applied to TABLE.* output");
+            return;
+        }
+        item.alias = column_names[i];
+        item.has_alias = true;
+    }
+}
+
+std::vector<ResolvedTableRef::ColumnInfo> SemanticAnalyzerV2::buildCTEColumns(
+    ResolvedSelectStmt* query,
+    const std::vector<StringPool::StringId>& column_names)
+{
+    std::vector<ResolvedTableRef::ColumnInfo> columns;
+    if (!query) {
+        return columns;
+    }
+
+    size_t expr_index = 0;
+    for (const auto& item : query->select_list) {
+        if (item.item_type == ResolvedSelectItem::ItemType::TABLE_STAR) {
+            core::CatalogManager::TableInfo table_info;
+            if (catalog_.getTable(item.table_uuid, table_info) != Status::OK) {
+                continue;
+            }
+
+            std::vector<CatalogManager::ColumnInfo> table_columns;
+            if (catalog_.getColumns(item.table_uuid, table_columns) != Status::OK) {
+                continue;
+            }
+
+            for (const auto& col : table_columns) {
+                ResolvedTableRef::ColumnInfo info;
+                info.name = internString(col.column_name);
+                info.data_type = static_cast<DataType>(col.data_type);
+                info.is_nullable = col.nullable;
+                info.column_index = static_cast<uint32_t>(columns.size());
+                columns.push_back(info);
+            }
+            continue;
+        }
+
+        ResolvedTableRef::ColumnInfo info;
+        if (item.has_alias) {
+            info.name = item.alias;
+        } else if (auto* col_ref = dynamic_cast<ResolvedColumnRefExpr*>(item.expr)) {
+            info.name = col_ref->column.column_name;
+        } else if (!column_names.empty() && expr_index < column_names.size()) {
+            info.name = column_names[expr_index];
+        } else {
+            info.name = internString("expr" + std::to_string(expr_index + 1));
+        }
+
+        info.data_type = item.type.data_type;
+        info.is_nullable = item.type.is_nullable;
+        info.column_index = static_cast<uint32_t>(columns.size());
+        columns.push_back(info);
+        ++expr_index;
+    }
+
+    return columns;
+}
+
 std::optional<ResolvedColumnRef> SemanticAnalyzerV2::resolveColumn(
     StringPool::StringId table_alias,
     StringPool::StringId column_name,
@@ -2553,6 +2750,17 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
+    if (func_name == "grouping") {
+        if (arg_types.size() != 1) {
+            error(span, "GROUPING() expects exactly one argument");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT32;
+        ret_type->is_nullable = false;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
     // String functions
     if (func_name == "length" || func_name == "char_length" || func_name == "octet_length") {
         ret_type->data_type = DataType::INT32;
@@ -2626,6 +2834,138 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
+    // Bit manipulation functions
+    auto any_nullable = [&]() {
+        for (const auto& arg : arg_types) {
+            if (arg.is_nullable) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (func_name == "get_byte") {
+        if (arg_types.size() != 2) {
+            error(span, "GET_BYTE requires exactly two arguments");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "set_byte") {
+        if (arg_types.size() != 3) {
+            error(span, "SET_BYTE requires exactly three arguments");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::VARCHAR;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "get_bit") {
+        if (arg_types.size() != 2) {
+            error(span, "GET_BIT requires exactly two arguments");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "set_bit") {
+        if (arg_types.size() != 3) {
+            error(span, "SET_BIT requires exactly three arguments");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::VARCHAR;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "bit_and" || func_name == "bit_or" || func_name == "bit_xor") {
+        if (arg_types.size() != 2) {
+            error(span, "BIT_AND/BIT_OR/BIT_XOR require exactly two arguments");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "bit_not") {
+        if (arg_types.size() != 1) {
+            error(span, "BIT_NOT requires exactly one argument");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "bit_shift_left" || func_name == "bit_shift_right" ||
+        func_name == "bit_shift_right_logical") {
+        if (arg_types.size() != 2) {
+            error(span, "BIT_SHIFT_* requires exactly two arguments");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "bit_count") {
+        if (arg_types.size() != 1) {
+            error(span, "BIT_COUNT requires exactly one argument");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT32;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "bit_length") {
+        if (arg_types.size() != 1) {
+            error(span, "BIT_LENGTH requires exactly one argument");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT32;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "bit_mask") {
+        if (arg_types.size() != 1) {
+            error(span, "BIT_MASK requires exactly one argument");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "chr") {
+        if (arg_types.size() != 1) {
+            error(span, "CHR requires exactly one argument");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::TEXT;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+    if (func_name == "ascii") {
+        if (arg_types.size() != 1) {
+            error(span, "ASCII requires exactly one argument");
+            return std::nullopt;
+        }
+        ret_type->data_type = DataType::INT32;
+        ret_type->is_nullable = any_nullable();
+        ref.return_type = ret_type;
+        return ref;
+    }
+
     // Spatial functions
     if (func_name == "st_point") {
         ret_type->data_type = DataType::POINT;
@@ -2677,8 +3017,8 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
-    if (func_name == "round" || func_name == "ceil" || func_name == "floor" ||
-        func_name == "trunc" || func_name == "mod") {
+    if (func_name == "round" || func_name == "ceil" || func_name == "ceiling" ||
+        func_name == "floor" || func_name == "trunc" || func_name == "mod") {
         ret_type->data_type = DataType::FLOAT64;
         ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
         ref.return_type = ret_type;
@@ -3002,6 +3342,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateIndex(static_cast<CreateIndexStmt*>(stmt));
         case ASTKind::CreateViewStmt:
             return analyzeCreateView(static_cast<CreateViewStmt*>(stmt));
+        case ASTKind::CreateSequenceStmt:
+            return analyzeCreateSequence(static_cast<CreateSequenceStmt*>(stmt));
         case ASTKind::CreateSchemaStmt:
             return analyzeCreateSchema(static_cast<CreateSchemaStmt*>(stmt));
         case ASTKind::DropSchemaStmt:
@@ -3018,6 +3360,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateTrigger(static_cast<CreateTriggerStmt*>(stmt));
         case ASTKind::CreatePackageStmt:
             return analyzeCreatePackage(static_cast<CreatePackageStmt*>(stmt));
+        case ASTKind::CreateUserStmt:
+            return analyzeCreateUser(static_cast<CreateUserStmt*>(stmt));
         case ASTKind::CreateRoleStmt:
             return analyzeCreateRole(static_cast<CreateRoleStmt*>(stmt));
         case ASTKind::CreateExceptionStmt:
@@ -3088,6 +3432,10 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeSavepoint(static_cast<SavepointStmt*>(stmt));
         case ASTKind::ReleaseSavepointStmt:
             return analyzeReleaseSavepoint(static_cast<ReleaseSavepointStmt*>(stmt));
+        case ASTKind::ConnectStmt:
+            return analyzeConnect(static_cast<ConnectStmt*>(stmt));
+        case ASTKind::DisconnectStmt:
+            return analyzeDisconnect(static_cast<DisconnectStmt*>(stmt));
 
         // Session
         case ASTKind::SetStmt:
@@ -3179,6 +3527,33 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeReleaseSavepoint(ReleaseSavepointS
     auto* resolved = arena_.create<ResolvedSavepointStmt>();
     resolved->span = stmt->span;
     resolved->name = stmt->name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeConnect(ConnectStmt* stmt) {
+    auto* resolved = arena_.create<ResolvedConnectStmt>();
+    resolved->span = stmt->span;
+    resolved->database = stmt->database;
+    resolved->user = stmt->user;
+    resolved->role = stmt->role;
+    resolved->charset = stmt->charset;
+    resolved->has_password = (stmt->password != StringPool::INVALID_ID);
+    if (resolved->has_password) {
+        resolved->password = std::string(string_pool_.get(stmt->password));
+    }
+
+    if (resolved->user == StringPool::INVALID_ID) {
+        error(stmt->span, "CONNECT requires USER");
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDisconnect(DisconnectStmt* stmt) {
+    auto* resolved = arena_.create<ResolvedDisconnectStmt>();
+    resolved->span = stmt->span;
+    resolved->target = stmt->target;
+    resolved->connection_name = stmt->connection_name;
     return resolved;
 }
 
@@ -3385,6 +3760,36 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTable(CreateTableStmt* stmt)
     auto* resolved = arena_.create<ResolvedCreateTableStmt>();
     resolved->span = stmt->span;
     resolved->if_not_exists = stmt->if_not_exists;
+    resolved->or_replace = stmt->or_replace;
+    resolved->temp_type = stmt->temp_type;
+    resolved->on_commit = stmt->on_commit;
+    resolved->unlogged = stmt->unlogged;
+
+    if (resolved->temp_type == TempTableType::NONE &&
+        resolved->on_commit != TempOnCommitAction::NONE)
+    {
+        error(stmt->span, "ON COMMIT can only be used on temporary tables");
+        return nullptr;
+    }
+
+    if (resolved->temp_type != TempTableType::NONE &&
+        resolved->on_commit == TempOnCommitAction::NONE)
+    {
+        switch (resolved->temp_type)
+        {
+            case TempTableType::SESSION:
+                resolved->on_commit = TempOnCommitAction::PRESERVE_ROWS;
+                break;
+            case TempTableType::TRANSACTION:
+                resolved->on_commit = TempOnCommitAction::DELETE_ROWS;
+                break;
+            case TempTableType::GLOBAL:
+                resolved->on_commit = TempOnCommitAction::DELETE_ROWS;
+                break;
+            default:
+                break;
+        }
+    }
 
     // Resolve schema from table path
     if (stmt->table_path.components.size() >= 2) {
@@ -3440,10 +3845,18 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
         resolved->tablespace_name = internString(schemaPathToString(stmt->tablespace, string_pool_));
     }
 
-    if (!stmt->include_columns.empty()) {
-        error(stmt->span, "INCLUDE columns are not supported for CREATE INDEX yet");
-        return nullptr;
-    }
+    // Make the target table available for expression and predicate resolution.
+    struct ScopeGuard {
+        SemanticAnalyzerV2* analyzer;
+        ~ScopeGuard() { analyzer->popScope(); }
+    };
+    pushScope();
+    ScopeGuard scope_guard{this};
+    ResolutionScope::TableEntry entry;
+    entry.table_uuid = table_ref->table_uuid;
+    entry.columns = table_ref->columns;
+    entry.alias = StringPool::INVALID_ID;
+    currentScope().addTable(entry);
 
     // Map index type to string
     switch (stmt->index_type) {
@@ -3451,14 +3864,25 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
         case IndexType::HASH: resolved->index_method = internString("hash"); break;
         case IndexType::GIN: resolved->index_method = internString("gin"); break;
         case IndexType::GIST: resolved->index_method = internString("gist"); break;
+        case IndexType::SPGIST: resolved->index_method = internString("spgist"); break;
         case IndexType::BRIN: resolved->index_method = internString("brin"); break;
+        case IndexType::RTREE: resolved->index_method = internString("rtree"); break;
+        case IndexType::HNSW: resolved->index_method = internString("hnsw"); break;
         case IndexType::BITMAP: resolved->index_method = internString("bitmap"); break;
+        case IndexType::COLUMNSTORE: resolved->index_method = internString("columnstore"); break;
+        case IndexType::LSM: resolved->index_method = internString("lsm"); break;
     }
 
-    // Resolve index columns
+    // Resolve index columns/expressions
+    bool saw_expression = false;
+    bool saw_column = false;
     for (const auto& idx_col : stmt->columns) {
         if (idx_col.column != StringPool::INVALID_ID) {
-            // Named column
+            if (saw_expression) {
+                error(stmt->span, "Expression indexes cannot mix columns and expressions yet");
+                return nullptr;
+            }
+            saw_column = true;
             bool found = false;
             for (uint32_t i = 0; i < table_ref->columns.size(); ++i) {
                 if (table_ref->columns[i].name == idx_col.column) {
@@ -3474,15 +3898,66 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
                 return nullptr;
             }
         } else if (idx_col.expr) {
-            error(stmt->span, "Expression indexes are not supported yet");
+            if (saw_column) {
+                error(stmt->span, "Expression indexes cannot mix columns and expressions yet");
+                return nullptr;
+            }
+            saw_expression = true;
+            auto* resolved_expr = analyzeExpression(idx_col.expr);
+            if (!resolved_expr) {
+                return nullptr;
+            }
+            resolved->expressions.push_back(resolved_expr);
+        } else {
+            error(stmt->span, "Index key requires a column name or expression");
             return nullptr;
+        }
+    }
+
+    if (!stmt->include_columns.empty()) {
+        std::unordered_set<std::string> seen;
+        for (const auto& name_id : resolved->column_names) {
+            seen.insert(core::IdentifierUtils::toUpper(std::string(getString(name_id))));
+        }
+
+        std::unordered_set<std::string> include_seen;
+        for (const auto& include_name : stmt->include_columns) {
+            bool found = false;
+            for (uint32_t i = 0; i < table_ref->columns.size(); ++i) {
+                if (table_ref->columns[i].name == include_name) {
+                    std::string normalized = core::IdentifierUtils::toUpper(
+                        std::string(getString(include_name)));
+                    if (!seen.empty() && seen.find(normalized) != seen.end()) {
+                        error(stmt->span, "INCLUDE column duplicates index key: " +
+                              std::string(getString(include_name)));
+                        return nullptr;
+                    }
+                    if (!include_seen.insert(normalized).second) {
+                        error(stmt->span, "Duplicate INCLUDE column: " +
+                              std::string(getString(include_name)));
+                        return nullptr;
+                    }
+                    resolved->include_column_indexes.push_back(i);
+                    resolved->include_column_names.push_back(table_ref->columns[i].name);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                error(stmt->span, "INCLUDE column not found: " +
+                      std::string(getString(include_name)));
+                return nullptr;
+            }
         }
     }
 
     // Analyze WHERE clause for partial index
     if (stmt->where_clause) {
-        error(stmt->span, "Partial indexes are not supported yet");
-        return nullptr;
+        auto* resolved_where = analyzeExpression(stmt->where_clause);
+        if (!resolved_where) {
+            return nullptr;
+        }
+        resolved->where_clause = resolved_where;
     }
 
     return resolved;
@@ -3496,6 +3971,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateView(CreateViewStmt* stmt) {
     auto* resolved = arena_.create<ResolvedCreateViewStmt>();
     resolved->span = stmt->span;
     resolved->or_replace = stmt->or_replace;
+    resolved->if_not_exists = stmt->if_not_exists;
+    resolved->temporary = stmt->temporary;
     resolved->materialized = stmt->materialized;
 
     // Resolve schema from view path
@@ -3521,6 +3998,81 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateView(CreateViewStmt* stmt) {
     }
 
     resolved->check_option = stmt->with_check_option;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateSequence(CreateSequenceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateSequenceStmt>();
+    resolved->span = stmt->span;
+    resolved->or_replace = stmt->or_replace;
+    resolved->if_not_exists = stmt->if_not_exists;
+    resolved->temporary = stmt->temporary;
+    resolved->start_with = stmt->start_with;
+    resolved->increment_by = stmt->increment_by;
+    resolved->min_value = stmt->min_value;
+    resolved->max_value = stmt->max_value;
+    resolved->cache = stmt->cache;
+    resolved->cycle = stmt->cycle;
+
+    if (stmt->or_replace) {
+        warning(stmt->span, "CREATE OR REPLACE SEQUENCE is treated as CREATE");
+    }
+
+    if (stmt->sequence_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->sequence_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->sequence_path.components[0];
+        }
+        resolved->sequence_name = stmt->sequence_path.components[1];
+    } else if (stmt->sequence_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->sequence_name = stmt->sequence_path.components[0];
+    }
+
+    if (stmt->has_owned_by) {
+        if (stmt->owned_by_table.components.empty() ||
+            stmt->owned_by_column == StringPool::INVALID_ID) {
+            error(stmt->span, "OWNED BY requires a table and column");
+            return nullptr;
+        }
+
+        auto table_ref = resolveTable(stmt->owned_by_table, stmt->span, true);
+        if (!table_ref) {
+            return nullptr;
+        }
+        if (table_ref->object_type != ResolvedTableRef::ObjectType::TABLE) {
+            error(stmt->span, "OWNED BY requires a base table");
+            return nullptr;
+        }
+
+        std::string target = core::IdentifierUtils::toUpper(
+            std::string(getString(stmt->owned_by_column)));
+        bool found = false;
+        for (const auto& col : table_ref->columns) {
+            std::string col_name = core::IdentifierUtils::toUpper(
+                std::string(getString(col.name)));
+            if (col_name == target) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            error(stmt->span, "OWNED BY column not found: " + std::string(getString(stmt->owned_by_column)));
+            return nullptr;
+        }
+
+        resolved->has_owned_by = true;
+        resolved->owned_by_table =
+            internString(schemaPathToString(stmt->owned_by_table, string_pool_));
+        resolved->owned_by_column = stmt->owned_by_column;
+    }
 
     return resolved;
 }
@@ -3722,6 +4274,24 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreatePackage(CreatePackageStmt* s
     }
     if (stmt->body != StringPool::INVALID_ID) {
         resolved->body = std::string(string_pool_.get(stmt->body));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateUser(CreateUserStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateUserStmt>();
+    resolved->span = stmt->span;
+    resolved->user_name = stmt->user_name;
+    resolved->has_password = stmt->has_password;
+    resolved->is_superuser = stmt->is_superuser;
+
+    if (stmt->has_password && stmt->password != StringPool::INVALID_ID) {
+        resolved->password = std::string(string_pool_.get(stmt->password));
     }
 
     return resolved;
@@ -4512,9 +5082,6 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
     std::string qualified_name =
         display_schema_path.empty() ? table_name : display_schema_path + "." + table_name;
 
-    if (stmt->only) {
-        warning(stmt->span, "ALTER TABLE ONLY is not supported");
-    }
     if (stmt->if_exists) {
         warning(stmt->span, "ALTER TABLE IF EXISTS is not enforced at bytecode level");
     }
@@ -4662,10 +5229,70 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
         case AlterTableAction::DISABLE_RLS:
             resolved->rls_action = 1;
             return resolved;
-        case AlterTableAction::ADD_CONSTRAINT:
-        case AlterTableAction::DROP_CONSTRAINT:
-            error(stmt->span, "ALTER TABLE constraint operations are not supported");
-            return nullptr;
+        case AlterTableAction::ADD_CONSTRAINT: {
+            if (!stmt->constraint) {
+                error(stmt->span, "ALTER TABLE ADD CONSTRAINT requires a constraint definition");
+                return nullptr;
+            }
+
+            std::vector<ResolvedColumnDef> table_columns;
+            table_columns.reserve(table_ref->columns.size());
+            for (const auto& col : table_ref->columns) {
+                ResolvedColumnDef col_def;
+                col_def.name = col.name;
+                col_def.type.data_type = col.data_type;
+                col_def.is_nullable = col.is_nullable;
+                table_columns.push_back(col_def);
+            }
+
+            struct ScopeGuard {
+                SemanticAnalyzerV2* analyzer;
+                ~ScopeGuard() { analyzer->popScope(); }
+            };
+            pushScope();
+            ScopeGuard scope_guard{this};
+            ResolutionScope::TableEntry entry;
+            entry.table_uuid = table_ref->table_uuid;
+            entry.columns = table_ref->columns;
+            entry.alias = table_ref->name;
+            currentScope().addTable(entry);
+
+            ResolvedTableConstraint resolved_constraint =
+                analyzeTableConstraint(stmt->constraint, table_columns);
+
+            if (stmt->constraint->type == TableConstraintType::PRIMARY_KEY ||
+                stmt->constraint->type == TableConstraintType::UNIQUE ||
+                stmt->constraint->type == TableConstraintType::FOREIGN_KEY) {
+                if (resolved_constraint.column_indexes.size() != stmt->constraint->columns.size()) {
+                    error(stmt->span, "ALTER TABLE ADD CONSTRAINT has unknown column(s)");
+                    return nullptr;
+                }
+            }
+
+            if (stmt->constraint->type == TableConstraintType::FOREIGN_KEY &&
+                resolved_constraint.fk_table_uuid == ID{}) {
+                error(stmt->span, "ALTER TABLE ADD CONSTRAINT FOREIGN KEY requires a valid referenced table");
+                return nullptr;
+            }
+
+            if (stmt->constraint->type == TableConstraintType::CHECK &&
+                !resolved_constraint.check_expr) {
+                error(stmt->span, "ALTER TABLE ADD CONSTRAINT CHECK requires an expression");
+                return nullptr;
+            }
+
+            resolved->constraint = std::move(resolved_constraint);
+            resolved->has_constraint = true;
+            return resolved;
+        }
+        case AlterTableAction::DROP_CONSTRAINT: {
+            if (stmt->constraint_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE DROP CONSTRAINT requires a constraint name");
+                return nullptr;
+            }
+            resolved->constraint_name = stmt->constraint_name;
+            return resolved;
+        }
         default:
             break;
     }
@@ -4725,6 +5352,10 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropIndex(DropIndexStmt* stmt) {
     // Index resolution would require looking up indexes in catalog
     // For now, we just note the index names
     for (const auto& index_path : stmt->indexes) {
+        if (index_path.components.empty()) {
+            error(stmt->span, "DROP INDEX requires an index name");
+            return nullptr;
+        }
         resolved->object_paths.push_back(index_path);
         if (!index_path.components.empty()) {
             // Would need catalog_.getIndex() or similar
@@ -4912,6 +5543,22 @@ ResolvedSelectStmt* SemanticAnalyzerV2::analyzeSelect(SelectStmt* stmt) {
     resolved->for_update = stmt->for_update;
     resolved->for_share = stmt->for_share;
 
+    struct CteScopeGuard {
+        SemanticAnalyzerV2* analyzer;
+        bool active;
+        ~CteScopeGuard() {
+            if (active) {
+                analyzer->popCTEScope();
+            }
+        }
+    };
+
+    const bool has_with = (stmt->with != nullptr);
+    if (has_with) {
+        resolved->with = analyzeWithClause(stmt->with);
+    }
+    CteScopeGuard cte_guard{this, has_with};
+
     // Push a new scope for this SELECT
     pushScope();
 
@@ -4920,6 +5567,17 @@ ResolvedSelectStmt* SemanticAnalyzerV2::analyzeSelect(SelectStmt* stmt) {
 
     // 2. Analyze SELECT list
     analyzeSelectList(stmt, resolved);
+
+    std::unordered_map<std::string, ResolvedExpression*> select_aliases;
+    select_aliases.reserve(resolved->select_list.size());
+    for (const auto& item : resolved->select_list) {
+        if (!item.expr || !item.has_alias) {
+            continue;
+        }
+        std::string alias = core::IdentifierUtils::toUpper(
+            std::string(getString(item.alias)));
+        select_aliases.emplace(std::move(alias), item.expr);
+    }
 
     // 3. Analyze WHERE clause
     if (stmt->where) {
@@ -4943,7 +5601,7 @@ ResolvedSelectStmt* SemanticAnalyzerV2::analyzeSelect(SelectStmt* stmt) {
     }
 
     // 6. Analyze ORDER BY clause
-    analyzeOrderByClause(stmt->order_by, resolved->order_by);
+    analyzeOrderByClause(stmt->order_by, resolved->order_by, &select_aliases);
 
     // 7. Analyze LIMIT/OFFSET
     if (stmt->limit) {
@@ -4967,7 +5625,7 @@ ResolvedSelectStmt* SemanticAnalyzerV2::analyzeSelect(SelectStmt* stmt) {
     }
 
     // Validate GROUP BY semantics
-    if (!resolved->group_by.empty() || has_aggregates_) {
+    if (!resolved->group_by.empty() || !resolved->grouping_sets.empty() || has_aggregates_) {
         validateGroupBy(resolved);
     }
 
@@ -4982,6 +5640,22 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeInsert(InsertStmt* stmt) {
 
     auto* resolved = arena_.create<ResolvedInsertStmt>();
     resolved->span = stmt->span;
+
+    struct CteScopeGuard {
+        SemanticAnalyzerV2* analyzer;
+        bool active;
+        ~CteScopeGuard() {
+            if (active) {
+                analyzer->popCTEScope();
+            }
+        }
+    };
+
+    const bool has_with = (stmt->with != nullptr);
+    if (has_with) {
+        resolved->with = analyzeWithClause(stmt->with);
+    }
+    CteScopeGuard cte_guard{this, has_with};
 
     // Resolve target table
     auto table_ref = resolveTable(stmt->table_path, stmt->span);
@@ -5118,6 +5792,22 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeUpdate(UpdateStmt* stmt) {
     auto* resolved = arena_.create<ResolvedUpdateStmt>();
     resolved->span = stmt->span;
 
+    struct CteScopeGuard {
+        SemanticAnalyzerV2* analyzer;
+        bool active;
+        ~CteScopeGuard() {
+            if (active) {
+                analyzer->popCTEScope();
+            }
+        }
+    };
+
+    const bool has_with = (stmt->with != nullptr);
+    if (has_with) {
+        resolved->with = analyzeWithClause(stmt->with);
+    }
+    CteScopeGuard cte_guard{this, has_with};
+
     // Resolve target table
     auto table_ref = resolveTable(stmt->table_path, stmt->span);
     if (!table_ref) {
@@ -5176,6 +5866,22 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDelete(DeleteStmt* stmt) {
 
     auto* resolved = arena_.create<ResolvedDeleteStmt>();
     resolved->span = stmt->span;
+
+    struct CteScopeGuard {
+        SemanticAnalyzerV2* analyzer;
+        bool active;
+        ~CteScopeGuard() {
+            if (active) {
+                analyzer->popCTEScope();
+            }
+        }
+    };
+
+    const bool has_with = (stmt->with != nullptr);
+    if (has_with) {
+        resolved->with = analyzeWithClause(stmt->with);
+    }
+    CteScopeGuard cte_guard{this, has_with};
 
     // Resolve target table
     auto table_ref = resolveTable(stmt->table_path, stmt->span);
@@ -5353,8 +6059,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCopy(CopyStmt* stmt) {
         if (stmt->options.encoding_set) {
             opts.encoding = std::string(getString(stmt->options.encoding));
             auto enc_upper = to_upper(opts.encoding);
-            if (!enc_upper.empty() && enc_upper != "UTF8" && enc_upper != "UTF-8") {
-                error(stmt->span, "COPY ENCODING is not supported");
+            if (enc_upper.empty()) {
+                opts.encoding.clear();
+            } else if (enc_upper == "UTF8" || enc_upper == "UTF-8") {
+                opts.encoding = "UTF8";
+            } else {
+                error(stmt->span, "COPY ENCODING supports only UTF8/UTF-8 in Alpha");
             }
         }
 
@@ -6227,6 +6937,23 @@ void SemanticAnalyzerV2::analyzeWhereClause(Expression* where, ResolvedExpressio
 }
 
 void SemanticAnalyzerV2::analyzeGroupByClause(SelectStmt* stmt, ResolvedSelectStmt* resolved) {
+    resolved->grouping_type = stmt->grouping_type;
+
+    if (stmt->grouping_type == GroupingType::GROUPING_SETS) {
+        for (const auto& set : stmt->grouping_sets) {
+            std::vector<ResolvedExpression*> resolved_set;
+            resolved_set.reserve(set.size());
+            for (auto* expr : set) {
+                auto* resolved_expr = analyzeExpression(expr);
+                if (resolved_expr) {
+                    resolved_set.push_back(resolved_expr);
+                }
+            }
+            resolved->grouping_sets.push_back(std::move(resolved_set));
+        }
+        return;
+    }
+
     for (auto* expr : stmt->group_by) {
         auto* resolved_expr = analyzeExpression(expr);
         if (resolved_expr) {
@@ -6243,11 +6970,28 @@ void SemanticAnalyzerV2::analyzeHavingClause(Expression* having, ResolvedExpress
 
 void SemanticAnalyzerV2::analyzeOrderByClause(
     const std::vector<OrderByItem*>& items,
-    std::vector<ResolvedOrderByItem*>& resolved)
+    std::vector<ResolvedOrderByItem*>& resolved,
+    const std::unordered_map<std::string, ResolvedExpression*>* alias_map)
 {
     for (auto* item : items) {
         auto* resolved_item = arena_.create<ResolvedOrderByItem>();
-        resolved_item->expr = analyzeExpression(item->expr);
+        ResolvedExpression* resolved_expr = nullptr;
+        if (alias_map) {
+            if (auto* col = dynamic_cast<ColumnRefExpr*>(item->expr)) {
+                if (!col->column.has_table_qualifier) {
+                    std::string name = core::IdentifierUtils::toUpper(
+                        std::string(getString(col->column.column_name)));
+                    auto it = alias_map->find(name);
+                    if (it != alias_map->end()) {
+                        resolved_expr = it->second;
+                    }
+                }
+            }
+        }
+        if (!resolved_expr) {
+            resolved_expr = analyzeExpression(item->expr);
+        }
+        resolved_item->expr = resolved_expr;
         resolved_item->ascending = item->ascending;
         resolved_item->nulls_first = item->nulls_first;
         resolved_item->nulls_last = item->nulls_last;
@@ -6645,6 +7389,8 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
             resolved.data_type = DataType::JSON;
         } else if (name_str == "jsonb") {
             resolved.data_type = DataType::JSONB;
+        } else if (name_str == "vector") {
+            resolved.data_type = DataType::VECTOR;
         } else {
             // Try resolving as a domain
             core::ErrorContext ctx;
@@ -6791,6 +7537,8 @@ ResolvedColumnDef SemanticAnalyzerV2::analyzeColumnDef(ColumnDef* def) {
 
             case ConstraintType::REFERENCES:
                 resolved.has_fk = true;
+                resolved.fk_table_path = constraint.ref_table;
+                resolved.fk_column_names = constraint.ref_columns;
                 // Would need to resolve the referenced table
                 if (!constraint.ref_table.components.empty()) {
                     auto ref_table = resolveTable(constraint.ref_table, SourceSpan{}, false);
@@ -6842,6 +7590,7 @@ ResolvedTableConstraint SemanticAnalyzerV2::analyzeTableConstraint(
             resolved.constraint_type = ResolvedTableConstraint::Type::PRIMARY_KEY;
             // Resolve column names to indexes
             for (auto col_name : constraint->columns) {
+                resolved.column_names.push_back(col_name);
                 for (uint32_t i = 0; i < columns.size(); ++i) {
                     if (columns[i].name == col_name) {
                         resolved.column_indexes.push_back(i);
@@ -6854,6 +7603,7 @@ ResolvedTableConstraint SemanticAnalyzerV2::analyzeTableConstraint(
         case TableConstraintType::UNIQUE:
             resolved.constraint_type = ResolvedTableConstraint::Type::UNIQUE;
             for (auto col_name : constraint->columns) {
+                resolved.column_names.push_back(col_name);
                 for (uint32_t i = 0; i < columns.size(); ++i) {
                     if (columns[i].name == col_name) {
                         resolved.column_indexes.push_back(i);
@@ -6867,6 +7617,7 @@ ResolvedTableConstraint SemanticAnalyzerV2::analyzeTableConstraint(
             resolved.constraint_type = ResolvedTableConstraint::Type::FOREIGN_KEY;
             // Resolve local columns
             for (auto col_name : constraint->columns) {
+                resolved.column_names.push_back(col_name);
                 for (uint32_t i = 0; i < columns.size(); ++i) {
                     if (columns[i].name == col_name) {
                         resolved.column_indexes.push_back(i);
@@ -6911,7 +7662,7 @@ ResolvedTableConstraint SemanticAnalyzerV2::analyzeTableConstraint(
 
         case TableConstraintType::EXCLUDE:
             // Exclusion constraints are PostgreSQL-specific
-            // Would need additional handling
+            error(constraint->span, "EXCLUDE constraints are not supported");
             break;
     }
 
@@ -6947,8 +7698,21 @@ bool SemanticAnalyzerV2::validateGroupBy(ResolvedSelectStmt* stmt) {
         return false;
     }
 
+    std::vector<const ResolvedExpression*> grouping_exprs;
+    if (stmt->grouping_type == GroupingType::GROUPING_SETS) {
+        for (const auto& set : stmt->grouping_sets) {
+            for (auto* expr : set) {
+                grouping_exprs.push_back(expr);
+            }
+        }
+    } else {
+        for (auto* expr : stmt->group_by) {
+            grouping_exprs.push_back(expr);
+        }
+    }
+
     std::unordered_set<GroupByColumnKey, GroupByColumnKeyHash> grouped_columns;
-    for (auto* expr : stmt->group_by) {
+    for (auto* expr : grouping_exprs) {
         if (containsAggregateExpr(expr)) {
             error(expr->span, "GROUP BY clause cannot contain aggregate functions");
             return false;
@@ -6959,7 +7723,7 @@ bool SemanticAnalyzerV2::validateGroupBy(ResolvedSelectStmt* stmt) {
     }
 
     auto isGroupedExpression = [&](const ResolvedExpression* expr) -> bool {
-        for (auto* grouped : stmt->group_by) {
+        for (auto* grouped : grouping_exprs) {
             if (expressionsEqual(expr, grouped)) {
                 return true;
             }

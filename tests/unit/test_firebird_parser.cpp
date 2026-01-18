@@ -265,7 +265,8 @@ TEST_F(FirebirdParserTest, CreateGlobalTemporaryTable) {
     auto result = parser.parseStatement();
     EXPECT_TRUE(result.success);
     auto* stmt = static_cast<ast::CreateTableStmt*>(result.statement.get());
-    EXPECT_TRUE(stmt->temporary);
+    EXPECT_EQ(stmt->temp_type, ast::TempTableType::GLOBAL);
+    EXPECT_EQ(stmt->on_commit, ast::TempOnCommitAction::DELETE_ROWS);
 }
 
 // =============================================================================

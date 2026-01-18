@@ -161,6 +161,9 @@ void Parser::parseCreateStmt() {
     // Handle UNLOGGED
     bool is_unlogged = matchKeyword(TokenType::KW_UNLOGGED);
 
+    pending_create_temp_ = is_temp;
+    pending_create_unlogged_ = is_unlogged;
+
     // What to create?
     if (matchKeyword(TokenType::KW_TABLE)) {
         parseCreateTable();
@@ -242,6 +245,8 @@ void Parser::parseCreateStmt() {
     }
 
     pending_or_replace_ = false;
+    pending_create_temp_ = false;
+    pending_create_unlogged_ = false;
 }
 
 // ============================================================================
@@ -250,6 +255,15 @@ void Parser::parseCreateStmt() {
 
 void Parser::parseCreateTable() {
     emit(sblr::Opcode::CREATE_TABLE);
+
+    bool is_temp = pending_create_temp_;
+    bool is_unlogged = pending_create_unlogged_;
+    pending_create_temp_ = false;
+    pending_create_unlogged_ = false;
+
+    uint8_t on_commit_flag = 0;
+    size_t flags_pos = bytecode_.size();
+    emitByte(0);
 
     // IF NOT EXISTS
     bool if_not_exists = false;
@@ -279,8 +293,18 @@ void Parser::parseCreateTable() {
     // Parse column definitions and constraints
     emit(sblr::Opcode::BEGIN_LIST);
     size_t count_pos = bytecode_.size();
-    emitU32(0);
+    emitUVarint(0);
     uint32_t count = 0;
+    auto patch_varint = [&](size_t pos, uint64_t value) {
+        uint8_t buffer[10];
+        size_t len = sblr::writeUVarint(buffer, value);
+        if (len == 1) {
+            bytecode_[pos] = buffer[0];
+            return;
+        }
+        bytecode_.insert(bytecode_.begin() + pos + 1, len - 1, 0);
+        std::copy(buffer, buffer + len, bytecode_.begin() + pos);
+    };
     std::vector<ForeignKeyDef> pending_fks;
     std::string tablespace_name;
 
@@ -427,7 +451,7 @@ void Parser::parseCreateTable() {
         }
     } while (match(TokenType::COMMA));
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
+    patch_varint(count_pos, count);
     emit(sblr::Opcode::END_LIST);
 
     consume(TokenType::RIGHT_PAREN, "Expected )");
@@ -447,6 +471,23 @@ void Parser::parseCreateTable() {
             if (!match(TokenType::COMMA)) break;
         }
         consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+
+    if (matchKeyword(TokenType::KW_ON)) {
+        consumeKeyword(TokenType::KW_COMMIT, "Expected COMMIT");
+        if (!is_temp) {
+            error("ON COMMIT can only be used on temporary tables");
+        } else if (matchKeyword(TokenType::KW_DELETE)) {
+            on_commit_flag = 0x01;
+            matchKeyword(TokenType::KW_ROWS);
+        } else if (matchKeyword(TokenType::KW_PRESERVE)) {
+            on_commit_flag = 0x02;
+            matchKeyword(TokenType::KW_ROWS);
+        } else if (matchKeyword(TokenType::KW_DROP)) {
+            on_commit_flag = 0x03;
+        } else {
+            error("Expected DELETE, PRESERVE, or DROP after ON COMMIT");
+        }
     }
 
     // TABLESPACE
@@ -480,6 +521,20 @@ void Parser::parseCreateTable() {
             deferrable_flags |= 0x02;
         }
         emitByte(deferrable_flags);
+    }
+
+    uint8_t flags = 0;
+    if (is_temp) {
+        flags |= 0x01;
+    }
+    if (on_commit_flag != 0) {
+        flags |= static_cast<uint8_t>((on_commit_flag & 0x03) << 2);
+    }
+    if (is_unlogged) {
+        flags |= 0x10;
+    }
+    if (emit_enabled_ && flags_pos < bytecode_.size()) {
+        bytecode_[flags_pos] = flags;
     }
 
     emitString(tablespace_name);
@@ -965,12 +1020,11 @@ void Parser::parseCreateIndex() {
 
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
-    bool has_include = false;
+    std::vector<std::string> include_columns;
     if (matchKeyword(TokenType::KW_INCLUDE)) {
-        has_include = true;
         consume(TokenType::LEFT_PAREN, "Expected (");
         do {
-            parseIdentifier();
+            include_columns.push_back(parseIdentifier());
         } while (match(TokenType::COMMA));
         consume(TokenType::RIGHT_PAREN, "Expected )");
     }
@@ -990,16 +1044,16 @@ void Parser::parseCreateIndex() {
     if (has_expressions) {
         error("PostgreSQL expression indexes are not supported in current bytecode yet");
     }
-    if (has_include) {
-        error("PostgreSQL INCLUDE indexes are not supported in current bytecode yet");
-    }
-
     emit(sblr::Opcode::CREATE_INDEX);
     emitString(index_name);
     emitString(table_path);
     emitByte(unique ? 1 : 0);
     emitU32(static_cast<uint32_t>(columns.size()));
     for (const auto& col : columns) {
+        emitString(col);
+    }
+    emitU32(static_cast<uint32_t>(include_columns.size()));
+    for (const auto& col : include_columns) {
         emitString(col);
     }
     emitString(tablespace_name);
@@ -1026,6 +1080,8 @@ void Parser::parseCreateView() {
 
     bool or_replace = pending_or_replace_;
     pending_or_replace_ = false;
+    bool is_temp = pending_create_temp_;
+    pending_create_temp_ = false;
 
     bool if_not_exists = false;
     if (matchKeyword(TokenType::KW_IF)) {
@@ -1105,6 +1161,12 @@ void Parser::parseCreateView() {
     }
     if (!column_names.empty()) {
         flags |= 0x04;
+    }
+    if (is_temp) {
+        flags |= 0x20;
+    }
+    if (if_not_exists) {
+        flags |= 0x40;
     }
 
     emitString(view_path);
@@ -1186,6 +1248,10 @@ void Parser::parseCreateMaterializedView() {
 void Parser::parseCreateSequence() {
     emit(sblr::Opcode::CREATE_SEQUENCE);
 
+    bool non_durable = pending_create_temp_ || pending_create_unlogged_;
+    pending_create_temp_ = false;
+    pending_create_unlogged_ = false;
+
     bool if_not_exists = false;
     if (matchKeyword(TokenType::KW_IF)) {
         consumeKeyword(TokenType::KW_NOT, "Expected NOT");
@@ -1231,6 +1297,9 @@ void Parser::parseCreateSequence() {
     int64_t start_value = 0;
     int64_t cache_size = 1;
     bool cycle = false;
+    bool has_owned_by = false;
+    std::string owned_by_table;
+    std::string owned_by_column;
 
     // Sequence options
     while (true) {
@@ -1267,8 +1336,26 @@ void Parser::parseCreateSequence() {
             consumeKeyword(TokenType::KW_BY, "Expected BY");
             if (matchKeyword(TokenType::KW_NONE)) {
                 // Not owned
+                has_owned_by = false;
             } else {
-                parseQualifiedName();  // table.column
+                std::string part1 = parseIdentifier();
+                consume(TokenType::DOT, "Expected '.' after table name");
+                std::string part2 = parseIdentifier();
+                std::string schema;
+                std::string table;
+                std::string column;
+                if (match(TokenType::DOT)) {
+                    schema = part1;
+                    table = part2;
+                    column = parseIdentifier();
+                } else {
+                    table = part1;
+                    column = part2;
+                }
+                resolveTableName(schema, table);
+                owned_by_table = schema.empty() ? table : (schema + "/" + table);
+                owned_by_column = column;
+                has_owned_by = true;
             }
         } else {
             break;
@@ -1282,6 +1369,8 @@ void Parser::parseCreateSequence() {
     if (has_start) flags |= 0x08;
     if (has_cache) flags |= 0x10;
     if (has_cycle) flags |= 0x20;
+    if (if_not_exists) flags |= 0x40;
+    if (non_durable) flags |= 0x80;
 
     emitByte(flags);
     if (has_increment) emitI64(increment_by);
@@ -1290,6 +1379,14 @@ void Parser::parseCreateSequence() {
     if (has_start) emitI64(start_value);
     if (has_cache) emitI64(cache_size);
     if (has_cycle) emitByte(cycle ? 1 : 0);
+
+    uint8_t flags2 = 0;
+    if (has_owned_by) flags2 |= 0x01;
+    emitByte(flags2);
+    if (has_owned_by) {
+        emitString(owned_by_table);
+        emitString(owned_by_column);
+    }
 }
 
 void Parser::parseCreateDatabase() {

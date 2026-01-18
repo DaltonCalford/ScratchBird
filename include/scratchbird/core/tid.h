@@ -184,8 +184,8 @@ inline std::string tidToString(const TID &tid)
 /**
  * LEGACY: Convert old 64-bit TID encoding to new TID structure
  *
- * Old encoding: (32-bit page_id << 32) | (16-bit item_id << 16)
- * Assumes tablespace 0 (primary file)
+ * Legacy encoding: (32-bit page_id << 32) | (16-bit item_id << 16) | (16-bit tablespace_id)
+ * Page number is limited to 32 bits in this encoding.
  *
  * @param legacy_tid Old 64-bit TID encoding
  * @return TID structure with tablespace_id=0
@@ -194,32 +194,35 @@ inline constexpr TID convertLegacyTID(uint64_t legacy_tid)
 {
     uint32_t page_id = static_cast<uint32_t>(legacy_tid >> 32);
     uint16_t item_id = static_cast<uint16_t>((legacy_tid >> 16) & 0xFFFF);
+    uint16_t tablespace_id = static_cast<uint16_t>(legacy_tid & 0xFFFF);
 
-    GPID gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+    GPID gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_id));
     return TID(gpid, item_id);
 }
 
 /**
  * LEGACY: Convert new TID structure to old 64-bit encoding
  *
- * Only works for tablespace 0 (primary file)
- * Returns 0 if TID is from custom tablespace
+ * Encodes tablespace_id into low 16 bits.
+ * Returns 0 if page number exceeds 32-bit legacy encoding.
  *
  * @param tid TID structure
  * @return Old 64-bit TID encoding, or 0 if custom tablespace
  */
 inline constexpr uint64_t convertTIDtoLegacy(const TID &tid)
 {
-    if (getTablespaceID(tid) != PRIMARY_TABLESPACE_ID)
+    uint64_t page_number = getPageNumber(tid);
+    if (page_number > 0xFFFFFFFFULL)
     {
-        return 0; // Cannot convert custom tablespace TID to legacy format
+        return 0;
     }
-
-    uint32_t page_id = static_cast<uint32_t>(getPageNumber(tid));
+    uint32_t page_id = static_cast<uint32_t>(page_number);
     uint16_t item_id = tid.slot;
+    uint16_t tablespace_id = getTablespaceID(tid);
 
     return (static_cast<uint64_t>(page_id) << 32) |
-           (static_cast<uint64_t>(item_id) << 16);
+           (static_cast<uint64_t>(item_id) << 16) |
+           static_cast<uint64_t>(tablespace_id);
 }
 
 } // namespace scratchbird::core

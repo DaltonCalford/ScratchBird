@@ -660,8 +660,8 @@ Status BackupManager::readBackupHeader(int fd, BackupManifestHeader* header,
 
     // Validate version
     if (header->version > BACKUP_VERSION) {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Backup version too new");
-        return Status::NOT_IMPLEMENTED;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, "Backup version too new");
+        return Status::NOT_SUPPORTED;
     }
 
     return Status::OK;
@@ -691,8 +691,8 @@ Status BackupManager::compressPage(const uint8_t* input, uint32_t input_size,
         return Status::OK;
     }
 
-    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Compression type not supported");
-    return Status::NOT_IMPLEMENTED;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, "Compression type not supported");
+    return Status::NOT_SUPPORTED;
 }
 
 Status BackupManager::decompressPage(const uint8_t* input, uint32_t input_size,
@@ -714,8 +714,8 @@ Status BackupManager::decompressPage(const uint8_t* input, uint32_t input_size,
         return Status::OK;
     }
 
-    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Compression type not supported");
-    return Status::NOT_IMPLEMENTED;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, "Compression type not supported");
+    return Status::NOT_SUPPORTED;
 }
 
 uint32_t BackupManager::calculateChecksum(const uint8_t* data, size_t size)

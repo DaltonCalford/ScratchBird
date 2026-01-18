@@ -23,6 +23,7 @@
 #include <string_view>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstring>
 
 // Forward declaration
@@ -163,15 +164,18 @@ private:
 
     // DML
     void generateSelect(ResolvedSelectStmt* stmt);
+    void generateSelectCore(ResolvedSelectStmt* stmt, bool emit_set_ops);
     void generateInsert(ResolvedInsertStmt* stmt);
     void generateUpdate(ResolvedUpdateStmt* stmt);
     void generateDelete(ResolvedDeleteStmt* stmt);
     void generateCopy(ResolvedCopyStmt* stmt);
+    void generateWithClause(ResolvedWithClause* with);
 
     // DDL
     void generateCreateTable(ResolvedCreateTableStmt* stmt);
     void generateCreateIndex(ResolvedCreateIndexStmt* stmt);
     void generateCreateView(ResolvedCreateViewStmt* stmt);
+    void generateCreateSequence(ResolvedCreateSequenceStmt* stmt);
     void generateCreateSchema(ResolvedCreateSchemaStmt* stmt);
     void generateDropSchema(ResolvedDropSchemaStmt* stmt);
     void generateAlterSchema(ResolvedAlterSchemaStmt* stmt);
@@ -180,6 +184,7 @@ private:
     void generateCreateProcedure(ResolvedCreateProcedureStmt* stmt);
     void generateCreateTrigger(ResolvedCreateTriggerStmt* stmt);
     void generateCreatePackage(ResolvedCreatePackageStmt* stmt);
+    void generateCreateUser(ResolvedCreateUserStmt* stmt);
     void generateCreateRole(ResolvedCreateRoleStmt* stmt);
     void generateCreateException(ResolvedCreateExceptionStmt* stmt);
     void generateCreateDomain(ResolvedCreateDomainStmt* stmt);
@@ -199,6 +204,8 @@ private:
     void generateCommit(ResolvedCommitStmt* stmt);
     void generateRollback(ResolvedRollbackStmt* stmt);
     void generateSavepoint(ResolvedSavepointStmt* stmt);
+    void generateConnect(ResolvedConnectStmt* stmt);
+    void generateDisconnect(ResolvedDisconnectStmt* stmt);
     void generateSet(ResolvedSetStmt* stmt);
     void generateShow(ResolvedShowStmt* stmt);
     void generateGrant(ResolvedGrantStmt* stmt);
@@ -229,6 +236,20 @@ private:
     void generateExtract(ResolvedExtractExpr* expr);
     void generateAlterElement(ResolvedAlterElementExpr* expr);
 
+    // Aggregate helpers
+    struct AggregateSpec {
+        const ResolvedFunctionCall* expr = nullptr;
+        sblr::Opcode opcode{};
+        std::vector<ResolvedExpression*> args;
+        std::string output_name;
+    };
+
+    void collectAggregates(ResolvedExpression* expr,
+                           std::vector<AggregateSpec>& aggregates,
+                           std::unordered_set<const ResolvedFunctionCall*>& seen);
+    bool buildAggregateSpec(const ResolvedFunctionCall* expr, AggregateSpec& out);
+    void writeColumnRefName(const std::string& name);
+
     // ==========================================================================
     // Clause Generation
     // ==========================================================================
@@ -237,7 +258,7 @@ private:
     void generateFromClause(const std::vector<ResolvedTableRef*>& tables,
                            const std::vector<ResolvedJoin*>& joins);
     void generateWhereClause(ResolvedExpression* where);
-    void generateGroupByClause(const std::vector<ResolvedExpression*>& group_by);
+    void generateGroupByClause(const ResolvedSelectStmt& stmt);
     void generateHavingClause(ResolvedExpression* having);
     void generateOrderByClause(const std::vector<ResolvedOrderByItem*>& order_by);
     void generateLimitOffset(ResolvedExpression* limit, ResolvedExpression* offset);
@@ -290,6 +311,9 @@ private:
      * Check if expression is a constant (can be evaluated at compile time)
      */
     bool isConstant(ResolvedExpression* expr);
+
+    bool aggregate_ref_mode_ = false;
+    std::unordered_map<const ResolvedFunctionCall*, std::string> aggregate_output_map_;
 };
 
 /**

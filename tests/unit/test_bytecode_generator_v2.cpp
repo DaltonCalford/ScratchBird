@@ -738,6 +738,13 @@ TEST_F(BytecodeGeneratorV2Test, CreateTable) {
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::COLUMN_DEF));
 }
 
+TEST_F(BytecodeGeneratorV2Test, CreateTablePrimaryKeyBytecode) {
+    auto result = generateBytecode("CREATE TABLE pk_table (id INT PRIMARY KEY)");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::PRIMARY_KEY));
+}
+
 TEST_F(BytecodeGeneratorV2Test, CreateDatabaseEmulatedSimple) {
     auto result = generateBytecode("CREATE DATABASE IF NOT EXISTS EMULATED mysql mydb");
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
@@ -1011,6 +1018,52 @@ TEST_F(BytecodeGeneratorV2Test, CreateIndex) {
     // Just verify it doesn't crash
 }
 
+TEST_F(BytecodeGeneratorV2Test, CreateIndex_AllTypes) {
+    ErrorContext ctx;
+    std::vector<CatalogManager::ColumnInfo> columns;
+
+    CatalogManager::ColumnInfo id_col;
+    id_col.column_name = "id";
+    id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+    id_col.nullable = false;
+    columns.push_back(id_col);
+
+    ID table_id;
+    auto status = catalog_->createTable(test_schema_id_, "users", columns, table_id, 0, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create users table";
+
+    struct Case {
+        const char* method;
+    };
+
+    std::vector<Case> cases = {
+        {"BTREE"},
+        {"HASH"},
+        {"GIN"},
+        {"GIST"},
+        {"SPGIST"},
+        {"BRIN"},
+        {"RTREE"},
+        {"HNSW"},
+        {"BITMAP"},
+        {"COLUMNSTORE"},
+        {"LSM"},
+    };
+
+    int idx = 0;
+    for (const auto& test_case : cases) {
+        std::string sql = "CREATE INDEX idx_";
+        sql += std::to_string(idx++);
+        sql += " ON users USING ";
+        sql += test_case.method;
+        sql += " (id)";
+
+        auto result = generateBytecode(sql);
+        ASSERT_TRUE(result.success()) << formatDiagnostics(result);
+        EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::CREATE_INDEX));
+    }
+}
+
 TEST_F(BytecodeGeneratorV2Test, AlterTableAddColumn) {
     ErrorContext ctx;
     std::vector<CatalogManager::ColumnInfo> columns;
@@ -1039,6 +1092,50 @@ TEST_F(BytecodeGeneratorV2Test, AlterTableAddColumn) {
 
     EXPECT_EQ(action, 0);
     EXPECT_EQ(table_name, "test.users");
+}
+
+TEST_F(BytecodeGeneratorV2Test, AlterTableAddConstraint) {
+    ErrorContext ctx;
+    std::vector<CatalogManager::ColumnInfo> columns;
+
+    CatalogManager::ColumnInfo id_col;
+    id_col.column_name = "id";
+    id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+    id_col.nullable = false;
+    columns.push_back(id_col);
+
+    ID table_id;
+    auto status = catalog_->createTable(test_schema_id_, "accounts", columns, table_id, 0, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create accounts table";
+
+    auto result = generateBytecode("ALTER TABLE accounts ADD CONSTRAINT accounts_pkey PRIMARY KEY (id)");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t offset = findOpcodeOffset(result.bytecode(), Opcode::ALTER_TABLE);
+    ASSERT_LT(offset, result.bytecode().size());
+    offset += 1;
+
+    std::string table_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &offset, &table_name));
+    ASSERT_LT(offset, result.bytecode().size());
+    uint8_t action = result.bytecode()[offset++];
+
+    EXPECT_EQ(action, 3);
+    ASSERT_LT(offset, result.bytecode().size());
+    uint8_t constraint_type = result.bytecode()[offset++];
+    EXPECT_EQ(constraint_type, 0);
+
+    std::string constraint_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &offset, &constraint_name));
+    EXPECT_EQ(constraint_name, "accounts_pkey");
+
+    uint64_t col_count = 0;
+    ASSERT_TRUE(readUVarint(result.bytecode(), &offset, &col_count));
+    EXPECT_EQ(col_count, 1u);
+
+    std::string col_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &offset, &col_name));
+    EXPECT_EQ(col_name, "id");
 }
 
 // =============================================================================

@@ -43,10 +43,7 @@ CompilationResultV2 QueryCompilerV2::compileWithCache(const std::string& sql, bo
         QueryResultCache& cache = QueryResultCacheManager::getInstance();
         if (cache.isEnabled()) {
             QueryHash hash = QueryResultCache::computeHash(sql);
-            // Note: QueryResultCache stores results, not bytecode
-            // For bytecode caching, we would need a separate cache
-            // For now, we skip bytecode cache and always compile
-            // TODO: Add BytecodeCache for compiled query caching
+            // QueryResultCache stores results; compilation always runs in this path.
         }
     }
 

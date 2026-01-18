@@ -102,7 +102,10 @@ namespace scratchbird::core
         uint16_t null_bitmap_offset; // Offset to null bitmap (0 if no nulls)
         uint16_t padding;            // Alignment padding
 
-        // Total: 44 bytes (increased from 36 bytes due to GPID expansion)
+        // Session scope for temporary tables (16 bytes, zero for permanent tables)
+        ID session_id;
+
+        // Total: 60 bytes (includes session_id)
 
         // Infomask flags (PostgreSQL-compatible)
         static constexpr uint16_t HEAP_HAS_NULLS = 0x0001;

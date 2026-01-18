@@ -284,6 +284,11 @@ namespace scratchbird::core
             shutdownTransaction(&err_ctx);
         }
 
+        {
+            ErrorContext err_ctx;
+            cleanupTempTablesOnSessionEnd(&err_ctx);
+        }
+
         // Unregister this backend from ProcArray to free the slot
         if (proc_id_ != UINT32_MAX)
         {
@@ -583,6 +588,182 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status ConnectionContext::cleanupTempTablesOnCommit(ErrorContext *ctx)
+    {
+        if (!db_)
+        {
+            return Status::OK;
+        }
+
+        struct CurrentContextGuard
+        {
+            ConnectionContext* previous = nullptr;
+            bool changed = false;
+
+            explicit CurrentContextGuard(ConnectionContext* current)
+                : previous(ConnectionContext::getCurrent())
+            {
+                if (current && current != previous)
+                {
+                    ConnectionContext::setCurrent(current);
+                    changed = true;
+                }
+            }
+
+            ~CurrentContextGuard()
+            {
+                if (changed)
+                {
+                    ConnectionContext::setCurrent(previous);
+                }
+            }
+        };
+
+        CurrentContextGuard ctx_guard(this);
+
+        CatalogManager *catalog = db_->catalog_manager();
+        StorageEngine *storage = db_->storage_engine();
+        if (!catalog || !storage)
+        {
+            return Status::OK;
+        }
+
+        ID session_id = effectiveSessionId();
+        std::vector<CatalogManager::TableInfo> tables;
+        Status status = catalog->listTemporaryTablesForSession(session_id, tables, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto& table : tables)
+        {
+            if (table.temp_on_commit == CatalogManager::TempOnCommitAction::DELETE_ROWS)
+            {
+                status = storage->deleteTuplesForSession(table.table_id, session_id, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+            else if (table.temp_on_commit == CatalogManager::TempOnCommitAction::DROP &&
+                     table.temp_metadata_scope == CatalogManager::TempMetadataScope::SESSION)
+            {
+                status = catalog->dropTable(table.table_id, true, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+        }
+
+        return Status::OK;
+    }
+
+    Status ConnectionContext::cleanupTempTablesOnSessionEnd(ErrorContext *ctx)
+    {
+        if (!db_)
+        {
+            return Status::OK;
+        }
+
+        struct CurrentContextGuard
+        {
+            ConnectionContext* previous = nullptr;
+            bool changed = false;
+
+            explicit CurrentContextGuard(ConnectionContext* current)
+                : previous(ConnectionContext::getCurrent())
+            {
+                if (current && current != previous)
+                {
+                    ConnectionContext::setCurrent(current);
+                    changed = true;
+                }
+            }
+
+            ~CurrentContextGuard()
+            {
+                if (changed)
+                {
+                    ConnectionContext::setCurrent(previous);
+                }
+            }
+        };
+
+        CurrentContextGuard ctx_guard(this);
+
+        CatalogManager *catalog = db_->catalog_manager();
+        StorageEngine *storage = db_->storage_engine();
+        if (!catalog || !storage)
+        {
+            return Status::OK;
+        }
+
+        ID session_id = effectiveSessionId();
+        std::vector<CatalogManager::ViewInfo> views;
+        Status status = catalog->listTemporaryViewsForSession(session_id, views, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto& view : views)
+        {
+            status = catalog->dropView(view.view_id, true, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                return status;
+            }
+        }
+
+        std::vector<CatalogManager::TableInfo> tables;
+        status = catalog->listTemporaryTablesForSession(session_id, tables, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto& table : tables)
+        {
+            if (table.temp_data_scope != CatalogManager::TempDataScope::NONE)
+            {
+                status = storage->deleteTuplesForSession(table.table_id, session_id, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            if (table.temp_metadata_scope == CatalogManager::TempMetadataScope::SESSION)
+            {
+                status = catalog->dropTable(table.table_id, true, ctx);
+                if (status != Status::OK && status != Status::NOT_FOUND)
+                {
+                    return status;
+                }
+            }
+        }
+
+        std::vector<CatalogManager::SequenceInfo> sequences;
+        status = catalog->listTemporarySequencesForSession(session_id, sequences, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto& seq : sequences)
+        {
+            status = catalog->dropSequence(seq.sequence_id, true, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                return status;
+            }
+        }
+
+        return Status::OK;
+    }
+
     Status ConnectionContext::commit(ErrorContext *ctx)
     {
         if (current_xid_ == 0)
@@ -608,7 +789,17 @@ namespace scratchbird::core
             return s;
         }
 
-        // 2. Commit current transaction
+        // 2. Apply ON COMMIT actions for temporary tables
+        s = cleanupTempTablesOnCommit(ctx);
+        if (s != Status::OK)
+        {
+            LOG_ERROR(TRANSACTION,
+                      "Failed to apply ON COMMIT actions: proc_id=%u, xid=%lu, status=%d",
+                      proc_id_, current_xid_, static_cast<int>(s));
+            return s;
+        }
+
+        // 3. Commit current transaction
         s = endCurrentTransaction(true, ctx);
         if (s != Status::OK)
         {
@@ -617,10 +808,10 @@ namespace scratchbird::core
             return s;
         }
 
-        // 3. Apply staged settings if any
+        // 4. Apply staged settings if any
         applyStagedSettings();
 
-        // 4. ATOMICALLY start new transaction
+        // 5. ATOMICALLY start new transaction
         s = beginNewTransaction(ctx);
         if (s != Status::OK)
         {
@@ -1772,6 +1963,19 @@ namespace scratchbird::core
         LOG_DEBUG(TRANSACTION,
                   "Staged session context change for next transaction: proc_id=%u, session_id=%s",
                   proc_id_, session_id.toString().c_str());
+    }
+
+    ConnectionContext::ID ConnectionContext::effectiveSessionId() const
+    {
+        if (!isZeroUuidLocal(session_id_))
+        {
+            return session_id_;
+        }
+        if (!isZeroUuidLocal(protocol_session_id_))
+        {
+            return protocol_session_id_;
+        }
+        return attachment_id_;
     }
 
     void ConnectionContext::setCurrentUser(const ID& user_id, bool is_superuser)

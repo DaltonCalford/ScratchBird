@@ -31,6 +31,7 @@ using core::DataType;
 // Forward declarations
 class ResolvedStatement;
 class ResolvedExpression;
+struct ResolvedSelectStmt;
 
 // =============================================================================
 // Resolved Reference Types
@@ -67,6 +68,23 @@ struct ResolvedTableRef {
         uint32_t column_index;
     };
     std::vector<ColumnInfo> columns;
+};
+
+/**
+ * Resolved CTE definition
+ */
+struct ResolvedCTE {
+    StringPool::StringId name = StringPool::INVALID_ID;
+    std::vector<StringPool::StringId> column_names;
+    ResolvedSelectStmt* query = nullptr;
+};
+
+/**
+ * Resolved WITH clause
+ */
+struct ResolvedWithClause {
+    bool recursive = false;
+    std::vector<ResolvedCTE> ctes;
 };
 
 /**
@@ -466,6 +484,8 @@ struct ResolvedWindowSpec {
  * Resolved SELECT statement
  */
 struct ResolvedSelectStmt : public ResolvedStatement {
+    ResolvedWithClause* with = nullptr;
+
     bool distinct = false;
     bool all = false;
 
@@ -481,6 +501,8 @@ struct ResolvedSelectStmt : public ResolvedStatement {
 
     // GROUP BY clause (resolved expressions)
     std::vector<ResolvedExpression*> group_by;
+    parser::GroupingType grouping_type = parser::GroupingType::STANDARD;
+    std::vector<std::vector<ResolvedExpression*>> grouping_sets;
 
     // HAVING clause
     ResolvedExpression* having = nullptr;
@@ -510,6 +532,8 @@ struct ResolvedSelectStmt : public ResolvedStatement {
  * Resolved INSERT statement
  */
 struct ResolvedInsertStmt : public ResolvedStatement {
+    ResolvedWithClause* with = nullptr;
+
     ResolvedTableRef target_table;
 
     // Resolved target columns (indexes into table)
@@ -543,6 +567,8 @@ struct ResolvedInsertStmt : public ResolvedStatement {
  * Resolved UPDATE statement
  */
 struct ResolvedUpdateStmt : public ResolvedStatement {
+    ResolvedWithClause* with = nullptr;
+
     ResolvedTableRef target_table;
 
     // SET clause: column index -> expression
@@ -563,6 +589,8 @@ struct ResolvedUpdateStmt : public ResolvedStatement {
  * Resolved DELETE statement
  */
 struct ResolvedDeleteStmt : public ResolvedStatement {
+    ResolvedWithClause* with = nullptr;
+
     ResolvedTableRef target_table;
 
     // USING clause
@@ -640,6 +668,8 @@ struct ResolvedColumnDef {
     bool has_fk = false;
     ID fk_table_uuid;
     uint32_t fk_column_index;
+    SchemaPath fk_table_path;
+    std::vector<StringPool::StringId> fk_column_names;
     ForeignKeyAction on_delete = ForeignKeyAction::NO_ACTION;
     ForeignKeyAction on_update = ForeignKeyAction::NO_ACTION;
 };
@@ -656,10 +686,11 @@ struct ResolvedTableConstraint {
         FOREIGN_KEY,
         CHECK,
     };
-    Type constraint_type;
+    Type constraint_type = Type::CHECK;
 
     // For PRIMARY KEY and UNIQUE
     std::vector<uint32_t> column_indexes;
+    std::vector<StringPool::StringId> column_names;
 
     // For FOREIGN KEY
     ID fk_table_uuid;
@@ -707,6 +738,10 @@ struct ResolvedCreateTableStmt : public ResolvedStatement {
     ResolvedSchemaRef schema;
     StringPool::StringId table_name;
     bool if_not_exists = false;
+    bool or_replace = false;
+    TempTableType temp_type = TempTableType::NONE;
+    TempOnCommitAction on_commit = TempOnCommitAction::NONE;
+    bool unlogged = false;
 
     std::vector<ResolvedColumnDef> columns;
     std::vector<ResolvedTableConstraint> constraints;
@@ -729,6 +764,9 @@ struct ResolvedCreateIndexStmt : public ResolvedStatement {
     std::vector<uint32_t> column_indexes;
     std::vector<bool> column_desc;  // DESC for each column
     std::vector<StringPool::StringId> column_names;
+    std::vector<uint32_t> include_column_indexes;
+    std::vector<StringPool::StringId> include_column_names;
+    std::vector<ResolvedExpression*> expressions;  // Expression index keys (all keys must be expressions)
 
     StringPool::StringId index_method;  // btree, hash, gin, etc.
     ResolvedExpression* where_clause = nullptr;  // Partial index
@@ -744,12 +782,32 @@ struct ResolvedCreateViewStmt : public ResolvedStatement {
     ResolvedSchemaRef schema;
     StringPool::StringId view_name;
     bool or_replace = false;
+    bool if_not_exists = false;
+    bool temporary = false;
     bool materialized = false;
 
     std::vector<StringPool::StringId> column_names;
     ResolvedSelectStmt* query = nullptr;
 
     bool check_option = false;
+};
+
+struct ResolvedCreateSequenceStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId sequence_name;
+    bool or_replace = false;
+    bool if_not_exists = false;
+    bool temporary = false;
+
+    std::optional<int64_t> start_with;
+    std::optional<int64_t> increment_by;
+    std::optional<int64_t> min_value;
+    std::optional<int64_t> max_value;
+    std::optional<int64_t> cache;
+    bool cycle = false;
+    bool has_owned_by = false;
+    StringPool::StringId owned_by_table = StringPool::INVALID_ID;
+    StringPool::StringId owned_by_column = StringPool::INVALID_ID;
 };
 
 struct ResolvedRoutineParam {
@@ -807,6 +865,16 @@ struct ResolvedCreatePackageStmt : public ResolvedStatement {
     bool is_body = false;
     std::string header;
     std::string body;
+};
+
+/**
+ * Resolved CREATE USER statement
+ */
+struct ResolvedCreateUserStmt : public ResolvedStatement {
+    StringPool::StringId user_name = StringPool::INVALID_ID;
+    bool has_password = false;
+    bool is_superuser = false;
+    std::string password;
 };
 
 /**
@@ -964,6 +1032,11 @@ struct ResolvedAlterTableStmt : public ResolvedStatement {
     ResolvedColumnDef column_def;
     bool has_column_def = false;
     StringPool::StringId column_name = StringPool::INVALID_ID;
+
+    // Constraint operations
+    ResolvedTableConstraint constraint;
+    bool has_constraint = false;
+    StringPool::StringId constraint_name = StringPool::INVALID_ID;
 
     // Tablespace operations
     StringPool::StringId tablespace_name = StringPool::INVALID_ID;
@@ -1128,6 +1201,26 @@ struct ResolvedRollbackStmt : public ResolvedStatement {
  */
 struct ResolvedSavepointStmt : public ResolvedStatement {
     StringPool::StringId name;
+};
+
+/**
+ * Resolved CONNECT statement
+ */
+struct ResolvedConnectStmt : public ResolvedStatement {
+    StringPool::StringId database = StringPool::INVALID_ID;
+    StringPool::StringId user = StringPool::INVALID_ID;
+    bool has_password = false;
+    std::string password;
+    StringPool::StringId role = StringPool::INVALID_ID;
+    StringPool::StringId charset = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved DISCONNECT statement
+ */
+struct ResolvedDisconnectStmt : public ResolvedStatement {
+    DisconnectStmt::Target target = DisconnectStmt::Target::CURRENT;
+    StringPool::StringId connection_name = StringPool::INVALID_ID;
 };
 
 /**

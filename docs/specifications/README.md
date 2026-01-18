@@ -81,9 +81,12 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**network/**](network/) | Network layer & wire protocols | Network layer, wire protocols, Y-Valve | ✅ Organized |
+| [**network/**](network/) | Network layer & wire protocols | Network layer, listener & parser pool, Y-Valve | ✅ Organized |
 | [**wire_protocols/**](wire_protocols/) | Protocol specifications | TDS (post-gold) and other protocols | ✅ Active |
 | [**api/**](api/) | Client APIs | Client library API, connection pooling | ✅ Organized |
+
+Key network specs:
+- [network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md](network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md) - Listener startup, parser pools, and socket handoff
 
 ### Drivers & Integrations
 

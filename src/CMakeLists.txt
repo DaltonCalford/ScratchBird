@@ -26,7 +26,7 @@ add_library(scratchbird_core STATIC
 )
 
 target_include_directories(scratchbird_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 if(LZ4_FOUND)
@@ -82,7 +82,7 @@ add_library(scratchbird_parser STATIC
 )
 
 target_include_directories(scratchbird_parser PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 set_target_properties(scratchbird_parser PROPERTIES
@@ -120,7 +120,7 @@ add_library(scratchbird_sblr STATIC
 )
 
 target_include_directories(scratchbird_sblr PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 target_link_libraries(scratchbird_sblr PUBLIC
@@ -152,7 +152,7 @@ if(SCRATCHBIRD_WITH_COMPILER)
     )
 
     target_include_directories(scratchbird_compiler PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/include
     )
 
     target_link_libraries(scratchbird_compiler PUBLIC
@@ -183,7 +183,7 @@ add_library(scratchbird_optimizer_runtime STATIC
 )
 
 target_include_directories(scratchbird_optimizer_runtime PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # Link OpenSSL if available for RAND_bytes in statistics_manager.cpp
@@ -213,7 +213,7 @@ if(SCRATCHBIRD_WITH_COMPILER)
     )
 
     target_include_directories(scratchbird_optimizer_compiler PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/include
     )
 
     target_link_libraries(scratchbird_optimizer_compiler PUBLIC
@@ -251,7 +251,7 @@ add_library(scratchbird_security STATIC
 )
 
 target_include_directories(scratchbird_security PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # OpenSSL required for TLS and crypto
@@ -294,7 +294,7 @@ add_library(scratchbird_network STATIC
 )
 
 target_include_directories(scratchbird_network PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # Thread support for thread pool
@@ -336,7 +336,7 @@ add_library(scratchbird_server STATIC
 )
 
 target_include_directories(scratchbird_server PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # Note: Dependencies are added after scratchbird_protocol is defined (circular dependency resolution)
@@ -379,7 +379,7 @@ add_library(scratchbird_protocol STATIC
 )
 
 target_include_directories(scratchbird_protocol PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 target_link_libraries(scratchbird_protocol PUBLIC
@@ -422,7 +422,7 @@ add_library(scratchbird_client STATIC
 )
 
 target_include_directories(scratchbird_client PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 target_link_libraries(scratchbird_client PUBLIC
@@ -455,7 +455,7 @@ add_library(scratchbird_lib SHARED
 )
 
 target_include_directories(scratchbird_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 target_link_libraries(scratchbird_lib PUBLIC
@@ -492,7 +492,7 @@ add_library(scratchbird_pool STATIC
 )
 
 target_include_directories(scratchbird_pool PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # Thread support for connection pool management
@@ -523,7 +523,7 @@ add_library(scratchbird_fdw STATIC
 )
 
 target_include_directories(scratchbird_fdw PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # OpenSSL required for MySQL password hashing and TLS
@@ -560,7 +560,7 @@ add_library(scratchbird_odbc STATIC
 )
 
 target_include_directories(scratchbird_odbc PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # Thread support for connection management
@@ -592,7 +592,7 @@ add_library(scratchbird_testing STATIC
 )
 
 target_include_directories(scratchbird_testing PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 # Thread support for load testing
@@ -646,7 +646,7 @@ set_target_properties(scratchbird PROPERTIES
 )
 
 # Data loader tools
-add_executable(sb_charset_loader ${CMAKE_SOURCE_DIR}/tools/sb_charset_loader.cpp)
+add_executable(sb_charset_loader ${PROJECT_SOURCE_DIR}/tools/sb_charset_loader.cpp)
 
 target_link_libraries(sb_charset_loader PRIVATE scratchbird_core)
 

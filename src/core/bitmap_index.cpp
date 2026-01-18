@@ -255,8 +255,9 @@ namespace scratchbird
                     entry_data += sizeof(BitmapDictionaryEntry) + entry->value_length;
                 }
 
-                current_page = dict_page->bmp_dict_next_page;
+                uint32_t next_page = dict_page->bmp_dict_next_page;
                 buffer_pool_->unpinPage(current_page, false, ctx);
+                current_page = next_page;
             }
 
             return 0; // Not found
@@ -423,11 +424,19 @@ namespace scratchbird
             return bitmap_root;
         }
 
-        std::unique_ptr<RoaringBitmap> BitmapIndex::loadBitmap(
+        std::shared_ptr<RoaringBitmap> BitmapIndex::loadBitmap(
             uint32_t bitmap_root_page,
             ErrorContext *ctx)
         {
-            return std::make_unique<RoaringBitmap>(db_, bitmap_root_page);
+            auto it = bitmap_cache_.find(bitmap_root_page);
+            if (it != bitmap_cache_.end())
+            {
+                return it->second;
+            }
+
+            auto bitmap = std::make_shared<RoaringBitmap>(db_, bitmap_root_page);
+            bitmap_cache_.emplace(bitmap_root_page, bitmap);
+            return bitmap;
         }
 
         Status BitmapIndex::insert(
@@ -775,41 +784,48 @@ namespace scratchbird
                 return results;
             }
 
-            // Load all bitmaps
-            std::vector<std::unique_ptr<RoaringBitmap>> bitmaps;
-            for (size_t i = 0; i < values.size(); i++)
+            std::vector<TID> first;
+            Status status = find(values[0], value_lens[0], current_xid, &first, ctx);
+            if (status != Status::OK || first.empty())
             {
-                uint32_t bitmap_root = 0;
-                findDictionaryEntry(values[i], value_lens[i], &bitmap_root, ctx);
+                return results;
+            }
 
-                if (bitmap_root == 0)
+            std::unordered_set<TID> current_set(first.begin(), first.end());
+            for (size_t i = 1; i < values.size(); i++)
+            {
+                std::vector<TID> next;
+                status = find(values[i], value_lens[i], current_xid, &next, ctx);
+                if (status != Status::OK || next.empty())
                 {
-                    return results; // One value not found = empty intersection
+                    current_set.clear();
+                    break;
                 }
 
-                bitmaps.push_back(loadBitmap(bitmap_root, ctx));
+                std::unordered_set<TID> next_set(next.begin(), next.end());
+                for (auto it = current_set.begin(); it != current_set.end(); )
+                {
+                    if (next_set.find(*it) == next_set.end())
+                    {
+                        it = current_set.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+
+                if (current_set.empty())
+                {
+                    break;
+                }
             }
 
-            // Perform intersection
-            auto result_bitmap = std::move(bitmaps[0]);
-            for (size_t i = 1; i < bitmaps.size(); i++)
+            results.reserve(current_set.size());
+            for (const auto& tid : current_set)
             {
-                result_bitmap = RoaringBitmap::bitwiseAnd(*result_bitmap, *bitmaps[i], ctx);
-            }
-
-            // Get all 64-bit TID values from bitmap
-            std::vector<uint64_t> tid_values = result_bitmap->toArray(ctx);
-            results.reserve(tid_values.size());
-
-            // Convert 64-bit values to TID structs
-            for (uint64_t tid_value : tid_values)
-            {
-                TID tid = convertLegacyTID(tid_value);
                 results.push_back(tid);
             }
-
-            // Firebird MGA: Post-filter results by heap tuple visibility using TIP lookups
-            results = filterTidsByVisibility(results, current_xid, ctx);
 
             return results;
         }
@@ -827,44 +843,26 @@ namespace scratchbird
                 return results;
             }
 
-            // Load all bitmaps
-            std::vector<std::unique_ptr<RoaringBitmap>> bitmaps;
+            std::unordered_set<TID> union_set;
             for (size_t i = 0; i < values.size(); i++)
             {
-                uint32_t bitmap_root = 0;
-                findDictionaryEntry(values[i], value_lens[i], &bitmap_root, ctx);
-
-                if (bitmap_root != 0)
+                std::vector<TID> partial;
+                Status status = find(values[i], value_lens[i], current_xid, &partial, ctx);
+                if (status != Status::OK)
                 {
-                    bitmaps.push_back(loadBitmap(bitmap_root, ctx));
+                    continue;
+                }
+                for (const auto& tid : partial)
+                {
+                    union_set.insert(tid);
                 }
             }
 
-            if (bitmaps.empty())
+            results.reserve(union_set.size());
+            for (const auto& tid : union_set)
             {
-                return results;
-            }
-
-            // Perform union
-            auto result_bitmap = std::move(bitmaps[0]);
-            for (size_t i = 1; i < bitmaps.size(); i++)
-            {
-                result_bitmap = RoaringBitmap::bitwiseOr(*result_bitmap, *bitmaps[i], ctx);
-            }
-
-            // Get all 64-bit TID values from bitmap
-            std::vector<uint64_t> tid_values = result_bitmap->toArray(ctx);
-            results.reserve(tid_values.size());
-
-            // Convert 64-bit values to TID structs
-            for (uint64_t tid_value : tid_values)
-            {
-                TID tid = convertLegacyTID(tid_value);
                 results.push_back(tid);
             }
-
-            // Firebird MGA: Post-filter results by heap tuple visibility using TIP lookups
-            results = filterTidsByVisibility(results, current_xid, ctx);
 
             return results;
         }
@@ -2067,7 +2065,7 @@ namespace scratchbird
         // ========================================
 
         BitmapIndexScanner::BitmapIndexScanner(BitmapIndex *index,
-                                              std::unique_ptr<RoaringBitmap> bitmap,
+                                              std::shared_ptr<RoaringBitmap> bitmap,
                                               uint64_t current_xid,
                                               Database *db)
             : index_(index),
@@ -2177,7 +2175,7 @@ namespace scratchbird
             LOG_DEBUG(STORAGE, "Bitmap scan: scanning %lu TIDs for value", bitmap->cardinality());
 
             // Create scanner with the loaded bitmap
-            return std::make_unique<BitmapIndexScanner>(this, std::move(bitmap), current_xid, db_);
+            return std::make_unique<BitmapIndexScanner>(this, bitmap, current_xid, db_);
         }
 
         std::unique_ptr<BitmapIndexScanner> BitmapIndex::scanOr(
@@ -2193,7 +2191,7 @@ namespace scratchbird
             }
 
             // Load bitmaps for all values and OR them together
-            std::unique_ptr<RoaringBitmap> result_bitmap;
+            std::shared_ptr<RoaringBitmap> result_bitmap;
 
             for (size_t i = 0; i < values.size(); ++i)
             {
@@ -2215,12 +2213,14 @@ namespace scratchbird
                 if (!result_bitmap)
                 {
                     // First bitmap - use it as the result
-                    result_bitmap = std::move(bitmap);
+                    auto bit_or = RoaringBitmap::bitwiseOr(*bitmap, *bitmap, ctx);
+                    result_bitmap = std::move(bit_or);
                 }
                 else
                 {
                     // OR this bitmap with the result
-                    result_bitmap = RoaringBitmap::bitwiseOr(*result_bitmap, *bitmap, ctx);
+                    auto bit_or = RoaringBitmap::bitwiseOr(*result_bitmap, *bitmap, ctx);
+                    result_bitmap = std::move(bit_or);
                 }
             }
 
@@ -2235,7 +2235,7 @@ namespace scratchbird
                      result_bitmap->cardinality(), values.size());
 
             // Create scanner with the OR'd bitmap
-            return std::make_unique<BitmapIndexScanner>(this, std::move(result_bitmap), current_xid, db_);
+            return std::make_unique<BitmapIndexScanner>(this, result_bitmap, current_xid, db_);
         }
 
     } // namespace core

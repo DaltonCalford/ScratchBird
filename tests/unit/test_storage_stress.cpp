@@ -22,6 +22,19 @@
 using namespace scratchbird::core;
 using namespace std::chrono;
 
+constexpr size_t kPayloadOffset = sizeof(TupleHeader);
+
+static std::vector<uint8_t> makeTestTuple(size_t payload_size, uint8_t fill, uint64_t xmin = 100)
+{
+    std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload_size, 0);
+    auto *hdr = reinterpret_cast<TupleHeader *>(tuple.data());
+    *hdr = {};
+    hdr->xmin = xmin;
+    hdr->xmax = 0;
+    std::memset(tuple.data() + sizeof(TupleHeader), fill, payload_size);
+    return tuple;
+}
+
 class StorageStressTest : public ::testing::Test
 {
 protected:
@@ -70,7 +83,7 @@ TEST_F(StorageStressTest, Insert10000Tuples)
         ASSERT_EQ(heap_pages[p].initialize(p, nullptr), Status::OK);
     }
 
-    std::vector<uint8_t> tuple_data(TUPLE_SIZE, 0xAA);
+    auto tuple_data = makeTestTuple(TUPLE_SIZE, 0xAA);
     int total_inserted = 0;
     int current_page = 0;
 
@@ -80,8 +93,8 @@ TEST_F(StorageStressTest, Insert10000Tuples)
     while (total_inserted < 10000 && current_page < NUM_PAGES)
     {
         // Vary the data slightly
-        tuple_data[0] = total_inserted & 0xFF;
-        tuple_data[1] = (total_inserted >> 8) & 0xFF;
+        tuple_data[kPayloadOffset] = total_inserted & 0xFF;
+        tuple_data[kPayloadOffset + 1] = (total_inserted >> 8) & 0xFF;
 
         uint16_t item_id;
         Status status = heap_pages[current_page].insertTuple(
@@ -163,14 +176,14 @@ TEST_F(StorageStressTest, RandomDeletePattern)
     // Insert 5000 tuples
     struct TupleLocation { int page; uint16_t slot; };
     std::vector<TupleLocation> tuple_locs;
-    std::vector<uint8_t> tuple_data(TUPLE_SIZE, 0xBB);
+    auto tuple_data = makeTestTuple(TUPLE_SIZE, 0xBB);
 
     int current_page = 0;
     int total_inserted = 0;
 
     while (total_inserted < 5000 && current_page < NUM_PAGES)
     {
-        tuple_data[0] = total_inserted & 0xFF;
+        tuple_data[kPayloadOffset] = total_inserted & 0xFF;
 
         uint16_t item_id;
         Status status = heap_pages[current_page].insertTuple(
@@ -245,8 +258,8 @@ TEST_F(StorageStressTest, FragmentationHandling)
     }
 
     // Create fragmentation by alternating small and large tuples
-    std::vector<uint8_t> small_tuple(50, 0xCC);
-    std::vector<uint8_t> large_tuple(500, 0xDD);
+    auto small_tuple = makeTestTuple(50, 0xCC);
+    auto large_tuple = makeTestTuple(500, 0xDD);
 
     const int ITERATIONS = 200;
     int small_count = 0;
@@ -297,7 +310,7 @@ TEST_F(StorageStressTest, FragmentationHandling)
     std::cout << "  Pages used: " << (current_page + 1) << "\n";
 
     // Calculate total bytes stored
-    size_t total_data = (small_count * 50) + (large_count * 500);
+    size_t total_data = (small_count * small_tuple.size()) + (large_count * large_tuple.size());
     size_t total_pages = (current_page + 1) * PAGE_SIZE;
     double utilization = (total_data * 100.0) / total_pages;
     std::cout << "  Space utilization: " << std::fixed << std::setprecision(1) << utilization << "%\n";
@@ -322,7 +335,7 @@ TEST_F(StorageStressTest, LargeDatabaseGrowth)
         ASSERT_EQ(heap_pages[p].initialize(p, nullptr), Status::OK);
     }
 
-    std::vector<uint8_t> tuple_data(TUPLE_SIZE, 0xFF);
+    auto tuple_data = makeTestTuple(TUPLE_SIZE, 0xFF);
     int total_inserted = 0;
     int current_page = 0;
 
@@ -357,7 +370,7 @@ TEST_F(StorageStressTest, LargeDatabaseGrowth)
     auto elapsed = end - start;
 
     size_t final_size = (current_page + 1) * PAGE_SIZE;
-    size_t data_size = total_inserted * TUPLE_SIZE;
+    size_t data_size = total_inserted * tuple_data.size();
 
     std::cout << "\nLarge Database Statistics:\n";
     std::cout << "  Total tuples: " << total_inserted << "\n";
@@ -365,7 +378,7 @@ TEST_F(StorageStressTest, LargeDatabaseGrowth)
     std::cout << "  Total page size: " << format_bytes(final_size) << "\n";
     std::cout << "  Data stored: " << format_bytes(data_size) << "\n";
     std::cout << "  Time taken: " << format_duration(duration_cast<duration<double>>(elapsed)) << "\n";
-    std::cout << "  Bytes per tuple: " << TUPLE_SIZE << "\n";
+    std::cout << "  Bytes per tuple: " << tuple_data.size() << "\n";
 
     EXPECT_GT(total_inserted, 1000) << "Should have inserted many tuples";
 }
@@ -386,7 +399,7 @@ TEST_F(StorageStressTest, TransactionIDStress)
         ASSERT_EQ(heap_pages[p].initialize(p, nullptr), Status::OK);
     }
 
-    std::vector<uint8_t> tuple_data(TUPLE_SIZE, 0x11);
+    auto tuple_data = makeTestTuple(TUPLE_SIZE, 0x11);
     struct TupleInfo { int page; uint16_t slot; uint64_t xid; };
     std::vector<TupleInfo> tuples;
 
@@ -435,7 +448,14 @@ TEST_F(StorageStressTest, TransactionIDStress)
     std::cout << "  XID is 64-bit: " << (sizeof(current_xid) == 8 ? "YES" : "NO") << "\n";
     std::cout << "  Time taken: " << format_duration(duration_cast<duration<double>>(elapsed)) << "\n";
 
-    EXPECT_GT(tuples.size(), 1000) << "Should have inserted many tuples";
+    const size_t tuple_size = tuple_data.size();
+    const size_t per_page_capacity =
+        (PAGE_SIZE - sizeof(PageHeader) - sizeof(HeapPageSpecial)) /
+        (tuple_size + sizeof(ItemPointer));
+    const size_t expected_min = per_page_capacity * NUM_PAGES;
+
+    EXPECT_GE(tuples.size(), expected_min)
+        << "Should have filled pages based on current tuple/page sizing";
 }
 
 // Stress test: Concurrent-style access pattern (single-threaded simulation)
@@ -490,7 +510,7 @@ TEST_F(StorageStressTest, ConcurrentAccessPattern)
         {
             case 0:  // Insert
             {
-                std::vector<uint8_t> data(100 + session.id * 10, session.id);
+                auto data = makeTestTuple(100 + session.id * 10, static_cast<uint8_t>(session.id));
                 uint16_t item_id;
                 Status status = heap_pages[current_page].insertTuple(
                     data.data(), data.size(), 100, &item_id, nullptr);

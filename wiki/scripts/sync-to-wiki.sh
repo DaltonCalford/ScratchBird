@@ -26,12 +26,16 @@ CONTENT_DIR="$WIKI_DIR/content"
 IMAGES_DIR="$WIKI_DIR/images"
 
 # Wiki repository (will be cloned)
-WIKI_REPO_URL="${GITHUB_REPO_URL:-https://github.com/scratchbird/scratchbird.wiki.git}"
+WIKI_REPO_URL="${GITHUB_REPO_URL:-https://github.com/DaltonCalford/ScratchBird.wiki.git}"
 WIKI_CLONE_DIR="/tmp/scratchbird-wiki-$$"
 
 # Options
 DRY_RUN=false
 FORCE=false
+
+# Flattening settings for GitHub wiki (no nested directories)
+FLATTEN_SEPARATOR="-"
+LINK_MAP_FILE=""
 
 # Logging functions
 log_info() {
@@ -139,9 +143,144 @@ clone_wiki() {
     log_success "Wiki repository cloned to $WIKI_CLONE_DIR"
 }
 
+# Build a map of content paths to flattened wiki page names
+build_link_map() {
+    LINK_MAP_FILE="$(mktemp -t scratchbird-wiki-map-XXXX.json)"
+
+    python - "$CONTENT_DIR" "$LINK_MAP_FILE" "$FLATTEN_SEPARATOR" << 'PY'
+import json
+import os
+import sys
+
+content_dir = sys.argv[1]
+map_file = sys.argv[2]
+sep = sys.argv[3]
+
+mapping = {}
+reverse = {}
+
+for dirpath, _, filenames in os.walk(content_dir):
+    for name in filenames:
+        if not name.endswith(".md"):
+            continue
+        rel = os.path.relpath(os.path.join(dirpath, name), content_dir).replace(os.sep, "/")
+        rel_no_ext = rel[:-3]
+        page_path = rel_no_ext[:-7] if rel_no_ext.endswith("/README") else rel_no_ext
+        slug = page_path.replace("/", sep)
+        if slug in reverse and reverse[slug] != page_path:
+            raise SystemExit(f"Slug collision: {slug} from {page_path} and {reverse[slug]}")
+        reverse[slug] = page_path
+        mapping[page_path] = slug
+        if rel_no_ext.endswith("/README"):
+            mapping[rel_no_ext] = slug
+
+with open(map_file, "w", encoding="utf-8") as fh:
+    json.dump(mapping, fh, indent=2, sort_keys=True)
+PY
+}
+
+# Rewrite internal links to flattened wiki page names
+rewrite_markdown() {
+    local source_file="$1"
+    local target_file="$2"
+    local rel_path="$3"
+
+    python - "$source_file" "$target_file" "$rel_path" "$LINK_MAP_FILE" << 'PY'
+import json
+import os
+import posixpath
+import re
+import sys
+
+source_file = sys.argv[1]
+target_file = sys.argv[2]
+rel_path = sys.argv[3].replace(os.sep, "/")
+map_file = sys.argv[4]
+
+with open(map_file, "r", encoding="utf-8") as fh:
+    mapping = json.load(fh)
+
+rel_dir = posixpath.dirname(rel_path) or "."
+
+def is_external(target: str) -> bool:
+    return bool(re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target))
+
+def is_image(target: str) -> bool:
+    lower = target.lower()
+    return lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"))
+
+def map_target(target: str) -> str:
+    if not target or target.startswith("#"):
+        return target
+    if is_external(target):
+        return target
+
+    if "#" in target:
+        path_part, anchor = target.split("#", 1)
+    else:
+        path_part, anchor = target, ""
+
+    if not path_part:
+        return target
+
+    lower_path = path_part.lower()
+    if is_image(path_part) or lower_path.startswith(("images/", "./images/", "../images/")):
+        normalized = re.sub(r"^(?:\.\./|\./)+", "", path_part)
+        if normalized.startswith("images/"):
+            return f"{normalized}#{anchor}" if anchor else normalized
+
+        if path_part.startswith("/"):
+            resolved = path_part.lstrip("/")
+        else:
+            resolved = posixpath.normpath(posixpath.join(rel_dir, path_part))
+
+        if resolved.startswith("./"):
+            resolved = resolved[2:]
+
+        if resolved.startswith("images/"):
+            return f"{resolved}#{anchor}" if anchor else resolved
+
+        return target
+
+    if path_part.endswith(".md"):
+        path_part = path_part[:-3]
+
+    if path_part.startswith("/"):
+        resolved = path_part.lstrip("/")
+    else:
+        resolved = posixpath.normpath(posixpath.join(rel_dir, path_part))
+
+    if resolved.startswith("./"):
+        resolved = resolved[2:]
+
+    slug = mapping.get(resolved)
+    if not slug:
+        return target
+
+    return f"{slug}#{anchor}" if anchor else slug
+
+link_re = re.compile(r"(!?\[[^\]]*\]\()([^)]+)(\))")
+
+with open(source_file, "r", encoding="utf-8") as fh:
+    content = fh.read()
+
+def repl(match: re.Match) -> str:
+    prefix, target, suffix = match.groups()
+    new_target = map_target(target.strip())
+    return f"{prefix}{new_target}{suffix}"
+
+content = link_re.sub(repl, content)
+
+with open(target_file, "w", encoding="utf-8") as fh:
+    fh.write(content)
+PY
+}
+
 # Sync content files
 sync_content() {
     log_info "Syncing content files..."
+
+    build_link_map
 
     local files_synced=0
     local files_skipped=0
@@ -152,55 +291,44 @@ sync_content() {
     while IFS= read -r -d '' file; do
         # Get relative path from content dir
         local rel_path="${file#$CONTENT_DIR/}"
-
-        # Convert directory structure to wiki format
-        # content/drivers/Python.md -> drivers-Python.md (or keep structure)
-        local wiki_path="$rel_path"
-
-        # For GitHub wiki, we might want to flatten structure or keep it
-        # Adjust based on preference:
-        # Option 1: Keep directory structure (content/foo/bar.md -> foo/bar.md)
-        # Option 2: Flatten (content/foo/bar.md -> foo-bar.md)
+        local rel_no_ext="${rel_path%.md}"
+        local page_path="$rel_no_ext"
+        if [[ "$page_path" == */README ]]; then
+            page_path="${page_path%/README}"
+        fi
+        local wiki_slug="${page_path//\//${FLATTEN_SEPARATOR}}"
+        local wiki_path="${wiki_slug}.md"
 
         local source_file="$file"
         local target_file="$WIKI_CLONE_DIR/$wiki_path"
-        local target_dir="$(dirname "$target_file")"
-
-        # Create target directory if needed
-        if [ ! -d "$target_dir" ]; then
-            if [ "$DRY_RUN" = false ]; then
-                mkdir -p "$target_dir"
-            fi
-            log_info "Created directory: $target_dir"
-        fi
 
         # Check if file needs update
         local needs_update=false
 
         if [ ! -f "$target_file" ]; then
             needs_update=true
-            ((files_created++))
+            ((files_created+=1))
             log_info "New file: $wiki_path"
         elif [ "$FORCE" = true ]; then
             needs_update=true
-            ((files_updated++))
+            ((files_updated+=1))
             log_info "Force update: $wiki_path"
         elif [ "$source_file" -nt "$target_file" ]; then
             needs_update=true
-            ((files_updated++))
+            ((files_updated+=1))
             log_info "Updated file: $wiki_path"
         else
-            ((files_skipped++))
+            ((files_skipped+=1))
         fi
 
         if [ "$needs_update" = true ]; then
             if [ "$DRY_RUN" = false ]; then
-                cp "$source_file" "$target_file"
+                rewrite_markdown "$source_file" "$target_file" "$rel_path"
                 log_success "Synced: $wiki_path"
             else
                 log_info "[DRY RUN] Would sync: $wiki_path"
             fi
-            ((files_synced++))
+            ((files_synced+=1))
         fi
 
     done < <(find "$CONTENT_DIR" -type f -name "*.md" -print0)
@@ -245,7 +373,7 @@ sync_images() {
             else
                 log_info "[DRY RUN] Would sync image: $rel_path"
             fi
-            ((images_synced++))
+            ((images_synced+=1))
         fi
 
     done < <(find "$IMAGES_DIR" -type f \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.gif" -o -name "*.svg" \) -print0)
@@ -283,8 +411,8 @@ commit_and_push() {
 
     cd "$WIKI_CLONE_DIR"
 
-    # Check if there are changes
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    # Check if there are changes, including untracked files
+    if [ -n "$(git status --porcelain)" ]; then
         git add -A
 
         local commit_msg="Sync from main repository
@@ -313,6 +441,9 @@ cleanup() {
         log_info "Cleaning up temporary directory..."
         rm -rf "$WIKI_CLONE_DIR"
         log_success "Cleanup complete"
+    fi
+    if [ -n "${LINK_MAP_FILE:-}" ] && [ -f "$LINK_MAP_FILE" ]; then
+        rm -f "$LINK_MAP_FILE"
     fi
 }
 

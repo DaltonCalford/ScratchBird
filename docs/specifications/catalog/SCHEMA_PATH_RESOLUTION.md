@@ -13,14 +13,18 @@ authoritative reference for parser, executor, and adapter behavior.
 - Schema path: dot-separated path of schema segments (example: `users.alice.dev`).
 - Object name: the final identifier (example: `tablename`).
 - Qualified name: `schema_path.object_name`.
-- Current schema: the active schema for the session (from user/role/group defaults).
+- Current schema: the active schema for the session (derived from role/user/group defaults).
 - Search path: ordered list of schema paths used for name resolution.
 - No-search prefix: `!:` prefix that disables search-path fallback for a name.
 
 ## Resolution Rules
 1) Default schema
-   - The session always has a default schema from user/role/group.
-   - If the current schema is missing, resolution is an error (no silent fallback).
+   - The session current schema is derived in this order:
+     1) active role default schema (if set)
+     2) user default schema (if set)
+     3) group default schema (if set; deterministic tie-breaker by lexicographic group name)
+     4) `public` schema
+   - If the current schema cannot be resolved, resolution is an error (no silent fallback).
 
 2) Unqualified object name (no schema path)
    - Resolve in the current schema.

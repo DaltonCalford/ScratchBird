@@ -1580,13 +1580,9 @@ namespace scratchbird::core
         // ISSUE 3.1: OPTIMIZE TIP PAGE SCAN
         // ===========================================================================================
         //
-        // OPTIMIZATION 1: Check transaction_cache_ first
-        // If XID is already in cache, we know it exists in TIP (likely)
-        // This avoids the O(N) TIP page scan for cache hits
-        //
-        // OPTIMIZATION 2: Use TIP location cache
-        // Maps XID -> TIP page ID to avoid scanning entire TIP chain
-        // Cache is populated when we find/create an entry
+        // Use TIP location cache:
+        // Maps XID -> TIP page ID to avoid scanning entire TIP chain.
+        // Cache is populated when we find/create an entry.
         //
         // Performance impact:
         // - Before: O(N) scan through all TIP pages and entries (worst case: thousands of pages)
@@ -1596,19 +1592,20 @@ namespace scratchbird::core
         // See: docs/audit/ISSUE_3_1_STATUS.md for complete analysis
         // ===========================================================================================
 
-        // OPTIMIZATION 1: Check transaction_cache_ first (quick O(1) check)
-        // If XID is in cache, it's likely already in TIP, so try TIP location cache
-        auto cache_it = transaction_cache_.find(xid);
-        bool in_cache = (cache_it != transaction_cache_.end());
-
-        // OPTIMIZATION 2: Check TIP location cache for known page
+        // OPTIMIZATION: Check TIP location cache for known page (best-effort)
         uint32_t start_page = tip_root_page_;
-        auto tip_cache_it = tip_location_cache_.find(xid);
-        if (tip_cache_it != tip_location_cache_.end())
+        bool has_cached_page = false;
         {
-            // We know which page this XID is on - start there
-            start_page = tip_cache_it->second;
-
+            std::lock_guard<std::mutex> lock(tip_cache_mutex_);
+            auto tip_cache_it = tip_location_cache_.find(xid);
+            if (tip_cache_it != tip_location_cache_.end())
+            {
+                start_page = tip_cache_it->second;
+                has_cached_page = true;
+            }
+        }
+        if (has_cached_page)
+        {
             // Try to update the entry on the cached page first (fast path)
             void *page_buffer;
             Status status = buffer_pool_->pinPage(start_page, &page_buffer, ctx);
@@ -1646,7 +1643,10 @@ namespace scratchbird::core
 
                 // XID not found on cached page - cache is stale, fall through to full scan
                 buffer_pool_->unpinPage(start_page, false, ctx);
-                tip_location_cache_.erase(xid); // Remove stale entry
+                {
+                    std::lock_guard<std::mutex> lock(tip_cache_mutex_);
+                    tip_location_cache_.erase(xid);
+                }
             }
         }
 
@@ -1688,9 +1688,12 @@ namespace scratchbird::core
                     reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
 
                 // Cache this page location for future updates (OPTIMIZATION)
-                if (tip_location_cache_.size() < MAX_TIP_LOCATION_CACHE_SIZE)
                 {
-                    tip_location_cache_[xid] = current_page;
+                    std::lock_guard<std::mutex> lock(tip_cache_mutex_);
+                    if (tip_location_cache_.size() < MAX_TIP_LOCATION_CACHE_SIZE)
+                    {
+                        tip_location_cache_[xid] = current_page;
+                    }
                 }
 
                 buffer_pool_->unpinPage(current_page, true, ctx);
@@ -1769,9 +1772,12 @@ namespace scratchbird::core
             calculatePageChecksum(reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
 
         // Cache this page location for future updates (OPTIMIZATION)
-        if (tip_location_cache_.size() < MAX_TIP_LOCATION_CACHE_SIZE)
         {
-            tip_location_cache_[xid] = last_page;
+            std::lock_guard<std::mutex> lock(tip_cache_mutex_);
+            if (tip_location_cache_.size() < MAX_TIP_LOCATION_CACHE_SIZE)
+            {
+                tip_location_cache_[xid] = last_page;
+            }
         }
 
         buffer_pool_->unpinPage(last_page, true, ctx);

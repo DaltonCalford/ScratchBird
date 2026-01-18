@@ -28,7 +28,7 @@
 |------|-----------|-------------|--------|
 | `-U` | `--user` | Username for authentication | ✅ Implemented |
 | `-P` | `--password` | Password | ✅ Implemented |
-| `-p` | `--port` | TCP port (default: 5433) | ✅ Implemented |
+| `-p` | `--port` | TCP port (default: 3092) | ✅ Implemented |
 | `-H` | `--host` | Host (default: localhost) | ✅ Implemented |
 | `-c` | `--command` | Execute single command and exit | ✅ Implemented |
 | `-f` | `--file` | Execute commands from file | ✅ Implemented |
@@ -247,7 +247,7 @@ struct ConnectionConfig {
     uint32_t query_timeout_ms = 30000;
     // ... other settings ...
     server::IPCMethod ipc_method = server::IPCMethod::AUTO;
-    uint16_t tcp_port = 5433;
+    uint16_t tcp_port = 3092;
     std::string socket_path;
 
     // ❌ NO parser selection field

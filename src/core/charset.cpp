@@ -627,9 +627,9 @@ namespace scratchbird::core
         {
             std::string msg = "Conversion from " + getCharsetName(from_cs) + " to " +
                               getCharsetName(to_cs) + " not yet implemented";
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, msg.c_str());
+            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, msg.c_str());
         }
-        return Status::NOT_IMPLEMENTED;
+        return Status::NOT_SUPPORTED;
     }
 
     // UTF-8 utility functions implementation

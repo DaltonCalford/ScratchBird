@@ -284,11 +284,13 @@ namespace scratchbird
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
             bool current_row_case_insensitive_ = false;
+            std::unordered_map<std::string, size_t> current_row_alias_map_;
             // Insert-row context (for VALUES(col) in ON CONFLICT updates)
             const std::vector<Value> *current_insert_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_insert_columns_ = nullptr;
             bool aggregate_scan_active_ = false;
             bool aggregate_scan_found_ = false;
+            bool skip_expression_disallow_aggregates_ = false;
             bool scalar_aggregate_filter_active_ = false;
             size_t scalar_aggregate_filter_start_ = 0;
             size_t scalar_aggregate_filter_end_ = 0;
@@ -347,6 +349,7 @@ namespace scratchbird
                                      std::string& alias_out,
                                      bool& has_uuid_out);
             size_t skipExpressionRange(size_t start_pc);
+            size_t skipExpressionRangeNoAggregates(size_t start_pc);
             void skipSelectStatement();
             core::DataType readDataTypeWithModifiers(uint32_t& precision_out, uint32_t& scale_out);
             core::DataType readColumnTypeWithDomain(core::ID& domain_id_out,
@@ -521,10 +524,28 @@ namespace scratchbird
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);
 
+            struct SelectItemInfo
+            {
+                enum class Kind
+                {
+                    STAR,
+                    TABLE_STAR,
+                    EXPR
+                };
+                Kind kind = Kind::EXPR;
+                size_t expr_start = 0;
+                size_t expr_end = 0;
+                bool has_aggregate = false;
+                std::string alias;
+                core::ID table_id{};
+                std::string table_name;
+                std::string table_alias;
+            };
+
             // Aggregation execution helper (Phase 1 Task 1.6.3)
             void executeAggregate(const core::CatalogManager::TableInfo& table_info,
                                  const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
-                                 const std::vector<std::pair<std::string, std::string>>& select_items,
+                                 const std::vector<SelectItemInfo>& select_items,
                                  bool is_select_star,
                                  bool has_where,
                                  size_t where_start_pc,
@@ -533,7 +554,7 @@ namespace scratchbird
             // Advanced grouping (ROLLUP/CUBE/GROUPING SETS) execution helper (Phase 3: Missing Functions)
             void executeAdvancedGrouping(const core::CatalogManager::TableInfo& table_info,
                                         const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
-                                        const std::vector<std::pair<std::string, std::string>>& select_items,
+                                        const std::vector<SelectItemInfo>& select_items,
                                         bool is_select_star,
                                         bool has_where,
                                         size_t where_start_pc,
@@ -833,6 +854,8 @@ namespace scratchbird
             void executeSetSessionAuth();    // Execute SET/RESET SESSION AUTHORIZATION
             void executeSetConstraints();    // P2-7: Execute SET CONSTRAINTS
             void executeSetVariable();       // Execute SET variable (EXT_SET_VARIABLE)
+            void executeConnect();           // Execute CONNECT
+            void executeDisconnect();        // Execute DISCONNECT
             void executeCreatePolicy();      // Execute CREATE POLICY (Security Phase 3.4.4)
             void executeDropPolicy();        // Execute DROP POLICY (Security Phase 3.4.4)
             void executeAlterTableRLS();     // Execute ALTER TABLE ... ROW LEVEL SECURITY (Security Phase 3.4.4)
@@ -966,6 +989,11 @@ namespace scratchbird
             bool evaluateCheckConstraint(const core::CatalogManager::ColumnInfo& column,
                                         const std::vector<Value>& row_values,
                                         const std::vector<core::CatalogManager::ColumnInfo>& columns);
+
+            // Table-level CHECK constraint evaluation
+            bool evaluateTableCheckConstraint(const core::CatalogManager::ConstraintInfo& constraint,
+                                             const std::vector<Value>& row_values,
+                                             const std::vector<core::CatalogManager::ColumnInfo>& columns);
 
             // ALPHA Phase A: Check for UNIQUE constraint violation
             // Returns true if a duplicate value exists (violation), false if value is unique

@@ -145,7 +145,7 @@ HANDLE hPipe = CreateFile(
 
 #### Fallback: TCP/IP Localhost
 
-**Address:** `127.0.0.1:5433` (default port, configurable)
+**Address:** `127.0.0.1:3092` (default port, configurable)
 
 **Advantages:**
 - Cross-platform identical code
@@ -170,7 +170,7 @@ int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 struct sockaddr_in addr;
 addr.sin_family = AF_INET;
 addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-addr.sin_port = htons(5433);
+addr.sin_port = htons(3092);
 int opt = 1;
 setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
@@ -579,7 +579,7 @@ void executeQuery(const std::string& sql,
 ipc_method = auto
 
 # TCP port (if using TCP)
-tcp_port = 5433
+tcp_port = 3092
 
 # Maximum connections
 max_connections = 100

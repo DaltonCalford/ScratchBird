@@ -1,7 +1,7 @@
 # Wiki Images Directory
 
 **Purpose:** Image assets for ScratchBird wiki documentation
-**Last Updated:** 2026-01-03
+**Last Updated:** 2026-01-18
 
 ---
 
@@ -149,7 +149,7 @@ svgo input.svg -o output.svg
 Always include descriptive alt text:
 
 ```markdown
-![Architecture diagram showing MGA transaction flow](images/architecture/mga-transaction-flow.png)
+![ScratchBird logo for documentation headers](logos/TransparentScratchBirdLogoHeader.png)
 ```
 
 **Good alt text:**
@@ -216,13 +216,13 @@ Export and save in `images/diagrams/`
 ### Basic Syntax
 
 ```markdown
-![Description](images/category/filename.png)
+![Example image](logos/TransparentScratchBirdLogoHeader.png)
 ```
 
 ### With Caption
 
 ```markdown
-![Architecture Diagram](images/architecture/mga-flow.png)
+![Architecture Diagram Example](logos/TransparentScratchBirdLogoHeader.png)
 
 *Figure 1: Multi-generational transaction flow in ScratchBird*
 ```

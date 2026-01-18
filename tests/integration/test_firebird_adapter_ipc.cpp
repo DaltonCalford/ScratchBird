@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -17,6 +18,7 @@ using scratchbird::protocol::ResultContext;
 using scratchbird::server::IPCMethod;
 using scratchbird::server::ScratchBirdServer;
 using scratchbird::server::ServerConfig;
+namespace client = scratchbird::client;
 
 namespace {
 
@@ -29,19 +31,27 @@ public:
 class FirebirdAdapterBridgeTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        const char* network_env = std::getenv("SCRATCHBIRD_TEST_NETWORK");
+        if (!network_env || network_env[0] == '\0') {
+            GTEST_SKIP() << "SCRATCHBIRD_TEST_NETWORK not set; skipping network listener tests";
+        }
+
         std::filesystem::create_directories("build/database");
         std::filesystem::create_directories("build/ipc_tests");
 
         config_.database_path = "build/database/fb_bridge_test.sbdb";
         config_.ipc_method = IPCMethod::UNIX_SOCKET;
         config_.ipc_path = scratchbird::server::getIPCPath(config_.database_path, config_.ipc_method);
+        std::error_code ec;
+        std::filesystem::remove(config_.database_path, ec);
+        std::filesystem::remove(config_.ipc_path, ec);
         config_.auto_create_db = true;
         config_.accept_timeout_ms = 50;
         config_.verbose = false;
 
         server_ = std::make_unique<ScratchBirdServer>(config_);
         Status status = server_->startAsync(&ctx_);
-        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(status, Status::OK) << "Server start failed: " << ctx_.message;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Bootstrap minimal RDB$DATABASE table for singleton selects

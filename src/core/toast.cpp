@@ -239,7 +239,8 @@ namespace scratchbird::core
         ID index_id;
         std::string index_name = toast_name + "_idx";
         // Create TOAST index in same tablespace as parent (Phase 2 Task 2.3)
-        status = catalog->createIndex(toast_table_id_, index_name, index_columns, index_id, false,
+        status = catalog->createIndex(toast_table_id_, index_name, index_columns,
+                                      std::vector<std::string>{}, index_id, false,
                                       IndexType::BTREE, tablespace_id, ctx);
         if (status != Status::OK)
         {

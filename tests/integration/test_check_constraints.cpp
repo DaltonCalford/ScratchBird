@@ -17,7 +17,7 @@
 #include <vector>
 
 // Test 1: Document CHECK constraint system architecture
-TEST(CheckConstraintTest, SystemArchitecture)
+TEST(CheckConstraintDocTest, SystemArchitecture)
 {
     std::cout << "\n=== CHECK Constraint System Architecture ===\n";
     std::cout << "1. Storage: ColumnInfo.check_expr (hex bytecode)\n";
@@ -31,7 +31,7 @@ TEST(CheckConstraintTest, SystemArchitecture)
 }
 
 // Test 2: Document CHECK constraint evaluation flow
-TEST(CheckConstraintTest, EvaluationFlow)
+TEST(CheckConstraintDocTest, EvaluationFlow)
 {
     std::cout << "\n=== CHECK Constraint Evaluation Flow ===\n";
     std::cout << "1. Check if column has CHECK constraint (check_expr not empty)\n";
@@ -44,7 +44,7 @@ TEST(CheckConstraintTest, EvaluationFlow)
 }
 
 // Test 3: Document CHECK constraint storage format
-TEST(CheckConstraintTest, StorageFormat)
+TEST(CheckConstraintDocTest, StorageFormat)
 {
     std::cout << "\n=== CHECK Constraint Storage Format ===\n";
     std::cout << "Storage Field: ColumnInfo.check_expr (std::string)\n";
@@ -62,7 +62,7 @@ TEST(CheckConstraintTest, StorageFormat)
 }
 
 // Test 4: Document NULL handling in CHECK constraints
-TEST(CheckConstraintTest, NullHandling)
+TEST(CheckConstraintDocTest, NullHandling)
 {
     std::cout << "\n=== CHECK Constraint NULL Handling ===\n";
     std::cout << "Standard SQL behavior:\n";
@@ -75,7 +75,7 @@ TEST(CheckConstraintTest, NullHandling)
 }
 
 // Test 5: Document parser integration requirements
-TEST(CheckConstraintTest, ParserIntegration)
+TEST(CheckConstraintDocTest, ParserIntegration)
 {
     std::cout << "\n=== Parser Integration Requirements ===\n";
     std::cout << "To enable full CHECK constraint support:\n";
@@ -97,7 +97,7 @@ TEST(CheckConstraintTest, ParserIntegration)
 }
 
 // Test 6: Document current implementation status
-TEST(CheckConstraintTest, ImplementationStatus)
+TEST(CheckConstraintDocTest, ImplementationStatus)
 {
     std::cout << "\n=== CHECK Constraint Implementation Status ===\n";
     std::cout << "✓ COMPLETED:\n";

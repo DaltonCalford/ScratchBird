@@ -187,6 +187,7 @@ namespace scratchbird::core
 
             // Copy the tuple header
             auto *new_hdr = reinterpret_cast<TupleHeader *>(toasted_data.data());
+            const auto *src_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
             new_hdr->xmin = xmin;
             new_hdr->xmax = 0;
             // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
@@ -198,6 +199,7 @@ namespace scratchbird::core
             new_hdr->infomask = 0;
             new_hdr->null_bitmap_offset = 0;
             new_hdr->padding = 0;
+            new_hdr->session_id = src_hdr->session_id;
 
             // TOAST the data portion (after TupleHeader)
             ToastPointer toast_ptr;
@@ -1114,8 +1116,7 @@ namespace scratchbird::core
         // 1. Start at PRIMARY location (item_id) - newest version
         // 2. Follow back_version_tid pointers BACKWARD (N2O traversal)
         // 3. Back versions stored by OFFSET (not item_id)
-        // 4. Only same-page back versions supported (Alpha limitation)
-        // 5. Uses TIP-based visibility (Firebird MGA), NOT snapshots
+        // 4. Uses TIP-based visibility (Firebird MGA), NOT snapshots
         // ====================================================================
 
         // Validate inputs
@@ -1126,12 +1127,12 @@ namespace scratchbird::core
         }
 
         // Start with the PRIMARY tuple (newest version at stable item_id)
+        const uint32_t primary_page_id = header()->page_id;
         uint16_t current_item_id = item_id;
-        uint32_t current_page_id = header()->page_id;
+        uint32_t current_page_id = primary_page_id;
         bool is_back_version = false;  // Track if we're at back version (offset-based)
         uint32_t current_offset = 0;  // For back versions accessed by offset
 
-        // Current page pointers (Alpha: only same-page back versions supported)
         uint8_t *current_page_data = page_data_;
         uint32_t current_page_size = page_size_;
 
@@ -1146,6 +1147,74 @@ namespace scratchbird::core
         std::unordered_set<uint64_t> visited_locations;
 
         BufferPool *buffer_pool = (db_ != nullptr) ? db_->buffer_pool() : nullptr;
+        uint32_t pinned_page_id = 0;
+        uint8_t *pinned_page_data = nullptr;
+
+        struct PinnedPageGuard
+        {
+            BufferPool *pool;
+            uint32_t *page_id;
+            ErrorContext *ctx;
+            ~PinnedPageGuard()
+            {
+                if (pool && page_id && *page_id != 0)
+                {
+                    pool->unpinPage(*page_id, false, ctx);
+                }
+            }
+        };
+
+        PinnedPageGuard pinned_guard{buffer_pool, &pinned_page_id, ctx};
+
+        auto unpinPinnedPage = [&]()
+        {
+            if (pinned_page_id != 0 && buffer_pool != nullptr)
+            {
+                buffer_pool->unpinPage(pinned_page_id, false, ctx);
+                pinned_page_id = 0;
+                pinned_page_data = nullptr;
+            }
+        };
+
+        auto switchToPage = [&](uint32_t target_page_id) -> Status
+        {
+            if (target_page_id == current_page_id)
+            {
+                return Status::OK;
+            }
+
+            if (target_page_id == primary_page_id)
+            {
+                unpinPinnedPage();
+                current_page_data = page_data_;
+                current_page_id = primary_page_id;
+                current_page_size = page_size_;
+                return Status::OK;
+            }
+
+            if (!buffer_pool)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Buffer pool not available for cross-page traversal");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            unpinPinnedPage();
+
+            Status pin_status = buffer_pool->pinPage(target_page_id,
+                                                     reinterpret_cast<void**>(&pinned_page_data),
+                                                     ctx);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            pinned_page_id = target_page_id;
+            current_page_data = pinned_page_data;
+            current_page_id = target_page_id;
+            current_page_size = page_size_;
+            return Status::OK;
+        };
 
         while (chain_length < MAX_CHAIN_LENGTH)
         {
@@ -1285,117 +1354,20 @@ namespace scratchbird::core
 
                 if (tuple_hdr->hasBackVersion())
                 {
-                    // Continue to BACK version (N2O traversal)
                     chain_length++;
-                    // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
                     TID back_tid = tuple_hdr->getBackVersionTID();
                     uint64_t back_page_num = getPageNumber(back_tid);
-                    uint32_t back_offset = back_tid.slot; // Alpha: slot is actually offset
+                    uint32_t back_offset = back_tid.slot;
 
-                    // Check if back version is on a different page
                     if (back_page_num != static_cast<uint64_t>(current_page_id))
                     {
-                        // Cross-page back version from error recovery path
-                        // Use same logic as main cross-page handling
-                        if (db_ == nullptr || db_->buffer_pool() == nullptr)
+                        Status switch_status = switchToPage(static_cast<uint32_t>(back_page_num));
+                        if (switch_status != Status::OK)
                         {
-                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                              "Database/buffer pool not available for cross-page traversal");
-                            return Status::INVALID_ARGUMENT;
+                            return switch_status;
                         }
-
-                        BufferPool *bp = db_->buffer_pool();
-                        uint8_t *back_buf = nullptr;
-                        uint32_t back_pid = static_cast<uint32_t>(back_page_num);
-                        Status pin_stat = bp->pinPage(back_pid, reinterpret_cast<void**>(&back_buf), ctx);
-                        if (pin_stat != Status::OK)
-                        {
-                            return pin_stat;
-                        }
-
-                        struct Unpin
-                        {
-                            BufferPool *p;
-                            uint32_t id;
-                            ~Unpin()
-                            {
-                                p->unpinPage(id, false);
-                            }
-                        };
-                        Unpin guard{bp, back_pid};
-
-                        // Access back version on other page
-                        if (back_offset + sizeof(TupleHeader) > page_size_)
-                        {
-                            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                              "Back version offset out of bounds (error recovery)");
-                            return Status::PAGE_CORRUPT;
-                        }
-
-                        const uint8_t *back_data = back_buf + back_offset;
-                        auto *back_hdr = reinterpret_cast<const TupleHeader *>(back_data);
-
-                        // Check if this back version is visible
-                        bool back_vis = false;
-                        if (TransactionManager::isValidXid(back_hdr->xmin) && back_hdr->xmin <= current_xid)
-                        {
-                            uint64_t back_xmax = back_hdr->xmax;
-                            if (back_xmax == 0 || back_xmax > current_xid)
-                            {
-                                back_vis = true;
-                            }
-                        }
-
-                        if (back_vis)
-                        {
-                            // Found visible version! Copy to buffer
-                            HeapPage back_pg(back_buf, page_size_);
-                            ItemPointer *back_items =
-                                reinterpret_cast<ItemPointer *>(back_buf + sizeof(PageHeader));
-                            auto *back_hdr2 = reinterpret_cast<PageHeader *>(back_buf);
-
-                            uint32_t back_size = 0;
-                            for (uint16_t i = 0; i < back_hdr2->item_count; ++i)
-                            {
-                                if (back_items[i].offset == back_offset && !back_items[i].isDeleted())
-                                {
-                                    back_size = back_items[i].length;
-                                    break;
-                                }
-                            }
-                            if (back_size == 0)
-                            {
-                                back_size = sizeof(TupleHeader);
-                            }
-
-                            if (back_size > page_size_)
-                            {
-                                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Back version size invalid");
-                                return Status::PAGE_CORRUPT;
-                            }
-
-                            cross_page_buffer_.resize(back_size);
-                            memcpy(cross_page_buffer_.data(), back_data, back_size);
-
-                            if (data_out != nullptr)
-                            {
-                                *data_out = cross_page_buffer_.data();
-                            }
-                            if (size_out != nullptr)
-                            {
-                                *size_out = back_size;
-                            }
-
-                            return Status::OK;
-                        }
-
-                        // Back version not visible either
-                        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                                          "No visible version (cross-page after corruption)");
-                        return Status::NOT_FOUND;
                     }
 
-                    // Move to back version (offset-based, same page)
                     current_offset = back_offset;
                     is_back_version = true;
                     continue;
@@ -1526,21 +1498,63 @@ namespace scratchbird::core
 
             if (visible)
             {
-                // Found visible version - return data pointer
+                if (current_page_id == primary_page_id)
+                {
+                    if (data_out != nullptr)
+                    {
+                        *data_out = current_page_data + offset;
+                    }
+                    if (size_out != nullptr)
+                    {
+                        // For back versions (offset-based), length might be 0
+                        // In that case, we need to determine it from tuple structure
+                        // For Alpha: We'll return 0 and let caller handle it
+                        // Full implementation would calculate from tuple header + data size
+                        *size_out = length;
+                    }
+
+                    // Safe to return pointer - page is pinned by caller
+                    return Status::OK;
+                }
+
+                uint32_t tuple_size = length;
+                if (tuple_size == 0)
+                {
+                    auto *page_header = reinterpret_cast<PageHeader *>(current_page_data);
+                    auto *items = reinterpret_cast<ItemPointer *>(current_page_data + sizeof(PageHeader));
+                    for (uint16_t idx = 0; idx < page_header->item_count; ++idx)
+                    {
+                        if (items[idx].offset == offset && !items[idx].isDeleted())
+                        {
+                            tuple_size = items[idx].length;
+                            break;
+                        }
+                    }
+                    if (tuple_size == 0)
+                    {
+                        tuple_size = sizeof(TupleHeader);
+                    }
+                }
+
+                if (tuple_size > page_size_)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Visible tuple size invalid on cross-page chain");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                cross_page_buffer_.resize(tuple_size);
+                std::memcpy(cross_page_buffer_.data(), current_page_data + offset, tuple_size);
+
                 if (data_out != nullptr)
                 {
-                    *data_out = current_page_data + offset;
+                    *data_out = cross_page_buffer_.data();
                 }
                 if (size_out != nullptr)
                 {
-                    // For back versions (offset-based), length might be 0
-                    // In that case, we need to determine it from tuple structure
-                    // For Alpha: We'll return 0 and let caller handle it
-                    // Full implementation would calculate from tuple header + data size
-                    *size_out = length;
+                    *size_out = tuple_size;
                 }
 
-                // Safe to return pointer - page is pinned by caller
                 return Status::OK;
             }
 
@@ -1552,278 +1566,19 @@ namespace scratchbird::core
             if (tuple_hdr->hasBackVersion())
             {
                 // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
-                // Extract back version TID
                 TID back_tid = tuple_hdr->getBackVersionTID();
                 uint64_t back_page_num = getPageNumber(back_tid);
-
-                // CRITICAL: Extract OFFSET (not item_id) from slot field
-                // This is the key change from forward versioning
-                // Alpha: slot is actually offset
                 uint32_t back_offset = back_tid.slot;
 
-                // Check if we need to follow version chain to another page
                 if (back_page_num != static_cast<uint64_t>(current_page_id))
                 {
-                    // CROSS-PAGE BACK VERSION CHAIN - Now supported!
-                    // Need to pin the back version page and continue traversal there
-                    if (db_ == nullptr)
+                    Status switch_status = switchToPage(static_cast<uint32_t>(back_page_num));
+                    if (switch_status != Status::OK)
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                          "Database not available for cross-page traversal");
-                        return Status::INVALID_ARGUMENT;
+                        return switch_status;
                     }
-
-                    BufferPool *buffer_pool = db_->buffer_pool();
-                    if (buffer_pool == nullptr)
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                          "Buffer pool not available for cross-page traversal");
-                        return Status::INVALID_ARGUMENT;
-                    }
-
-                    // Pin the back version page
-                    uint8_t *back_page_buffer = nullptr;
-                    uint32_t back_page_id = static_cast<uint32_t>(back_page_num);
-                    Status pin_status = buffer_pool->pinPage(back_page_id, reinterpret_cast<void**>(&back_page_buffer), ctx);
-                    if (pin_status != Status::OK)
-                    {
-                        return pin_status;
-                    }
-
-                    // RAII guard to ensure back page is unpinned on all exit paths
-                    struct BackPageUnpinGuard
-                    {
-                        BufferPool *pool;
-                        uint32_t pid;
-                        ~BackPageUnpinGuard()
-                        {
-                            pool->unpinPage(pid, false);
-                        }
-                    };
-                    BackPageUnpinGuard back_guard{buffer_pool, back_page_id};
-
-                    // Wrap the back version page with HeapPage for structured access
-                    HeapPage back_page(back_page_buffer, page_size_);
-
-                    // Get the back version tuple data from the other page
-                    const uint8_t *back_tuple_data;
-                    uint32_t back_tuple_size;
-                    Status back_status = back_page.getTuple(static_cast<uint16_t>(back_offset),
-                                                           &back_tuple_data, &back_tuple_size, ctx);
-
-                    // Note: getTuple on back page may fail if the item is marked deleted
-                    // For cross-page back versions, we need to access by offset, not item_id
-                    // Let's try direct offset access instead
-                    if (back_status != Status::OK)
-                    {
-                        // Try to access by offset directly for back versions
-                        if (back_offset + sizeof(TupleHeader) > page_size_)
-                        {
-                            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                              "Back version offset out of bounds");
-                            return Status::PAGE_CORRUPT;
-                        }
-                        back_tuple_data = back_page_buffer + back_offset;
-                        back_tuple_size = sizeof(TupleHeader); // Minimum size for header access
-                    }
-
-                    // Validate back version has at least a TupleHeader
-                    if (back_tuple_size < sizeof(TupleHeader))
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                          "Cross-page back version too small");
-                        return Status::PAGE_CORRUPT;
-                    }
-
-                    // Check visibility of the back version
-                    auto *back_tuple_hdr = reinterpret_cast<const TupleHeader *>(back_tuple_data);
-                    bool back_visible = false;
-
-                    // Check if this version is visible to our transaction
-                    if (back_tuple_hdr->xmin <= current_xid)
-                    {
-                        uint64_t back_effective_xmax = back_tuple_hdr->xmax;
-                        if (back_effective_xmax == 0 || back_effective_xmax > current_xid)
-                        {
-                            back_visible = true;
-                        }
-                    }
-
-                    if (back_visible)
-                    {
-                        // Found visible version on cross page!
-                        // Copy the data to our internal buffer before unpinning the back page
-
-                        // First, we need to determine the actual tuple size
-                        // For back versions stored by offset, we need to read the full tuple
-                        ItemPointer *back_items = reinterpret_cast<ItemPointer *>(
-                            back_page_buffer + sizeof(PageHeader));
-                        auto *back_header = reinterpret_cast<PageHeader *>(back_page_buffer);
-
-                        // Find the actual tuple size by checking the item pointer
-                        // Back versions should have been inserted as regular tuples
-                        uint32_t actual_tuple_size = 0;
-                        bool found_item = false;
-
-                        // Search for an item pointing to this offset
-                        for (uint16_t idx = 0; idx < back_header->item_count; ++idx)
-                        {
-                            if (back_items[idx].offset == back_offset && !back_items[idx].isDeleted())
-                            {
-                                actual_tuple_size = back_items[idx].length;
-                                found_item = true;
-                                break;
-                            }
-                        }
-
-                        if (!found_item)
-                        {
-                            // Back version stored by offset only (Alpha format)
-                            // We need to calculate size from the tuple structure
-                            // Minimum size is TupleHeader
-                            actual_tuple_size = back_tuple_size;
-
-                            // Try to get more accurate size if possible
-                            if (back_tuple_size >= sizeof(TupleHeader))
-                            {
-                                // For now, use the back_tuple_size we got earlier
-                                // In production, might need to parse tuple format for exact size
-                            }
-                        }
-
-                        // Validate size is reasonable
-                        if (actual_tuple_size == 0 || actual_tuple_size > page_size_)
-                        {
-                            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                              "Cross-page back version has invalid size");
-                            return Status::PAGE_CORRUPT;
-                        }
-
-                        // Copy the tuple data to our buffer BEFORE unpinning
-                        cross_page_buffer_.resize(actual_tuple_size);
-                        memcpy(cross_page_buffer_.data(), back_tuple_data, actual_tuple_size);
-
-                        // Return pointer to our buffered copy
-                        if (data_out != nullptr)
-                        {
-                            *data_out = cross_page_buffer_.data();
-                        }
-                        if (size_out != nullptr)
-                        {
-                            *size_out = actual_tuple_size;
-                        }
-
-                        // RAII guard will unpin the back page automatically
-                        // Our buffered copy remains valid
-                        return Status::OK;
-                    }
-
-                    // Back version not visible, check if it has further back versions
-                    if (back_tuple_hdr->hasBackVersion())
-                    {
-                        // Continue traversal on the back page
-                        // Get the next back version TID from this cross-page back version
-                        TID next_back_tid = back_tuple_hdr->getBackVersionTID();
-                        uint64_t next_back_page_num = getPageNumber(next_back_tid);
-                        uint32_t next_back_offset = next_back_tid.slot;
-
-                        // Check if the next back version is on the same back page or another page
-                        if (next_back_page_num == static_cast<uint64_t>(back_page_id))
-                        {
-                            // Next back version is on the same back page we already have pinned
-                            // We can continue traversing on this page
-
-                            // Access the next back version by offset
-                            if (next_back_offset + sizeof(TupleHeader) > page_size_)
-                            {
-                                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                                  "Next back version offset out of bounds");
-                                return Status::PAGE_CORRUPT;
-                            }
-
-                            const uint8_t *next_back_data = back_page_buffer + next_back_offset;
-                            auto *next_back_hdr = reinterpret_cast<const TupleHeader *>(next_back_data);
-
-                            // Check visibility of this next back version
-                            bool next_visible = false;
-                            if (next_back_hdr->xmin <= current_xid)
-                            {
-                                uint64_t next_xmax = next_back_hdr->xmax;
-                                if (next_xmax == 0 || next_xmax > current_xid)
-                                {
-                                    next_visible = true;
-                                }
-                            }
-
-                            if (next_visible)
-                            {
-                                // Found visible version! Copy it to our buffer
-                                // Determine size (same logic as before)
-                                uint32_t next_tuple_size = 0;
-                                // Get back page header and items for size lookup
-                                const PageHeader *back_header = back_page.header();
-                                const ItemPointer *back_items = back_page.getItemArray();
-                                for (uint16_t idx = 0; idx < back_header->item_count; ++idx)
-                                {
-                                    if (back_items[idx].offset == next_back_offset &&
-                                        !back_items[idx].isDeleted())
-                                    {
-                                        next_tuple_size = back_items[idx].length;
-                                        break;
-                                    }
-                                }
-                                if (next_tuple_size == 0)
-                                {
-                                    next_tuple_size = sizeof(TupleHeader); // Minimum
-                                }
-
-                                // Validate and copy
-                                if (next_tuple_size > page_size_)
-                                {
-                                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                                      "Next back version size invalid");
-                                    return Status::PAGE_CORRUPT;
-                                }
-
-                                cross_page_buffer_.resize(next_tuple_size);
-                                memcpy(cross_page_buffer_.data(), next_back_data, next_tuple_size);
-
-                                if (data_out != nullptr)
-                                {
-                                    *data_out = cross_page_buffer_.data();
-                                }
-                                if (size_out != nullptr)
-                                {
-                                    *size_out = next_tuple_size;
-                                }
-
-                                return Status::OK;
-                            }
-
-                            // Could continue even further, but limit complexity for now
-                            // In production, would recursively handle deeper chains
-                            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                                              "No visible version in multi-level cross-page chain");
-                            return Status::NOT_FOUND;
-                        }
-                        else
-                        {
-                            // Next back version is on yet another page
-                            // This would require pinning a third page
-                            // For production use, implement recursive helper function
-                            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                              "Multi-page version chains (3+ pages) not yet supported");
-                            return Status::NOT_IMPLEMENTED;
-                        }
-                    }
-
-                    // No more back versions and this one isn't visible
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                                      "No visible version found (cross-page chain exhausted)");
-                    return Status::NOT_FOUND;
                 }
 
-                // Same-page back version - update offset and set flag
                 current_offset = back_offset;
                 is_back_version = true; // Switch to offset-based access
 

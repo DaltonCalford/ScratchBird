@@ -363,6 +363,7 @@ namespace scratchbird::core
         // Marked mutable since caching is an internal optimization
         mutable std::unordered_map<uint64_t, uint32_t> tip_location_cache_;
         static constexpr uint32_t MAX_TIP_LOCATION_CACHE_SIZE = 1000; // Limit cache size
+        mutable std::mutex tip_cache_mutex_; // Protects tip_location_cache_ only
 
         mutable std::mutex mutex_; // Thread safety for future
 

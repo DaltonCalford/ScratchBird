@@ -230,6 +230,9 @@ CREATE TABLE sys.sec_roles (
     -- Flags
     is_system           BOOLEAN DEFAULT FALSE,
     can_login           BOOLEAN DEFAULT FALSE,  -- Roles cannot login
+
+    -- Defaults
+    default_schema_uuid UUID,                  -- Home schema for role
     
     -- Metadata
     created_at          TIMESTAMP NOT NULL,
@@ -244,6 +247,7 @@ CREATE TABLE sys.sec_roles (
 - **Explicit activation**: User must `SET ROLE role_name`
 - **Transaction-bound**: Role change requires commit/rollback
 - **Grant-based membership**: Users are granted membership in roles
+- **Home schema**: Optional default schema used when the role is active
 
 #### 3.2.2 Role Membership
 
@@ -291,6 +295,9 @@ CREATE TABLE sys.sec_groups (
     -- External mapping
     external_source     VARCHAR(64),    -- 'ldap', 'ad', etc.
     external_id         VARCHAR(256),   -- DN or group name
+
+    -- Defaults
+    default_schema_uuid UUID,           -- Home schema for group
     
     -- Metadata
     created_at          TIMESTAMP NOT NULL,
@@ -307,6 +314,7 @@ CREATE TABLE sys.sec_groups (
 - **Automatic**: No activation required
 - **Nestable**: Groups can contain other groups
 - **External mapping**: Can map to LDAP/AD groups
+- **Home schema**: Optional default schema used when a user has no role/user default
 
 #### 3.3.2 Group Membership
 

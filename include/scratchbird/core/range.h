@@ -520,7 +520,8 @@ public:
      * @brief Compute difference of two ranges
      *
      * @param other Range to subtract
-     * @return Difference range (may be empty or split into two ranges)
+     * @return Difference range. If the subtraction would split into two ranges,
+     *         returns the lower remainder.
      */
     Range<T> difference(const Range<T>& other) const
     {
@@ -530,19 +531,72 @@ public:
         if (other.empty_)
             return *this;
 
-        // If no overlap, return this range unchanged
         if (!overlaps(other))
             return *this;
 
-        // If other contains this, result is empty
         if (other.contains(*this))
             return Range<T>();
 
-        // TODO: Handle case where difference results in two disjoint ranges
-        // For now, return empty range for complex cases
-        // Full implementation would return a multirange or pair of ranges
+        auto compareLower = [](const std::optional<T>& a, BoundType a_type,
+                               const std::optional<T>& b, BoundType b_type) -> int {
+            if (!a.has_value() && !b.has_value())
+                return 0;
+            if (!a.has_value())
+                return -1; // -inf
+            if (!b.has_value())
+                return 1;
+            if (*a < *b)
+                return -1;
+            if (*a > *b)
+                return 1;
+            if (a_type == b_type)
+                return 0;
+            return (a_type == BoundType::INCLUSIVE) ? -1 : 1;
+        };
 
-        return Range<T>();
+        auto compareUpper = [](const std::optional<T>& a, BoundType a_type,
+                               const std::optional<T>& b, BoundType b_type) -> int {
+            if (!a.has_value() && !b.has_value())
+                return 0;
+            if (!a.has_value())
+                return 1; // +inf
+            if (!b.has_value())
+                return -1;
+            if (*a < *b)
+                return -1;
+            if (*a > *b)
+                return 1;
+            if (a_type == b_type)
+                return 0;
+            return (a_type == BoundType::INCLUSIVE) ? 1 : -1;
+        };
+
+        int lower_cmp = compareLower(lower_, lower_bound_type_, other.lower_, other.lower_bound_type_);
+        int upper_cmp = compareUpper(upper_, upper_bound_type_, other.upper_, other.upper_bound_type_);
+
+        // Overlap on lower side: trim lower bound to other's upper
+        if (lower_cmp <= 0 && upper_cmp < 0)
+        {
+            BoundType new_lower_type =
+                (other.upper_bound_type_ == BoundType::INCLUSIVE) ? BoundType::EXCLUSIVE
+                                                                 : BoundType::INCLUSIVE;
+            return Range<T>(other.upper_, upper_, new_lower_type, upper_bound_type_);
+        }
+
+        // Overlap on upper side: trim upper bound to other's lower
+        if (lower_cmp > 0 && upper_cmp >= 0)
+        {
+            BoundType new_upper_type =
+                (other.lower_bound_type_ == BoundType::INCLUSIVE) ? BoundType::EXCLUSIVE
+                                                                 : BoundType::INCLUSIVE;
+            return Range<T>(lower_, other.lower_, lower_bound_type_, new_upper_type);
+        }
+
+        // Other is strictly inside: return lower remainder
+        BoundType new_upper_type =
+            (other.lower_bound_type_ == BoundType::INCLUSIVE) ? BoundType::EXCLUSIVE
+                                                             : BoundType::INCLUSIVE;
+        return Range<T>(lower_, other.lower_, lower_bound_type_, new_upper_type);
     }
 
     /**

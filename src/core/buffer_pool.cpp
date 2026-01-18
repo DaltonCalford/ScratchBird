@@ -200,20 +200,19 @@ namespace scratchbird::core
             return status;
         }
 
-        // P2-1: Insert into partitioned page table
-        // HIGH-1 FIX: Update page_table BEFORE frame metadata to ensure atomicity
-        {
-            std::lock_guard<std::mutex> partition_lock(partition.mutex);
-            partition.table[gpid] = frame_index;
-        }
-
-        // Update frame metadata (page_table already knows about this mapping)
+        // Initialize frame metadata before publishing mapping to avoid lost pin_count on cache hits.
         frames_[frame_index].gpid = gpid;
         frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
         frames_[frame_index].is_dirty = false;
 
         // Clock Sweep: Initialize usage count for newly loaded page
         frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
+
+        // P2-1: Insert into partitioned page table
+        {
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
+            partition.table[gpid] = frame_index;
+        }
 
         // Update LRU (still maintained for fallback)
         updateLru(frame_index);
@@ -553,232 +552,217 @@ namespace scratchbird::core
         // Spec: docs/specifications/STORAGE_ENGINE_BUFFER_POOL.md:402-465
 
         constexpr uint32_t MAX_PASSES = 2; // Maximum passes before forcing eviction
+        constexpr uint32_t MAX_RETRIES = 4; // Retry if candidate becomes pinned during eviction
 
-        uint32_t candidate_frame = UINT32_MAX;
-        uint32_t passes = 0;
-        uint32_t start_hand = clock_hand_;
-
-        // Clock sweep: search for victim page
-        while (passes < MAX_PASSES)
+        for (uint32_t attempt = 0; attempt < MAX_RETRIES; ++attempt)
         {
-            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
-            stats_.clock_sweeps.fetch_add(1, std::memory_order_relaxed);
+            uint32_t candidate_frame = UINT32_MAX;
+            uint32_t passes = 0;
+            uint32_t start_hand = clock_hand_;
 
-            // SAFETY: Bounds check for clock_hand_
-            if (clock_hand_ >= config_.pool_size)
-            {
-                DEBUG_LOG_BP("Clock hand out of bounds: " << clock_hand_
-                                                          << " >= pool_size: " << config_.pool_size);
-                clock_hand_ = 0; // Reset to safe value
-            }
-
-            Frame &frame = frames_[clock_hand_];
-
-            // Move clock hand forward (circular)
-            uint32_t current_hand = clock_hand_;
-            clock_hand_ = (clock_hand_ + 1) % config_.pool_size;
-
-            // Track when we wrap around
-            if (clock_hand_ == 0)
+            // Clock sweep: search for victim page
+            while (passes < MAX_PASSES)
             {
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
-                stats_.clock_hand_resets.fetch_add(1, std::memory_order_relaxed);
-            }
+                stats_.clock_sweeps.fetch_add(1, std::memory_order_relaxed);
 
-            // Skip pinned frames (in use)
-            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-            if (frame.pin_count.load(std::memory_order_relaxed) > 0)
-            {
-                continue;
-            }
-
-            // Skip empty frames (these should be allocated first, not evicted)
-            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-            if (frame.gpid == INVALID_GPID)
-            {
-                continue;
-            }
-
-            // Check usage count
-            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-            uint32_t current_usage_count = frame.usage_count.load(std::memory_order_relaxed);
-            if (current_usage_count == 0)
-            {
-                // Found victim! This page hasn't been accessed recently
-                // Prefer clean pages for faster eviction (READ ONLY optimization)
-                if (!frame.is_dirty)
+                // SAFETY: Bounds check for clock_hand_
+                if (clock_hand_ >= config_.pool_size)
                 {
-                    // Clean page - evict immediately
-                    candidate_frame = current_hand;
-                    break;
-                }
-                else if (candidate_frame == UINT32_MAX)
-                {
-                    // Dirty page - remember as fallback, but keep looking for clean page
-                    candidate_frame = current_hand;
-                }
-            }
-            else
-            {
-                // Give page another chance - decrement usage count
-                // CRITICAL FIX (CRITICAL-1): Use atomic fetch_sub for thread-safe decrement
-                frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
-            }
-
-            // Check if we've completed a full pass
-            if (clock_hand_ == start_hand)
-            {
-                passes++;
-                if (candidate_frame != UINT32_MAX)
-                {
-                    // We found a dirty page candidate, use it
-                    break;
-                }
-                // Otherwise continue for another pass
-            }
-        }
-
-        // Emergency fallback: force evict the least recently used dirty page
-        // This should rarely happen - only if all pages have high usage counts
-        if (candidate_frame == UINT32_MAX)
-        {
-            DEBUG_LOG_BP("Clock sweep failed after " << MAX_PASSES
-                                                     << " passes, using LRU fallback");
-
-            // Fallback to LRU for emergency eviction
-            for (unsigned int frame_index : lru_list_)
-            {
-                // DEFENSIVE CHECK (Issue 3.2): Validate LRU list entries
-                // This is NOT redundant - it validates data from lru_list_ which could be corrupted
-                if (frame_index >= config_.pool_size)
-                {
-                    continue; // Skip invalid entries
+                    DEBUG_LOG_BP("Clock hand out of bounds: " << clock_hand_
+                                                              << " >= pool_size: " << config_.pool_size);
+                    clock_hand_ = 0; // Reset to safe value
                 }
 
+                Frame &frame = frames_[clock_hand_];
+
+                // Move clock hand forward (circular)
+                uint32_t current_hand = clock_hand_;
+                clock_hand_ = (clock_hand_ + 1) % config_.pool_size;
+
+                // Track when we wrap around
+                if (clock_hand_ == 0)
+                {
+                    // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                    stats_.clock_hand_resets.fetch_add(1, std::memory_order_relaxed);
+                }
+
+                // Skip pinned frames (in use)
                 // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-                // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-                if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0 &&
-                    frames_[frame_index].gpid != INVALID_GPID)
+                if (frame.pin_count.load(std::memory_order_relaxed) > 0)
                 {
-                    candidate_frame = frame_index;
-                    break;
+                    continue;
+                }
+
+                // Skip empty frames (these should be allocated first, not evicted)
+                // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+                if (frame.gpid == INVALID_GPID)
+                {
+                    continue;
+                }
+
+                // Check usage count
+                // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+                uint32_t current_usage_count = frame.usage_count.load(std::memory_order_relaxed);
+                if (current_usage_count == 0)
+                {
+                    // Found victim! This page hasn't been accessed recently
+                    // Prefer clean pages for faster eviction (READ ONLY optimization)
+                    if (!frame.is_dirty)
+                    {
+                        // Clean page - evict immediately
+                        candidate_frame = current_hand;
+                        break;
+                    }
+                    else if (candidate_frame == UINT32_MAX)
+                    {
+                        // Dirty page - remember as fallback, but keep looking for clean page
+                        candidate_frame = current_hand;
+                    }
+                }
+                else
+                {
+                    // Give page another chance - decrement usage count
+                    // CRITICAL FIX (CRITICAL-1): Use atomic fetch_sub for thread-safe decrement
+                    frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
+                }
+
+                // Check if we've completed a full pass
+                if (clock_hand_ == start_hand)
+                {
+                    passes++;
+                    if (candidate_frame != UINT32_MAX)
+                    {
+                        // We found a dirty page candidate, use it
+                        break;
+                    }
+                    // Otherwise continue for another pass
                 }
             }
-        }
 
-        // Final check: did we find any evictable page?
-        if (candidate_frame == UINT32_MAX)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                              "Buffer pool full - all pages are pinned");
-            return Status::INVALID_ARGUMENT;
-        }
-
-        // ALGORITHM OUTPUT VALIDATION (Issue 3.2): Final safety check
-        // This is NOT redundant - it validates the algorithm's output (candidate_frame) which is
-        // computed from clock sweep or LRU fallback logic. Different variable than internal checks.
-        if (candidate_frame >= config_.pool_size)
-        {
-            DEBUG_LOG_BP("Invalid candidate_frame: " << candidate_frame
-                                                     << " >= pool_size: " << config_.pool_size);
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Invalid frame index selected for eviction");
-            return Status::IO_ERROR;
-        }
-
-        evicted_frame = candidate_frame;
-
-        // CRITICAL FIX (Issue 2.2): Consistency check - verify frame is unpinned
-        // This MUST be fatal in ALL builds (not just debug) to prevent corruption
-        // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-        uint32_t evicted_pin_count = frames_[evicted_frame].pin_count.load(std::memory_order_relaxed);
-        if (evicted_pin_count != 0)
-        {
-            DEBUG_LOG_BP("CONSISTENCY ERROR: Attempting to evict pinned frame "
-                         << evicted_frame
-                         << " with pin_count=" << evicted_pin_count);
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                              "Buffer pool corruption: attempting to evict pinned page");
-            return Status::IO_ERROR;
-        }
-
-        // Track whether this is a clean or dirty eviction
-        bool was_dirty = frames_[evicted_frame].is_dirty;
-        // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-        GPID evicted_gpid = frames_[evicted_frame].gpid;
-
-        // SAFETY: Verify the gpid is valid before using it
-        if (evicted_gpid == INVALID_GPID)
-        {
-            DEBUG_LOG_BP("Evicting frame with INVALID_GPID at index " << evicted_frame);
-            // This is actually OK - might be a free frame, just skip the flush and erase
-            evicted_frame = candidate_frame;
-            return Status::OK;
-        }
-
-        // If dirty, flush first
-        if (was_dirty)
-        {
-            Status status =
-                writePageToDisk(evicted_gpid, frames_[evicted_frame].data.get(), ctx);
-            if (status != Status::OK)
+            // Emergency fallback: force evict the least recently used dirty page
+            // This should rarely happen - only if all pages have high usage counts
+            if (candidate_frame == UINT32_MAX)
             {
-                return status;
+                DEBUG_LOG_BP("Clock sweep failed after " << MAX_PASSES
+                                                         << " passes, using LRU fallback");
+
+                // Fallback to LRU for emergency eviction
+                for (unsigned int frame_index : lru_list_)
+                {
+                    // DEFENSIVE CHECK (Issue 3.2): Validate LRU list entries
+                    // This is NOT redundant - it validates data from lru_list_ which could be corrupted
+                    if (frame_index >= config_.pool_size)
+                    {
+                        continue; // Skip invalid entries
+                    }
+
+                    // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+                    // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+                    if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0 &&
+                        frames_[frame_index].gpid != INVALID_GPID)
+                    {
+                        candidate_frame = frame_index;
+                        break;
+                    }
+                }
             }
-            // P2-2: Decrement dirty counter since page is being flushed during eviction
-            dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
-            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
-            stats_.flushes.fetch_add(1, std::memory_order_relaxed);
-            stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
-        }
-        else
-        {
-            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
-            stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
-        }
 
-        // P2-1: Use partitioned page table for eviction
-        // CRITICAL FIX (Issue 2.2): Verify gpid exists in page_table before erasing
-        size_t partition_idx = getPartitionIndex(evicted_gpid);
-        auto& partition = page_table_partitions_[partition_idx];
+            // Final check: did we find any evictable page?
+            if (candidate_frame == UINT32_MAX)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Buffer pool full - all pages are pinned");
+                return Status::INVALID_ARGUMENT;
+            }
 
-        {
+            // ALGORITHM OUTPUT VALIDATION (Issue 3.2): Final safety check
+            // This is NOT redundant - it validates the algorithm's output (candidate_frame) which is
+            // computed from clock sweep or LRU fallback logic. Different variable than internal checks.
+            if (candidate_frame >= config_.pool_size)
+            {
+                DEBUG_LOG_BP("Invalid candidate_frame: " << candidate_frame
+                                                         << " >= pool_size: " << config_.pool_size);
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Invalid frame index selected for eviction");
+                return Status::IO_ERROR;
+            }
+
+            // Lock the partition to serialize against pin/unpin for this page.
+            // This prevents evicting a frame that becomes pinned concurrently.
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            GPID evicted_gpid = frames_[candidate_frame].gpid;
+            if (evicted_gpid == INVALID_GPID)
+            {
+                DEBUG_LOG_BP("Evicting frame with INVALID_GPID at index " << candidate_frame);
+                evicted_frame = candidate_frame;
+                return Status::OK;
+            }
+
+            size_t partition_idx = getPartitionIndex(evicted_gpid);
+            auto& partition = page_table_partitions_[partition_idx];
             std::lock_guard<std::mutex> partition_lock(partition.mutex);
 
             auto page_table_it = partition.table.find(evicted_gpid);
-            if (page_table_it == partition.table.end())
+            if (page_table_it == partition.table.end() || page_table_it->second != candidate_frame)
             {
-                DEBUG_LOG_BP("CONSISTENCY ERROR: gpid "
-                             << gpidToString(evicted_gpid) << " not found in page_table during eviction");
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                                  "Buffer pool corruption: evicting page not in page_table");
-                return Status::IO_ERROR;
+                continue;
             }
 
-            // CRITICAL FIX (Issue 2.2): Verify consistency - page_table points to correct frame
-            if (page_table_it->second != evicted_frame)
+            // CRITICAL FIX (Issue 2.2): Consistency check - verify frame is unpinned
+            // This MUST be fatal in ALL builds (not just debug) to prevent corruption
+            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+            uint32_t evicted_pin_count =
+                frames_[candidate_frame].pin_count.load(std::memory_order_relaxed);
+            if (evicted_pin_count != 0)
             {
-                DEBUG_LOG_BP("CONSISTENCY ERROR: page_table["
-                             << gpidToString(evicted_gpid) << "] = " << page_table_it->second
-                             << " but evicting frame " << evicted_frame);
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                                  "Buffer pool corruption: page_table frame_index mismatch");
-                return Status::IO_ERROR;
+                continue;
+            }
+
+            evicted_frame = candidate_frame;
+
+            // Track whether this is a clean or dirty eviction
+            bool was_dirty = frames_[evicted_frame].is_dirty;
+
+            // If dirty, flush first
+            if (was_dirty)
+            {
+                Status status =
+                    writePageToDisk(evicted_gpid, frames_[evicted_frame].data.get(), ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                // P2-2: Decrement dirty counter since page is being flushed during eviction
+                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                stats_.flushes.fetch_add(1, std::memory_order_relaxed);
+                stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
+            }
+            else
+            {
+                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
             }
 
             // Remove from page table
             partition.table.erase(page_table_it);
+
+            // Reset frame (including Clock Sweep usage_count)
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            frames_[evicted_frame].gpid = INVALID_GPID;
+            frames_[evicted_frame].is_dirty = false;
+            frames_[evicted_frame].pin_count.store(0, std::memory_order_relaxed);
+            // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
+            frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
+
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.evictions.fetch_add(1, std::memory_order_relaxed);
+            return Status::OK;
         }
 
-        // Reset frame (including Clock Sweep usage_count)
-        // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-        frames_[evicted_frame].gpid = INVALID_GPID;
-        frames_[evicted_frame].is_dirty = false;
-        // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
-        frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
-
-        // MEDIUM-1 FIX: Use relaxed atomic increment for stats
-        stats_.evictions.fetch_add(1, std::memory_order_relaxed);
-        return Status::OK;
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Buffer pool full - all pages are pinned");
+        return Status::INVALID_ARGUMENT;
     }
 
     // PHASE 1, TASK 1.2.4: Use Database::read_page_global() for GPID-based I/O

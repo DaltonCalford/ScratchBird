@@ -103,7 +103,7 @@ std::string getIPCPath(const std::string& database_name, IPCMethod method) {
 
         case IPCMethod::TCP_LOCALHOST:
             // TCP doesn't have a path, return address format
-            return "127.0.0.1:5433";
+            return "127.0.0.1:3092";
 
         default:
             // Fallback to the build IPC directory

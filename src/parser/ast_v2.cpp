@@ -28,6 +28,7 @@ void CreateFunctionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateTriggerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreatePackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateUserStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -248,6 +249,7 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateProcedureStmt: return "CreateProcedureStmt";
         case ASTKind::CreateTriggerStmt: return "CreateTriggerStmt";
         case ASTKind::CreatePackageStmt: return "CreatePackageStmt";
+        case ASTKind::CreateUserStmt: return "CreateUserStmt";
         case ASTKind::CreateRoleStmt: return "CreateRoleStmt";
         case ASTKind::CreateExceptionStmt: return "CreateExceptionStmt";
         case ASTKind::CreateTypeStmt: return "CreateTypeStmt";

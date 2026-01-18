@@ -10,6 +10,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include <cstring>
 #include <algorithm>
+#include <unordered_set>
 
 namespace scratchbird {
 namespace core {
@@ -415,9 +416,6 @@ namespace core {
                                                uint64_t *pages_modified_out,
                                                ErrorContext *ctx)
     {
-        // Garbage collection: Remove rows corresponding to dead TIDs
-        // This is complex for columnstore as TIDs map to row numbers
-
         if (entries_removed_out) *entries_removed_out = 0;
         if (pages_modified_out) *pages_modified_out = 0;
 
@@ -426,13 +424,43 @@ namespace core {
             return Status::OK;
         }
 
-        // In production:
-        // 1. Convert TIDs to row numbers
-        // 2. Mark rows as deleted in segments
-        // 3. Recompress segments without deleted rows
-        // 4. Update segment catalog
+        std::unordered_set<uint64_t> dead_set;
+        dead_set.reserve(dead_tids.size());
+        for (const auto &tid : dead_tids)
+        {
+            uint64_t legacy_tid = convertTIDtoLegacy(tid);
+            if (legacy_tid != 0)
+            {
+                dead_set.insert(legacy_tid);
+            }
+        }
 
-        // For now, stub implementation
+        if (dead_set.empty())
+        {
+            return Status::OK;
+        }
+
+        uint64_t removed = 0;
+        {
+            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            for (auto &pair : row_buffer_)
+            {
+                auto &rows = pair.second;
+                size_t before = rows.size();
+                rows.erase(std::remove_if(rows.begin(), rows.end(),
+                                          [&](const BufferedRow &row)
+                                          {
+                                              return dead_set.count(row.tid) > 0;
+                                          }),
+                           rows.end());
+                removed += (before - rows.size());
+            }
+        }
+
+        if (entries_removed_out)
+        {
+            *entries_removed_out = removed;
+        }
         return Status::OK;
     }
 

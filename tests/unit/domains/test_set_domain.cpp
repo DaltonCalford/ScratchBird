@@ -65,7 +65,7 @@ TEST(SetDomainTest, Comprehensive) {
         status = dm->getDomain(schema_id, "Tags", info, &ctx);
         ASSERT_EQ(status, Status::OK);
         ASSERT_EQ(info.domain_type, DomainType::SET);
-        ASSERT_EQ(info.base_type, DataType::VECTOR);
+        ASSERT_EQ(info.base_type, DataType::ARRAY);
         ASSERT_EQ(info.set_element_type.type, DataType::VARCHAR);
         std::cout << "  Retrieved Tags domain: SET<VARCHAR> ✓\n";
     }
@@ -180,44 +180,81 @@ TEST(SetDomainTest, Comprehensive) {
     }
     std::cout << "  ✓ List mixed domain types passed\n\n";
 
-    // Test 6: SET operations (stub verification)
-    std::cout << "Test 6: SET operations (stub verification)\n";
+    // Test 6: SET operations
+    std::cout << "Test 6: SET operations\n";
     {
-        // Note: These operations return NOT_IMPLEMENTED until TypedValue VECTOR support is complete
-        // This test verifies the API exists and returns appropriate status
+        std::vector<TypedValue> elems1 = {
+            TypedValue::makeInt32(1),
+            TypedValue::makeInt32(2),
+            TypedValue::makeInt32(2), // duplicate to verify de-dupe
+            TypedValue::makeInt32(3)
+        };
+        std::vector<TypedValue> elems2 = {
+            TypedValue::makeInt32(3),
+            TypedValue::makeInt32(4)
+        };
 
-        TypedValue empty_vector = TypedValue::makeNull();  // Placeholder
-        TypedValue element = TypedValue::makeInt32(42);
-        bool result_bool;
-        TypedValue result_set;
+        TypedValue set1 = TypedValue::makeArray(elems1);
+        TypedValue set2 = TypedValue::makeArray(elems2);
 
-        // setContains - should return NOT_IMPLEMENTED
-        status = dm->setContains(empty_vector, element, result_bool, &ctx);
-        // We expect NOT_IMPLEMENTED or TYPE_MISMATCH (since empty_vector is NULL, not VECTOR)
-        ASSERT_NE(status, Status::OK);
-        std::cout << "  setContains API exists (returns non-OK as expected) ✓\n";
+        bool contains = false;
+        status = dm->setContains(set1, TypedValue::makeInt32(2), contains, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_TRUE(contains);
 
-        // setsOverlap - should return NOT_IMPLEMENTED
-        status = dm->setsOverlap(empty_vector, empty_vector, result_bool, &ctx);
-        ASSERT_NE(status, Status::OK);
-        std::cout << "  setsOverlap API exists (returns non-OK as expected) ✓\n";
+        status = dm->setContains(set1, TypedValue::makeInt32(5), contains, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_FALSE(contains);
 
-        // setUnion - should return NOT_IMPLEMENTED
-        status = dm->setUnion(empty_vector, empty_vector, result_set, &ctx);
-        ASSERT_NE(status, Status::OK);
-        std::cout << "  setUnion API exists (returns non-OK as expected) ✓\n";
+        bool overlaps = false;
+        status = dm->setsOverlap(set1, set2, overlaps, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_TRUE(overlaps);
 
-        // setIntersection - should return NOT_IMPLEMENTED
-        status = dm->setIntersection(empty_vector, empty_vector, result_set, &ctx);
-        ASSERT_NE(status, Status::OK);
-        std::cout << "  setIntersection API exists (returns non-OK as expected) ✓\n";
+        TypedValue union_set;
+        status = dm->setUnion(set1, set2, union_set, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(union_set.type(), DataType::ARRAY);
+        ASSERT_EQ(union_set.getArray().size(), 4u);
+        for (int v : {1, 2, 3, 4})
+        {
+            bool has = false;
+            status = dm->setContains(union_set, TypedValue::makeInt32(v), has, &ctx);
+            ASSERT_EQ(status, Status::OK);
+            EXPECT_TRUE(has);
+        }
 
-        // setDifference - should return NOT_IMPLEMENTED
-        status = dm->setDifference(empty_vector, empty_vector, result_set, &ctx);
-        ASSERT_NE(status, Status::OK);
-        std::cout << "  setDifference API exists (returns non-OK as expected) ✓\n";
+        TypedValue intersection;
+        status = dm->setIntersection(set1, set2, intersection, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(intersection.getArray().size(), 1u);
+        status = dm->setContains(intersection, TypedValue::makeInt32(3), contains, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_TRUE(contains);
+
+        TypedValue difference;
+        status = dm->setDifference(set1, set2, difference, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(difference.getArray().size(), 2u);
+        for (int v : {1, 2})
+        {
+            bool has = false;
+            status = dm->setContains(difference, TypedValue::makeInt32(v), has, &ctx);
+            ASSERT_EQ(status, Status::OK);
+            EXPECT_TRUE(has);
+        }
+
+        status = dm->setContains(set1, TypedValue::makeNull(DataType::INT32), contains, &ctx);
+        ASSERT_EQ(status, Status::NULL_VALUE_NOT_ALLOWED);
+
+        TypedValue mixed = TypedValue::makeArray({
+            TypedValue::makeInt32(1),
+            TypedValue::makeText("bad")
+        });
+        status = dm->setsOverlap(mixed, set1, overlaps, &ctx);
+        ASSERT_EQ(status, Status::TYPE_MISMATCH);
     }
-    std::cout << "  ✓ SET operations stub verification passed\n\n";
+    std::cout << "  ✓ SET operations passed\n\n";
 
     db.close();
     std::remove(test_db);
@@ -226,6 +263,5 @@ TEST(SetDomainTest, Comprehensive) {
     std::cout << "ALL TESTS PASSED! ✓\n";
     std::cout << "SET Domain Phase 4 is functional.\n";
     std::cout << "========================================\n";
-    std::cout << "\nNote: SET value operations (contains, overlap, union, intersection, difference)\n";
-    std::cout << "require TypedValue VECTOR element access and are planned for future enhancement.\n";
+    std::cout << "\nNote: SET operations enforce unique, non-NULL elements.\n";
 }

@@ -169,3 +169,41 @@ TEST_F(CopyExecutorTest, CopyCsvFromWithHeaderAndDelimiter) {
 
     std::filesystem::remove(path);
 }
+
+TEST_F(CopyExecutorTest, CopyEncodingUtf8Accepted) {
+    auto create_table = compileAndExecute(
+        "CREATE TABLE copy_enc (id INT, name VARCHAR(10))");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    ASSERT_TRUE(compileAndExecute(
+        "INSERT INTO copy_enc VALUES (1, 'alpha')").success());
+
+    std::string path = makeUniquePath("copy_enc_utf8", ".csv");
+    std::string sql = "COPY copy_enc TO '" + path +
+                      "' WITH (FORMAT csv, ENCODING 'UTF8')";
+    auto copy_out = compileAndExecute(sql);
+    ASSERT_TRUE(copy_out.success()) << copy_out.error();
+
+    std::ifstream in(path);
+    ASSERT_TRUE(in.is_open());
+    std::string line;
+    ASSERT_TRUE(std::getline(in, line));
+    EXPECT_FALSE(line.empty());
+
+    std::filesystem::remove(path);
+}
+
+TEST_F(CopyExecutorTest, CopyEncodingUnsupportedRejected) {
+    auto create_table = compileAndExecute(
+        "CREATE TABLE copy_enc_bad (id INT, name VARCHAR(10))");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    std::string path = makeUniquePath("copy_enc_bad", ".csv");
+    std::string sql = "COPY copy_enc_bad TO '" + path +
+                      "' WITH (FORMAT csv, ENCODING 'LATIN1')";
+    auto copy_out = compileAndExecute(sql);
+    ASSERT_FALSE(copy_out.success());
+    EXPECT_NE(copy_out.error().find("COPY ENCODING"), std::string::npos);
+
+    std::filesystem::remove(path);
+}

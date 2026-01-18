@@ -200,6 +200,14 @@ private:
     // Scope stack for nested contexts
     std::vector<ResolutionScope> scope_stack_;
 
+    struct CTEEntry {
+        StringPool::StringId name = StringPool::INVALID_ID;
+        std::vector<ResolvedTableRef::ColumnInfo> columns;
+        ResolvedSelectStmt* query = nullptr;
+    };
+
+    std::vector<std::unordered_map<StringPool::StringId, CTEEntry>> cte_scopes_;
+
     // Analysis state
     bool in_aggregate_ = false;
     bool has_aggregates_ = false;
@@ -219,6 +227,18 @@ private:
     void pushScope();
     void popScope();
     ResolutionScope& currentScope();
+    void pushCTEScope();
+    void popCTEScope();
+    void registerCTE(const CTEEntry& entry);
+    const CTEEntry* findCTE(StringPool::StringId name);
+
+    ResolvedWithClause* analyzeWithClause(WithClause* with);
+    void applyCTEColumnAliases(ResolvedSelectStmt* query,
+                               const std::vector<StringPool::StringId>& column_names,
+                               SourceSpan span);
+    std::vector<ResolvedTableRef::ColumnInfo> buildCTEColumns(
+        ResolvedSelectStmt* query,
+        const std::vector<StringPool::StringId>& column_names);
 
     // ==========================================================================
     // Name Resolution
@@ -285,6 +305,7 @@ private:
     ResolvedStatement* analyzeCreateTable(CreateTableStmt* stmt);
     ResolvedStatement* analyzeCreateIndex(CreateIndexStmt* stmt);
     ResolvedStatement* analyzeCreateView(CreateViewStmt* stmt);
+    ResolvedStatement* analyzeCreateSequence(CreateSequenceStmt* stmt);
     ResolvedStatement* analyzeCreateSchema(CreateSchemaStmt* stmt);
     ResolvedStatement* analyzeDropSchema(DropSchemaStmt* stmt);
     ResolvedStatement* analyzeAlterSchema(AlterSchemaStmt* stmt);
@@ -293,6 +314,7 @@ private:
     ResolvedStatement* analyzeCreateProcedure(CreateProcedureStmt* stmt);
     ResolvedStatement* analyzeCreateTrigger(CreateTriggerStmt* stmt);
     ResolvedStatement* analyzeCreatePackage(CreatePackageStmt* stmt);
+    ResolvedStatement* analyzeCreateUser(CreateUserStmt* stmt);
     ResolvedStatement* analyzeCreateRole(CreateRoleStmt* stmt);
     ResolvedStatement* analyzeCreateException(CreateExceptionStmt* stmt);
     ResolvedStatement* analyzeCreateDomain(CreateDomainStmt* stmt);
@@ -330,6 +352,8 @@ private:
     ResolvedStatement* analyzeRollback(RollbackStmt* stmt);
     ResolvedStatement* analyzeSavepoint(SavepointStmt* stmt);
     ResolvedStatement* analyzeReleaseSavepoint(ReleaseSavepointStmt* stmt);
+    ResolvedStatement* analyzeConnect(ConnectStmt* stmt);
+    ResolvedStatement* analyzeDisconnect(DisconnectStmt* stmt);
     ResolvedStatement* analyzeSet(SetStmt* stmt);
     ResolvedStatement* analyzeShow(ShowStmt* stmt);
     ResolvedStatement* analyzeExplain(ExplainStmt* stmt);
@@ -370,7 +394,8 @@ private:
     void analyzeGroupByClause(SelectStmt* stmt, ResolvedSelectStmt* resolved);
     void analyzeHavingClause(Expression* having, ResolvedExpression*& resolved);
     void analyzeOrderByClause(const std::vector<OrderByItem*>& items,
-                              std::vector<ResolvedOrderByItem*>& resolved);
+                              std::vector<ResolvedOrderByItem*>& resolved,
+                              const std::unordered_map<std::string, ResolvedExpression*>* alias_map = nullptr);
     void analyzeSelectList(SelectStmt* stmt, ResolvedSelectStmt* resolved);
     void analyzeReturningClause(const std::vector<SelectItem*>& returning,
                                 std::vector<ResolvedSelectItem>& resolved);

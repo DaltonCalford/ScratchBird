@@ -28,7 +28,7 @@ This document defines the **strict architectural layers** of ScratchBird and exp
 │    • MySQL Wire Protocol (port 3306)                            │
 │    • Firebird Wire Protocol (port 3050)                         │
 │    • TDS/SQL Server Wire Protocol (port 1433)                   │
-│    • ScratchBird Native Protocol (port 5433)                    │
+│    • ScratchBird Native Protocol (port 3092)                    │
 └────────────────────────┬──────────────────────────────────────┬─┘
                          │                                      ▲
                          ▼                                      │
@@ -144,7 +144,7 @@ This document defines the **strict architectural layers** of ScratchBird and exp
 **Location:** `src/network/connection/`
 **Components:**
 
-- Port listeners (5432, 3306, 3050, 1433, 5433)
+- Port listeners (5432, 3306, 3050, 1433, 3092)
 - Connection pool management
 - Authentication (SASL, MD5, cleartext, etc.)
 - Session management

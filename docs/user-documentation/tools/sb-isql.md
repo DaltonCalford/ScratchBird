@@ -25,7 +25,7 @@ sb_isql [OPTIONS] [DATABASE]
 | Option | Description |
 |--------|-------------|
 | `-H, --host HOST` | Server hostname (default: localhost) |
-| `-p, --port PORT` | Server port (default: 5433) |
+| `-p, --port PORT` | Server port (default: 3092) |
 | `-U, --user USER` | Username |
 | `-P, --password` | Prompt for password |
 | `-d, --database DB` | Database name |

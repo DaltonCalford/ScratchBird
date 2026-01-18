@@ -103,6 +103,16 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_reads{0};
+    std::atomic<int> pin_errors{0};
+    std::atomic<int> unpin_errors{0};
+    std::atomic<int> pin_invalid_argument{0};
+    std::atomic<int> pin_io_error{0};
+    std::atomic<int> pin_other{0};
+    std::atomic<int> unpin_invalid_argument{0};
+    std::atomic<int> unpin_not_found{0};
+    std::atomic<int> unpin_other{0};
+    std::mutex error_mutex;
+    std::string last_error;
     std::vector<std::thread> threads;
 
     for (int t = 0; t < NUM_THREADS; ++t) {
@@ -119,6 +129,18 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
                 Status s = pool_->pinPage(page_id, &buffer, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    pin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        pin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::IO_ERROR) {
+                        pin_io_error.fetch_add(1);
+                    } else {
+                        pin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = ctx.message;
+                    }
                     continue;
                 }
 
@@ -128,6 +150,18 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
                 s = pool_->unpinPage(page_id, false, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    unpin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        unpin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::NOT_FOUND) {
+                        unpin_not_found.fetch_add(1);
+                    } else {
+                        unpin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = ctx.message;
+                    }
                 } else {
                     successful_reads.fetch_add(1);
                 }
@@ -139,7 +173,17 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
         t.join();
     }
 
-    EXPECT_EQ(errors.load(), 0) << "Concurrent reads to different pages should not fail";
+    EXPECT_EQ(errors.load(), 0)
+        << "Concurrent reads to different pages should not fail"
+        << " (pin_errors=" << pin_errors.load()
+        << ", unpin_errors=" << unpin_errors.load()
+        << ", pin_invalid_argument=" << pin_invalid_argument.load()
+        << ", pin_io_error=" << pin_io_error.load()
+        << ", pin_other=" << pin_other.load()
+        << ", unpin_invalid_argument=" << unpin_invalid_argument.load()
+        << ", unpin_not_found=" << unpin_not_found.load()
+        << ", unpin_other=" << unpin_other.load()
+        << ", last_error='" << last_error << "')";
     EXPECT_EQ(successful_reads.load(), NUM_THREADS * ITERATIONS);
 
     std::cout << "Concurrent reads test: " << successful_reads.load() << " successful reads\n";

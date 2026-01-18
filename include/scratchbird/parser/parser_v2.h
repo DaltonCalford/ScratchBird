@@ -129,13 +129,19 @@ private:
     Statement* parseTruncate();
 
     // CREATE statements
-    CreateTableStmt* parseCreateTable(bool or_replace = false);
+    CreateTableStmt* parseCreateTable(bool or_replace = false,
+                                      TempTableType temp_type = TempTableType::NONE);
     CreateIndexStmt* parseCreateIndex();
     CreateViewStmt* parseCreateView(bool or_replace = false);
     CreateSequenceStmt* parseCreateSequence();
     CreateSchemaStmt* parseCreateSchema();
     CreateDatabaseStmt* parseCreateDatabase();
     CreateDomainStmt* parseCreateDomain();
+    CreateFunctionStmt* parseCreateFunction(bool or_replace = false);
+    CreateProcedureStmt* parseCreateProcedure(bool or_replace = false);
+    CreateTriggerStmt* parseCreateTrigger(bool or_replace = false);
+    CreateUserStmt* parseCreateUser();
+    CreateRoleStmt* parseCreateRole();
 
     // ALTER statements
     AlterTableStmt* parseAlterTable();
@@ -163,6 +169,11 @@ private:
     // ==========================================================================
     // DML Statements
     // ==========================================================================
+
+    // WITH clause
+    Statement* parseWithStatement();
+    WithClause* parseWithClause();
+    SelectStmt* parseSelectWithClause();
 
     // SELECT statement
     SelectStmt* parseSelect();
@@ -246,6 +257,34 @@ private:
     MergeStmt* parseMerge();
 
     // ==========================================================================
+    // PSQL Statements (Procedural SQL)
+    // ==========================================================================
+
+    Statement* parsePSQLStatement();
+    Statement* parseBeginEndBlock();
+    Statement* parseIfStatement();
+    Statement* parseWhileStatement();
+    Statement* parseForStatement();
+    Statement* parseLoopStatement();
+    Statement* parseLeaveStatement();
+    Statement* parseContinueStatement();
+    Statement* parseExitStatement();
+    Statement* parseSuspendStatement();
+    Statement* parseReturnStatement();
+    Statement* parseExceptionStatement();
+    Statement* parseWhenStatement();
+    Statement* parseDeclareVariable();
+    Statement* parseExecuteStatement();
+    ExecuteBlockStmt* parseExecuteBlock();
+    ExecuteProcedureStmt* parseExecuteProcedure();
+    ExecuteStatementStmt* parseExecuteDynamicStatement();
+    DeclareCursorStmt* parseDeclareCursor();
+    OpenCursorStmt* parseOpenCursor();
+    FetchCursorStmt* parseFetchCursor();
+    CloseCursorStmt* parseCloseCursor();
+    PostEventStmt* parsePostEventStatement();
+
+    // ==========================================================================
     // Column and Type Parsing
     // ==========================================================================
 
@@ -259,6 +298,7 @@ private:
     void parseDomainQualityBlock(CreateDomainStmt* stmt);
     void parseDomainOptionsBlock(CreateDomainStmt* stmt);
     std::string extractExpressionText(Expression* expr);
+    std::string captureStatementBody();
     ColumnConstraint parseColumnConstraint();
 
     // ==========================================================================

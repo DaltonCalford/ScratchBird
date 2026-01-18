@@ -64,6 +64,7 @@ std::vector<uint8_t> buildCreateIndexBytecode(
     {
         appendString(bytecode, col);
     }
+    appendUint32(bytecode, 0);  // Include column count
     appendString(bytecode, "");  // Tablespace name
     bytecode.push_back(static_cast<uint8_t>(index_type));
     bytecode.push_back(0);  // has expressions

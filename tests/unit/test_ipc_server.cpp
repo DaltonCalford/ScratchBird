@@ -100,7 +100,7 @@ TEST_F(IPCPathTest, NamedPipePath) {
 
 TEST_F(IPCPathTest, TCPLocalhostPath) {
     std::string path = getIPCPath("testdb", IPCMethod::TCP_LOCALHOST);
-    EXPECT_EQ(path, "127.0.0.1:5433");
+    EXPECT_EQ(path, "127.0.0.1:3092");
 }
 
 TEST_F(IPCPathTest, AutoResolvesToPlatformDefault) {

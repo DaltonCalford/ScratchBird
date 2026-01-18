@@ -90,8 +90,43 @@ TEST(VariantDomainTest, Comprehensive) {
     }
     std::cout << "  ✓ Reject duplicate types passed\n\n";
 
-    // Test 6: List all domain types
-    std::cout << "Test 6: List all domain types\n";
+    // Test 6: VARIANT operations
+    std::cout << "Test 6: VARIANT operations\n";
+    {
+        TypedValue payload = TypedValue::makeInt32(42);
+        TypedValue variant = TypedValue::makeVariant(DataType::INT32, payload);
+
+        DataType runtime = DataType::UNKNOWN;
+        status = dm->extractDataType(variant, runtime, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_EQ(runtime, DataType::INT32);
+
+        bool is_type = false;
+        status = dm->isOfType(variant, DataType::INT32, is_type, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_TRUE(is_type);
+
+        status = dm->isOfType(variant, DataType::VARCHAR, is_type, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_FALSE(is_type);
+
+        TypedValue casted;
+        status = dm->variantCast(variant, DataType::INT32, casted, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_EQ(casted.getInt32(), 42);
+
+        status = dm->variantCast(variant, DataType::VARCHAR, casted, &ctx);
+        ASSERT_EQ(status, Status::TYPE_MISMATCH);
+
+        TypedValue null_variant = TypedValue::makeVariant(TypedValue::makeNull(DataType::INT32));
+        status = dm->extractDataType(null_variant, runtime, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_EQ(runtime, DataType::NULL_TYPE);
+    }
+    std::cout << "  ✓ VARIANT operations passed\n\n";
+
+    // Test 7: List all domain types
+    std::cout << "Test 7: List all domain types\n";
     {
         // Create one of each type
         ID basic_id;
@@ -134,6 +169,5 @@ TEST(VariantDomainTest, Comprehensive) {
     std::cout << "ALL TESTS PASSED! ✓\n";
     std::cout << "VARIANT Domain Phase 5 is functional.\n";
     std::cout << "========================================\n";
-    std::cout << "\nNote: VARIANT value operations (extractDataType, isOfType, variantCast)\n";
-    std::cout << "require TypedValue VARIANT support and are planned for future enhancement.\n";
+    std::cout << "\nNote: VARIANT operations validate runtime tags and enforce type safety.\n";
 }

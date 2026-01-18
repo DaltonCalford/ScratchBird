@@ -206,7 +206,7 @@ EXAMPLES:
     sb_server -d /path/to/mydb.sbdb --create
 
     # Multi-database mode with custom ports
-    sb_server -D /var/lib/scratchbird --pg-port 5433 --mysql-port 0
+    sb_server -D /var/lib/scratchbird --pg-port 5434 --mysql-port 0
 
     # Maintenance mode (single user, no network)
     sb_server -d /path/to/mydb.sbdb -s

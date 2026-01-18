@@ -96,6 +96,13 @@ namespace scratchbird::optimizer
             core::ErrorContext* ctx);
 
         /**
+         * Check SELECT permissions for all FROM tables before planning.
+         */
+        bool checkSelectPermissions(
+            const parser::v2::ResolvedSelectStmt* select_stmt,
+            core::ErrorContext* ctx);
+
+        /**
          * Wrap base plan with GROUP BY, ORDER BY, LIMIT/OFFSET nodes
          */
         std::shared_ptr<PlanNode> wrapWithClauses(

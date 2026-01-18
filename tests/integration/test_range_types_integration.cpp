@@ -11,6 +11,7 @@
 
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/range.h"
+#include "scratchbird/core/typed_value.h"
 #include <gtest/gtest.h>
 
 using namespace scratchbird::core;

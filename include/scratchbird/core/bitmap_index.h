@@ -358,7 +358,7 @@ namespace scratchbird
                 size_t value_len,
                 ErrorContext *ctx);
 
-            std::unique_ptr<RoaringBitmap> loadBitmap(
+            std::shared_ptr<RoaringBitmap> loadBitmap(
                 uint32_t bitmap_root_page,
                 ErrorContext *ctx);
 
@@ -374,6 +374,7 @@ namespace scratchbird
             uint32_t num_distinct_values_;
             uint32_t total_tuples_;
             uint32_t dictionary_page_;
+            std::unordered_map<uint32_t, std::shared_ptr<RoaringBitmap>> bitmap_cache_;
         };
 
         // Roaring Bitmap implementation
@@ -500,7 +501,7 @@ namespace scratchbird
         public:
             // Firebird MGA: Uses TransactionId for TIP-based visibility (NOT Snapshot*)
             BitmapIndexScanner(BitmapIndex *index,
-                              std::unique_ptr<RoaringBitmap> bitmap,
+                              std::shared_ptr<RoaringBitmap> bitmap,
                               uint64_t current_xid,
                               Database *db);
             ~BitmapIndexScanner();
@@ -516,7 +517,7 @@ namespace scratchbird
         private:
             BitmapIndex *index_;
             Database *db_;
-            std::unique_ptr<RoaringBitmap> bitmap_;
+            std::shared_ptr<RoaringBitmap> bitmap_;
             std::unique_ptr<RoaringBitmapIterator> iterator_;
 
             // Firebird MGA: Transaction ID for TIP-based visibility filtering

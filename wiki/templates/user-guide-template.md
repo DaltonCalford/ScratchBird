@@ -234,27 +234,27 @@ Continue with additional examples.
 
 Related documentation:
 
-- [Related Feature 1](link) - Brief description
-- [Related Feature 2](link) - Brief description
-- [Tutorial: Using This Feature](link) - Step-by-step guide
+- [Transactions](../content/user-guides/Transactions.md) - Transaction semantics and controls
+- [Indexes](../content/user-guides/Indexes.md) - Index selection and usage
+- [Tutorials](../content/tutorials/README.md) - Step-by-step walkthroughs
 
 External resources:
-- [Relevant standard or documentation](url)
+- [SQL Syntax Reference](../content/reference/SQL-Syntax.md)
 
 ---
 
 ## Feedback and Questions
 
 **Questions?**
-- Ask on [Discord](link) in #help channel
-- Post on [Stack Overflow](link) with tag `scratchbird`
+- Ask on [Discord](https://discord.gg/scratchbird) in #help channel
+- Post on [Stack Overflow](https://stackoverflow.com/questions/tagged/scratchbird) with tag `scratchbird`
 
 **Found an error?**
-- [Edit this page](link) to fix it
-- [Report an issue](link) on GitHub
+- [Edit the wiki source](https://github.com/scratchbird/scratchbird.wiki)
+- [Report an issue](https://github.com/scratchbird/scratchbird/issues) on GitHub
 
 **Want to contribute?**
-- See [Contributing Guide](../Contributing.md)
+- See [Contributing Guide](../content/Contributing.md)
 
 ---
 

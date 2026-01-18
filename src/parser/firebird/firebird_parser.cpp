@@ -2228,7 +2228,10 @@ Statement* Parser::parseRecreateStatement() {
 ast::CreateTableStmt* Parser::parseCreateTableImpl(bool or_replace, bool temporary, bool global_temp) {
     auto* stmt = allocate<ast::CreateTableStmt>();
     stmt->or_replace = or_replace;
-    stmt->temporary = temporary;
+    if (temporary || global_temp) {
+        stmt->temp_type = ast::TempTableType::GLOBAL;
+        stmt->on_commit = ast::TempOnCommitAction::DELETE_ROWS;  // Firebird default
+    }
 
     // Table name
     stmt->table_path = parseSchemaPath();
@@ -2257,12 +2260,12 @@ ast::CreateTableStmt* Parser::parseCreateTableImpl(bool or_replace, bool tempora
     consume(TokenType::RIGHT_PAREN, "Expected ')' after column definitions");
 
     // Optional ON COMMIT clause for GTT
-    if (temporary && matchKeyword(TokenType::KW_ON)) {
+    if ((temporary || global_temp) && matchKeyword(TokenType::KW_ON)) {
         consume(TokenType::KW_COMMIT, "Expected COMMIT after ON");
         if (matchKeyword(TokenType::KW_DELETE)) {
-            // ON COMMIT DELETE ROWS (default for Firebird)
+            stmt->on_commit = ast::TempOnCommitAction::DELETE_ROWS;
         } else if (matchKeyword(TokenType::KW_PRESERVE)) {
-            // ON COMMIT PRESERVE ROWS
+            stmt->on_commit = ast::TempOnCommitAction::PRESERVE_ROWS;
         }
         matchKeyword(TokenType::KW_ROWS);  // Optional ROWS keyword
     }

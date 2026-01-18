@@ -78,6 +78,7 @@ Detailed technical specs for all features:
 - **[Error Handling](specifications/ERROR_HANDLING.md)** - Error handling system
 - **[Catalog Specification](specifications/CATALOG_SPECIFICATION.md)** - System catalog design
 - **[Component Model and Responsibilities](specifications/COMPONENT_MODEL_AND_RESPONSIBILITIES.md)** - Engine/parser/listener boundaries and trust model
+- **[Network Listener and Parser Pool Spec](specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md)** - Listener startup, parser pools, and socket handoff
 - **[Storage Engine Spec](specifications/STORAGE_ENGINE_SPEC.md)** - Storage engine architecture
 - **[Transaction Management](specifications/TRANSACTION_MANAGEMENT.md)** - MGA transaction system
 

@@ -12,6 +12,7 @@
 #include "scratchbird/core/hash_index.h"  // Phase 5 Task 5.3.1: Hash index TID updates
 #include "scratchbird/core/rtree.h"       // Phase 2 Task 9.2: R-tree spatial index
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
+#include "scratchbird/core/config.h"
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
@@ -51,6 +52,17 @@ bool isZeroUuidLocal(const ID& id) {
         }
     }
     return true;
+}
+
+ID resolveOwnerFromSession(CatalogManager* catalog, ErrorContext* ctx) {
+    auto* conn = ConnectionContext::getCurrent();
+    if (conn) {
+        auto security_ctx = conn->getCurrentSecurityContext();
+        if (!isZeroUuidLocal(security_ctx.effective_user_id)) {
+            return security_ctx.effective_user_id;
+        }
+    }
+    return catalog->resolveOwnerUUID("system", ctx);
 }
 
 std::string normalizeResolverName(const std::string& name, bool name_is_delimited) {
@@ -407,12 +419,20 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t has_toast;             // 1 if table has TOAST
         uint8_t rls_enabled;           // Security Phase 3.4: Row-level security enabled
         uint8_t rls_forced;            // Security Phase 3.4: Force RLS for table owners
+        uint8_t temp_metadata_scope;   // TempMetadataScope enum
+        uint8_t temp_data_scope;       // TempDataScope enum
+        uint8_t temp_on_commit;        // TempOnCommitAction enum
+        uint8_t temp_flags;            // Reserved for temp table flags
         uint16_t tablespace_id;        // Tablespace ID (0 = default)
         uint16_t default_charset;      // CharacterSet enum (0 = inherit from schema)
         uint8_t name_is_delimited;     // 1 if quoted identifier
         uint8_t reserved1;             // Reserved for future use
         uint32_t default_collation_id; // Collation ID (0 = inherit from schema)
         uint32_t storage_params_oid;   // TOAST reference for storage parameters - IMPLEMENTED
+        ID creating_session_id;        // Session UUID for session-scoped temp metadata
+        uint64_t creating_transaction_id; // Transaction ID for session/txn temp metadata
+        ID temp_parent_table_id;       // Internal temp instance parent table (optional)
+        ID temp_schema_id;             // Session-local temp schema (optional)
         uint64_t created_time;
         uint64_t last_modified_time;
         uint64_t policy_epoch;         // Security policy epoch (Plan 03)
@@ -478,7 +498,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t is_unique;
         uint16_t column_count;
         ID column_ids[16];         // Max 16 columns per index
+        uint16_t include_column_count;
+        ID include_column_ids[16];
         uint32_t index_params_oid; // TOAST reference for index parameters (HNSW config, etc.) - IMPLEMENTED
+        uint32_t expression_oid;   // TOAST reference for serialized expression tree(s)
+        uint32_t predicate_oid;    // TOAST reference for serialized WHERE predicate
         uint64_t created_time;
         uint32_t is_valid;
 
@@ -641,6 +665,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID schema_id;
         char sequence_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         ID owner_id;             // Owner UUID reference
+        ID owned_by_table_id;    // Optional owned-by table ID
+        ID owned_by_column_id;   // Optional owned-by column ID
         int64_t current_value;
         int64_t increment_by;
         int64_t min_value;
@@ -865,6 +891,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID role_id;
         char role_name[512];        // Role name
         ID owner_id;                // Owner UUID reference
+        ID default_schema_id;       // Home schema UUID
         uint32_t role_metadata_oid; // TOAST reference - JSON metadata (permissions, settings)
         uint8_t is_active;          // 1 if active, 0 if disabled
         uint8_t reserved[7];        // Alignment
@@ -882,6 +909,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char external_id[512];      // AD/LDAP group ID (empty if local)
         uint8_t group_type;         // LOCAL, AD, LDAP
         uint8_t reserved[7];        // Alignment
+        ID default_schema_id;       // Home schema UUID
         uint32_t group_metadata_oid; // TOAST reference - JSON metadata
         uint64_t created_time;
         uint64_t last_modified_time;
@@ -2044,6 +2072,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         public_role.role_id = generateUuidV7();  // Generate UUID v7
         strncpy(public_role.role_name, "PUBLIC", sizeof(public_role.role_name) - 1);
         public_role.owner_id = system_user.user_id;  // Owned by SYSTEM
+        public_role.default_schema_id = public_id;
         public_role.role_metadata_oid = 0;
         public_role.is_active = 1;
         public_role.created_time = std::chrono::system_clock::now().time_since_epoch().count();
@@ -2064,6 +2093,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         db_owner_role.role_id = generateUuidV7();  // Generate UUID v7
         strncpy(db_owner_role.role_name, "DB_OWNER", sizeof(db_owner_role.role_name) - 1);
         db_owner_role.owner_id = system_user.user_id;  // Owned by SYSTEM
+        db_owner_role.default_schema_id = public_id;
         db_owner_role.role_metadata_oid = 0;
         db_owner_role.is_active = 1;
         db_owner_role.created_time = std::chrono::system_clock::now().time_since_epoch().count();
@@ -2926,11 +2956,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::OK;
         }
 
-        // Fallback: If TOAST manager not available, use hash-based OID
-        // This maintains backward compatibility and allows degraded operation
-        std::hash<std::string> hasher;
-        oid_out = static_cast<uint32_t>(hasher(str) & 0xFFFFFFFF);
-        DEBUG_LOG_DB("TOAST manager unavailable, using hash-based OID: " << oid_out);
+        // Fallback: If TOAST manager not available, retain values in memory
+        {
+            std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
+            if (toast_fallback_next_oid_ == 0)
+            {
+                toast_fallback_next_oid_ = 1;
+            }
+            oid_out = toast_fallback_next_oid_++;
+            toast_fallback_cache_[oid_out] = str;
+        }
+        DEBUG_LOG_DB("TOAST manager unavailable, using in-memory OID: " << oid_out);
 
         return Status::OK;
     }
@@ -2976,12 +3012,21 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::OK;
         }
 
-        // Fallback: Cannot load from hash-based OID
-        // The caller must use the in-memory cached value
+        // Fallback: Load from in-memory cache
+        {
+            std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
+            auto it = toast_fallback_cache_.find(oid);
+            if (it != toast_fallback_cache_.end())
+            {
+                str_out = it->second;
+                return Status::OK;
+            }
+        }
+
         DEBUG_LOG_DB("TOAST manager unavailable, cannot load from OID: " << oid);
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                         "TOAST manager not available - using in-memory cache");
-        return Status::NOT_IMPLEMENTED;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                         "TOAST manager not available - value not cached");
+        return Status::NOT_FOUND;
     }
 
     auto CatalogManager::initializePolicyToastIfNeeded(ErrorContext* ctx) -> Status
@@ -5795,7 +5840,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::createTable(const ID &schema_id, const std::string &table_name,
                                      const std::vector<ColumnInfo> &columns, ID &table_id,
                                      uint16_t tablespace_id, // Phase 2 Task 2.3
-                                     ErrorContext *ctx) -> Status
+                                     ErrorContext *ctx,
+                                     const TableCreateOptions* options) -> Status
     {
         // Acquire ALL locks in consistent order to prevent deadlock
         // Lock order: mutex_, sequence_cache_mutex_, dependency_cache_mutex_
@@ -5818,6 +5864,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 IdentifierUtils::namesConflict(table_name, false /*new_is_delimited*/,
                                                info.table_name, info.name_is_delimited))
             {
+                if (options &&
+                    options->temp_metadata_scope == TempMetadataScope::SESSION &&
+                    info.temp_metadata_scope == TempMetadataScope::SESSION &&
+                    !isZeroUuidLocal(options->creating_session_id) &&
+                    info.creating_session_id != options->creating_session_id)
+                {
+                    continue;
+                }
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   ("Table already exists: " + table_name).c_str());
                 return Status::INVALID_ARGUMENT;
@@ -5838,7 +5892,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         table.table_id = generateUuidV7();
         table.schema_id = schema_id;
         table.table_name = table_name;
-        table.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+        table.owner_id = resolveOwnerFromSession(this, ctx);
         if (isZeroUuidLocal(table.owner_id))
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
@@ -5846,7 +5900,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         table.root_page = root_page;
         table.column_count = columns.size();
         table.row_count = 0;
-        table.table_type = TableType::HEAP; // Default to heap table
+        table.table_type = options ? options->table_type : TableType::HEAP;
+        table.temp_metadata_scope = options ? options->temp_metadata_scope : TempMetadataScope::NONE;
+        table.temp_data_scope = options ? options->temp_data_scope : TempDataScope::NONE;
+        table.temp_on_commit = options ? options->temp_on_commit : TempOnCommitAction::NONE;
+        table.creating_session_id = options ? options->creating_session_id : ID{};
+        table.creating_transaction_id = options ? options->creating_transaction_id : 0;
+        table.temp_parent_table_id = options ? options->temp_parent_table_id : ID{};
+        table.temp_schema_id = options ? options->temp_schema_id : ID{};
         table.has_toast = false;            // Will be set to true if needed
         table.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
         table.storage_params_oid = 0;       // No custom storage parameters
@@ -5910,82 +5971,104 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
-        // Phase 5: Track sequence usage in DEFAULT expressions (column -> sequence)
-        for (const auto& col : columns_with_ids) {
-            if (col.default_expr.empty()) {
-                continue;
+        const bool skip_sequence_dependencies =
+            options && options->temp_metadata_scope == TempMetadataScope::SESSION;
+
+        if (!skip_sequence_dependencies)
+        {
+            auto is_temp_sequence = [&](const ID& seq_id) -> bool {
+                auto it = sequence_cache_.find(seq_id);
+                return it != sequence_cache_.end() && it->second &&
+                    it->second->temp_metadata_scope == TempMetadataScope::SESSION;
+            };
+
+            // Phase 5: Track sequence usage in DEFAULT expressions (column -> sequence)
+            for (const auto& col : columns_with_ids) {
+                if (col.default_expr.empty()) {
+                    continue;
+                }
+
+                std::vector<uint8_t> bytecode = hexToBytesLocal(col.default_expr);
+                std::vector<std::string> seq_names;
+                parseDefaultExprSequenceNames(bytecode, seq_names);
+
+                std::unordered_set<ID, IDHash> sequence_ids;
+                for (const auto& name : seq_names) {
+                    ID seq_id;
+                    // Use internal versions that assume locks already held
+                    if (getSequenceIdByNameInternal(schema_id, name, seq_id, ctx) == Status::OK) {
+                        if (!is_temp_sequence(seq_id))
+                        {
+                            sequence_ids.insert(seq_id);
+                        }
+                        continue;
+                    }
+                    SequenceInfo sinfo;
+                    if (getSequenceInternal(schema_id, name, sinfo, ctx) == Status::OK) {
+                        if (!is_temp_sequence(sinfo.sequence_id))
+                        {
+                            sequence_ids.insert(sinfo.sequence_id);
+                        }
+                    }
+                }
+
+                for (const auto& seq_id : sequence_ids) {
+                    ID dep_id;
+                    // Use internal version that assumes locks already held
+                    status = createDependencyInternal(
+                        col.column_id, ObjectType::COLUMN,
+                        seq_id, ObjectType::SEQUENCE,
+                        DependencyType::NORMAL,
+                        dep_id,
+                        ctx
+                    );
+                    if (status != Status::OK) {
+                        LOG_ERROR(CATALOG, "Failed to create dependency for default sequence");
+                        return status;
+                    }
+                }
             }
 
-        std::vector<uint8_t> bytecode = hexToBytesLocal(col.default_expr);
-        std::vector<std::string> seq_names;
-        parseDefaultExprSequenceNames(bytecode, seq_names);
-
-        std::unordered_set<ID, IDHash> sequence_ids;
-        for (const auto& name : seq_names) {
-            ID seq_id;
-            // Use internal versions that assume locks already held
-            if (getSequenceIdByNameInternal(schema_id, name, seq_id, ctx) == Status::OK) {
-                sequence_ids.insert(seq_id);
-                continue;
-            }
-            SequenceInfo sinfo;
-            if (getSequenceInternal(schema_id, name, sinfo, ctx) == Status::OK) {
-                sequence_ids.insert(sinfo.sequence_id);
-            }
-        }
-
-        for (const auto& seq_id : sequence_ids) {
-            ID dep_id;
-            // Use internal version that assumes locks already held
-            status = createDependencyInternal(
-                col.column_id, ObjectType::COLUMN,
-                seq_id, ObjectType::SEQUENCE,
-                DependencyType::NORMAL,
-                dep_id,
-                ctx
-            );
-            if (status != Status::OK) {
-                LOG_ERROR(CATALOG, "Failed to create dependency for default sequence");
-                return status;
-            }
-        }
-    }
-
-        // Phase 2: Create dependencies for identity sequences
-        std::unordered_set<ID, IDHash> identity_sequence_ids;
-        for (const auto& col : columns_with_ids) {
-            if (col.is_identity && col.identity_sequence_id != ID{}) {
-                identity_sequence_ids.insert(col.identity_sequence_id);
-            }
-        }
-
-        for (const auto& seq_id : identity_sequence_ids) {
-            ID dep_id = ID{};
-            // Use internal version that assumes locks already held
-            status = createDependencyInternal(
-                table.table_id, ObjectType::TABLE,
-                seq_id, ObjectType::SEQUENCE,
-                DependencyType::NORMAL,
-                dep_id,
-                ctx
-            );
-            if (status != Status::OK) {
-                LOG_ERROR(CATALOG, "Failed to create dependency for identity sequence");
-                return status;
+            // Phase 2: Create dependencies for identity sequences
+            std::unordered_set<ID, IDHash> identity_sequence_ids;
+            for (const auto& col : columns_with_ids) {
+                if (col.is_identity && col.identity_sequence_id != ID{}) {
+                    identity_sequence_ids.insert(col.identity_sequence_id);
+                }
             }
 
-            ID auto_dep_id = ID{};
-            // Use internal version that assumes locks already held
-            status = createDependencyInternal(
-                seq_id, ObjectType::SEQUENCE,
-                table.table_id, ObjectType::TABLE,
-                DependencyType::AUTO,
-                auto_dep_id,
-                ctx
-            );
-            if (status != Status::OK) {
-                LOG_ERROR(CATALOG, "Failed to create auto dependency for identity sequence");
-                return status;
+            for (const auto& seq_id : identity_sequence_ids) {
+                if (is_temp_sequence(seq_id))
+                {
+                    continue;
+                }
+                ID dep_id = ID{};
+                // Use internal version that assumes locks already held
+                status = createDependencyInternal(
+                    table.table_id, ObjectType::TABLE,
+                    seq_id, ObjectType::SEQUENCE,
+                    DependencyType::NORMAL,
+                    dep_id,
+                    ctx
+                );
+                if (status != Status::OK) {
+                    LOG_ERROR(CATALOG, "Failed to create dependency for identity sequence");
+                    return status;
+                }
+
+                ID auto_dep_id = ID{};
+                // Use internal version that assumes locks already held
+                status = createDependencyInternal(
+                    seq_id, ObjectType::SEQUENCE,
+                    table.table_id, ObjectType::TABLE,
+                    DependencyType::AUTO,
+                    auto_dep_id,
+                    ctx
+                );
+                if (status != Status::OK) {
+                    LOG_ERROR(CATALOG, "Failed to create auto dependency for identity sequence");
+                    return status;
+                }
             }
         }
 
@@ -6014,7 +6097,21 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::INVALID_ARGUMENT;
         }
 
-        info = it->second;
+        const auto& candidate = it->second;
+        if (candidate.temp_metadata_scope == TempMetadataScope::SESSION ||
+            !isZeroUuidLocal(candidate.temp_parent_table_id))
+        {
+            ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+            ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+            if (isZeroUuidLocal(session_id) || candidate.creating_session_id != session_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("Table not found: " + table_id.toString()).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        info = candidate;
         return Status::OK;
     }
 
@@ -6022,6 +6119,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                   TableInfo &info, ErrorContext *ctx) -> Status
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
         // Use case-insensitive lookup: search name (assumed unquoted) matches
         // stored names using Firebird SQL rules
         for (const auto &[id, table_info] : table_cache_)
@@ -6030,6 +6129,20 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 IdentifierUtils::namesMatch(table_name, false /*search_delimited*/,
                                             table_info.table_name, table_info.name_is_delimited))
             {
+                if (!isZeroUuidLocal(table_info.temp_parent_table_id))
+                {
+                    continue; // Internal temp instance tables are not name-resolvable
+                }
+                if (table_info.temp_metadata_scope == TempMetadataScope::SESSION &&
+                    (!isZeroUuidLocal(session_id) && table_info.creating_session_id != session_id))
+                {
+                    continue; // Session temp table not owned by this session
+                }
+                if (table_info.temp_metadata_scope == TempMetadataScope::SESSION &&
+                    isZeroUuidLocal(session_id))
+                {
+                    continue; // No session context for session temp tables
+                }
                 info = table_info;
                 return Status::OK;
             }
@@ -6045,11 +6158,24 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
         tables.clear();
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
         for (const auto &[id, info] : table_cache_)
         {
             if (info.schema_id == schema_id)
             {
+                if (!isZeroUuidLocal(info.temp_parent_table_id))
+                {
+                    continue;
+                }
+                if (info.temp_metadata_scope == TempMetadataScope::SESSION)
+                {
+                    if (isZeroUuidLocal(session_id) || info.creating_session_id != session_id)
+                    {
+                        continue;
+                    }
+                }
                 tables.push_back(info);
             }
         }
@@ -6057,6 +6183,40 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Sort by table name for consistent ordering
         std::sort(tables.begin(), tables.end(), [](const TableInfo &a, const TableInfo &b)
                   { return a.table_name < b.table_name; });
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::listTemporaryTablesForSession(const ID &session_id,
+                                                       std::vector<TableInfo> &tables,
+                                                       ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        tables.clear();
+
+        if (isZeroUuidLocal(session_id))
+        {
+            return Status::OK;
+        }
+
+        for (const auto &[id, info] : table_cache_)
+        {
+            if (info.temp_data_scope == TempDataScope::NONE &&
+                info.temp_metadata_scope == TempMetadataScope::NONE)
+            {
+                continue;
+            }
+            if (!isZeroUuidLocal(info.temp_parent_table_id))
+            {
+                continue;
+            }
+            if (info.temp_metadata_scope == TempMetadataScope::SESSION &&
+                info.creating_session_id != session_id)
+            {
+                continue;
+            }
+            tables.push_back(info);
+        }
 
         return Status::OK;
     }
@@ -6224,7 +6384,20 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     }
 
     auto CatalogManager::createIndex(const ID &table_id, const std::string &index_name,
-                                     const std::vector<std::string> &column_names, ID &index_id,
+                                     const std::vector<std::string> &column_names,
+                                     ID &index_id,
+                                     bool is_unique, IndexType index_type,
+                                     uint16_t tablespace_id,
+                                     ErrorContext *ctx) -> Status
+    {
+        return createIndex(table_id, index_name, column_names, std::vector<std::string>{},
+                           index_id, is_unique, index_type, tablespace_id, ctx);
+    }
+
+    auto CatalogManager::createIndex(const ID &table_id, const std::string &index_name,
+                                     const std::vector<std::string> &column_names,
+                                     const std::vector<std::string> &include_column_names,
+                                     ID &index_id,
                                      bool is_unique, IndexType index_type,
                                      uint16_t tablespace_id, // Phase 2 Task 2.3
                                      ErrorContext *ctx)
@@ -6253,8 +6426,16 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
+        if (column_names.size() > 16 || include_column_names.size() > 16)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Too many index columns (max 16 key and 16 include)");
+            return Status::INVALID_ARGUMENT;
+        }
+
         // Resolve column names to column IDs
         // NOTE: Use getColumnInternal since we already hold mutex_
+        std::unordered_set<ID, IDHash> key_ids;
         std::vector<ID> column_ids;
         for (const auto &col_name : column_names)
         {
@@ -6265,6 +6446,32 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 return status;
             }
             column_ids.push_back(col_info.column_id);
+            key_ids.insert(col_info.column_id);
+        }
+
+        std::unordered_set<ID, IDHash> include_ids;
+        std::vector<ID> include_column_ids;
+        for (const auto &col_name : include_column_names)
+        {
+            ColumnInfo col_info;
+            Status status = getColumnInternal(table_id, col_name, col_info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (key_ids.find(col_info.column_id) != key_ids.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("INCLUDE column duplicates index key: " + col_name).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+            if (!include_ids.insert(col_info.column_id).second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("Duplicate INCLUDE column: " + col_name).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+            include_column_ids.push_back(col_info.column_id);
         }
 
         // Allocate root page for index data
@@ -6281,7 +6488,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
-        index.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+        index.owner_id = resolveOwnerFromSession(this, ctx);
         if (isZeroUuidLocal(index.owner_id))
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
@@ -6291,7 +6498,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.index_type = index_type;
         index.is_unique = is_unique;
         index.column_ids = column_ids;
+        index.include_column_ids = include_column_ids;
         index.index_params_oid = 0; // Will be set later when index params are added
+        index.expression_oid = 0;
+        index.predicate_oid = 0;
         index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
@@ -6380,6 +6590,24 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                      ID &index_id,
                                      bool is_unique, IndexType index_type,
                                      uint16_t tablespace_id,
+                                     ErrorContext *ctx) -> Status
+    {
+        return createIndex(table_id, index_name, column_names, std::vector<std::string>{},
+                           expression_data, predicate_data, expression_strings,
+                           predicate_string, index_id, is_unique, index_type,
+                           tablespace_id, ctx);
+    }
+
+    auto CatalogManager::createIndex(const ID &table_id, const std::string &index_name,
+                                     const std::vector<std::string> &column_names,
+                                     const std::vector<std::string> &include_column_names,
+                                     const std::vector<uint8_t> &expression_data,
+                                     const std::vector<uint8_t> &predicate_data,
+                                     const std::vector<std::string> &expression_strings,
+                                     const std::string &predicate_string,
+                                     ID &index_id,
+                                     bool is_unique, IndexType index_type,
+                                     uint16_t tablespace_id,
                                      ErrorContext *ctx)
         -> Status
     {
@@ -6407,9 +6635,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
+        if (column_names.size() > 16 || include_column_names.size() > 16)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Too many index columns (max 16 key and 16 include)");
+            return Status::INVALID_ARGUMENT;
+        }
+
         // Resolve column names to column IDs (if not an expression index)
         // NOTE: Use getColumnInternal since we already hold mutex_
         std::vector<ID> column_ids;
+        std::unordered_set<ID, IDHash> key_ids;
         if (!expression_data.empty())
         {
             // WP-2 CAT-M3: Expression index - extract referenced columns from bytecode
@@ -6440,7 +6676,33 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     return status;
                 }
                 column_ids.push_back(col_info.column_id);
+                key_ids.insert(col_info.column_id);
             }
+        }
+
+        std::unordered_set<ID, IDHash> include_ids;
+        std::vector<ID> include_column_ids;
+        for (const auto &col_name : include_column_names)
+        {
+            ColumnInfo col_info;
+            Status status = getColumnInternal(table_id, col_name, col_info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (!key_ids.empty() && key_ids.find(col_info.column_id) != key_ids.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("INCLUDE column duplicates index key: " + col_name).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+            if (!include_ids.insert(col_info.column_id).second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("Duplicate INCLUDE column: " + col_name).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+            include_column_ids.push_back(col_info.column_id);
         }
 
         // Allocate root page for index data
@@ -6457,7 +6719,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
-        index.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+        index.owner_id = resolveOwnerFromSession(this, ctx);
         if (isZeroUuidLocal(index.owner_id))
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
@@ -6467,6 +6729,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.index_type = index_type;
         index.is_unique = is_unique;
         index.column_ids = column_ids;
+        index.include_column_ids = include_column_ids;
         index.index_params_oid = 0;
         index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
@@ -6487,9 +6750,37 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.predicate_data = predicate_data;
         index.expression_strings = expression_strings;
         index.predicate_string = predicate_string;
+        index.expression_oid = 0;
+        index.predicate_oid = 0;
+        uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+        if (xmin == 0)
+        {
+            xmin = config::DEFAULT_INITIAL_XID;
+        }
 
-        // TODO: For large expressions, use TOAST storage
-        // if (expression_data.size() > TOAST_TUPLE_THRESHOLD) { ... }
+        if (!expression_data.empty())
+        {
+            std::string blob(reinterpret_cast<const char*>(expression_data.data()),
+                             expression_data.size());
+            Status toast_status = storeStringInToast(blob, xmin, index.expression_oid, ctx);
+            if (toast_status != Status::OK)
+            {
+                pm->freePage(root_page, ctx);
+                return toast_status;
+            }
+        }
+
+        if (!predicate_data.empty())
+        {
+            std::string blob(reinterpret_cast<const char*>(predicate_data.data()),
+                             predicate_data.size());
+            Status toast_status = storeStringInToast(blob, xmin, index.predicate_oid, ctx);
+            if (toast_status != Status::OK)
+            {
+                pm->freePage(root_page, ctx);
+                return toast_status;
+            }
+        }
 
         // Write index record
         status = writeIndexRecord(index, ctx);
@@ -7397,6 +7688,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.column_count = table.column_count;
         record.row_count = table.row_count;
         record.table_type = static_cast<uint8_t>(table.table_type);
+        record.temp_metadata_scope = static_cast<uint8_t>(table.temp_metadata_scope);
+        record.temp_data_scope = static_cast<uint8_t>(table.temp_data_scope);
+        record.temp_on_commit = static_cast<uint8_t>(table.temp_on_commit);
         record.has_toast = table.has_toast ? 1 : 0;
         record.rls_enabled = table.rls_enabled ? 1 : 0;  // Security Phase 3.4
         record.rls_forced = table.rls_forced ? 1 : 0;    // Security Phase 3.4
@@ -7405,6 +7699,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.name_is_delimited = table.name_is_delimited ? 1 : 0;
         record.default_collation_id = table.default_collation_id;
         record.storage_params_oid = table.storage_params_oid;
+        record.creating_session_id = table.creating_session_id;
+        record.creating_transaction_id = table.creating_transaction_id;
+        record.temp_parent_table_id = table.temp_parent_table_id;
+        record.temp_schema_id = table.temp_schema_id;
         record.created_time = table.created_time;
         record.last_modified_time = table.last_modified_time;
         record.policy_epoch = table.policy_epoch;
@@ -7636,6 +7934,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.column_count = record.column_count;
             info.row_count = record.row_count;
             info.table_type = static_cast<TableType>(record.table_type);
+            info.temp_metadata_scope = static_cast<TempMetadataScope>(record.temp_metadata_scope);
+            info.temp_data_scope = static_cast<TempDataScope>(record.temp_data_scope);
+            info.temp_on_commit = static_cast<TempOnCommitAction>(record.temp_on_commit);
+            info.creating_session_id = record.creating_session_id;
+            info.creating_transaction_id = record.creating_transaction_id;
+            info.temp_parent_table_id = record.temp_parent_table_id;
+            info.temp_schema_id = record.temp_schema_id;
             info.has_toast = record.has_toast != 0;
             info.rls_enabled = record.rls_enabled != 0;  // Security Phase 3.4
             info.rls_forced = record.rls_forced != 0;    // Security Phase 3.4
@@ -7845,7 +8150,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             record.column_ids[i] = index.column_ids[i];
         }
+        record.include_column_count = static_cast<uint16_t>(index.include_column_ids.size());
+        for (size_t i = 0; i < index.include_column_ids.size(); ++i)
+        {
+            record.include_column_ids[i] = index.include_column_ids[i];
+        }
         record.index_params_oid = index.index_params_oid;
+        record.expression_oid = index.expression_oid;
+        record.predicate_oid = index.predicate_oid;
         record.created_time = index.created_time;
         record.is_valid = 1;
 
@@ -7863,7 +8175,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::readIndexRecords(ErrorContext *ctx) -> Status
     {
-        auto converter = [](const IndexRecord &record, IndexInfo &info)
+        Status toast_status = initializePolicyToastIfNeeded(ctx);
+        if (toast_status != Status::OK)
+        {
+            return toast_status;
+        }
+
+        uint64_t xmin = 0;
+        auto converter = [this, xmin, ctx](const IndexRecord &record, IndexInfo &info)
         {
             // Phase 4: Safety check - ensure null-termination at max position
             const_cast<char&>(record.index_name[511]) = '\0';
@@ -7876,7 +8195,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.index_type = static_cast<IndexType>(record.index_type);
             info.is_unique = record.is_unique;
             info.column_ids.assign(record.column_ids, record.column_ids + record.column_count);
+            info.include_column_ids.assign(record.include_column_ids,
+                                           record.include_column_ids + record.include_column_count);
             info.index_params_oid = record.index_params_oid;
+            info.expression_oid = record.expression_oid;
+            info.predicate_oid = record.predicate_oid;
             info.created_time = record.created_time;
 
             // Plan 01 Task E: Shadow index rebuild + versioning fields
@@ -7887,6 +8210,27 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.retired_xid = record.retired_xid;
             info.build_started_time = record.build_started_time;
             info.build_completed_time = record.build_completed_time;
+
+            info.expression_data.clear();
+            info.predicate_data.clear();
+
+            if (record.expression_oid != 0)
+            {
+                std::string blob;
+                if (loadStringFromToast(record.expression_oid, xmin, blob, ctx) == Status::OK)
+                {
+                    info.expression_data.assign(blob.begin(), blob.end());
+                }
+            }
+
+            if (record.predicate_oid != 0)
+            {
+                std::string blob;
+                if (loadStringFromToast(record.predicate_oid, xmin, blob, ctx) == Status::OK)
+                {
+                    info.predicate_data.assign(blob.begin(), blob.end());
+                }
+            }
         };
         auto key_extractor = [](const IndexInfo &info) { return info.index_id; };
         return readRecordsFromHeapPage<IndexRecord, IndexInfo, ID>(
@@ -8587,8 +8931,39 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::CONSTRAINT_VIOLATION;
         }
 
-        // Step 2: Check if charset is used by any tables (TODO: add when column metadata tracking is complete)
-        // For now, we'll skip this check as it requires full column metadata tracking
+        // Step 2: Check if charset is used by any schemas, tables, or columns
+        for (const auto& [schema_id, schema_info] : schema_cache_)
+        {
+            if (schema_info.default_charset == charset_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                                  "Cannot delete charset in use by schema");
+                return Status::CONSTRAINT_VIOLATION;
+            }
+        }
+
+        for (const auto& [table_id, table_info] : table_cache_)
+        {
+            if (table_info.default_charset == charset_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                                  "Cannot delete charset in use by table");
+                return Status::CONSTRAINT_VIOLATION;
+            }
+        }
+
+        for (const auto& [table_id, columns] : column_cache_)
+        {
+            for (const auto& col : columns)
+            {
+                if (col.charset == charset_id)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                                      "Cannot delete charset in use by column");
+                    return Status::CONSTRAINT_VIOLATION;
+                }
+            }
+        }
 
         // Step 3: Delete record from charsets table using deleteRecordFromHeapPage
         auto matcher = [charset_id](const CharsetRecord &rec)
@@ -9065,8 +9440,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         info.free_size_mb = 0;
         info.table_count = 0;
         info.index_count = 0;
-        info.created_time = 0; // TODO: Add timestamp
-        info.last_modified_time = 0;
+        info.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                 std::chrono::system_clock::now().time_since_epoch())
+                                 .count();
+        info.last_modified_time = info.created_time;
         info.last_extended_time = 0;
 
         // Write to catalog
@@ -9090,7 +9467,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::dropTablespace(const std::string &tablespace_name, bool force,
                                         ErrorContext *ctx) -> Status
     {
-        std::lock_guard<CatalogMutex> lock(mutex_);
+        std::unique_lock<CatalogMutex> lock(mutex_);
 
         // Find tablespace by name
         uint16_t ts_id = 0;
@@ -9131,14 +9508,84 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::INVALID_ARGUMENT;
         }
 
-        // TODO: If FORCE, drop all tables/indexes in the tablespace first
-        // For now, return NOT_IMPLEMENTED for FORCE with objects
         if (force && (ts_info.table_count > 0 || ts_info.index_count > 0))
         {
-            SET_ERROR_CONTEXT(
-                ctx, Status::NOT_IMPLEMENTED,
-                "FORCE drop of non-empty tablespace not yet implemented (will be in Phase 2)");
-            return Status::NOT_IMPLEMENTED;
+            std::vector<ID> tables_to_drop;
+            std::vector<ID> indexes_to_drop;
+
+            tables_to_drop.reserve(ts_info.table_count);
+            indexes_to_drop.reserve(ts_info.index_count);
+
+            for (const auto& [table_id, table_info] : table_cache_)
+            {
+                if (table_info.tablespace_id == ts_id)
+                {
+                    tables_to_drop.push_back(table_id);
+                }
+            }
+
+            for (const auto& [index_id, index_info] : index_cache_)
+            {
+                if (index_info.tablespace_id == ts_id)
+                {
+                    indexes_to_drop.push_back(index_id);
+                }
+            }
+
+            lock.unlock();
+
+            for (const auto& table_id : tables_to_drop)
+            {
+                Status drop_status = dropTable(table_id, true, ctx);
+                if (drop_status != Status::OK)
+                {
+                    return drop_status;
+                }
+            }
+
+            for (const auto& index_id : indexes_to_drop)
+            {
+                Status drop_status = dropIndex(index_id, ctx);
+                if (drop_status != Status::OK && drop_status != Status::NOT_FOUND)
+                {
+                    return drop_status;
+                }
+            }
+
+            lock.lock();
+            auto ts_it = tablespace_cache_.find(ts_id);
+            if (ts_it == tablespace_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                  ("Tablespace '" + tablespace_name + "' not found").c_str());
+                return Status::NOT_FOUND;
+            }
+            ts_info = ts_it->second;
+
+            ts_info.table_count = 0;
+            ts_info.index_count = 0;
+            for (const auto& [table_id, table_info] : table_cache_)
+            {
+                if (table_info.tablespace_id == ts_id)
+                {
+                    ts_info.table_count++;
+                }
+            }
+            for (const auto& [index_id, index_info] : index_cache_)
+            {
+                if (index_info.tablespace_id == ts_id)
+                {
+                    ts_info.index_count++;
+                }
+            }
+
+            if (ts_info.table_count > 0 || ts_info.index_count > 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                                  ("Tablespace '" + tablespace_name +
+                                   "' still contains objects after FORCE cleanup").c_str());
+                return Status::CONSTRAINT_VIOLATION;
+            }
         }
 
         // Get PageManager
@@ -9295,7 +9742,38 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::INVALID_ARGUMENT;
         }
 
-        // TODO: Validate MAXSIZE >= current file size (requires PageManager API)
+        if (max_size_mb > 0)
+        {
+            uint64_t current_bytes = 0;
+            for (const auto& path : ts_info->file_paths)
+            {
+                if (path.empty())
+                {
+                    continue;
+                }
+                std::error_code ec;
+                if (!std::filesystem::exists(path, ec))
+                {
+                    continue;
+                }
+                uint64_t file_size = std::filesystem::file_size(path, ec);
+                if (ec)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                      ("Failed to read tablespace file size: " + path).c_str());
+                    return Status::IO_ERROR;
+                }
+                current_bytes += file_size;
+            }
+
+            uint64_t current_mb = (current_bytes + (1024 * 1024 - 1)) / (1024 * 1024);
+            if (current_mb > max_size_mb)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "MAXSIZE must be >= current tablespace size");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
 
         // Update in-memory cache
         ts_info->autoextend_enabled = autoextend_enabled;
@@ -10551,10 +11029,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // ===== STEP 0: Reject ONLINE mode in Phase 4 =====
         if (online)
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                            "ONLINE table migration not implemented in Phase 4 (deferred to Phase 5)");
-            LOG_WARNING(CATALOG, "Rejected ONLINE migration request (not implemented in Phase 4)");
-            return Status::NOT_IMPLEMENTED;
+            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                            "ONLINE table migration is not supported in this build");
+            LOG_WARNING(CATALOG, "Rejected ONLINE migration request (not supported)");
+            return Status::NOT_SUPPORTED;
         }
 
         // ===== STEP 1: Acquire lock and validate table exists =====
@@ -10591,7 +11069,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
                             "Target tablespace not found");
             LOG_ERROR(CATALOG, "Target tablespace %u not found", target_tablespace_id);
-            return Status::NOT_IMPLEMENTED;
+            return Status::NOT_FOUND;
         }
 
         // ===== STEP 2.5: Migrate TOAST table (Phase 5 Task 5.1.3.3) =====
@@ -13480,6 +13958,58 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         clearDependenciesForInternal(col.column_id, ctx);
     }
 
+    if (!table_columns.empty())
+    {
+        std::unordered_set<ID, IDHash> column_ids;
+        column_ids.reserve(table_columns.size());
+        for (const auto& col : table_columns)
+        {
+            column_ids.insert(col.column_id);
+        }
+
+        std::unordered_set<ID, IDHash> owned_sequences_by_column;
+        for (const auto& col : table_columns)
+        {
+            std::vector<DependencyInfo> deps;
+            getDependentsInternal(col.column_id, deps);
+            for (const auto& dep : deps)
+            {
+                if (dep.dependent_type == ObjectType::SEQUENCE &&
+                    dep.dependency_type == DependencyType::AUTO)
+                {
+                    owned_sequences_by_column.insert(dep.dependent_object_id);
+                }
+            }
+        }
+
+        for (const auto& seq_id : owned_sequences_by_column)
+        {
+            std::vector<DependencyInfo> seq_dependents;
+            getDependentsInternal(seq_id, seq_dependents);
+            bool has_other = false;
+            for (const auto& dep : seq_dependents)
+            {
+                if (column_ids.find(dep.dependent_object_id) == column_ids.end())
+                {
+                    has_other = true;
+                    break;
+                }
+            }
+            if (has_other)
+            {
+                LOG_INFO(CATALOG, "Skipping owned sequence drop; sequence has other dependents");
+                continue;
+            }
+
+            status = dropSequenceInternal(seq_id, ctx);
+            if (status != Status::OK)
+            {
+                LOG_ERROR(CATALOG, "Failed to drop owned sequence during table drop");
+                return status;
+            }
+        }
+    }
+
     // 6. Soft delete the table record (mark is_valid = 0)
     status = deleteTableRecord(table_id, ctx);
     if (status != Status::OK)
@@ -13667,19 +14197,75 @@ Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow
                                           .count();
     shadow_index.build_completed_time = 0;
     shadow_index.logical_index_id = existing_index.logical_index_id;
+    shadow_index.root_page = 0;
 
-    // Create the actual index structure
-    // TODO: This needs to call the appropriate index creation method based on index_type
-    // For now, just save the catalog entry
-
-    Status status = writeIndexRecord(shadow_index, ctx);
+    // Allocate root page for shadow index
+    PageManager *pm = db_->page_manager();
+    if (!pm)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+    Status status = pm->allocatePage(shadow_index.root_page, ctx);
     if (status != Status::OK)
     {
+        return status;
+    }
+
+    status = writeIndexRecord(shadow_index, ctx);
+    if (status != Status::OK)
+    {
+        pm->freePage(shadow_index.root_page, ctx);
         SET_ERROR_CONTEXT(ctx, status, "Failed to write shadow index record");
         return status;
     }
 
     // Update cache
+    index_cache_[shadow_index.index_id] = shadow_index;
+
+    // Update root page to persist catalog metadata
+    status = writeCatalogRoot(ctx);
+    if (status == Status::OK)
+    {
+        db_->sync(ctx);
+    }
+
+    // Instantiate actual index object
+    void *index_ptr = nullptr;
+    status = IndexFactory::createIndex(shadow_index.index_type, db_, shadow_index, &index_ptr, ctx);
+    if (status != Status::OK)
+    {
+        index_cache_.erase(shadow_index.index_id);
+        pm->freePage(shadow_index.root_page, ctx);
+        return status;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(index_object_mutex_);
+        index_object_cache_[shadow_index.index_id] = {index_ptr, shadow_index.index_type};
+    }
+
+    ID dep_id;
+    status = createDependency(
+        shadow_index.index_id, ObjectType::INDEX,
+        shadow_index.table_id, ObjectType::TABLE,
+        DependencyType::AUTO,
+        dep_id,
+        ctx
+    );
+    if (status != Status::OK)
+    {
+        {
+            std::lock_guard<std::mutex> lock(index_object_mutex_);
+            index_object_cache_.erase(shadow_index.index_id);
+        }
+        index_cache_.erase(shadow_index.index_id);
+        pm->freePage(shadow_index.root_page, ctx);
+        LOG_ERROR(CATALOG, "Failed to create dependency for shadow index");
+        return status;
+    }
+
+    shadow_index.dependency_id = dep_id;
     index_cache_[shadow_index.index_id] = shadow_index;
 
     shadow_index_id_out = shadow_index.index_id;
@@ -13988,7 +14574,7 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
     // DROP COLUMN implementation (ALPHA Phase 1)
     // Soft deletes column with MGA compliance and CASCADE support
 
-    std::lock_guard<CatalogMutex> lock(mutex_);
+    std::scoped_lock lock(mutex_, sequence_cache_mutex_, dependency_cache_mutex_);
 
     // 1. Check if table exists in cache
     auto table_it = table_cache_.find(table_id);
@@ -14094,6 +14680,52 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
         for (const auto &index : dependent_indexes)
         {
             status = dropIndex(index.index_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+    }
+
+    // 5.5 Drop owned sequences (OWNED BY column)
+    std::vector<DependencyInfo> dependents;
+    getDependentsInternal(column_id, dependents);
+    std::vector<DependencyInfo> owned_sequences;
+    for (const auto& dep : dependents)
+    {
+        if (dep.dependent_type == ObjectType::SEQUENCE &&
+            dep.dependency_type == DependencyType::AUTO)
+        {
+            owned_sequences.push_back(dep);
+        }
+    }
+
+    if (!owned_sequences.empty())
+    {
+        for (const auto& dep : owned_sequences)
+        {
+            std::vector<DependencyInfo> seq_dependents;
+            getDependentsInternal(dep.dependent_object_id, seq_dependents);
+            bool has_other = false;
+            for (const auto& seq_dep : seq_dependents)
+            {
+                if (seq_dep.dependent_object_id != column_id)
+                {
+                    has_other = true;
+                    break;
+                }
+            }
+            if (has_other)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                                  "Cannot drop column with owned sequences that have other dependents");
+                return Status::CONSTRAINT_VIOLATION;
+            }
+        }
+
+        for (const auto& dep : owned_sequences)
+        {
+            status = dropSequenceInternal(dep.dependent_object_id, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -15189,8 +15821,8 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
         {
             if (!db_ || !db_->domain_manager())
             {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Domain manager unavailable");
-                return Status::NOT_IMPLEMENTED;
+                SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Domain manager unavailable");
+                return Status::INTERNAL_ERROR;
             }
             return db_->domain_manager()->renameDomain(object_id, new_name, ctx);
         }
@@ -15348,6 +15980,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
         case ObjectType::ROLE:
         {
             return updateRole(object_id, new_name, std::nullopt, std::nullopt,
+                              std::nullopt,
                               std::nullopt, ctx);
         }
 
@@ -15394,6 +16027,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
         case ObjectType::GROUP:
         {
             return updateGroup(object_id, new_name, std::nullopt, std::nullopt,
+                               std::nullopt,
                                std::nullopt, ctx);
         }
 
@@ -16896,9 +17530,12 @@ auto CatalogManager::listTruncateJobs(std::vector<std::shared_ptr<TruncateJob>> 
 auto CatalogManager::createSequence(const ID& schema_id, const std::string& name,
                                      int64_t increment_by, int64_t min_value, int64_t max_value,
                                      int64_t start_value, int64_t cache_size, bool cycle,
-                                     ErrorContext* ctx) -> Status
+                                     ErrorContext* ctx,
+                                     const TempObjectOptions* temp_opts,
+                                     const ID& owned_by_table_id,
+                                     const ID& owned_by_column_id) -> Status
 {
-    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    std::scoped_lock lock(sequence_cache_mutex_, dependency_cache_mutex_);
 
     LOG_INFO(CATALOG, "Creating sequence '%s' with increment=%ld, min=%ld, max=%ld, start=%ld",
              name.c_str(), increment_by, min_value, max_value, start_value);
@@ -16937,6 +17574,9 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
         }
     }
 
+    const bool is_temporary =
+        temp_opts && temp_opts->temp_metadata_scope == TempMetadataScope::SESSION;
+
     // Generate sequence ID
     ID sequence_id = generateUuidV7();
 
@@ -16946,11 +17586,13 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
     state->schema_id = schema_id;  // WP-2 CAT-M1: Track schema for cascade drop
     state->name = name;  // Store name for cleanup
     state->name_is_delimited = false;
-    state->owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: use session owner
+    state->owner_id = resolveOwnerFromSession(this, ctx);
     if (isZeroUuidLocal(state->owner_id))
     {
         return ctx ? ctx->code : Status::PAGE_CORRUPT;
     }
+    state->owned_by_table_id = owned_by_table_id;
+    state->owned_by_column_id = owned_by_column_id;
     state->current_value.store(start_value);
     state->increment_by = increment_by;
     state->min_value = min_value;
@@ -16960,6 +17602,10 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
     state->cycle = cycle;
     state->created_time = std::chrono::system_clock::now().time_since_epoch().count();
     state->last_modified_time = state->created_time;
+    state->temp_metadata_scope =
+        temp_opts ? temp_opts->temp_metadata_scope : TempMetadataScope::NONE;
+    state->creating_session_id = temp_opts ? temp_opts->creating_session_id : ID{};
+    state->creating_transaction_id = temp_opts ? temp_opts->creating_transaction_id : 0;
 
     // Add to cache
     sequence_cache_[sequence_id] = state;
@@ -16971,14 +17617,42 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
             sequence_id;
     }
 
-    // Persist to disk
-    Status persist_status = writeSequenceRecord(*state, ctx);
-    if (persist_status != Status::OK)
+    // Persist to disk (skip for session-scoped temporary sequences)
+    if (!is_temporary)
     {
-        sequence_cache_.erase(sequence_id);
-        std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
-        sequence_name_to_id_.erase(makeSequenceNameKey(schema_id, name, state->name_is_delimited));
-        return persist_status;
+        Status persist_status = writeSequenceRecord(*state, ctx);
+        if (persist_status != Status::OK)
+        {
+            sequence_cache_.erase(sequence_id);
+            std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
+            sequence_name_to_id_.erase(makeSequenceNameKey(schema_id, name, state->name_is_delimited));
+            return persist_status;
+        }
+    }
+
+    if (!isZeroUuidLocal(owned_by_column_id))
+    {
+        ID dep_id{};
+        Status dep_status = createDependencyInternal(
+            sequence_id, ObjectType::SEQUENCE,
+            owned_by_column_id, ObjectType::COLUMN,
+            DependencyType::AUTO,
+            dep_id,
+            ctx);
+        if (dep_status != Status::OK)
+        {
+            if (!is_temporary)
+            {
+                auto predicate = [&sequence_id](const SequenceRecord& rec) {
+                    return rec.sequence_id == sequence_id && rec.is_valid == 1;
+                };
+                deleteRecordFromHeapPage<SequenceRecord>(sequences_table_page_, predicate, ctx);
+            }
+            sequence_cache_.erase(sequence_id);
+            std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
+            sequence_name_to_id_.erase(makeSequenceNameKey(schema_id, name, state->name_is_delimited));
+            return dep_status;
+        }
     }
 
     LOG_INFO(CATALOG, "Created sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
@@ -17001,6 +17675,17 @@ auto CatalogManager::alterSequence(const ID& sequence_id, const std::optional<in
     }
 
     auto state = it->second;
+
+    if (state->temp_metadata_scope == TempMetadataScope::SESSION)
+    {
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+        if (isZeroUuidLocal(session_id) || state->creating_session_id != session_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+            return Status::NOT_FOUND;
+        }
+    }
 
     // Lock config mutex for thread-safe parameter updates
     std::lock_guard<std::mutex> config_lock(state->config_mutex);
@@ -17058,32 +17743,35 @@ auto CatalogManager::alterSequence(const ID& sequence_id, const std::optional<in
 
     state->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
 
-    SequenceRecord record{};
-    record.sequence_id = state->sequence_id;
-    record.schema_id = state->schema_id;
-    std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
-    std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
-    std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
-    record.owner_id = state->owner_id;
-    record.current_value = state->current_value.load();
-    record.increment_by = state->increment_by;
-    record.min_value = state->min_value;
-    record.max_value = state->max_value;
-    record.start_value = state->start_value;
-    record.cache_size = state->cache_size;
-    record.cycle = state->cycle ? 1 : 0;
-    record.name_is_delimited = state->name_is_delimited ? 1 : 0;
-    record.created_time = state->created_time;
-    record.last_modified_time = state->last_modified_time;
-    record.is_valid = 1;
-
-    auto predicate = [&sequence_id](const SequenceRecord& rec) {
-        return rec.sequence_id == sequence_id && rec.is_valid == 1;
-    };
-    Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
-    if (persist_status != Status::OK)
+    if (state->temp_metadata_scope != TempMetadataScope::SESSION)
     {
-        return persist_status;
+        SequenceRecord record{};
+        record.sequence_id = state->sequence_id;
+        record.schema_id = state->schema_id;
+        std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
+        std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+        std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
+        record.owner_id = state->owner_id;
+        record.current_value = state->current_value.load();
+        record.increment_by = state->increment_by;
+        record.min_value = state->min_value;
+        record.max_value = state->max_value;
+        record.start_value = state->start_value;
+        record.cache_size = state->cache_size;
+        record.cycle = state->cycle ? 1 : 0;
+        record.name_is_delimited = state->name_is_delimited ? 1 : 0;
+        record.created_time = state->created_time;
+        record.last_modified_time = state->last_modified_time;
+        record.is_valid = 1;
+
+        auto predicate = [&sequence_id](const SequenceRecord& rec) {
+            return rec.sequence_id == sequence_id && rec.is_valid == 1;
+        };
+        Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
+        if (persist_status != Status::OK)
+        {
+            return persist_status;
+        }
     }
 
     return Status::OK;
@@ -17099,9 +17787,22 @@ auto CatalogManager::dropSequenceInternal(const ID& sequence_id, ErrorContext* c
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
         return Status::NOT_FOUND;
     }
-    std::string seq_name = it->second->name;
-    ID seq_schema_id = it->second->schema_id;
-    bool seq_name_is_delimited = it->second->name_is_delimited;
+    auto state = it->second;
+    if (state->temp_metadata_scope == TempMetadataScope::SESSION)
+    {
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+        if (isZeroUuidLocal(session_id) || state->creating_session_id != session_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+            return Status::NOT_FOUND;
+        }
+    }
+
+    bool is_temporary = (state->temp_metadata_scope == TempMetadataScope::SESSION);
+    std::string seq_name = state->name;
+    ID seq_schema_id = state->schema_id;
+    bool seq_name_is_delimited = state->name_is_delimited;
 
     // Check dependencies (assumes dependency_cache_mutex_ held)
     std::vector<DependencyInfo> deps;
@@ -17127,14 +17828,17 @@ auto CatalogManager::dropSequenceInternal(const ID& sequence_id, ErrorContext* c
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    // Mark record invalid on disk (MGA delete) before evicting caches
-    auto predicate = [&sequence_id](const SequenceRecord& rec) {
-        return rec.sequence_id == sequence_id && rec.is_valid == 1;
-    };
-    Status persist_status = deleteRecordFromHeapPage<SequenceRecord>(
-        sequences_table_page_, predicate, ctx);
-    if (persist_status != Status::OK) {
-        return persist_status;
+    if (!is_temporary)
+    {
+        // Mark record invalid on disk (MGA delete) before evicting caches
+        auto predicate = [&sequence_id](const SequenceRecord& rec) {
+            return rec.sequence_id == sequence_id && rec.is_valid == 1;
+        };
+        Status persist_status = deleteRecordFromHeapPage<SequenceRecord>(
+            sequences_table_page_, predicate, ctx);
+        if (persist_status != Status::OK) {
+            return persist_status;
+        }
     }
 
     // Remove from cache (assumes sequence_cache_mutex_ held)
@@ -17192,6 +17896,17 @@ auto CatalogManager::getSequenceInternal(const ID& schema_id, const std::string&
     // Lock config mutex for consistent reads (this is a per-sequence lock, not the cache mutex)
     std::lock_guard<std::mutex> config_lock(state->config_mutex);
 
+    if (state->temp_metadata_scope == TempMetadataScope::SESSION)
+    {
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+        if (isZeroUuidLocal(session_id) || state->creating_session_id != session_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found in schema");
+            return Status::NOT_FOUND;
+        }
+    }
+
     if (!isZeroUuidLocal(schema_id) && state->schema_id != schema_id)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found in schema");
@@ -17203,6 +17918,8 @@ auto CatalogManager::getSequenceInternal(const ID& schema_id, const std::string&
     info_out.schema_id = state->schema_id;
     info_out.name = state->name;
     info_out.owner_id = state->owner_id;
+    info_out.owned_by_table_id = state->owned_by_table_id;
+    info_out.owned_by_column_id = state->owned_by_column_id;
     info_out.current_value = state->current_value.load();
     info_out.increment_by = state->increment_by;
     info_out.min_value = state->min_value;
@@ -17212,6 +17929,9 @@ auto CatalogManager::getSequenceInternal(const ID& schema_id, const std::string&
     info_out.cycle = state->cycle;
     info_out.created_time = state->created_time;
     info_out.last_modified_time = state->last_modified_time;
+    info_out.temp_metadata_scope = state->temp_metadata_scope;
+    info_out.creating_session_id = state->creating_session_id;
+    info_out.creating_transaction_id = state->creating_transaction_id;
 
     LOG_DEBUG(CATALOG, "Retrieved sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
 
@@ -17238,6 +17958,17 @@ auto CatalogManager::sequenceNextVal(const ID& sequence_id, int64_t& value_out,
     }
 
     auto state = it->second;
+
+    if (state->temp_metadata_scope == TempMetadataScope::SESSION)
+    {
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+        if (isZeroUuidLocal(session_id) || state->creating_session_id != session_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+            return Status::NOT_FOUND;
+        }
+    }
 
     // Lock config mutex to ensure consistent reads of increment/min/max
     std::lock_guard<std::mutex> config_lock(state->config_mutex);
@@ -17278,34 +18009,37 @@ auto CatalogManager::sequenceNextVal(const ID& sequence_id, int64_t& value_out,
 
     value_out = new_value;
 
-    // Persist current_value so sequences survive restart
-    SequenceRecord record{};
-    record.sequence_id = state->sequence_id;
-    record.schema_id = state->schema_id;
-    std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
-    std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
-    std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
-    record.owner_id = state->owner_id;
-    record.current_value = state->current_value.load();
-    record.increment_by = state->increment_by;
-    record.min_value = state->min_value;
-    record.max_value = state->max_value;
-    record.start_value = state->start_value;
-    record.cache_size = state->cache_size;
-    record.cycle = state->cycle ? 1 : 0;
-    record.name_is_delimited = state->name_is_delimited ? 1 : 0;
-    record.created_time = state->created_time;
-    record.last_modified_time = state->last_modified_time;
-    record.is_valid = 1;
-
-    auto predicate = [&sequence_id](const SequenceRecord& rec) {
-        return rec.sequence_id == sequence_id && rec.is_valid == 1;
-    };
-    Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
-    if (persist_status != Status::OK)
+    if (state->temp_metadata_scope != TempMetadataScope::SESSION)
     {
-        state->current_value.store(original_value);
-        return persist_status;
+        // Persist current_value so sequences survive restart
+        SequenceRecord record{};
+        record.sequence_id = state->sequence_id;
+        record.schema_id = state->schema_id;
+        std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
+        std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+        std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
+        record.owner_id = state->owner_id;
+        record.current_value = state->current_value.load();
+        record.increment_by = state->increment_by;
+        record.min_value = state->min_value;
+        record.max_value = state->max_value;
+        record.start_value = state->start_value;
+        record.cache_size = state->cache_size;
+        record.cycle = state->cycle ? 1 : 0;
+        record.name_is_delimited = state->name_is_delimited ? 1 : 0;
+        record.created_time = state->created_time;
+        record.last_modified_time = state->last_modified_time;
+        record.is_valid = 1;
+
+        auto predicate = [&sequence_id](const SequenceRecord& rec) {
+            return rec.sequence_id == sequence_id && rec.is_valid == 1;
+        };
+        Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
+        if (persist_status != Status::OK)
+        {
+            state->current_value.store(original_value);
+            return persist_status;
+        }
     }
 
     LOG_DEBUG(CATALOG, "NEXTVAL returned %ld", new_value);
@@ -17326,6 +18060,17 @@ auto CatalogManager::sequenceSetVal(const ID& sequence_id, int64_t value, bool i
     }
 
     auto state = it->second;
+
+    if (state->temp_metadata_scope == TempMetadataScope::SESSION)
+    {
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+        if (isZeroUuidLocal(session_id) || state->creating_session_id != session_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+            return Status::NOT_FOUND;
+        }
+    }
 
     // Lock config mutex
     std::lock_guard<std::mutex> config_lock(state->config_mutex);
@@ -17348,33 +18093,36 @@ auto CatalogManager::sequenceSetVal(const ID& sequence_id, int64_t value, bool i
         state->current_value.store(value - state->increment_by);
     }
 
-    SequenceRecord record{};
-    record.sequence_id = state->sequence_id;
-    record.schema_id = state->schema_id;
-    std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
-    std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
-    std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
-    record.owner_id = state->owner_id;
-    record.current_value = state->current_value.load();
-    record.increment_by = state->increment_by;
-    record.min_value = state->min_value;
-    record.max_value = state->max_value;
-    record.start_value = state->start_value;
-    record.cache_size = state->cache_size;
-    record.cycle = state->cycle ? 1 : 0;
-    record.name_is_delimited = state->name_is_delimited ? 1 : 0;
-    record.created_time = state->created_time;
-    record.last_modified_time = state->last_modified_time;
-    record.is_valid = 1;
-
-    auto predicate = [&sequence_id](const SequenceRecord& rec) {
-        return rec.sequence_id == sequence_id && rec.is_valid == 1;
-    };
-    Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
-    if (persist_status != Status::OK)
+    if (state->temp_metadata_scope != TempMetadataScope::SESSION)
     {
-        state->current_value.store(original_value);
-        return persist_status;
+        SequenceRecord record{};
+        record.sequence_id = state->sequence_id;
+        record.schema_id = state->schema_id;
+        std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
+        std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+        std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
+        record.owner_id = state->owner_id;
+        record.current_value = state->current_value.load();
+        record.increment_by = state->increment_by;
+        record.min_value = state->min_value;
+        record.max_value = state->max_value;
+        record.start_value = state->start_value;
+        record.cache_size = state->cache_size;
+        record.cycle = state->cycle ? 1 : 0;
+        record.name_is_delimited = state->name_is_delimited ? 1 : 0;
+        record.created_time = state->created_time;
+        record.last_modified_time = state->last_modified_time;
+        record.is_valid = 1;
+
+        auto predicate = [&sequence_id](const SequenceRecord& rec) {
+            return rec.sequence_id == sequence_id && rec.is_valid == 1;
+        };
+        Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
+        if (persist_status != Status::OK)
+        {
+            state->current_value.store(original_value);
+            return persist_status;
+        }
     }
 
     LOG_INFO(CATALOG, "SETVAL set sequence to %ld (is_called=%s)",
@@ -17394,6 +18142,15 @@ auto CatalogManager::getSequenceIdByNameInternal(const ID& schema_id, const std:
         if (!state)
         {
             continue;
+        }
+        if (state->temp_metadata_scope == TempMetadataScope::SESSION)
+        {
+            ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+            ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+            if (isZeroUuidLocal(session_id) || state->creating_session_id != session_id)
+            {
+                continue;
+            }
         }
         if (!isZeroUuidLocal(schema_id) && state->schema_id != schema_id)
         {
@@ -17431,11 +18188,18 @@ auto CatalogManager::listSequencesBySchema(const ID& schema_id, std::vector<ID>&
 {
     std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
     sequence_ids_out.clear();
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
     for (const auto& [seq_id, state] : sequence_cache_)
     {
         if (state && state->schema_id == schema_id)
         {
+            if (state->temp_metadata_scope == TempMetadataScope::SESSION &&
+                (isZeroUuidLocal(session_id) || state->creating_session_id != session_id))
+            {
+                continue;
+            }
             sequence_ids_out.push_back(seq_id);
         }
     }
@@ -17448,10 +18212,17 @@ auto CatalogManager::listSequences(const ID& schema_id, std::vector<SequenceInfo
 {
     std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
     sequences_out.clear();
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
     for (const auto& [seq_id, state] : sequence_cache_)
     {
         if (!state)
+        {
+            continue;
+        }
+        if (state->temp_metadata_scope == TempMetadataScope::SESSION &&
+            (isZeroUuidLocal(session_id) || state->creating_session_id != session_id))
         {
             continue;
         }
@@ -17475,6 +18246,9 @@ auto CatalogManager::listSequences(const ID& schema_id, std::vector<SequenceInfo
         info.cycle = state->cycle;
         info.created_time = state->created_time;
         info.last_modified_time = state->last_modified_time;
+        info.temp_metadata_scope = state->temp_metadata_scope;
+        info.creating_session_id = state->creating_session_id;
+        info.creating_transaction_id = state->creating_transaction_id;
         sequences_out.push_back(std::move(info));
     }
 
@@ -17494,6 +18268,16 @@ auto CatalogManager::getSequenceById(const ID& sequence_id, SequenceInfo& info_o
     }
 
     const auto& state = it->second;
+    if (state->temp_metadata_scope == TempMetadataScope::SESSION)
+    {
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+        if (isZeroUuidLocal(session_id) || state->creating_session_id != session_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+            return Status::NOT_FOUND;
+        }
+    }
     info_out.sequence_id = sequence_id;
     info_out.schema_id = state->schema_id;
     info_out.name = state->name;
@@ -17508,6 +18292,56 @@ auto CatalogManager::getSequenceById(const ID& sequence_id, SequenceInfo& info_o
     info_out.cycle = state->cycle;
     info_out.created_time = state->created_time;
     info_out.last_modified_time = state->last_modified_time;
+    info_out.temp_metadata_scope = state->temp_metadata_scope;
+    info_out.creating_session_id = state->creating_session_id;
+    info_out.creating_transaction_id = state->creating_transaction_id;
+
+    return Status::OK;
+}
+
+auto CatalogManager::listTemporarySequencesForSession(const ID& session_id,
+                                                      std::vector<SequenceInfo>& sequences_out,
+                                                      ErrorContext* /* ctx */) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    sequences_out.clear();
+
+    if (isZeroUuidLocal(session_id))
+    {
+        return Status::OK;
+    }
+
+    for (const auto& [seq_id, state] : sequence_cache_)
+    {
+        if (!state || state->temp_metadata_scope != TempMetadataScope::SESSION)
+        {
+            continue;
+        }
+        if (state->creating_session_id != session_id)
+        {
+            continue;
+        }
+
+        SequenceInfo info;
+        info.sequence_id = seq_id;
+        info.schema_id = state->schema_id;
+        info.name = state->name;
+        info.name_is_delimited = state->name_is_delimited;
+        info.owner_id = state->owner_id;
+        info.current_value = state->current_value.load();
+        info.increment_by = state->increment_by;
+        info.min_value = state->min_value;
+        info.max_value = state->max_value;
+        info.start_value = state->start_value;
+        info.cache_size = state->cache_size;
+        info.cycle = state->cycle;
+        info.created_time = state->created_time;
+        info.last_modified_time = state->last_modified_time;
+        info.temp_metadata_scope = state->temp_metadata_scope;
+        info.creating_session_id = state->creating_session_id;
+        info.creating_transaction_id = state->creating_transaction_id;
+        sequences_out.push_back(std::move(info));
+    }
 
     return Status::OK;
 }
@@ -17521,9 +18355,13 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
                                   bool check_option, bool materialized,
                                   const std::vector<std::string>& column_names,
                                   const ID& materialized_table_id,
-                                  ErrorContext* ctx) -> Status
+                                  ErrorContext* ctx,
+                                  const TempObjectOptions* temp_opts) -> Status
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    const bool is_temporary =
+        temp_opts && temp_opts->temp_metadata_scope == TempMetadataScope::SESSION;
 
     // Check if view exists using case-insensitive comparison per Firebird SQL rules
     ID existing_view_id;
@@ -17555,6 +18393,12 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
         // Update existing view (OR REPLACE)
         ViewInfo& view = view_cache_[existing_view_id];
         ViewInfo old_view = view;
+        if (is_temporary != (view.temp_metadata_scope == TempMetadataScope::SESSION))
+        {
+            std::string msg = "View already exists with different temporary scope: " + name;
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, msg.c_str());
+            return Status::CONSTRAINT_VIOLATION;
+        }
         view.definition = definition;
         view.check_option = check_option;
         view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
@@ -17567,11 +18411,14 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
             view.last_refresh_time = std::chrono::system_clock::now().time_since_epoch().count();
         }
 
-        Status persist_status = updateViewRecord(view, ctx);
-        if (persist_status != Status::OK)
+        if (view.temp_metadata_scope != TempMetadataScope::SESSION)
         {
-            view = old_view;
-            return persist_status;
+            Status persist_status = updateViewRecord(view, ctx);
+            if (persist_status != Status::OK)
+            {
+                view = old_view;
+                return persist_status;
+            }
         }
 
         LOG_INFO(CATALOG, "Replaced %sview '%s'", materialized ? "materialized " : "", name.c_str());
@@ -17583,7 +18430,7 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     view.view_id = generateUuidV7();
     view.schema_id = schema_id;
     view.name = name;
-    view.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+    view.owner_id = resolveOwnerFromSession(this, ctx);
     if (isZeroUuidLocal(view.owner_id))
     {
         return ctx ? ctx->code : Status::PAGE_CORRUPT;
@@ -17594,6 +18441,10 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     view.column_names = column_names;
     view.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     view.last_modified_time = view.created_time;
+    view.temp_metadata_scope =
+        temp_opts ? temp_opts->temp_metadata_scope : TempMetadataScope::NONE;
+    view.creating_session_id = temp_opts ? temp_opts->creating_session_id : ID{};
+    view.creating_transaction_id = temp_opts ? temp_opts->creating_transaction_id : 0;
 
     // ALPHA Phase 1 - Materialized Views
     if (materialized) {
@@ -17607,12 +18458,15 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     view_cache_[view.view_id] = view;
     view_name_to_id_[makeViewNameKey(schema_id, name, view.name_is_delimited)] = view.view_id;
 
-    Status persist_status = writeViewRecord(view, ctx);
-    if (persist_status != Status::OK)
+    if (!is_temporary)
     {
-        view_cache_.erase(view.view_id);
-        view_name_to_id_.erase(makeViewNameKey(schema_id, name, view.name_is_delimited));
-        return persist_status;
+        Status persist_status = writeViewRecord(view, ctx);
+        if (persist_status != Status::OK)
+        {
+            view_cache_.erase(view.view_id);
+            view_name_to_id_.erase(makeViewNameKey(schema_id, name, view.name_is_delimited));
+            return persist_status;
+        }
     }
 
     LOG_INFO(CATALOG, "Created %sview '%s'", materialized ? "materialized " : "", name.c_str());
@@ -17635,6 +18489,17 @@ auto CatalogManager::dropView(const ID& view_id, bool cascade, ErrorContext* ctx
         view_info = it->second;
         view_name = it->second.name;
     }
+    if (view_info.temp_metadata_scope == TempMetadataScope::SESSION)
+    {
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+        if (isZeroUuidLocal(session_id) || view_info.creating_session_id != session_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+            return Status::NOT_FOUND;
+        }
+    }
+    bool is_temporary = (view_info.temp_metadata_scope == TempMetadataScope::SESSION);
 
     // 2. Check for dependencies using dependency API (not string matching!)
     std::vector<DependencyInfo> all_deps;
@@ -17682,14 +18547,17 @@ auto CatalogManager::dropView(const ID& view_id, bool cascade, ErrorContext* ctx
     // 7. Clear dependencies
     clearDependenciesFor(view_id, ctx);
 
-    // 8. Mark view record invalid on disk
-    auto predicate = [&view_id](const ViewRecord& rec) {
-        return rec.view_id == view_id && rec.is_valid == 1;
-    };
-    status = deleteRecordFromHeapPage<ViewRecord>(views_table_page_, predicate, ctx);
-    if (status != Status::OK)
+    if (!is_temporary)
     {
-        return status;
+        // 8. Mark view record invalid on disk
+        auto predicate = [&view_id](const ViewRecord& rec) {
+            return rec.view_id == view_id && rec.is_valid == 1;
+        };
+        status = deleteRecordFromHeapPage<ViewRecord>(views_table_page_, predicate, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
     }
 
     // 9. Remove from cache
@@ -17961,6 +18829,8 @@ auto CatalogManager::getView(const ID& schema_id, const std::string& name,
                                ViewInfo& info_out, ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
     if (!isZeroUuidLocal(schema_id))
     {
@@ -17968,8 +18838,17 @@ auto CatalogManager::getView(const ID& schema_id, const std::string& name,
         auto it = view_name_to_id_.find(key);
         if (it != view_name_to_id_.end())
         {
-            info_out = view_cache_[it->second];
-            return Status::OK;
+            const auto& candidate = view_cache_[it->second];
+            if (candidate.temp_metadata_scope == TempMetadataScope::SESSION &&
+                (isZeroUuidLocal(session_id) || candidate.creating_session_id != session_id))
+            {
+                // Hide temp view from other sessions.
+            }
+            else
+            {
+                info_out = candidate;
+                return Status::OK;
+            }
         }
     }
 
@@ -17983,6 +18862,11 @@ auto CatalogManager::getView(const ID& schema_id, const std::string& name,
         if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
                                         view_info.name, view_info.name_is_delimited))
         {
+            if (view_info.temp_metadata_scope == TempMetadataScope::SESSION &&
+                (isZeroUuidLocal(session_id) || view_info.creating_session_id != session_id))
+            {
+                continue;
+            }
             info_out = view_info;
             return Status::OK;
         }
@@ -17997,6 +18881,8 @@ auto CatalogManager::listViewsForSchema(const ID& schema_id, std::vector<ViewInf
                                         ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
     views_out.clear();
     views_out.reserve(view_cache_.size());
@@ -18005,6 +18891,11 @@ auto CatalogManager::listViewsForSchema(const ID& schema_id, std::vector<ViewInf
     {
         if (view_info.schema_id == schema_id)
         {
+            if (view_info.temp_metadata_scope == TempMetadataScope::SESSION &&
+                (isZeroUuidLocal(session_id) || view_info.creating_session_id != session_id))
+            {
+                continue;
+            }
             views_out.push_back(view_info);
         }
     }
@@ -18017,9 +18908,16 @@ auto CatalogManager::getViewIdByName(const std::string& name, ID& id_out,
                                        ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
     for (const auto& [view_id, view_info] : view_cache_)
     {
+        if (view_info.temp_metadata_scope == TempMetadataScope::SESSION &&
+            (isZeroUuidLocal(session_id) || view_info.creating_session_id != session_id))
+        {
+            continue;
+        }
         if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
                                         view_info.name, view_info.name_is_delimited))
         {
@@ -18036,8 +18934,15 @@ auto CatalogManager::getViewIdByName(const std::string& name, ID& id_out,
 auto CatalogManager::isView(const std::string& name) -> bool
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
     for (const auto& [view_id, view_info] : view_cache_)
     {
+        if (view_info.temp_metadata_scope == TempMetadataScope::SESSION &&
+            (isZeroUuidLocal(session_id) || view_info.creating_session_id != session_id))
+        {
+            continue;
+        }
         if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
                                         view_info.name, view_info.name_is_delimited))
         {
@@ -18052,9 +18957,18 @@ auto CatalogManager::getViewById(const ID& view_id, ViewInfo& info_out,
                                   ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
     auto it = view_cache_.find(view_id);
     if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found by ID");
+        return Status::NOT_FOUND;
+    }
+
+    if (it->second.temp_metadata_scope == TempMetadataScope::SESSION &&
+        (isZeroUuidLocal(session_id) || it->second.creating_session_id != session_id))
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found by ID");
         return Status::NOT_FOUND;
@@ -18069,6 +18983,8 @@ auto CatalogManager::getAllMaterializedViews(std::vector<ViewInfo>& views_out,
                                               ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
 
     views_out.clear();
     views_out.reserve(view_cache_.size());
@@ -18077,8 +18993,41 @@ auto CatalogManager::getAllMaterializedViews(std::vector<ViewInfo>& views_out,
     {
         if (view_info.materialized)
         {
+            if (view_info.temp_metadata_scope == TempMetadataScope::SESSION &&
+                (isZeroUuidLocal(session_id) || view_info.creating_session_id != session_id))
+            {
+                continue;
+            }
             views_out.push_back(view_info);
         }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::listTemporaryViewsForSession(const ID& session_id,
+                                                  std::vector<ViewInfo>& views_out,
+                                                  ErrorContext* /* ctx */) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    views_out.clear();
+
+    if (isZeroUuidLocal(session_id))
+    {
+        return Status::OK;
+    }
+
+    for (const auto& [view_id, view_info] : view_cache_)
+    {
+        if (view_info.temp_metadata_scope != TempMetadataScope::SESSION)
+        {
+            continue;
+        }
+        if (view_info.creating_session_id != session_id)
+        {
+            continue;
+        }
+        views_out.push_back(view_info);
     }
 
     return Status::OK;
@@ -20625,7 +21574,7 @@ auto CatalogManager::setComment(const ID& object_id, ObjectType object_type,
     comment.comment_id = generateUuidV7();  // Generate new ID each time
     comment.object_id = object_id;
     comment.object_type = object_type;
-    comment.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session
+    comment.owner_id = resolveOwnerFromSession(this, ctx);
     if (isZeroUuidLocal(comment.owner_id))
     {
         return ctx ? ctx->code : Status::PAGE_CORRUPT;
@@ -21034,6 +21983,8 @@ auto CatalogManager::writeSequenceRecord(const SequenceState &state, ErrorContex
     std::string truncated = UTF8Utils::truncateToBytes(state.name, sizeof(record.sequence_name));
     std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
     record.owner_id = state.owner_id;
+    record.owned_by_table_id = state.owned_by_table_id;
+    record.owned_by_column_id = state.owned_by_column_id;
     record.current_value = state.current_value.load();
     record.increment_by = state.increment_by;
     record.min_value = state.min_value;
@@ -21066,6 +22017,8 @@ auto CatalogManager::readSequenceRecords(ErrorContext *ctx) -> Status
         info.name = record.sequence_name;
         info.name_is_delimited = record.name_is_delimited != 0;
         info.owner_id = record.owner_id;
+        info.owned_by_table_id = record.owned_by_table_id;
+        info.owned_by_column_id = record.owned_by_column_id;
         info.current_value = record.current_value;
         info.increment_by = record.increment_by;
         info.min_value = record.min_value;
@@ -21093,6 +22046,8 @@ auto CatalogManager::readSequenceRecords(ErrorContext *ctx) -> Status
         state->name = info.name;
         state->name_is_delimited = info.name_is_delimited;
         state->owner_id = info.owner_id;
+        state->owned_by_table_id = info.owned_by_table_id;
+        state->owned_by_column_id = info.owned_by_column_id;
         state->current_value.store(info.current_value);
         state->increment_by = info.increment_by;
         state->min_value = info.min_value;
@@ -23417,9 +24372,25 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
 
     // Check if username already exists
     UserInfo existing_user;
+    SchemaInfo public_schema;
+    bool need_public_schema = isZeroUuidLocal(default_schema_id);
     // Note: getUserByName also locks mutex, so we temporarily unlock here
     lock.unlock();
     status = getUserByName(username, existing_user, ctx);
+    if (need_public_schema)
+    {
+        ErrorContext schema_ctx;
+        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        if (schema_status != Status::OK)
+        {
+            schema_status = getSchema("root", public_schema, &schema_ctx);
+        }
+        if (schema_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, schema_status, "Failed to resolve public schema");
+            return schema_status;
+        }
+    }
     lock.lock();
 
     if (status == Status::OK)
@@ -23456,7 +24427,7 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
             return status;
         }
     }
-    user_rec.default_schema_id = default_schema_id;
+    user_rec.default_schema_id = need_public_schema ? public_schema.schema_id : default_schema_id;
     user_rec.is_active = 1;
     user_rec.is_superuser = is_superuser ? 1 : 0;
     user_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
@@ -23755,6 +24726,7 @@ auto CatalogManager::listUsers(std::vector<UserInfo>& users_out,
 // Role operations
 
 auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id,
+                                const ID& default_schema_id,
                                 ID& role_id_out, ErrorContext* ctx) -> Status
 {
     std::unique_lock<CatalogMutex> lock(mutex_);
@@ -23771,8 +24743,24 @@ auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id
 
     // Check if role already exists
     RoleInfo existing_role;
+    CatalogManager::SchemaInfo public_schema;
+    bool need_public_schema = isZeroUuidLocal(default_schema_id);
     lock.unlock();
     status = getRoleByName(role_name, existing_role, ctx);
+    if (need_public_schema)
+    {
+        ErrorContext schema_ctx;
+        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        if (schema_status != Status::OK)
+        {
+            schema_status = getSchema("root", public_schema, &schema_ctx);
+        }
+        if (schema_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, schema_status, "Failed to resolve public schema");
+            return schema_status;
+        }
+    }
     lock.lock();
 
     if (status == Status::OK)
@@ -23796,7 +24784,8 @@ auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id
             sizeof(role_rec.role_name) - 1);
 
     role_rec.owner_id = owner_id;
-    role_rec.role_metadata_oid = 0;  // TODO Phase 1.4: TOAST integration
+    role_rec.default_schema_id = need_public_schema ? public_schema.schema_id : default_schema_id;
+    role_rec.role_metadata_oid = 0;
     role_rec.is_active = 1;
     role_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     role_rec.last_modified_time = role_rec.created_time;
@@ -23834,6 +24823,7 @@ auto CatalogManager::getRole(const ID& role_id, RoleInfo& role_out,
     role_out.role_id = result.record.role_id;
     role_out.role_name = std::string(result.record.role_name);
     role_out.owner_id = result.record.owner_id;
+    role_out.default_schema_id = result.record.default_schema_id;
 
     // Load role_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
@@ -23870,6 +24860,7 @@ auto CatalogManager::getRoleByName(const std::string& role_name, RoleInfo& role_
     role_out.role_id = result.record.role_id;
     role_out.role_name = std::string(result.record.role_name);
     role_out.owner_id = result.record.owner_id;
+    role_out.default_schema_id = result.record.default_schema_id;
 
     // Load role_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
@@ -23967,12 +24958,19 @@ auto CatalogManager::listRoles(std::vector<RoleInfo>& roles_out,
 
     roles_out.clear();
 
+    uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
+
     auto filter = [](const RoleRecord& rec) { return rec.is_valid; };
-    auto converter = [](const RoleRecord& rec, RoleInfo& info) {
+    auto converter = [this, xmin, ctx](const RoleRecord& rec, RoleInfo& info) {
         info.role_id = rec.role_id;
         info.role_name = std::string(rec.role_name);
         info.owner_id = rec.owner_id;
-        info.role_metadata = "";  // TODO: Read from TOAST
+        info.default_schema_id = rec.default_schema_id;
+        info.role_metadata.clear();
+        if (rec.role_metadata_oid != 0)
+        {
+            loadStringFromToast(rec.role_metadata_oid, xmin, info.role_metadata, ctx);
+        }
         info.is_active = rec.is_active != 0;
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
@@ -23986,6 +24984,7 @@ auto CatalogManager::listRoles(std::vector<RoleInfo>& roles_out,
 auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::string>& new_name,
                                 const std::optional<ID>& new_owner_id,
                                 const std::optional<std::string>& new_metadata,
+                                const std::optional<ID>& new_default_schema_id,
                                 const std::optional<bool>& is_active,
                                 ErrorContext* ctx) -> Status
 {
@@ -24071,11 +25070,38 @@ auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::stri
                     {
                         record->owner_id = new_owner_id.value();
                     }
+                    if (new_default_schema_id.has_value())
+                    {
+                        record->default_schema_id = new_default_schema_id.value();
+                    }
                     if (is_active.has_value())
                     {
                         record->is_active = is_active.value() ? 1 : 0;
                     }
-                    // new_metadata is stored in TOAST - TODO Phase 1.4
+                    if (new_metadata.has_value())
+                    {
+                        uint32_t old_oid = record->role_metadata_oid;
+                        uint32_t new_oid = 0;
+                        uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+                        if (xmin == 0)
+                        {
+                            xmin = config::DEFAULT_INITIAL_XID;
+                        }
+
+                        Status toast_status = storeStringInToast(new_metadata.value(),
+                                                                xmin, new_oid, ctx);
+                        if (toast_status != Status::OK)
+                        {
+                            bp->unpinPage(roles_table_page_, false, ctx);
+                            return toast_status;
+                        }
+
+                        if (old_oid != 0 && policy_toast_manager_)
+                        {
+                            policy_toast_manager_->deleteToastValue(old_oid, xmin, ctx);
+                        }
+                        record->role_metadata_oid = new_oid;
+                    }
                     record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
                     found = true;
                     break;
@@ -24265,7 +25291,9 @@ auto CatalogManager::getRoleMembers(const ID& role_id, std::vector<RoleMembershi
 // Group operations
 
 auto CatalogManager::createGroup(const std::string& group_name, GroupType group_type,
-                                 const std::string& external_id, ID& group_id_out,
+                                 const std::string& external_id,
+                                 const ID& default_schema_id,
+                                 ID& group_id_out,
                                  ErrorContext* ctx) -> Status
 {
     std::unique_lock<CatalogMutex> lock(mutex_);
@@ -24282,8 +25310,24 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
 
     // Check if group already exists
     GroupInfo existing_group;
+    CatalogManager::SchemaInfo public_schema;
+    bool need_public_schema = isZeroUuidLocal(default_schema_id);
     lock.unlock();
     status = getGroupByName(group_name, existing_group, ctx);
+    if (need_public_schema)
+    {
+        ErrorContext schema_ctx;
+        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        if (schema_status != Status::OK)
+        {
+            schema_status = getSchema("root", public_schema, &schema_ctx);
+        }
+        if (schema_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, schema_status, "Failed to resolve public schema");
+            return schema_status;
+        }
+    }
     lock.lock();
 
     if (status == Status::OK)
@@ -24313,7 +25357,8 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
             sizeof(group_rec.external_id) - 1);
 
     group_rec.group_type = static_cast<uint8_t>(group_type);
-    group_rec.group_metadata_oid = 0;  // TODO Phase 1.4: TOAST integration
+    group_rec.default_schema_id = need_public_schema ? public_schema.schema_id : default_schema_id;
+    group_rec.group_metadata_oid = 0;
     group_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     group_rec.last_modified_time = group_rec.created_time;
     group_rec.is_valid = 1;
@@ -24351,6 +25396,7 @@ auto CatalogManager::getGroup(const ID& group_id, GroupInfo& group_out,
     group_out.group_name = std::string(result.record.group_name);
     group_out.external_id = std::string(result.record.external_id);
     group_out.group_type = static_cast<GroupType>(result.record.group_type);
+    group_out.default_schema_id = result.record.default_schema_id;
 
     // Load group_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
@@ -24387,6 +25433,7 @@ auto CatalogManager::getGroupByName(const std::string& group_name, GroupInfo& gr
     group_out.group_name = std::string(result.record.group_name);
     group_out.external_id = std::string(result.record.external_id);
     group_out.group_type = static_cast<GroupType>(result.record.group_type);
+    group_out.default_schema_id = result.record.default_schema_id;
 
     // Load group_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
@@ -24505,6 +25552,7 @@ auto CatalogManager::listGroups(std::vector<GroupInfo>& groups_out,
         info.group_name = std::string(rec.group_name);
         info.external_id = std::string(rec.external_id);
         info.group_type = static_cast<GroupType>(rec.group_type);
+        info.default_schema_id = rec.default_schema_id;
 
         // Load group_metadata from TOAST
         info.group_metadata = "";
@@ -24800,6 +25848,7 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
                                  const std::optional<GroupType>& new_type,
                                  const std::optional<std::string>& new_external_id,
                                  const std::optional<std::string>& new_metadata,
+                                 const std::optional<ID>& new_default_schema_id,
                                  ErrorContext* ctx) -> Status
 {
     std::unique_lock<CatalogMutex> lock(mutex_);
@@ -24905,7 +25954,34 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
                         strncpy(record->external_id, truncated.c_str(),
                                 sizeof(record->external_id) - 1);
                     }
-                    // new_metadata is stored in TOAST - TODO Phase 1.4
+                    if (new_default_schema_id.has_value())
+                    {
+                        record->default_schema_id = new_default_schema_id.value();
+                    }
+                    if (new_metadata.has_value())
+                    {
+                        uint32_t old_oid = record->group_metadata_oid;
+                        uint32_t new_oid = 0;
+                        uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+                        if (xmin == 0)
+                        {
+                            xmin = config::DEFAULT_INITIAL_XID;
+                        }
+
+                        Status toast_status = storeStringInToast(new_metadata.value(),
+                                                                xmin, new_oid, ctx);
+                        if (toast_status != Status::OK)
+                        {
+                            bp->unpinPage(groups_table_page_, false, ctx);
+                            return toast_status;
+                        }
+
+                        if (old_oid != 0 && policy_toast_manager_)
+                        {
+                            policy_toast_manager_->deleteToastValue(old_oid, xmin, ctx);
+                        }
+                        record->group_metadata_oid = new_oid;
+                    }
                     record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
                     found = true;
                     break;
@@ -25478,6 +26554,50 @@ auto CatalogManager::createSession(const ID& user_id, const ID& authkey_id,
         // NOT_FOUND is OK (user has no groups)
         SET_ERROR_CONTEXT(ctx, status, "Failed to compute effective groups");
         return status;
+    }
+
+    if (isZeroUuidLocal(session_out.current_schema_id))
+    {
+        ID group_schema_id{};
+        std::string best_group_name;
+
+        for (const auto& group_id : session_out.effective_groups)
+        {
+            GroupInfo group_info;
+            if (getGroup(group_id, group_info, ctx) != Status::OK)
+            {
+                continue;
+            }
+            if (isZeroUuidLocal(group_info.default_schema_id))
+            {
+                continue;
+            }
+            if (isZeroUuidLocal(group_schema_id) ||
+                group_info.group_name < best_group_name)
+            {
+                group_schema_id = group_info.default_schema_id;
+                best_group_name = group_info.group_name;
+            }
+        }
+
+        if (!isZeroUuidLocal(group_schema_id))
+        {
+            session_out.current_schema_id = group_schema_id;
+        }
+    }
+
+    if (isZeroUuidLocal(session_out.current_schema_id))
+    {
+        SchemaInfo schema_info;
+        Status schema_status = getSchema("public", schema_info, ctx);
+        if (schema_status != Status::OK)
+        {
+            schema_status = getSchema("root", schema_info, ctx);
+        }
+        if (schema_status == Status::OK)
+        {
+            session_out.current_schema_id = schema_info.schema_id;
+        }
     }
 
     SessionRecord session_rec{};
@@ -28155,7 +29275,11 @@ auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_na
     }
 
     // Phase 3.4.8: Delete TOAST data for expressions before soft-deleting the policy
-    uint64_t xmax = 1;  // TODO: Get from transaction context
+    uint64_t xmax = ConnectionContext::getCurrentTransactionId();
+    if (xmax == 0)
+    {
+        xmax = config::DEFAULT_INITIAL_XID;
+    }
 
     // Delete USING expression from TOAST if it exists
     if (result.record.using_expr_oid != 0 && policy_toast_manager_)
@@ -28260,12 +29384,16 @@ auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_nam
     policy_out.modified_time = result.record.modified_time;
 
     // Load expressions from TOAST if available (Phase 3.4.8)
-    uint64_t xmin = 1;  // TODO: Get from transaction context
+    uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+    if (xmin == 0)
+    {
+        xmin = config::DEFAULT_INITIAL_XID;
+    }
 
     // Load USING expression
     Status load_status = loadStringFromToast(result.record.using_expr_oid, xmin,
                                             policy_out.using_expr, ctx);
-    if (load_status != Status::OK && load_status != Status::NOT_IMPLEMENTED)
+    if (load_status != Status::OK && load_status != Status::NOT_FOUND)
     {
         DEBUG_LOG_DB("Failed to load USING expression from TOAST for policy: " << policy_name);
         // Non-fatal - continue with empty expression
@@ -28275,15 +29403,36 @@ auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_nam
     // Load WITH CHECK expression
     load_status = loadStringFromToast(result.record.with_check_expr_oid, xmin,
                                      policy_out.with_check_expr, ctx);
-    if (load_status != Status::OK && load_status != Status::NOT_IMPLEMENTED)
+    if (load_status != Status::OK && load_status != Status::NOT_FOUND)
     {
         DEBUG_LOG_DB("Failed to load WITH CHECK expression from TOAST for policy: " << policy_name);
         // Non-fatal - continue with empty expression
         policy_out.with_check_expr = "";
     }
 
-    // Phase 3 Polish: Roles list as UUIDs (TODO: Load from TOAST when roles_oid is implemented)
     policy_out.role_ids.clear();
+    if (result.record.roles_oid != 0)
+    {
+        std::string roles_str;
+        Status roles_status = loadStringFromToast(result.record.roles_oid, xmin, roles_str, ctx);
+        if (roles_status == Status::OK && !roles_str.empty())
+        {
+            std::istringstream iss(roles_str);
+            std::string role_name;
+            while (std::getline(iss, role_name, ','))
+            {
+                if (role_name.empty())
+                {
+                    continue;
+                }
+                RoleInfo role;
+                if (getRoleByName(role_name, role, ctx) == Status::OK)
+                {
+                    policy_out.role_ids.push_back(role.role_id);
+                }
+            }
+        }
+    }
 
     // Cache the loaded policy for future access
     {
@@ -28315,7 +29464,13 @@ auto CatalogManager::getTablePolicies(const ID& table_id, PolicyType type,
                rec.policy_type == static_cast<uint8_t>(PolicyType::ALL);
     };
 
-    auto converter = [this](const PolicyRecord& rec, PolicyInfo& info) {
+    uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+    if (xmin == 0)
+    {
+        xmin = config::DEFAULT_INITIAL_XID;
+    }
+
+    auto converter = [this, xmin, ctx](const PolicyRecord& rec, PolicyInfo& info) {
         info.policy_id = rec.policy_id;
         info.table_id = rec.table_id;
         info.policy_name = std::string(rec.policy_name);
@@ -28340,8 +29495,44 @@ auto CatalogManager::getTablePolicies(const ID& table_id, PolicyType type,
 
         // Cache miss - no expressions available (Phase 3 Polish: role_ids)
         info.role_ids.clear();
-        info.using_expr = "";
-        info.with_check_expr = "";
+        info.using_expr.clear();
+        info.with_check_expr.clear();
+
+        if (rec.using_expr_oid != 0)
+        {
+            loadStringFromToast(rec.using_expr_oid, xmin, info.using_expr, ctx);
+        }
+        if (rec.with_check_expr_oid != 0)
+        {
+            loadStringFromToast(rec.with_check_expr_oid, xmin, info.with_check_expr, ctx);
+        }
+
+        if (rec.roles_oid != 0)
+        {
+            std::string roles_str;
+            if (loadStringFromToast(rec.roles_oid, xmin, roles_str, ctx) == Status::OK)
+            {
+                std::istringstream iss(roles_str);
+                std::string role_name;
+                while (std::getline(iss, role_name, ','))
+                {
+                    if (role_name.empty())
+                    {
+                        continue;
+                    }
+                    RoleInfo role;
+                    if (getRoleByName(role_name, role, ctx) == Status::OK)
+                    {
+                        info.role_ids.push_back(role.role_id);
+                    }
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> cache_lock(policy_cache_mutex_);
+            policy_cache_[info.policy_id] = info;
+        }
     };
 
     return readRecordsToVector<PolicyRecord, PolicyInfo>(

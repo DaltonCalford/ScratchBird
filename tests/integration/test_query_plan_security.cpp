@@ -61,18 +61,16 @@ protected:
         executor_ = std::make_unique<Executor>(db.get());
         executor_->setCurrentSchema(schema_id_);
 
-        // Initialize admin connection context (proc_id 1)
-        admin_ctx = std::make_unique<ConnectionContext>(db.get(), 1);
-        ASSERT_EQ(admin_ctx->initialize(&ctx), Status::OK);
+        // Initialize admin connection context
+        ASSERT_EQ(db->connect(admin_ctx, &ctx), Status::OK) << ctx.message;
 
         // Set admin as superuser (bootstrap user)
         CatalogManager::UserInfo admin_user;
-        ASSERT_EQ(db->catalog_manager()->getUserByName("SYS", admin_user, &ctx), Status::OK);
+        ASSERT_EQ(db->catalog_manager()->getUserByName("SYSTEM", admin_user, &ctx), Status::OK);
         admin_ctx->setCurrentUser(admin_user.user_id, true);
 
-        // Initialize regular user connection context (proc_id 2)
-        user_ctx = std::make_unique<ConnectionContext>(db.get(), 2);
-        ASSERT_EQ(user_ctx->initialize(&ctx), Status::OK);
+        // Initialize regular user connection context
+        ASSERT_EQ(db->connect(user_ctx, &ctx), Status::OK) << ctx.message;
 
         // Create a test user
         executeSQL(admin_ctx.get(), "CREATE USER alice WITH PASSWORD 'password123'");
@@ -154,11 +152,13 @@ protected:
         auto* select_stmt = dynamic_cast<parser::v2::ResolvedSelectStmt*>(sem_result.statement());
         if (!select_stmt)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_STATEMENT, "Not a SELECT statement");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Not a SELECT statement");
             return nullptr;
         }
 
-        return db->query_planner()->planQuery(select_stmt, ctx, conn_ctx);
+        CostModel cost_model;
+        QueryPlanner planner(db.get(), cost_model, db->statistics_manager());
+        return planner.planQuery(select_stmt, ctx, conn_ctx);
     }
 };
 
@@ -191,9 +191,11 @@ TEST_F(QueryPlanSecurityTest, UserWithoutPermissionCannotPlanQuery)
 TEST_F(QueryPlanSecurityTest, UserWithPermissionCanPlanQuery)
 {
     ErrorContext ctx;
+    std::string error_msg;
 
     // Grant SELECT permission to alice
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT SELECT ON TABLE employees TO alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT SELECT ON TABLE employees TO alice", &error_msg))
+        << error_msg;
 
     // Now alice should be able to plan query
     auto plan = planQuery(user_ctx.get(), "SELECT * FROM employees", &ctx);
@@ -222,9 +224,11 @@ TEST_F(QueryPlanSecurityTest, PermissionCheckAtPlanTimeNotExecutionTime)
 TEST_F(QueryPlanSecurityTest, PermissionCacheWorksCorrectly)
 {
     ErrorContext ctx1, ctx2;
+    std::string error_msg;
 
     // Grant SELECT permission
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT SELECT ON TABLE employees TO alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT SELECT ON TABLE employees TO alice", &error_msg))
+        << error_msg;
 
     // First query should check catalog and cache result
     auto plan1 = planQuery(user_ctx.get(), "SELECT * FROM employees", &ctx1);
@@ -241,16 +245,19 @@ TEST_F(QueryPlanSecurityTest, PermissionCacheWorksCorrectly)
 TEST_F(QueryPlanSecurityTest, RevokeInvalidatesCachedPermissions)
 {
     ErrorContext ctx1, ctx2;
+    std::string error_msg;
 
     // Grant SELECT permission
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT SELECT ON TABLE employees TO alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT SELECT ON TABLE employees TO alice", &error_msg))
+        << error_msg;
 
     // Query should succeed
     auto plan1 = planQuery(user_ctx.get(), "SELECT * FROM employees", &ctx1);
     ASSERT_NE(plan1, nullptr);
 
     // Revoke permission
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "REVOKE SELECT ON TABLE employees FROM alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "REVOKE SELECT ON TABLE employees FROM alice", &error_msg))
+        << error_msg;
 
     // Query should now fail (cache is cleared between queries)
     auto plan2 = planQuery(user_ctx.get(), "SELECT * FROM employees", &ctx2);
@@ -272,7 +279,8 @@ TEST_F(QueryPlanSecurityTest, InsertPermissionCheck)
     EXPECT_NE(error_msg.find("Permission denied"), std::string::npos);
 
     // Grant INSERT permission
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT INSERT ON TABLE employees TO alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT INSERT ON TABLE employees TO alice", &error_msg))
+        << error_msg;
 
     // Now alice should be able to INSERT
     ASSERT_TRUE(executeSQL(user_ctx.get(), "INSERT INTO employees VALUES (3, 'Carol', 70000)"));
@@ -291,7 +299,8 @@ TEST_F(QueryPlanSecurityTest, UpdatePermissionCheck)
     EXPECT_NE(error_msg.find("Permission denied"), std::string::npos);
 
     // Grant UPDATE permission
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT UPDATE ON TABLE employees TO alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT UPDATE ON TABLE employees TO alice", &error_msg))
+        << error_msg;
 
     // Now alice should be able to UPDATE
     ASSERT_TRUE(executeSQL(user_ctx.get(), "UPDATE employees SET salary = 75000 WHERE id = 1"));
@@ -307,7 +316,8 @@ TEST_F(QueryPlanSecurityTest, DeletePermissionCheck)
     EXPECT_NE(error_msg.find("Permission denied"), std::string::npos);
 
     // Grant DELETE permission
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT DELETE ON TABLE employees TO alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT DELETE ON TABLE employees TO alice", &error_msg))
+        << error_msg;
 
     // Now alice should be able to DELETE
     ASSERT_TRUE(executeSQL(user_ctx.get(), "DELETE FROM employees WHERE id = 1"));
@@ -325,8 +335,11 @@ TEST_F(QueryPlanSecurityTest, SuperuserDMLBypass)
 // Test 11: DML permission checks are statement-level (not per-row)
 TEST_F(QueryPlanSecurityTest, DMLPermissionIsStatementLevel)
 {
+    std::string error_msg;
+
     // Grant INSERT permission
-    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT INSERT ON TABLE employees TO alice"));
+    ASSERT_TRUE(executeSQL(admin_ctx.get(), "GRANT INSERT ON TABLE employees TO alice", &error_msg))
+        << error_msg;
 
     // Insert multiple rows - permission checked ONCE, not per row
     ASSERT_TRUE(executeSQL(user_ctx.get(), "INSERT INTO employees VALUES (5, 'Eve', 50000)"));

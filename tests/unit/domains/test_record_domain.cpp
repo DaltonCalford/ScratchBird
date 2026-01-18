@@ -106,8 +106,35 @@ TEST_F(RecordDomainTest, Comprehensive) {
     }
     std::cout << "  ✓ Get RECORD domain info passed\n\n";
 
-    // Test 3: Get specific field from RECORD domain
-    std::cout << "Test 3: Get specific field\n";
+    // Test 3: Extract field from composite value
+    std::cout << "Test 3: Extract field from composite value\n";
+    {
+        std::vector<std::string> field_names = {"id", "name", "email"};
+        std::vector<TypedValue> field_values = {
+            TypedValue::makeInt32(7),
+            TypedValue::makeVarchar("Alice"),
+            TypedValue::makeVarchar("alice@example.com")
+        };
+
+        TypedValue record_value = TypedValue::makeComposite(field_names, field_values);
+        TypedValue extracted;
+        status = dm->extractField(record_value, "name", extracted, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_EQ(extracted.getVarchar(), "Alice");
+
+        status = dm->extractField(record_value, "missing", extracted, &ctx);
+        ASSERT_EQ(status, Status::NOT_FOUND);
+
+        TypedValue null_record = TypedValue::makeNull(DataType::COMPOSITE);
+        status = dm->extractField(null_record, "name", extracted, &ctx);
+        ASSERT_EQ(status, Status::OK);
+        EXPECT_TRUE(extracted.isNull());
+        std::cout << "  Extract field from composite value ✓\n";
+    }
+    std::cout << "  ✓ Extract field passed\n\n";
+
+    // Test 4: Get specific field from RECORD domain
+    std::cout << "Test 4: Get specific field\n";
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Person", info, &ctx);
@@ -128,8 +155,8 @@ TEST_F(RecordDomainTest, Comprehensive) {
     }
     std::cout << "  ✓ Get specific field passed\n\n";
 
-    // Test 4: Reject duplicate field names
-    std::cout << "Test 4: Reject duplicate field names\n";
+    // Test 5: Reject duplicate field names
+    std::cout << "Test 5: Reject duplicate field names\n";
     {
         std::vector<RecordField> fields;
         fields.push_back(RecordField("id", DataType::INT32, false));
@@ -142,8 +169,8 @@ TEST_F(RecordDomainTest, Comprehensive) {
     }
     std::cout << "  ✓ Reject duplicate field names passed\n\n";
 
-    // Test 5: Reject empty field list
-    std::cout << "Test 5: Reject empty field list\n";
+    // Test 6: Reject empty field list
+    std::cout << "Test 6: Reject empty field list\n";
     {
         std::vector<RecordField> fields;  // Empty!
 
@@ -154,8 +181,8 @@ TEST_F(RecordDomainTest, Comprehensive) {
     }
     std::cout << "  ✓ Reject empty field list passed\n\n";
 
-    // Test 6: Complex RECORD domain
-    std::cout << "Test 6: Complex RECORD domain with many fields\n";
+    // Test 7: Complex RECORD domain
+    std::cout << "Test 7: Complex RECORD domain with many fields\n";
     {
         std::vector<RecordField> fields;
         fields.push_back(RecordField("employee_id", DataType::INT32, false));
@@ -191,8 +218,8 @@ TEST_F(RecordDomainTest, Comprehensive) {
     }
     std::cout << "  ✓ Complex RECORD domain passed\n\n";
 
-    // Test 7: List RECORD and BASIC domains together
-    std::cout << "Test 7: List mixed domain types\n";
+    // Test 8: List RECORD and BASIC domains together
+    std::cout << "Test 8: List mixed domain types\n";
     {
         // Create a basic domain
         ID basic_domain_id;

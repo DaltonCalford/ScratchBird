@@ -2,9 +2,9 @@
 
 **Firebird-style MGA database engine** with multi-dialect wire compatibility and advanced distributed cluster capabilities.
 
-**Current Phase:** Alpha (completing) → Pre-Beta preparation
-**Project Age:** ~6 months (July 2025 - January 2026)
-**Status:** 100% test pass (2,007/2,007 CTest), 71% code coverage
+**Current Phase:** Alpha final polish (core engine ready for embedded/IPC/inet)
+**Project Age:** ~6 months (July 2025 - present)
+**Status:** Alpha remediation and parity work in progress; see `docs/status/` and `docs/testing/`
 
 ---
 
@@ -13,55 +13,43 @@
 ScratchBird is a next-generation database management system that combines:
 
 - **Firebird MGA Architecture** - Multi-Generational Architecture for true MVCC
-- **Multi-Dialect Support** - Native Firebird, PostgreSQL, and MySQL wire protocol compatibility
+- **Multi-Dialect Support** - ScratchBird native + Firebird/PostgreSQL/MySQL wire protocol compatibility (emulation layer)
 - **Advanced Security** - Built-in encryption, masking, RLS/CLS, cryptographic audit chain
-- **Distributed Ready** - Complete Beta cluster specifications (16 comprehensive documents)
+- **Distributed Ready** - Beta cluster specifications drafted; implementation deferred to Beta
 - **Modern C++** - High-performance C++17/20 implementation
 
-### Key Metrics
+### Key References
 
-| Metric | Value |
-|--------|-------|
-| **Lines of Code** | 606,000+ |
-| **Test Cases** | 25,000+ (71% coverage) |
-| **Test Pass Rate** | 100% (2,007/2,007) |
-| **Commits** | 1,584+ |
-| **Documentation** | 1,385 markdown files |
-| **Index Types** | 11 (B-Tree, Hash, GIN, GiST, BRIN, HNSW, etc.) |
-| **SQL Dialects** | 4 parsers (V2, Firebird, PostgreSQL, MySQL) |
+| Area | Link |
+|------|------|
+| **Project Metrics** | `PROJECT_STATS.md` |
+| **Documentation Index** | `docs/INDEX.md` |
+| **Specifications Index** | `docs/specifications/README.md` |
+| **Findings & Plans** | `docs/findings/` and `docs/planning/` |
+| **Audit Outputs** | `docs/audit/` |
 
 ---
 
 ## Current Status
 
-### ✅ Completed (Alpha Phase)
+### ✅ Alpha Scope (current)
 
-- **Plan 01:** Core Storage & Garbage Collection
-- **Plan 02:** UUID Resolution & Rename/Move Operations
-- **Plan 03:** Security Context, Authentication, Audit Logging
-- **Plan 03B:** Domain Infrastructure (encryption, masking, validation)
-- **Compatibility Test Suite:** 113 files, 22,000+ PostgreSQL compatibility tests
+- Core engine (MGA, storage, SBLR runtime) for embedded, IPC, and network use
+- Network listeners for ScratchBird native + Firebird/PostgreSQL/MySQL protocols
+- Engine-enforced security; parser/listener treated as untrusted
+- Shared SBLR cache with per-connection compile caches
 
 ### 🚧 In Progress
 
-- **Plan 04:** Domain DDL Parsers (60% complete)
-  - Advanced domain kinds with full WITH block support
-  - CREATE/ALTER/DROP DOMAIN implementation
+- Parser parity and catalog virtualization audits/remediation (see `docs/planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md`)
+- Domain catalog and engine stub cleanup (F-022/F-023 sequence)
+- Listener/pool behavior alignment and wire-protocol parity tests
 
-### 📋 Beta Planning Complete
+### 📋 Beta (Deferred)
 
-**Status:** ✅ **Specifications Ready**
-
-16 comprehensive cluster specification documents (12,794 lines) covering:
-- Raft consensus and Cluster Configuration Epoch (CCE)
-- mTLS authentication and PKI infrastructure
-- Sharding and distributed query execution
-- Asynchronous replication (RF=2)
-- Automated backup/restore with trust boundaries
-- Distributed scheduler and observability
-- Complete security threat model
-
-**Location:** `docs/specifications/Cluster Specification Work/`
+- Cluster manager, multi-node coordination, and distributed scheduling
+- Backup/ETL orchestration and NoSQL extensions beyond Alpha vectors
+- Post-gold protocol expansions (e.g., TDS/MSSQL)
 
 ---
 
@@ -88,10 +76,9 @@ ctest --output-on-failure -C Debug --test-dir build
 
 ```bash
 # Start ScratchBird server
-./build/bin/scratchbird-server
+./build/bin/sb_server
 
-# Connect on port 3092 (default)
-# Use Firebird, PostgreSQL, or MySQL wire protocol
+# Native: 3092 | PostgreSQL: 5432 | MySQL: 3306 | Firebird: 3050
 ```
 
 ---
@@ -155,7 +142,7 @@ Run `./scripts/generate-all-stats.sh` to generate current statistics:
 - **docs/design/** - Architecture and design documents
 - **docs/findings/** - Analysis and investigation reports
 - **docs/development/** - Development guides and procedures
-- **wiki/** - User-facing documentation (infrastructure ready)
+- **wiki/** - User-facing documentation (active; see `wiki/README.md`)
 
 ---
 

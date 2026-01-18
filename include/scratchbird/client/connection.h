@@ -69,7 +69,7 @@ struct ConnectionConfig {
 
     // IPC settings
     server::IPCMethod ipc_method = server::IPCMethod::AUTO;
-    uint16_t tcp_port = 5433;               // TCP port (if using TCP)
+    uint16_t tcp_port = 3092;               // TCP port (if using TCP)
     std::string socket_path;                // Override socket/pipe path (optional)
 
     // Behavior settings

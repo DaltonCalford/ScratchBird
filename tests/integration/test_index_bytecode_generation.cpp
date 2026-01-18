@@ -1,9 +1,16 @@
 #include <gtest/gtest.h>
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/core/types.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 using namespace scratchbird::sblr;
 
@@ -21,13 +28,130 @@ using namespace scratchbird::sblr;
 class IndexBytecodeGenerationTest : public ::testing::Test
 {
 protected:
+    std::string test_db_path_;
+    std::unique_ptr<scratchbird::core::Database> db_;
+    scratchbird::core::CatalogManager* catalog_ = nullptr;
+    scratchbird::core::ID public_schema_{};
+
+    void SetUp() override
+    {
+        test_db_path_ = "/tmp/test_index_bytecode_" + std::to_string(::getpid()) + ".db";
+        if (std::filesystem::exists(test_db_path_))
+        {
+            std::filesystem::remove(test_db_path_);
+        }
+
+        scratchbird::core::ErrorContext ctx;
+        auto status = scratchbird::core::Database::create(test_db_path_, 8192, &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK)
+            << "Failed to create database: " << ctx.message;
+
+        db_ = std::make_unique<scratchbird::core::Database>();
+        status = db_->open(test_db_path_, &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK)
+            << "Failed to open database: " << ctx.message;
+
+        catalog_ = db_->catalog_manager();
+
+        scratchbird::core::CatalogManager::SchemaInfo schema_info;
+        status = catalog_->getSchema("public", schema_info, &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK)
+            << "Failed to resolve public schema: " << ctx.message;
+        public_schema_ = schema_info.schema_id;
+
+        createTable("users", {
+            {"id", scratchbird::core::DataType::INT32},
+            {"name", scratchbird::core::DataType::VARCHAR},
+            {"email", scratchbird::core::DataType::VARCHAR},
+            {"age", scratchbird::core::DataType::INT32},
+            {"is_active", scratchbird::core::DataType::BOOLEAN},
+        });
+        createTable("documents", {
+            {"tags", scratchbird::core::DataType::TEXT},
+        });
+        createTable("places", {
+            {"geom", scratchbird::core::DataType::TEXT},
+        });
+        createTable("events", {
+            {"created_at", scratchbird::core::DataType::TIMESTAMP},
+            {"status", scratchbird::core::DataType::INT32},
+            {"event_ts", scratchbird::core::DataType::TIMESTAMP},
+        });
+        createTable("vectors", {
+            {"embedding", scratchbird::core::DataType::VECTOR},
+        });
+        createTable("points", {
+            {"location", scratchbird::core::DataType::POINT},
+        });
+        createTable("shapes", {
+            {"bounds", scratchbird::core::DataType::POLYGON},
+        });
+        createTable("sales", {
+            {"sale_date", scratchbird::core::DataType::DATE},
+        });
+        createTable("test_table", {
+            {"col1", scratchbird::core::DataType::INT32},
+        });
+    }
+
+    void TearDown() override
+    {
+        if (db_)
+        {
+            db_->close();
+        }
+        if (std::filesystem::exists(test_db_path_))
+        {
+            std::filesystem::remove(test_db_path_);
+        }
+    }
+
+    void createTable(const std::string& name,
+                     const std::vector<std::pair<std::string, scratchbird::core::DataType>>& columns)
+    {
+        std::vector<scratchbird::core::CatalogManager::ColumnInfo> col_infos;
+        col_infos.reserve(columns.size());
+
+        for (const auto& col : columns)
+        {
+            scratchbird::core::CatalogManager::ColumnInfo info{};
+            info.column_name = col.first;
+            info.data_type = static_cast<uint16_t>(col.second);
+            info.nullable = true;
+            if (col.second == scratchbird::core::DataType::VARCHAR ||
+                col.second == scratchbird::core::DataType::CHAR)
+            {
+                info.type_precision = 255;
+                info.max_length = 255;
+            }
+            col_infos.push_back(info);
+        }
+
+        scratchbird::core::ID table_id;
+        scratchbird::core::ErrorContext ctx;
+        auto status = catalog_->createTable(public_schema_, name, col_infos, table_id, 0, &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK)
+            << "Failed to create table " << name << ": " << ctx.message;
+    }
+
     /**
      * Parse SQL and generate bytecode using QueryCompilerV2
      */
     CompilationResultV2 generateBytecode(const std::string &sql)
     {
-        QueryCompilerV2 compiler(nullptr);  // No database needed for bytecode structure tests
+        QueryCompilerV2 compiler(db_.get());
         return compiler.compile(sql);
+    }
+
+    std::string formatErrors(const CompilationResultV2& result) const
+    {
+        std::string out;
+        for (const auto& err : result.errors())
+        {
+            out += err;
+            out += "\n";
+        }
+        return out.empty() ? "(no errors)" : out;
     }
 
     /**
@@ -75,25 +199,33 @@ protected:
     }
 
     /**
-     * Helper to read a string from bytecode (length-prefixed)
+     * Helper to read a string from bytecode (UVarint length-prefixed)
      */
     std::string readString(const std::vector<uint8_t> &bytecode, size_t offset, size_t* bytes_read = nullptr)
     {
-        if (offset + 4 > bytecode.size())
+        if (offset >= bytecode.size())
         {
             if (bytes_read) *bytes_read = 0;
             return "";
         }
 
-        uint32_t length = readInt32(bytecode, offset);
-        if (offset + 4 + length > bytecode.size())
+        uint64_t length = 0;
+        size_t len_bytes = 0;
+        if (!scratchbird::sblr::readUVarint(&bytecode[offset], bytecode.size() - offset, length, len_bytes))
         {
-            if (bytes_read) *bytes_read = 4;
+            if (bytes_read) *bytes_read = 0;
             return "";
         }
 
-        std::string result(reinterpret_cast<const char*>(&bytecode[offset + 4]), length);
-        if (bytes_read) *bytes_read = 4 + length;
+        if (offset + len_bytes + length > bytecode.size())
+        {
+            if (bytes_read) *bytes_read = len_bytes;
+            return "";
+        }
+
+        std::string result(reinterpret_cast<const char*>(&bytecode[offset + len_bytes]),
+                           static_cast<size_t>(length));
+        if (bytes_read) *bytes_read = len_bytes + static_cast<size_t>(length);
         return result;
     }
 };
@@ -239,6 +371,61 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexHNSW)
     // Bytecode should contain index type = HNSW (0x07)
 }
 
+TEST_F(IndexBytecodeGenerationTest, CreateIndexSPGiST)
+{
+    std::string sql = "CREATE INDEX idx_points ON points USING SPGIST (location)";
+    auto result = generateBytecode(sql);
+
+    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed for SPGIST index";
+
+    const auto &bc = result.bytecode();
+    EXPECT_TRUE(containsOpcode(bc, Opcode::CREATE_INDEX));
+}
+
+TEST_F(IndexBytecodeGenerationTest, CreateIndexRTree)
+{
+    std::string sql = "CREATE INDEX idx_shapes ON shapes USING RTREE (bounds)";
+    auto result = generateBytecode(sql);
+
+    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed for RTREE index";
+
+    const auto &bc = result.bytecode();
+    EXPECT_TRUE(containsOpcode(bc, Opcode::CREATE_INDEX));
+}
+
+TEST_F(IndexBytecodeGenerationTest, CreateIndexBitmap)
+{
+    std::string sql = "CREATE INDEX idx_status ON events USING BITMAP (status)";
+    auto result = generateBytecode(sql);
+
+    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed for BITMAP index";
+
+    const auto &bc = result.bytecode();
+    EXPECT_TRUE(containsOpcode(bc, Opcode::CREATE_INDEX));
+}
+
+TEST_F(IndexBytecodeGenerationTest, CreateIndexColumnstore)
+{
+    std::string sql = "CREATE INDEX idx_sales ON sales USING COLUMNSTORE (sale_date)";
+    auto result = generateBytecode(sql);
+
+    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed for COLUMNSTORE index";
+
+    const auto &bc = result.bytecode();
+    EXPECT_TRUE(containsOpcode(bc, Opcode::CREATE_INDEX));
+}
+
+TEST_F(IndexBytecodeGenerationTest, CreateIndexLSM)
+{
+    std::string sql = "CREATE INDEX idx_events ON events USING LSM (event_ts)";
+    auto result = generateBytecode(sql);
+
+    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed for LSM index";
+
+    const auto &bc = result.bytecode();
+    EXPECT_TRUE(containsOpcode(bc, Opcode::CREATE_INDEX));
+}
+
 // Test partial index with WHERE clause (using non-reserved column name)
 TEST_F(IndexBytecodeGenerationTest, CreateIndexWithPredicate)
 {
@@ -246,7 +433,8 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexWithPredicate)
     std::string sql = "CREATE INDEX idx_active_users ON users(email) WHERE is_active = true";
     auto result = generateBytecode(sql);
 
-    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed with WHERE clause";
+    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed with WHERE clause\n"
+                                  << formatErrors(result);
 
     const auto &bc = result.bytecode();
     EXPECT_TRUE(containsOpcode(bc, Opcode::CREATE_INDEX));
@@ -261,7 +449,8 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexWithExpression)
     std::string sql = "CREATE INDEX idx_users_lower_email ON users((LOWER(email)))";
     auto result = generateBytecode(sql);
 
-    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed with expression index";
+    ASSERT_TRUE(result.success()) << "Bytecode generation should succeed with expression index\n"
+                                  << formatErrors(result);
 
     const auto &bc = result.bytecode();
     EXPECT_TRUE(containsOpcode(bc, Opcode::CREATE_INDEX));
@@ -354,7 +543,8 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexBytecodeFormat)
 
     // Verify bytecode structure:
     // VERSION (1) | version_num (1) | CREATE_INDEX (1) | index_name (4+N) | table_name (4+M) |
-    // unique_flag (1) | col_count (4) | columns... | tablespace (4+P) | index_type (1) |
+    // unique_flag (1) | col_count (4) | columns... | include_count (4) | include_columns... |
+    // tablespace (4+P) | index_type (1) |
     // has_expressions (1) | has_predicate (1) | [expressions...] | [predicate...] | END (1)
 
     ASSERT_GE(bc.size(), 3u) << "Bytecode should have at least VERSION, opcode, and END";
@@ -421,7 +611,7 @@ TEST_F(IndexBytecodeGenerationTest, DropIndexBytecodeFormat)
 
 TEST_F(IndexBytecodeGenerationTest, CreateIndexInvalidSQL)
 {
-    std::string sql = "CREATE INDEX ON users(name)";  // Missing index name
+    std::string sql = "CREATE INDEX idx_users_name ON users";  // Missing column list
     auto result = generateBytecode(sql);
 
     EXPECT_FALSE(result.success()) << "Bytecode generation should fail for invalid SQL";

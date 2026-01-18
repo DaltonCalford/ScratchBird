@@ -1,6 +1,6 @@
 ---
 
-📖 **Documentation:** Beta 0.9.x | 🐛 **Bug?** [Report Issue](https://github.com/scratchbird/scratchbird/issues) | ✏️ **Edit?** [Improve this page](https://github.com/scratchbird/scratchbird/wiki)
+📖 **Documentation:** Alpha (in progress) | 🐛 **Bug?** [Report Issue](https://github.com/scratchbird/scratchbird/issues) | ✏️ **Edit?** [Improve this page](https://github.com/scratchbird/scratchbird/wiki)
 
 💬 **Help:** [Discord](https://discord.gg/scratchbird) • [Stack Overflow](https://stackoverflow.com/questions/tagged/scratchbird) • [GitHub Discussions](https://github.com/scratchbird/scratchbird/discussions)
 

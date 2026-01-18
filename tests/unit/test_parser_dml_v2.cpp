@@ -165,6 +165,27 @@ TEST_F(ParserDMLV2Test, SelectForUpdate) {
     EXPECT_TRUE(stmt->for_update);
 }
 
+TEST_F(ParserDMLV2Test, SelectWithCTE) {
+    auto* stmt = parseAs<SelectStmt>(
+        "WITH cte AS (SELECT 1 AS id) SELECT id FROM cte");
+    ASSERT_NE(stmt, nullptr);
+    ASSERT_NE(stmt->with, nullptr);
+    EXPECT_FALSE(stmt->with->recursive);
+    ASSERT_EQ(stmt->with->ctes.size(), 1u);
+    EXPECT_NE(stmt->with->ctes[0].query, nullptr);
+}
+
+TEST_F(ParserDMLV2Test, SelectWithRecursiveCTE) {
+    auto* stmt = parseAs<SelectStmt>(
+        "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t) "
+        "SELECT n FROM t");
+    ASSERT_NE(stmt, nullptr);
+    ASSERT_NE(stmt->with, nullptr);
+    EXPECT_TRUE(stmt->with->recursive);
+    ASSERT_EQ(stmt->with->ctes.size(), 1u);
+    EXPECT_TRUE(stmt->with->ctes[0].recursive);
+}
+
 // =============================================================================
 // JOIN Tests
 // =============================================================================
@@ -268,6 +289,14 @@ TEST_F(ParserDMLV2Test, InsertReturning) {
     EXPECT_FALSE(stmt->returning.empty());
 }
 
+TEST_F(ParserDMLV2Test, InsertWithCTE) {
+    auto* stmt = parseAs<InsertStmt>(
+        "WITH src AS (SELECT 1 AS id) INSERT INTO users (id) SELECT id FROM src");
+    ASSERT_NE(stmt, nullptr);
+    ASSERT_NE(stmt->with, nullptr);
+    EXPECT_EQ(stmt->with->ctes.size(), 1u);
+}
+
 // =============================================================================
 // UPDATE Statement Tests
 // =============================================================================
@@ -296,6 +325,14 @@ TEST_F(ParserDMLV2Test, UpdateReturning) {
     EXPECT_FALSE(stmt->returning.empty());
 }
 
+TEST_F(ParserDMLV2Test, UpdateWithCTE) {
+    auto* stmt = parseAs<UpdateStmt>(
+        "WITH src AS (SELECT 1 AS id) UPDATE users SET name = 'x' WHERE id IN (SELECT id FROM src)");
+    ASSERT_NE(stmt, nullptr);
+    ASSERT_NE(stmt->with, nullptr);
+    EXPECT_EQ(stmt->with->ctes.size(), 1u);
+}
+
 // =============================================================================
 // DELETE Statement Tests
 // =============================================================================
@@ -315,6 +352,15 @@ TEST_F(ParserDMLV2Test, DeleteReturning) {
     auto* stmt = parseAs<DeleteStmt>("DELETE FROM users RETURNING *");
     ASSERT_NE(stmt, nullptr);
     EXPECT_FALSE(stmt->returning.empty());
+}
+
+TEST_F(ParserDMLV2Test, DeleteWithCTE) {
+    auto* stmt = parseAs<DeleteStmt>(
+        "WITH src AS (SELECT id FROM users WHERE id < 10) "
+        "DELETE FROM users WHERE id IN (SELECT id FROM src)");
+    ASSERT_NE(stmt, nullptr);
+    ASSERT_NE(stmt->with, nullptr);
+    EXPECT_EQ(stmt->with->ctes.size(), 1u);
 }
 
 // =============================================================================

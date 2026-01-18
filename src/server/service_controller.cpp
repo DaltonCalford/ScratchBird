@@ -1020,7 +1020,7 @@ void printHelp(const char* program_name) {
               << "    # Single database mode\n"
               << "    " << program_name << " -d /path/to/mydb.sbdb --create\n\n"
               << "    # Multi-database mode with custom ports\n"
-              << "    " << program_name << " -D /var/lib/scratchbird --pg-port 5433\n";
+              << "    " << program_name << " -D /var/lib/scratchbird --pg-port 5434\n";
 }
 
 void printVersion() {

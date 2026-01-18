@@ -860,9 +860,19 @@ void Parser::parseFromClause() {
     emit(sblr::Opcode::BEGIN_LIST);
 
     size_t count_pos = bytecode_.size();
-    emitU32(0);  // Placeholder
+    emitUVarint(0);  // Placeholder
 
     uint32_t count = 0;
+    auto patch_varint = [&](size_t pos, uint64_t value) {
+        uint8_t buffer[10];
+        size_t len = sblr::writeUVarint(buffer, value);
+        if (len == 1) {
+            bytecode_[pos] = buffer[0];
+            return;
+        }
+        bytecode_.insert(bytecode_.begin() + pos + 1, len - 1, 0);
+        std::copy(buffer, buffer + len, bytecode_.begin() + pos);
+    };
 
     do {
         // Parse table reference
@@ -878,6 +888,7 @@ void Parser::parseFromClause() {
         resolveTableName(schema, table);
 
         emit(sblr::Opcode::TABLE_REF);
+        emitByte(0);  // name-based reference
         emitString(schema + "/" + table);
 
         // Optional alias
@@ -941,6 +952,7 @@ void Parser::parseFromClause() {
             resolveTableName(j_schema, j_table);
 
             emit(sblr::Opcode::TABLE_REF);
+            emitByte(0);  // name-based reference
             emitString(j_schema + "/" + j_table);
 
             // Optional alias for joined table
@@ -987,7 +999,7 @@ void Parser::parseFromClause() {
 
     } while (match(TokenType::COMMA));
 
-    sblr::writeInt32(&bytecode_[count_pos], count);
+    patch_varint(count_pos, count);
     emit(sblr::Opcode::END_LIST);
 }
 
@@ -3449,7 +3461,7 @@ void Parser::parseTruncateStmt() {
 }
 
 void Parser::parseCreateTable() {
-    matchKeyword(TokenType::KW_TEMPORARY);
+    bool is_temp = matchKeyword(TokenType::KW_TEMPORARY);
 
     consumeKeyword(TokenType::KW_TABLE, "Expected TABLE");
 
@@ -3464,6 +3476,8 @@ void Parser::parseCreateTable() {
     (void)if_not_exists;
 
     emit(sblr::Opcode::CREATE_TABLE);
+    uint8_t flags = is_temp ? 0x01 : 0x00;
+    emitByte(flags);
 
     // Table name
     std::string schema;
@@ -3473,19 +3487,31 @@ void Parser::parseCreateTable() {
         table = parseIdentifier();
     }
     resolveTableName(schema, table);
-    std::string table_path = schema + "/" + table;
+    std::string table_path = schema.empty() ? table : schema + "/" + table;
 
     emit(sblr::Opcode::TABLE_REF);
+    emitByte(0);
     emitString(table_path);
+    emitString("");
 
     // Column definitions
     consume(TokenType::LEFT_PAREN, "Expected (");
 
     emit(sblr::Opcode::BEGIN_LIST);
     size_t col_count_pos = bytecode_.size();
-    emitU32(0);
+    emitUVarint(0);
 
     uint32_t col_count = 0;
+    auto patch_varint = [&](size_t pos, uint64_t value) {
+        uint8_t buffer[10];
+        size_t len = sblr::writeUVarint(buffer, value);
+        if (len == 1) {
+            bytecode_[pos] = buffer[0];
+            return;
+        }
+        bytecode_.insert(bytecode_.begin() + pos + 1, len - 1, 0);
+        std::copy(buffer, buffer + len, bytecode_.begin() + pos);
+    };
     std::vector<ForeignKeyDef> pending_fks;
     std::vector<IndexDef> pending_indexes;
     do {
@@ -3637,7 +3663,7 @@ void Parser::parseCreateTable() {
         }
     } while (match(TokenType::COMMA));
 
-    sblr::writeInt32(&bytecode_[col_count_pos], col_count);
+    patch_varint(col_count_pos, col_count);
     emit(sblr::Opcode::END_LIST);
 
     consume(TokenType::RIGHT_PAREN, "Expected )");
@@ -4012,6 +4038,7 @@ void Parser::parseCreateTable() {
         for (const auto& col : idx.columns) {
             emitString(col);
         }
+        emitU32(0);
         emitString("");
         emitByte(index_type);
         emitByte(0);
@@ -4455,6 +4482,7 @@ void Parser::parseCreateIndex() {
     for (const auto& col : columns) {
         emitString(col);
     }
+    emitU32(0);
     emitString("");
     emitByte(index_type);
     emitByte(0);
@@ -4592,14 +4620,17 @@ void Parser::parseCreateDatabase() {
         } else if (matchKeyword(TokenType::KW_COLLATE)) {
             std::string value = parseIdentifier();
             options.emplace_back("collation", value);
-        // TODO: Add ENCRYPTION keyword support
-        // } else if (matchKeyword(TokenType::KW_ENCRYPTION)) {
-        //     match(TokenType::EQUAL);
-        //     if (check(TokenType::STRING_LITERAL)) {
-        //         advance();
-        //     } else {
-        //         parseIdentifier();
-        //     }
+        } else if (matchKeyword(TokenType::KW_ENCRYPTION)) {
+            match(TokenType::EQUAL);
+            std::string value;
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string_view str = lexer_.stringPool().get(current_token_.value.string_id);
+                value.assign(str.data(), str.size());
+                advance();
+            } else {
+                value = parseIdentifier();
+            }
+            options.emplace_back("encryption", value);
         } else {
             break;
         }

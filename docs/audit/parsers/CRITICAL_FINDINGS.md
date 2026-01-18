@@ -18,10 +18,63 @@ Four parsers were audited for dialect purity and cross-contamination:
 
 | Parser | Dialect Purity | Critical Issues | Production Ready |
 |--------|---------------|-----------------|------------------|
-| **V2** | ⚠️ Mixed (PostgreSQL features present) | Incomplete PSQL, CTEs not parsed | ⚠️ **Conditional** |
+| **V2** | ⚠️ Mixed (approved PG-style extensions) | Parsed-only audit cleanup in progress (Phase 5) | ⚠️ **Conditional** |
 | **FirebirdSQL** | ✅ **EXCELLENT** (100% pure) | None | ✅ **YES** |
-| **PostgreSQL** | ✅ **EXCELLENT** (100% pure) | Executor format mismatches | ⚠️ **Conditional** |
-| **MySQL** | ✅ **GOOD** (99% pure) | Executor format mismatches | ⚠️ **Conditional** |
+| **PostgreSQL** | ✅ **EXCELLENT** (100% pure) | Executor format mismatches (partial fixes applied) | ⚠️ **Conditional** |
+| **MySQL** | ✅ **GOOD** (99% pure) | Executor format mismatches (partial fixes applied) | ⚠️ **Conditional** |
+
+---
+
+## Phase 0 Verification (2026-01-14) - Outstanding Deferrals
+
+Goal: validate that every parsed feature executes end-to-end (parser -> semantic -> bytecode -> executor) with **no stubs**.
+Result: **remaining deferrals exist** and must be resolved before network listener work.
+
+### V2 Parser Pipeline Gaps (native ScratchBird)
+- CREATE DOMAIN `WITH` blocks are parsed but rejected (`src/parser/parser_v2.cpp:2039`).
+- CREATE INDEX `INCLUDE` parsed, but semantic analyzer rejects (`src/sblr/semantic_analyzer_v2.cpp:3818`). ✅ **RESOLVED**
+- CREATE SEQUENCE `OWNED BY` is parsed but ignored (warning) (`src/sblr/semantic_analyzer_v2.cpp:3963`). ✅ **RESOLVED**
+- CHECK constraint subqueries parse but are rejected (`src/sblr/semantic_analyzer_v2.cpp:4314`, `4650`).
+- ALTER TABLE ONLY parses but is ignored (warning) (`src/sblr/semantic_analyzer_v2.cpp:4988`). ✅ **RESOLVED**
+- ALTER TABLE constraint operations parse but are rejected (`src/sblr/semantic_analyzer_v2.cpp:5139`). ✅ **RESOLVED**
+- COPY FORMAT/ENCODING options parse but are rejected (`src/sblr/semantic_analyzer_v2.cpp:5908`, `5913`; `src/sblr/executor.cpp:47185`, `47233`). ✅ **RESOLVED** (TEXT/CSV accepted; ENCODING supports UTF8/UTF-8; BINARY remains unsupported in Alpha).
+- TRUNCATE CASCADE/RESTART IDENTITY parse but are ignored (warnings) (`src/sblr/bytecode_generator_v2.cpp:2950`, `2953`).
+- SIMILAR TO ESCAPE parses but is ignored (warning) (`src/sblr/bytecode_generator_v2.cpp:3905`).
+- Aggregation limits (e.g., JOIN/CTE aggregation, SELECT * with aggregation) are parsed but rejected at execution (`src/sblr/executor.cpp:19595`, `19599`, `19638`).
+
+### PostgreSQL Parser Gaps
+- Expression indexes / INCLUDE indexes parsed but rejected by bytecode (`src/parser/postgresql/pg_parser_ddl.cpp:1046`, `1049`).
+- CREATE TYPE RANGE rejected (`src/parser/postgresql/pg_parser_ddl.cpp:1923`).
+- CREATE DOMAIN base type rejected (`src/parser/postgresql/pg_parser_ddl.cpp:2062`).
+- Table-level CHECK constraints rejected (`src/parser/postgresql/pg_parser_ddl.cpp:373`).
+- DEFAULT values in multi-row INSERT rejected (`src/parser/postgresql/pg_parser_dml.cpp:905`).
+- ALTER TABLE DROP CONSTRAINT / ALTER COLUMN SET/DROP DEFAULT/NOT NULL / USING rejected (`src/parser/postgresql/pg_parser_ddl.cpp:2577`, `2594`, `2599`, `2612`).
+- TRUNCATE options rejected (`src/parser/postgresql/pg_parser_ddl.cpp:3115`).
+- GRANT/REVOKE ON ALL rejected in bytecode (`src/parser/postgresql/pg_parser_misc.cpp:588`, `715`).
+
+### MySQL Parser Gaps
+- DEFAULT values in multi-row INSERT/REPLACE rejected (`src/parser/mysql/mysql_parser.cpp:2263`, `2693`).
+- ALTER TABLE ADD/DROP INDEX rejected (`src/parser/mysql/mysql_parser.cpp:3266`, `3282`).
+- ALTER TABLE CHANGE COLUMN rename / ALTER COLUMN rejected (`src/parser/mysql/mysql_parser.cpp:3318`, `3333`).
+- MySQL partition options rejected (`src/parser/mysql/mysql_parser.cpp:3765`).
+- Unsupported table options are rejected (explicit errors) (`src/parser/mysql/mysql_parser.cpp:3848`, `3927`).
+- LOCK TABLES / UNLOCK TABLES rejected (`src/parser/mysql/mysql_parser.cpp:5488`, `5496`).
+
+### Firebird Parser Gaps
+- ALTER/DROP/RECREATE for some object types reject with not-implemented errors
+  (`src/parser/firebird/firebird_parser.cpp:1982`, `2068`, `2223`).
+- ALTER DATABASE options rejected (`src/parser/firebird/firebird_parser.cpp:2201`).
+- ALTER TABLE SET rejected (`src/parser/firebird/firebird_parser.cpp:2423`).
+
+### Cross-cutting Executor Gaps (Parsed Features)
+- Unsupported ALTER SCHEMA / ALTER DATABASE action enums in executor
+  (`src/sblr/executor.cpp:7743`, `9420`).
+- ON CONFLICT unsupported action variants rejected (`src/sblr/executor.cpp:11137`).
+- SELECT aggregation limitations (JOIN/CTE/SELECT * restrictions) block parsed queries
+  (`src/sblr/executor.cpp:19595`, `19599`, `19638`).
+
+**Status:** These must be resolved or parsing must be removed to eliminate stubs/deferrals before
+network listener work begins.
 
 ---
 
@@ -76,6 +129,7 @@ else if (matchKeyword(TokenType::KW_REPEATABLE)) {
 ## CRITICAL ISSUE #1: V2 Parser - Incomplete PSQL Implementation
 
 **Severity:** HIGH - Feature Gap
+**Status:** RESOLVED - V2 parser now implements PSQL + CTE parsing and is wired through semantic analysis and bytecode generation with tests.
 
 **File:** `src/parser/parser_v2.cpp`
 **Lines:** 299-302 (TODO comments), AST nodes defined but not parsed
@@ -91,22 +145,20 @@ V2 parser defines AST nodes for procedural SQL but never parses them:
 // if (matchContextual("TRIGGER"))    return parseCreateTrigger();
 ```
 
-**Missing Implementations:**
+**Previously Missing Implementations (now resolved):**
 - CREATE FUNCTION, CREATE PROCEDURE, CREATE TRIGGER
 - EXECUTE BLOCK
 - IF/WHILE/FOR SELECT statements
 - Exception handling
 - WITH clauses (CTEs)
 
-**AST Infrastructure Exists But Unused:**
-- `ExecuteBlockStmt`, `IfStmt`, `WhileStmt`, `ForSelectStmt` defined in `ast_v2.h`
-- `WithClause` fields exist in INSERT/UPDATE/DELETE statements but never populated
+**AST Infrastructure Status:**
+- `ExecuteBlockStmt`, `IfStmt`, `WhileStmt`, `ForSelectStmt` now parsed and populated in V2
+- `WithClause` fields in INSERT/UPDATE/DELETE are now populated and emitted as bytecode
 
-### Impact
+### Impact (Resolved)
 
-- V2 parser cannot handle procedural code
-- CTEs (Common Table Expressions) not supported despite AST infrastructure
-- Functions/procedures must use emulated parsers (Firebird/PostgreSQL)
+- V2 parser handles procedural code, CTEs, and CREATE FUNCTION/PROCEDURE/TRIGGER without falling back
 
 ### Recommended Action
 
@@ -120,6 +172,7 @@ V2 parser defines AST nodes for procedural SQL but never parses them:
 ## CRITICAL ISSUE #2: V2 Parser - PostgreSQL Feature Contamination
 
 **Severity:** MEDIUM - Dialect Bleeding
+**Status:** ACCEPTED - V2 keeps PG-style syntax as approved extensions (Firebird base + explicit extensions).
 
 **File:** `src/parser/parser_v2.cpp`
 **Violations:** Multiple PostgreSQL-specific features in V2 parser
@@ -154,16 +207,14 @@ Having PostgreSQL-specific syntax in V2 creates confusion:
 
 ### Recommended Action
 
-**Decision Required:**
-1. **Option A**: Remove PostgreSQL-specific features, keep V2 pure Firebird-style
-2. **Option B**: Document V2 as "Firebird base + approved extensions" and list PostgreSQL features as intentional
-3. **Option C**: Rename V2 to indicate it's a hybrid dialect
+**Decision:** Option B - Document V2 as "Firebird base + approved extensions" and list PG-style features as intentional.
 
 ---
 
 ## CRITICAL ISSUE #3: TEMPORARY TABLES - Parsed But Not Implemented (ALL PARSERS)
 
 **Severity:** CRITICAL - Silent Feature Failure
+**Status:** RESOLVED - temp table metadata, bytecode, executor isolation, and ON COMMIT semantics implemented with tests.
 
 **Files:** All 4 parsers
 **Impact:** All parsers accept temporary table syntax but silently create **PERMANENT** tables
@@ -185,27 +236,16 @@ CREATE TEMPORARY TABLE test (id INT);           -- MySQL
 
 | Parser | Syntax Parsing | Flag Set | Bytecode Emitted | Executor Handles | Result |
 |--------|---------------|----------|------------------|------------------|---------|
-| **Firebird** | ✅ Lines 1607-1620 | ✅ `stmt->temporary = true` | ❌ NO | ❌ NO | PERMANENT table |
-| **V2** | ✅ Lines 265-269 | ✅ `stmt->temporary = true` | ❌ NO | ❌ NO | PERMANENT table |
-| **PostgreSQL** | ✅ Line 158 | ⚠️ `is_temp` read but **DISCARDED** | ❌ NO | ❌ NO | PERMANENT table |
-| **MySQL** | ✅ Line 2703 | ⚠️ Matched but **DISCARDED** | ❌ NO | ❌ NO | PERMANENT table |
+| **Firebird** | ✅ | ✅ | ✅ | ✅ | TEMP table |
+| **V2** | ✅ | ✅ | ✅ | ✅ | TEMP table |
+| **PostgreSQL** | ✅ | ✅ | ✅ | ✅ | TEMP table |
+| **MySQL** | ✅ | ✅ | ✅ | ✅ | TEMP table |
 
-### Implementation Gaps
+### Implementation Status (Resolved)
 
-**Bytecode Generator:** `src/sblr/bytecode_generator_v2.cpp:619-677`
-- Completely **IGNORES** `stmt->temporary` flag
-- No temporary flags written to bytecode
-
-**Executor:** `src/sblr/executor.cpp:4152+`
-- `executeCreateTable()` has **NO HANDLING** for temporary tables
-- No session/transaction tracking
-- No visibility isolation
-- No cleanup logic
-
-**Catalog:** `include/scratchbird/core/catalog_manager.h:1520`
-- `createTable()` has **NO PARAMETER** for temporary flag
-- Cannot store temporary table metadata
-- No session-scoped table tracking
+- Bytecode generator writes temp/on-commit flags for CREATE TABLE.
+- Executor enforces session/transaction isolation and ON COMMIT behavior.
+- Catalog stores temp metadata and session ownership.
 
 ### Additional Issue: ON COMMIT Clause (Firebird)
 
@@ -225,7 +265,7 @@ if (temporary && matchKeyword(TokenType::KW_ON)) {
 }
 ```
 
-**Status:** Parsed successfully but **NOT STORED** in AST or emitted to bytecode.
+**Status:** RESOLVED - ON COMMIT action stored in AST and enforced at execution time.
 
 ### Impact
 
@@ -244,37 +284,25 @@ if (temporary && matchKeyword(TokenType::KW_ON)) {
 - Breaks PostgreSQL/MySQL/Firebird compatibility
 - Applications migrating from these databases will behave incorrectly
 
-### Required Implementation
+### Resolution Summary
 
-**Full implementation required across entire stack:**
+- AST enums for temp type/on-commit added and populated by all parsers.
+- CREATE TABLE bytecode carries temp flags.
+- Catalog stores temp metadata and session/transaction ownership.
+- Executor isolates visibility and applies ON COMMIT rules.
+- Tests cover parsing + lifecycle semantics.
 
-1. **AST Extension** - Add enums for temporary table type and ON COMMIT action
-2. **Bytecode Format** - Extend CREATE_TABLE opcode with temporary flags
-3. **Catalog Extension** - Store temporary metadata, session/transaction IDs
-4. **Session Tracking** - Track temp tables per connection in ConnectionContext
-5. **Executor** - Implement visibility isolation and cleanup logic
-6. **Storage** - Use in-memory storage or separate temp tablespace
-
-**See:** `/docs/specifications/FIREBIRD_V2_FEATURE_PARITY_SPECIFICATION.md` (Section: "Parsed But Not Implemented Features") for detailed implementation plan
-
-### Recommended Action
-
-**CRITICAL PRIORITY:**
-1. Implement temporary table support (full stack)
-2. Implement ON COMMIT semantics for Firebird GTT
-3. Add comprehensive test suite
-4. OR: Make parsers **REJECT** temporary table syntax with clear error until implemented
-
-**Related Features Also Affected:**
-- TEMPORARY VIEWS (same issue)
-- TEMPORARY SEQUENCES (same issue)
-- UNLOGGED TABLES (parsed but not implemented)
+**Related Features (Phase 5):**
+- TEMPORARY VIEWS: session-scoped temp metadata; non-persistent in Alpha.
+- TEMPORARY SEQUENCES: session-scoped temp metadata; non-persistent in Alpha.
+- UNLOGGED TABLES: warn + treated as regular tables under MGA.
 
 ---
 
 ## ISSUE #4: PostgreSQL Parser - Executor Format Mismatches
 
 **Severity:** MEDIUM - Runtime Compatibility
+**Status:** PARTIALLY RESOLVED - PG CREATE TABLE column count uses uvarint; remaining mismatches still require audit/cleanup.
 
 **Files:** Multiple in `src/parser/postgresql/`
 
@@ -311,6 +339,7 @@ Per existing audit document `/docs/audit/19_postgresql_parser_correction_plan_ch
 ## ISSUE #5: V2 Parser - Incomplete Index Type Support
 
 **Severity:** HIGH - Feature Gap
+**Status:** RESOLVED - V2 AST/parser/semantic/bytecode now cover all 11 index types with tests.
 
 **Files:** Multiple (AST, parser, semantic analyzer, bytecode generator)
 
@@ -325,13 +354,13 @@ V2 parser only supports **5 of 11 production-ready index types**, even though th
 - GIST ✅
 - BRIN ✅
 
-**V2 Parser MISSING (storage engine supports):**
-- SPGIST ❌ (Space-Partitioned GiST)
-- RTREE ❌ (R-Tree spatial index)
-- HNSW ❌ (Vector similarity search)
-- BITMAP ❌ (Low cardinality columns)
-- COLUMNSTORE ❌ (Column-oriented storage)
-- LSM ❌ (Log-Structured Merge-Tree)
+**Previously Missing in V2 (now implemented):**
+- SPGIST (Space-Partitioned GiST)
+- RTREE (R-Tree spatial index)
+- HNSW (Vector similarity search)
+- BITMAP (Low cardinality columns)
+- COLUMNSTORE (Column-oriented storage)
+- LSM (Log-Structured Merge-Tree)
 
 ### Implementation Status Across Layers
 
@@ -342,14 +371,14 @@ V2 parser only supports **5 of 11 production-ready index types**, even though th
 | GIN | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | GIST | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | BRIN | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SPGIST | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
-| RTREE | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
-| HNSW | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
-| BITMAP | ❌ | ❌ | ⚠️ (dead) | ✅ | ✅ | ✅ | ✅ |
-| COLUMNSTORE | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
-| LSM | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| SPGIST | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| RTREE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| HNSW | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BITMAP | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| COLUMNSTORE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| LSM | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-### Critical Bug: Dead Code in Semantic Analyzer
+### Critical Bug: Dead Code in Semantic Analyzer (Resolved)
 
 **File:** `src/sblr/semantic_analyzer_v2.cpp:3210`
 
@@ -364,7 +393,7 @@ switch (stmt->index_type) {
 }
 ```
 
-BITMAP is not in the AST enum (ast_v2.h), so this case is dead code.
+BITMAP is now in the AST enum and semantic analyzer mapping is active.
 
 ### Impact
 
@@ -375,7 +404,7 @@ BITMAP is not in the AST enum (ast_v2.h), so this case is dead code.
 - Cannot use space-partitioned indexes (SPGIST)
 - Cannot use bitmap indexes for low-cardinality columns
 
-**Example Failures:**
+**Example Failures (Resolved):**
 
 ```sql
 -- All of these FAIL with "Unknown index type" even though storage engine supports them:
@@ -385,19 +414,10 @@ CREATE INDEX bitmap_idx ON status_codes USING BITMAP (status);
 CREATE INDEX columnstore_idx ON analytics USING COLUMNSTORE (timestamp, value);
 ```
 
-### Recommended Action
+### Resolution Summary
 
-**IMMEDIATE PRIORITY:**
-1. Extend AST enum to include all 11 index types
-2. Update V2 parser to accept all 11 index types
-3. Fix dead code in semantic analyzer
-4. Extend bytecode generator for missing types (RTREE, HNSW, COLUMNSTORE, LSM)
-5. Add comprehensive integration tests
-
-**Detailed Implementation Plan:**
-See `/docs/specifications/V2_PARSER_INDEX_TYPE_COMPLETENESS.md` for complete specification
-
-**Effort Estimate:** 6 days (5 implementation phases + testing)
+- AST enum, parser, semantic analyzer, and bytecode generator updated for all 11 types.
+- Integration tests added for CREATE/INSERT/SELECT across index types.
 
 ---
 
@@ -431,23 +451,23 @@ See `/docs/specifications/V2_PARSER_INDEX_TYPE_COMPLETENESS.md` for complete spe
 
 ### CRITICAL (Must Fix Before Production)
 
-1. **ALL PARSERS**: Implement TEMPORARY TABLES (full stack) OR reject syntax with error
-2. **Firebird Parser**: Implement ON COMMIT clause storage and execution
-3. **V2 Parser**: Implement PSQL parsing OR document as "not supported"
-4. **V2 Parser**: Implement CTE (WITH clause) parsing OR remove AST fields
+1. **ALL PARSERS**: TEMPORARY TABLES implemented end-to-end (DONE)
+2. **Firebird Parser**: ON COMMIT storage + execution implemented (DONE)
+3. **V2 Parser**: PSQL parsing implemented (DONE)
+4. **V2 Parser**: CTE (WITH clause) parsing implemented (DONE)
 
 ### HIGH Priority
 
-5. **V2 Parser**: Implement complete index type support (11 types) - see Issue #5
-6. **V2 Parser**: Document PostgreSQL features as intentional OR remove them
-7. **PostgreSQL Parser**: Fix executor bytecode format mismatches
-8. **MySQL Parser**: Fix executor bytecode format mismatches
+5. **V2 Parser**: Complete index type support (11 types) (DONE)
+6. **V2 Parser**: PG-style extensions documented as intentional (DONE)
+7. **PostgreSQL Parser**: Fix remaining executor bytecode format mismatches (PARTIAL)
+8. **MySQL Parser**: Fix remaining executor bytecode format mismatches (PARTIAL)
 
 ### MEDIUM Priority
 
-9. **All Parsers**: Add comprehensive integration tests (parser → executor)
-10. **MySQL Parser**: Implement CREATE INDEX, CREATE VIEW, DROP statements
-11. **All Parsers**: Audit and implement other parsed-but-not-implemented features (UNLOGGED, PARTITION BY, etc.)
+9. **All Parsers**: Expand integration tests (parser → executor) (IN PROGRESS)
+10. **MySQL Parser**: Implement remaining CREATE INDEX/VIEW/DROP gaps (VERIFY STATUS)
+11. **All Parsers**: Audit and implement parsed-but-not-implemented features (Phase 5 target)
 12. **Documentation**: ✅ COMPLETE - Comparison matrix and SBLR mapping created
 
 ---

@@ -65,6 +65,7 @@ enum class ASTKind : uint16_t {
     CreateProcedureStmt,
     CreateTriggerStmt,
     CreatePackageStmt,
+    CreateUserStmt,
     CreateRoleStmt,
     CreateExceptionStmt,
     CreateTypeStmt,
@@ -467,6 +468,22 @@ struct DatabaseOption {
 // DDL Statements
 // =============================================================================
 
+// Temporary table type (scratchbird normalized)
+enum class TempTableType : uint8_t {
+    NONE = 0,
+    SESSION = 1,
+    TRANSACTION = 2,
+    GLOBAL = 3
+};
+
+// ON COMMIT action for temporary tables
+enum class TempOnCommitAction : uint8_t {
+    NONE = 0,
+    DELETE_ROWS = 1,
+    PRESERVE_ROWS = 2,
+    DROP = 3
+};
+
 /**
  * CREATE TABLE statement
  */
@@ -478,7 +495,8 @@ public:
     // Options
     bool or_replace = false;
     bool if_not_exists = false;
-    bool temporary = false;
+    TempTableType temp_type = TempTableType::NONE;
+    TempOnCommitAction on_commit = TempOnCommitAction::NONE;
     bool unlogged = false;
 
     // Table path
@@ -511,8 +529,13 @@ enum class IndexType : uint8_t {
     HASH,
     GIN,
     GIST,
+    SPGIST,
     BRIN,
+    RTREE,
+    HNSW,
     BITMAP,
+    COLUMNSTORE,
+    LSM,
 };
 
 /**
@@ -721,6 +744,20 @@ public:
     SchemaPath package_path;
     StringPool::StringId header = StringPool::INVALID_ID;
     StringPool::StringId body = StringPool::INVALID_ID;
+};
+
+/**
+ * CREATE USER statement
+ */
+class CreateUserStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateUserStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId user_name = StringPool::INVALID_ID;
+    bool has_password = false;
+    StringPool::StringId password = StringPool::INVALID_ID;
+    bool is_superuser = false;
 };
 
 /**
@@ -2087,6 +2124,7 @@ enum class SetOpType : uint8_t {
 
 // Forward declarations
 class SelectStmt;
+struct WithClause;
 
 /**
  * SELECT statement
@@ -2095,6 +2133,9 @@ class SelectStmt : public Statement {
 public:
     ASTKind kind() const override { return ASTKind::SelectStmt; }
     void accept(ASTVisitor& visitor) override;
+
+    // WITH clause
+    WithClause* with = nullptr;
 
     // SELECT [DISTINCT | ALL]
     bool distinct = false;
@@ -2112,6 +2153,8 @@ public:
 
     // GROUP BY clause
     std::vector<Expression*> group_by;
+    GroupingType grouping_type = GroupingType::STANDARD;
+    std::vector<std::vector<Expression*>> grouping_sets;
 
     // HAVING clause
     Expression* having = nullptr;
@@ -2865,6 +2908,7 @@ public:
     virtual void visit(CreateProcedureStmt* stmt) = 0;
     virtual void visit(CreateTriggerStmt* stmt) = 0;
     virtual void visit(CreatePackageStmt* stmt) = 0;
+    virtual void visit(CreateUserStmt* stmt) = 0;
     virtual void visit(CreateRoleStmt* stmt) = 0;
     virtual void visit(CreateExceptionStmt* stmt) = 0;
     virtual void visit(CreateDomainStmt* stmt) = 0;

@@ -431,9 +431,9 @@ users = db.session.query(User).filter(User.email.like('%@example.com')).all()
 ```
 
 For complete ORM documentation, see:
-- [SQLAlchemy with ScratchBird](../orms/SQLAlchemy.md)
-- [Hibernate with ScratchBird](../orms/Hibernate.md)
-- [Entity Framework with ScratchBird](../orms/EntityFramework.md)
+- [SQLAlchemy Documentation](https://docs.sqlalchemy.org/)
+- [Hibernate Documentation](https://hibernate.org/orm/documentation/)
+- [Entity Framework Documentation](https://learn.microsoft.com/en-us/ef/)
 
 ---
 
@@ -598,7 +598,7 @@ class Cursor:
 ```
 
 For complete API documentation, see:
-- [Full API Reference](link-to-generated-api-docs)
+- [Driver API Reference (replace with driver docs)](https://github.com/scratchbird)
 
 ---
 
@@ -629,35 +629,35 @@ For complete API documentation, see:
 
 ## Additional Resources
 
-- [Driver GitHub Repository](link)
-- [Issue Tracker](link)
-- [Changelog](link)
-- [Performance Benchmarks](link)
-- [Migration from PostgreSQL driver](link)
-- [Language-specific tutorials](link)
+- [Driver GitHub Repository](https://github.com/scratchbird)
+- [Issue Tracker](https://github.com/scratchbird/scratchbird/issues)
+- [Changelog](https://github.com/scratchbird/scratchbird/releases)
+- [Performance Tuning](../content/user-guides/Performance-Tuning.md)
+- [Migration from PostgreSQL](../content/migration/From-PostgreSQL.md)
+- [Tutorials](../content/tutorials/README.md)
 
 ---
 
 ## See Also
 
-- [ScratchBird SQL Reference](../reference/SQL-Syntax.md)
-- [Connection Pooling Guide](../user-guides/Connection-Pooling.md)
-- [Security Best Practices](../user-guides/Security.md)
-- [Performance Tuning](../user-guides/Performance-Tuning.md)
+- [ScratchBird SQL Reference](../content/reference/SQL-Syntax.md)
+- [Security Best Practices](../content/user-guides/Security.md)
+- [Performance Tuning](../content/user-guides/Performance-Tuning.md)
+- [Driver Comparison](../content/drivers/Driver-Comparison.md)
 
 ---
 
 ## Feedback
 
 **Questions?**
-- [Discord #[language]-driver](link)
-- [Stack Overflow with tag `scratchbird-[language]`](link)
+- [Discord #drivers](https://discord.gg/scratchbird)
+- [Stack Overflow (scratchbird)](https://stackoverflow.com/questions/tagged/scratchbird)
 
 **Found a bug?**
-- [Report on GitHub](link)
+- [Report on GitHub](https://github.com/scratchbird/scratchbird/issues)
 
 **Want to contribute?**
-- [Contributing Guide](link)
+- [Contributing Guide](../content/Contributing.md)
 
 ---
 

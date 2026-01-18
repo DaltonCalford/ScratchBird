@@ -19,6 +19,17 @@ static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
     return uuid;
 }
 
+static std::vector<uint8_t> makeTestTuple(size_t payload_size, uint8_t fill, uint64_t xmin = 100)
+{
+    std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload_size, 0);
+    auto *hdr = reinterpret_cast<TupleHeader *>(tuple.data());
+    *hdr = {};
+    hdr->xmin = xmin;
+    hdr->xmax = 0;
+    std::memset(tuple.data() + sizeof(TupleHeader), fill, payload_size);
+    return tuple;
+}
+
 class StorageCriticalFixesTest : public ::testing::Test
 {
 protected:
@@ -58,7 +69,7 @@ TEST_F(StorageCriticalFixesTest, HeapScanIterator_NoMemoryLeak)
     ASSERT_EQ(heap_page.initialize(0, nullptr), Status::OK);
 
     // Insert tuples directly into heap page
-    std::vector<uint8_t> tuple_data(100, 0xAA);
+    auto tuple_data = makeTestTuple(100, 0xAA);
     int inserted_count = 0;
     for (int i = 0; i < 50; i++)  // Insert until page is full
     {
@@ -117,7 +128,7 @@ TEST_F(StorageCriticalFixesTest, HeapPage_InsertTuple_BufferOverflowProtection)
 
     // Test Case 1: Normal tuple insertion
     {
-        std::vector<uint8_t> raw_data(50, 0xBB);
+        auto raw_data = makeTestTuple(50, 0xBB);
         uint16_t item_id;
         Status status = heap_page.insertTuple(raw_data.data(), raw_data.size(), 100, &item_id, nullptr);
         EXPECT_EQ(status, Status::OK) << "Normal tuple insertion should succeed";
@@ -132,18 +143,16 @@ TEST_F(StorageCriticalFixesTest, HeapPage_InsertTuple_BufferOverflowProtection)
 
     // Test Case 2: Minimum size validation - very small tuple
     {
-        std::vector<uint8_t> tiny_data(5, 0xDD);
+        std::vector<uint8_t> tiny_data(sizeof(TupleHeader) - 1, 0xDD);
         uint16_t item_id;
-        // HeapPage should handle small tuples appropriately
         Status status = heap_page.insertTuple(tiny_data.data(), tiny_data.size(), 100, &item_id, nullptr);
-        // Small tuples may or may not be rejected - depends on implementation
-        // This documents current behavior
-        (void)status;  // May succeed or fail
+        EXPECT_EQ(status, Status::INVALID_ARGUMENT)
+            << "Tuple smaller than TupleHeader should be rejected";
     }
 
     // Test Case 3: Large tuple that fits in page
     {
-        std::vector<uint8_t> large_data(1000, 0xEE);
+        auto large_data = makeTestTuple(1000, 0xEE);
         uint16_t item_id;
         Status status = heap_page.insertTuple(large_data.data(), large_data.size(), 100, &item_id, nullptr);
         EXPECT_EQ(status, Status::OK) << "Large tuple should fit in 8K page";
@@ -162,7 +171,7 @@ TEST_F(StorageCriticalFixesTest, HeapPage_TupleOperations)
     ASSERT_EQ(heap_page.initialize(0, nullptr), Status::OK);
 
     // Insert test data directly into heap page
-    std::vector<uint8_t> tuple_data(100, 0xEE);
+    auto tuple_data = makeTestTuple(100, 0xEE);
     uint16_t item_id;
 
     Status status = heap_page.insertTuple(tuple_data.data(), tuple_data.size(), 100, &item_id, nullptr);
@@ -213,7 +222,7 @@ TEST_F(StorageCriticalFixesTest, HeapPage_StressTestMemoryLeak)
     }
 
     // Insert tuples across all pages
-    std::vector<uint8_t> tuple_data(100, 0xFF);
+    auto tuple_data = makeTestTuple(100, 0xFF);
     int total_inserted = 0;
 
     for (int p = 0; p < NUM_PAGES; p++)
@@ -290,11 +299,9 @@ TEST_F(StorageCriticalFixesTest, HeapPage_InsertTuple_BoundaryValidation)
 
     // Test with proper data size (normal case)
     {
-        uint8_t data[100];
-        memset(data, 0xBB, sizeof(data));
-
+        auto data = makeTestTuple(100, 0xBB);
         uint16_t item_id;
-        Status status = heap_page.insertTuple(data, sizeof(data), 100, &item_id, nullptr);
+        Status status = heap_page.insertTuple(data.data(), data.size(), 100, &item_id, nullptr);
         EXPECT_EQ(status, Status::OK) << "Normal tuple insertion should succeed";
 
         if (status == Status::OK)
@@ -329,8 +336,8 @@ TEST_F(StorageCriticalFixesTest, HeapPage_CombinedOperations)
 
     // Insert various sized tuples
     std::vector<std::vector<uint8_t>> test_data = {
-        std::vector<uint8_t>(50, 0x11), std::vector<uint8_t>(100, 0x22),
-        std::vector<uint8_t>(200, 0x33), std::vector<uint8_t>(1000, 0x44)};
+        makeTestTuple(50, 0x11), makeTestTuple(100, 0x22),
+        makeTestTuple(200, 0x33), makeTestTuple(1000, 0x44)};
 
     std::vector<uint16_t> inserted_ids;
 

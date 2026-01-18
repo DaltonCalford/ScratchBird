@@ -309,9 +309,9 @@ namespace scratchbird
             uint64_t legacy_tid = convertTIDtoLegacy(tid);
             if (legacy_tid == 0)
             {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                  "Custom tablespace indexes not yet supported in ALPHA");
-                return Status::NOT_IMPLEMENTED;
+                SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                                  "TID page number exceeds legacy index encoding");
+                return Status::NOT_SUPPORTED;
             }
 
             if (!value_data || value_len == 0)
@@ -372,9 +372,9 @@ namespace scratchbird
             uint64_t legacy_tid = convertTIDtoLegacy(tid);
             if (legacy_tid == 0)
             {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                  "Custom tablespace indexes not yet supported in ALPHA");
-                return Status::NOT_IMPLEMENTED;
+                SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                                  "TID page number exceeds legacy index encoding");
+                return Status::NOT_SUPPORTED;
             }
 
             if (!value_data || value_len == 0)

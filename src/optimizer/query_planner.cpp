@@ -17,6 +17,7 @@
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/permission_cache.h"
 #include <algorithm>
 #include <unordered_map>
 #include <cmath>
@@ -171,6 +172,11 @@ auto QueryPlanner::planQuery(const parser::v2::ResolvedSelectStmt* select_stmt,
 
     DEBUG_LOG_DB("QueryPlanner::planQuery - planning query");
 
+    if (!checkSelectPermissions(select_stmt, ctx))
+    {
+        return nullptr;
+    }
+
     // Check if this is a join query
     if (!select_stmt->joins.empty())
     {
@@ -222,6 +228,101 @@ auto QueryPlanner::planQuery(const parser::v2::ResolvedSelectStmt* select_stmt,
     }
 
     return wrapWithClauses(base_node, select_stmt);
+}
+
+bool QueryPlanner::checkSelectPermissions(
+    const parser::v2::ResolvedSelectStmt* select_stmt,
+    core::ErrorContext* ctx)
+{
+    if (!select_stmt || select_stmt->from_tables.empty())
+    {
+        return true;
+    }
+
+    if (!conn_ctx_ || conn_ctx_->isSuperuser())
+    {
+        return true;
+    }
+
+    auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+    auto* cache = db_ ? db_->permission_cache() : nullptr;
+    if (!catalog || !cache)
+    {
+        SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                          "Permission checks unavailable");
+        return false;
+    }
+
+    core::ID user_id = conn_ctx_->getCurrentUserId();
+    if (user_id == core::ID{})
+    {
+        SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
+                          "Permission denied: no active user");
+        return false;
+    }
+
+    for (const auto* table_ref : select_stmt->from_tables)
+    {
+        if (!table_ref)
+        {
+            continue;
+        }
+
+        if (table_ref->object_type == parser::v2::ResolvedTableRef::ObjectType::CTE ||
+            table_ref->object_type == parser::v2::ResolvedTableRef::ObjectType::SUBQUERY ||
+            table_ref->object_type == parser::v2::ResolvedTableRef::ObjectType::FUNCTION)
+        {
+            continue;
+        }
+
+        if (table_ref->table_uuid == core::ID{})
+        {
+            continue;
+        }
+
+        core::CatalogManager::PermissionObjectType object_type =
+            (table_ref->object_type == parser::v2::ResolvedTableRef::ObjectType::VIEW ||
+             table_ref->object_type == parser::v2::ResolvedTableRef::ObjectType::MATERIALIZED_VIEW)
+                ? core::CatalogManager::PermissionObjectType::VIEW
+                : core::CatalogManager::PermissionObjectType::TABLE;
+
+        core::PermissionCache::CacheKey key{
+            user_id,
+            table_ref->table_uuid,
+            object_type,
+            core::CatalogManager::Privilege::SELECT
+        };
+
+        core::ErrorContext perm_ctx;
+        bool allowed = cache->checkPermission(
+            catalog,
+            key,
+            core::PermissionCheckMode::CACHED,
+            &perm_ctx);
+
+        if (!allowed)
+        {
+            if (ctx)
+            {
+                if (perm_ctx.code != core::Status::OK &&
+                    perm_ctx.code != core::Status::NOT_FOUND)
+                {
+                    SET_ERROR_CONTEXT(ctx, perm_ctx.code,
+                                      perm_ctx.message.empty() ? "Permission check failed"
+                                                               : perm_ctx.message.c_str());
+                }
+                else
+                {
+                    std::string object_label = getTableName(table_ref, db_);
+                    SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
+                                      ("Permission denied: SELECT on " + object_label).c_str());
+                }
+            }
+            return false;
+        }
+    }
+
+    return true;
 }
 
 std::shared_ptr<PlanNode> QueryPlanner::planJoinQuery(

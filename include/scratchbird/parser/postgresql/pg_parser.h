@@ -241,6 +241,8 @@ private:
     bool emit_enabled_ = true;
     bool pending_index_unique_ = false;
     bool pending_or_replace_ = false;
+    bool pending_create_temp_ = false;
+    bool pending_create_unlogged_ = false;
 
     // Token management
     void advance();

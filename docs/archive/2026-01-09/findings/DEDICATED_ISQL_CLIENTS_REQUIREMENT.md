@@ -8,13 +8,13 @@
 
 ## Executive Summary
 
-**Problem:** Current `sb_isql` uses ScratchBird's native wire protocol (port 5433) and can only test the ScratchBird V2 parser. Testing Firebird, PostgreSQL, and MySQL emulation requires clients that speak their native wire protocols.
+**Problem:** Current `sb_isql` uses ScratchBird's native wire protocol (port 3092) and can only test the ScratchBird V2 parser. Testing Firebird, PostgreSQL, and MySQL emulation requires clients that speak their native wire protocols.
 
 **Solution:** Create **four dedicated ISQL utilities**, one for each database emulation:
 
 | Utility | Protocol | Port | Purpose |
 |---------|----------|------|---------|
-| `sb_isql` | ScratchBird Native | 5433 | ✅ EXISTS - ScratchBird V2 testing |
+| `sb_isql` | ScratchBird Native | 3092 | ✅ EXISTS - ScratchBird V2 testing |
 | `sb_fb_isql` | Firebird XDR | 3050 | ❌ NEEDED - Firebird emulation testing |
 | `sb_my_isql` | MySQL Text Protocol | 3306 | ❌ NEEDED - MySQL emulation testing |
 | `sb_pg_isql` | PostgreSQL Frontend/Backend | 5432 | ❌ NEEDED - PostgreSQL emulation testing |
@@ -42,7 +42,7 @@
 │  │              Wire Protocol Listeners                         │        │
 │  ├──────────────┬──────────────┬──────────────┬─────────────────┤        │
 │  │ ScratchBird  │   Firebird   │ PostgreSQL   │     MySQL       │        │
-│  │ Native (5433)│  XDR (3050)  │   FE/BE      │  Text Protocol  │        │
+│  │ Native (3092)│  XDR (3050)  │   FE/BE      │  Text Protocol  │        │
 │  │              │              │   (5432)     │    (3306)       │        │
 │  └──────┬───────┴──────┬───────┴──────┬───────┴───────┬─────────┘        │
 │         │              │              │               │                  │
@@ -85,7 +85,7 @@
 ```
 sb_isql (Client)
     │
-    │ ScratchBird Native Wire Protocol (port 5433)
+    │ ScratchBird Native Wire Protocol (port 3092)
     │
     ▼
 ScratchBird Server
@@ -104,7 +104,7 @@ V2 Parser Only
 │  (V2 Native) │    │  (Firebird)  │    │(PostgreSQL)  │    │   (MySQL)    │
 └──────┬───────┘    └──────┬───────┘    └──────┬───────┘    └──────┬───────┘
        │                   │                   │                   │
-       │ Native (5433)     │ XDR (3050)        │ FE/BE (5432)      │ Text (3306)
+       │ Native (3092)     │ XDR (3050)        │ FE/BE (5432)      │ Text (3306)
        │                   │                   │                   │
        └───────────────────┴───────────────────┴───────────────────┘
                                    │
@@ -237,7 +237,7 @@ Each database has different session behavior:
 
 **Status:** ✅ ALREADY EXISTS
 
-**Wire Protocol:** ScratchBird Native (port 5433)
+**Wire Protocol:** ScratchBird Native (port 3092)
 
 **Purpose:** Test ScratchBird V2 native parser
 
@@ -512,7 +512,7 @@ mysql> CALL test();
 | Feature | sb_isql | sb_fb_isql | sb_pg_isql | sb_my_isql |
 |---------|---------|------------|------------|------------|
 | **Wire Protocol** | ScratchBird Native | Firebird XDR | PostgreSQL FE/BE | MySQL Text |
-| **Default Port** | 5433 | 3050 | 5432 | 3306 |
+| **Default Port** | 3092 | 3050 | 5432 | 3306 |
 | **Parser Triggered** | V2 | Firebird | PostgreSQL | MySQL |
 | **Input Flag** | `-f` | `-i` | `-f` | Stdin `<` or `-e` |
 | **Output Flag** | `-o` | `-o` | `-o` | Stdout `>` |
@@ -532,7 +532,7 @@ mysql> CALL test();
 **ScratchBird server MUST implement or already implements:**
 
 1. **Wire Protocol Listeners**
-   - ✅ ScratchBird Native (port 5433) - EXISTS
+   - ✅ ScratchBird Native (port 3092) - EXISTS
    - ⚠️ Firebird XDR (port 3050) - STATUS UNKNOWN
    - ⚠️ PostgreSQL FE/BE (port 5432) - STATUS UNKNOWN
    - ⚠️ MySQL Text (port 3306) - STATUS UNKNOWN
@@ -541,7 +541,7 @@ mysql> CALL test();
    - Connection on port 3050 → Firebird parser
    - Connection on port 5432 → PostgreSQL parser
    - Connection on port 3306 → MySQL parser
-   - Connection on port 5433 → V2 parser
+   - Connection on port 3092 → V2 parser
 
 3. **Emulation Schema Structure**
    - `/remote/emulated/firebird/` - Firebird databases

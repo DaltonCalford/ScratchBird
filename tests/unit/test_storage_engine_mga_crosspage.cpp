@@ -4,6 +4,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -19,6 +20,18 @@ static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
     UuidV7Bytes uuid;
     memset(uuid.bytes.data(), value, 16);
     return uuid;
+}
+
+static std::vector<uint8_t> makeTestTuple(size_t payload_size, uint8_t fill,
+                                          uint64_t xmin = config::DEFAULT_INITIAL_XID)
+{
+    std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload_size, 0);
+    auto *hdr = reinterpret_cast<TupleHeader *>(tuple.data());
+    *hdr = {};
+    hdr->xmin = xmin;
+    hdr->xmax = 0;
+    std::memset(tuple.data() + sizeof(TupleHeader), fill, payload_size);
+    return tuple;
 }
 
 class StorageEngineMGATest : public ::testing::Test
@@ -84,7 +97,7 @@ protected:
 TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
 {
     // Setup: Create database with small page size to force cross-page back versioning
-    // Using 8KB pages with tuple sizes under TOAST threshold (2048 bytes for 8KB pages)
+    // Using 8KB pages with tuple sizes under TOAST threshold (256 bytes for 8KB pages)
     // We test MGA principle: TID remains stable even when back version goes to different page
     ASSERT_EQ(Database::create("/tmp/test_mga_crosspage.db", 8192), Status::OK);
 
@@ -99,7 +112,7 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
     ASSERT_NE(engine, nullptr);
 
     // Step 1: Insert tuple with SMALL data
-    std::vector<uint8_t> small_data(50, 0xAA);
+    auto small_data = makeTestTuple(50, 0xAA);
     uint32_t original_page_id;
     uint16_t original_item_id;
 
@@ -119,8 +132,8 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
 
     // Step 2: Update with LARGER data
     // TOAST threshold for 8KB pages = page_size/32 = 256 bytes
-    // Use 200 bytes - large enough to test update but under TOAST threshold
-    std::vector<uint8_t> larger_data(200, 0xBB);
+    // Use 180 bytes payload - large enough to test update but under TOAST threshold
+    auto larger_data = makeTestTuple(180, 0xBB);
     uint32_t new_page_id;
     uint16_t new_item_id;
 
@@ -153,7 +166,7 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
     EXPECT_EQ(read_tuple.data_size, larger_data.size())
         << "Tuple data size mismatch after UPDATE";
 
-    // Verify data content (skip TupleHeader - first 44 bytes are header, rest is user data)
+    // Verify data content (skip TupleHeader, rest is user data)
     // Note: insertTuple/updateTuple API expects caller to include space for TupleHeader
     // The header is filled in by the storage engine, so we only compare user data portion
     const uint8_t *user_data_start = read_tuple.data + sizeof(TupleHeader);
@@ -180,7 +193,7 @@ TEST_F(StorageEngineMGATest, SamePageUpdatePreservesTID)
     ASSERT_NE(engine, nullptr);
 
     // Insert small tuple
-    std::vector<uint8_t> small_data(50, 0xAA);
+    auto small_data = makeTestTuple(50, 0xAA);
     uint32_t original_page_id;
     uint16_t original_item_id;
 
@@ -195,7 +208,7 @@ TEST_F(StorageEngineMGATest, SamePageUpdatePreservesTID)
     ASSERT_EQ(status, Status::OK) << "Failed to insert: " << ctx.message;
 
     // Update with another small tuple (same-page update)
-    std::vector<uint8_t> small_data2(60, 0xBB);
+    auto small_data2 = makeTestTuple(60, 0xBB);
     uint32_t new_page_id;
     uint16_t new_item_id;
 
@@ -242,7 +255,7 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     ASSERT_NE(engine, nullptr);
 
     // Insert initial small tuple
-    std::vector<uint8_t> data1(50, 0x11);
+    auto data1 = makeTestTuple(50, 0x11);
     uint32_t page_id;
     uint16_t item_id;
 
@@ -254,7 +267,7 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     TID original_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
 
     // Update 1: Larger data (under TOAST threshold of 256 bytes for 8KB pages)
-    std::vector<uint8_t> data2(200, 0x22);
+    auto data2 = makeTestTuple(180, 0x22);
     uint32_t page_id2;
     uint16_t item_id2;
 
@@ -268,7 +281,7 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     EXPECT_EQ(item_id, item_id2);
 
     // Update 2: Another update (still under TOAST threshold of 256 bytes)
-    std::vector<uint8_t> data3(250, 0x33);
+    auto data3 = makeTestTuple(190, 0x33);
     uint32_t page_id3;
     uint16_t item_id3;
 
@@ -321,20 +334,21 @@ TEST_F(StorageEngineMGATest, OverwriteTupleHandlesSizeChanges)
     ASSERT_EQ(status, Status::OK);
 
     // Insert initial tuple on primary page
-    std::vector<uint8_t> initial_data(100, 0xAA);
+    auto initial_data = makeTestTuple(100, 0xAA);
     uint16_t primary_item_id;
     status = primary_page.insertTuple(initial_data.data(), initial_data.size(), 100, &primary_item_id, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     // Test Case 1: Overwrite with SMALLER data (should fit in same space)
     {
-        std::vector<uint8_t> smaller_data(50, 0xBB);
+        const uint32_t smaller_payload_size = 50;
+        auto smaller_data = makeTestTuple(smaller_payload_size, 0xBB);
         GPID back_gpid = makeGPID(PRIMARY_TABLESPACE_ID, 200);
 
         status = primary_page.overwriteTuple(
             primary_item_id,
             smaller_data.data(),
-            smaller_data.size(),
+            smaller_payload_size,
             100, // xmax
             101, // new_xmin
             back_gpid,
@@ -357,13 +371,14 @@ TEST_F(StorageEngineMGATest, OverwriteTupleHandlesSizeChanges)
 
     // Test Case 2: Overwrite with LARGER data (requires new space allocation)
     {
-        std::vector<uint8_t> larger_data(200, 0xCC);
+        const uint32_t larger_payload_size = 200;
+        auto larger_data = makeTestTuple(larger_payload_size, 0xCC);
         GPID back_gpid2 = makeGPID(PRIMARY_TABLESPACE_ID, 200);
 
         status = primary_page.overwriteTuple(
             primary_item_id,
             larger_data.data(),
-            larger_data.size(),
+            larger_payload_size,
             101, // xmax
             102, // new_xmin
             back_gpid2,

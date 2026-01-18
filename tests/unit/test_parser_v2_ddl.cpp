@@ -6,6 +6,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <vector>
 #include "scratchbird/parser/parser_v2.h"
 
 using namespace scratchbird::parser::v2;
@@ -84,7 +85,7 @@ TEST_F(ParserV2DDLTest, CreateTable_Temporary) {
     ASSERT_TRUE(result.success());
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
-    EXPECT_TRUE(stmt->temporary);
+    EXPECT_EQ(stmt->temp_type, TempTableType::SESSION);
 }
 
 // =============================================================================
@@ -369,6 +370,38 @@ TEST_F(ParserV2DDLTest, CreateIndex_UsingGin) {
     EXPECT_EQ(stmt->index_type, IndexType::GIN);
 }
 
+TEST_F(ParserV2DDLTest, CreateIndex_UsingAdditionalTypes) {
+    struct Case {
+        const char* method;
+        IndexType type;
+    };
+
+    std::vector<Case> cases = {
+        {"HASH", IndexType::HASH},
+        {"GIST", IndexType::GIST},
+        {"SPGIST", IndexType::SPGIST},
+        {"BRIN", IndexType::BRIN},
+        {"RTREE", IndexType::RTREE},
+        {"HNSW", IndexType::HNSW},
+        {"BITMAP", IndexType::BITMAP},
+        {"COLUMNSTORE", IndexType::COLUMNSTORE},
+        {"LSM", IndexType::LSM},
+    };
+
+    for (const auto& test_case : cases) {
+        std::string sql = "CREATE INDEX idx ON t USING ";
+        sql += test_case.method;
+        sql += " (id)";
+        Parser parser(sql);
+        auto result = parser.parseStatement();
+
+        ASSERT_TRUE(result.success()) << "Failed for USING " << test_case.method;
+        auto* stmt = dynamic_cast<CreateIndexStmt*>(result.statement());
+        ASSERT_NE(stmt, nullptr);
+        EXPECT_EQ(stmt->index_type, test_case.type) << "USING " << test_case.method;
+    }
+}
+
 TEST_F(ParserV2DDLTest, CreateIndex_DescNullsFirst) {
     Parser parser("CREATE INDEX idx ON t (created DESC NULLS FIRST)");
     auto result = parser.parseStatement();
@@ -401,6 +434,22 @@ TEST_F(ParserV2DDLTest, CreateIndex_Include) {
 }
 
 // =============================================================================
+// CREATE VIEW Tests
+// =============================================================================
+
+TEST_F(ParserV2DDLTest, CreateView_Temporary) {
+    Parser parser("CREATE TEMPORARY VIEW v AS SELECT 1");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<CreateViewStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_TRUE(stmt->temporary);
+    EXPECT_FALSE(stmt->materialized);
+}
+
+// =============================================================================
 // CREATE SEQUENCE Tests
 // =============================================================================
 
@@ -428,6 +477,17 @@ TEST_F(ParserV2DDLTest, CreateSequence_AllOptions) {
     EXPECT_EQ(stmt->max_value.value(), 10000);
     EXPECT_EQ(stmt->cache.value(), 20);
     EXPECT_TRUE(stmt->cycle);
+}
+
+TEST_F(ParserV2DDLTest, CreateSequence_Temporary) {
+    Parser parser("CREATE TEMP SEQUENCE temp_seq");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<CreateSequenceStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_TRUE(stmt->temporary);
 }
 
 // =============================================================================

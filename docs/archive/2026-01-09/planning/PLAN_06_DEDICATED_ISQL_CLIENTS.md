@@ -62,7 +62,7 @@ This plan provides **complete specifications** for implementing three dedicated 
 │  Protocol Client ││ Protocol Client  ││ Protocol Client  ││Native Client │
 └────────┬─────────┘└────────┬─────────┘└────────┬─────────┘└──────┬───────┘
          │                   │                   │                 │
-         │ Port 3050         │ Port 5432         │ Port 3306       │ Port 5433
+         │ Port 3050         │ Port 5432         │ Port 3306       │ Port 3092
          │ XDR Protocol      │ FE/BE Protocol    │ Text Protocol   │ Native
          │                   │                   │                 │
          └───────────────────┴───────────────────┴─────────────────┘

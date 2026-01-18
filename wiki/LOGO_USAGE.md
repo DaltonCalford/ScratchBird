@@ -1,7 +1,7 @@
 # ScratchBird Logo Usage Guide
 
 **Quick Reference for Documentation Authors**
-**Last Updated:** 2026-01-03
+**Last Updated:** 2026-01-18
 
 ---
 
@@ -41,7 +41,7 @@ Content goes here...
 For README.md files in the main repository:
 
 ```markdown
-![ScratchBird](docs/Artwork/TransparentScratchBirdLogoHeader.png)
+![ScratchBird](images/logos/TransparentScratchBirdLogoHeader.png)
 
 # ScratchBird
 
@@ -53,7 +53,7 @@ High-performance database with Firebird MGA transaction model...
 For driver-specific documentation:
 
 ```markdown
-![ScratchBird](../../images/logos/TransparentScratchBirdLogoHeader.png)
+![ScratchBird](images/logos/TransparentScratchBirdLogoHeader.png)
 
 # Python Driver for ScratchBird
 
@@ -346,7 +346,7 @@ git push
 
 **See Also:**
 - [Logo Files README](images/logos/README.md) - Technical details
-- [Wiki Style Guide](templates/STYLE_GUIDE.md) - Writing standards
+- [User Guide Template](templates/user-guide-template.md) - Writing standards
 - [Contributing Guide](content/Contributing.md) - How to contribute
 
 ---

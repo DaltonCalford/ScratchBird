@@ -157,7 +157,7 @@ Tests will be executed using dedicated ISQL clients:
 - **sb_fb_isql** - Firebird protocol client (port 3050)
 - **sb_my_isql** - MySQL protocol client (port 3306)
 - **sb_pg_isql** - PostgreSQL protocol client (port 5432)
-- **sb_isql** - ScratchBird native client (port 5433)
+- **sb_isql** - ScratchBird native client (port 3092)
 
 Each client speaks its database's native wire protocol and connects to ScratchBird's multi-protocol server.
 

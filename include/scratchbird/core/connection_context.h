@@ -164,6 +164,7 @@ namespace scratchbird::core
                                const std::string& emulation_mode,
                                uint64_t policy_epoch_global,
                                uint64_t policy_epoch_table);
+        ID effectiveSessionId() const;
 
         // Security context queries (Phase 2 - Security System)
         const ID& getCurrentUserId() const { return current_user_id_; }
@@ -712,6 +713,9 @@ namespace scratchbird::core
 
         // LRU eviction helper
         void evictOldestPreparedStatement();
+
+        Status cleanupTempTablesOnCommit(ErrorContext *ctx);
+        Status cleanupTempTablesOnSessionEnd(ErrorContext *ctx);
     };
 
 } // namespace scratchbird::core

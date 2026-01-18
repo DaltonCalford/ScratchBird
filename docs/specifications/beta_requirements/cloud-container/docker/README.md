@@ -255,7 +255,7 @@ services:
     container_name: scratchbird-replica
     restart: always
     ports:
-      - "5433:5432"
+      - "5434:5432"
     environment:
       SCRATCHBIRD_REPLICATION_MODE: replica
       SCRATCHBIRD_PRIMARY_HOST: scratchbird-primary

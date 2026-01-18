@@ -10,7 +10,7 @@
  * Options:
  *   -U, --user=<username>    Username for authentication
  *   -P, --password=<pass>    Password (prompted if not given)
- *   -p, --port=<n>           TCP port (default: 5433)
+ *   -p, --port=<n>           TCP port (default: 3092)
  *   -H, --host=<host>        Host (default: localhost)
  *   -c, --command=<sql>      Execute single command and exit
  *   -f, --file=<file>        Execute commands from file and exit
@@ -93,7 +93,7 @@ struct IsqlConfig {
     std::string username;
     std::string password;
     std::string host = "localhost";
-    uint16_t port = 5433;
+    uint16_t port = 3092;
 
     std::string command;           // -c: single command
     std::string input_file;        // -f: input file
@@ -2835,7 +2835,7 @@ void printUsage(const char* program) {
     std::cout << "Options:\n";
     std::cout << "  -U, --user=<username>     Username for authentication\n";
     std::cout << "  -P, --password=<pass>     Password (prompted if not given)\n";
-    std::cout << "  -p, --port=<n>            TCP port (default: 5433)\n";
+    std::cout << "  -p, --port=<n>            TCP port (default: 3092)\n";
     std::cout << "  -H, --host=<host>         Host (default: localhost)\n";
     std::cout << "  -c, --command=<sql>       Execute single command and exit\n";
     std::cout << "  -f, --file=<file>         Execute commands from file and exit\n";

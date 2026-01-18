@@ -453,8 +453,7 @@ namespace scratchbird
              * @param ctx Error context
              * @return Status::OK on success, error status otherwise
              *
-             * Note: For Phase 1, only primary tablespace (tablespace 0) is supported.
-             *       Custom tablespaces return Status::NOT_IMPLEMENTED.
+             * Note: Custom tablespaces are supported when the tablespace file is registered.
              *
              * Thread-safe: atomically increments next_page_id in database header.
              */

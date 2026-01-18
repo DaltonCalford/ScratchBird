@@ -1,7 +1,7 @@
 # ScratchBird Logos and Branding
 
 **Source:** `/docs/Artwork/`
-**Last Updated:** 2026-01-03
+**Last Updated:** 2026-01-18
 
 ---
 
@@ -52,31 +52,31 @@
 
 **Header Image (recommended):**
 ```markdown
-![ScratchBird Logo](images/logos/TransparentScratchBirdLogoHeader.png)
+![ScratchBird Logo](TransparentScratchBirdLogoHeader.png)
 ```
 
 **Inline Logo:**
 ```markdown
-![ScratchBird](images/logos/ScratchBirdLogo.png)
+![ScratchBird](ScratchBirdLogo.png)
 ```
 
 **Small Icon:**
 ```markdown
-![ScratchBird Icon](images/logos/ScratchBirdLogo.png){ width=64px }
+![ScratchBird Icon](ScratchBirdLogo.png){ width=64px }
 ```
 
 ### In Markdown Files
 
 For repository markdown files (README.md, etc.):
 ```markdown
-![ScratchBird](docs/Artwork/TransparentScratchBirdLogoHeader.png)
+![ScratchBird](TransparentScratchBirdLogoHeader.png)
 ```
 
 ### In HTML
 
 For HTML documentation:
 ```html
-<img src="images/logos/TransparentScratchBirdLogoHeader.png" alt="ScratchBird Logo" />
+<img src="TransparentScratchBirdLogoHeader.png" alt="ScratchBird Logo" />
 ```
 
 ---

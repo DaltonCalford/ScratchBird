@@ -94,7 +94,7 @@ struct HBARule {
      * Check if rule matches connection
      */
     bool matches(const ConnectionInfo& conn, const std::string& username,
-                 const std::string& database) const;
+                 const std::string& database, const std::vector<std::string>& roles) const;
 
     /**
      * Parse HBA rule from line
@@ -138,7 +138,8 @@ public:
      */
     const HBARule* findMatchingRule(const ConnectionInfo& conn,
                                      const std::string& username,
-                                     const std::string& database) const;
+                                     const std::string& database,
+                                     const std::vector<std::string>& roles) const;
 
     /**
      * Get all rules

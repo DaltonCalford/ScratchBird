@@ -356,6 +356,28 @@ public:
             TOAST = 5              // TOAST table
         };
 
+        enum class TempMetadataScope : uint8_t
+        {
+            NONE = 0,
+            GLOBAL = 1,
+            SESSION = 2
+        };
+
+        enum class TempDataScope : uint8_t
+        {
+            NONE = 0,
+            SESSION = 1,
+            TRANSACTION = 2
+        };
+
+        enum class TempOnCommitAction : uint8_t
+        {
+            NONE = 0,
+            DELETE_ROWS = 1,
+            PRESERVE_ROWS = 2,
+            DROP = 3
+        };
+
         // Table information
         struct TableInfo
         {
@@ -368,6 +390,13 @@ public:
             uint32_t column_count = 0;
             uint64_t row_count = 0;            // Estimated row count
             TableType table_type = TableType::HEAP;
+            TempMetadataScope temp_metadata_scope = TempMetadataScope::NONE;
+            TempDataScope temp_data_scope = TempDataScope::NONE;
+            TempOnCommitAction temp_on_commit = TempOnCommitAction::NONE;
+            ID creating_session_id{};          // Session UUID for session-scoped temp metadata
+            uint64_t creating_transaction_id = 0;
+            ID temp_parent_table_id{};         // Internal temp instance parent table (optional)
+            ID temp_schema_id{};               // Session-local temp schema (optional)
             bool has_toast = false;
             ID toast_table_id;                 // PHASE 5 TASK 5.1.3.1: UUID of TOAST table (zero if none)
             uint16_t tablespace_id = 0;        // Tablespace ID (0 = default)
@@ -388,6 +417,25 @@ public:
             // Security Phase 3.4: Row-level security settings
             bool rls_enabled = false;               // Row-level security enabled
             bool rls_forced = false;                // Force RLS for table owners
+        };
+
+        struct TableCreateOptions
+        {
+            TableType table_type = TableType::HEAP;
+            TempMetadataScope temp_metadata_scope = TempMetadataScope::NONE;
+            TempDataScope temp_data_scope = TempDataScope::NONE;
+            TempOnCommitAction temp_on_commit = TempOnCommitAction::NONE;
+            ID creating_session_id{};
+            uint64_t creating_transaction_id = 0;
+            ID temp_parent_table_id{};
+            ID temp_schema_id{};
+        };
+
+        struct TempObjectOptions
+        {
+            TempMetadataScope temp_metadata_scope = TempMetadataScope::NONE;
+            ID creating_session_id{};
+            uint64_t creating_transaction_id = 0;
         };
 
         // TRUNCATE TABLE job tracking (ALPHA Phase 1 - DDL Modifications)
@@ -420,6 +468,8 @@ public:
             std::string name;
             bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;
+            ID owned_by_table_id{};
+            ID owned_by_column_id{};
             int64_t current_value;
             int64_t increment_by;
             int64_t min_value;
@@ -429,6 +479,9 @@ public:
             bool cycle;
             uint64_t created_time;
             uint64_t last_modified_time;
+            TempMetadataScope temp_metadata_scope = TempMetadataScope::NONE;
+            ID creating_session_id{};
+            uint64_t creating_transaction_id = 0;
         };
 
         // In-memory sequence state for atomic operations
@@ -438,6 +491,8 @@ public:
             std::string name;  // Sequence name (for cleanup in drop)
             bool name_is_delimited = false;  // True if name was double-quoted (case-sensitive)
             ID owner_id;  // Owner UUID reference
+            ID owned_by_table_id{};
+            ID owned_by_column_id{};
             std::atomic<int64_t> current_value;
             int64_t increment_by;
             int64_t min_value;
@@ -447,6 +502,9 @@ public:
             bool cycle;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
+            TempMetadataScope temp_metadata_scope = TempMetadataScope::NONE;
+            ID creating_session_id{};
+            uint64_t creating_transaction_id = 0;
             std::mutex config_mutex;  // Protect ALTER SEQUENCE changes
         };
 
@@ -469,6 +527,9 @@ public:
             std::vector<std::string> column_names;  // Optional explicit columns
             uint64_t created_time;
             uint64_t last_modified_time;
+            TempMetadataScope temp_metadata_scope = TempMetadataScope::NONE;
+            ID creating_session_id{};
+            uint64_t creating_transaction_id = 0;
 
             // ALPHA Phase 1 - Materialized Views
             bool materialized;              // True if this is a materialized view
@@ -582,11 +643,11 @@ public:
             IndexType index_type = IndexType::BTREE;
             bool is_unique = false;
             std::vector<ID> column_ids;
+            std::vector<ID> include_column_ids;
             uint32_t index_params_oid = 0; // TOAST reference for index parameters - IMPLEMENTED
             uint64_t created_time = 0;
             uint32_t collation_id = 101; // Default: utf8_general_ci (binary comparison)
-                                         // TODO(Issue #50): Full integration of collation-aware
-                                         // comparisons throughout B-tree and query evaluation
+                                         // Collation-aware comparisons are handled by CharsetManager
 
             // R-tree specific parameters (Phase 2 Task 9.2)
             uint32_t rtree_max_entries = 50; // Maximum entries per R-tree node (M parameter)
@@ -827,6 +888,7 @@ public:
             std::string role_name;
             ID owner_id;
             std::string role_metadata;  // JSON metadata (stored in TOAST on disk)
+            ID default_schema_id{};     // Home schema for role
             bool is_active = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -840,6 +902,7 @@ public:
             std::string external_id;    // AD/LDAP group ID (empty if local)
             GroupType group_type = GroupType::LOCAL;
             std::string group_metadata;  // JSON metadata (stored in TOAST on disk)
+            ID default_schema_id{};      // Home schema for group
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
         };
@@ -1536,7 +1599,8 @@ public:
         auto createTable(const ID &schema_id, const std::string &table_name,
                          const std::vector<ColumnInfo> &columns, ID &table_id,
                          uint16_t tablespace_id = 0, // Phase 2 Task 2.3: default tablespace
-                         ErrorContext *ctx = nullptr) -> Status;
+                         ErrorContext *ctx = nullptr,
+                         const TableCreateOptions* options = nullptr) -> Status;
 
         auto getTable(const ID &table_id, TableInfo &info, ErrorContext *ctx = nullptr) -> Status;
 
@@ -1545,6 +1609,9 @@ public:
 
         auto listTables(const ID &schema_id, std::vector<TableInfo> &tables,
                         ErrorContext *ctx = nullptr) -> Status;
+
+        auto listTemporaryTablesForSession(const ID &session_id, std::vector<TableInfo> &tables,
+                                           ErrorContext *ctx = nullptr) -> Status;
 
         // DDL Modifications (ALPHA Phase 1)
         auto dropTable(const ID &table_id, bool cascade, ErrorContext *ctx = nullptr) -> Status;
@@ -1564,9 +1631,30 @@ public:
                          uint16_t tablespace_id = 0, // Phase 2 Task 2.3: default tablespace
                          ErrorContext *ctx = nullptr) -> Status;
 
+        auto createIndex(const ID &table_id, const std::string &index_name,
+                         const std::vector<std::string> &column_names,
+                         const std::vector<std::string> &include_column_names,
+                         ID &index_id,
+                         bool is_unique = false, IndexType index_type = IndexType::BTREE,
+                         uint16_t tablespace_id = 0, // Phase 2 Task 2.3: default tablespace
+                         ErrorContext *ctx = nullptr) -> Status;
+
         // Task 17: Create index with expressions and/or WHERE clause
         auto createIndex(const ID &table_id, const std::string &index_name,
                          const std::vector<std::string> &column_names,
+                         const std::vector<uint8_t> &expression_data,  // Serialized expressions (empty if none)
+                         const std::vector<uint8_t> &predicate_data,   // Serialized WHERE predicate (empty if none)
+                         const std::vector<std::string> &expression_strings,  // Original SQL
+                         const std::string &predicate_string,                 // Original WHERE clause
+                         ID &index_id,
+                         bool is_unique = false,
+                         IndexType index_type = IndexType::BTREE,
+                         uint16_t tablespace_id = 0,
+                         ErrorContext *ctx = nullptr) -> Status;
+
+        auto createIndex(const ID &table_id, const std::string &index_name,
+                         const std::vector<std::string> &column_names,
+                         const std::vector<std::string> &include_column_names,
                          const std::vector<uint8_t> &expression_data,  // Serialized expressions (empty if none)
                          const std::vector<uint8_t> &predicate_data,   // Serialized WHERE predicate (empty if none)
                          const std::vector<std::string> &expression_strings,  // Original SQL
@@ -1676,7 +1764,10 @@ public:
         auto createSequence(const ID& schema_id, const std::string& name,
                             int64_t increment_by, int64_t min_value, int64_t max_value,
                             int64_t start_value, int64_t cache_size, bool cycle,
-                            ErrorContext* ctx = nullptr) -> Status;
+                            ErrorContext* ctx = nullptr,
+                            const TempObjectOptions* temp_opts = nullptr,
+                            const ID& owned_by_table_id = ID{},
+                            const ID& owned_by_column_id = ID{}) -> Status;
 
         auto alterSequence(const ID& sequence_id, const std::optional<int64_t>& increment_by,
                            const std::optional<int64_t>& min_value, const std::optional<int64_t>& max_value,
@@ -1711,12 +1802,17 @@ public:
         auto getSequenceById(const ID& sequence_id, SequenceInfo& info_out,
                              ErrorContext* ctx = nullptr) -> Status;
 
+        auto listTemporarySequencesForSession(const ID& session_id,
+                                              std::vector<SequenceInfo>& sequences_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
         // View operations (ALPHA Phase 1 - Views)
         auto createView(const ID& schema_id, const std::string& name,
                         const std::string& definition, bool or_replace, bool check_option,
                         bool materialized, const std::vector<std::string>& column_names,
                         const ID& materialized_table_id = ID{},
-                        ErrorContext* ctx = nullptr) -> Status;
+                        ErrorContext* ctx = nullptr,
+                        const TempObjectOptions* temp_opts = nullptr) -> Status;
 
         auto dropView(const ID& view_id, bool cascade,
                       ErrorContext* ctx = nullptr) -> Status;
@@ -1757,6 +1853,10 @@ public:
         // OPT-4: Get all materialized views (for MV candidate search)
         auto getAllMaterializedViews(std::vector<ViewInfo>& views_out,
                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto listTemporaryViewsForSession(const ID& session_id,
+                                          std::vector<ViewInfo>& views_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
 
         auto isView(const std::string& name) -> bool;
 
@@ -2312,6 +2412,7 @@ public:
 
         // Role operations
         auto createRole(const std::string& role_name, const ID& owner_id,
+                       const ID& default_schema_id,
                        ID& role_id_out, ErrorContext* ctx = nullptr) -> Status;
 
         auto getRole(const ID& role_id, RoleInfo& role_out,
@@ -2326,6 +2427,7 @@ public:
         auto updateRole(const ID& role_id, const std::optional<std::string>& new_name,
                         const std::optional<ID>& new_owner_id,
                         const std::optional<std::string>& new_metadata,
+                        const std::optional<ID>& new_default_schema_id,
                         const std::optional<bool>& is_active,
                         ErrorContext* ctx = nullptr) -> Status;
 
@@ -2347,7 +2449,9 @@ public:
 
         // Group operations
         auto createGroup(const std::string& group_name, GroupType group_type,
-                        const std::string& external_id, ID& group_id_out,
+                        const std::string& external_id,
+                        const ID& default_schema_id,
+                        ID& group_id_out,
                         ErrorContext* ctx = nullptr) -> Status;
 
         auto getGroup(const ID& group_id, GroupInfo& group_out,
@@ -2363,6 +2467,7 @@ public:
                          const std::optional<GroupType>& new_type,
                          const std::optional<std::string>& new_external_id,
                          const std::optional<std::string>& new_metadata,
+                         const std::optional<ID>& new_default_schema_id,
                          ErrorContext* ctx = nullptr) -> Status;
 
         auto listGroups(std::vector<GroupInfo>& groups_out,
@@ -3765,6 +3870,9 @@ public:
         // TOAST table ID for policy expressions (Phase 3.4.8 - TOAST Persistence)
         ID policy_toast_table_id_{};  // UUID for sb_toast_policy table
         std::unique_ptr<ToastManager> policy_toast_manager_;  // TOAST manager for policy expressions
+        std::unordered_map<uint32_t, std::string> toast_fallback_cache_;
+        std::mutex toast_fallback_mutex_;
+        uint32_t toast_fallback_next_oid_ = 1;
 
         // Object permissions cache (Phase 3.1 - SQL Object Permissions)
         std::unordered_map<ID, std::vector<ObjectPermissionInfo>> object_permissions_cache_;  // object_id -> permissions
@@ -3823,8 +3931,7 @@ public:
                                   const std::optional<ID> &forced_schema_id = std::nullopt) -> Status;
 
         // Helper to resolve owner name to UUID (Phase 5.1 - Owner UUID References)
-        // For ALPHA: Returns system UUID for "system" and zero UUID for others
-        // TODO Phase 6: Implement full user lookup from Users table
+        // Uses Users table lookup; "SYSTEM" resolves to the system user UUID.
         auto resolveOwnerUUID(const std::string &owner_name, ErrorContext* ctx) -> ID;
 
         // Note: storeStringInToast and loadStringFromToast are in public section (OPT-1/OPT-2, WP-5 EXEC-M6)

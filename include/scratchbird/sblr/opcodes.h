@@ -146,7 +146,7 @@ namespace scratchbird
             AGG_REGR_SXY = 0x96,         // REGR_SXY(y, x) - sum of cross-products
 
             // Temporal functions (Note: FUNC_DATE_ADD collision at 0x84 needs fixing)
-            FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days) - TODO: Move to extended opcodes
+            FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days) - legacy opcode (extended map recommended)
             FUNC_DATE_SUB = 0x85,     // DATE_SUB(date, days)
             FUNC_DATE_DIFF = 0x86,    // DATE_DIFF(date1, date2) - returns days
             FUNC_NOW = 0x87,          // NOW() - current timestamp
@@ -1055,6 +1055,7 @@ namespace scratchbird
             // Extended scalar type markers (0x0400+ range)
             EXT_TYPE_INT128 = 0x0400,  // INT128 data type marker
             EXT_TYPE_UINT128 = 0x0401,  // UINT128 data type marker
+            EXT_TYPE_VECTOR = 0x0402,  // VECTOR data type marker
             EXT_TO_TSVECTOR = 0xAD,  // TO_TSVECTOR(config, text) - text to tsvector
             EXT_TO_TSQUERY = 0xAE,  // TO_TSQUERY(config, query) - query to tsquery
             EXT_PLAINTO_TSQUERY = 0xAF,  // PLAINTO_TSQUERY(config, text) - plain text to query

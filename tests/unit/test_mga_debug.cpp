@@ -4,6 +4,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -15,6 +16,17 @@
 #include <iostream>
 
 using namespace scratchbird::core;
+
+static std::vector<uint8_t> makeTestTuple(size_t payload_size, uint8_t fill)
+{
+    std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload_size, 0);
+    auto *hdr = reinterpret_cast<TupleHeader *>(tuple.data());
+    *hdr = {};
+    hdr->xmin = config::DEFAULT_INITIAL_XID;
+    hdr->xmax = 0;
+    std::memset(tuple.data() + sizeof(TupleHeader), fill, payload_size);
+    return tuple;
+}
 
 class MGADebugTest : public ::testing::Test
 {
@@ -127,8 +139,8 @@ TEST_F(MGADebugTest, DebugInsertTuple)
     std::cerr << "DEBUG: totalPages=" << total_pages << "\n";
 
     // Prepare tuple data
-    std::cerr << "DEBUG: Preparing tuple data (50 bytes)...\n";
-    std::vector<uint8_t> small_data(50, 0xAA);
+    std::cerr << "DEBUG: Preparing tuple data (payload 50 bytes)...\n";
+    auto small_data = makeTestTuple(50, 0xAA);
     uint32_t page_id;
     uint16_t item_id;
 

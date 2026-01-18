@@ -59,6 +59,8 @@ namespace scratchbird::core
         uint16_t current_item_;
         uint32_t last_page_;
         bool done_;
+        bool filter_session_ = false;
+        ID session_id_{};
 
         // Current page data
         uint8_t *page_data_ = nullptr;
@@ -112,6 +114,10 @@ namespace scratchbird::core
         auto insertTuple(const ID &table_id, const uint8_t *tuple_data, uint32_t tuple_size,
                          uint32_t *page_id_out, uint16_t *item_id_out, ErrorContext *ctx = nullptr)
             -> Status;
+
+        // Delete all tuples for a session from a temporary table
+        auto deleteTuplesForSession(const ID &table_id, const ID &session_id,
+                                    ErrorContext *ctx = nullptr) -> Status;
 
         // Get a specific tuple by ID
         auto getTuple(uint32_t page_id, uint16_t item_id, Tuple *tuple_out,

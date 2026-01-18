@@ -1,9 +1,9 @@
-![ScratchBird Logo](images/logos/TransparentScratchBirdLogoHeader.png)
+![ScratchBird Logo](../images/logos/TransparentScratchBirdLogoHeader.png)
 
 # Welcome to ScratchBird Wiki
 
-**Version:** Beta 0.9.x
-**Last Updated:** 2026-01-03
+**Version:** Alpha (documentation in progress)
+**Last Updated:** 2026-01-18
 
 > 🎯 **ScratchBird** is a high-performance database that implements **Firebird's Multi-Generational Architecture (MGA)** transaction model with modern features including vector search, advanced indexing, and comprehensive SQL support.
 
@@ -11,16 +11,22 @@
 
 ## Quick Links
 
+### 📘 Introduction
+- [How this all started](How-this-all-started.md) - Why ScratchBird exists and how it evolved
+- [What makes ScratchBird different](What-makes-ScratchBird-different.md) - The design choices that set it apart
+
 ### 🚀 Getting Started
 - [**Getting Started Guide**](Getting-Started.md) - Quick start in < 5 minutes
-- [Installation Guides](installation/) - Platform-specific installation
+- [Installation Guides](installation/README.md) - Platform-specific installation
 - [Docker Quick Start](installation/Docker.md) - Fastest way to try ScratchBird
 
 ### 📚 Documentation
-- [User Guides](user-guides/) - Feature documentation
-- [Tutorials](tutorials/) - Step-by-step learning
-- [SQL Reference](reference/SQL-Syntax.md) - SQL syntax and functions
-- [FAQ](FAQ.md) - Frequently asked questions
+- [Developers Guide](developer-guide/README.md) - Architecture and specs map
+- [Command Line Tools](cli-tools/README.md) - CLI reference and commands
+- [Language Guides](language-guides/README.md) - Dialect-specific SQL guides
+- [Feature Comparison](Feature-Comparison.md) - ScratchBird vs other engines and SQL standard
+- [User Guides](user-guides/README.md) - Feature documentation
+- [Tutorials](tutorials/README.md) - Step-by-step learning
 
 ### 💻 Language Drivers
 - [Python](drivers/Python.md) - PEP 249 DB-API, SQLAlchemy, Pandas
@@ -113,13 +119,16 @@ docker pull scratchbird/scratchbird:latest
 # Run ScratchBird
 docker run -d \
   --name scratchbird \
+  -p 3092:3092 \
   -p 5432:5432 \
   -e SCRATCHBIRD_PASSWORD=mypassword \
   -v scratchbird_data:/var/lib/scratchbird/data \
   scratchbird/scratchbird:latest
 
 # Connect
-psql -h localhost -U scratchbird
+sb_isql -H localhost -p 3092 -U scratchbird -d mydb
+# Or use PostgreSQL protocol:
+psql -h localhost -p 5432 -U scratchbird -d mydb
 ```
 
 ### Platform-Specific Installation
@@ -135,14 +144,15 @@ psql -h localhost -U scratchbird
 ## First Steps
 
 ### 1. Install ScratchBird
-Choose your platform from the [installation guides](installation/).
+Choose your platform from the [installation guides](installation/README.md).
 
 ### 2. Connect to Database
-Use any PostgreSQL-compatible client or driver:
+Use a native ScratchBird client or a dialect client:
 
 ```bash
 # Command-line
-psql -h localhost -U scratchbird -d mydb
+sb_isql -H localhost -p 3092 -U scratchbird -d mydb
+psql -h localhost -p 5432 -U scratchbird -d mydb
 
 # Or use your preferred GUI
 # DBeaver, pgAdmin, DataGrip, etc.

@@ -13,17 +13,23 @@
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
+#include "scratchbird/core/brin_index.h"
+#include "scratchbird/core/gin_index.h"
+#include "scratchbird/core/gist_index.h"
+#include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/hash_index.h"
-#include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
+#include "scratchbird/core/lsm_tree_index.h"  // LSM Integration Phase 4
 #include "scratchbird/core/rtree_index.h"  // R-Tree DML Integration
+#include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/bitmap_index.h"  // TASK-DML-8: Bitmap Index DML Integration
-#include "scratchbird/core/columnstore_index.h"  // TASK-DML-7: Columnstore Index DML Integration
+#include "scratchbird/core/columnstore.h"  // TASK-DML-7: Columnstore Index DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/index_key_extractor.h" // Phase 3 Task 3.2: Storage Layer TOAST Integration
-#include "scratchbird/sblr/gin_extractors.h"  // TASK-DML-1: GIN Key Extractors
+#include "scratchbird/core/vector.h"
+#include "scratchbird/core/gpid.h"
 #include <cctype>
 #include <cstring>
 #include <new>
@@ -41,6 +47,24 @@ namespace scratchbird::core
 
     // LSM Integration Phase 4: Helper method to insert into any index type
     namespace {
+        std::vector<uint8_t> encodeLsmValue(const TID &tid)
+        {
+            std::vector<uint8_t> value;
+            value.resize(sizeof(uint64_t) + sizeof(uint16_t));
+
+            uint64_t gpid = tid.gpid;
+            for (size_t i = 0; i < sizeof(uint64_t); ++i)
+            {
+                value[i] = static_cast<uint8_t>((gpid >> (i * 8)) & 0xFF);
+            }
+
+            uint16_t slot = tid.slot;
+            value[sizeof(uint64_t)] = static_cast<uint8_t>(slot & 0xFF);
+            value[sizeof(uint64_t) + 1] = static_cast<uint8_t>((slot >> 8) & 0xFF);
+
+            return value;
+        }
+
         Status insertIntoIndex(
             CatalogManager::IndexType index_type,
             void *index_ptr,
@@ -65,9 +89,10 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::LSM:
                 {
-                    auto *lsm = static_cast<LSMTree*>(index_ptr);
-                    // LSM-Tree: put(key, tid, xmin, ctx)
-                    return lsm->put(key, tid, xid, ctx);
+                    auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
+                    // LSM-Tree: store TID as value payload
+                    auto value = encodeLsmValue(tid);
+                    return lsm->put(key, value, xid, ctx);
                 }
 
                 case CatalogManager::IndexType::HASH:
@@ -96,15 +121,55 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::GIN:
+                {
+                    auto *gin = static_cast<GinIndex*>(index_ptr);
+                    auto extractor = [](const void *data, size_t len) -> std::vector<std::vector<uint8_t>> {
+                        std::vector<std::vector<uint8_t>> keys;
+                        if (data && len > 0)
+                        {
+                            const auto *bytes = static_cast<const uint8_t *>(data);
+                            keys.emplace_back(bytes, bytes + len);
+                        }
+                        return keys;
+                    };
+                    return gin->insert(key.data(), key.size(), tid, extractor, ctx);
+                }
+
                 case CatalogManager::IndexType::GIST:
+                {
+                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
+                    GiSTPredicate predicate(key, 0);
+                    return gist->insert(predicate, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::BRIN:
+                {
+                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid.gpid));
+                    return brin->insert(key, block_number, ctx);
+                }
+
                 case CatalogManager::IndexType::SPGIST:
+                {
+                    auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
+                    return spgist->insert(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::HNSW:
                 {
-                    // Other index types not yet implemented
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                        "Index type not yet implemented for DML operations");
-                    return Status::NOT_IMPLEMENTED;
+                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+                    if (key.empty())
+                    {
+                        return Status::OK;
+                    }
+                    auto decoded = Vector::decode(key);
+                    if (!decoded)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Invalid vector encoding for HNSW index");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    return hnsw->insert(*decoded, tid, ctx);
                 }
 
                 default:
@@ -137,9 +202,9 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::LSM:
                 {
-                    auto *lsm = static_cast<LSMTree*>(index_ptr);
-                    // LSM-Tree: remove(key, tid, xmax, ctx)
-                    return lsm->remove(key, tid, xid, ctx);
+                    auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
+                    // LSM-Tree: remove by key
+                    return lsm->remove(key, xid, ctx);
                 }
 
                 case CatalogManager::IndexType::HASH:
@@ -171,14 +236,44 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::GIN:
+                {
+                    auto *gin = static_cast<GinIndex*>(index_ptr);
+                    auto extractor = [](const void *data, size_t len) -> std::vector<std::vector<uint8_t>> {
+                        std::vector<std::vector<uint8_t>> keys;
+                        if (data && len > 0)
+                        {
+                            const auto *bytes = static_cast<const uint8_t *>(data);
+                            keys.emplace_back(bytes, bytes + len);
+                        }
+                        return keys;
+                    };
+                    return gin->remove(key.data(), key.size(), tid, extractor, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIST:
+                {
+                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
+                    GiSTPredicate predicate(key, 0);
+                    return gist->remove(predicate, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::BRIN:
+                {
+                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid.gpid));
+                    return brin->remove(key, block_number, ctx);
+                }
+
                 case CatalogManager::IndexType::SPGIST:
+                {
+                    auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
+                    return spgist->remove(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::HNSW:
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                        "Index type not yet implemented for DML operations");
-                    return Status::NOT_IMPLEMENTED;
+                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+                    return hnsw->remove(tid, ctx);
                 }
 
                 default:
@@ -348,6 +443,24 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
+        const uint8_t *tuple_data_ptr = tuple_data;
+        std::vector<uint8_t> temp_tuple_buffer;
+        if (table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+        {
+            ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+            ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+            if (!isZeroId(session_id))
+            {
+                temp_tuple_buffer.assign(tuple_data, tuple_data + tuple_size);
+                if (tuple_size >= sizeof(TupleHeader))
+                {
+                    auto *header = reinterpret_cast<TupleHeader *>(temp_tuple_buffer.data());
+                    header->session_id = session_id;
+                    tuple_data_ptr = temp_tuple_buffer.data();
+                }
+            }
+        }
+
         // Step 2: Determine target tablespace for INSERT
         uint16_t target_tablespace = table_info.tablespace_id; // Default: source tablespace
 
@@ -403,7 +516,7 @@ namespace scratchbird::core
             current_xid = config::DEFAULT_INITIAL_XID;
         }
 
-        status = heap_page.insertTuple(tuple_data, tuple_size, current_xid, &item_id, ctx);
+        status = heap_page.insertTuple(tuple_data_ptr, tuple_size, current_xid, &item_id, ctx);
 
         if (status == Status::OK)
         {
@@ -436,7 +549,7 @@ namespace scratchbird::core
 
                     std::vector<size_t> column_offsets;
                     std::vector<size_t> column_sizes;
-                    Status layout_status = computeColumnLayout(tuple_data, tuple_size, columns,
+                    Status layout_status = computeColumnLayout(tuple_data_ptr, tuple_size, columns,
                                                                db_->domain_manager(),
                                                                column_offsets, column_sizes, ctx);
                     if (layout_status == Status::OK)
@@ -458,7 +571,7 @@ namespace scratchbird::core
                         // TASK-DML-7: Special handling for columnstore (append-only columnar storage)
                         if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
                         {
-                            auto *columnstore = static_cast<ColumnstoreIndexSimple*>(index_ptr);
+                            auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
 
                             // Insert each indexed column into columnstore
                             for (const auto &col_id : index_info.column_ids)
@@ -487,14 +600,14 @@ namespace scratchbird::core
                                 bool is_null = (column_offsets[col_idx] == 0 && column_sizes[col_idx] == 0);
 
                                 // Get column value pointer and size
-                                const void *col_value = is_null ? nullptr : (tuple_data + column_offsets[col_idx]);
+                                const void *col_value = is_null ? nullptr : (tuple_data_ptr + column_offsets[col_idx]);
                                 size_t col_value_len = column_sizes[col_idx];
 
                                 // STOR-M1: Row-level OLTP insert into columnstore
                                 // Buffers individual rows and auto-flushes when threshold reached
                                 // Use gpid as the TID representation (64-bit global page id)
-                                Status insert_status = columnstore->insertRow(
-                                    static_cast<uint16_t>(col_idx),
+                                Status insert_status = columnstore->insert(
+                                    col_id,
                                     tid.gpid,
                                     col_value,
                                     col_value_len,
@@ -531,7 +644,7 @@ namespace scratchbird::core
                         // Extract index key with automatic detoasting
                         std::vector<uint8_t> key;
                         Status extract_status = extractor.extractKey(
-                            tuple_data, tuple_size,
+                            tuple_data_ptr, tuple_size,
                             column_offsets, column_sizes,
                             column_indices,
                             toast_mgr, current_xid,
@@ -584,6 +697,59 @@ namespace scratchbird::core
         return status;
     }
 
+    auto StorageEngine::deleteTuplesForSession(const ID &table_id, const ID &session_id,
+                                               ErrorContext *ctx) -> Status
+    {
+        if (isZeroId(session_id))
+        {
+            return Status::OK;
+        }
+
+        CatalogManager::TableInfo table_info;
+        Status info_status = catalog_manager_->getTable(table_id, table_info, ctx);
+        if (info_status != Status::OK)
+        {
+            return info_status;
+        }
+        if (table_info.temp_data_scope == CatalogManager::TempDataScope::NONE)
+        {
+            return Status::OK;
+        }
+
+        uint32_t heap_start = 0;
+        if (isZeroId(table_id))
+        {
+            heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
+        }
+        HeapScanIterator scan(db_, this, table_id, heap_start);
+        Tuple tuple;
+
+        Status scan_status = Status::OK;
+        while ((scan_status = scan.next(&tuple, ctx)) == Status::OK)
+        {
+            const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple.data);
+            if (hdr->session_id != session_id)
+            {
+                continue;
+            }
+
+            uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid.gpid));
+            uint16_t item_id = tuple.tid.slot;
+            Status status = deleteTuple(table_id, page_id, item_id, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                return status;
+            }
+        }
+
+        if (scan_status != Status::OK && scan_status != Status::NOT_FOUND)
+        {
+            return scan_status;
+        }
+
+        return Status::OK;
+    }
+
     auto StorageEngine::getTuple(uint32_t page_id, uint16_t item_id, Tuple *tuple_out,
                                  ErrorContext *ctx) -> Status
     {
@@ -615,6 +781,15 @@ namespace scratchbird::core
             }
             else
             {
+                ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+                ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+                if (!isZeroId(hdr->session_id) &&
+                    (isZeroId(session_id) || hdr->session_id != session_id))
+                {
+                    status = Status::NOT_FOUND;
+                    SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
+                }
+
                 // Set tuple data pointer (includes header for now)
                 tuple_out->data = tuple_data;
                 tuple_out->data_size = tuple_size;
@@ -702,6 +877,24 @@ namespace scratchbird::core
                 status = Status::NOT_FOUND;
                 SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
             }
+            else if (table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+            {
+                ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+                ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+                if (isZeroId(session_id) || hdr->session_id != session_id)
+                {
+                    status = Status::NOT_FOUND;
+                    SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
+                }
+                else
+                {
+                    // Set tuple data pointer (includes header for now)
+                    tuple_out->data = tuple_data;
+                    tuple_out->data_size = tuple_size;
+                    // Set TID with resolved tablespace
+                    tuple_out->tid = TID(resolved_gpid, tid.slot);
+                }
+            }
             else
             {
                 // Set tuple data pointer (includes header for now)
@@ -764,6 +957,28 @@ namespace scratchbird::core
         {
             // No active connection context - use fallback XID
             current_xid = config::DEFAULT_INITIAL_XID;
+        }
+
+        if (table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+        {
+            const uint8_t *tuple_data = nullptr;
+            uint32_t tuple_size = 0;
+            Status get_status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, ctx);
+            if (get_status != Status::OK)
+            {
+                buffer_pool_->unpinPage(page_id, false, ctx);
+                return get_status;
+            }
+
+            const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+            ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+            ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+            if (isZeroId(session_id) || hdr->session_id != session_id)
+            {
+                buffer_pool_->unpinPage(page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple not visible");
+                return Status::NOT_FOUND;
+            }
         }
 
         status = heap_page.deleteTuple(item_id, current_xid, ctx);
@@ -1232,6 +1447,18 @@ namespace scratchbird::core
                 last_page_ = total_pages - 1;
             }
         }
+
+        if (db_ && !isZeroId(table_id_))
+        {
+            CatalogManager::TableInfo table_info;
+            if (db_->catalog_manager()->getTable(table_id_, table_info, nullptr) == Status::OK &&
+                table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+            {
+                ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+                session_id_ = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+                filter_session_ = true;
+            }
+        }
     }
 
     HeapScanIterator::~HeapScanIterator()
@@ -1316,6 +1543,10 @@ namespace scratchbird::core
 
                     if (engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
                     {
+                        if (filter_session_ && hdr->session_id != session_id_)
+                        {
+                            continue;
+                        }
                         // Found visible tuple
                         if (tuple_out != nullptr)
                         {
@@ -1373,6 +1604,24 @@ namespace scratchbird::core
         CatalogManager::TableInfo table_info;
         Status migration_check_status = catalog_manager_->getTable(table_id, table_info, ctx);
         bool is_migrating = (migration_check_status == Status::OK && table_info.migration_in_progress);
+        const uint8_t *tuple_data_ptr = new_tuple_data;
+        std::vector<uint8_t> temp_tuple_buffer;
+        if (migration_check_status == Status::OK &&
+            table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+        {
+            ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+            ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+            if (!isZeroId(session_id))
+            {
+                temp_tuple_buffer.assign(new_tuple_data, new_tuple_data + new_tuple_size);
+                if (new_tuple_size >= sizeof(TupleHeader))
+                {
+                    auto *header = reinterpret_cast<TupleHeader *>(temp_tuple_buffer.data());
+                    header->session_id = session_id;
+                    tuple_data_ptr = temp_tuple_buffer.data();
+                }
+            }
+        }
 
         // Get proc_id from ConnectionContext (Phase 2 complete)
         int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
@@ -1412,7 +1661,7 @@ namespace scratchbird::core
         HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
         uint16_t new_item_id;
 
-        status = heap_page.updateTuple(item_id, new_tuple_data, new_tuple_size, xmax, new_xmin,
+        status = heap_page.updateTuple(item_id, tuple_data_ptr, new_tuple_size, xmax, new_xmin,
                                        &new_item_id, ctx);
 
         if (status == Status::OK)
@@ -1450,7 +1699,7 @@ namespace scratchbird::core
                     Status old_layout_status = computeColumnLayout(old_tuple_data, old_length, columns,
                                                                    db_->domain_manager(),
                                                                    old_offsets, old_sizes, ctx);
-                    Status new_layout_status = computeColumnLayout(new_tuple_data, new_tuple_size, columns,
+                    Status new_layout_status = computeColumnLayout(tuple_data_ptr, new_tuple_size, columns,
                                                                    db_->domain_manager(),
                                                                    new_offsets, new_sizes, ctx);
                     if (old_layout_status == Status::OK && new_layout_status == Status::OK)
@@ -1472,7 +1721,7 @@ namespace scratchbird::core
                         // TASK-DML-7: Special handling for columnstore UPDATE (append-only)
                         if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
                         {
-                            auto *columnstore = static_cast<ColumnstoreIndexSimple*>(index_ptr);
+                            auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
 
                             // Columnstore is append-only: insert new values
                             // Old values are already marked with xmax in heap (visibility filtering)
@@ -1502,15 +1751,15 @@ namespace scratchbird::core
                                 bool is_null = (new_offsets[col_idx] == 0 && new_sizes[col_idx] == 0);
 
                                 // Get new column value pointer and size
-                                const void *col_value = is_null ? nullptr : (new_tuple_data + new_offsets[col_idx]);
+                                const void *col_value = is_null ? nullptr : (tuple_data_ptr + new_offsets[col_idx]);
                                 size_t col_value_len = new_sizes[col_idx];
 
                                 // STOR-M1: Row-level OLTP insert into columnstore (append-only)
                                 // Old values are already marked with xmax in heap (visibility filtering)
                                 // New values are appended to columnstore buffer
                                 // Use gpid as the TID representation (64-bit global page id)
-                                Status insert_status = columnstore->insertRow(
-                                    static_cast<uint16_t>(col_idx),
+                                Status insert_status = columnstore->insert(
+                                    col_id,
                                     tid.gpid,
                                     col_value,
                                     col_value_len,
@@ -1547,7 +1796,7 @@ namespace scratchbird::core
                         std::vector<uint8_t> old_key, new_key;
                         Status old_status = extractor.extractKeyForUpdate(
                             old_tuple_data, old_length, old_offsets, old_sizes,
-                            new_tuple_data, new_tuple_size, new_offsets, new_sizes,
+                            tuple_data_ptr, new_tuple_size, new_offsets, new_sizes,
                             column_indices,
                             getOrCreateToastManager(table_id, ctx),
                             xmax,
@@ -1705,8 +1954,7 @@ namespace scratchbird::core
 
             // Insert OLD tuple data as back version
             uint16_t back_item_id;
-            status = back_heap_page.insertTuple(old_tuple_buffer.data() + sizeof(TupleHeader),
-                                               old_length - sizeof(TupleHeader), old_xmin,
+            status = back_heap_page.insertTuple(old_tuple_buffer.data(), old_length, old_xmin,
                                                &back_item_id, ctx);
 
             if (status != Status::OK)
@@ -1741,7 +1989,7 @@ namespace scratchbird::core
             HeapPage primary_heap_page(page_data, db_->page_size());
 
             // Overwrite primary tuple in-place (NEW data, back version on different page)
-            status = primary_heap_page.overwriteTuple(item_id, new_tuple_data, new_tuple_size,
+            status = primary_heap_page.overwriteTuple(item_id, tuple_data_ptr, new_tuple_size,
                                                      xmax, new_xmin, back_version_gpid,
                                                      back_item_id, ctx);
 

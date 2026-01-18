@@ -46,7 +46,7 @@
  * Options:
  *   -U, --user=<username>    Admin username
  *   -P, --password=<pass>    Admin password
- *   -p, --port=<n>           TCP port (default: 5433)
+ *   -p, --port=<n>           TCP port (default: 3092)
  *   -v, --verbose            Verbose output
  *   -q, --quiet              Only show errors
  *   --json                   JSON output format
@@ -117,7 +117,7 @@ struct SecurityConfig {
     std::string database_path;
     std::string admin_user;
     std::string admin_password;
-    uint16_t port = 5433;
+    uint16_t port = 3092;
 
     // Command arguments
     std::string username;
@@ -680,7 +680,7 @@ void printUsage(const char* program) {
     std::cout << "Options:\n";
     std::cout << "  -U, --user=<username>  Admin username\n";
     std::cout << "  -P, --password=<pass>  Admin password\n";
-    std::cout << "  -p, --port=<n>         TCP port (default: 5433)\n";
+    std::cout << "  -p, --port=<n>         TCP port (default: 3092)\n";
     std::cout << "  -v, --verbose          Verbose output\n";
     std::cout << "  -q, --quiet            Only show errors\n";
     std::cout << "      --json             JSON output format\n";

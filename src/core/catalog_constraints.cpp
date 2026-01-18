@@ -25,7 +25,7 @@ auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
                                      ID& constraint_id_out,
                                      ErrorContext* ctx) -> Status
 {
-    std::scoped_lock lock(mutex_, constraints_cache_mutex_);
+    std::scoped_lock lock(mutex_, constraints_cache_mutex_, dependency_cache_mutex_);
 
     // Generate constraint ID if not provided
     if (constraint.constraint_id == ID{})
@@ -87,6 +87,33 @@ auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
         }
         constraint_name_lookup_.erase(name_key);
         return persist_status;
+    }
+
+    ID dep_id;
+    Status dep_status = createDependencyInternal(
+        constraint_id_out, ObjectType::CONSTRAINT,
+        constraint.table_id, ObjectType::TABLE,
+        DependencyType::AUTO,
+        dep_id,
+        ctx);
+    if (dep_status != Status::OK)
+    {
+        deleteConstraintRecord(constraint_id_out, ctx);
+        constraints_cache_.erase(constraint_id_out);
+        auto range = table_constraints_.equal_range(constraint.table_id);
+        for (auto it = range.first; it != range.second; )
+        {
+            if (it->second == constraint_id_out)
+            {
+                it = table_constraints_.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        constraint_name_lookup_.erase(name_key);
+        return dep_status;
     }
 
     DEBUG_LOG_DB("Created constraint " << new_constraint.constraint_name
@@ -358,6 +385,8 @@ auto CatalogManager::dropConstraintInternal(const ID& constraint_id,
     }
 
     const ConstraintInfo& constraint = it->second;
+
+    clearDependenciesForInternal(constraint_id, ctx);
 
     // Remove from name lookup
     auto name_key = makeConstraintNameKey(constraint.table_id, constraint.constraint_name,

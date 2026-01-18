@@ -133,6 +133,13 @@ protected:
             bytecode.insert(bytecode.end(), col.begin(), col.end());
         }
 
+        // Include column count (none)
+        uint32_t include_count = 0;
+        bytecode.push_back(include_count & 0xFF);
+        bytecode.push_back((include_count >> 8) & 0xFF);
+        bytecode.push_back((include_count >> 16) & 0xFF);
+        bytecode.push_back((include_count >> 24) & 0xFF);
+
         // Tablespace name (empty)
         bytecode.push_back(0);
 

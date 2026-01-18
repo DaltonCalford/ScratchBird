@@ -12,58 +12,75 @@
 
 #include <gtest/gtest.h>
 #include <scratchbird/core/database.h>
+#include <filesystem>
+#include <unistd.h>
 
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include <scratchbird/sblr/executor.h>
 
 using namespace scratchbird;
+using scratchbird::sblr::QueryCompilerV2;
 
 class BitManipulationTest : public ::testing::Test
 {
 protected:
-    core::Database* db;
+    std::unique_ptr<core::Database> db;
+    std::string db_path;
 
     void SetUp() override
     {
-        // Bytecode generation and parsing don't actually need a database
-        // They only need one for when they try to use the optimizer
-        // For testing bit manipulation functions, we can pass nullptr
-        db = nullptr;
-        std::cout << "Setup complete (no database needed for parse/bytecode tests)" << std::endl;
+        db = std::make_unique<core::Database>();
+        db_path = (std::filesystem::temp_directory_path() /
+                   ("sb_bit_manipulation_" + std::to_string(::getpid()) + ".db"))
+                      .string();
+        std::filesystem::remove(db_path);
+
+        core::ErrorContext ctx;
+        auto status = core::Database::create(db_path, 16384, &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+
+        status = db->open(db_path, &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
     }
 
     void TearDown() override
     {
-        // No cleanup needed since we don't create a database
+        if (db) {
+            db->close();
+        }
+        if (!db_path.empty()) {
+            std::filesystem::remove(db_path);
+        }
     }
 
-    // Helper to test that bit manipulation functions parse as expressions
-    // NOTE: Parser and executor don't support scalar SELECT (SELECT without FROM)
-    // So we test expression parsing directly using V2 parser
-    bool testExpression(const std::string& expr_str)
+    // Helper to test that bit manipulation functions parse via full SQL
+    // NOTE: Executor doesn't support scalar SELECT execution, so only compile.
+    bool testSQL(const std::string& sql)
     {
-        std::cout << "Testing expression: " << expr_str << std::endl;
+        std::cout << "Testing SQL: " << sql << std::endl;
 
-        parser::v2::Parser parser(expr_str);
-        auto result = parser.parseExpression();
+        QueryCompilerV2 compiler(db.get());
+        auto result = compiler.compile(sql);
 
-        if (!result) {
-            std::cout << "  Parse FAILED" << std::endl;
-            EXPECT_TRUE(result) << "Expression parsing failed for: " << expr_str;
+        if (!result.success()) {
+            std::cout << "  Compile FAILED" << std::endl;
+            EXPECT_TRUE(result.success()) << "Compile failed for: " << sql;
             return false;
         }
-        std::cout << "  Parse OK" << std::endl;
-
-        // Success: expression was parsed
+        std::cout << "  Compile OK" << std::endl;
         return true;
+    }
+
+    bool testExpression(const std::string& expr_str)
+    {
+        return testSQL("SELECT " + expr_str);
     }
 
     // Test helpers that extract expressions from SQL and test them
     bool testFunction(const std::string& sql)
     {
-        // Extract expression from "SELECT expr"
         if (sql.substr(0, 7) == "SELECT ") {
-            return testExpression(sql.substr(7));
+            return testSQL(sql);
         }
         return testExpression(sql);
     }

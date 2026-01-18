@@ -179,7 +179,25 @@ Status IndexFactory::createIndex(
             // LSM-Tree uses file-based storage
             std::string index_path = generateIndexPath(db->path(), index_info.index_id, index_type);
 
-            // Create directory for LSM-Tree
+            // Ensure base indexes directory exists
+            std::string index_dir = index_path;
+            size_t last_sep = index_dir.find_last_of("/\\");
+            if (last_sep != std::string::npos)
+            {
+                index_dir = index_dir.substr(0, last_sep);
+            }
+            if (!index_dir.empty())
+            {
+                if (mkdir(index_dir.c_str(), 0755) != 0 && errno != EEXIST)
+                {
+                    std::string error_msg = "Failed to create LSM-Tree directory: " +
+                        std::string(strerror(errno));
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
+                    return Status::IO_ERROR;
+                }
+            }
+
+            // Create directory for LSM-Tree index data
             if (mkdir(index_path.c_str(), 0755) != 0 && errno != EEXIST)
             {
                 std::string error_msg = "Failed to create LSM-Tree directory: " + std::string(strerror(errno));
