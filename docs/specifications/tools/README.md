@@ -10,8 +10,11 @@ This directory is reserved for specifications related to database management too
 
 ## Current Status
 
-This directory is currently empty. Tool integration specifications are located in:
+This directory now includes CLI specifications for network-capable clients and tooling.
+Additional tool integration specifications are located in:
 
+- **[SB_ISQL_CLI_SPECIFICATION.md](SB_ISQL_CLI_SPECIFICATION.md)** - sb_isql network CLI (native + emulated clients)
+- **[SB_TOOLING_NETWORK_SPEC.md](SB_TOOLING_NETWORK_SPEC.md)** - Network support for sb_backup/sb_verify/sb_security/sb_charset_loader
 - **[Beta Requirements - Tools](../beta_requirements/tools/)** - Tool compatibility specifications for Beta release
   - DBeaver
   - pgAdmin

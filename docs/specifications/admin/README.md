@@ -11,6 +11,7 @@ ScratchBird provides comprehensive administration tools including a command-line
 ## Specifications in this Directory
 
 - **[SB_ADMIN_CLI_SPECIFICATION.md](SB_ADMIN_CLI_SPECIFICATION.md)** (608 lines) - ScratchBird Admin CLI specification
+- **[SB_SERVER_NETWORK_CLI_SPECIFICATION.md](SB_SERVER_NETWORK_CLI_SPECIFICATION.md)** - sb_server network CLI options
 
 ## Key Features
 

@@ -87,6 +87,10 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 Key network specs:
 - [network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md](network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md) - Listener startup, parser pools, and socket handoff
+- [network/CONTROL_PLANE_PROTOCOL_SPEC.md](network/CONTROL_PLANE_PROTOCOL_SPEC.md) - Listener <-> parser control plane
+- [network/PARSER_AGENT_SPEC.md](network/PARSER_AGENT_SPEC.md) - Parser agent binaries and lifecycle
+- [network/ENGINE_PARSER_IPC_CONTRACT.md](network/ENGINE_PARSER_IPC_CONTRACT.md) - Parser <-> engine IPC contract
+- [network/DIALECT_AUTH_MAPPING_SPEC.md](network/DIALECT_AUTH_MAPPING_SPEC.md) - Dialect auth mapping
 
 ### Drivers & Integrations
 
@@ -108,8 +112,8 @@ Key network specs:
 | [**compression/**](compression/) | Compression framework | Compression specifications | ✅ Organized |
 | [**udr/**](udr/) | User-Defined Resources | UDR system specification | ✅ Organized |
 | [**triggers/**](triggers/) | Trigger system | Trigger context variables | ✅ Organized |
-| [**operations/**](operations/) | Operations & monitoring | Prometheus metrics | ✅ Organized |
-| [**admin/**](admin/) | Administration tools | CLI administration | ✅ Organized |
+| [**operations/**](operations/) | Operations & monitoring | Prometheus metrics + listener/pool metrics | ✅ Organized |
+| [**admin/**](admin/) | Administration tools | CLI administration + sb_server network CLI | ✅ Organized |
 | [**deployment/**](deployment/) | Deployment | systemd service specification | ✅ Organized |
 | [**testing/**](testing/) | Test plans | Alpha 3 test plan | ✅ Organized |
 
@@ -328,8 +332,12 @@ Unique ScratchBird features:
 Administrative tools and interfaces:
 
 - [SB_ADMIN_CLI_SPECIFICATION.md](SB_ADMIN_CLI_SPECIFICATION.md) (608 lines) - Admin CLI
+- [SB_SERVER_NETWORK_CLI_SPECIFICATION.md](SB_SERVER_NETWORK_CLI_SPECIFICATION.md) (new) - sb_server network CLI
+- [SB_ISQL_CLI_SPECIFICATION.md](SB_ISQL_CLI_SPECIFICATION.md) (new) - sb_isql network CLI
+- [SB_TOOLING_NETWORK_SPEC.md](SB_TOOLING_NETWORK_SPEC.md) (new) - Remote tooling support
 - [FlameRobin_Specification_for_AI.md](FlameRobin_Specification_for_AI.md) (442 lines) - FlameRobin integration
 - [PROMETHEUS_METRICS_REFERENCE.md](PROMETHEUS_METRICS_REFERENCE.md) (824 lines) - Metrics export
+- [LISTENER_POOL_METRICS.md](LISTENER_POOL_METRICS.md) (new) - Listener/pool metrics
 - [PERFORMANCE_BENCHMARKS.md](PERFORMANCE_BENCHMARKS.md) (52 lines) - ⚠️ Needs expansion
 
 ### Deployment

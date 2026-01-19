@@ -8,12 +8,16 @@ This directory contains specifications for database drivers and client library e
 
 ScratchBird implements driver emulation layers for PostgreSQL (libpq), MySQL (libmysqlclient), and Firebird (fbclient). MSSQL/TDS (FreeTDS) is post-gold, and is documented for future implementation.
 
+Alpha requirement: all drivers listed in `docs/specifications/beta_requirements/drivers/`
+must be implemented for ScratchBird native protocol connectivity.
+
 ## Specifications in this Directory
 
 ### Core Driver Specifications
 
 - **[JDBC_DRIVER_SPECIFICATION.md](JDBC_DRIVER_SPECIFICATION.md)** - JDBC driver specification
 - **[ODBC_DRIVER_SPECIFICATION.md](ODBC_DRIVER_SPECIFICATION.md)** - ODBC driver specification
+- **[ALPHA_DRIVER_BOOTSTRAP.md](ALPHA_DRIVER_BOOTSTRAP.md)** - Alpha driver bootstrap requirements (native protocol)
 
 ### Protocol-Specific Drivers
 

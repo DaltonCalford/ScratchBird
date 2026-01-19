@@ -12,6 +12,10 @@ ScratchBird implements a sophisticated network layer with the Y-Valve architectu
 
 - **[NETWORK_LAYER_SPEC.md](NETWORK_LAYER_SPEC.md)** - Network layer architecture and implementation
 - **[NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md](NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md)** - Listener startup, parser pools, and socket handoff
+- **[CONTROL_PLANE_PROTOCOL_SPEC.md](CONTROL_PLANE_PROTOCOL_SPEC.md)** - Listener <-> parser control-plane protocol
+- **[PARSER_AGENT_SPEC.md](PARSER_AGENT_SPEC.md)** - Parser agent binaries and lifecycle
+- **[ENGINE_PARSER_IPC_CONTRACT.md](ENGINE_PARSER_IPC_CONTRACT.md)** - Parser <-> engine IPC runtime contract
+- **[DIALECT_AUTH_MAPPING_SPEC.md](DIALECT_AUTH_MAPPING_SPEC.md)** - Dialect auth method mapping to SB auth providers
 - **[WIRE_PROTOCOL_SPECIFICATIONS.md](WIRE_PROTOCOL_SPECIFICATIONS.md)** - Wire protocol specifications overview
 - **[Y_VALVE_DESIGN_PRINCIPLES.md](Y_VALVE_DESIGN_PRINCIPLES.md)** - Y-Valve multi-protocol routing design
 

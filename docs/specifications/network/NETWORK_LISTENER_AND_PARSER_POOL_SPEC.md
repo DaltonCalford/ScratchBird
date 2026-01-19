@@ -46,6 +46,25 @@ Key principles:
 - The engine is the sole authority for SBLR validation and execution.
 - After handoff, data plane traffic does not pass through the listener.
 
+## Executables and Defaults
+
+ScratchBird uses separate listener and parser agent binaries per protocol.
+
+Listeners:
+- sb_listener_native (default enabled)
+- sb_listener_pg (config-enabled)
+- sb_listener_mysql (config-enabled)
+- sb_listener_fb (config-enabled)
+
+Parser agents:
+- sb_parser_native
+- sb_parser_pg
+- sb_parser_mysql
+- sb_parser_fb
+
+Only the native listener starts by default. Emulated listeners are started
+only when enabled in configuration.
+
 ### Diagram (Mermaid)
 
 ```mermaid
@@ -115,6 +134,16 @@ Parser pool properties per protocol:
 - max_age_seconds: Recycle after time limit.
 - health_check_interval_ms: Ping or heartbeat interval.
 - recycle_on_error: Replace worker on crash or protocol error.
+
+### Spawn Strategy (Alpha Default)
+
+Options:
+- prefork: pre-start min_size workers at startup
+- on_demand: spawn workers only when needed
+- hybrid: prefork min_size and allow on_demand up to max_size
+
+Default: hybrid (prefork min_size + on_demand burst) for fast connect time
+with process isolation.
 
 Parser workers are single-connection. After a connection closes, the worker can
 be recycled or returned to idle depending on configuration.
@@ -270,7 +299,7 @@ connection pooling is enabled, it must follow:
    - If running, refuse to start unless force option is set.
    - If stale, remove PID file and continue.
 5. Clean up stale IPC artifacts (unix socket, shared memory).
-6. Initialize TLS contexts for enabled listeners.
+6. Load TLS configuration for parser agents.
 7. Create listener instances per config.
 8. Prewarm parser pools to min_size.
 9. Start accept loops for each listener.
@@ -303,7 +332,7 @@ Reload (SIGHUP or control command):
 - Listener and parser are untrusted; engine is authoritative.
 - Parser sends SBLR to engine; engine validates and executes.
 - Listener must not accept untrusted IPC peers for handoff.
-- TLS termination occurs at the listener unless configured for parser pass-through.
+- TLS termination occurs in the parser agent; listener never decrypts traffic.
 - Authentication decisions are made by the engine, not the listener.
 
 ## Observability
