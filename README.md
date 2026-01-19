@@ -2,9 +2,9 @@
 
 **Firebird-style MGA database engine** with multi-dialect wire compatibility and advanced distributed cluster capabilities.
 
-**Current Phase:** Alpha final polish (core engine ready for embedded/IPC/inet)
+**Current Phase:** Alpha IP layer (network listeners + connection pools + parser agents)
 **Project Age:** ~6 months (July 2025 - present)
-**Status:** Alpha remediation and parity work in progress; see `docs/status/` and `docs/testing/`
+**Status:** Alpha parser remediation complete; IP layer and CLI/network integration in progress; see `docs/status/` and `docs/testing/`
 
 ---
 
@@ -35,14 +35,15 @@ ScratchBird is a next-generation database management system that combines:
 ### ✅ Alpha Scope (current)
 
 - Core engine (MGA, storage, SBLR runtime) for embedded, IPC, and network use
-- Network listeners for ScratchBird native + Firebird/PostgreSQL/MySQL protocols
+- Parser remediation and dialect bytecode alignment complete
 - Engine-enforced security; parser/listener treated as untrusted
 - Shared SBLR cache with per-connection compile caches
 
 ### 🚧 In Progress
 
-- Parser parity and catalog virtualization audits/remediation (see `docs/planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md`)
-- Domain catalog and engine stub cleanup (F-022/F-023 sequence)
+- IP layer: network listeners, connection pools, and parser agents bridging client protocols to the server over IP
+- Configuration and driver readiness for ScratchBird native connectivity
+- CLI updates to support network modes and listener orchestration
 - Listener/pool behavior alignment and wire-protocol parity tests
 
 ### 📋 Beta (Deferred)
@@ -312,21 +313,22 @@ ScratchBird/
 
 ## Roadmap
 
-### Alpha Phase (Current - Completing)
+### Alpha Phase (Current - IP Layer)
 
 - ✅ Plan 01: Core Storage & GC
 - ✅ Plan 02: UUID Resolution & Rename/Move
 - ✅ Plan 03: Security Context/Auth/Audit
 - ✅ Plan 03B: Domain Infrastructure
-- 🚧 Plan 04: Domain DDL (60% complete)
-- ⏸️ Plan 05: ODBC Driver (paused pending decisions)
+- ✅ Plan 04: Domain DDL (all parsers complete)
+- 🚧 IP layer: listeners, connection pools, parser agents, and CLI network support
 
 ### Pre-Beta Phase (Next)
 
-After Alpha completion:
+After Alpha IP layer completion:
 - Finalize planning and specification phase
 - Audit and verification of Alpha deliverables
 - Prepare infrastructure for Beta cluster implementation
+- Plan 05: ODBC Driver (upcoming phase)
 
 ### Beta Phase (Planned)
 
@@ -406,7 +408,7 @@ Contributions welcome! Please:
 - `docs/DOCUMENTATION_COVERAGE.md` - Documentation coverage analysis
 - `docs/specifications/beta_requirements/COMPLETION_STATUS.md` - Beta requirements tracker
 
-**Quick Stats (as of January 2026):**
+**Quick Stats (snapshot; re-generate for current numbers):**
 - 606,000+ lines of code
 - 25,000+ test cases (71% coverage)
 - 1,584+ commits
@@ -426,5 +428,5 @@ Contributions welcome! Please:
 ---
 
 **Last Updated:** January 2026
-**Next Milestone:** Complete Plan 04, finalize Alpha phase
+**Next Milestone:** Complete IP layer (listeners, connection pools, parser agents, CLI network support)
 **Next Phase:** Pre-Beta preparation, then Beta cluster implementation

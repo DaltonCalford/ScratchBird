@@ -166,6 +166,11 @@ Progress:
 Acceptance: Full ctest run passes (except gated network tests); audit doc states all critical parser
 findings resolved.
 
+Progress:
+- ✅ Updated `docs/audit/parsers/CRITICAL_FINDINGS.md`.
+- ✅ Updated `docs/IMPLEMENTATION_STATUS_DASHBOARD.md`.
+- ✅ Full build + full test suite pass (2026-01-18; gated network tests skipped).
+
 ## Suggested Execution Order
 1) Phase 0 (verification)  
 2) Phase 1 (temporary tables)  
