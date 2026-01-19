@@ -2,7 +2,7 @@
 ## Core library and executable wiring
 
 # Core library: scratchbird_core
-file(GLOB_RECURSE SCRATCHBIRD_CORE_SOURCES
+file(GLOB_RECURSE SCRATCHBIRD_CORE_SOURCES CONFIGURE_DEPENDS
     core/*.cpp
     catalog/*.cpp
 )
@@ -76,6 +76,7 @@ set_target_properties(scratchbird_core PROPERTIES
 file(GLOB_RECURSE SCRATCHBIRD_PARSER_SOURCES
     parser/*.cpp
 )
+list(FILTER SCRATCHBIRD_PARSER_SOURCES EXCLUDE REGEX ".*/sb_parser_main\\.cpp$")
 
 add_library(scratchbird_parser STATIC
     ${SCRATCHBIRD_PARSER_SOURCES}
@@ -288,6 +289,7 @@ target_link_libraries(scratchbird_core PUBLIC scratchbird_security)
 file(GLOB SCRATCHBIRD_NETWORK_SOURCES
     network/*.cpp
 )
+list(FILTER SCRATCHBIRD_NETWORK_SOURCES EXCLUDE REGEX ".*/sb_listener_main\\.cpp$")
 
 add_library(scratchbird_network STATIC
     ${SCRATCHBIRD_NETWORK_SOURCES}
@@ -696,7 +698,7 @@ target_compile_definitions(sb_parser_native PRIVATE
     SB_PARSER_PROTOCOL="scratchbird"
     SB_PARSER_NAME="sb_parser_native"
 )
-target_link_libraries(sb_parser_native PRIVATE scratchbird_core)
+target_link_libraries(sb_parser_native PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
 set_target_properties(sb_parser_native PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -708,7 +710,7 @@ target_compile_definitions(sb_parser_pg PRIVATE
     SB_PARSER_PROTOCOL="postgresql"
     SB_PARSER_NAME="sb_parser_pg"
 )
-target_link_libraries(sb_parser_pg PRIVATE scratchbird_core)
+target_link_libraries(sb_parser_pg PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
 set_target_properties(sb_parser_pg PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -720,7 +722,7 @@ target_compile_definitions(sb_parser_mysql PRIVATE
     SB_PARSER_PROTOCOL="mysql"
     SB_PARSER_NAME="sb_parser_mysql"
 )
-target_link_libraries(sb_parser_mysql PRIVATE scratchbird_core)
+target_link_libraries(sb_parser_mysql PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
 set_target_properties(sb_parser_mysql PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -732,7 +734,7 @@ target_compile_definitions(sb_parser_fb PRIVATE
     SB_PARSER_PROTOCOL="firebird"
     SB_PARSER_NAME="sb_parser_fb"
 )
-target_link_libraries(sb_parser_fb PRIVATE scratchbird_core)
+target_link_libraries(sb_parser_fb PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
 set_target_properties(sb_parser_fb PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES

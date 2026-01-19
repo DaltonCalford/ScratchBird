@@ -1,5 +1,6 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/table_stats_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/lock_manager.h"
@@ -276,6 +277,11 @@ namespace scratchbird::core
             current_ = nullptr;
         }
 
+        if (db_)
+        {
+            db_->unregisterConnectionContext(this);
+        }
+
         // Rollback any outstanding transaction
         if (current_xid_ != 0)
         {
@@ -349,6 +355,12 @@ namespace scratchbird::core
           last_error_code_(other.last_error_code_),
           last_sqlstate_(std::move(other.last_sqlstate_)),
           last_activity_time_(other.last_activity_time_),
+          connection_io_stats_(other.connection_io_stats_),
+          transaction_io_stats_(other.transaction_io_stats_),
+          statement_io_stats_(other.statement_io_stats_),
+          statement_io_active_(other.statement_io_active_),
+          statement_id_(other.statement_id_),
+          pending_table_deltas_(std::move(other.pending_table_deltas_)),
           default_isolation_level_(other.default_isolation_level_),
           default_read_committed_mode_(other.default_read_committed_mode_),
           default_is_read_only_(other.default_is_read_only_),
@@ -363,6 +375,11 @@ namespace scratchbird::core
           statement_xid_(other.statement_xid_),
           table_reservations_(std::move(other.table_reservations_))
     {
+        if (db_)
+        {
+            db_->rebindConnectionContext(proc_id_, this);
+        }
+
         // Clear other's state - critical to invalidate proc_id_ so destructor doesn't unregister
         other.db_ = nullptr;
         other.txn_manager_ = nullptr;
@@ -404,6 +421,12 @@ namespace scratchbird::core
         other.last_error_code_ = 0;
         other.last_sqlstate_.clear();
         other.last_activity_time_ = 0;
+        other.connection_io_stats_.reset();
+        other.transaction_io_stats_.reset();
+        other.statement_io_stats_.reset();
+        other.statement_io_active_ = false;
+        other.statement_id_ = 0;
+        other.pending_table_deltas_.clear();
         other.role_switch_policy_ = RoleSwitchPolicy::ERROR;
     }
 
@@ -417,6 +440,11 @@ namespace scratchbird::core
                 ErrorContext err_ctx;
                 // Avoid starting a new transaction while being overwritten.
                 shutdownTransaction(&err_ctx);
+            }
+
+            if (db_)
+            {
+                db_->unregisterConnectionContext(this);
             }
 
             // Unregister our current backend before taking the new one
@@ -481,6 +509,12 @@ namespace scratchbird::core
             last_error_code_ = other.last_error_code_;
             last_sqlstate_ = std::move(other.last_sqlstate_);
             last_activity_time_ = other.last_activity_time_;
+            connection_io_stats_ = other.connection_io_stats_;
+            transaction_io_stats_ = other.transaction_io_stats_;
+            statement_io_stats_ = other.statement_io_stats_;
+            statement_io_active_ = other.statement_io_active_;
+            statement_id_ = other.statement_id_;
+            pending_table_deltas_ = std::move(other.pending_table_deltas_);
             default_isolation_level_ = other.default_isolation_level_;
             default_read_committed_mode_ = other.default_read_committed_mode_;
             default_is_read_only_ = other.default_is_read_only_;
@@ -494,6 +528,11 @@ namespace scratchbird::core
             next_lock_timeout_seconds_ = other.next_lock_timeout_seconds_;
             statement_xid_ = other.statement_xid_;
             table_reservations_ = std::move(other.table_reservations_);
+
+            if (db_)
+            {
+                db_->rebindConnectionContext(proc_id_, this);
+            }
 
             // Clear other's state - critical to invalidate proc_id_
             other.db_ = nullptr;
@@ -536,6 +575,12 @@ namespace scratchbird::core
             other.last_error_code_ = 0;
             other.last_sqlstate_.clear();
             other.last_activity_time_ = 0;
+            other.connection_io_stats_.reset();
+            other.transaction_io_stats_.reset();
+            other.statement_io_stats_.reset();
+            other.statement_io_active_ = false;
+            other.statement_id_ = 0;
+            other.pending_table_deltas_.clear();
             other.role_switch_policy_ = RoleSwitchPolicy::ERROR;
         }
         return *this;
@@ -580,6 +625,11 @@ namespace scratchbird::core
             LOG_ERROR(TRANSACTION, "Failed to initialize connection context: %d",
                       static_cast<int>(s));
             return s;
+        }
+
+        if (db_)
+        {
+            db_->registerConnectionContext(this);
         }
 
         LOG_DEBUG(TRANSACTION, "Initialized connection context: proc_id=%u, xid=%lu", proc_id_,
@@ -1047,6 +1097,9 @@ namespace scratchbird::core
         last_rows_affected_ = 0;
         last_error_code_ = 0;
         last_sqlstate_.clear();
+        statement_io_stats_.reset();
+        statement_io_active_ = true;
+        statement_id_ = last_statement_time_;
 
         // Classify statement type using the leading keyword only (fast, dialect-agnostic).
         size_t i = 0;
@@ -1105,6 +1158,8 @@ namespace scratchbird::core
         last_statement_time_ = end_time;
         last_activity_time_ = last_statement_time_;
         ProcArrayManager::clearQueryInfo(proc_id_, last_statement_time_, nullptr);
+        statement_io_active_ = false;
+        statement_id_ = 0;
 
         CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
         if (catalog && !last_statement_text_.empty())
@@ -1157,6 +1212,8 @@ namespace scratchbird::core
         last_statement_time_ = end_time;
         last_activity_time_ = last_statement_time_;
         ProcArrayManager::clearQueryInfo(proc_id_, last_statement_time_, nullptr);
+        statement_io_active_ = false;
+        statement_id_ = 0;
 
         CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
         if (catalog && !last_statement_text_.empty())
@@ -1195,6 +1252,81 @@ namespace scratchbird::core
                 catalog->recordStatementDigest(entry, nullptr);
             }
         }
+    }
+
+    void ConnectionContext::recordPageRead()
+    {
+        connection_io_stats_.recordRead();
+        transaction_io_stats_.recordRead();
+        if (statement_io_active_)
+        {
+            statement_io_stats_.recordRead();
+        }
+    }
+
+    void ConnectionContext::recordPageWrite()
+    {
+        connection_io_stats_.recordWrite();
+        transaction_io_stats_.recordWrite();
+        if (statement_io_active_)
+        {
+            statement_io_stats_.recordWrite();
+        }
+    }
+
+    void ConnectionContext::recordPageFetch()
+    {
+        connection_io_stats_.recordFetch();
+        transaction_io_stats_.recordFetch();
+        if (statement_io_active_)
+        {
+            statement_io_stats_.recordFetch();
+        }
+    }
+
+    void ConnectionContext::recordPageMark()
+    {
+        connection_io_stats_.recordMark();
+        transaction_io_stats_.recordMark();
+        if (statement_io_active_)
+        {
+            statement_io_stats_.recordMark();
+        }
+    }
+
+    IOStatsSnapshot ConnectionContext::snapshotConnectionIoStats() const
+    {
+        return connection_io_stats_.snapshot();
+    }
+
+    IOStatsSnapshot ConnectionContext::snapshotTransactionIoStats() const
+    {
+        return transaction_io_stats_.snapshot();
+    }
+
+    IOStatsSnapshot ConnectionContext::snapshotStatementIoStats() const
+    {
+        return statement_io_stats_.snapshot();
+    }
+
+    void ConnectionContext::recordTableDmlDelta(const ID& table_id,
+                                               uint64_t inserts,
+                                               uint64_t updates,
+                                               uint64_t deletes,
+                                               uint64_t hot_updates,
+                                               uint64_t newpage_updates)
+    {
+        if (isZeroUuidLocal(table_id))
+        {
+            return;
+        }
+
+        TableDmlDelta& delta = pending_table_deltas_[table_id];
+        delta.inserts += inserts;
+        delta.updates += updates;
+        delta.deletes += deletes;
+        delta.hot_updates += hot_updates;
+        delta.newpage_updates += newpage_updates;
     }
 
     std::string ConnectionContext::sessionSettingsJson() const
@@ -1331,6 +1463,11 @@ namespace scratchbird::core
             std::chrono::system_clock::now().time_since_epoch());
         // Track activity at transaction start for dormant transaction auditing.
         last_activity_time_ = static_cast<uint64_t>(xact_start_time_.count());
+        transaction_io_stats_.reset();
+        statement_io_stats_.reset();
+        statement_io_active_ = false;
+        statement_id_ = 0;
+        pending_table_deltas_.clear();
 
         // Update isolation level in ProcArray for transaction marker tracking
         s = ProcArrayManager::setIsolationLevel(proc_id_, static_cast<uint8_t>(isolation_level_),
@@ -1504,6 +1641,22 @@ namespace scratchbird::core
                 catalog->recordTransactionHistory(entry, nullptr);
             }
         }
+
+        if (s == Status::OK && commit && db_ && !pending_table_deltas_.empty())
+        {
+            if (auto* stats_mgr = db_->table_stats_manager())
+            {
+                for (const auto& [table_id, delta] : pending_table_deltas_)
+                {
+                    stats_mgr->applyCommittedDelta(table_id, delta);
+                }
+            }
+        }
+        pending_table_deltas_.clear();
+        transaction_io_stats_.reset();
+        statement_io_stats_.reset();
+        statement_io_active_ = false;
+        statement_id_ = 0;
 
         // Clear statement XID (FIREBIRD MGA: No snapshots)
         statement_xid_ = 0;

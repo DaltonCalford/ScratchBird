@@ -284,6 +284,12 @@ server:
     protocols: [scratchbird, postgresql, mysql, firebird]
 ```
 
+Implementation note (Alpha IP layer):
+- Listener binaries also accept a flattened config format:
+  - `network.<protocol>_health_check_interval_ms` for per-protocol override
+  - `server.health_check_interval_ms` as a global default
+  - `--health-check-interval-ms` CLI override
+
 ### Connection Pooling (Engine Level)
 
 Listener parser pools are not the same as engine connection pools. If engine

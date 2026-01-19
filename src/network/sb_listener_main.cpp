@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -49,6 +50,7 @@
 namespace {
 
 std::atomic<bool> g_shutdown{false};
+std::atomic<bool> g_dump_stats{false};
 
 struct ListenerConfig {
     std::string protocol = SB_LISTENER_PROTOCOL;
@@ -63,11 +65,18 @@ struct ListenerConfig {
     std::string spawn_strategy = "hybrid";
     uint32_t max_requests = 0;
     uint32_t max_age_seconds = 0;
+    uint32_t health_check_interval_ms = 5000;
     bool show_help = false;
     bool show_version = false;
 };
 
-void handleSignal(int) {
+void handleSignal(int signal) {
+#ifndef _WIN32
+    if (signal == SIGUSR2) {
+        g_dump_stats.store(true, std::memory_order_release);
+        return;
+    }
+#endif
     g_shutdown.store(true, std::memory_order_release);
 }
 
@@ -154,6 +163,14 @@ struct ParserWorker {
     uint64_t awaiting_request = 0;
     bool last_ack_ok = false;
     bool last_ack_ready = false;
+    bool session_active = false;
+    std::chrono::steady_clock::time_point session_start;
+    uint64_t healthcheck_request = 0;
+    std::chrono::steady_clock::time_point healthcheck_start;
+    uint32_t sessions_completed = 0;
+    std::chrono::steady_clock::time_point started_at;
+    bool recycle_requested = false;
+    std::string recycle_reason;
 };
 
 struct PoolMetrics {
@@ -191,10 +208,12 @@ public:
                 }
             }
         }
+        startHealthChecks();
         return true;
     }
 
     void stop() {
+        stopHealthChecks();
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& worker : workers_) {
             if (!worker->running) {
@@ -267,6 +286,7 @@ public:
         worker->control = std::move(socket);
         worker->state = WorkerState::IDLE;
         worker->running = true;
+        worker->started_at = std::chrono::steady_clock::now();
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -357,13 +377,15 @@ public:
         }
 
         if (!acked || !worker->last_ack_ok) {
-            worker->awaiting_ack = false;
-            worker->last_ack_ready = false;
-            worker->state = WorkerState::FAULT;
-            updateMetrics();
+            markWorkerFault(worker, "error");
             return false;
         }
 
+        {
+            std::lock_guard<std::mutex> lock(worker->mutex);
+            worker->session_active = true;
+            worker->session_start = std::chrono::steady_clock::now();
+        }
         return true;
     }
 
@@ -384,6 +406,8 @@ private:
     std::condition_variable cv_;
     std::vector<std::shared_ptr<ParserWorker>> workers_;
     std::atomic<uint64_t> request_id_{1};
+    std::atomic<bool> healthcheck_running_{false};
+    std::thread healthcheck_thread_;
 
     uint64_t nextRequestId() {
         return request_id_.fetch_add(1, std::memory_order_relaxed);
@@ -418,7 +442,8 @@ private:
             total++;
             if (worker->state == WorkerState::IDLE) {
                 idle++;
-            } else if (worker->state == WorkerState::BUSY) {
+            } else if (worker->state == WorkerState::BUSY ||
+                       worker->state == WorkerState::DRAINING) {
                 busy++;
             }
         }
@@ -438,6 +463,7 @@ private:
             metrics_.parser_recycle_total->inc(1.0, {config_.protocol, "default", reason});
         }
         updateMetrics();
+        ensureMinWorkers();
     }
 
     bool spawnWorker() {
@@ -499,6 +525,57 @@ private:
         return true;
     }
 
+    void startHealthChecks() {
+        if (!metrics_.parser_healthcheck_seconds || config_.health_check_interval_ms == 0) {
+            return;
+        }
+        healthcheck_running_.store(true, std::memory_order_release);
+        healthcheck_thread_ = std::thread([this]() {
+            while (healthcheck_running_.load(std::memory_order_acquire)) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(config_.health_check_interval_ms));
+                sendHealthChecks();
+            }
+        });
+    }
+
+    void stopHealthChecks() {
+        healthcheck_running_.store(false, std::memory_order_release);
+        if (healthcheck_thread_.joinable()) {
+            healthcheck_thread_.join();
+        }
+    }
+
+    void sendHealthChecks() {
+        std::vector<std::shared_ptr<ParserWorker>> workers;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            workers = workers_;
+        }
+
+        for (const auto& worker : workers) {
+            if (!worker->control) {
+                continue;
+            }
+            std::lock_guard<std::mutex> lock(worker->mutex);
+            if (!worker->running) {
+                continue;
+            }
+            if (worker->awaiting_ack) {
+                continue;
+            }
+            scratchbird::network::ControlPlaneMessage msg;
+            msg.header.message_type = static_cast<uint16_t>(
+                scratchbird::network::ControlPlaneMessageType::HEALTH_CHECK);
+            msg.header.request_id = nextRequestId();
+            msg.header.payload_len = 0;
+            scratchbird::network::sendControlPlaneMessage(
+                *worker->control, msg, scratchbird::network::INVALID_SOCKET_VALUE, 0, nullptr);
+            worker->healthcheck_request = msg.header.request_id;
+            worker->healthcheck_start = std::chrono::steady_clock::now();
+        }
+    }
+
     void readerLoop(const std::shared_ptr<ParserWorker>& worker) {
         scratchbird::core::ErrorContext ctx;
         while (worker->running) {
@@ -506,7 +583,19 @@ private:
             auto status = scratchbird::network::receiveControlPlaneMessage(*worker->control,
                                                                            msg, nullptr, &ctx);
             if (status != scratchbird::core::Status::OK) {
-                markWorkerFault(worker, "error");
+                bool recycle_requested = false;
+                {
+                    std::lock_guard<std::mutex> lock(worker->mutex);
+                    recycle_requested = worker->recycle_requested;
+                }
+                if (recycle_requested) {
+                    std::lock_guard<std::mutex> lock(worker->mutex);
+                    worker->running = false;
+                    updateMetrics();
+                    ensureMinWorkers();
+                } else {
+                    markWorkerFault(worker, "error");
+                }
                 break;
             }
             auto type = static_cast<scratchbird::network::ControlPlaneMessageType>(
@@ -543,8 +632,51 @@ private:
             return;
         }
         uint8_t state = msg.payload[8];
+        uint32_t last_error = readU32(msg.payload.data() + 11);
+        bool record_healthcheck = false;
+        std::chrono::steady_clock::time_point health_start;
+        {
+            std::lock_guard<std::mutex> lock(worker->mutex);
+            if (worker->healthcheck_request == msg.header.request_id) {
+                record_healthcheck = true;
+                health_start = worker->healthcheck_start;
+                worker->healthcheck_request = 0;
+            }
+        }
+        if (record_healthcheck && metrics_.parser_healthcheck_seconds) {
+            auto elapsed = std::chrono::steady_clock::now() - health_start;
+            metrics_.parser_healthcheck_seconds->observe(
+                std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count(),
+                {config_.protocol, "default"});
+        }
+
         std::lock_guard<std::mutex> lock(worker->mutex);
-        worker->state = (state == 0) ? WorkerState::IDLE : WorkerState::BUSY;
+        if (state == 0) {
+            worker->state = WorkerState::IDLE;
+        } else if (state == 2) {
+            worker->state = WorkerState::DRAINING;
+        } else if (state == 3) {
+            worker->state = WorkerState::FAULT;
+        } else {
+            worker->state = WorkerState::BUSY;
+        }
+
+        if (worker->session_active && worker->state == WorkerState::IDLE &&
+            metrics_.parser_session_seconds) {
+            auto elapsed = std::chrono::steady_clock::now() - worker->session_start;
+            metrics_.parser_session_seconds->observe(
+                std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count(),
+                {config_.protocol, "default"});
+            worker->session_active = false;
+            worker->sessions_completed += 1;
+            maybeRecycleWorker(worker);
+        }
+
+        if (last_error != 0 && metrics_.parser_errors_total) {
+            metrics_.parser_errors_total->inc(1.0,
+                                              {config_.protocol, "default",
+                                               errorCategory(last_error)});
+        }
         updateMetrics();
         cv_.notify_all();
     }
@@ -625,7 +757,121 @@ private:
         }
         return value;
     }
+
+    void ensureMinWorkers() {
+        while (true) {
+            size_t running = 0;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                running = runningCountLocked();
+            }
+            if (running >= config_.pool_min) {
+                break;
+            }
+            if (!spawnWorker()) {
+                break;
+            }
+        }
+    }
+
+    void maybeRecycleWorker(const std::shared_ptr<ParserWorker>& worker) {
+        if (worker->recycle_requested) {
+            return;
+        }
+        if (config_.max_requests > 0 &&
+            worker->sessions_completed >= config_.max_requests) {
+            requestRecycle(worker, "max_requests");
+            return;
+        }
+        if (config_.max_age_seconds > 0) {
+            auto age = std::chrono::steady_clock::now() - worker->started_at;
+            if (std::chrono::duration_cast<std::chrono::seconds>(age).count() >=
+                config_.max_age_seconds) {
+                requestRecycle(worker, "max_age");
+            }
+        }
+    }
+
+    void requestRecycle(const std::shared_ptr<ParserWorker>& worker, const std::string& reason) {
+        uint16_t reason_code = 0;
+        if (reason == "max_requests") {
+            reason_code = 1;
+        } else if (reason == "max_age") {
+            reason_code = 2;
+        } else if (reason == "error") {
+            reason_code = 3;
+        } else {
+            reason_code = 4;
+        }
+
+        scratchbird::network::ControlPlaneMessage msg;
+        msg.header.message_type = static_cast<uint16_t>(
+            scratchbird::network::ControlPlaneMessageType::RECYCLE);
+        msg.header.request_id = nextRequestId();
+        msg.payload.push_back(static_cast<uint8_t>(reason_code & 0xFF));
+        msg.payload.push_back(static_cast<uint8_t>((reason_code >> 8) & 0xFF));
+        msg.header.payload_len = msg.payload.size();
+
+        scratchbird::network::sendControlPlaneMessage(
+            *worker->control, msg, scratchbird::network::INVALID_SOCKET_VALUE, 0, nullptr);
+
+        {
+            std::lock_guard<std::mutex> lock(worker->mutex);
+            worker->recycle_requested = true;
+            worker->recycle_reason = reason;
+            worker->state = WorkerState::DRAINING;
+        }
+
+        if (metrics_.parser_recycle_total) {
+            metrics_.parser_recycle_total->inc(1.0, {config_.protocol, "default", reason});
+        }
+        updateMetrics();
+    }
+
+    static std::string errorCategory(uint32_t error_code) {
+        if (error_code >= 1000 && error_code < 1100) {
+            return "io";
+        }
+        if (error_code >= 2000 && error_code < 2100) {
+            return "corruption";
+        }
+        if (error_code >= 3000 && error_code < 3100) {
+            return "transaction";
+        }
+        if (error_code >= 4000 && error_code < 4100) {
+            return "data";
+        }
+        if (error_code >= 4100 && error_code < 4200) {
+            return "constraint";
+        }
+        if (error_code >= 4200 && error_code < 4300) {
+            return "syntax";
+        }
+        if (error_code >= 4300 && error_code < 4400) {
+            return "cursor";
+        }
+        if (error_code >= 4400 && error_code < 4500) {
+            return "plpgsql";
+        }
+        if (error_code >= 5000 && error_code < 5100) {
+            return "resource";
+        }
+        if (error_code >= 6000 && error_code < 6100) {
+            return "connection";
+        }
+        if (error_code >= 7000 && error_code < 7100) {
+            return "operational";
+        }
+        return "unknown";
+    }
 };
+
+void dumpMetrics(const scratchbird::core::MetricsRegistry& registry) {
+    auto now = std::chrono::system_clock::now();
+    std::time_t ts = std::chrono::system_clock::to_time_t(now);
+    std::cout << "\n--- Listener Metrics Dump (" << std::ctime(&ts) << ")---\n";
+    std::cout << registry.exportPrometheus() << std::flush;
+}
 
 void printUsage(const char* program) {
     std::cout << SB_LISTENER_NAME << " (" << SB_LISTENER_PROTOCOL << ")\n\n"
@@ -642,6 +888,7 @@ void printUsage(const char* program) {
               << "  --spawn-strategy <mode>     prefork|on_demand|hybrid\n"
               << "  --max-requests <n>          Recycle parser after N sessions\n"
               << "  --max-age-seconds <n>       Recycle parser after seconds\n"
+              << "  --health-check-interval-ms <n>  Health check interval (0 disables)\n"
               << "  --log-level <level>         info|debug|warn|error\n"
               << "  --help, -h                  Show this help\n"
               << "  --version                   Show version\n";
@@ -686,8 +933,11 @@ bool applyConfigFile(ListenerConfig& config) {
         config.port = static_cast<uint16_t>(network->getInt(key, config.port));
         std::string min_key = protocolKey(config.protocol) + "_pool_min";
         std::string max_key = protocolKey(config.protocol) + "_pool_max";
+        std::string health_key = protocolKey(config.protocol) + "_health_check_interval_ms";
         config.pool_min = static_cast<uint32_t>(network->getInt(min_key, config.pool_min));
         config.pool_max = static_cast<uint32_t>(network->getInt(max_key, config.pool_max));
+        config.health_check_interval_ms = static_cast<uint32_t>(
+            network->getInt(health_key, config.health_check_interval_ms));
         if (network->has("control_socket_dir")) {
             config.control_socket_dir = network->getString("control_socket_dir",
                                                            config.control_socket_dir);
@@ -702,6 +952,10 @@ bool applyConfigFile(ListenerConfig& config) {
         if (server->has("control_socket_dir")) {
             config.control_socket_dir = server->getString("control_socket_dir",
                                                           config.control_socket_dir);
+        }
+        if (server->has("health_check_interval_ms")) {
+            config.health_check_interval_ms = static_cast<uint32_t>(
+                server->getInt("health_check_interval_ms", config.health_check_interval_ms));
         }
         if (config.engine_endpoint.empty() && server->has("database")) {
             auto db_path = server->getString("database", "");
@@ -802,6 +1056,20 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
                 config.max_age_seconds = static_cast<uint32_t>(std::stoul(arg.substr(18)));
             } catch (...) {
                 std::cerr << "Invalid max-age-seconds value\n";
+                return false;
+            }
+        } else if (arg == "--health-check-interval-ms" && i + 1 < argc) {
+            try {
+                config.health_check_interval_ms = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid health-check-interval-ms value\n";
+                return false;
+            }
+        } else if (arg.rfind("--health-check-interval-ms=", 0) == 0) {
+            try {
+                config.health_check_interval_ms = static_cast<uint32_t>(std::stoul(arg.substr(27)));
+            } catch (...) {
+                std::cerr << "Invalid health-check-interval-ms value\n";
                 return false;
             }
         } else if (arg == "--log-level" && i + 1 < argc) {
@@ -977,6 +1245,9 @@ int runListener(const ListenerConfig& config) {
 
     // Accept loop with parser handoff.
     while (!g_shutdown.load(std::memory_order_acquire)) {
+        if (g_dump_stats.exchange(false, std::memory_order_acq_rel)) {
+            dumpMetrics(metrics);
+        }
         NetworkAddress client_addr;
         auto client = server_socket->accept(&client_addr, &ctx);
         if (!client) {
@@ -1013,6 +1284,7 @@ int runListener(const ListenerConfig& config) {
         }
     }
 
+    dumpMetrics(metrics);
     server_socket->close();
     pool.stop();
     control_plane.stop();
@@ -1053,6 +1325,9 @@ int main(int argc, char* argv[]) {
 
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
+#ifndef _WIN32
+    std::signal(SIGUSR2, handleSignal);
+#endif
 
     return runListener(config);
 }

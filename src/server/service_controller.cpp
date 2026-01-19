@@ -7,6 +7,7 @@
 #include "scratchbird/server/service_controller.h"
 #include "scratchbird/version.h"
 #include "scratchbird/core/permission_cache.h"
+#include "scratchbird/server/ipc_server.h"
 
 #include <iostream>
 #include <fstream>
@@ -130,6 +131,7 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
             protocols.push_back({network::ProtocolType::NATIVE, bind_address, native_port, true, false,
                                  native_pool_min, native_pool_max});
         }
+        driver_defaults.port = native_port;
 
         uint16_t pg_port = static_cast<uint16_t>(network->getInt("pg_port", 5432));
         uint32_t pg_pool_min = static_cast<uint32_t>(network->getInt("pg_pool_min", 4));
@@ -157,6 +159,25 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
     } else {
         // Use defaults
         protocols = getDefaultProtocols();
+    }
+
+    // Drivers section (native client defaults)
+    const ConfigSection* drivers = parser.section("drivers");
+    if (drivers) {
+        driver_defaults.host = drivers->getString("native_host", driver_defaults.host);
+        driver_defaults.port = static_cast<uint16_t>(
+            drivers->getInt("native_port", driver_defaults.port));
+        driver_defaults.sslmode = drivers->getString("sslmode", driver_defaults.sslmode);
+        driver_defaults.connect_timeout_ms = static_cast<uint32_t>(
+            drivers->getDuration("connect_timeout_ms", driver_defaults.connect_timeout_ms));
+        driver_defaults.default_database = drivers->getString("default_database",
+                                                             driver_defaults.default_database);
+        driver_defaults.default_role = drivers->getString("default_role",
+                                                         driver_defaults.default_role);
+        driver_defaults.allow_cleartext = drivers->getBool("allow_cleartext",
+                                                          driver_defaults.allow_cleartext);
+        driver_defaults.application_name = drivers->getString("application_name",
+                                                             driver_defaults.application_name);
     }
 
     // Memory section

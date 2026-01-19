@@ -7,6 +7,8 @@
 #include "scratchbird/client/network_client.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
@@ -42,14 +44,98 @@ core::Status mapQueryError(const protocol::Message& response,
     return static_cast<core::Status>(error_code);
 }
 
+std::string toLower(const std::string& value) {
+    std::string out = value;
+    std::transform(out.begin(), out.end(), out.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return out;
+}
+
+network::SSLMode parseSslMode(const std::string& value) {
+    auto mode = toLower(value);
+    if (mode == "disable" || mode == "disabled") {
+        return network::SSLMode::DISABLED;
+    }
+    if (mode == "allow") {
+        return network::SSLMode::ALLOW;
+    }
+    if (mode == "prefer") {
+        return network::SSLMode::PREFER;
+    }
+    if (mode == "require") {
+        return network::SSLMode::REQUIRE;
+    }
+    if (mode == "verify_ca") {
+        return network::SSLMode::VERIFY_CA;
+    }
+    if (mode == "verify_full") {
+        return network::SSLMode::VERIFY_FULL;
+    }
+    return network::SSLMode::REQUIRE;
+}
+
 } // namespace
 
 NetworkClient::NetworkClient() = default;
 NetworkClient::~NetworkClient() = default;
 
+void applyDriverDefaultsFromEnv(NetworkClientConfig& config) {
+    const char* host = std::getenv("SCRATCHBIRD_DRIVER_HOST");
+    if (host && (config.host.empty() || config.host == "127.0.0.1" || config.host == "localhost")) {
+        config.host = host;
+    }
+
+    const char* port = std::getenv("SCRATCHBIRD_DRIVER_PORT");
+    if (port && config.port == network::DEFAULT_NATIVE_PORT) {
+        try {
+            config.port = static_cast<uint16_t>(std::stoul(port));
+        } catch (...) {
+        }
+    }
+
+    const char* sslmode = std::getenv("SCRATCHBIRD_DRIVER_SSLMODE");
+    if (sslmode) {
+        config.ssl_mode = parseSslMode(sslmode);
+    }
+
+    const char* timeout_ms = std::getenv("SCRATCHBIRD_DRIVER_CONNECT_TIMEOUT_MS");
+    if (timeout_ms && config.connect_timeout_ms == network::DEFAULT_CONNECT_TIMEOUT_MS) {
+        try {
+            config.connect_timeout_ms = static_cast<uint32_t>(std::stoul(timeout_ms));
+        } catch (...) {
+        }
+    }
+
+    const char* db = std::getenv("SCRATCHBIRD_DRIVER_DATABASE");
+    if (db && config.database.empty()) {
+        config.database = db;
+    }
+
+    const char* app = std::getenv("SCRATCHBIRD_DRIVER_APPLICATION_NAME");
+    if (app && (config.application_name.empty() || config.application_name == "scratchbird_odbc")) {
+        config.application_name = app;
+    }
+
+    const char* ssl_cert = std::getenv("SCRATCHBIRD_DRIVER_SSL_CERT");
+    if (ssl_cert && config.ssl_cert.empty()) {
+        config.ssl_cert = ssl_cert;
+    }
+
+    const char* ssl_key = std::getenv("SCRATCHBIRD_DRIVER_SSL_KEY");
+    if (ssl_key && config.ssl_key.empty()) {
+        config.ssl_key = ssl_key;
+    }
+
+    const char* ssl_root = std::getenv("SCRATCHBIRD_DRIVER_SSL_ROOT_CERT");
+    if (ssl_root && config.ssl_root_cert.empty()) {
+        config.ssl_root_cert = ssl_root;
+    }
+}
+
 core::Status NetworkClient::connect(const NetworkClientConfig& config,
                                     core::ErrorContext* ctx) {
     config_ = config;
+    applyDriverDefaultsFromEnv(config_);
     last_error_.clear();
 
     if (!network::isNetworkInitialized()) {

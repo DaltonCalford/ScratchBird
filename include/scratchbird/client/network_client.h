@@ -96,5 +96,7 @@ private:
     std::ostream* copy_output_stream_{nullptr};
 };
 
+void applyDriverDefaultsFromEnv(NetworkClientConfig& config);
+
 } // namespace client
 } // namespace scratchbird

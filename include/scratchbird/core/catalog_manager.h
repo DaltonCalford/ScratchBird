@@ -1570,6 +1570,11 @@ public:
         CatalogManager(Database *db);
         ~CatalogManager();
 
+        Database *database() const
+        {
+            return db_;
+        }
+
         // Initialize catalog for new database
         auto initialize(ErrorContext *ctx = nullptr) -> Status;
 

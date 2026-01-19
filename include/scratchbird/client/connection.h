@@ -29,6 +29,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <istream>
+#include <ostream>
 #include <chrono>
 #include <functional>
 
@@ -474,6 +476,9 @@ public:
      * @return Status::OK if server is responsive
      */
     core::Status ping(core::ErrorContext* ctx = nullptr);
+
+    void setCopyInputStream(std::istream* in);
+    void setCopyOutputStream(std::ostream* out);
 
     struct AuthResponse {
         protocol::AuthStatus status = protocol::AuthStatus::ERROR;

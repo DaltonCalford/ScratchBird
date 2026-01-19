@@ -74,6 +74,16 @@ struct DatabaseConfig {
  * Complete service configuration
  */
 struct ServiceConfig {
+    struct DriverDefaults {
+        std::string host = "localhost";
+        uint16_t port = 3092;
+        std::string sslmode = "prefer";  // disable|prefer|require
+        uint32_t connect_timeout_ms = 5000;
+        std::string default_database;
+        std::string default_role;
+        bool allow_cleartext = false;
+        std::string application_name = "scratchbird_driver";
+    };
     // Server mode
     enum class Mode {
         SINGLE_DATABASE,    // One database
@@ -97,6 +107,9 @@ struct ServiceConfig {
     std::string spawn_strategy = "hybrid";
     uint32_t parser_max_requests = 0;
     uint32_t parser_max_age_seconds = 0;
+
+    // Driver bootstrap defaults (native protocol)
+    DriverDefaults driver_defaults;
 
     // Unix socket
     std::string unix_socket = "/var/run/scratchbird/sb.sock";
@@ -467,6 +480,8 @@ public:
     void setReloadCallback(ReloadCallback callback);
 
 private:
+    struct ListenerProcess;
+
     // Internal methods
     core::Status daemonize(core::ErrorContext* ctx);
     core::Status openDatabases(core::ErrorContext* ctx);

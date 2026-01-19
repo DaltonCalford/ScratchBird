@@ -1,7 +1,7 @@
 # Tracker: Network Listener + Parser Binaries (Alpha IP Layer)
 
-Status: In progress
-Last Updated: 2026-01-18
+Status: Complete
+Last Updated: 2026-01-19
 
 ## Scope
 Scaffold the listener and parser agent executables plus their CLI surfaces.
@@ -31,7 +31,7 @@ socket handoff, pool management, and TLS.
 2) Implement listener main:
    - Parse CLI/config (done)
    - Bind port (done)
-   - Basic accept loop (handoff integration planned) (in progress)
+   - Accept loop + handoff integration (done)
 3) Implement parser agent main:
    - Parse CLI/config (done)
    - TLS config loading (no plaintext) (done)
@@ -41,7 +41,7 @@ socket handoff, pool management, and TLS.
 6) Emit baseline listener/pool metrics (status + counts). (done)
 
 ## Current Focus
-- Control-plane message handling and parser pool lifecycle refinements.
+Complete; awaiting next scope definition.
 
 ## Notes
 - Socket handoff and control-plane protocol are tracked separately in

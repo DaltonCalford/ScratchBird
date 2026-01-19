@@ -41,6 +41,10 @@
 namespace scratchbird {
 namespace network {
 
+using ::socket_t;
+using ::INVALID_SOCKET_VALUE;
+using ::SOCKET_ERROR_VALUE;
+
 // ============================================================================
 // Forward Declarations
 // ============================================================================

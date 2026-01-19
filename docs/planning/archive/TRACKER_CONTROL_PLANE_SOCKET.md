@@ -1,7 +1,7 @@
 # Tracker: Control-Plane Socket (Listener <-> Parser)
 
-Status: In progress
-Last Updated: 2026-01-18
+Status: Complete
+Last Updated: 2026-01-19
 
 ## Scope
 Implement the listener control-plane socket and handoff protocol used to
@@ -25,8 +25,8 @@ metrics, and socket handoff metadata.
 2) Listener-side control-plane server socket (per protocol). (done)
 3) Parser-side control-plane client (register, heartbeat, recycle). (done)
 4) Handoff metadata pipe and acknowledgement tracking. (done)
-5) Metrics emission and status dump.
+5) Metrics emission and status dump. (done)
 
 ## Notes
 - Keep OS-specific socket passing logic isolated for later extension.
-- HELLO/HANDOFF/HEALTH framing is wired in parser/listener scaffolding; pooled handoff is still minimal.
+- Listener metrics dump is SIGUSR2-triggered and emits Prometheus text.

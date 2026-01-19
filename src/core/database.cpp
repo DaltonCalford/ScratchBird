@@ -15,6 +15,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/table_stats_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
@@ -36,7 +37,10 @@
 namespace scratchbird::core
 {
 
-    Database::Database() = default;
+    Database::Database()
+    {
+        table_stats_manager_ = std::make_unique<TableStatsManager>(this);
+    }
 
     Database::~Database()
     {
@@ -59,6 +63,10 @@ namespace scratchbird::core
             std::lock_guard<std::mutex> lock(dormant_mutex_);
             // Tear down dormant contexts while lock/txn managers are still available.
             dormant_contexts_.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(connection_registry_mutex_);
+            connection_registry_.clear();
         }
 
         // Shut down domain manager
@@ -94,6 +102,8 @@ namespace scratchbird::core
 
         // Shut down catalog manager
         catalog_manager_.reset();
+
+        table_stats_manager_.reset();
 
         // Flush page manager before shutting down buffer pool
         if (page_manager_ != nullptr)
@@ -197,6 +207,68 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate ConnectionContext");
             return Status::OOM;
         }
+    }
+
+    void Database::registerConnectionContext(ConnectionContext* ctx)
+    {
+        if (!ctx)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(connection_registry_mutex_);
+        connection_registry_[ctx->getProcId()] = ctx;
+    }
+
+    void Database::unregisterConnectionContext(ConnectionContext* ctx)
+    {
+        if (!ctx)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(connection_registry_mutex_);
+        auto it = connection_registry_.find(ctx->getProcId());
+        if (it != connection_registry_.end() && it->second == ctx)
+        {
+            connection_registry_.erase(it);
+        }
+    }
+
+    void Database::rebindConnectionContext(uint32_t proc_id, ConnectionContext* ctx)
+    {
+        if (!ctx)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(connection_registry_mutex_);
+        connection_registry_[proc_id] = ctx;
+    }
+
+    std::vector<Database::ConnectionIoSnapshot> Database::snapshotConnectionIoStats() const
+    {
+        std::vector<ConnectionIoSnapshot> out;
+        std::lock_guard<std::mutex> lock(connection_registry_mutex_);
+        out.reserve(connection_registry_.size());
+        for (const auto& [proc_id, ctx] : connection_registry_)
+        {
+            if (!ctx)
+            {
+                continue;
+            }
+            ConnectionIoSnapshot snap;
+            snap.proc_id = proc_id;
+            snap.session_id = ctx->effectiveSessionId();
+            snap.transaction_id = ctx->getCurrentXid();
+            snap.statement_id = ctx->currentStatementId();
+            snap.statement_active = ctx->statementIoActive();
+            snap.connection_io = ctx->snapshotConnectionIoStats();
+            snap.transaction_io = ctx->snapshotTransactionIoStats();
+            snap.statement_io = ctx->snapshotStatementIoStats();
+            out.push_back(snap);
+        }
+        return out;
     }
 
     Status Database::detachToDormant(std::unique_ptr<ConnectionContext> &connection,

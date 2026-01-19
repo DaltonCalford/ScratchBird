@@ -2148,6 +2148,61 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
         return ref;
     };
 
+    if (components.size() == 2 &&
+        core::IdentifierUtils::toUpper(components[0]) == "SYS")
+    {
+        std::string base = core::IdentifierUtils::toUpper(components[1]);
+        if (base == "TABLE_STATS")
+        {
+            return make_monitor_ref(
+                "sys.table_stats",
+                {{"table_id", DataType::UUID},
+                 {"schema_name", DataType::TEXT},
+                 {"table_name", DataType::TEXT},
+                 {"seq_scan_count", DataType::INT64},
+                 {"last_seq_scan_at", DataType::TIMESTAMP},
+                 {"seq_rows_read", DataType::INT64},
+                 {"idx_scan_count", DataType::INT64},
+                 {"last_idx_scan_at", DataType::TIMESTAMP},
+                 {"idx_rows_fetch", DataType::INT64},
+                 {"rows_inserted", DataType::INT64},
+                 {"rows_updated", DataType::INT64},
+                 {"rows_deleted", DataType::INT64},
+                 {"rows_hot_updated", DataType::INT64},
+                 {"rows_newpage_updated", DataType::INT64},
+                 {"live_rows_estimate", DataType::INT64},
+                 {"dead_rows_estimate", DataType::INT64},
+                 {"mod_since_analyze", DataType::INT64},
+                 {"ins_since_vacuum", DataType::INT64},
+                 {"last_vacuum_at", DataType::TIMESTAMP},
+                 {"last_autovacuum_at", DataType::TIMESTAMP},
+                 {"last_analyze_at", DataType::TIMESTAMP},
+                 {"last_autoanalyze_at", DataType::TIMESTAMP},
+                 {"vacuum_count", DataType::INT64},
+                 {"autovacuum_count", DataType::INT64},
+                 {"analyze_count", DataType::INT64},
+                 {"autoanalyze_count", DataType::INT64},
+                 {"total_vacuum_time_ms", DataType::INT64},
+                 {"total_autovacuum_time_ms", DataType::INT64},
+                 {"total_analyze_time_ms", DataType::INT64},
+                 {"total_autoanalyze_time_ms", DataType::INT64}});
+        }
+        if (base == "IO_STATS")
+        {
+            return make_monitor_ref(
+                "sys.io_stats",
+                {{"stat_id", DataType::INT64},
+                 {"stat_group", DataType::INT16},
+                 {"session_id", DataType::UUID},
+                 {"transaction_id", DataType::INT64},
+                 {"statement_id", DataType::INT64},
+                 {"page_reads", DataType::INT64},
+                 {"page_writes", DataType::INT64},
+                 {"page_fetches", DataType::INT64},
+                 {"page_marks", DataType::INT64}});
+        }
+    }
+
     std::string table_name = components.back();
     std::string schema_path = components.size() > 1 ? join_components(components.size() - 1)
                                                     : std::string();

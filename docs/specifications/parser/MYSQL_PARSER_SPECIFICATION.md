@@ -801,6 +801,10 @@ Key categories:
 - **Summary tables**: events_*_summary_by_*, file_summary_*, memory_summary_*
 - **Replication tables**: replication_connection_status, replication_applier_status
 
+Note: performance_schema and PROCESSLIST monitoring tables must map to ScratchBird
+native monitoring views defined in `operations/MONITORING_SQL_VIEWS.md`.
+Column-level mappings follow `operations/MONITORING_DIALECT_MAPPINGS.md`.
+
 ---
 
 ## Implementation Phases

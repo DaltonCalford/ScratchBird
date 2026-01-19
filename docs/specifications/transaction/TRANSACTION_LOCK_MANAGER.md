@@ -1014,6 +1014,9 @@ typedef struct lock_view_entry {
     TimestampTz     lv_wait_start;         // When started waiting
 } LockViewEntry;
 
+SQL exposure:
+- `sys.locks` view (see `operations/MONITORING_SQL_VIEWS.md`)
+
 // Get current locks (for pg_locks view)
 List* get_all_locks(SBLockManager* lm) {
     List* result = NIL;

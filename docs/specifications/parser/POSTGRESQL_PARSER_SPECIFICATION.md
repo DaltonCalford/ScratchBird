@@ -1389,6 +1389,10 @@ X'1FF'       -- hexadecimal bit string
 | pg_stat_bgwriter | Background writer statistics |
 | pg_stat_progress_* | Progress monitoring views |
 
+Note: pg_stat_* and pg_locks views MUST map to ScratchBird native monitoring views
+defined in `operations/MONITORING_SQL_VIEWS.md`. Column-level mappings follow
+`operations/MONITORING_DIALECT_MAPPINGS.md` to ensure consistent runtime data.
+
 ### information_schema Views (~60+ views)
 
 | View | Description |

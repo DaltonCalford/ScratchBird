@@ -19,6 +19,7 @@
 #include <queue>
 #include <sstream>
 #include <thread>
+#include <iostream>
 #include <condition_variable>
 #include <unordered_map>
 #include <csignal>
@@ -581,6 +582,8 @@ public:
     std::string server_version_;
     bool in_transaction_ = false;
     bool auto_commit_ = true;
+    std::istream* copy_input_stream_ = nullptr;
+    std::ostream* copy_output_stream_ = nullptr;
 
     // ============================
     // Connection helpers
@@ -814,6 +817,187 @@ public:
             return status;
         }
 
+        const uint32_t kCopyWindow = 65536;
+
+        auto handle_copy_out = [&]() -> core::Status {
+            std::ostream* out = copy_output_stream_ ? copy_output_stream_ : &std::cout;
+            uint32_t window = 0;
+            bool stream_ready = false;
+
+            while (true) {
+                protocol::Message response;
+                auto status = protocol_session_->receiveMessage(response, ctx);
+                if (!isOk(status)) {
+                    last_error_ = "Failed to receive COPY OUT response";
+                    return status;
+                }
+
+                switch (response.getType()) {
+                    case protocol::MessageType::STREAM_READY: {
+                        stream_ready = true;
+                        window = kCopyWindow;
+                        auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                            protocol::StreamControlType::START, window, 0);
+                        status = protocol_session_->sendMessage(ctrl, ctx);
+                        if (!isOk(status)) {
+                            last_error_ = "Failed to send STREAM_CONTROL";
+                            return status;
+                        }
+                        break;
+                    }
+                    case protocol::MessageType::COPY_DATA: {
+                        const uint8_t* data = nullptr;
+                        size_t len = 0;
+                        protocol::ProtocolCodec::parseCopyData(response, &data, &len, ctx);
+                        if (len > 0) {
+                            out->write(reinterpret_cast<const char*>(data),
+                                       static_cast<std::streamsize>(len));
+                            if (!(*out)) {
+                                last_error_ = "COPY OUT write failed";
+                                return core::Status::IO_ERROR;
+                            }
+                        }
+                        if (window > 0) {
+                            if (len >= window) {
+                                window = 0;
+                            } else {
+                                window -= static_cast<uint32_t>(len);
+                            }
+                        }
+                        if (stream_ready && window == 0) {
+                            window = kCopyWindow;
+                            auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                                protocol::StreamControlType::ACK, window, 0);
+                            status = protocol_session_->sendMessage(ctrl, ctx);
+                            if (!isOk(status)) {
+                                last_error_ = "Failed to send STREAM_CONTROL ACK";
+                                return status;
+                            }
+                        }
+                        break;
+                    }
+                    case protocol::MessageType::COPY_DONE:
+                        return core::Status::OK;
+
+                    case protocol::MessageType::COPY_FAIL: {
+                        std::string message;
+                        protocol::ProtocolCodec::parseCopyFail(response, message, ctx);
+                        last_error_ = message.empty() ? "COPY OUT failed" : message;
+                        return core::Status::INTERNAL_ERROR;
+                    }
+                    case protocol::MessageType::QUERY_ERROR: {
+                        uint32_t error_code;
+                        std::string sqlstate, message, detail, hint;
+                        protocol::ProtocolCodec::parseQueryError(
+                            response, error_code, sqlstate, message, detail, hint, ctx
+                        );
+                        last_error_ = message;
+                        if (!detail.empty()) last_error_ += " (" + detail + ")";
+                        return static_cast<core::Status>(error_code);
+                    }
+                    case protocol::MessageType::STREAM_END:
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+        };
+
+        auto handle_copy_in = [&]() -> core::Status {
+            std::istream* in = copy_input_stream_ ? copy_input_stream_ : &std::cin;
+            uint32_t window = 0;
+            bool done = false;
+
+            while (!done) {
+                if (window == 0) {
+                    protocol::Message response;
+                    auto status = protocol_session_->receiveMessage(response, ctx);
+                    if (!isOk(status)) {
+                        last_error_ = "Failed to receive COPY IN control";
+                        return status;
+                    }
+
+                    switch (response.getType()) {
+                        case protocol::MessageType::STREAM_READY:
+                            break;
+                        case protocol::MessageType::STREAM_CONTROL: {
+                            protocol::StreamControlType control;
+                            uint32_t new_window = 0;
+                            uint32_t timeout_ms = 0;
+                            status = protocol::ProtocolCodec::parseStreamControl(
+                                response, control, new_window, timeout_ms, ctx);
+                            if (!isOk(status)) {
+                                last_error_ = "Malformed STREAM_CONTROL";
+                                return status;
+                            }
+                            (void)timeout_ms;
+                            if (control == protocol::StreamControlType::PAUSE) {
+                                break;
+                            }
+                            if (control == protocol::StreamControlType::CANCEL) {
+                                last_error_ = "COPY IN canceled by server";
+                                return core::Status::CANCELLED;
+                            }
+                            window += new_window;
+                            break;
+                        }
+                        case protocol::MessageType::COPY_FAIL: {
+                            std::string message;
+                            protocol::ProtocolCodec::parseCopyFail(response, message, ctx);
+                            last_error_ = message.empty() ? "COPY IN failed" : message;
+                            return core::Status::INTERNAL_ERROR;
+                        }
+                        case protocol::MessageType::QUERY_ERROR: {
+                            uint32_t error_code;
+                            std::string sqlstate, message, detail, hint;
+                            protocol::ProtocolCodec::parseQueryError(
+                                response, error_code, sqlstate, message, detail, hint, ctx
+                            );
+                            last_error_ = message;
+                            if (!detail.empty()) last_error_ += " (" + detail + ")";
+                            return static_cast<core::Status>(error_code);
+                        }
+                        default:
+                            break;
+                    }
+                    if (window == 0) {
+                        continue;
+                    }
+                }
+
+                size_t to_read = std::min<size_t>(window, 16384);
+                std::string buffer(to_read, '\0');
+                in->read(buffer.data(), static_cast<std::streamsize>(to_read));
+                std::streamsize got = in->gcount();
+
+                if (got > 0) {
+                    auto msg = protocol::ProtocolCodec::buildCopyData(
+                        reinterpret_cast<const uint8_t*>(buffer.data()),
+                        static_cast<size_t>(got));
+                    auto status = protocol_session_->sendMessage(msg, ctx);
+                    if (!isOk(status)) {
+                        last_error_ = "Failed to send COPY_DATA";
+                        return status;
+                    }
+                    if (got >= static_cast<std::streamsize>(window)) {
+                        window = 0;
+                    } else {
+                        window -= static_cast<uint32_t>(got);
+                    }
+                } else {
+                    auto msg = protocol::ProtocolCodec::buildCopyDone();
+                    auto status = protocol_session_->sendMessage(msg, ctx);
+                    if (!isOk(status)) {
+                        last_error_ = "Failed to send COPY_DONE";
+                        return status;
+                    }
+                    done = true;
+                }
+            }
+            return core::Status::OK;
+        };
+
         while (true) {
             protocol::Message response;
             status = protocol_session_->receiveMessage(response, ctx);
@@ -879,6 +1063,30 @@ public:
                     }
                     return core::Status::OK;
                 }
+
+                case protocol::MessageType::COPY_IN_RESPONSE: {
+                    status = handle_copy_in();
+                    if (!isOk(status)) {
+                        return status;
+                    }
+                    break;
+                }
+                case protocol::MessageType::COPY_OUT_RESPONSE: {
+                    status = handle_copy_out();
+                    if (!isOk(status)) {
+                        return status;
+                    }
+                    break;
+                }
+                case protocol::MessageType::COPY_FAIL: {
+                    std::string message;
+                    protocol::ProtocolCodec::parseCopyFail(response, message, ctx);
+                    last_error_ = message.empty() ? "COPY failed" : message;
+                    return core::Status::INTERNAL_ERROR;
+                }
+                case protocol::MessageType::STREAM_END:
+                case protocol::MessageType::STREAM_READY:
+                    break;
 
                 case protocol::MessageType::TRANSACTION_STATUS: {
                     // NET-L1: Parse transaction status and update connection state
@@ -1116,6 +1324,20 @@ core::Status Connection::ping(core::ErrorContext* ctx) {
     }
 
     return core::Status::OK;
+}
+
+void Connection::setCopyInputStream(std::istream* in) {
+    if (!impl_) {
+        return;
+    }
+    impl_->copy_input_stream_ = in;
+}
+
+void Connection::setCopyOutputStream(std::ostream* out) {
+    if (!impl_) {
+        return;
+    }
+    impl_->copy_output_stream_ = out;
 }
 
 core::Status Connection::sendAuthRequest(protocol::AuthMethod method,

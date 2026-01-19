@@ -8,6 +8,7 @@
 
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/server/ipc_server.h"
 
 #include <algorithm>
 #include <cctype>
@@ -249,7 +250,10 @@ core::Status NativeAdapter::processAuthentication(network::Connection* /*conn*/)
 core::Status NativeAdapter::sendAuthResult(network::Connection* conn,
                                             bool success,
                                             const std::string& error_msg) {
-    sendAuthResponse(conn, success, error_msg);
+    sendAuthResponse(conn,
+                     success ? AuthStatus::OK : AuthStatus::ERROR,
+                     user_id_,
+                     error_msg);
     if (success) {
         native_state_ = NativeProtocolState::READY;
     }
@@ -296,25 +300,31 @@ core::Status NativeAdapter::sendProtocolError(network::Connection* conn,
 // ============================================================================
 
 core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
-    // Parse connect request
     current_message_.resetReadPosition();
-
-    // Client version
-    client_version_ = current_message_.readUInt16();
-
-    // Database name (length-prefixed string)
-    database_name_ = current_message_.readLengthPrefixedString();
-
-    // Username (length-prefixed string)
-    username_ = current_message_.readLengthPrefixedString();
-
-    // Application name (optional)
-    if (current_message_.getRemainingBytes() > 0) {
-        std::string app_name = current_message_.readLengthPrefixedString();
-        (void)app_name;  // Store if needed
+    std::string database;
+    std::string client_name;
+    core::ErrorContext ctx;
+    uint32_t client_pid = 0;
+    auto status = ProtocolCodec::parseConnectRequest(current_message_,
+                                                     database,
+                                                     client_name,
+                                                     client_pid,
+                                                     &ctx);
+    if (status != core::Status::OK) {
+        sendConnectResponse(conn, false,
+                            ctx.message.empty() ? "Invalid CONNECT_REQUEST" : ctx.message);
+        return sendBuffer(conn);
     }
 
-    // Send connect response
+    (void)client_name;
+
+    database_name_ = database.empty() ? config_.default_database : database;
+    if (database_name_.empty()) {
+        database_name_ = "default";
+    }
+
+    client_version_ = PROTOCOL_VERSION;
+
     sendConnectResponse(conn, true);
     native_state_ = NativeProtocolState::AUTHENTICATING;
 
@@ -328,45 +338,138 @@ core::Status NativeAdapter::handleDisconnect(network::Connection* conn) {
 }
 
 core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
-    // Parse auth request
     current_message_.resetReadPosition();
+    uint8_t session_id[SESSION_ID_SIZE] = {0};
+    std::string username;
+    AuthMethod auth_method = AuthMethod::PASSWORD;
+    std::vector<uint8_t> payload;
+    core::ErrorContext ctx;
+    auto status = ProtocolCodec::parseAuthRequest(current_message_,
+                                                  session_id,
+                                                  username,
+                                                  auth_method,
+                                                  payload,
+                                                  &ctx);
+    if (status != core::Status::OK) {
+        sendAuthResponse(conn, AuthStatus::ERROR, 0,
+                         ctx.message.empty() ? "Invalid AUTH_REQUEST" : ctx.message);
+        return sendBuffer(conn);
+    }
 
-    // Auth method
-    uint8_t auth_method = current_message_.readUInt8();
-    (void)auth_method;
+    if (std::memcmp(session_id, session_id_, SESSION_ID_SIZE) != 0 &&
+        config_.strict_protocol) {
+        sendAuthResponse(conn, AuthStatus::ERROR, 0, "Invalid session id");
+        return sendBuffer(conn);
+    }
 
-    // Auth data (password or token)
-    std::string auth_data = current_message_.readLengthPrefixedString();
-    (void)auth_data;
+    username_ = username;
 
-    // For testing, accept any authentication
-    // TODO: Implement proper authentication
+    if (!config_.engine_endpoint.empty()) {
+        status = ensureRemoteClient(&ctx);
+        if (status != core::Status::OK) {
+            sendAuthResponse(conn, AuthStatus::ERROR, 0,
+                             ctx.message.empty() ? "Engine connection failed" : ctx.message);
+            return sendBuffer(conn);
+        }
+
+        client::Connection::AuthResponse auth_response;
+        status = client_->sendAuthRequest(auth_method, payload, auth_response, &ctx);
+        if (status != core::Status::OK) {
+            sendAuthResponse(conn, AuthStatus::ERROR, 0,
+                             ctx.message.empty() ? "Authentication failed" : ctx.message);
+            return sendBuffer(conn);
+        }
+
+        user_id_ = auth_response.user_id;
+        sendAuthResponse(conn,
+                         auth_response.status,
+                         auth_response.user_id,
+                         auth_response.error_message,
+                         auth_response.data);
+        if (auth_response.status == AuthStatus::OK) {
+            native_state_ = NativeProtocolState::READY;
+        }
+        return sendBuffer(conn);
+    }
+
     return sendAuthResult(conn, true);
 }
 
 core::Status NativeAdapter::handleQuery(network::Connection* conn) {
     native_state_ = NativeProtocolState::QUERY_PROCESSING;
 
-    // Parse query
     current_message_.resetReadPosition();
-    std::string query = current_message_.readLengthPrefixedString();
+    uint8_t session_id[SESSION_ID_SIZE] = {0};
+    std::string query;
+    uint8_t flags = 0;
+    std::vector<uint8_t> bytecode;
+    core::ErrorContext ctx;
+    auto status = ProtocolCodec::parseQuery(current_message_,
+                                            session_id,
+                                            query,
+                                            flags,
+                                            &bytecode,
+                                            &ctx);
+    if (status != core::Status::OK) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(status),
+                       "42000",
+                       ctx.message.empty() ? "Invalid QUERY" : ctx.message);
+        native_state_ = NativeProtocolState::READY;
+        return sendBuffer(conn);
+    }
+
+    if (std::memcmp(session_id, session_id_, SESSION_ID_SIZE) != 0 &&
+        config_.strict_protocol) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
+                       "42000",
+                       "Invalid session id");
+        native_state_ = NativeProtocolState::READY;
+        return sendBuffer(conn);
+    }
 
     bool from_stdin = false;
     bool to_stdout = false;
     if (parseCopyQuery(query, from_stdin, to_stdout)) {
-        QueryContext ctx;
-        ctx.query = query;
-        auto status = handleCopyQuery(conn, ctx, from_stdin, to_stdout);
+        QueryContext copy_ctx;
+        copy_ctx.query = query;
+        auto status = handleCopyQuery(conn, copy_ctx, from_stdin, to_stdout);
         native_state_ = NativeProtocolState::READY;
         return status;
     }
 
     // Execute query
-    QueryContext ctx;
-    ctx.query = query;
+    QueryContext query_ctx;
+    query_ctx.query = query;
 
     ResultContext result;
-    executeQuery(ctx, result);
+    if (flags & static_cast<uint8_t>(QueryFlags::BYTECODE)) {
+        if (!config_.engine_endpoint.empty()) {
+            auto exec_status = executeRemoteQuery(query, &bytecode, result);
+            if (exec_status != core::Status::OK) {
+                native_state_ = NativeProtocolState::READY;
+                return sendBuffer(conn);
+            }
+        } else {
+            core::ErrorContext exec_ctx;
+            auto exec_status = executeBytecode(query, bytecode, result, &exec_ctx);
+            if (exec_status != core::Status::OK) {
+                result.has_error = true;
+                result.error_code = static_cast<uint32_t>(exec_status);
+                result.sqlstate = "42000";
+                result.error_message = exec_ctx.message.empty() ? "Bytecode execution failed" : exec_ctx.message;
+            }
+        }
+    } else if (!config_.engine_endpoint.empty()) {
+        auto exec_status = executeRemoteQuery(query, nullptr, result);
+        if (exec_status != core::Status::OK) {
+            native_state_ = NativeProtocolState::READY;
+            return sendBuffer(conn);
+        }
+    } else {
+        executeQuery(query_ctx, result);
+    }
 
     sendQueryResult(conn, result);
     native_state_ = NativeProtocolState::READY;
@@ -377,7 +480,7 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
 core::Status NativeAdapter::handleQueryCancel(network::Connection* conn) {
     // TODO: Implement query cancellation
     // For now, just acknowledge
-    sendPong(conn);
+    sendPong(conn, 0, 0);
     return sendBuffer(conn);
 }
 
@@ -442,7 +545,15 @@ core::Status NativeAdapter::handleExecute(network::Connection* conn) {
     }
 
     ResultContext result;
-    executeQuery(ctx, result);
+    if (!config_.engine_endpoint.empty()) {
+        auto exec_status = executeRemoteQuery(ctx.query, nullptr, result);
+        if (exec_status != core::Status::OK) {
+            native_state_ = NativeProtocolState::READY;
+            return sendBuffer(conn);
+        }
+    } else {
+        executeQuery(ctx, result);
+    }
 
     sendQueryResult(conn, result);
     native_state_ = NativeProtocolState::READY;
@@ -558,7 +669,20 @@ core::Status NativeAdapter::handleRollbackTo(network::Connection* conn) {
 }
 
 core::Status NativeAdapter::handlePing(network::Connection* conn) {
-    sendPong(conn);
+    current_message_.resetReadPosition();
+    uint64_t timestamp = 0;
+    uint32_t sequence = 0;
+    core::ErrorContext ctx;
+    auto status = ProtocolCodec::parsePing(current_message_, timestamp, sequence, &ctx);
+    if (status != core::Status::OK) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(status),
+                       "42000",
+                       ctx.message.empty() ? "Invalid PING" : ctx.message);
+        return sendBuffer(conn);
+    }
+
+    sendPong(conn, timestamp, sequence);
     return sendBuffer(conn);
 }
 
@@ -584,105 +708,49 @@ void NativeAdapter::sendMessage(network::Connection* conn, const Message& msg) {
 
 void NativeAdapter::sendConnectResponse(network::Connection* conn, bool success,
                                          const std::string& error_msg) {
-    Message msg(MessageType::CONNECT_RESPONSE);
-
-    // Success flag
-    msg.writeUInt8(success ? 1 : 0);
-
-    // Server version
-    msg.writeUInt16(PROTOCOL_VERSION);
-
-    if (success) {
-        // Session ID
-        msg.writeBytes(session_id_, SESSION_ID_SIZE);
-    } else {
-        // Error message
-        msg.writeLengthPrefixedString(error_msg);
-    }
-
+    Message msg = ProtocolCodec::buildConnectResponse(
+        success,
+        session_id_,
+        error_msg
+    );
     sendMessage(conn, msg);
 }
 
-void NativeAdapter::sendAuthResponse(network::Connection* conn, bool success,
-                                      const std::string& error_msg) {
-    Message msg(MessageType::AUTH_RESPONSE);
-
-    // Success flag
-    msg.writeUInt8(success ? 1 : 0);
-
-    if (!success) {
-        // Error message
-        msg.writeLengthPrefixedString(error_msg);
-    }
-
+void NativeAdapter::sendAuthResponse(network::Connection* conn,
+                                      AuthStatus status,
+                                      uint32_t user_id,
+                                      const std::string& error_msg,
+                                      const std::vector<uint8_t>& data) {
+    Message msg = ProtocolCodec::buildAuthResponse(status, user_id, error_msg, data);
     sendMessage(conn, msg);
 }
 
 void NativeAdapter::sendQueryError(network::Connection* conn, uint32_t error_code,
                                     const std::string& sqlstate, const std::string& message) {
-    Message msg(MessageType::QUERY_ERROR);
-
-    msg.writeUInt32(error_code);
-    msg.writeLengthPrefixedString(sqlstate);
-    msg.writeLengthPrefixedString(message);
-
+    Message msg = ProtocolCodec::buildQueryError(error_code, sqlstate, message);
     sendMessage(conn, msg);
 }
 
 void NativeAdapter::sendRowDescription(network::Connection* conn,
                                         const std::vector<ProtocolCodec::ColumnInfo>& columns) {
-    Message msg(MessageType::ROW_DESCRIPTION);
-
-    // Column count
-    msg.writeUInt16(static_cast<uint16_t>(columns.size()));
-
-    for (const auto& col : columns) {
-        // Column name
-        msg.writeLengthPrefixedString(col.name);
-
-        // Type
-        msg.writeUInt8(static_cast<uint8_t>(col.type));
-
-        // Type modifier
-        msg.writeUInt32(col.type_modifier);
-    }
-
+    Message msg = ProtocolCodec::buildRowDescription(columns);
     sendMessage(conn, msg);
 }
 
 void NativeAdapter::sendRowData(network::Connection* conn,
                                  const std::vector<ProtocolCodec::ColumnValue>& values) {
-    Message msg(MessageType::ROW_DATA);
-
-    // Column count
-    msg.writeUInt16(static_cast<uint16_t>(values.size()));
-
-    for (const auto& val : values) {
-        if (val.is_null) {
-            msg.writeUInt8(1);  // NULL flag
-        } else {
-            msg.writeUInt8(0);  // Not NULL
-            // Convert vector<uint8_t> to string
-            std::string data_str(val.data.begin(), val.data.end());
-            msg.writeLengthPrefixedString(data_str);
-        }
-    }
-
+    Message msg = ProtocolCodec::buildRowData(values);
     sendMessage(conn, msg);
 }
 
 void NativeAdapter::sendEndOfResults(network::Connection* conn) {
-    Message msg(MessageType::END_OF_RESULTS);
+    Message msg = ProtocolCodec::buildEndOfResults();
     sendMessage(conn, msg);
 }
 
 void NativeAdapter::sendCommandComplete(network::Connection* conn, const std::string& tag,
                                          int64_t rows_affected) {
-    Message msg(MessageType::COMMAND_COMPLETE);
-
-    msg.writeLengthPrefixedString(tag);
-    msg.writeInt64(rows_affected);
-
+    Message msg = ProtocolCodec::buildCommandComplete(tag, rows_affected);
     sendMessage(conn, msg);
 }
 
@@ -720,13 +788,12 @@ void NativeAdapter::sendDescribeResponse(network::Connection* conn, uint32_t stm
 }
 
 void NativeAdapter::sendTransactionStatus(network::Connection* conn, bool in_transaction) {
-    Message msg(MessageType::TRANSACTION_STATUS);
-    msg.writeUInt8(in_transaction ? 1 : 0);
+    Message msg = ProtocolCodec::buildTransactionStatus(in_transaction ? 1 : 0, transaction_id_);
     sendMessage(conn, msg);
 }
 
-void NativeAdapter::sendPong(network::Connection* conn) {
-    Message msg(MessageType::PONG);
+void NativeAdapter::sendPong(network::Connection* conn, uint64_t timestamp, uint32_t sequence) {
+    Message msg = ProtocolCodec::buildPong(timestamp, sequence);
     sendMessage(conn, msg);
 }
 
@@ -743,21 +810,106 @@ void NativeAdapter::sendStatusResponse(network::Connection* conn) {
     sendMessage(conn, msg);
 }
 
+core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
+    if (client_) {
+        return core::Status::OK;
+    }
+
+    client_config_.database_name = database_name_.empty() ? "default" : database_name_;
+    if (!config_.engine_endpoint.empty()) {
+        client_config_.ipc_method = server::IPCMethod::AUTO;
+        client_config_.socket_path = config_.engine_endpoint;
+    } else {
+        client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
+        client_config_.socket_path = server::getIPCPath(client_config_.database_name,
+                                                        client_config_.ipc_method);
+    }
+    client_config_.connect_timeout_ms = config_.read_timeout_ms;
+    client_config_.read_timeout_ms = config_.read_timeout_ms;
+    client_config_.write_timeout_ms = config_.write_timeout_ms;
+    client_config_.auto_commit = true;
+    client_config_.auto_start_server = false;
+    client_config_.manual_auth = true;
+    client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
+
+    client_ = std::make_unique<client::Connection>();
+    auto status = client_->connect(client_config_, ctx);
+    if (status != core::Status::OK) {
+        client_.reset();
+        return status;
+    }
+
+    return core::Status::OK;
+}
+
+core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
+                                               const std::vector<uint8_t>* bytecode,
+                                               ResultContext& result) {
+    core::ErrorContext ctx;
+    auto status = ensureRemoteClient(&ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.sqlstate = "58000";
+        result.error_message = ctx.message.empty() ? "Failed to connect to engine" : ctx.message;
+        return status;
+    }
+
+    client::ResultSet rs;
+    if (bytecode) {
+        status = client_->executeBytecode(*bytecode, sql, &rs, &ctx);
+    } else {
+        std::vector<uint8_t> compiled;
+        std::string compile_error;
+        status = compileQuery(sql, compiled, compile_error);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "42000";
+            result.error_message = compile_error.empty() ? "Compilation failed" : compile_error;
+            return status;
+        }
+        status = client_->executeBytecode(compiled, sql, &rs, &ctx);
+    }
+
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        std::string err = client_->getLastError();
+        if (err.empty()) {
+            err = ctx.message;
+        }
+        result.error_message = err.empty() ? "Query execution failed" : err;
+        result.sqlstate = "42000";
+        return status;
+    }
+
+    result.columns.clear();
+    for (const auto& col : rs.getColumns()) {
+        ProtocolCodec::ColumnInfo info;
+        info.name = col.name;
+        info.type = col.type;
+        info.type_modifier = col.type_modifier;
+        result.columns.push_back(info);
+    }
+
+    result.rows.clear();
+    const auto row_count = static_cast<size_t>(rs.getRowCount());
+    for (size_t i = 0; i < row_count; ++i) {
+        result.rows.push_back(rs.getRowValues(i));
+    }
+
+    result.rows_affected = rs.getRowsAffected();
+    result.command_tag = rs.getCommandTag();
+    return core::Status::OK;
+}
+
 // ============================================================================
 // COPY Helpers
 // ============================================================================
 
 core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const QueryContext& ctx,
                                             bool from_stdin, bool to_stdout) {
-    std::vector<uint8_t> bytecode;
-    std::string compile_error;
-    auto status = compileQuery(ctx.query, bytecode, compile_error);
-    if (status != core::Status::OK) {
-        sendQueryError(conn, static_cast<uint32_t>(status), "42000",
-                       compile_error.empty() ? "Compilation failed" : compile_error);
-        return sendBuffer(conn);
-    }
-
     if (from_stdin) {
         native_state_ = NativeProtocolState::COPY_IN;
     } else if (to_stdout) {
@@ -770,6 +922,116 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
 
     copy_stream_id_ = next_stream_id_++;
     copy_total_bytes_ = 0;
+
+    if (!config_.engine_endpoint.empty()) {
+        core::ErrorContext remote_ctx;
+        auto remote_status = ensureRemoteClient(&remote_ctx);
+        if (remote_status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(remote_status),
+                           "58000",
+                           remote_ctx.message.empty() ? "Failed to connect to engine"
+                                                     : remote_ctx.message);
+            native_state_ = NativeProtocolState::READY;
+            return sendBuffer(conn);
+        }
+
+        if (from_stdin) {
+            copy_in_window_grant_ = static_cast<uint32_t>(std::max<size_t>(config_.read_buffer_size, 16384));
+            copy_in_window_bytes_ = 0;
+            copy_in_low_watermark_ = copy_in_window_grant_ / 2;
+
+            sendMessage(conn, ProtocolCodec::buildCopyInResponse(CopyFormat::TEXT, {}));
+            sendMessage(conn, ProtocolCodec::buildStreamReady(copy_stream_id_, 0, 0));
+            sendMessage(conn, ProtocolCodec::buildStreamControl(StreamControlType::START,
+                                                                copy_in_window_grant_, 0));
+            copy_in_window_bytes_ += copy_in_window_grant_;
+            auto status_flush = flushWriteBuffer(conn);
+            if (status_flush != core::Status::OK) {
+                native_state_ = NativeProtocolState::READY;
+                return status_flush;
+            }
+
+            auto read_fn = [this, conn](std::string& out, bool& done, std::string& error) {
+                return readCopyInChunk(conn, out, done, error);
+            };
+            CopyInStreambuf streambuf(read_fn);
+            std::istream in(&streambuf);
+
+            client_->setCopyInputStream(&in);
+            ResultContext result;
+            auto status = executeRemoteQuery(ctx.query, nullptr, result);
+            client_->setCopyInputStream(nullptr);
+
+            if (status != core::Status::OK || result.has_error) {
+                sendMessage(conn, ProtocolCodec::buildCopyFail(result.error_message));
+                sendQueryError(conn, result.error_code, result.sqlstate,
+                               result.error_message);
+                native_state_ = NativeProtocolState::READY;
+                return flushWriteBuffer(conn);
+            }
+
+            auto rows = result.rows_affected;
+            sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,
+                                                            static_cast<uint64_t>(rows),
+                                                            copy_total_bytes_));
+            sendCommandComplete(conn, "COPY " + std::to_string(rows), rows);
+            sendEndOfResults(conn);
+            native_state_ = NativeProtocolState::READY;
+            return flushWriteBuffer(conn);
+        }
+
+        // COPY OUT (IPC)
+        copy_out_window_bytes_ = 0;
+        copy_out_paused_ = false;
+
+        sendMessage(conn, ProtocolCodec::buildCopyOutResponse(CopyFormat::TEXT, {}));
+        sendMessage(conn, ProtocolCodec::buildStreamReady(copy_stream_id_, 0, 0));
+        auto status_flush = flushWriteBuffer(conn);
+        if (status_flush != core::Status::OK) {
+            native_state_ = NativeProtocolState::READY;
+            return status_flush;
+        }
+
+        auto write_fn = [this, conn](const uint8_t* data, size_t len, std::string& error) {
+            return sendCopyOutChunk(conn, data, len, error);
+        };
+        CopyOutStreambuf streambuf(config_.write_buffer_size, write_fn);
+        std::ostream out(&streambuf);
+
+        client_->setCopyOutputStream(&out);
+        ResultContext result;
+        auto status = executeRemoteQuery(ctx.query, nullptr, result);
+        out.flush();
+        client_->setCopyOutputStream(nullptr);
+
+        if (status != core::Status::OK || result.has_error) {
+            sendMessage(conn, ProtocolCodec::buildCopyFail(result.error_message));
+            sendQueryError(conn, result.error_code, result.sqlstate,
+                           result.error_message);
+            native_state_ = NativeProtocolState::READY;
+            return flushWriteBuffer(conn);
+        }
+
+        sendMessage(conn, ProtocolCodec::buildCopyDone());
+        auto rows = result.rows_affected;
+        sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,
+                                                        static_cast<uint64_t>(rows),
+                                                        copy_total_bytes_));
+        sendCommandComplete(conn, "COPY " + std::to_string(rows), rows);
+        sendEndOfResults(conn);
+        native_state_ = NativeProtocolState::READY;
+        return flushWriteBuffer(conn);
+    }
+
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    auto status = compileQuery(ctx.query, bytecode, compile_error);
+    if (status != core::Status::OK) {
+        sendQueryError(conn, static_cast<uint32_t>(status), "42000",
+                       compile_error.empty() ? "Compilation failed" : compile_error);
+        return sendBuffer(conn);
+    }
 
     if (from_stdin) {
         copy_in_window_grant_ = static_cast<uint32_t>(std::max<size_t>(config_.read_buffer_size, 16384));
@@ -825,7 +1087,7 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
         return flushWriteBuffer(conn);
     }
 
-    // COPY OUT
+    // COPY OUT (local)
     copy_out_window_bytes_ = 0;
     copy_out_paused_ = false;
 
@@ -847,8 +1109,8 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
         sblr::Executor* executor;
         explicit CopyOutputGuard(sblr::Executor* exec, std::ostream* out_stream)
             : executor(exec) {
-            if (executor) executor->setCopyOutputStream(out_stream);
-        }
+                if (executor) executor->setCopyOutputStream(out_stream);
+            }
         ~CopyOutputGuard() {
             if (executor) executor->setCopyOutputStream(nullptr);
         }

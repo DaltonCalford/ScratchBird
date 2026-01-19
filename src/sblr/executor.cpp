@@ -20,6 +20,7 @@
 #include "scratchbird/core/type_extractor.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/table_stats_manager.h"
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/firebird_datetime.h"
@@ -20528,7 +20529,9 @@ namespace scratchbird
                 if (!table_name.empty())
                 {
                     std::string upper_name = scratchbird::core::IdentifierUtils::toUpper(table_name);
-                    if (upper_name.rfind("MON_", 0) == 0)
+                    if (upper_name.rfind("MON_", 0) == 0 ||
+                        upper_name == "SYS.TABLE_STATS" ||
+                        upper_name == "SYS.IO_STATS")
                     {
                         bool has_star = false;
                         std::vector<std::pair<std::string, std::string>> projection_items;
@@ -22837,7 +22840,9 @@ namespace scratchbird
             // Handle monitoring/system table queries (MON_ tables)
             current_result_set_ = std::make_unique<ResultSet>();
 
-            if (table_name == "MON_DATABASE")
+            std::string upper_name = core::IdentifierUtils::toUpper(table_name);
+
+            if (upper_name == "MON_DATABASE")
             {
                 // Add columns for transaction markers
                 current_result_set_->addColumn("MON$DATABASE_NAME", core::DataType::VARCHAR);
@@ -22863,7 +22868,7 @@ namespace scratchbird
 
                 current_result_set_->addRow(std::move(row));
             }
-            else if (table_name == "MON_SWEEP")
+            else if (upper_name == "MON_SWEEP")
             {
                 // Add columns for sweep statistics
                 current_result_set_->addColumn("MON$SWEEP_COUNT", core::DataType::INT64);
@@ -22909,7 +22914,7 @@ namespace scratchbird
                     current_result_set_->addRow(std::move(row));
                 }
             }
-            else if (table_name == "MON_GARBAGE_COLLECTION")
+            else if (upper_name == "MON_GARBAGE_COLLECTION")
             {
                 // Add columns for GC statistics
                 current_result_set_->addColumn("MON$TUPLES_REMOVED", core::DataType::INT64);
@@ -23024,7 +23029,7 @@ namespace scratchbird
                     current_result_set_->addRow(std::move(row));
                 }
             }
-            else if (table_name == "MON_ACTIVE_TRANSACTIONS")
+            else if (upper_name == "MON_ACTIVE_TRANSACTIONS")
             {
                 // Add columns for active transaction information
                 current_result_set_->addColumn("MON$TRANSACTION_ID", core::DataType::INT64);
@@ -23075,6 +23080,188 @@ namespace scratchbird
                     }
                 }
                 // If getAllActiveBackends fails, return empty result set (no error)
+            }
+            else if (upper_name == "SYS.TABLE_STATS")
+            {
+                current_result_set_->addColumn("table_id", core::DataType::UUID);
+                current_result_set_->addColumn("schema_name", core::DataType::TEXT);
+                current_result_set_->addColumn("table_name", core::DataType::TEXT);
+                current_result_set_->addColumn("seq_scan_count", core::DataType::INT64);
+                current_result_set_->addColumn("last_seq_scan_at", core::DataType::TIMESTAMP);
+                current_result_set_->addColumn("seq_rows_read", core::DataType::INT64);
+                current_result_set_->addColumn("idx_scan_count", core::DataType::INT64);
+                current_result_set_->addColumn("last_idx_scan_at", core::DataType::TIMESTAMP);
+                current_result_set_->addColumn("idx_rows_fetch", core::DataType::INT64);
+                current_result_set_->addColumn("rows_inserted", core::DataType::INT64);
+                current_result_set_->addColumn("rows_updated", core::DataType::INT64);
+                current_result_set_->addColumn("rows_deleted", core::DataType::INT64);
+                current_result_set_->addColumn("rows_hot_updated", core::DataType::INT64);
+                current_result_set_->addColumn("rows_newpage_updated", core::DataType::INT64);
+                current_result_set_->addColumn("live_rows_estimate", core::DataType::INT64);
+                current_result_set_->addColumn("dead_rows_estimate", core::DataType::INT64);
+                current_result_set_->addColumn("mod_since_analyze", core::DataType::INT64);
+                current_result_set_->addColumn("ins_since_vacuum", core::DataType::INT64);
+                current_result_set_->addColumn("last_vacuum_at", core::DataType::TIMESTAMP);
+                current_result_set_->addColumn("last_autovacuum_at", core::DataType::TIMESTAMP);
+                current_result_set_->addColumn("last_analyze_at", core::DataType::TIMESTAMP);
+                current_result_set_->addColumn("last_autoanalyze_at", core::DataType::TIMESTAMP);
+                current_result_set_->addColumn("vacuum_count", core::DataType::INT64);
+                current_result_set_->addColumn("autovacuum_count", core::DataType::INT64);
+                current_result_set_->addColumn("analyze_count", core::DataType::INT64);
+                current_result_set_->addColumn("autoanalyze_count", core::DataType::INT64);
+                current_result_set_->addColumn("total_vacuum_time_ms", core::DataType::INT64);
+                current_result_set_->addColumn("total_autovacuum_time_ms", core::DataType::INT64);
+                current_result_set_->addColumn("total_analyze_time_ms", core::DataType::INT64);
+                current_result_set_->addColumn("total_autoanalyze_time_ms", core::DataType::INT64);
+
+                if (!db_ || !db_->table_stats_manager())
+                {
+                    return;
+                }
+
+                auto stats_rows = db_->table_stats_manager()->snapshot();
+                core::CatalogManager* catalog = db_->catalog_manager();
+
+                for (const auto& stats : stats_rows)
+                {
+                    std::string schema_name;
+                    std::string table_name_out;
+                    core::CatalogManager::TableInfo table_info;
+                    if (catalog &&
+                        catalog->getTable(stats.table_id, table_info, nullptr) == core::Status::OK)
+                    {
+                        table_name_out = table_info.table_name;
+                        core::CatalogManager::SchemaInfo schema_info;
+                        if (catalog->getSchema(table_info.schema_id, schema_info, nullptr) == core::Status::OK)
+                        {
+                            schema_name = schema_info.schema_name;
+                        }
+                    }
+
+                    std::vector<uint8_t> uuid_bytes(stats.table_id.bytes.begin(),
+                                                    stats.table_id.bytes.end());
+
+                    std::vector<Value> row;
+                    row.push_back(Value::makeUUID(uuid_bytes));
+                    row.push_back(schema_name.empty() ? Value::makeNull(core::DataType::TEXT)
+                                                      : Value::makeText(schema_name));
+                    row.push_back(table_name_out.empty() ? Value::makeNull(core::DataType::TEXT)
+                                                        : Value::makeText(table_name_out));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.seq_scan_count)));
+                    row.push_back(stats.last_seq_scan_at > 0
+                                      ? Value::makeTimestamp(stats.last_seq_scan_at)
+                                      : Value::makeNull(core::DataType::TIMESTAMP));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.seq_rows_read)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.idx_scan_count)));
+                    row.push_back(stats.last_idx_scan_at > 0
+                                      ? Value::makeTimestamp(stats.last_idx_scan_at)
+                                      : Value::makeNull(core::DataType::TIMESTAMP));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.idx_rows_fetch)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.rows_inserted)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.rows_updated)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.rows_deleted)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.rows_hot_updated)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.rows_newpage_updated)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.live_rows_estimate)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.dead_rows_estimate)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.mod_since_analyze)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.ins_since_vacuum)));
+                    row.push_back(stats.last_vacuum_at > 0
+                                      ? Value::makeTimestamp(stats.last_vacuum_at)
+                                      : Value::makeNull(core::DataType::TIMESTAMP));
+                    row.push_back(stats.last_autovacuum_at > 0
+                                      ? Value::makeTimestamp(stats.last_autovacuum_at)
+                                      : Value::makeNull(core::DataType::TIMESTAMP));
+                    row.push_back(stats.last_analyze_at > 0
+                                      ? Value::makeTimestamp(stats.last_analyze_at)
+                                      : Value::makeNull(core::DataType::TIMESTAMP));
+                    row.push_back(stats.last_autoanalyze_at > 0
+                                      ? Value::makeTimestamp(stats.last_autoanalyze_at)
+                                      : Value::makeNull(core::DataType::TIMESTAMP));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.vacuum_count)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.autovacuum_count)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.analyze_count)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.autoanalyze_count)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_vacuum_time_ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_autovacuum_time_ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_analyze_time_ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_autoanalyze_time_ms)));
+
+                    current_result_set_->addRow(std::move(row));
+                }
+            }
+            else if (upper_name == "SYS.IO_STATS")
+            {
+                current_result_set_->addColumn("stat_id", core::DataType::INT64);
+                current_result_set_->addColumn("stat_group", core::DataType::INT16);
+                current_result_set_->addColumn("session_id", core::DataType::UUID);
+                current_result_set_->addColumn("transaction_id", core::DataType::INT64);
+                current_result_set_->addColumn("statement_id", core::DataType::INT64);
+                current_result_set_->addColumn("page_reads", core::DataType::INT64);
+                current_result_set_->addColumn("page_writes", core::DataType::INT64);
+                current_result_set_->addColumn("page_fetches", core::DataType::INT64);
+                current_result_set_->addColumn("page_marks", core::DataType::INT64);
+
+                if (!db_)
+                {
+                    return;
+                }
+
+                auto snapshots = db_->snapshotConnectionIoStats();
+                for (const auto& snap : snapshots)
+                {
+                    std::vector<uint8_t> session_bytes(snap.session_id.bytes.begin(),
+                                                       snap.session_id.bytes.end());
+                    Value session_val =
+                        isZeroUuid(snap.session_id)
+                            ? Value::makeNull(core::DataType::UUID)
+                            : Value::makeUUID(session_bytes);
+
+                    int64_t connection_stat_id = static_cast<int64_t>(snap.proc_id + 1);
+                    {
+                        std::vector<Value> row;
+                        row.push_back(Value::makeInt64(connection_stat_id));
+                        row.push_back(Value::makeInt16(1));
+                        row.push_back(session_val);
+                        row.push_back(Value::makeNull(core::DataType::INT64));
+                        row.push_back(Value::makeNull(core::DataType::INT64));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.connection_io.page_reads)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.connection_io.page_writes)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.connection_io.page_fetches)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.connection_io.page_marks)));
+                        current_result_set_->addRow(std::move(row));
+                    }
+
+                    if (snap.transaction_id != 0)
+                    {
+                        std::vector<Value> row;
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.transaction_id)));
+                        row.push_back(Value::makeInt16(2));
+                        row.push_back(session_val);
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.transaction_id)));
+                        row.push_back(Value::makeNull(core::DataType::INT64));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.transaction_io.page_reads)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.transaction_io.page_writes)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.transaction_io.page_fetches)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.transaction_io.page_marks)));
+                        current_result_set_->addRow(std::move(row));
+                    }
+
+                    if (snap.statement_active && snap.statement_id != 0)
+                    {
+                        std::vector<Value> row;
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.statement_id)));
+                        row.push_back(Value::makeInt16(3));
+                        row.push_back(session_val);
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.transaction_id)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.statement_id)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.statement_io.page_reads)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.statement_io.page_writes)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.statement_io.page_fetches)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(snap.statement_io.page_marks)));
+                        current_result_set_->addRow(std::move(row));
+                    }
+                }
             }
             else
             {

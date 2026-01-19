@@ -4,6 +4,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/monitoring_stats.h"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -314,6 +315,24 @@ namespace scratchbird::core
         void endStatementTrackingSuccess(int64_t rows_affected);
         void endStatementTrackingFailure(uint32_t error_code, const std::string& sqlstate);
 
+        void recordPageRead();
+        void recordPageWrite();
+        void recordPageFetch();
+        void recordPageMark();
+
+        IOStatsSnapshot snapshotConnectionIoStats() const;
+        IOStatsSnapshot snapshotTransactionIoStats() const;
+        IOStatsSnapshot snapshotStatementIoStats() const;
+        bool statementIoActive() const { return statement_io_active_; }
+        uint64_t currentStatementId() const { return statement_id_; }
+
+        void recordTableDmlDelta(const ID& table_id,
+                                 uint64_t inserts,
+                                 uint64_t updates,
+                                 uint64_t deletes,
+                                 uint64_t hot_updates = 0,
+                                 uint64_t newpage_updates = 0);
+
         uint64_t lastActivityTime() const { return last_activity_time_; }
         std::string sessionSettingsJson() const;
         const std::string& lastStatementText() const { return last_statement_text_; }
@@ -452,6 +471,13 @@ namespace scratchbird::core
         uint32_t last_error_code_ = 0;
         std::string last_sqlstate_;
         uint64_t last_activity_time_ = 0;
+
+        IOStats connection_io_stats_;
+        IOStats transaction_io_stats_;
+        IOStats statement_io_stats_;
+        bool statement_io_active_ = false;
+        uint64_t statement_id_ = 0;
+        std::unordered_map<ID, TableDmlDelta, IDHash> pending_table_deltas_;
 
         // Default transaction settings (for AND NO CHAIN resets)
         IsolationLevel default_isolation_level_;

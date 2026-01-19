@@ -10,6 +10,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/table_stats_manager.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
@@ -681,6 +682,11 @@ namespace scratchbird::core
                 }
             }
 
+            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordTableDmlDelta(table_id, 1, 0, 0);
+            }
+
             if (page_id_out != nullptr)
             {
                 *page_id_out = page_id;
@@ -1099,6 +1105,11 @@ namespace scratchbird::core
                     }
                 }
             }
+
+            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordTableDmlDelta(table_id, 0, 0, 1);
+            }
         }
 
         // Unpin the page
@@ -1128,6 +1139,11 @@ namespace scratchbird::core
         else if (page_manager_ && start_page >= page_manager_->totalPages())
         {
             start_page = 0;
+        }
+
+        if (!isZeroId(table_id) && db_ && db_->table_stats_manager())
+        {
+            db_->table_stats_manager()->recordSeqScan(table_id);
         }
 
         return std::unique_ptr<HeapScanIterator>(
@@ -1538,6 +1554,10 @@ namespace scratchbird::core
 
                 if (status == Status::OK)
                 {
+                    if (!isZeroId(table_id_) && db_ && db_->table_stats_manager())
+                    {
+                        db_->table_stats_manager()->recordSeqRowsRead(table_id_, 1);
+                    }
                     // Check visibility
                     const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
 
@@ -1874,6 +1894,11 @@ namespace scratchbird::core
                 db_->garbage_collector()->markPageDirty(page_id);
             }
 
+            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
+            }
+
             // Unpin with dirty flag
             buffer_pool_->unpinPage(page_id, true, ctx);
             return Status::OK;
@@ -2033,6 +2058,11 @@ namespace scratchbird::core
             // This is an 80% performance improvement over PostgreSQL MVCC!
             // (The old buggy code called updateIndexesForRelocation here)
 
+            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
+            }
+
             return Status::OK;
         }
         else
@@ -2054,9 +2084,10 @@ namespace scratchbird::core
 
     // IndexScanIterator implementation
 
-    IndexScanIterator::IndexScanIterator(Database *db, StorageEngine *engine, const ID &index_id)
-        : db_(db), engine_(engine), index_id_(index_id), done_(false), current_tuple_index_(0),
-          initialized_(false)
+    IndexScanIterator::IndexScanIterator(Database *db, StorageEngine *engine, const ID &index_id,
+                                         const ID &table_id)
+        : db_(db), engine_(engine), index_id_(index_id), table_id_(table_id), done_(false),
+          current_tuple_index_(0), initialized_(false)
     {
     }
 
@@ -2124,6 +2155,11 @@ namespace scratchbird::core
         // PHASE 1.5: current_tuple_ids_ now contains TID structs
         TID tid = current_tuple_ids_[current_tuple_index_++];
 
+        if (!isZeroId(table_id_) && db_ && db_->table_stats_manager())
+        {
+            db_->table_stats_manager()->recordIndexRowsFetch(table_id_, 1);
+        }
+
         // Fill tuple_out with the location information
         if (tuple_out != nullptr)
         {
@@ -2144,7 +2180,21 @@ namespace scratchbird::core
     auto StorageEngine::createIndexScan(const ID &index_id, ErrorContext *ctx)
         -> std::unique_ptr<IndexScanIterator>
     {
-        return std::make_unique<IndexScanIterator>(db_, this, index_id);
+        ID table_id{};
+        if (catalog_manager_)
+        {
+            CatalogManager::IndexInfo index_info;
+            if (catalog_manager_->getIndex(index_id, index_info, ctx) == Status::OK)
+            {
+                table_id = index_info.table_id;
+                if (db_ && db_->table_stats_manager())
+                {
+                    db_->table_stats_manager()->recordIndexScan(table_id);
+                }
+            }
+        }
+
+        return std::make_unique<IndexScanIterator>(db_, this, index_id, table_id);
     }
 
     // Lock management helpers

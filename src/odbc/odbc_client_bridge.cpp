@@ -242,6 +242,7 @@ client::NetworkClientConfig OdbcClientBridge::buildConfig(const ConnectionParams
     cfg.ssl_cert = params.ssl_cert;
     cfg.ssl_key = params.ssl_key;
     cfg.ssl_root_cert = params.ssl_root_cert;
+    client::applyDriverDefaultsFromEnv(cfg);
     return cfg;
 }
 

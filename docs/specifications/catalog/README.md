@@ -42,6 +42,9 @@ Core catalog tables (all in `sys` schema):
 - **sys.permissions** - Object permissions
 - **sys.row_level_security** - RLS policies
 
+System view definitions and SQL behavior for users/roles are specified in
+`ddl/DDL_ROLES_AND_GROUPS.md`.
+
 #### Advanced Features
 - **sys.domains** - User-defined domains
 - **sys.types** - User-defined types

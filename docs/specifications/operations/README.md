@@ -12,6 +12,8 @@ ScratchBird provides comprehensive operational monitoring with Prometheus metric
 
 - **[PROMETHEUS_METRICS_REFERENCE.md](PROMETHEUS_METRICS_REFERENCE.md)** (824 lines) - Complete Prometheus metrics reference
 - **[LISTENER_POOL_METRICS.md](LISTENER_POOL_METRICS.md)** - Listener and parser pool metrics
+- **[MONITORING_SQL_VIEWS.md](MONITORING_SQL_VIEWS.md)** - SQL-visible monitoring views for sessions/locks/statements/perf
+- **[MONITORING_DIALECT_MAPPINGS.md](MONITORING_DIALECT_MAPPINGS.md)** - Column-level mapping to pg_stat_*/MON$/performance_schema
 
 ## Key Features
 

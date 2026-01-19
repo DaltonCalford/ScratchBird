@@ -224,6 +224,32 @@ The Firebird parser must support queries against:
 - MON$ tables (12 monitoring tables) - mapped to runtime statistics
 - SEC$ tables (4 security tables) - mapped to security views
 
+### 5. Monitoring View Mapping (All Dialects)
+
+Emulated dialects must map their monitoring/system views to ScratchBird's native
+SQL monitoring views defined in `operations/MONITORING_SQL_VIEWS.md`.
+
+| Emulated View | ScratchBird Source |
+| --- | --- |
+| pg_stat_activity | sys.sessions + sys.statements |
+| pg_locks | sys.locks |
+| pg_stat_database | sys.performance |
+| pg_stat_bgwriter | sys.performance |
+| pg_stat_all_tables | sys.table_stats |
+| information_schema.PROCESSLIST | sys.sessions |
+| performance_schema.data_locks | sys.locks |
+| performance_schema.global_status | sys.performance |
+| MON$ATTACHMENTS | sys.sessions |
+| MON$LOCKS | sys.locks |
+| MON$STATEMENTS | sys.statements |
+| MON$DATABASE | sys.performance |
+| MON$TRANSACTIONS | sys.transactions |
+| MON$IO_STATS | sys.io_stats |
+
+Column-level mappings must preserve dialect expectations (names, types, and
+nullable behavior), even if data is sourced from a shared ScratchBird view.
+See `operations/MONITORING_DIALECT_MAPPINGS.md` for the per-column contract.
+
 ---
 
 ## Implementation Checklist

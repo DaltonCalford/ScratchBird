@@ -7,6 +7,7 @@
 #include "scratchbird/catalog/firebird_catalog.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/table_stats_manager.h"
 #include <algorithm>
 #include <cctype>
 #include <unordered_set>
@@ -1936,13 +1937,68 @@ Status FirebirdCatalogHandler::queryMonCallStack(VirtualResultSet& results, Erro
 
 Status FirebirdCatalogHandler::queryMonIoStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
     results.column_names = {
-        "MON$STAT_ID", "MON$PAGE_READS", "MON$PAGE_WRITES",
+        "MON$STAT_ID", "MON$STAT_GROUP", "MON$PAGE_READS", "MON$PAGE_WRITES",
         "MON$PAGE_FETCHES", "MON$PAGE_MARKS"
     };
     results.column_types = {
-        DataType::INT64, DataType::INT64, DataType::INT64,
+        DataType::INT64, DataType::INT16, DataType::INT64, DataType::INT64,
         DataType::INT64, DataType::INT64
     };
+
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db)
+    {
+        return Status::OK;
+    }
+
+    auto snapshots = db->snapshotConnectionIoStats();
+    for (const auto& snap : snapshots)
+    {
+        // Group 1: connection (attachment)
+        {
+            VirtualRow row;
+            row.columns = {
+                {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(snap.proc_id + 1))},
+                {"MON$STAT_GROUP", TypedValue::makeInt16(1)},
+                {"MON$PAGE_READS", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_reads))},
+                {"MON$PAGE_WRITES", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_writes))},
+                {"MON$PAGE_FETCHES", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_fetches))},
+                {"MON$PAGE_MARKS", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_marks))}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
+        // Group 2: transaction
+        if (snap.transaction_id != 0)
+        {
+            VirtualRow row;
+            row.columns = {
+                {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_id))},
+                {"MON$STAT_GROUP", TypedValue::makeInt16(2)},
+                {"MON$PAGE_READS", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_reads))},
+                {"MON$PAGE_WRITES", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_writes))},
+                {"MON$PAGE_FETCHES", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_fetches))},
+                {"MON$PAGE_MARKS", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_marks))}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
+        // Group 3: statement
+        if (snap.statement_active && snap.statement_id != 0)
+        {
+            VirtualRow row;
+            row.columns = {
+                {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_id))},
+                {"MON$STAT_GROUP", TypedValue::makeInt16(3)},
+                {"MON$PAGE_READS", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_reads))},
+                {"MON$PAGE_WRITES", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_writes))},
+                {"MON$PAGE_FETCHES", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_fetches))},
+                {"MON$PAGE_MARKS", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_marks))}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
     return Status::OK;
 }
 
@@ -1975,6 +2031,31 @@ Status FirebirdCatalogHandler::queryMonTableStats(VirtualResultSet& results, Err
     results.column_types = {
         DataType::INT64, DataType::TEXT
     };
+
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db || !db->table_stats_manager())
+    {
+        return Status::OK;
+    }
+
+    auto stats_rows = db->table_stats_manager()->snapshot();
+    for (const auto& stats : stats_rows)
+    {
+        CatalogManager::TableInfo table_info;
+        if (catalog_manager_->getTable(stats.table_id, table_info, nullptr) != Status::OK)
+        {
+            continue;
+        }
+
+        uint64_t stat_id = static_cast<uint64_t>(IDHash{}(stats.table_id));
+        VirtualRow row;
+        row.columns = {
+            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(stat_id))},
+            {"MON$TABLE_NAME", TypedValue::makeText(table_info.table_name)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
     return Status::OK;
 }
 
@@ -2407,6 +2488,7 @@ void FirebirdCatalogHandler::getMonCallStackColumns(std::vector<CatalogManager::
 void FirebirdCatalogHandler::getMonIoStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
     cols.clear();
     cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$STAT_GROUP", DataType::INT16, true));
     cols.push_back(makeCol("MON$PAGE_READS", DataType::INT64, true));
     cols.push_back(makeCol("MON$PAGE_WRITES", DataType::INT64, true));
     cols.push_back(makeCol("MON$PAGE_FETCHES", DataType::INT64, true));

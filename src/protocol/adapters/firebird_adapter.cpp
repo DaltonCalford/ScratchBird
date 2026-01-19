@@ -1260,8 +1260,14 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     }
 
     client_config_.database_name = database_name_.empty() ? "default" : database_name_;
-    client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
-    client_config_.socket_path = server::getIPCPath(client_config_.database_name, client_config_.ipc_method);
+    if (!config_.engine_endpoint.empty()) {
+        client_config_.ipc_method = server::IPCMethod::AUTO;
+        client_config_.socket_path = config_.engine_endpoint;
+    } else {
+        client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
+        client_config_.socket_path = server::getIPCPath(client_config_.database_name,
+                                                        client_config_.ipc_method);
+    }
     client_config_.connect_timeout_ms = config_.read_timeout_ms;
     client_config_.read_timeout_ms = config_.read_timeout_ms;
     client_config_.write_timeout_ms = config_.write_timeout_ms;
@@ -1492,9 +1498,14 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
     database_name_ = db_path;
     client_.reset();
     client_config_.database_name = database_name_;
-    client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
-    client_config_.socket_path = server::getIPCPath(client_config_.database_name,
-                                                   client_config_.ipc_method);
+    if (!config_.engine_endpoint.empty()) {
+        client_config_.ipc_method = server::IPCMethod::AUTO;
+        client_config_.socket_path = config_.engine_endpoint;
+    } else {
+        client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
+        client_config_.socket_path = server::getIPCPath(client_config_.database_name,
+                                                       client_config_.ipc_method);
+    }
     client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
     client_config_.auto_start_server = false;
 

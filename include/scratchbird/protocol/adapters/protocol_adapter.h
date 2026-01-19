@@ -44,6 +44,7 @@ struct ProtocolAdapterConfig {
     uint32_t write_timeout_ms = 30000;      // Write timeout
     uint32_t idle_timeout_ms = 3600000;     // 1 hour idle timeout
     std::string database_path;              // Database location for adapter
+    std::string engine_endpoint;            // Engine IPC endpoint override
     uint32_t page_size = 16384;             // Page size for new databases
     bool auto_create_db = true;             // Create database if missing
 

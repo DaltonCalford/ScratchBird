@@ -523,6 +523,9 @@ typedef struct transaction_view_entry {
     UUID            tv_coordinator;        // Coordinator node
 } TransactionViewEntry;
 
+SQL exposure:
+- `sys.transactions` view (see `operations/MONITORING_SQL_VIEWS.md`)
+
 // Get all transactions (for monitoring)
 List* get_all_transactions(SBTransactionManager* tm) {
     List* result = NIL;

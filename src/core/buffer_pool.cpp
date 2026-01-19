@@ -1,5 +1,6 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include <cstring>
@@ -134,6 +135,10 @@ namespace scratchbird::core
 
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                if (auto* conn_ctx = ConnectionContext::getCurrent())
+                {
+                    conn_ctx->recordPageFetch();
+                }
                 return Status::OK;
             }
         }
@@ -164,6 +169,10 @@ namespace scratchbird::core
                 *buffer = frames_[frame_index].data.get();
                 updateLru(frame_index);
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                if (auto* conn_ctx = ConnectionContext::getCurrent())
+                {
+                    conn_ctx->recordPageFetch();
+                }
                 return Status::OK;
             }
         }
@@ -198,6 +207,10 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             return status;
+        }
+        if (auto* conn_ctx = ConnectionContext::getCurrent())
+        {
+            conn_ctx->recordPageRead();
         }
 
         // Initialize frame metadata before publishing mapping to avoid lost pin_count on cache hits.
@@ -262,6 +275,10 @@ namespace scratchbird::core
         {
             frames_[frame_index].is_dirty = true;
             dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
+            if (auto* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordPageMark();
+            }
         }
 
         // Decrement pin count
@@ -780,7 +797,15 @@ namespace scratchbird::core
     {
         // Call new Database GPID method (supports multi-tablespace addressing)
         // Database class handles tablespace validation and routing for Phase 1
-        return db_->write_page_global(gpid, buffer, ctx);
+        Status status = db_->write_page_global(gpid, buffer, ctx);
+        if (status == Status::OK)
+        {
+            if (auto* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordPageWrite();
+            }
+        }
+        return status;
     }
 
     void BufferPool::updateLru(uint32_t frame_index)
@@ -904,6 +929,10 @@ namespace scratchbird::core
         {
             frames_[frame_index].is_dirty = true;
             dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
+            if (auto* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordPageMark();
+            }
         }
 
         return Status::OK;

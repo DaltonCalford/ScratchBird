@@ -5,9 +5,11 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
+#include <vector>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/monitoring_stats.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/connection_context.h"
@@ -49,6 +51,7 @@ namespace scratchbird
         class AuditLogger;
         class TIDResolver; // Sprint 4 Task 5.4.2
         class PermissionCache; // Security Phase 3.2.3
+        class TableStatsManager;
 
     } // namespace core
 
@@ -156,6 +159,18 @@ namespace scratchbird
             {
                 return server_instance_id_;
             }
+
+            struct ConnectionIoSnapshot
+            {
+                uint32_t proc_id = 0;
+                ID session_id{};
+                uint64_t transaction_id = 0;
+                uint64_t statement_id = 0;
+                bool statement_active = false;
+                IOStatsSnapshot connection_io;
+                IOStatsSnapshot transaction_io;
+                IOStatsSnapshot statement_io;
+            };
 
             // Dormant transaction handling (reattach support).
             // The ConnectionContext is retained to preserve locks and ProcArray visibility.
@@ -276,6 +291,16 @@ namespace scratchbird
                 return statistics_manager_.get();
             }
 
+            // Get table stats manager (monitoring)
+            TableStatsManager *table_stats_manager()
+            {
+                return table_stats_manager_.get();
+            }
+            const TableStatsManager *table_stats_manager() const
+            {
+                return table_stats_manager_.get();
+            }
+
             // Get permission cache (Security Phase 3.2.3)
             PermissionCache *permission_cache()
             {
@@ -285,6 +310,11 @@ namespace scratchbird
             {
                 return permission_cache_.get();
             }
+
+            void registerConnectionContext(ConnectionContext* ctx);
+            void unregisterConnectionContext(ConnectionContext* ctx);
+            void rebindConnectionContext(uint32_t proc_id, ConnectionContext* ctx);
+            std::vector<ConnectionIoSnapshot> snapshotConnectionIoStats() const;
 
             void setRoleSwitchPolicy(ConnectionContext::RoleSwitchPolicy policy)
             {
@@ -525,6 +555,7 @@ namespace scratchbird
 
             // Optimizer runtime components (Phase 1, Task 1.3)
             std::unique_ptr<optimizer::StatisticsManager> statistics_manager_; // Statistics manager (owned)
+            std::unique_ptr<TableStatsManager> table_stats_manager_;           // Runtime monitoring stats (owned)
             std::unique_ptr<DomainManager> domain_manager_;                   // Domain manager (owned)
             std::unique_ptr<EncryptionKeyManager> encryption_key_manager_;    // Encryption key manager (owned)
             std::unique_ptr<AuditLogger> audit_logger_;                       // Audit logger (owned)
@@ -543,6 +574,9 @@ namespace scratchbird
             };
             std::unordered_map<ID, DormantContextEntry, IDHash> dormant_contexts_;
             std::mutex dormant_mutex_;
+
+            mutable std::mutex connection_registry_mutex_;
+            std::unordered_map<uint32_t, ConnectionContext*> connection_registry_;
 
             // === Tablespace File Descriptors (Phase 1, Task 1.3.4) ===
             std::unordered_map<uint16_t, int> tablespace_fds_; // Map: tablespace_id -> file descriptor

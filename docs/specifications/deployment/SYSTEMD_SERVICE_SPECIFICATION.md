@@ -1916,6 +1916,14 @@ sb_admin show replication
 | logging | destination | file | No | Log destination |
 | audit | enabled | true | Yes | Enable audit |
 | statistics | enabled | true | Yes | Enable stats |
+| drivers | native_host | localhost | Yes | Default native driver host |
+| drivers | native_port | 3092 | Yes | Default native driver port |
+| drivers | sslmode | prefer | Yes | Default driver SSL mode |
+| drivers | connect_timeout_ms | 5000 | Yes | Driver connect timeout |
+| drivers | default_database | - | Yes | Default database name for drivers |
+| drivers | default_role | - | Yes | Default role for drivers |
+| drivers | allow_cleartext | false | Yes | Allow cleartext auth for drivers |
+| drivers | application_name | scratchbird_driver | Yes | Driver application_name default |
 
 *Requires new connections to take effect
 
@@ -1966,6 +1974,15 @@ max_lifetime = 1h
 | logging.level | SCRATCHBIRD_LOG_LEVEL |
 | server.max_connections | SCRATCHBIRD_MAX_CONNECTIONS |
 | network.native_port | SCRATCHBIRD_PORT |
+| drivers.native_host | SCRATCHBIRD_DRIVER_HOST |
+| drivers.native_port | SCRATCHBIRD_DRIVER_PORT |
+| drivers.sslmode | SCRATCHBIRD_DRIVER_SSLMODE |
+| drivers.connect_timeout_ms | SCRATCHBIRD_DRIVER_CONNECT_TIMEOUT_MS |
+| drivers.default_database | SCRATCHBIRD_DRIVER_DATABASE |
+| drivers.application_name | SCRATCHBIRD_DRIVER_APPLICATION_NAME |
+| drivers.ssl_cert | SCRATCHBIRD_DRIVER_SSL_CERT |
+| drivers.ssl_key | SCRATCHBIRD_DRIVER_SSL_KEY |
+| drivers.ssl_root_cert | SCRATCHBIRD_DRIVER_SSL_ROOT_CERT |
 
 ---
 
@@ -1988,6 +2005,12 @@ pg_port = 5432
 mysql_port = 0
 tds_port = 0
 fb_port = 0
+
+[drivers]
+native_host = localhost
+native_port = 3092
+sslmode = disable
+default_database = dev
 
 [ssl]
 enabled = false

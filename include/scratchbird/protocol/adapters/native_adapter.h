@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "scratchbird/client/connection.h"
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
 #include "scratchbird/protocol/wire_protocol.h"
 
@@ -105,6 +106,10 @@ private:
 
     core::Status handleCopyQuery(network::Connection* conn, const QueryContext& ctx,
                                  bool from_stdin, bool to_stdout);
+    core::Status ensureRemoteClient(core::ErrorContext* ctx);
+    core::Status executeRemoteQuery(const std::string& sql,
+                                    const std::vector<uint8_t>* bytecode,
+                                    ResultContext& result);
 
     // ========================================================================
     // Message Sending
@@ -112,8 +117,11 @@ private:
 
     void sendConnectResponse(network::Connection* conn, bool success,
                              const std::string& error_msg = "");
-    void sendAuthResponse(network::Connection* conn, bool success,
-                          const std::string& error_msg = "");
+    void sendAuthResponse(network::Connection* conn,
+                          AuthStatus status,
+                          uint32_t user_id,
+                          const std::string& error_msg,
+                          const std::vector<uint8_t>& data = {});
     void sendQueryError(network::Connection* conn, uint32_t error_code,
                         const std::string& sqlstate, const std::string& message);
     void sendRowDescription(network::Connection* conn,
@@ -129,7 +137,7 @@ private:
                               const std::vector<ProtocolCodec::ColumnInfo>& columns,
                               uint16_t param_count);
     void sendTransactionStatus(network::Connection* conn, bool in_transaction);
-    void sendPong(network::Connection* conn);
+    void sendPong(network::Connection* conn, uint64_t timestamp, uint32_t sequence);
     void sendStatusResponse(network::Connection* conn);
 
     // ========================================================================
@@ -174,6 +182,9 @@ private:
     uint32_t copy_in_window_grant_ = 0;
     uint32_t copy_in_low_watermark_ = 0;
     bool copy_out_paused_ = false;
+
+    client::ConnectionConfig client_config_;
+    std::unique_ptr<client::Connection> client_;
 };
 
 } // namespace protocol

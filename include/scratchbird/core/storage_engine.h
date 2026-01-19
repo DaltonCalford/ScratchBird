@@ -73,7 +73,8 @@ namespace scratchbird::core
     class IndexScanIterator
     {
     public:
-        IndexScanIterator(Database *db, StorageEngine *engine, const ID &index_id);
+        IndexScanIterator(Database *db, StorageEngine *engine, const ID &index_id,
+                          const ID &table_id);
         ~IndexScanIterator();
 
         // Move to the first entry >= key
@@ -92,6 +93,7 @@ namespace scratchbird::core
         Database *db_;
         StorageEngine *engine_;
         ID index_id_;
+        ID table_id_;
         bool done_;
 
         // B-tree traversal state
