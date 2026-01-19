@@ -7,13 +7,18 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+#include <algorithm>
 
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/error_context.h"
@@ -22,7 +27,16 @@
 #include "scratchbird/network/socket.h"
 #include "scratchbird/network/socket_types.h"
 #include "scratchbird/server/config_parser.h"
+#include "scratchbird/server/ipc_server.h"
 #include "scratchbird/version.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #ifndef SB_LISTENER_PROTOCOL
 #define SB_LISTENER_PROTOCOL "scratchbird"
@@ -41,6 +55,7 @@ struct ListenerConfig {
     std::string bind_address = "0.0.0.0";
     uint16_t port = 0;
     std::string control_socket_dir;
+    std::string engine_endpoint;
     std::string config_path;
     std::string log_level = "info";
     uint32_t pool_min = 4;
@@ -87,6 +102,19 @@ std::string protocolKey(const std::string& protocol) {
     return "native";
 }
 
+std::string parserBinaryForProtocol(const std::string& protocol) {
+    if (protocol == "postgresql") {
+        return "sb_parser_pg";
+    }
+    if (protocol == "mysql") {
+        return "sb_parser_mysql";
+    }
+    if (protocol == "firebird") {
+        return "sb_parser_fb";
+    }
+    return "sb_parser_native";
+}
+
 std::string controlSocketPath(const ListenerConfig& config) {
 #ifdef _WIN32
     std::string protocol = config.protocol;
@@ -106,6 +134,499 @@ std::string controlSocketPath(const ListenerConfig& config) {
 #endif
 }
 
+enum class WorkerState : uint8_t {
+    IDLE = 0,
+    BUSY = 1,
+    DRAINING = 2,
+    FAULT = 3
+};
+
+struct ParserWorker {
+    uint64_t worker_id = 0;
+    uint32_t worker_pid = 0;
+    std::unique_ptr<scratchbird::network::Socket> control;
+    std::thread reader_thread;
+    std::mutex mutex;
+    std::condition_variable cv;
+    WorkerState state = WorkerState::IDLE;
+    bool running = false;
+    bool awaiting_ack = false;
+    uint64_t awaiting_request = 0;
+    bool last_ack_ok = false;
+    bool last_ack_ready = false;
+};
+
+struct PoolMetrics {
+    scratchbird::core::Counter* parser_spawn_total = nullptr;
+    scratchbird::core::Counter* parser_recycle_total = nullptr;
+    scratchbird::core::Counter* parser_errors_total = nullptr;
+    scratchbird::core::Gauge* parser_pool_size = nullptr;
+    scratchbird::core::Gauge* parser_pool_idle = nullptr;
+    scratchbird::core::Gauge* parser_pool_busy = nullptr;
+    scratchbird::core::Histogram* parser_session_seconds = nullptr;
+    scratchbird::core::Histogram* parser_healthcheck_seconds = nullptr;
+};
+
+class ParserPool {
+public:
+    ParserPool(const ListenerConfig& config,
+               PoolMetrics metrics,
+               scratchbird::core::Histogram* handoff_histogram,
+               scratchbird::core::Histogram* queue_wait_histogram)
+        : config_(config),
+          metrics_(metrics),
+          handoff_histogram_(handoff_histogram),
+          queue_wait_histogram_(queue_wait_histogram) {}
+
+    bool start() {
+        if (config_.engine_endpoint.empty()) {
+            std::cerr << "Missing engine endpoint; parser pool disabled\n";
+            return false;
+        }
+
+        if (config_.spawn_strategy != "on_demand") {
+            for (uint32_t i = 0; i < config_.pool_min; ++i) {
+                if (!spawnWorker()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void stop() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& worker : workers_) {
+            if (!worker->running) {
+                continue;
+            }
+            worker->running = false;
+            if (worker->control) {
+                worker->control->close();
+            }
+        }
+    }
+
+    void handleControlConnection(std::unique_ptr<scratchbird::network::Socket> socket) {
+        scratchbird::core::ErrorContext ctx;
+        scratchbird::network::ControlPlaneMessage msg;
+        auto status = scratchbird::network::receiveControlPlaneMessage(*socket, msg, nullptr, &ctx);
+        if (status != scratchbird::core::Status::OK) {
+            socket->close();
+            return;
+        }
+
+        if (msg.header.message_type != static_cast<uint16_t>(
+                scratchbird::network::ControlPlaneMessageType::HELLO)) {
+            socket->close();
+            return;
+        }
+
+        std::string proto;
+        uint32_t pid = 0;
+        uint64_t worker_id = 0;
+        if (!parseHello(msg.payload, proto, pid, worker_id)) {
+            socket->close();
+            return;
+        }
+
+        scratchbird::network::ControlPlaneMessage ack;
+        ack.header.message_type = static_cast<uint16_t>(
+            scratchbird::network::ControlPlaneMessageType::HELLO_ACK);
+        ack.header.request_id = msg.header.request_id;
+        if (proto != config_.protocol) {
+            ack.payload = buildHelloAck(false, "Protocol mismatch");
+            ack.header.payload_len = ack.payload.size();
+            scratchbird::network::sendControlPlaneMessage(*socket, ack,
+                                                          scratchbird::network::INVALID_SOCKET_VALUE,
+                                                          0, nullptr);
+            socket->close();
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (runningCountLocked() >= config_.pool_max) {
+                ack.payload = buildHelloAck(false, "Pool full");
+                ack.header.payload_len = ack.payload.size();
+                scratchbird::network::sendControlPlaneMessage(*socket, ack,
+                                                              scratchbird::network::INVALID_SOCKET_VALUE,
+                                                              0, nullptr);
+                socket->close();
+                return;
+            }
+        }
+        ack.payload = buildHelloAck(true, "");
+        ack.header.payload_len = ack.payload.size();
+        scratchbird::network::sendControlPlaneMessage(*socket, ack,
+                                                      scratchbird::network::INVALID_SOCKET_VALUE,
+                                                      0, nullptr);
+
+        auto worker = std::make_shared<ParserWorker>();
+        worker->worker_id = worker_id;
+        worker->worker_pid = pid;
+        worker->control = std::move(socket);
+        worker->state = WorkerState::IDLE;
+        worker->running = true;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            workers_.push_back(worker);
+            updateMetricsLocked();
+        }
+
+        worker->reader_thread = std::thread([this, worker]() {
+            readerLoop(worker);
+        });
+        worker->reader_thread.detach();
+
+        cv_.notify_all();
+    }
+
+    std::shared_ptr<ParserWorker> acquireWorker(std::chrono::milliseconds timeout) {
+        auto start = std::chrono::steady_clock::now();
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        while (true) {
+            for (auto& worker : workers_) {
+                if (worker->running && worker->state == WorkerState::IDLE && !worker->awaiting_ack) {
+                    worker->state = WorkerState::BUSY;
+                    updateMetricsLocked();
+                    if (queue_wait_histogram_) {
+                        auto elapsed = std::chrono::steady_clock::now() - start;
+                        queue_wait_histogram_->observe(
+                            std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count(),
+                            {config_.protocol, SB_LISTENER_NAME});
+                    }
+                    return worker;
+                }
+            }
+
+            if (config_.spawn_strategy != "prefork" && runningCountLocked() < config_.pool_max) {
+                spawnWorkerLocked();
+            }
+
+            if (timeout.count() == 0) {
+                return nullptr;
+            }
+            auto now = std::chrono::steady_clock::now();
+            if (now - start >= timeout) {
+                return nullptr;
+            }
+            cv_.wait_for(lock, std::chrono::milliseconds(50));
+        }
+    }
+
+    bool handoff(const std::shared_ptr<ParserWorker>& worker,
+                 scratchbird::network::socket_t client_fd,
+                 const scratchbird::network::NetworkAddress& client_addr,
+                 bool tls_active) {
+        scratchbird::network::ControlPlaneMessage msg;
+        msg.header.message_type = static_cast<uint16_t>(
+            scratchbird::network::ControlPlaneMessageType::HANDOFF_SOCKET);
+        msg.header.request_id = nextRequestId();
+        msg.payload = buildHandoffPayload(msg.header.request_id, client_addr, tls_active);
+        msg.header.payload_len = msg.payload.size();
+
+        auto start = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> lock(worker->mutex);
+            worker->awaiting_ack = true;
+            worker->awaiting_request = msg.header.request_id;
+            worker->last_ack_ready = false;
+        }
+
+        scratchbird::core::ErrorContext ctx;
+        auto status = scratchbird::network::sendControlPlaneMessage(
+            *worker->control, msg, client_fd, worker->worker_pid, &ctx);
+
+        if (status != scratchbird::core::Status::OK) {
+            markWorkerFault(worker, "error");
+            return false;
+        }
+
+        std::unique_lock<std::mutex> lock(worker->mutex);
+        bool acked = worker->cv.wait_for(lock, std::chrono::seconds(2), [&worker]() {
+            return worker->last_ack_ready;
+        });
+
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        if (handoff_histogram_) {
+            handoff_histogram_->observe(
+                std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count(),
+                {config_.protocol, SB_LISTENER_NAME});
+        }
+
+        if (!acked || !worker->last_ack_ok) {
+            worker->awaiting_ack = false;
+            worker->last_ack_ready = false;
+            worker->state = WorkerState::FAULT;
+            updateMetrics();
+            return false;
+        }
+
+        return true;
+    }
+
+    void reportIdle(const std::shared_ptr<ParserWorker>& worker) {
+        std::lock_guard<std::mutex> lock(worker->mutex);
+        worker->state = WorkerState::IDLE;
+        updateMetrics();
+        cv_.notify_all();
+    }
+
+private:
+    ListenerConfig config_;
+    PoolMetrics metrics_;
+    scratchbird::core::Histogram* handoff_histogram_;
+    scratchbird::core::Histogram* queue_wait_histogram_;
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::vector<std::shared_ptr<ParserWorker>> workers_;
+    std::atomic<uint64_t> request_id_{1};
+
+    uint64_t nextRequestId() {
+        return request_id_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void updateMetrics() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        updateMetricsLocked();
+    }
+
+    size_t runningCountLocked() const {
+        size_t running = 0;
+        for (const auto& worker : workers_) {
+            if (worker->running) {
+                running++;
+            }
+        }
+        return running;
+    }
+
+    void updateMetricsLocked() {
+        if (!metrics_.parser_pool_size) {
+            return;
+        }
+        size_t total = 0;
+        size_t idle = 0;
+        size_t busy = 0;
+        for (const auto& worker : workers_) {
+            if (!worker->running) {
+                continue;
+            }
+            total++;
+            if (worker->state == WorkerState::IDLE) {
+                idle++;
+            } else if (worker->state == WorkerState::BUSY) {
+                busy++;
+            }
+        }
+        metrics_.parser_pool_size->set(static_cast<double>(total),
+                                       {config_.protocol, "default"});
+        metrics_.parser_pool_idle->set(static_cast<double>(idle),
+                                       {config_.protocol, "default"});
+        metrics_.parser_pool_busy->set(static_cast<double>(busy),
+                                       {config_.protocol, "default"});
+    }
+
+    void markWorkerFault(const std::shared_ptr<ParserWorker>& worker, const std::string& reason) {
+        std::lock_guard<std::mutex> lock(worker->mutex);
+        worker->state = WorkerState::FAULT;
+        worker->running = false;
+        if (metrics_.parser_recycle_total) {
+            metrics_.parser_recycle_total->inc(1.0, {config_.protocol, "default", reason});
+        }
+        updateMetrics();
+    }
+
+    bool spawnWorker() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return spawnWorkerLocked();
+    }
+
+    bool spawnWorkerLocked() {
+        if (runningCountLocked() >= config_.pool_max) {
+            return false;
+        }
+        if (metrics_.parser_spawn_total) {
+            metrics_.parser_spawn_total->inc(1.0, {config_.protocol, "default"});
+        }
+
+        std::string binary = parserBinaryForProtocol(config_.protocol);
+        std::vector<std::string> args;
+        args.push_back(binary);
+        args.push_back("--control-socket");
+        args.push_back(controlSocketPath(config_));
+        args.push_back("--engine-endpoint");
+        args.push_back(config_.engine_endpoint);
+        args.push_back("--log-level");
+        args.push_back(config_.log_level);
+
+#ifdef _WIN32
+        std::string command_line;
+        for (const auto& item : args) {
+            if (!command_line.empty()) command_line += " ";
+            command_line += item;
+        }
+        STARTUPINFOA si{};
+        PROCESS_INFORMATION pi{};
+        si.cb = sizeof(si);
+        BOOL ok = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE,
+                                 CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
+        if (!ok) {
+            return false;
+        }
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+#else
+        pid_t pid = fork();
+        if (pid < 0) {
+            return false;
+        }
+        if (pid == 0) {
+            std::vector<char*> argv;
+            argv.reserve(args.size() + 1);
+            for (auto& item : args) {
+                argv.push_back(const_cast<char*>(item.c_str()));
+            }
+            argv.push_back(nullptr);
+            execvp(argv[0], argv.data());
+            _exit(127);
+        }
+#endif
+
+        return true;
+    }
+
+    void readerLoop(const std::shared_ptr<ParserWorker>& worker) {
+        scratchbird::core::ErrorContext ctx;
+        while (worker->running) {
+            scratchbird::network::ControlPlaneMessage msg;
+            auto status = scratchbird::network::receiveControlPlaneMessage(*worker->control,
+                                                                           msg, nullptr, &ctx);
+            if (status != scratchbird::core::Status::OK) {
+                markWorkerFault(worker, "error");
+                break;
+            }
+            auto type = static_cast<scratchbird::network::ControlPlaneMessageType>(
+                msg.header.message_type);
+            if (type == scratchbird::network::ControlPlaneMessageType::HANDOFF_ACK) {
+                handleHandoffAck(worker, msg);
+            } else if (type == scratchbird::network::ControlPlaneMessageType::HEALTH_REPORT) {
+                handleHealthReport(worker, msg);
+            } else if (type == scratchbird::network::ControlPlaneMessageType::ERROR) {
+                markWorkerFault(worker, "error");
+            }
+        }
+    }
+
+    void handleHandoffAck(const std::shared_ptr<ParserWorker>& worker,
+                          const scratchbird::network::ControlPlaneMessage& msg) {
+        bool ok = false;
+        if (msg.payload.size() >= 9) {
+            uint8_t status = msg.payload[8];
+            ok = (status == 0);
+        }
+        std::lock_guard<std::mutex> lock(worker->mutex);
+        if (worker->awaiting_ack && worker->awaiting_request == msg.header.request_id) {
+            worker->last_ack_ok = ok;
+            worker->last_ack_ready = true;
+            worker->awaiting_ack = false;
+            worker->cv.notify_all();
+        }
+    }
+
+    void handleHealthReport(const std::shared_ptr<ParserWorker>& worker,
+                            const scratchbird::network::ControlPlaneMessage& msg) {
+        if (msg.payload.size() < 15) {
+            return;
+        }
+        uint8_t state = msg.payload[8];
+        std::lock_guard<std::mutex> lock(worker->mutex);
+        worker->state = (state == 0) ? WorkerState::IDLE : WorkerState::BUSY;
+        updateMetrics();
+        cv_.notify_all();
+    }
+
+    static std::vector<uint8_t> buildHelloAck(bool accepted, const std::string& reason) {
+        std::vector<uint8_t> payload;
+        payload.push_back(accepted ? 1 : 0);
+        uint16_t len = static_cast<uint16_t>(reason.size());
+        payload.push_back(static_cast<uint8_t>(len & 0xFF));
+        payload.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+        payload.insert(payload.end(), reason.begin(), reason.end());
+        return payload;
+    }
+
+    static bool parseHello(const std::vector<uint8_t>& payload,
+                           std::string& protocol,
+                           uint32_t& pid,
+                           uint64_t& worker_id) {
+        if (payload.size() < 32) {
+            return false;
+        }
+        size_t len = 0;
+        while (len < 16 && payload[len] != 0) {
+            ++len;
+        }
+        protocol.assign(reinterpret_cast<const char*>(payload.data()), len);
+        pid = readU32(payload.data() + 16);
+        worker_id = readU64(payload.data() + 20);
+        return true;
+    }
+
+    std::vector<uint8_t> buildHandoffPayload(uint64_t connection_id,
+                                             const scratchbird::network::NetworkAddress& addr,
+                                             bool tls_active) const {
+        std::vector<uint8_t> payload;
+        payload.reserve(8 + 16 + 48 + 2 + 1 + 2 + 64);
+        appendU64(payload, connection_id);
+        char protocol[16];
+        std::memset(protocol, 0, sizeof(protocol));
+        std::memcpy(protocol, config_.protocol.c_str(),
+                    std::min<size_t>(config_.protocol.size(), 15));
+        payload.insert(payload.end(), protocol, protocol + sizeof(protocol));
+        char client_addr[48];
+        std::memset(client_addr, 0, sizeof(client_addr));
+        std::string addr_str = addr.host;
+        std::memcpy(client_addr, addr_str.c_str(),
+                    std::min<size_t>(addr_str.size(), sizeof(client_addr) - 1));
+        payload.insert(payload.end(), client_addr, client_addr + sizeof(client_addr));
+        appendU16(payload, addr.port);
+        payload.push_back(tls_active ? 1 : 0);
+        appendU16(payload, 0);
+        payload.insert(payload.end(), 64, 0);
+        return payload;
+    }
+
+    static void appendU16(std::vector<uint8_t>& out, uint16_t value) {
+        out.push_back(static_cast<uint8_t>(value & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    }
+
+    static void appendU64(std::vector<uint8_t>& out, uint64_t value) {
+        for (int i = 0; i < 8; ++i) {
+            out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+        }
+    }
+
+    static uint32_t readU32(const uint8_t* data) {
+        return static_cast<uint32_t>(data[0])
+            | (static_cast<uint32_t>(data[1]) << 8)
+            | (static_cast<uint32_t>(data[2]) << 16)
+            | (static_cast<uint32_t>(data[3]) << 24);
+    }
+
+    static uint64_t readU64(const uint8_t* data) {
+        uint64_t value = 0;
+        for (int i = 7; i >= 0; --i) {
+            value = (value << 8) | data[i];
+        }
+        return value;
+    }
+};
+
 void printUsage(const char* program) {
     std::cout << SB_LISTENER_NAME << " (" << SB_LISTENER_PROTOCOL << ")\n\n"
               << "Usage:\n"
@@ -115,6 +636,7 @@ void printUsage(const char* program) {
               << "  --bind <addr>               Bind address\n"
               << "  --port <port>               Listen port\n"
               << "  --control-socket-dir <dir>  Control socket directory\n"
+              << "  --engine-endpoint <path>    Engine IPC endpoint\n"
               << "  --pool-min <n>              Minimum parser pool size\n"
               << "  --pool-max <n>              Maximum parser pool size\n"
               << "  --spawn-strategy <mode>     prefork|on_demand|hybrid\n"
@@ -176,9 +698,18 @@ bool applyConfigFile(ListenerConfig& config) {
     }
 
     const auto* server = parser.section("server");
-    if (server && server->has("control_socket_dir")) {
-        config.control_socket_dir = server->getString("control_socket_dir",
-                                                     config.control_socket_dir);
+    if (server) {
+        if (server->has("control_socket_dir")) {
+            config.control_socket_dir = server->getString("control_socket_dir",
+                                                          config.control_socket_dir);
+        }
+        if (config.engine_endpoint.empty() && server->has("database")) {
+            auto db_path = server->getString("database", "");
+            if (!db_path.empty()) {
+                config.engine_endpoint = scratchbird::server::getIPCPath(db_path,
+                                                                         scratchbird::server::IPCMethod::AUTO);
+            }
+        }
     }
 
     return true;
@@ -209,6 +740,10 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
             config.control_socket_dir = argv[++i];
         } else if (arg.rfind("--control-socket-dir=", 0) == 0) {
             config.control_socket_dir = arg.substr(21);
+        } else if (arg == "--engine-endpoint" && i + 1 < argc) {
+            config.engine_endpoint = argv[++i];
+        } else if (arg.rfind("--engine-endpoint=", 0) == 0) {
+            config.engine_endpoint = arg.substr(18);
         } else if (arg == "--pool-min" && i + 1 < argc) {
             try {
                 config.pool_min = static_cast<uint32_t>(std::stoul(argv[++i]));
@@ -381,13 +916,32 @@ int runListener(const ListenerConfig& config) {
     std::cout << "Parser pool: min=" << config.pool_min
               << " max=" << config.pool_max
               << " strategy=" << config.spawn_strategy << "\n";
+    if (config.engine_endpoint.empty()) {
+        std::cout << "Engine endpoint: (unset)\n";
+    } else {
+        std::cout << "Engine endpoint: " << config.engine_endpoint << "\n";
+    }
 
     std::string control_socket = controlSocketPath(config);
     scratchbird::network::ControlPlaneServer control_plane;
     std::thread control_thread;
+    bool pool_enabled = false;
+    PoolMetrics pool_metrics;
+    pool_metrics.parser_spawn_total = parser_spawn_total;
+    pool_metrics.parser_recycle_total = parser_recycle_total;
+    pool_metrics.parser_errors_total = parser_errors_total;
+    pool_metrics.parser_pool_size = parser_pool_size;
+    pool_metrics.parser_pool_idle = parser_pool_idle;
+    pool_metrics.parser_pool_busy = parser_pool_busy;
+    pool_metrics.parser_session_seconds = parser_session_seconds;
+    pool_metrics.parser_healthcheck_seconds = parser_healthcheck_seconds;
+
+    ParserPool pool(config, pool_metrics, handoff_seconds, queue_wait_seconds);
+
     if (!control_socket.empty()) {
         if (control_plane.start(control_socket, &ctx) == scratchbird::core::Status::OK) {
             std::cout << "Control socket: " << control_socket << "\n";
+            pool_enabled = pool.start();
             control_thread = std::thread([&]() {
                 scratchbird::core::ErrorContext local_ctx;
                 while (!g_shutdown.load(std::memory_order_acquire)) {
@@ -396,7 +950,7 @@ int runListener(const ListenerConfig& config) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
-                    control_conn->close();
+                    pool.handleControlConnection(std::move(control_conn));
                 }
             });
         } else {
@@ -421,7 +975,7 @@ int runListener(const ListenerConfig& config) {
     parser_session_seconds->observe(0.0, {config.protocol, "default"});
     parser_healthcheck_seconds->observe(0.0, {config.protocol, "default"});
 
-    // Accept loop (connections are closed until parser handoff is wired).
+    // Accept loop with parser handoff.
     while (!g_shutdown.load(std::memory_order_acquire)) {
         NetworkAddress client_addr;
         auto client = server_socket->accept(&client_addr, &ctx);
@@ -436,12 +990,31 @@ int runListener(const ListenerConfig& config) {
 
         std::cout << "Accepted connection from " << client_addr.host
                   << ":" << client_addr.port << "\n";
-        client->close();
+        if (!pool_enabled) {
+            reject_total->inc(1.0, {config.protocol, SB_LISTENER_NAME, "error"});
+            client->close();
+            open_connections->dec(1.0, label);
+            continue;
+        }
+        auto worker = pool.acquireWorker(std::chrono::milliseconds(1000));
+        if (!worker) {
+            reject_total->inc(1.0, {config.protocol, SB_LISTENER_NAME, "queue_full"});
+            client->close();
+            open_connections->dec(1.0, label);
+            continue;
+        }
 
+        bool handed_off = pool.handoff(worker, client->getFd(), client_addr, false);
+        client->close();
         open_connections->dec(1.0, label);
+
+        if (!handed_off) {
+            reject_total->inc(1.0, {config.protocol, SB_LISTENER_NAME, "error"});
+        }
     }
 
     server_socket->close();
+    pool.stop();
     control_plane.stop();
     if (control_thread.joinable()) {
         control_thread.join();

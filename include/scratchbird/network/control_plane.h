@@ -14,11 +14,13 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/network/socket.h"
+#include "scratchbird/network/socket_types.h"
 
 namespace scratchbird::network {
 
 constexpr uint32_t CONTROL_PLANE_MAGIC = 0x54434253; // "SBCT" little-endian
 constexpr uint16_t CONTROL_PLANE_VERSION = 1;
+constexpr uint16_t CONTROL_PLANE_FLAG_HAS_HANDLE = 0x0001;
 
 enum class ControlPlaneMessageType : uint16_t {
     HELLO = 0x0001,
@@ -52,6 +54,16 @@ struct ControlPlaneMessage {
 
 bool encodeControlPlaneHeader(const ControlPlaneHeader& header, std::vector<uint8_t>& out);
 bool decodeControlPlaneHeader(const uint8_t* data, size_t len, ControlPlaneHeader& header);
+
+core::Status sendControlPlaneMessage(Socket& socket,
+                                     const ControlPlaneMessage& message,
+                                     socket_t send_fd = INVALID_SOCKET_VALUE,
+                                     uint32_t target_pid = 0,
+                                     core::ErrorContext* ctx = nullptr);
+core::Status receiveControlPlaneMessage(Socket& socket,
+                                        ControlPlaneMessage& message,
+                                        socket_t* recv_fd = nullptr,
+                                        core::ErrorContext* ctx = nullptr);
 
 class ControlPlaneServer {
 public:

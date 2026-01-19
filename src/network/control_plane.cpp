@@ -6,14 +6,24 @@
 
 #include <cstring>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #endif
 
 namespace scratchbird::network {
 
 namespace {
+
+constexpr size_t CONTROL_PLANE_HEADER_SIZE = 24;
+constexpr size_t CONTROL_PLANE_MAX_MESSAGE = 1024;
 
 void appendU16(std::vector<uint8_t>& out, uint16_t value) {
     out.push_back(static_cast<uint8_t>(value & 0xFF));
@@ -79,6 +89,168 @@ bool decodeControlPlaneHeader(const uint8_t* data, size_t len, ControlPlaneHeade
     header.request_id = readU64(data + 12);
     header.payload_len = readU64(data + 20);
     return true;
+}
+
+core::Status sendControlPlaneMessage(Socket& socket,
+                                     const ControlPlaneMessage& message,
+                                     socket_t send_fd,
+                                     uint32_t target_pid,
+                                     core::ErrorContext* ctx) {
+    ControlPlaneHeader header = message.header;
+    header.payload_len = message.payload.size();
+    if (send_fd != INVALID_SOCKET_VALUE) {
+        header.flags |= CONTROL_PLANE_FLAG_HAS_HANDLE;
+    }
+
+    std::vector<uint8_t> buffer;
+    encodeControlPlaneHeader(header, buffer);
+    buffer.insert(buffer.end(), message.payload.begin(), message.payload.end());
+
+#ifdef _WIN32
+    if (send_fd != INVALID_SOCKET_VALUE) {
+        if (target_pid == 0) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                              "Target PID required for WSADuplicateSocket");
+            return core::Status::INVALID_ARGUMENT;
+        }
+        WSAPROTOCOL_INFO info{};
+        if (WSADuplicateSocket(send_fd, target_pid, &info) != 0) {
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "WSADuplicateSocket failed");
+            return core::Status::IO_ERROR;
+        }
+        auto info_bytes = reinterpret_cast<const uint8_t*>(&info);
+        buffer.insert(buffer.end(), info_bytes, info_bytes + sizeof(info));
+    }
+    return socket.writeExact(buffer.data(), buffer.size(), ctx);
+#else
+    struct msghdr msg{};
+    struct iovec iov{};
+    iov.iov_base = buffer.data();
+    iov.iov_len = buffer.size();
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    char control[CMSG_SPACE(sizeof(int))];
+    if (send_fd != INVALID_SOCKET_VALUE) {
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        std::memset(control, 0, sizeof(control));
+        struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+        std::memcpy(CMSG_DATA(cmsg), &send_fd, sizeof(int));
+    }
+
+    ssize_t sent = ::sendmsg(socket.getFd(), &msg, 0);
+    if (sent < 0 || static_cast<size_t>(sent) != buffer.size()) {
+        SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "sendmsg failed");
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+#endif
+}
+
+core::Status receiveControlPlaneMessage(Socket& socket,
+                                        ControlPlaneMessage& message,
+                                        socket_t* recv_fd,
+                                        core::ErrorContext* ctx) {
+    if (recv_fd) {
+        *recv_fd = INVALID_SOCKET_VALUE;
+    }
+
+#ifdef _WIN32
+    std::vector<uint8_t> header_buf(CONTROL_PLANE_HEADER_SIZE);
+    core::Status status = socket.readExact(header_buf.data(), header_buf.size(), ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    if (!decodeControlPlaneHeader(header_buf.data(), header_buf.size(), message.header)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION, "Invalid control header");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (message.header.payload_len > CONTROL_PLANE_MAX_MESSAGE) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION, "Control payload too large");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    message.payload.resize(static_cast<size_t>(message.header.payload_len));
+    if (!message.payload.empty()) {
+        status = socket.readExact(message.payload.data(), message.payload.size(), ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+    if ((message.header.flags & CONTROL_PLANE_FLAG_HAS_HANDLE) != 0) {
+        WSAPROTOCOL_INFO info{};
+        status = socket.readExact(&info, sizeof(info), ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        SOCKET dup = WSASocket(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
+                               &info, 0, 0);
+        if (dup == INVALID_SOCKET_VALUE) {
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "WSASocket failed");
+            return core::Status::IO_ERROR;
+        }
+        if (recv_fd) {
+            *recv_fd = dup;
+        } else {
+            closesocket(dup);
+        }
+    }
+    return core::Status::OK;
+#else
+    std::vector<uint8_t> header_buf(CONTROL_PLANE_HEADER_SIZE);
+    struct msghdr msg{};
+    struct iovec iov{};
+    iov.iov_base = header_buf.data();
+    iov.iov_len = header_buf.size();
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    char control[CMSG_SPACE(sizeof(int))];
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    ssize_t received = ::recvmsg(socket.getFd(), &msg, 0);
+    if (received <= 0) {
+        SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE, "recvmsg failed");
+        return core::Status::CONNECTION_FAILURE;
+    }
+    if (static_cast<size_t>(received) < CONTROL_PLANE_HEADER_SIZE) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION, "Short control header");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+         cmsg != nullptr;
+         cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+            if (recv_fd) {
+                std::memcpy(recv_fd, CMSG_DATA(cmsg), sizeof(int));
+            }
+        }
+    }
+
+    if (!decodeControlPlaneHeader(header_buf.data(), header_buf.size(), message.header)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION, "Invalid control header");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    if (message.header.payload_len > CONTROL_PLANE_MAX_MESSAGE) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION, "Control payload too large");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    message.payload.resize(static_cast<size_t>(message.header.payload_len));
+    if (!message.payload.empty()) {
+        core::Status status = socket.readExact(message.payload.data(), message.payload.size(), ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+    return core::Status::OK;
+#endif
 }
 
 ControlPlaneServer::~ControlPlaneServer() {

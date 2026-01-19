@@ -924,6 +924,17 @@ bool ServiceController::launchListenerProcess(ListenerProcess& listener, core::E
         args.push_back("--control-socket-dir");
         args.push_back(config_.control_socket_dir);
     }
+    std::string engine_endpoint;
+    if (config_.mode == ServiceConfig::Mode::SINGLE_DATABASE && !config_.database_path.empty()) {
+        engine_endpoint = getIPCPath(config_.database_path, IPCMethod::AUTO);
+    } else if (config_.mode == ServiceConfig::Mode::MULTI_DATABASE && !config_.data_dir.empty()) {
+        std::string main_path = config_.data_dir + "/main.sbdb";
+        engine_endpoint = getIPCPath(main_path, IPCMethod::AUTO);
+    }
+    if (!engine_endpoint.empty()) {
+        args.push_back("--engine-endpoint");
+        args.push_back(engine_endpoint);
+    }
     if (!config_.config_file.empty()) {
         args.push_back("--config");
         args.push_back(config_.config_file);
