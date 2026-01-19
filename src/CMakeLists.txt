@@ -634,6 +634,114 @@ set_target_properties(sb_server PROPERTIES
 message(STATUS "Server executable: sb_server")
 
 # ==============================================================================
+# Listener Binaries (Network Listener + Parser Pool)
+# ==============================================================================
+
+add_executable(sb_listener_native network/sb_listener_main.cpp)
+target_compile_definitions(sb_listener_native PRIVATE
+    SB_LISTENER_PROTOCOL="scratchbird"
+    SB_LISTENER_NAME="sb_listener_native"
+)
+target_link_libraries(sb_listener_native PRIVATE scratchbird_network scratchbird_server scratchbird_core)
+set_target_properties(sb_listener_native PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+add_executable(sb_listener_pg network/sb_listener_main.cpp)
+target_compile_definitions(sb_listener_pg PRIVATE
+    SB_LISTENER_PROTOCOL="postgresql"
+    SB_LISTENER_NAME="sb_listener_pg"
+)
+target_link_libraries(sb_listener_pg PRIVATE scratchbird_network scratchbird_server scratchbird_core)
+set_target_properties(sb_listener_pg PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+add_executable(sb_listener_mysql network/sb_listener_main.cpp)
+target_compile_definitions(sb_listener_mysql PRIVATE
+    SB_LISTENER_PROTOCOL="mysql"
+    SB_LISTENER_NAME="sb_listener_mysql"
+)
+target_link_libraries(sb_listener_mysql PRIVATE scratchbird_network scratchbird_server scratchbird_core)
+set_target_properties(sb_listener_mysql PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+add_executable(sb_listener_fb network/sb_listener_main.cpp)
+target_compile_definitions(sb_listener_fb PRIVATE
+    SB_LISTENER_PROTOCOL="firebird"
+    SB_LISTENER_NAME="sb_listener_fb"
+)
+target_link_libraries(sb_listener_fb PRIVATE scratchbird_network scratchbird_server scratchbird_core)
+set_target_properties(sb_listener_fb PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "Listener executables: sb_listener_native/pg/mysql/fb")
+
+# ==============================================================================
+# Parser Agent Binaries (Protocol Parsers)
+# ==============================================================================
+
+add_executable(sb_parser_native parser/sb_parser_main.cpp)
+target_compile_definitions(sb_parser_native PRIVATE
+    SB_PARSER_PROTOCOL="scratchbird"
+    SB_PARSER_NAME="sb_parser_native"
+)
+target_link_libraries(sb_parser_native PRIVATE scratchbird_core)
+set_target_properties(sb_parser_native PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+add_executable(sb_parser_pg parser/sb_parser_main.cpp)
+target_compile_definitions(sb_parser_pg PRIVATE
+    SB_PARSER_PROTOCOL="postgresql"
+    SB_PARSER_NAME="sb_parser_pg"
+)
+target_link_libraries(sb_parser_pg PRIVATE scratchbird_core)
+set_target_properties(sb_parser_pg PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+add_executable(sb_parser_mysql parser/sb_parser_main.cpp)
+target_compile_definitions(sb_parser_mysql PRIVATE
+    SB_PARSER_PROTOCOL="mysql"
+    SB_PARSER_NAME="sb_parser_mysql"
+)
+target_link_libraries(sb_parser_mysql PRIVATE scratchbird_core)
+set_target_properties(sb_parser_mysql PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+add_executable(sb_parser_fb parser/sb_parser_main.cpp)
+target_compile_definitions(sb_parser_fb PRIVATE
+    SB_PARSER_PROTOCOL="firebird"
+    SB_PARSER_NAME="sb_parser_fb"
+)
+target_link_libraries(sb_parser_fb PRIVATE scratchbird_core)
+set_target_properties(sb_parser_fb PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "Parser agent executables: sb_parser_native/pg/mysql/fb")
+
+# ==============================================================================
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
