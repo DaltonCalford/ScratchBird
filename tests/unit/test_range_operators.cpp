@@ -239,11 +239,13 @@ void test_difference_operator()
 
     // Contained range (simplified - would need multirange for full support)
     auto d2 = r1 - r3;
-    test_assert(d2.isEmpty(), "[1,10) - [3,7) = empty (simplified)");
+    test_assert(!d2.isEmpty(), "[1,10) - [3,7) is not empty (lower remainder)");
+    test_assert(d2.lower() == 1 && d2.upper() == 3, "[1,10) - [3,7) = [1,3)");
 
-    // Overlapping range (simplified)
+    // Overlapping range (simplified - returns single remainder)
     auto d3 = r1 - r2;
-    test_assert(d3.isEmpty(), "[1,10) - [5,15) = empty (simplified)");
+    test_assert(!d3.isEmpty(), "[1,10) - [5,15) is not empty (lower remainder)");
+    test_assert(d3.lower() == 1 && d3.upper() == 5, "[1,10) - [5,15) = [1,5)");
 }
 
 // ============================================================================

@@ -46,6 +46,7 @@ static bool isNonReservedKeyword(TokenType type) {
         case TokenType::KW_ENGINE:
         case TokenType::KW_LANGUAGE:
         case TokenType::KW_CONDITION:
+        case TokenType::KW_ENCRYPTION:
         case TokenType::KW_YEAR:
         case TokenType::KW_DATE:
         case TokenType::KW_TIME:
@@ -91,6 +92,7 @@ static std::string tokenToString(TokenType type) {
         case TokenType::KW_ENGINE: return "engine";
         case TokenType::KW_LANGUAGE: return "language";
         case TokenType::KW_CONDITION: return "condition";
+        case TokenType::KW_ENCRYPTION: return "encryption";
         case TokenType::KW_YEAR: return "year";
         case TokenType::KW_DATE: return "date";
         case TokenType::KW_TIME: return "time";

@@ -701,6 +701,9 @@ namespace scratchbird::core
          */
         size_t getMaxPreparedStatements() const { return max_prepared_statements_; }
 
+        // Cleanup temporary tables and views for end-of-session handling.
+        Status cleanupTempTablesOnSessionEnd(ErrorContext *ctx);
+
     private:
         // P2-7: Deferred constraint tracking
         std::unordered_map<ID, bool, IDHash> constraint_deferred_state_; // Per-constraint deferral
@@ -715,7 +718,6 @@ namespace scratchbird::core
         void evictOldestPreparedStatement();
 
         Status cleanupTempTablesOnCommit(ErrorContext *ctx);
-        Status cleanupTempTablesOnSessionEnd(ErrorContext *ctx);
     };
 
 } // namespace scratchbird::core

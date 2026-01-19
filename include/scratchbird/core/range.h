@@ -574,8 +574,8 @@ public:
         int lower_cmp = compareLower(lower_, lower_bound_type_, other.lower_, other.lower_bound_type_);
         int upper_cmp = compareUpper(upper_, upper_bound_type_, other.upper_, other.upper_bound_type_);
 
-        // Overlap on lower side: trim lower bound to other's upper
-        if (lower_cmp <= 0 && upper_cmp < 0)
+        // Other overlaps the lower side: trim lower bound to other's upper.
+        if (lower_cmp >= 0 && upper_cmp > 0)
         {
             BoundType new_lower_type =
                 (other.upper_bound_type_ == BoundType::INCLUSIVE) ? BoundType::EXCLUSIVE
@@ -583,8 +583,8 @@ public:
             return Range<T>(other.upper_, upper_, new_lower_type, upper_bound_type_);
         }
 
-        // Overlap on upper side: trim upper bound to other's lower
-        if (lower_cmp > 0 && upper_cmp >= 0)
+        // Other overlaps the upper side: trim upper bound to other's lower.
+        if (lower_cmp < 0 && upper_cmp <= 0)
         {
             BoundType new_upper_type =
                 (other.lower_bound_type_ == BoundType::INCLUSIVE) ? BoundType::EXCLUSIVE
@@ -592,7 +592,7 @@ public:
             return Range<T>(lower_, other.lower_, lower_bound_type_, new_upper_type);
         }
 
-        // Other is strictly inside: return lower remainder
+        // Other is strictly inside: return lower remainder.
         BoundType new_upper_type =
             (other.lower_bound_type_ == BoundType::INCLUSIVE) ? BoundType::EXCLUSIVE
                                                              : BoundType::INCLUSIVE;

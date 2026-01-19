@@ -424,7 +424,8 @@ TEST_F(ParserSessionV2Test, SetRole) {
     auto* stmt = parseAs<SetStmt>("SET ROLE admin");
     ASSERT_NE(stmt, nullptr);
     EXPECT_EQ(stmt->set_type, SetStmt::SetType::ROLE);
-    EXPECT_NE(stmt->value, nullptr);
+    EXPECT_EQ(stmt->value, nullptr);
+    EXPECT_NE(stmt->name, StringPool::INVALID_ID);
 }
 
 TEST_F(ParserSessionV2Test, SetRoleNone) {
@@ -438,7 +439,8 @@ TEST_F(ParserSessionV2Test, SetSessionAuthorization) {
     auto* stmt = parseAs<SetStmt>("SET SESSION AUTHORIZATION admin");
     ASSERT_NE(stmt, nullptr);
     EXPECT_EQ(stmt->set_type, SetStmt::SetType::SESSION_AUTHORIZATION);
-    EXPECT_NE(stmt->value, nullptr);
+    EXPECT_EQ(stmt->value, nullptr);
+    EXPECT_NE(stmt->name, StringPool::INVALID_ID);
 }
 
 TEST_F(ParserSessionV2Test, SetVariableString) {

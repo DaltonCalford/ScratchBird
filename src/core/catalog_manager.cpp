@@ -62,7 +62,7 @@ ID resolveOwnerFromSession(CatalogManager* catalog, ErrorContext* ctx) {
             return security_ctx.effective_user_id;
         }
     }
-    return catalog->resolveOwnerUUID("system", ctx);
+    return catalog->getSystemUserId(ctx);
 }
 
 std::string normalizeResolverName(const std::string& name, bool name_is_delimited) {

@@ -5404,6 +5404,19 @@ SetStmt* Parser::parseSet() {
     // SET SESSION AUTHORIZATION ...
     // SET ROLE ...
 
+    auto parseNameOrStringLiteral = [&](const char* error_message) -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (isIdentifier()) {
+            return expectIdentifier(error_message);
+        }
+        error(error_message);
+        return StringPool::INVALID_ID;
+    };
+
     // Check for scope
     if (matchContextual("SESSION")) {
         stmt->scope = SetStmt::Scope::SESSION;
@@ -5413,7 +5426,7 @@ SetStmt* Parser::parseSet() {
             if (matchContextual("DEFAULT")) {
                 stmt->is_default = true;
             } else {
-                stmt->value = parseExpression();
+                stmt->name = parseNameOrStringLiteral("Expected authorization user after SET SESSION AUTHORIZATION");
             }
             stmt->span = makeSpan(start);
             return stmt;
@@ -5752,7 +5765,7 @@ SetStmt* Parser::parseSet() {
         if (matchContextual("NONE") || matchContextual("DEFAULT")) {
             stmt->is_default = true;
         } else {
-            stmt->value = parseExpression();
+            stmt->name = parseNameOrStringLiteral("Expected role name after SET ROLE");
         }
         stmt->span = makeSpan(start);
         return stmt;

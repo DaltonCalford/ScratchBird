@@ -233,6 +233,7 @@ enum class TokenType : uint16_t {
     KW_INVOKER,
     KW_SQL,
     KW_SECURITY,
+    KW_ENCRYPTION,
 
     // Type keywords
     KW_TINYINT,

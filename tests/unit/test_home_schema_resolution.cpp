@@ -12,6 +12,21 @@ using namespace scratchbird::core;
 using namespace scratchbird::sblr;
 using scratchbird::testing::TestDatabaseFile;
 
+namespace
+{
+    bool isZeroUuid(const ID& id)
+    {
+        for (auto byte : id.bytes)
+        {
+            if (byte != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+} // namespace
+
 class HomeSchemaResolutionTest : public ::testing::Test
 {
 protected:
@@ -33,7 +48,7 @@ protected:
         public_schema_id_ = schema_info.schema_id;
 
         system_user_id_ = catalog_->getSystemUserId(&ctx);
-        ASSERT_FALSE(isZeroUuidLocal(system_user_id_));
+        ASSERT_FALSE(isZeroUuid(system_user_id_));
 
         compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
         executor_ = std::make_unique<Executor>(db_.get());
@@ -133,12 +148,15 @@ TEST_F(HomeSchemaResolutionTest, SetRoleSwitchesSchemaToRoleHome)
               Status::OK) << ctx.message;
 
     auto session_info = createSessionForUser(user_id);
+    conn_ctx_.reset();
+    ASSERT_EQ(db_->connect(conn_ctx_, &ctx), Status::OK) << ctx.message;
     conn_ctx_->setCurrentUser(user_id, false);
     conn_ctx_->setCurrentSchemaId(session_info.current_schema_id);
     conn_ctx_->setSessionContext(session_info.session_id, ID{},
                                  session_info.emulation_mode,
                                  session_info.policy_epoch_global,
                                  session_info.policy_epoch_table);
+    ConnectionContext::setCurrent(conn_ctx_.get());
     executor_->setConnectionContext(conn_ctx_.get());
     compiler_->setCurrentSchema(session_info.current_schema_id);
 

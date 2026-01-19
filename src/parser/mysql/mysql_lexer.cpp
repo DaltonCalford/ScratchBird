@@ -193,6 +193,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"INVOKER", TokenType::KW_INVOKER},
         {"SQL", TokenType::KW_SQL},
         {"SECURITY", TokenType::KW_SECURITY},
+        {"ENCRYPTION", TokenType::KW_ENCRYPTION},
 
         // Type keywords
         {"TINYINT", TokenType::KW_TINYINT},

@@ -2869,20 +2869,30 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
         case SetStmt::SetType::ROLE:
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_SET_ROLE);
-            if (stmt->variable_name != StringPool::INVALID_ID) {
-                writeStringId(stmt->variable_name);
-            } else {
-                current_result_->writeInt32(0);  // RESET ROLE
+            {
+                uint8_t flags = 0;
+                if (stmt->is_default || stmt->variable_name == StringPool::INVALID_ID) {
+                    flags |= 0x01;
+                }
+                current_result_->writeByte(flags);
+                if ((flags & 0x01) == 0) {
+                    writeStringId(stmt->variable_name);
+                }
             }
             break;
 
         case SetStmt::SetType::SESSION_AUTHORIZATION:
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_SET_SESSION_AUTH);
-            if (stmt->variable_name != StringPool::INVALID_ID) {
-                writeStringId(stmt->variable_name);
-            } else {
-                current_result_->writeInt32(0);  // RESET
+            {
+                uint8_t flags = 0;
+                if (stmt->is_default || stmt->variable_name == StringPool::INVALID_ID) {
+                    flags |= 0x01;
+                }
+                current_result_->writeByte(flags);
+                if ((flags & 0x01) == 0) {
+                    writeStringId(stmt->variable_name);
+                }
             }
             break;
 
