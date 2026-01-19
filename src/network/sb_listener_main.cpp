@@ -13,8 +13,11 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
 
+#include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/network/control_plane.h"
 #include "scratchbird/network/network.h"
 #include "scratchbird/network/socket.h"
 #include "scratchbird/network/socket_types.h"
@@ -40,6 +43,11 @@ struct ListenerConfig {
     std::string control_socket_dir;
     std::string config_path;
     std::string log_level = "info";
+    uint32_t pool_min = 4;
+    uint32_t pool_max = 64;
+    std::string spawn_strategy = "hybrid";
+    uint32_t max_requests = 0;
+    uint32_t max_age_seconds = 0;
     bool show_help = false;
     bool show_version = false;
 };
@@ -107,6 +115,11 @@ void printUsage(const char* program) {
               << "  --bind <addr>               Bind address\n"
               << "  --port <port>               Listen port\n"
               << "  --control-socket-dir <dir>  Control socket directory\n"
+              << "  --pool-min <n>              Minimum parser pool size\n"
+              << "  --pool-max <n>              Maximum parser pool size\n"
+              << "  --spawn-strategy <mode>     prefork|on_demand|hybrid\n"
+              << "  --max-requests <n>          Recycle parser after N sessions\n"
+              << "  --max-age-seconds <n>       Recycle parser after seconds\n"
               << "  --log-level <level>         info|debug|warn|error\n"
               << "  --help, -h                  Show this help\n"
               << "  --version                   Show version\n";
@@ -149,9 +162,16 @@ bool applyConfigFile(ListenerConfig& config) {
         config.bind_address = network->getString("bind_address", config.bind_address);
         std::string key = protocolKey(config.protocol) + "_port";
         config.port = static_cast<uint16_t>(network->getInt(key, config.port));
+        std::string min_key = protocolKey(config.protocol) + "_pool_min";
+        std::string max_key = protocolKey(config.protocol) + "_pool_max";
+        config.pool_min = static_cast<uint32_t>(network->getInt(min_key, config.pool_min));
+        config.pool_max = static_cast<uint32_t>(network->getInt(max_key, config.pool_max));
         if (network->has("control_socket_dir")) {
             config.control_socket_dir = network->getString("control_socket_dir",
                                                            config.control_socket_dir);
+        }
+        if (network->has("spawn_strategy")) {
+            config.spawn_strategy = network->getString("spawn_strategy", config.spawn_strategy);
         }
     }
 
@@ -189,6 +209,66 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
             config.control_socket_dir = argv[++i];
         } else if (arg.rfind("--control-socket-dir=", 0) == 0) {
             config.control_socket_dir = arg.substr(21);
+        } else if (arg == "--pool-min" && i + 1 < argc) {
+            try {
+                config.pool_min = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid pool-min value\n";
+                return false;
+            }
+        } else if (arg.rfind("--pool-min=", 0) == 0) {
+            try {
+                config.pool_min = static_cast<uint32_t>(std::stoul(arg.substr(11)));
+            } catch (...) {
+                std::cerr << "Invalid pool-min value\n";
+                return false;
+            }
+        } else if (arg == "--pool-max" && i + 1 < argc) {
+            try {
+                config.pool_max = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid pool-max value\n";
+                return false;
+            }
+        } else if (arg.rfind("--pool-max=", 0) == 0) {
+            try {
+                config.pool_max = static_cast<uint32_t>(std::stoul(arg.substr(11)));
+            } catch (...) {
+                std::cerr << "Invalid pool-max value\n";
+                return false;
+            }
+        } else if (arg == "--spawn-strategy" && i + 1 < argc) {
+            config.spawn_strategy = argv[++i];
+        } else if (arg.rfind("--spawn-strategy=", 0) == 0) {
+            config.spawn_strategy = arg.substr(17);
+        } else if (arg == "--max-requests" && i + 1 < argc) {
+            try {
+                config.max_requests = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid max-requests value\n";
+                return false;
+            }
+        } else if (arg.rfind("--max-requests=", 0) == 0) {
+            try {
+                config.max_requests = static_cast<uint32_t>(std::stoul(arg.substr(15)));
+            } catch (...) {
+                std::cerr << "Invalid max-requests value\n";
+                return false;
+            }
+        } else if (arg == "--max-age-seconds" && i + 1 < argc) {
+            try {
+                config.max_age_seconds = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid max-age-seconds value\n";
+                return false;
+            }
+        } else if (arg.rfind("--max-age-seconds=", 0) == 0) {
+            try {
+                config.max_age_seconds = static_cast<uint32_t>(std::stoul(arg.substr(18)));
+            } catch (...) {
+                std::cerr << "Invalid max-age-seconds value\n";
+                return false;
+            }
         } else if (arg == "--log-level" && i + 1 < argc) {
             config.log_level = argv[++i];
         } else if (arg.rfind("--log-level=", 0) == 0) {
@@ -202,11 +282,78 @@ int runListener(const ListenerConfig& config) {
     using scratchbird::network::AddressFamily;
     using scratchbird::network::NetworkAddress;
     using scratchbird::network::Socket;
+    using scratchbird::core::MetricsRegistry;
 
     if (!scratchbird::network::initNetwork()) {
         std::cerr << "Failed to initialize network subsystem\n";
         return 2;
     }
+
+    auto& metrics = MetricsRegistry::getInstance();
+    auto* connections_total = metrics.registerCounter(
+        "scratchbird_listener_connections_total",
+        "Total connections observed by listener",
+        {"protocol", "listener"});
+    auto* accept_total = metrics.registerCounter(
+        "scratchbird_listener_accept_total",
+        "Total accepted connections",
+        {"protocol", "listener"});
+    auto* reject_total = metrics.registerCounter(
+        "scratchbird_listener_reject_total",
+        "Total rejected connections",
+        {"protocol", "listener", "reason"});
+    auto* open_connections = metrics.registerGauge(
+        "scratchbird_listener_open_connections",
+        "Open connections currently tracked by listener",
+        {"protocol", "listener"});
+    auto* queue_depth = metrics.registerGauge(
+        "scratchbird_listener_queue_depth",
+        "Listener accept queue depth",
+        {"protocol", "listener"});
+    auto* handoff_seconds = metrics.registerHistogram(
+        "scratchbird_listener_handoff_seconds",
+        "Listener handoff latency",
+        scratchbird::core::Histogram::DEFAULT_LATENCY_BUCKETS,
+        {"protocol", "listener"});
+    auto* queue_wait_seconds = metrics.registerHistogram(
+        "scratchbird_listener_queue_wait_seconds",
+        "Listener queue wait time",
+        scratchbird::core::Histogram::DEFAULT_LATENCY_BUCKETS,
+        {"protocol", "listener"});
+    auto* parser_spawn_total = metrics.registerCounter(
+        "scratchbird_parser_spawn_total",
+        "Parser spawn count",
+        {"protocol", "pool"});
+    auto* parser_recycle_total = metrics.registerCounter(
+        "scratchbird_parser_recycle_total",
+        "Parser recycle count",
+        {"protocol", "pool", "reason"});
+    auto* parser_errors_total = metrics.registerCounter(
+        "scratchbird_parser_errors_total",
+        "Parser errors",
+        {"protocol", "pool", "category"});
+    auto* parser_pool_size = metrics.registerGauge(
+        "scratchbird_parser_pool_size",
+        "Parser pool size",
+        {"protocol", "pool"});
+    auto* parser_pool_idle = metrics.registerGauge(
+        "scratchbird_parser_pool_idle",
+        "Parser pool idle count",
+        {"protocol", "pool"});
+    auto* parser_pool_busy = metrics.registerGauge(
+        "scratchbird_parser_pool_busy",
+        "Parser pool busy count",
+        {"protocol", "pool"});
+    auto* parser_session_seconds = metrics.registerHistogram(
+        "scratchbird_parser_session_seconds",
+        "Parser session duration",
+        scratchbird::core::Histogram::DEFAULT_LATENCY_BUCKETS,
+        {"protocol", "pool"});
+    auto* parser_healthcheck_seconds = metrics.registerHistogram(
+        "scratchbird_parser_healthcheck_seconds",
+        "Parser healthcheck duration",
+        scratchbird::core::Histogram::DEFAULT_LATENCY_BUCKETS,
+        {"protocol", "pool"});
 
     scratchbird::core::ErrorContext ctx;
     auto server_socket = Socket::create(AddressFamily::IPV4, scratchbird::network::SocketType::STREAM, &ctx);
@@ -231,11 +378,48 @@ int runListener(const ListenerConfig& config) {
 
     std::cout << SB_LISTENER_NAME << " listening on "
               << config.bind_address << ":" << config.port << "\n";
+    std::cout << "Parser pool: min=" << config.pool_min
+              << " max=" << config.pool_max
+              << " strategy=" << config.spawn_strategy << "\n";
 
     std::string control_socket = controlSocketPath(config);
+    scratchbird::network::ControlPlaneServer control_plane;
+    std::thread control_thread;
     if (!control_socket.empty()) {
-        std::cout << "Control socket: " << control_socket << "\n";
+        if (control_plane.start(control_socket, &ctx) == scratchbird::core::Status::OK) {
+            std::cout << "Control socket: " << control_socket << "\n";
+            control_thread = std::thread([&]() {
+                scratchbird::core::ErrorContext local_ctx;
+                while (!g_shutdown.load(std::memory_order_acquire)) {
+                    auto control_conn = control_plane.accept(&local_ctx);
+                    if (!control_conn) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        continue;
+                    }
+                    control_conn->close();
+                }
+            });
+        } else {
+            std::cerr << "Failed to start control socket: " << ctx.message << "\n";
+        }
     }
+
+    std::vector<std::string> label = {config.protocol, SB_LISTENER_NAME};
+    connections_total->inc(0.0, label);
+    accept_total->inc(0.0, label);
+    reject_total->inc(0.0, {config.protocol, SB_LISTENER_NAME, "error"});
+    open_connections->set(0.0, label);
+    queue_depth->set(0.0, label);
+    handoff_seconds->observe(0.0, label);
+    queue_wait_seconds->observe(0.0, label);
+    parser_spawn_total->inc(0.0, {config.protocol, "default"});
+    parser_recycle_total->inc(0.0, {config.protocol, "default", "manual"});
+    parser_errors_total->inc(0.0, {config.protocol, "default", "none"});
+    parser_pool_size->set(0.0, {config.protocol, "default"});
+    parser_pool_idle->set(0.0, {config.protocol, "default"});
+    parser_pool_busy->set(0.0, {config.protocol, "default"});
+    parser_session_seconds->observe(0.0, {config.protocol, "default"});
+    parser_healthcheck_seconds->observe(0.0, {config.protocol, "default"});
 
     // Accept loop (connections are closed until parser handoff is wired).
     while (!g_shutdown.load(std::memory_order_acquire)) {
@@ -246,12 +430,22 @@ int runListener(const ListenerConfig& config) {
             continue;
         }
 
+        connections_total->inc(1.0, label);
+        accept_total->inc(1.0, label);
+        open_connections->inc(1.0, label);
+
         std::cout << "Accepted connection from " << client_addr.host
                   << ":" << client_addr.port << "\n";
         client->close();
+
+        open_connections->dec(1.0, label);
     }
 
     server_socket->close();
+    control_plane.stop();
+    if (control_thread.joinable()) {
+        control_thread.join();
+    }
     scratchbird::network::cleanupNetwork();
     return 0;
 }

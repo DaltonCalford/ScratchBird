@@ -1,6 +1,6 @@
 # Tracker: Control-Plane Socket (Listener <-> Parser)
 
-Status: Not started
+Status: In progress
 Last Updated: 2026-01-18
 
 ## Scope
@@ -21,8 +21,8 @@ metrics, and socket handoff metadata.
 - Health/metrics hooks for pool supervision
 
 ## Work Items
-1) Control-plane message structs + serialization (versioned framing).
-2) Listener-side control-plane server socket (per protocol).
+1) Control-plane message structs + serialization (versioned framing). (done)
+2) Listener-side control-plane server socket (per protocol). (in progress)
 3) Parser-side control-plane client (register, heartbeat, recycle).
 4) Handoff metadata pipe and acknowledgement tracking.
 5) Metrics emission and status dump.

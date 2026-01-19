@@ -23,6 +23,10 @@
 #include <functional>
 #include <chrono>
 
+#ifndef _WIN32
+#include <sys/types.h>
+#endif
+
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
@@ -52,6 +56,8 @@ struct ProtocolConfig {
     uint16_t port;
     bool enabled;
     bool ssl_required = false;
+    uint32_t pool_min = 4;
+    uint32_t pool_max = 64;
 };
 
 /**
@@ -87,6 +93,10 @@ struct ServiceConfig {
     // Network
     std::string bind_address = "0.0.0.0";
     std::vector<ProtocolConfig> protocols;
+    std::string control_socket_dir = "/var/run/scratchbird";
+    std::string spawn_strategy = "hybrid";
+    uint32_t parser_max_requests = 0;
+    uint32_t parser_max_age_seconds = 0;
 
     // Unix socket
     std::string unix_socket = "/var/run/scratchbird/sb.sock";
@@ -366,6 +376,11 @@ public:
      */
     Daemon* daemon() { return daemon_.get(); }
 
+    /**
+     * Check if parse requested early exit (help/version/check)
+     */
+    bool exitRequested() const { return exit_after_parse_; }
+
     // ========================================================================
     // Databases
     // ========================================================================
@@ -461,6 +476,8 @@ private:
     void handleSignal(DaemonSignal signal);
     void doShutdown();
     void updateStats();
+    void checkListeners();
+    bool launchListenerProcess(ListenerProcess& listener, core::ErrorContext* ctx);
 
     // Log helper
     void log(ServiceConfig::LogLevel level, const std::string& message);
@@ -476,6 +493,7 @@ private:
     std::atomic<ServiceState> state_{ServiceState::UNINITIALIZED};
     std::atomic<bool> shutdown_requested_{false};
     std::atomic<bool> immediate_shutdown_{false};
+    bool exit_after_parse_{false};
 
     // Databases
     struct DatabaseInstance {
@@ -498,6 +516,24 @@ private:
     // Watchdog
     std::thread watchdog_thread_;
     std::atomic<bool> watchdog_running_{false};
+
+    struct ListenerProcess {
+        ProtocolConfig config;
+        std::string name;
+        std::string binary;
+        uint64_t start_count = 0;
+        uint64_t restart_count = 0;
+#ifdef _WIN32
+        void* process_handle = nullptr;
+        uint32_t process_id = 0;
+#else
+        pid_t pid = 0;
+#endif
+        bool running = false;
+    };
+
+    std::vector<ListenerProcess> listeners_;
+    mutable std::mutex listeners_mutex_;
 };
 
 // ============================================================================
@@ -523,6 +559,27 @@ struct CommandLineArgs {
     uint16_t mysql_port = 0;
     uint16_t fb_port = 0;
     std::string unix_socket;
+    std::string control_socket_dir;
+    std::string native_bind;
+    std::string pg_bind;
+    std::string mysql_bind;
+    std::string fb_bind;
+    bool enable_native = false;
+    bool enable_pg = false;
+    bool enable_mysql = false;
+    bool enable_fb = false;
+    bool disable_native = false;
+    bool disable_pg = false;
+    bool disable_mysql = false;
+    bool disable_fb = false;
+    uint32_t native_pool_min = 0;
+    uint32_t native_pool_max = 0;
+    uint32_t pg_pool_min = 0;
+    uint32_t pg_pool_max = 0;
+    uint32_t mysql_pool_min = 0;
+    uint32_t mysql_pool_max = 0;
+    uint32_t fb_pool_min = 0;
+    uint32_t fb_pool_max = 0;
 
     // Server
     uint32_t max_connections = 0;

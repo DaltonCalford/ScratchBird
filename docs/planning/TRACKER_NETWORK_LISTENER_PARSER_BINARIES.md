@@ -36,12 +36,12 @@ socket handoff, pool management, and TLS.
    - Parse CLI/config (done)
    - TLS config loading (no plaintext) (done)
    - Engine IPC endpoint validation (done)
-4) Update sb_server CLI parsing and config overrides for listener/pool flags.
-5) Wire listener process spawn/recycle (per protocol) into service controller.
-6) Emit baseline listener/pool metrics (status + counts).
+4) Update sb_server CLI parsing and config overrides for listener/pool flags. (done)
+5) Wire listener process spawn/recycle (per protocol) into service controller. (in progress)
+6) Emit baseline listener/pool metrics (status + counts). (in progress)
 
 ## Current Focus
-- Finish listener accept loop behavior and hook into control-plane tracker.
+- Listener spawn + restart handling and baseline metrics wiring.
 
 ## Notes
 - Socket handoff and control-plane protocol are tracked separately in

@@ -16,8 +16,51 @@
 #include <filesystem>
 #include <getopt.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 namespace scratchbird {
 namespace server {
+
+namespace {
+
+std::string protocolName(network::ProtocolType type) {
+    switch (type) {
+        case network::ProtocolType::NATIVE: return "scratchbird";
+        case network::ProtocolType::POSTGRESQL: return "postgresql";
+        case network::ProtocolType::MYSQL: return "mysql";
+        case network::ProtocolType::FIREBIRD: return "firebird";
+        default: return "unknown";
+    }
+}
+
+std::string listenerBinary(network::ProtocolType type) {
+    switch (type) {
+        case network::ProtocolType::NATIVE: return "sb_listener_native";
+        case network::ProtocolType::POSTGRESQL: return "sb_listener_pg";
+        case network::ProtocolType::MYSQL: return "sb_listener_mysql";
+        case network::ProtocolType::FIREBIRD: return "sb_listener_fb";
+        default: return "sb_listener_native";
+    }
+}
+
+std::string logLevelString(ServiceConfig::LogLevel level) {
+    switch (level) {
+        case ServiceConfig::LogLevel::DEBUG: return "debug";
+        case ServiceConfig::LogLevel::INFO: return "info";
+        case ServiceConfig::LogLevel::NOTICE: return "info";
+        case ServiceConfig::LogLevel::WARNING: return "warn";
+        case ServiceConfig::LogLevel::ERROR: return "error";
+        default: return "info";
+    }
+}
+
+}  // namespace
 
 // ============================================================================
 // Service State String Conversion
@@ -69,6 +112,10 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
     const ConfigSection* network = parser.section("network");
     if (network) {
         bind_address = network->getString("bind_address", bind_address);
+        control_socket_dir = network->getString("control_socket_dir", control_socket_dir);
+        spawn_strategy = network->getString("spawn_strategy", spawn_strategy);
+        parser_max_requests = static_cast<uint32_t>(network->getInt("parser_max_requests", parser_max_requests));
+        parser_max_age_seconds = static_cast<uint32_t>(network->getInt("parser_max_age_seconds", parser_max_age_seconds));
         unix_socket = network->getString("unix_socket", unix_socket);
         unix_socket_permissions = static_cast<mode_t>(network->getInt("unix_socket_permissions", unix_socket_permissions));
         unix_socket_group = network->getString("unix_socket_group", unix_socket_group);
@@ -77,23 +124,35 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
         protocols.clear();
 
         uint16_t native_port = static_cast<uint16_t>(network->getInt("native_port", 3092));
+        uint32_t native_pool_min = static_cast<uint32_t>(network->getInt("native_pool_min", 4));
+        uint32_t native_pool_max = static_cast<uint32_t>(network->getInt("native_pool_max", 64));
         if (native_port > 0) {
-            protocols.push_back({network::ProtocolType::NATIVE, bind_address, native_port, true});
+            protocols.push_back({network::ProtocolType::NATIVE, bind_address, native_port, true, false,
+                                 native_pool_min, native_pool_max});
         }
 
         uint16_t pg_port = static_cast<uint16_t>(network->getInt("pg_port", 5432));
+        uint32_t pg_pool_min = static_cast<uint32_t>(network->getInt("pg_pool_min", 4));
+        uint32_t pg_pool_max = static_cast<uint32_t>(network->getInt("pg_pool_max", 64));
         if (pg_port > 0) {
-            protocols.push_back({network::ProtocolType::POSTGRESQL, bind_address, pg_port, true});
+            protocols.push_back({network::ProtocolType::POSTGRESQL, bind_address, pg_port, true, false,
+                                 pg_pool_min, pg_pool_max});
         }
 
         uint16_t mysql_port = static_cast<uint16_t>(network->getInt("mysql_port", 3306));
+        uint32_t mysql_pool_min = static_cast<uint32_t>(network->getInt("mysql_pool_min", 4));
+        uint32_t mysql_pool_max = static_cast<uint32_t>(network->getInt("mysql_pool_max", 64));
         if (mysql_port > 0) {
-            protocols.push_back({network::ProtocolType::MYSQL, bind_address, mysql_port, true});
+            protocols.push_back({network::ProtocolType::MYSQL, bind_address, mysql_port, true, false,
+                                 mysql_pool_min, mysql_pool_max});
         }
 
         uint16_t fb_port = static_cast<uint16_t>(network->getInt("fb_port", 3050));
+        uint32_t fb_pool_min = static_cast<uint32_t>(network->getInt("fb_pool_min", 4));
+        uint32_t fb_pool_max = static_cast<uint32_t>(network->getInt("fb_pool_max", 64));
         if (fb_port > 0) {
-            protocols.push_back({network::ProtocolType::FIREBIRD, bind_address, fb_port, true});
+            protocols.push_back({network::ProtocolType::FIREBIRD, bind_address, fb_port, true, false,
+                                 fb_pool_min, fb_pool_max});
         }
     } else {
         // Use defaults
@@ -197,10 +256,10 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
 
 std::vector<ProtocolConfig> ServiceConfig::getDefaultProtocols() {
     return {
-        {network::ProtocolType::NATIVE, "0.0.0.0", 3092, true},
-        {network::ProtocolType::POSTGRESQL, "0.0.0.0", 5432, true},
-        {network::ProtocolType::MYSQL, "0.0.0.0", 3306, true},
-        {network::ProtocolType::FIREBIRD, "0.0.0.0", 3050, true}
+        {network::ProtocolType::NATIVE, "0.0.0.0", 3092, true, false, 4, 64},
+        {network::ProtocolType::POSTGRESQL, "0.0.0.0", 5432, false, false, 4, 64},
+        {network::ProtocolType::MYSQL, "0.0.0.0", 3306, false, false, 4, 64},
+        {network::ProtocolType::FIREBIRD, "0.0.0.0", 3050, false, false, 4, 64}
     };
 }
 
@@ -261,11 +320,13 @@ core::Status ServiceController::parseCommandLine(int argc, char* argv[], core::E
     // Handle help/version
     if (args.help) {
         printHelp(argv[0]);
+        exit_after_parse_ = true;
         return core::Status::OK;
     }
 
     if (args.version) {
         printVersion();
+        exit_after_parse_ = true;
         return core::Status::OK;
     }
 
@@ -297,6 +358,45 @@ core::Status ServiceController::parseCommandLine(int argc, char* argv[], core::E
         config_.bind_address = args.host;
         for (auto& proto : config_.protocols) {
             proto.bind_address = args.host;
+        }
+    }
+
+    if (!args.control_socket_dir.empty()) {
+        config_.control_socket_dir = args.control_socket_dir;
+    }
+
+    for (auto& proto : config_.protocols) {
+        switch (proto.type) {
+            case network::ProtocolType::NATIVE:
+                if (!args.native_bind.empty()) proto.bind_address = args.native_bind;
+                if (args.enable_native) proto.enabled = true;
+                if (args.disable_native) proto.enabled = false;
+                if (args.native_pool_min > 0) proto.pool_min = args.native_pool_min;
+                if (args.native_pool_max > 0) proto.pool_max = args.native_pool_max;
+                break;
+            case network::ProtocolType::POSTGRESQL:
+                if (!args.pg_bind.empty()) proto.bind_address = args.pg_bind;
+                if (args.enable_pg) proto.enabled = true;
+                if (args.disable_pg) proto.enabled = false;
+                if (args.pg_pool_min > 0) proto.pool_min = args.pg_pool_min;
+                if (args.pg_pool_max > 0) proto.pool_max = args.pg_pool_max;
+                break;
+            case network::ProtocolType::MYSQL:
+                if (!args.mysql_bind.empty()) proto.bind_address = args.mysql_bind;
+                if (args.enable_mysql) proto.enabled = true;
+                if (args.disable_mysql) proto.enabled = false;
+                if (args.mysql_pool_min > 0) proto.pool_min = args.mysql_pool_min;
+                if (args.mysql_pool_max > 0) proto.pool_max = args.mysql_pool_max;
+                break;
+            case network::ProtocolType::FIREBIRD:
+                if (!args.fb_bind.empty()) proto.bind_address = args.fb_bind;
+                if (args.enable_fb) proto.enabled = true;
+                if (args.disable_fb) proto.enabled = false;
+                if (args.fb_pool_min > 0) proto.pool_min = args.fb_pool_min;
+                if (args.fb_pool_max > 0) proto.pool_max = args.fb_pool_max;
+                break;
+            default:
+                break;
         }
     }
 
@@ -363,6 +463,7 @@ core::Status ServiceController::parseCommandLine(int argc, char* argv[], core::E
     // Config check mode
     if (args.check_config) {
         std::cout << "Configuration OK\n";
+        exit_after_parse_ = true;
         return core::Status::OK;
     }
 
@@ -734,24 +835,29 @@ core::Status ServiceController::openDatabases(core::ErrorContext* ctx) {
 }
 
 core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
-    // Note: Actual listener implementation would use the network layer
-    // For now, this is a placeholder that will be connected to the network infrastructure
     log(ServiceConfig::LogLevel::INFO, "Starting protocol listeners...");
 
-    for (const auto& proto : config_.protocols) {
-        if (!proto.enabled) continue;
+    std::lock_guard<std::mutex> lock(listeners_mutex_);
+    listeners_.clear();
 
-        std::string proto_name;
-        switch (proto.type) {
-            case network::ProtocolType::NATIVE: proto_name = "Native"; break;
-            case network::ProtocolType::POSTGRESQL: proto_name = "PostgreSQL"; break;
-            case network::ProtocolType::MYSQL: proto_name = "MySQL"; break;
-            case network::ProtocolType::FIREBIRD: proto_name = "Firebird"; break;
-            default: proto_name = "Unknown"; break;
+    for (const auto& proto : config_.protocols) {
+        if (!proto.enabled || proto.port == 0) {
+            continue;
+        }
+
+        ListenerProcess listener;
+        listener.config = proto;
+        listener.name = protocolName(proto.type);
+        listener.binary = listenerBinary(proto.type);
+
+        if (!launchListenerProcess(listener, ctx)) {
+            continue;
         }
 
         log(ServiceConfig::LogLevel::INFO,
-            proto_name + " listener on " + proto.bind_address + ":" + std::to_string(proto.port));
+            "Started " + listener.name + " listener on " + proto.bind_address + ":" +
+            std::to_string(proto.port));
+        listeners_.push_back(listener);
     }
 
     if (!config_.unix_socket.empty()) {
@@ -763,7 +869,163 @@ core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
 
 core::Status ServiceController::stopListeners(core::ErrorContext* ctx) {
     log(ServiceConfig::LogLevel::INFO, "Stopping listeners...");
+
+    std::lock_guard<std::mutex> lock(listeners_mutex_);
+    for (auto& listener : listeners_) {
+        if (!listener.running) {
+            continue;
+        }
+#ifdef _WIN32
+        if (listener.process_handle) {
+            TerminateProcess(listener.process_handle, 0);
+            CloseHandle(listener.process_handle);
+            listener.process_handle = nullptr;
+        }
+        listener.running = false;
+#else
+        if (listener.pid > 0) {
+            kill(listener.pid, SIGTERM);
+            int status = 0;
+            waitpid(listener.pid, &status, 0);
+            listener.pid = 0;
+        }
+        listener.running = false;
+#endif
+    }
+
+    listeners_.clear();
     return core::Status::OK;
+}
+
+bool ServiceController::launchListenerProcess(ListenerProcess& listener, core::ErrorContext* ctx) {
+    const auto& proto = listener.config;
+    std::vector<std::string> args;
+    args.push_back(listener.binary);
+    args.push_back("--bind");
+    args.push_back(proto.bind_address);
+    args.push_back("--port");
+    args.push_back(std::to_string(proto.port));
+    args.push_back("--pool-min");
+    args.push_back(std::to_string(proto.pool_min));
+    args.push_back("--pool-max");
+    args.push_back(std::to_string(proto.pool_max));
+    args.push_back("--spawn-strategy");
+    args.push_back(config_.spawn_strategy);
+
+    if (config_.parser_max_requests > 0) {
+        args.push_back("--max-requests");
+        args.push_back(std::to_string(config_.parser_max_requests));
+    }
+    if (config_.parser_max_age_seconds > 0) {
+        args.push_back("--max-age-seconds");
+        args.push_back(std::to_string(config_.parser_max_age_seconds));
+    }
+    if (!config_.control_socket_dir.empty()) {
+        args.push_back("--control-socket-dir");
+        args.push_back(config_.control_socket_dir);
+    }
+    if (!config_.config_file.empty()) {
+        args.push_back("--config");
+        args.push_back(config_.config_file);
+    }
+    args.push_back("--log-level");
+    args.push_back(logLevelString(config_.log_level));
+
+#ifdef _WIN32
+    std::string command_line;
+    for (const auto& item : args) {
+        if (!command_line.empty()) command_line += " ";
+        command_line += item;
+    }
+
+    STARTUPINFOA si{};
+    PROCESS_INFORMATION pi{};
+    si.cb = sizeof(si);
+    BOOL ok = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE,
+                             CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
+    if (!ok) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
+                              "Failed to spawn listener process");
+        }
+        log(ServiceConfig::LogLevel::ERROR,
+            "Failed to spawn listener: " + listener.binary);
+        return false;
+    }
+    listener.process_handle = pi.hProcess;
+    listener.process_id = pi.dwProcessId;
+    listener.running = true;
+    listener.start_count++;
+    CloseHandle(pi.hThread);
+#else
+    pid_t pid = fork();
+    if (pid < 0) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
+                              "Failed to fork listener process");
+        }
+        log(ServiceConfig::LogLevel::ERROR,
+            "Failed to fork listener: " + listener.binary);
+        return false;
+    }
+
+    if (pid == 0) {
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& item : args) {
+            argv.push_back(const_cast<char*>(item.c_str()));
+        }
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    listener.pid = pid;
+    listener.running = true;
+    listener.start_count++;
+#endif
+
+    return true;
+}
+
+void ServiceController::checkListeners() {
+    std::lock_guard<std::mutex> lock(listeners_mutex_);
+
+    for (auto& listener : listeners_) {
+        if (!listener.running) {
+            continue;
+        }
+#ifdef _WIN32
+        if (!listener.process_handle) {
+            continue;
+        }
+        DWORD exit_code = 0;
+        if (GetExitCodeProcess(listener.process_handle, &exit_code) && exit_code != STILL_ACTIVE) {
+            CloseHandle(listener.process_handle);
+            listener.process_handle = nullptr;
+            listener.running = false;
+            listener.restart_count++;
+            log(ServiceConfig::LogLevel::WARNING,
+                "Listener exited (" + listener.name + "), restarting");
+            if (!shutdown_requested_) {
+                launchListenerProcess(listener, nullptr);
+            }
+        }
+#else
+        int status = 0;
+        pid_t result = waitpid(listener.pid, &status, WNOHANG);
+        if (result == listener.pid) {
+            listener.running = false;
+            listener.pid = 0;
+            listener.restart_count++;
+            log(ServiceConfig::LogLevel::WARNING,
+                "Listener exited (" + listener.name + "), restarting");
+            if (!shutdown_requested_) {
+                launchListenerProcess(listener, nullptr);
+            }
+        }
+#endif
+    }
 }
 
 void ServiceController::mainLoop() {
@@ -772,6 +1034,8 @@ void ServiceController::mainLoop() {
         if (daemon_) {
             daemon_->checkSignals();
         }
+
+        checkListeners();
 
         // Update stats periodically
         updateStats();
@@ -886,6 +1150,27 @@ bool parseCommandLineArgs(int argc, char* argv[], CommandLineArgs& args, std::st
         {"pg-port", required_argument, nullptr, 1001},
         {"mysql-port", required_argument, nullptr, 1002},
         {"fb-port", required_argument, nullptr, 1003},
+        {"control-socket-dir", required_argument, nullptr, 1004},
+        {"enable-native", no_argument, nullptr, 1100},
+        {"enable-postgres", no_argument, nullptr, 1101},
+        {"enable-mysql", no_argument, nullptr, 1102},
+        {"enable-firebird", no_argument, nullptr, 1103},
+        {"disable-native", no_argument, nullptr, 1110},
+        {"disable-postgres", no_argument, nullptr, 1111},
+        {"disable-mysql", no_argument, nullptr, 1112},
+        {"disable-firebird", no_argument, nullptr, 1113},
+        {"native-bind", required_argument, nullptr, 1120},
+        {"postgres-bind", required_argument, nullptr, 1121},
+        {"mysql-bind", required_argument, nullptr, 1122},
+        {"firebird-bind", required_argument, nullptr, 1123},
+        {"native-pool-min", required_argument, nullptr, 1200},
+        {"native-pool-max", required_argument, nullptr, 1201},
+        {"postgres-pool-min", required_argument, nullptr, 1202},
+        {"postgres-pool-max", required_argument, nullptr, 1203},
+        {"mysql-pool-min", required_argument, nullptr, 1204},
+        {"mysql-pool-max", required_argument, nullptr, 1205},
+        {"firebird-pool-min", required_argument, nullptr, 1206},
+        {"firebird-pool-max", required_argument, nullptr, 1207},
         {"unix-socket", required_argument, nullptr, 'k'},
         {"max-connections", required_argument, nullptr, 'N'},
         {"shared-buffers", required_argument, nullptr, 'B'},
@@ -930,6 +1215,69 @@ bool parseCommandLineArgs(int argc, char* argv[], CommandLineArgs& args, std::st
                 break;
             case 1003:
                 args.fb_port = static_cast<uint16_t>(std::stoi(optarg));
+                break;
+            case 1004:
+                args.control_socket_dir = optarg;
+                break;
+            case 1100:
+                args.enable_native = true;
+                break;
+            case 1101:
+                args.enable_pg = true;
+                break;
+            case 1102:
+                args.enable_mysql = true;
+                break;
+            case 1103:
+                args.enable_fb = true;
+                break;
+            case 1110:
+                args.disable_native = true;
+                break;
+            case 1111:
+                args.disable_pg = true;
+                break;
+            case 1112:
+                args.disable_mysql = true;
+                break;
+            case 1113:
+                args.disable_fb = true;
+                break;
+            case 1120:
+                args.native_bind = optarg;
+                break;
+            case 1121:
+                args.pg_bind = optarg;
+                break;
+            case 1122:
+                args.mysql_bind = optarg;
+                break;
+            case 1123:
+                args.fb_bind = optarg;
+                break;
+            case 1200:
+                args.native_pool_min = static_cast<uint32_t>(std::stoul(optarg));
+                break;
+            case 1201:
+                args.native_pool_max = static_cast<uint32_t>(std::stoul(optarg));
+                break;
+            case 1202:
+                args.pg_pool_min = static_cast<uint32_t>(std::stoul(optarg));
+                break;
+            case 1203:
+                args.pg_pool_max = static_cast<uint32_t>(std::stoul(optarg));
+                break;
+            case 1204:
+                args.mysql_pool_min = static_cast<uint32_t>(std::stoul(optarg));
+                break;
+            case 1205:
+                args.mysql_pool_max = static_cast<uint32_t>(std::stoul(optarg));
+                break;
+            case 1206:
+                args.fb_pool_min = static_cast<uint32_t>(std::stoul(optarg));
+                break;
+            case 1207:
+                args.fb_pool_max = static_cast<uint32_t>(std::stoul(optarg));
                 break;
             case 'k':
                 args.unix_socket = optarg;
@@ -996,6 +1344,28 @@ void printHelp(const char* program_name) {
               << "                                Default: 3306\n\n"
               << "    --fb-port <PORT>            Firebird protocol port (0 to disable)\n"
               << "                                Default: 3050\n\n"
+              << "    --control-socket-dir <DIR>  Control socket directory\n"
+              << "                                Default: /var/run/scratchbird\n\n"
+              << "    --enable-native             Enable native listener\n"
+              << "    --enable-postgres           Enable PostgreSQL listener\n"
+              << "    --enable-mysql              Enable MySQL listener\n"
+              << "    --enable-firebird           Enable Firebird listener\n\n"
+              << "    --disable-native            Disable native listener\n"
+              << "    --disable-postgres          Disable PostgreSQL listener\n"
+              << "    --disable-mysql             Disable MySQL listener\n"
+              << "    --disable-firebird          Disable Firebird listener\n\n"
+              << "    --native-bind <ADDR>        Native listener bind address\n"
+              << "    --postgres-bind <ADDR>      PostgreSQL listener bind address\n"
+              << "    --mysql-bind <ADDR>         MySQL listener bind address\n"
+              << "    --firebird-bind <ADDR>      Firebird listener bind address\n\n"
+              << "    --native-pool-min <N>        Native parser pool min\n"
+              << "    --native-pool-max <N>        Native parser pool max\n"
+              << "    --postgres-pool-min <N>      PostgreSQL parser pool min\n"
+              << "    --postgres-pool-max <N>      PostgreSQL parser pool max\n"
+              << "    --mysql-pool-min <N>         MySQL parser pool min\n"
+              << "    --mysql-pool-max <N>         MySQL parser pool max\n"
+              << "    --firebird-pool-min <N>      Firebird parser pool min\n"
+              << "    --firebird-pool-max <N>      Firebird parser pool max\n\n"
               << "    -k, --unix-socket <PATH>    Unix domain socket path\n"
               << "                                Default: /var/run/scratchbird/sb.sock\n\n"
               << "    -N, --max-connections <N>   Maximum concurrent connections\n"
