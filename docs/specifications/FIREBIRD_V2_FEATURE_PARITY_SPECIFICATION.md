@@ -729,7 +729,7 @@ CREATE UNLOGGED TABLE test (id INT);  -- Creates normal logged table
 
 **Purpose:** Optimize performance by skipping optional write-after log writes
 
-**MGA Note:** ScratchBird does not use WAL for recovery, so UNLOGGED tables are effectively identical to regular tables today. If a write-after log (WAL) is introduced later (replication/PITR), UNLOGGED tables can bypass that stream.
+**MGA Note:** ScratchBird does not use WAL for recovery, so UNLOGGED tables are effectively identical to regular tables today. If a write-after log (WAL, optional post-gold) is introduced later (replication/PITR), UNLOGGED tables can bypass that stream.
 
 **Characteristics (PostgreSQL semantics):**
 - NOT written to write-after log (WAL, optional)

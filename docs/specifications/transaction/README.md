@@ -63,7 +63,7 @@ Hierarchical locking system:
 **CRITICAL:** ScratchBird implements pure Firebird MGA, NOT PostgreSQL MVCC:
 
 - ✅ **MGA:** Multiple versions in-place, no undo, garbage collection
-- ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL)/undo logs, VACUUM
+- ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL, optional post-gold)/undo logs, VACUUM
   (ScratchBird WAL is optional post-gold only)
 
 See [../../MGA_RULES.md](../../MGA_RULES.md) for absolute rules.

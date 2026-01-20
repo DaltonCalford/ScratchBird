@@ -126,7 +126,7 @@ This specification covers **Service Mode** - running ScratchBird as a persistent
 | Main | 1 | Signal handling, coordination |
 | Listener | 1 per protocol | Accept connections |
 | Worker | Configurable (default: CPU cores × 2) | Query execution |
-| Checkpoint | 1 per database | MGA checkpointing (no write-after log (WAL)) |
+| Checkpoint | 1 per database | MGA checkpointing (no write-after log (WAL, optional post-gold)) |
 | Garbage Collector | 1 per database | MGA version cleanup |
 | Stats Collector | 1 | Aggregate statistics |
 | Watchdog | 1 | Health monitoring |
@@ -775,7 +775,7 @@ role = primary
 # Replication slots
 max_replication_slots = 10
 
-# Write-after log (WAL) sender processes
+# Write-after log (WAL, optional post-gold) sender processes
 max_wal_senders = 10
 
 # Standby connection string (for standby role)
@@ -1883,7 +1883,7 @@ sb_admin show locks --blocking
 sb_admin show buffers --histogram
 
 # Write-after log status (optional post-gold)
-sb_admin show wal
+sb_admin show wal  # optional post-gold
 
 # Replication status (if enabled)
 sb_admin show replication

@@ -464,7 +464,7 @@ Bitmap* combined = Bitmap::AND(bitmap1, bitmap2);
 - Memtable (in-memory Red-Black tree)
 - Immutable SSTables (Sorted String Tables) on disk
 - Multiple levels with size-tiered compaction
-- Write-ahead log for durability
+- Write-after log (WAL, optional post-gold) for durability
 
 **File:** `src/core/lsm_tree_index.cpp`
 

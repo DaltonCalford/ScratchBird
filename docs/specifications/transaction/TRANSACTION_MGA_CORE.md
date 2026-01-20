@@ -937,10 +937,10 @@ Status prepare_transaction(
     pt->pt_deleted = copy_tuple_list(txn->txn_deleted_tuples);
     pt->pt_locks = copy_lock_list(txn->txn_locks);
     
-    // Write prepare record to write-after log (WAL)
+    // Write prepare record to write-after log (WAL, optional post-gold)
     pt->pt_prepare_lsn = write_prepare_record(pt);
     
-    // Flush write-after log (WAL) to ensure durability
+    // Flush write-after log (WAL, optional post-gold) to ensure durability
     flush_wal(pt->pt_prepare_lsn);
     
     // Update TIP to limbo state
@@ -1033,6 +1033,6 @@ This MGA core implementation provides:
 6. **Savepoints** and nested transaction support
 7. **Two-phase commit** for distributed transactions
 
-The system is designed to work without write-after log (WAL) for basic ACID
+The system is designed to work without write-after log (WAL, optional post-gold) for basic ACID
 properties (minus durability), with an optional post-gold write-after log (WAL)
 added only for replication/PITR (not crash recovery).

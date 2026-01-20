@@ -116,7 +116,7 @@ Reuse artifacts: [Component Model Diagrams](../diagrams/component_model_diagrams
 | Catalog virtualization | Primary | Support | None | Engine defines surfaces; parser emulates dialect views. |
 | Shared SBLR cache | Primary | None | None | Global cache across sessions with security gating. |
 | Per-session compile cache | None | Primary | None | SQL -> SBLR artifacts scoped to connection. |
-| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no write-after log (WAL) in core. |
+| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no write-after log (WAL, optional post-gold) in core. |
 | Scheduler (task planning) | Primary | None | None | Engine schedules GC and maintenance work. |
 | Job system (execution workers) | Primary | None | None | Engine owns background job execution. |
 | UDR connectors (local/remote) | Primary | None | None | Engine executes UDR connectors and enforces security. |
@@ -185,7 +185,7 @@ Transaction Engine Storage:
 │
 ├─ Persistent Storage (SSD)
 │  ├─ LSM tree for row versions
-│  ├─ Write-ahead log (durability)
+│  ├─ Write-after log (WAL, optional post-gold) (durability)
 │  └─ Periodic snapshots
 │
 └─ Replication Queue

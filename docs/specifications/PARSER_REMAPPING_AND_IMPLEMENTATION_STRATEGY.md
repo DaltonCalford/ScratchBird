@@ -413,8 +413,8 @@ These features should be explicitly rejected with clear error messages rather th
 
 **Justification:**
 - Performance optimization feature (not core functionality)
-- MGA has no write-after log (WAL), so UNLOGGED semantics are effectively identical to regular tables
-- If a write-after log is introduced later (for replication/PITR), UNLOGGED can bypass it
+- MGA has no write-after log (WAL, optional post-gold), so UNLOGGED semantics are effectively identical to regular tables
+- If a write-after log (WAL, optional post-gold) is introduced later (for replication/PITR), UNLOGGED can bypass it
 - Warning prevents user confusion
 
 **Alpha Implementation:**

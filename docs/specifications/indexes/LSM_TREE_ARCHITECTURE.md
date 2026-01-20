@@ -6,8 +6,7 @@
 
 ---
 
-**Scope Note:** "WAL" references in this spec refer to an optional post-gold
-per-index write-after log and do not imply a global recovery log.
+**Scope Note:** "WAL" references in this spec refer to a per-index write-after log (WAL, optional post-gold) and do not imply a global recovery log.
 
 ## Executive Summary
 
@@ -95,7 +94,7 @@ LSMTree (In-Memory Only)
    - No size-based eviction
 
 5. **Recovery**:
-   - No write-after log (WAL)
+   - No write-after log (WAL, optional post-gold)
    - No crash recovery
    - No durability guarantees
 
@@ -194,7 +193,7 @@ LSMTreeIndex (Full Production)
 - Parallel compaction (future)
 
 ✅ **Durability**:
-- Write-after log (WAL) support (future)
+- Write-after log (WAL, optional post-gold) support (future)
 - Crash recovery (future)
 - Atomic SSTable replacement
 
@@ -276,7 +275,7 @@ const size_t LEVEL2_MAX_SIZE = 400 * 1024 * 1024;  // 400MB
 |----------|------------------|---------------------|
 | **Dataset Size** | < 100K entries | Unlimited |
 | **Write Throughput** | < 1K writes/sec | > 10K writes/sec |
-| **Durability** | ❌ Not durable | ✅ Durable (with write-after log (WAL)) |
+| **Durability** | ❌ Not durable | ✅ Durable (with write-after log (WAL, optional post-gold)) |
 | **Memory Usage** | High (all in RAM) | Low (mostly on disk) |
 | **Read Performance** | Excellent (in-memory) | Good (with Bloom filters) |
 | **Setup Complexity** | Simple (no files) | Complex (directories, SSTables) |
@@ -386,14 +385,14 @@ CREATE INDEX new_lsm_index ON table(column) USING LSM;
    - No automatic compaction
 
 2. **LSMTreeIndex (Full)**:
-   - No write-after log (WAL) (crash recovery incomplete)
+   - No write-after log (WAL, optional post-gold) (crash recovery incomplete)
    - No compression (Snappy planned)
    - Single-threaded compaction
 
 ### Future Enhancements
 
 **Priority 1** (Critical):
-- Write-after log (WAL) for LSMTreeIndex
+- Write-after log (WAL, optional post-gold) for LSMTreeIndex
 - Crash recovery mechanism
 - Memory limits for LSMTree
 

@@ -825,7 +825,7 @@ TIMELINE_HISTORY 2
 
 ### Write-after Log (WAL) Data Messages (optional post-gold)
 
-**Scope Note:** ScratchBird does not implement write-after log (WAL)-based replication. This section is included as PostgreSQL protocol reference only.
+**Scope Note:** ScratchBird does not implement write-after log (WAL, optional post-gold)-based replication. This section is included as PostgreSQL protocol reference only.
 
 In streaming replication, `CopyBothResponse` is used and **all** replication traffic is carried inside `CopyData` (type 'd') messages. The first byte of the `CopyData` payload is a submessage type:
 - 'w' = XLogData (primary → standby)
@@ -838,16 +838,16 @@ The remaining bytes are the submessage payload as defined below.
 struct XLogData {
     char  type = 'w';
     int32 length;
-    int64 wal_start;   // WAL start position
-    int64 wal_end;     // WAL end position
+    int64 wal_start;   // WAL (optional post-gold) start position
+    int64 wal_end;     // WAL (optional post-gold) end position
     int64 timestamp;   // Send time
-    char  wal_data[];  // WAL data
+    char  wal_data[];  // WAL (optional post-gold) data
 };
 
 struct PrimaryKeepAlive {
     char  type = 'k';
     int32 length = 17;
-    int64 wal_end;     // Current end of WAL
+    int64 wal_end;     // Current end of WAL (optional post-gold)
     int64 timestamp;   // Send time
     char  reply_requested; // 1 if reply requested
 };
@@ -855,9 +855,9 @@ struct PrimaryKeepAlive {
 struct StandbyStatusUpdate {
     char  type = 'r';
     int32 length = 34;
-    int64 received;    // Last WAL byte received
-    int64 flushed;     // Last WAL byte flushed
-    int64 applied;     // Last WAL byte applied
+    int64 received;    // Last WAL (optional post-gold) byte received
+    int64 flushed;     // Last WAL (optional post-gold) byte flushed
+    int64 applied;     // Last WAL (optional post-gold) byte applied
     int64 timestamp;   // Send time
     char  reply_requested; // 1 if reply requested
 };

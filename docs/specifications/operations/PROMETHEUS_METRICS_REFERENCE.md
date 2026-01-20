@@ -348,7 +348,7 @@ scratchbird_index_size_bytes{database="mydb",index="idx_orders_date"} 268435456
 # HELP scratchbird_disk_usage_bytes Total disk usage
 # TYPE scratchbird_disk_usage_bytes gauge
 scratchbird_disk_usage_bytes{type="data"} 64424509440
-scratchbird_disk_usage_bytes{type="wal"} 1073741824
+scratchbird_disk_usage_bytes{type="wal"} 1073741824  # optional post-gold
 scratchbird_disk_usage_bytes{type="temp"} 536870912
 ```
 
@@ -362,22 +362,22 @@ scratchbird_disk_usage_bytes{type="temp"} 536870912
 
 ---
 
-## 7. Write-after Log (WAL)/Recovery Metrics
+## 7. Write-after log (WAL, optional post-gold)/Recovery Metrics
 
 **Scope Note:** MGA does not use write-after log (WAL) for recovery. These metrics apply only if an optional write-after log is introduced (post-gold).
 
 ```prometheus
-# HELP scratchbird_wal_bytes_written_total Write-after log (WAL) bytes written
+# HELP scratchbird_wal_bytes_written_total Write-after log (WAL, optional post-gold) bytes written
 # TYPE scratchbird_wal_bytes_written_total counter
 scratchbird_wal_bytes_written_total 9876543210
 
-# HELP scratchbird_wal_segments_total Write-after log (WAL) segments
+# HELP scratchbird_wal_segments_total Write-after log (WAL, optional post-gold) segments
 # TYPE scratchbird_wal_segments_total gauge
 scratchbird_wal_segments_total{state="active"} 3
 scratchbird_wal_segments_total{state="archived"} 1234
 scratchbird_wal_segments_total{state="pending_archive"} 2
 
-# HELP scratchbird_wal_segment_size_bytes Write-after log (WAL) segment size
+# HELP scratchbird_wal_segment_size_bytes Write-after log (WAL, optional post-gold) segment size
 # TYPE scratchbird_wal_segment_size_bytes gauge
 scratchbird_wal_segment_size_bytes 16777216
 

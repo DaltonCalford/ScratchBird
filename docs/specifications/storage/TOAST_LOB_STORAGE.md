@@ -172,11 +172,11 @@ bool isChunkVisible(uint64_t chunk_xmin, uint64_t chunk_xmax,
 
 ### Key Differences from PostgreSQL MVCC
 
-| Aspect | PostgreSQL (MVCC/write-after log (WAL)) | ScratchBird (MGA/TIP) |
+| Aspect | PostgreSQL (MVCC/write-after log (WAL, optional post-gold)) | ScratchBird (MGA/TIP) |
 |--------|----------------------|----------------------|
-| Visibility Source | Snapshot + write-after log (WAL) | TIP state only |
-| Crash Recovery | write-after log (WAL) replay | TIP state check |
-| Transaction State | In-memory + write-after log (WAL) | TIP (2-bit state) |
+| Visibility Source | Snapshot + write-after log (WAL, optional post-gold) | TIP state only |
+| Crash Recovery | write-after log (WAL, optional post-gold) replay | TIP state check |
+| Transaction State | In-memory + write-after log (WAL, optional post-gold) | TIP (2-bit state) |
 | Chunk Lifecycle | Snapshot-based | TIP-based |
 | Garbage Collection | Snapshot horizon | TIP state + orphan detection |
 
@@ -198,7 +198,7 @@ Each transaction has one of 4 states in TIP:
 
 ### Crash Recovery
 
-**Without write-after log (WAL)** (MGA approach):
+**Without write-after log (WAL, optional post-gold)** (MGA approach):
 
 1. Database crashes during TOAST operation
 2. On restart, check TIP for transaction state
@@ -206,7 +206,7 @@ Each transaction has one of 4 states in TIP:
 4. TOAST chunks with aborted xmin become invisible
 5. Garbage collection (sweep) physically removes orphaned chunks
 
-**NO write-after log (WAL) replay needed** - all state recovered from TIP.
+**NO write-after log (WAL, optional post-gold) replay needed** - all state recovered from TIP.
 
 ## Garbage Collection (MGA-Compliant)
 
@@ -402,7 +402,7 @@ When `ToastStrategy::EXTERNAL` is used:
 - ✅ Strategy selection logic
 - ✅ Error handling
 - ✅ **MGA compliance (TIP-based visibility)**
-- ✅ **Crash recovery (TIP state, no write-after log)**
+- ✅ **Crash recovery (TIP state, no write-after log (WAL, optional post-gold))**
 - ✅ **Concurrent operations (snapshot isolation)**
 - ✅ **Garbage collection (3-phase GC)**
 

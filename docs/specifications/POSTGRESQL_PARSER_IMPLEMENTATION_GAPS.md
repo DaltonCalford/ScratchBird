@@ -183,16 +183,16 @@ bool is_unlogged = matchKeyword(TokenType::KW_UNLOGGED);
 ```
 
 **PostgreSQL UNLOGGED semantics:**
-- Table is not written to the optional write-after log (WAL)
-- Faster writes (no write-after log overhead)
+- Table is not written to the optional write-after log (WAL, optional post-gold)
+- Faster writes (no write-after log (WAL, optional post-gold) overhead)
 - Truncated on crash recovery
 - Not replicated to standby servers
 
 **ScratchBird MGA note:**
-- MGA does not use write-after log (WAL) for recovery, so UNLOGGED tables are effectively the same as regular tables today.
-- If an optional write-after log is introduced later (replication/PITR), UNLOGGED can bypass that stream.
+- MGA does not use write-after log (WAL, optional post-gold) for recovery, so UNLOGGED tables are effectively the same as regular tables today.
+- If an optional write-after log (WAL, optional post-gold) is introduced later (replication/PITR), UNLOGGED can bypass that stream.
 
-**Result:** `CREATE UNLOGGED TABLE test (id INT)` creates a normal table. Under MGA, this is acceptable; any difference only appears if a write-after log is added later.
+**Result:** `CREATE UNLOGGED TABLE test (id INT)` creates a normal table. Under MGA, this is acceptable; any difference only appears if a write-after log (WAL, optional post-gold) is added later.
 
 #### Remediation
 
@@ -201,8 +201,8 @@ bool is_unlogged = matchKeyword(TokenType::KW_UNLOGGED);
 1. Pass `is_unlogged` flag to `parseCreateTable()`
 2. Emit flag in bytecode
 3. Store in catalog metadata
-4. Skip write-after log (if introduced)
-5. Truncate on crash recovery only if a write-after log durability path is introduced
+4. Skip write-after log (WAL, optional post-gold) if introduced
+5. Truncate on crash recovery only if a write-after log (WAL, optional post-gold) durability path is introduced
 
 **Effort:** 2-3 days
 **Priority:** **POST-ALPHA** (optimization feature)
@@ -601,8 +601,8 @@ emitByte(deferrable_flags);  // ✅ Emitted to bytecode
     - See FIREBIRD_V2_FEATURE_PARITY_SPECIFICATION.md
 
 11. **UNLOGGED TABLES** - 2-3 days
-    - Implement write-after log bypass (optional)
-    - Implement crash recovery truncation if write-after log durability is introduced
+    - Implement write-after log (WAL, optional post-gold) bypass (optional)
+    - Implement crash recovery truncation if write-after log (WAL, optional post-gold) durability is introduced
 
 12. **Expression Indexes** - 3-4 days
     - Parse expressions

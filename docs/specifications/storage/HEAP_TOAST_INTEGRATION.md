@@ -23,7 +23,7 @@ replication/PITR only.
 **MGA Compliance Achievements (November 2025)**:
 - Chunk format: TupleHeader + value_id (4) + chunk_seq (4) + chunk_size (4)
 - TIP-based visibility: `ToastVisibility::isChunkVisible()` uses TIP, not snapshots
-- Crash recovery: TIP state recovery, NO write-after log (WAL) replay
+- Crash recovery: TIP state recovery, NO write-after log (WAL, optional post-gold) replay
 - Garbage collection: Sweep/GC processes TOAST tables with 3-phase GC
 - **MGA Scorecard**: 6/6 (100%) - FULL MGA COMPLIANCE
 

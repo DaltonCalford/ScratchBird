@@ -326,7 +326,7 @@ test.db:
 
 ```
 test.db          - Main database file
-test.db.wal      - Write-ahead log (future)
+test.db.wal      - Write-after log (WAL, optional post-gold) (future)
 test.db.1        - Segment 1 when file > 1GB
 test.db.2        - Segment 2
 test.db.lock     - Lock file (contains PID)

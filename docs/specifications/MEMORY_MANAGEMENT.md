@@ -175,9 +175,9 @@ ScratchBird Memory Architecture:
 
 ### 2.3. MGA-Specific Memory Requirements
 
-**ScratchBird uses Firebird MGA, not PostgreSQL write-after log (WAL):**
+**ScratchBird uses Firebird MGA, not PostgreSQL write-after log (WAL, optional post-gold):**
 
-- **No write-after log (WAL) Buffers** - MGA doesn't require write-after log (WAL) for recovery
+- **No write-after log (WAL, optional post-gold) Buffers** - MGA doesn't require write-after log (WAL, optional post-gold) for recovery
 - **Multi-Version Storage** - Pages contain multiple tuple versions
 - **Transaction Marker Caching** - OIT, OAT, OST, NEXT in memory
 - **Sweep Metadata** - Garbage collection state tracking
@@ -199,13 +199,13 @@ struct TransactionState {
 
 **Comparison with PostgreSQL:**
 
-| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL)) |
+| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL, optional post-gold)) |
 |--------|-------------------|------------------|
-| **Write-after log (WAL) Buffers** | Not needed | 16 MB default |
+| **Write-after log (WAL, optional post-gold) Buffers** | Not needed | 16 MB default |
 | **Version Storage** | In-page (xmin/xmax) | TOAST + HOT |
 | **Commit Log** | Commit bitmap | CLOG files |
-| **Recovery** | No write-after log (WAL) replay | Write-after log (WAL) replay |
-| **Memory Overhead** | Lower (no write-after log (WAL)) | Higher (write-after log (WAL) + buffers) |
+| **Recovery** | No write-after log (WAL, optional post-gold) replay | Write-after log (WAL, optional post-gold) replay |
+| **Memory Overhead** | Lower (no write-after log (WAL, optional post-gold)) | Higher (write-after log (WAL, optional post-gold) + buffers) |
 
 ---
 
