@@ -24,6 +24,20 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        if (frames_.size() != config_.pool_size)
+        {
+            frames_.clear();
+            frames_.resize(config_.pool_size);
+        }
+        lru_list_.clear();
+
+        // Ensure page table partitions have buckets to avoid modulo-by-zero in hashing.
+        const size_t per_partition = std::max<size_t>(1, config_.pool_size / NUM_PAGE_TABLE_PARTITIONS);
+        for (auto& partition : page_table_partitions_)
+        {
+            partition.table.reserve(per_partition);
+        }
+
         // Allocate memory for each frame
         for (uint32_t i = 0; i < config_.pool_size; i++)
         {
@@ -99,6 +113,35 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        if (frames_.size() != config_.pool_size)
+        {
+            std::lock_guard<std::mutex> init_lock(mutex_);
+            if (frames_.size() != config_.pool_size)
+            {
+                frames_.clear();
+                frames_.resize(config_.pool_size);
+                lru_list_.clear();
+                for (uint32_t i = 0; i < config_.pool_size; i++)
+                {
+                    try
+                    {
+                        frames_[i].data = std::make_unique<uint8_t[]>(config_.page_size);
+                    }
+                    catch (const std::bad_alloc &)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                          "Failed to allocate buffer pool memory");
+                        return Status::OOM;
+                    }
+                    frames_[i].gpid = INVALID_GPID;
+                    frames_[i].pin_count.store(0, std::memory_order_relaxed);
+                    frames_[i].is_dirty = false;
+                    frames_[i].usage_count.store(0, std::memory_order_relaxed);
+                    lru_list_.push_back(i);
+                }
+            }
+        }
+
         // P2-1: Get partition for this GPID
         size_t partition_idx = getPartitionIndex(gpid);
         auto& partition = page_table_partitions_[partition_idx];
@@ -106,6 +149,10 @@ namespace scratchbird::core
         // First, try to find page with just the partition lock (fast path for cache hit)
         {
             std::lock_guard<std::mutex> partition_lock(partition.mutex);
+            if (partition.table.bucket_count() == 0)
+            {
+                partition.table.rehash(1);
+            }
 
             auto it = partition.table.find(gpid);
             if (it != partition.table.end())

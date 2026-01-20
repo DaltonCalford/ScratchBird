@@ -1,20 +1,24 @@
-# Y-Valve Design Principles and Implementation Guidelines
+# Listener/Parser Pool Design Principles (Legacy Y-Valve Terminology)
+
+**Scope Note:** The historical "Y-Valve" router is superseded by the listener +
+parser pool control plane. Any "Y-Valve" references in this document should be
+read as **listener/pool control plane** responsibilities.
 
 ## Core Design Philosophy
 
-The Y-Valve follows a **lean, fast, and focused** design philosophy:
+The listener/pool control plane follows a **lean, fast, and focused** design philosophy:
 
-1. **Minimal Core**: Y-Valve only handles routing and basic protocol detection
+1. **Minimal Core**: Listener/pool only handles routing and basic protocol detection
 2. **Parser Responsibility**: Protocol-specific logic lives in parser implementations
 3. **No Feature Creep**: Resist adding features that belong in parsers
 4. **Performance First**: Every decision prioritizes latency and throughput
 
 ## Separation of Concerns
 
-### Y-Valve Core (Minimal)
+### Listener/Pool Core (Minimal)
 
 ```c
-class YValveCore {
+class ListenerControlPlane {
     // ONLY these responsibilities:
     // 1. Detect protocol from initial bytes
     // 2. Create appropriate parser instance
@@ -23,10 +27,10 @@ class YValveCore {
     // 5. Track basic metrics
     
     void handleConnection(int socket_fd, const uint8_t* initial_data, size_t len) {
-        // Detect protocol
+        // Detect protocol (if using a shared port)
         ProtocolType protocol = detectProtocol(initial_data, len);
         
-        // Create parser
+        // Create parser or select worker from pool
         auto parser = factory.createParser(protocol);
         
         // Hand off completely to parser
@@ -204,7 +208,7 @@ private:
     
     BLRResult handleInternally(const std::string& sql) {
         // Generate results without going to engine
-        // This keeps Y-Valve and Engine lean
+        // This keeps the listener/pool control plane and engine lean
     }
 };
 ```
@@ -299,10 +303,10 @@ class FastSystemQueryHandler {
 };
 ```
 
-### 2. Minimal Y-Valve Overhead
+### 2. Minimal Listener/Pool Overhead
 
 ```c
-class YValveMetrics {
+class ListenerPoolMetrics {
     // Only track essential metrics
     struct CoreMetrics {
         std::atomic<uint64_t> connections_routed;
@@ -318,16 +322,16 @@ class YValveMetrics {
 
 ## Testing Strategy
 
-### 1. Y-Valve Core Tests (Minimal)
+### 1. Listener/Pool Core Tests (Minimal)
 
 ```c
-TEST(YValveCore, DetectsProtocols) {
+TEST(ListenerControlPlane, DetectsProtocols) {
     // Test protocol detection only
     EXPECT_EQ(detectProtocol(pg_bytes), PROTOCOL_POSTGRESQL);
     EXPECT_EQ(detectProtocol(mysql_bytes), PROTOCOL_MYSQL);
 }
 
-TEST(YValveCore, CreatesCorrectParser) {
+TEST(ListenerControlPlane, CreatesCorrectParser) {
     // Test parser factory only
     auto parser = factory.create(PROTOCOL_POSTGRESQL);
     EXPECT_NE(parser, nullptr);
@@ -387,7 +391,7 @@ WHERE c.relname = 'users';
 
 ## Documentation Requirements
 
-### For Y-Valve Core
+### For Listener/Pool Control Plane
 - Protocol detection algorithm
 - Parser lifecycle management
 - Basic metrics
@@ -403,10 +407,10 @@ WHERE c.relname = 'users';
 
 ## Success Metrics
 
-### Y-Valve Core
+### Listener/Pool Control Plane
 - **Detection Speed**: <1ms protocol detection
 - **Routing Overhead**: <0.1ms to parser handoff
-- **Memory Usage**: <1KB per connection in Y-Valve
+- **Memory Usage**: <1KB per connection in listener control plane
 
 ### Parser Performance
 - **System Query Speed**: <5ms for system catalog queries
@@ -415,7 +419,7 @@ WHERE c.relname = 'users';
 
 ## Summary
 
-This lean Y-Valve design:
+This lean listener/pool design:
 1. **Keeps the core minimal and fast**
 2. **Pushes complexity to parsers where it belongs**
 3. **Enables independent parser development**

@@ -6,7 +6,8 @@
 
 ---
 
-**Scope Note:** "WAL" references in this spec refer to an optional per-index write-after log and do not imply a global recovery log.
+**Scope Note:** "WAL" references in this spec refer to an optional post-gold
+per-index write-after log and do not imply a global recovery log.
 
 ## Executive Summary
 
@@ -476,13 +477,13 @@ index.getStatistics(&stats, ctx);
 // Alert if:
 // 1. Level 0 has > 20 SSTables (compaction falling behind)
 // 2. Total size > 10GB (disk space concern)
-// 3. Deleted entries > 50% (need VACUUM)
+// 3. Deleted entries > 50% (need GC/compaction)
 ```
 
 **Maintenance**:
 ```sql
 -- Manual compaction (if needed)
-VACUUM INDEX lsm_index;
+VACUUM INDEX lsm_index; -- PostgreSQL alias; maps to GC/compaction
 
 -- Rebuild index (if corrupted)
 REINDEX INDEX lsm_index;

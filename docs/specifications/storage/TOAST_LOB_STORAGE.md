@@ -5,6 +5,9 @@
 TOAST (The Oversized-Attribute Storage Technique) is a mechanism for storing large values that exceed the normal tuple size limits. It allows ScratchBird to handle large binary objects (LOBs), text, and other oversized data by storing them out-of-line in a separate TOAST table.
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
 
 ## Architecture
 
@@ -127,7 +130,7 @@ Status status = toast_mgr.delete_toast_value(
 );
 ```
 
-**Note**: Deletion sets xmax on all chunks for the value. Physical deletion happens during garbage collection (vacuum/sweep).
+**Note**: Deletion sets xmax on all chunks for the value. Physical deletion happens during sweep/GC.
 
 ## TIP-Based Visibility (MGA Compliance)
 
@@ -207,7 +210,7 @@ Each transaction has one of 4 states in TIP:
 
 ## Garbage Collection (MGA-Compliant)
 
-TOAST chunks are garbage collected during database vacuum/sweep using a **3-phase approach**:
+TOAST chunks are garbage collected during database sweep/GC using a **3-phase approach**:
 
 ### Phase 1: Orphan Detection
 
@@ -275,7 +278,7 @@ Status status = gc->cleanToastChunksByTIP(
 
 ### Vacuum Integration
 
-TOAST garbage collection is integrated into database vacuum:
+TOAST garbage collection is integrated into database sweep/GC:
 
 ```cpp
 // From src/core/vacuum.cpp

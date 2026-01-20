@@ -133,7 +133,7 @@ struct SBTransaction {
 
     // Connection info
     UUID            tra_session_uuid;      // Session UUID
-    uint64_t        tra_connection_id;     // Y-Valve connection ID
+    uint64_t        tra_connection_id;     // Listener/pool connection ID
 };
 ```
 
@@ -733,7 +733,7 @@ The state of every transaction in the database—whether it is active, committed
 
 ### 1.3 The Concept of Record Version Chains and "Back Versions"
 
-The implementation of versioning in Firebird diverges significantly from that of other popular MVCC databases like PostgreSQL. While PostgreSQL employs an append-only storage model, where an `UPDATE` creates an entirely new physical tuple and leaves the old one to be cleaned up later by a `VACUUM` process, Firebird is centered on the concept of "back versions".1
+The implementation of versioning in Firebird diverges significantly from that of other popular MVCC databases like PostgreSQL. While PostgreSQL employs an append-only storage model, where an `UPDATE` creates an entirely new physical tuple and leaves the old one to be cleaned up later by a PostgreSQL `VACUUM` process, Firebird is centered on the concept of "back versions".1 ScratchBird follows the Firebird model and does not implement PostgreSQL VACUUM phases.
 
 When a transaction updates a record, it performs two distinct but related operations 1:
 
@@ -920,7 +920,7 @@ These garbage versions consume valuable disk space and can elongate record versi
 
 ### 5.2 The Firebird Sweep Mechanism
 
-Firebird employs a garbage collection process known as "sweep," which is functionally analogous to the `VACUUM` process in PostgreSQL.27 The sweep process systematically scans the data pages of the database, identifies garbage record versions based on the current transaction state, and removes them. This action frees up space on the page, which can then be reused for new records or back versions, and shortens version chains.28
+Firebird employs a garbage collection process known as "sweep," which is conceptually analogous to PostgreSQL `VACUUM` but with different semantics.27 The sweep process scans data pages, identifies obsolete **back versions** based on transaction state, and removes them. Primary record slots remain stable; space is reclaimed within pages and version chains are shortened.28
 
 A notable feature of Firebird's approach is that garbage collection is not solely the responsibility of a dedicated background process. It is also "co-operative." As described previously, any user transaction that reads a record and traverses its version chain (`VIO_chase_record_version`) has the ability to identify and purge garbage versions it encounters along the way.11 This distributed, on-the-fly cleanup helps to mitigate the accumulation of garbage in frequently accessed tables. However, for tables with low read activity or for cleaning up the remnants of long-running transactions, a dedicated sweep is still necessary.
 

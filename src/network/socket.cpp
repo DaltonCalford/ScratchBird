@@ -791,7 +791,8 @@ core::Status Socket::applyOptions(const SocketOptions& options, core::ErrorConte
         auto s = setReusePort(true, ctx);
         if (s != core::Status::OK) return s;
     }
-    if (options.tcp_nodelay && type_ == SocketType::STREAM) {
+    if (options.tcp_nodelay && type_ == SocketType::STREAM &&
+        family_ != AddressFamily::UNIX) {
         auto s = setTcpNoDelay(true, ctx);
         if (s != core::Status::OK) return s;
     }

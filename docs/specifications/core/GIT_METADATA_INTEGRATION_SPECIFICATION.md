@@ -32,6 +32,12 @@ ScratchBird Git Integration provides version control for database schema and met
 | PR-based schema review | Extended |
 | Automatic rollback scripts | Extended |
 
+### 1.4 Non-Goals
+
+- Git integration does not version row data (use seeds for reference data only).
+- Git integration is not used for crash recovery or durability.
+- Git operations do not replace SQL transactions; all schema changes still execute under MGA rules.
+
 ---
 
 ## 2. Architecture
@@ -87,6 +93,53 @@ ScratchBird Git Integration provides version control for database schema and met
 
 ---
 
+## 2.1 Git Object Model (Reference)
+
+Git stores content as immutable objects:
+- **Blob**: file content
+- **Tree**: directory structure (names + modes + object IDs)
+- **Commit**: snapshot of a tree plus parent commit(s) and metadata
+- **Tag**: optional named reference to a commit
+
+The Git index (staging area) is a transient structure used to build a commit.
+
+## 2.2 ScratchBird Mapping
+
+ScratchBird maps database metadata to Git objects:
+- Schema object files are **blobs** (DDL text).
+- Directory structure under `schema/` is a **tree**.
+- Each export or migration batch produces a **commit**.
+- Optional tags identify release points (`sbdb-1.0`, `sbdb-1.1`, etc).
+
+Commit metadata includes:
+- database UUID
+- user/role
+- timestamp
+- migration batch ID (if applicable)
+
+## 2.3 Integration Modes
+
+| Mode | Source of Truth | Use Case |
+|------|-----------------|----------|
+| Export-only | Database | Auditing and review |
+| Import-only | Git | GitOps / CI-driven migrations |
+| Bidirectional | Both | Dev environments and controlled staging |
+
+Rules:
+- Production environments should be Import-only or Export-only.
+- Bidirectional mode requires conflict detection and explicit resolution.
+
+## 2.4 Repository Topologies
+
+- **Working tree repo**: Local checkout with `schema/` and `migrations/` files.
+  - Best for export/import and diff operations.
+- **Bare repo + workdir**: Bare repo as source of truth, temporary workdir for export.
+  - Best for servers that must keep repository files out of working paths.
+
+`repository.repo_mode` and `repository.repo_path` control the topology.
+
+---
+
 ## 3. Repository Structure
 
 ### 3.1 Standard Directory Layout
@@ -95,6 +148,7 @@ ScratchBird Git Integration provides version control for database schema and met
 my-database-repo/
 ├── .scratchbird.yml           # Configuration file
 ├── schema/                    # Current schema definitions
+│   ├── _manifest.json         # Object UUID -> file mapping
 │   ├── tables/
 │   │   ├── public.users.sql
 │   │   ├── public.orders.sql
@@ -139,6 +193,7 @@ Each object exported as individual SQL file:
 -- schema/tables/public.users.sql
 -- ScratchBird Schema Export
 -- Object: TABLE public.users
+-- Object ID: 018f6a8d-2aa5-7e2a-8a2b-0e3a4f1b2c3d
 -- Exported: 2024-03-01T10:30:00Z
 -- Checksum: sha256:abc123...
 
@@ -189,6 +244,37 @@ DROP INDEX IF EXISTS idx_orders_user;
 DROP TABLE IF EXISTS public.orders;
 ```
 
+### 3.4 Deterministic Export Rules
+
+To avoid noisy diffs, schema export must be canonical and deterministic:
+- Preserve column order as stored in the catalog (ordinal position).
+- Sort constraints, indexes, and grants by name.
+- Normalize whitespace and indentation (4 spaces).
+- Use explicit schema qualifiers for all objects.
+- Omit volatile metadata (OID-like IDs, internal page IDs).
+- Normalize string literals to single quotes.
+
+### 3.5 Object Identity and Manifest
+
+Each exported object includes its UUID in a header comment:
+
+```sql
+-- Object ID: 018f6a8d-2aa5-7e2a-8a2b-0e3a4f1b2c3d
+```
+
+Exports also write a manifest to preserve rename history:
+
+```
+schema/_manifest.json
+```
+
+The manifest maps:
+- object_uuid -> file path
+- object_type, schema, name
+- checksum
+
+This allows rename detection without losing Git history.
+
 ---
 
 ## 4. Configuration
@@ -201,15 +287,23 @@ version: 1
 
 # Repository settings
 repository:
-  type: git
-  url: git@github.com:company/database-schema.git
-  branch: main
+  repo_type: git
+  repo_url: git@github.com:company/database-schema.git
+  repo_path: /var/lib/scratchbird/git/schema-repo
+  repo_mode: working          # working | bare
+  repo_branch: main
+  integration_mode: export_only   # export_only | import_only | bidirectional
   auto_commit: false
   auto_push: false
+  auto_pull: true
+  sign_commits: false
+  commit_template: "sbdb {db_uuid} {user} {timestamp}"
 
 # Schema export settings
 schema:
   directory: schema
+  manifest: true
+  canonicalize: true
   include_grants: true
   include_comments: true
   include_defaults: true
@@ -268,6 +362,134 @@ notifications:
       - dba@example.com
 ```
 
+### 4.2 Configuration File (sb_config.ini)
+
+```
+; sb_config.ini
+[git.repository]
+repo_type = git
+repo_url = git@github.com:company/database-schema.git
+repo_path = /var/lib/scratchbird/git/schema-repo
+repo_mode = working
+repo_branch = main
+integration_mode = export_only
+auto_commit = false
+auto_push = false
+auto_pull = true
+sign_commits = false
+commit_template = sbdb {db_uuid} {user} {timestamp}
+
+[git.schema]
+directory = schema
+manifest = true
+canonicalize = true
+include_grants = true
+include_comments = true
+include_defaults = true
+separate_indexes = true
+file_per_object = true
+schemas = public,app
+exclude_schemas = pg_catalog,information_schema
+exclude_tables = temporary_*,_migration_*
+
+[git.migrations]
+directory = migrations
+table = public._migrations
+naming = versioned
+generate_down = true
+transaction_per_file = true
+checksum_validation = true
+
+[git.environments.development]
+database = dev_db
+auto_apply = true
+
+[git.environments.production]
+database = prod_db
+approval_required = true
+backup_before_apply = true
+
+[git.hooks]
+pre_export = ./scripts/validate_naming.sh
+post_export = ./scripts/update_docs.sh
+pre_migrate = ./scripts/backup_schema.sh
+post_migrate = ./scripts/notify_team.sh
+
+[git.notifications.slack]
+webhook = ${SLACK_WEBHOOK_URL}
+channel = #database-changes
+
+[git.notifications.email]
+recipients = dba@example.com
+```
+
+### 4.3 Configuration Key Notes
+
+- `repository.repo_path`: local path for the working tree or bare repository.
+- `repository.repo_mode`: `working` (default) or `bare`.
+- `repository.repo_url`: remote repository URL.
+- `repository.repo_branch`: default branch for operations.
+- `repository.integration_mode`: `export_only`, `import_only`, or `bidirectional`.
+- `repository.sign_commits`: sign commits with configured GPG/SSH key.
+- `repository.commit_template`: format string for commit messages.
+- `schema.manifest`: write `schema/_manifest.json` for rename tracking.
+- `schema.canonicalize`: export deterministic DDL for stable diffs.
+- `migrations.checksum_validation`: reject altered migrations.
+
+Key normalization rules:
+- `.scratchbird.yml` uses nested objects; `sb_config.ini` uses section prefixes.
+- Leaf key names are identical across both formats (snake_case).
+
+Canonical repository keys (final):
+- `repository.repo_type`
+- `repository.repo_url`
+- `repository.repo_path`
+- `repository.repo_mode`
+- `repository.repo_branch`
+- `repository.integration_mode`
+- `repository.auto_commit`
+- `repository.auto_push`
+- `repository.auto_pull`
+- `repository.sign_commits`
+- `repository.commit_template`
+
+Example mappings:
+| .scratchbird.yml | sb_config.ini |
+| --- | --- |
+| `repository.repo_url` | `[git.repository] repo_url` |
+| `repository.repo_path` | `[git.repository] repo_path` |
+| `repository.repo_mode` | `[git.repository] repo_mode` |
+| `schema.directory` | `[git.schema] directory` |
+| `migrations.directory` | `[git.migrations] directory` |
+| `environments.production.approval_required` | `[git.environments.production] approval_required` |
+
+### 4.4 Migration Notes (Repository Key Renames)
+
+Legacy keys (deprecated aliases):
+- `repository.type` -> `repository.repo_type`
+- `repository.url` -> `repository.repo_url`
+- `repository.path` -> `repository.repo_path`
+- `repository.mode` -> `repository.repo_mode`
+- `repository.branch` -> `repository.repo_branch`
+
+Migration rules:
+- Prefer the canonical `repo_*` names in all new configs.
+- If both legacy and canonical keys are set, canonical values take precedence.
+
+### 4.5 Implementation Validation (Current Code)
+
+Validation against `src/git/GitConfigParser.cpp` (read-only audit):
+- Parser currently recognizes legacy keys: `repository.url`, `repository.branch`,
+  `repository.auto_commit`, `repository.auto_push`, `repository.auto_pull`,
+  `repository.ssh_key`.
+- Parser does not parse `repository.path`, `repository.mode`, or any `repository.repo_*`
+  canonical keys yet.
+- Parser is YAML-only today; `sb_config.ini` support is pending.
+
+Required update (when code is writable):
+- Add canonical `repository.repo_*` keys with legacy aliases.
+- Enforce canonical precedence when both are present.
+
 ---
 
 ## 5. SQL Interface
@@ -278,10 +500,12 @@ notifications:
 -- Initialize Git integration for database
 INIT GIT REPOSITORY
     URL 'git@github.com:company/db-schema.git'
+    PATH '/var/lib/scratchbird/git/schema-repo'
     BRANCH 'main'
     OPTIONS (
         ssh_key '/path/to/id_rsa',
-        auto_commit FALSE
+        auto_commit FALSE,
+        sign_commits FALSE
     );
 
 -- Show Git status
@@ -305,6 +529,9 @@ GIT CHECKOUT BRANCH 'feature/new-tables';
 
 -- Create new branch
 GIT CREATE BRANCH 'feature/add-orders';
+
+-- Show recent Git history
+SHOW GIT LOG LIMIT 20;
 ```
 
 ### 5.2 Schema Export
@@ -439,6 +666,26 @@ SHOW SCHEMA DIFF WITH BRANCH 'production';
 SHOW SCHEMA DIFF BRANCH 'main' WITH BRANCH 'feature/orders';
 ```
 
+### 5.6 Process Flows
+
+**Export to Git (DB -> Git):**
+1. Acquire SYS$GIT_LOCK.
+2. Export canonical DDL to working tree.
+3. Update `schema/_manifest.json`.
+4. Stage changes in Git index.
+5. Commit (auto or manual).
+6. Update SYS$GIT_STATE and SYS$DDL_HISTORY.git_commit.
+7. Release SYS$GIT_LOCK.
+
+**Import from Git (Git -> DB):**
+1. Acquire SYS$GIT_LOCK.
+2. Pull/fetch remote changes.
+3. Diff Git vs database catalog.
+4. Generate migration plan (or use migrations/).
+5. Execute migration within transaction boundary.
+6. Record SYS$MIGRATIONS and SYS$GIT_STATE.
+7. Release SYS$GIT_LOCK.
+
 ---
 
 ## 6. DDL Change Tracking
@@ -475,7 +722,7 @@ CREATE TABLE SYS$DDL_HISTORY (
     ddl_statement TEXT NOT NULL,
     old_definition TEXT,                -- For ALTER/DROP
     new_definition TEXT,                -- For CREATE/ALTER
-    git_commit VARCHAR(40),             -- If committed to Git
+    git_commit VARCHAR(64),             -- If committed to Git (sha1 or sha256)
     application_name VARCHAR(128),
     client_ip VARCHAR(45)
 );
@@ -505,6 +752,26 @@ GIT DISCARD CHANGES;
 
 -- Discard specific change
 GIT DISCARD CHANGE event_id;
+```
+
+### 6.4 Commit Linking Rules
+
+- If `repository.auto_commit = true`, a successful DDL transaction commit triggers:
+  1) schema export
+  2) Git commit
+  3) sys$ddl_history.git_commit updates for all DDL events in that transaction
+- If `repository.auto_commit = false`, DDL events accumulate until an explicit
+  `GIT COMMIT` is issued.
+- Each Git commit must reference the set of DDL event IDs it includes
+  (stored in commit message footer or Git notes).
+- If Git commit fails, the DDL transaction is not rolled back. The database is
+  marked dirty in SYS$GIT_STATE and can be re-exported and committed later.
+
+Commit footer example:
+```
+SBDB-DB-UUID: 018f6a8d-2aa5-7e2a-8a2b-0e3a4f1b2c3d
+SBDB-USER: admin
+SBDB-DDL-EVENTS: 9b3f..., 12aa..., 77ff...
 ```
 
 ---
@@ -714,6 +981,35 @@ sb_admin migration status
 sb_admin schema diff --branch main
 ```
 
+### 9.4 GitOps Operating Guide (Migration-Safe)
+
+**Baseline rules**
+- Git is the control plane; migrations are the only deployable unit.
+- Direct DDL in staging/production is disabled (import-only mode).
+- Applied migrations are immutable; new migrations correct old ones.
+
+**Development (bidirectional)**
+- Mode: `repository.integration_mode = bidirectional`, working tree.
+- Workflow: local DDL -> export -> generate migration -> PR.
+- Validation: run `sb_admin migration validate` before merge.
+
+**Staging (import-only)**
+- Mode: `repository.integration_mode = import_only`.
+- Workflow: apply migrations from main branch or release candidate tag.
+- Approvals: required for destructive changes (DROP, ALTER TYPE, data backfills).
+- Rollback: use tested down migrations; prefer forward fix when possible.
+
+**Production (import-only, gated)**
+- Mode: `repository.integration_mode = import_only`.
+- Approvals: always required; `approval_required = true`, `backup_before_apply = true`.
+- Inputs: only signed commits or release tags; no force-push allowed.
+- Rollback policy: restore from backup if down migration is unsafe; otherwise
+  rollback only for explicit, tested down migrations.
+
+**Audit and traceability**
+- Track approvals in commit messages or change tickets.
+- Verify `SYS$DDL_HISTORY`, `SYS$MIGRATIONS`, `SYS$GIT_SYNC_HISTORY` after apply.
+
 ---
 
 ## 10. Conflict Resolution
@@ -845,14 +1141,36 @@ CREATE TABLE SYS$GIT_CONFIG (
     updated_at TIMESTAMP NOT NULL
 );
 
+-- Git working state (per database)
+CREATE TABLE SYS$GIT_STATE (
+    db_uuid UUID PRIMARY KEY,
+    repo_path TEXT NOT NULL,
+    branch VARCHAR(128) NOT NULL,
+    head_commit VARCHAR(64),
+    last_export_commit VARCHAR(64),
+    last_import_commit VARCHAR(64),
+    last_sync_time TIMESTAMP,
+    mode VARCHAR(16),             -- export_only | import_only | bidirectional
+    is_dirty BOOLEAN NOT NULL
+);
+
+-- Git operation lock (single-row)
+CREATE TABLE SYS$GIT_LOCK (
+    lock_id INTEGER PRIMARY KEY DEFAULT 1,
+    locked_at TIMESTAMP,
+    locked_by VARCHAR(128),
+    lock_reason VARCHAR(256),
+    CONSTRAINT single_lock CHECK (lock_id = 1)
+);
+
 -- Git sync history
 CREATE TABLE SYS$GIT_SYNC_HISTORY (
     sync_id UUID PRIMARY KEY,
     sync_time TIMESTAMP NOT NULL,
     sync_type VARCHAR(32) NOT NULL,  -- PULL, PUSH, EXPORT, IMPORT
     branch VARCHAR(128),
-    commit_before VARCHAR(40),
-    commit_after VARCHAR(40),
+    commit_before VARCHAR(64),
+    commit_after VARCHAR(64),
     objects_affected INTEGER,
     user_name VARCHAR(128),
     success BOOLEAN NOT NULL,
@@ -899,6 +1217,8 @@ REVOKE GIT_PUSH FROM developer_role;
 -- GIT_ROLLBACK - Rollback migrations
 -- GIT_PUSH - Push to remote
 -- GIT_PULL - Pull from remote
+
+-- Force-push is disabled by default; if enabled, requires GIT_ADMIN.
 ```
 
 ### 13.3 Sensitive Data Handling
@@ -916,6 +1236,13 @@ schema:
   exclude_grants_for:
     - 'admin_role'
 ```
+
+### 13.4 Hook and Script Safety
+
+- Hook execution is disabled by default in production environments.
+- Hooks run under the server account with a restricted environment.
+- Hook scripts must be allowlisted via configuration.
+- Hook output is captured and recorded in SYS$GIT_SYNC_HISTORY.
 
 ---
 
@@ -958,24 +1285,80 @@ BASELINE MIGRATIONS AT V005;
 
 ---
 
-## 15. Implementation Notes
+## 15. Implementation Plan (Phased Milestones)
 
-### 15.1 Dependencies
+### 15.1 Phase 0 - Config and Repository Bootstrap
+
+- GitConfigParser.cpp: parse `.scratchbird.yml` and `sb_config.ini`, validate keys.
+- GitRepository.cpp: init/open repo, clone, fetch, checkout, status.
+- GitIntegration.cpp: INIT GIT REPOSITORY, SHOW GIT STATUS, GIT PULL/PUSH.
+- Output: SYS$GIT_CONFIG and SYS$GIT_STATE seeded with validated settings.
+
+### 15.2 Phase 1 - Export and DDL Tracking
+
+- DDLTracker.cpp: capture DDL, write SYS$DDL_HISTORY.
+- SchemaExporter.cpp: canonical export, manifest output, options handling.
+- GitRepository.cpp: stage/commit, attach notes/footers.
+- GitIntegration.cpp: EXPORT SCHEMA, GIT COMMIT, auto_commit flow.
+- Output: deterministic schema export with commit linking.
+
+### 15.3 Phase 2 - Import and Migration Runner
+
+- SchemaImporter.cpp: apply schema files, compute import plan.
+- MigrationManager.cpp: generate/apply/rollback/validate migrations.
+- GitRepository.cpp: pull before import, branch enforcement.
+- GitIntegration.cpp: IMPORT SCHEMA, APPLY MIGRATIONS, VALIDATE MIGRATIONS.
+- Output: import-only workflows with checksum validation.
+
+### 15.4 Phase 3 - Diff and Conflict Resolution
+
+- SchemaExporter.cpp / SchemaImporter.cpp: diff computation and metadata mapping.
+- GitIntegration.cpp: SHOW SCHEMA DIFF, SHOW GIT CONFLICTS, RESOLVE GIT CONFLICT.
+- DDLTracker.cpp: conflict metadata and audit entries.
+- Output: explicit conflict detection and resolution paths.
+
+### 15.5 Phase 4 - CI/CD and Safety Controls
+
+- GitIntegration.cpp: environment gating, approval_required, backup_before_apply.
+- MigrationManager.cpp: lock enforcement, dry run validation, timing limits.
+- GitRepository.cpp: commit signing, reject force-push in protected modes.
+- Output: GitOps-ready enforcement in staging/production.
+
+---
+
+## 16. Implementation Notes
+
+### 16.1 Dependencies
 
 - libgit2 for Git operations
 - OpenSSL for SSH authentication
 - Optional: GitHub/GitLab API for PR integration
+- Git operations must use libgit2 APIs (no shelling out to git binaries)
 
-### 15.2 Performance Considerations
+### 16.2 Git Object Format
+
+- Support SHA-1 and SHA-256 repositories.
+- Detect object format from the repository configuration and store commit hashes
+  in VARCHAR(64) fields.
+
+### 16.3 Performance Considerations
 
 - Large schema exports chunked by object type
 - Incremental export (only changed objects)
 - Background sync with configurable intervals
 - Migration execution with statement timeout
 
-### 15.3 Limitations
+### 16.4 Limitations
 
 - Binary files (BLOBs) not versioned
 - Table data not included (use seeds for reference data)
 - Some DDL operations may require exclusive locks
 - Cross-database dependencies not tracked
+
+---
+
+## 17. References
+
+- Git Book: https://git-scm.com/book/en/v2
+- Git object format: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
+- libgit2: https://libgit2.org/

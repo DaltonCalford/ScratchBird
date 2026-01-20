@@ -18,7 +18,7 @@ typedef struct sb_statistics {
     
     // Basic statistics
     uint64_t        n_tuples;          // Number of tuples
-    uint64_t        n_dead_tuples;     // Dead tuples (for vacuum)
+    uint64_t        n_dead_tuples;     // Dead tuples (for sweep/GC)
     uint64_t        n_pages;           // Number of pages
     uint64_t        n_all_visible_pages; // Pages with all visible tuples
     

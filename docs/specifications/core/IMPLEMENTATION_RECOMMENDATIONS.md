@@ -5,6 +5,9 @@
 
 After analyzing the implementation details of FirebirdSQL, PostgreSQL, MySQL/MariaDB, and Microsoft SQL Server, I recommend a hybrid approach that leverages the best practices from each system while maintaining ScratchBird's unique architectural advantages.
 
+**Terminology Note:** Historical "Y-Valve" references in this document map to the
+current listener + parser pool control plane.
+
 ## 1. INDEX IMPLEMENTATION
 
 ### Current Approach Analysis
@@ -70,7 +73,7 @@ typedef struct sb_btree_page {
 - **MySQL**: Query result caching, compression
 - **SQL Server**: Connection context preservation, MARS
 
-**ScratchBird's Y-Valve Advantages:**
+**ScratchBird's Listener/Pool Advantages:**
 - Multi-protocol support already designed
 - Protocol detection and routing
 - Parser factory pattern
@@ -113,7 +116,7 @@ typedef struct sb_connection_pool {
 - **Compression**: Add zstd compression for all protocols (better than MySQL's zlib)
 - **Multiplexing**: Support multiple logical connections over single TCP connection
 
-#### 2.3 Y-Valve Enhancements
+#### 2.3 Listener/Pool Enhancements
 - **Smart Routing**: Route read queries to replicas automatically
 - **Protocol Translation Cache**: Cache translated queries between protocols
 - **Connection Migration**: Move connections between servers without disconnection
@@ -200,7 +203,7 @@ typedef struct sb_cost_config {
 
 **Strengths in Other Databases:**
 - **Firebird**: Efficient MGA, good page management
-- **PostgreSQL**: Robust MVCC, visibility maps, parallel vacuum
+- **PostgreSQL**: Robust MVCC, visibility maps, parallel VACUUM
 - **MySQL**: Multiple storage engines, adaptive buffer pool
 - **SQL Server**: Sophisticated buffer management, read-ahead
 
@@ -226,7 +229,7 @@ typedef struct sb_buffer_pool {
     
     // Ring buffers (PostgreSQL-style)
     RingBuffer*     bp_ring_sequential;  // For sequential scans
-    RingBuffer*     bp_ring_vacuum;      // For vacuum
+    RingBuffer*     bp_ring_vacuum;      // For sweep/GC (vacuum alias)
     RingBuffer*     bp_ring_bulkwrite;   // For bulk operations
     
     // Adaptive features (MySQL InnoDB)
@@ -274,7 +277,7 @@ typedef struct sb_page_header {
 
 #### 4.3 Storage Features Priority
 1. **Phase 1**: Basic MGA with TIP pages
-2. **Phase 2**: Parallel vacuum/sweep
+2. **Phase 2**: Parallel sweep/GC
 3. **Phase 3**: Compression (page and column level)
 4. **Phase 4**: Encryption at rest
 5. **Future**: Tiered storage (hot/warm/cold)
@@ -324,7 +327,7 @@ typedef struct sb_lock_manager {
         ACCESS_SHARE,     // SELECT
         ROW_SHARE,        // SELECT FOR UPDATE
         ROW_EXCLUSIVE,    // UPDATE, DELETE
-        SHARE_UPDATE_EXCLUSIVE, // VACUUM, DDL
+        SHARE_UPDATE_EXCLUSIVE, // Sweep/GC, DDL
         SHARE,           // CREATE INDEX
         SHARE_ROW_EXCLUSIVE,
         EXCLUSIVE,       // DROP TABLE
@@ -392,7 +395,7 @@ typedef struct sb_transaction {
 
 ### Phase 1: Foundation (Months 1-3)
 - Implement basic B-Tree indexes with compression
-- Complete Y-Valve connection pooling
+- Complete listener/pool connection pooling
 - Basic cost-based optimizer
 - MGA with TIP pages
 - Simple lock manager
@@ -401,7 +404,7 @@ typedef struct sb_transaction {
 - Add hash indexes
 - Protocol compression and multiplexing
 - Join reordering optimizer
-- Parallel vacuum
+- Parallel sweep/GC
 - Deadlock detection
 
 ### Phase 3: Advanced (Months 7-9)

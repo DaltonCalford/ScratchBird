@@ -166,7 +166,7 @@ SET search_path TO myschema, public;
 
 2. Free space:
    - Delete old backups
-   - Vacuum tables: `VACUUM FULL;`
+   - Run sweep/GC: `SWEEP;` (VACUUM alias)
    - Archive old data
 
 3. Expand disk if needed

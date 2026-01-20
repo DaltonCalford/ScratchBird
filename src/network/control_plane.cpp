@@ -22,7 +22,7 @@ namespace scratchbird::network {
 
 namespace {
 
-constexpr size_t CONTROL_PLANE_HEADER_SIZE = 24;
+constexpr size_t CONTROL_PLANE_HEADER_SIZE = 28;
 constexpr size_t CONTROL_PLANE_MAX_MESSAGE = 1024;
 
 void appendU16(std::vector<uint8_t>& out, uint16_t value) {
@@ -212,7 +212,7 @@ core::Status receiveControlPlaneMessage(Socket& socket,
     msg.msg_control = control;
     msg.msg_controllen = sizeof(control);
 
-    ssize_t received = ::recvmsg(socket.getFd(), &msg, 0);
+    ssize_t received = ::recvmsg(socket.getFd(), &msg, MSG_WAITALL);
     if (received <= 0) {
         SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE, "recvmsg failed");
         return core::Status::CONNECTION_FAILURE;

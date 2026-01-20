@@ -19,10 +19,14 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
+#include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/optimizer/statistics_manager.h"
+#include "scratchbird/security/scram_auth.h"
+#include <nlohmann/json.hpp>
+#include <openssl/md5.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -33,9 +37,102 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <iomanip>
+#include <sstream>
 
 namespace scratchbird::core
 {
+    namespace {
+    constexpr uint32_t kSysarchScramIterations = 4096;
+    constexpr const char* kSysarchUser = "SYSARCH";
+    constexpr const char* kSysarchPassword = "ScratchBirdBeta1!";
+
+    std::string toHexLower(const unsigned char* data, size_t len)
+    {
+        std::ostringstream oss;
+        oss << std::hex << std::setfill('0');
+        for (size_t i = 0; i < len; ++i)
+        {
+            oss << std::setw(2) << static_cast<int>(data[i]);
+        }
+        return oss.str();
+    }
+
+    std::string computePgMd5StoredHash(const std::string& username,
+                                       const std::string& password)
+    {
+        std::string input = password + username;
+        unsigned char hash[MD5_DIGEST_LENGTH];
+        MD5(reinterpret_cast<const unsigned char*>(input.data()), input.size(), hash);
+        return "md5" + toHexLower(hash, MD5_DIGEST_LENGTH);
+    }
+
+    core::Status buildPasswordHashPayload(const std::string& username,
+                                          const std::string& password,
+                                          std::string& out)
+    {
+        using json = nlohmann::json;
+        json payload = json::object();
+        payload["bcrypt"] = core::PasswordHash::hashPassword(password);
+        payload["md5"] = computePgMd5StoredHash(username, password);
+
+        json scram = json::object();
+        auto add_scram = [&](security::ScramAlgorithm algo, const char* key) -> core::Status
+        {
+            std::vector<uint8_t> salt;
+            std::vector<uint8_t> stored_key;
+            std::vector<uint8_t> server_key;
+            auto status = security::generateScramCredentials(
+                password, algo, kSysarchScramIterations, salt, stored_key, server_key);
+            if (status != core::Status::OK)
+            {
+                return status;
+            }
+
+            json entry = json::object();
+            entry["iterations"] = kSysarchScramIterations;
+            entry["salt"] = security::base64Encode(salt);
+            entry["stored_key"] = security::base64Encode(stored_key);
+            entry["server_key"] = security::base64Encode(server_key);
+            scram[key] = entry;
+            return core::Status::OK;
+        };
+
+        auto status = add_scram(security::ScramAlgorithm::SHA_256, "sha256");
+        if (status != core::Status::OK)
+        {
+            return status;
+        }
+        status = add_scram(security::ScramAlgorithm::SHA_512, "sha512");
+        if (status != core::Status::OK)
+        {
+            return status;
+        }
+
+        payload["scram"] = scram;
+        out = payload.dump();
+        return core::Status::OK;
+    }
+
+    core::Status ensureSysarchUser(CatalogManager* catalog, ErrorContext* ctx)
+    {
+        std::string password_hash;
+        auto status = buildPasswordHashPayload(kSysarchUser, kSysarchPassword, password_hash);
+        if (status != Status::OK)
+        {
+            if (ctx)
+            {
+                ctx->set(status, "Failed to build SYSARCH password hash",
+                         __FILE__, __LINE__, __func__);
+            }
+            return status;
+        }
+
+        ID user_id;
+        status = catalog->ensureUserExists(kSysarchUser, password_hash, ID(), true, user_id, ctx);
+        return status;
+    }
+    } // namespace
 
     Database::Database()
     {
@@ -977,6 +1074,12 @@ namespace scratchbird::core
         }
 
         status = catalog_manager_->initializePolicyToastIfNeeded(ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
+        }
+        status = ensureSysarchUser(catalog_manager_.get(), ctx);
         if (status != Status::OK)
         {
             close();

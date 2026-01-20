@@ -490,7 +490,7 @@ Status BloomFilter::rebuild(ErrorContext* ctx) {
 
 **Rebuild triggers:**
 1. After N insertions (e.g., 100K inserts → rebuild)
-2. During VACUUM
+2. During sweep/GC
 3. Manual REINDEX command
 
 ### MGA Compliance Summary

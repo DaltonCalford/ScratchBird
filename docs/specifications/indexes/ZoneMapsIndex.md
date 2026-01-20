@@ -694,7 +694,7 @@ struct ZoneColumnStats {
 };
 
 // Rebuild trigger conditions:
-// 1. After VACUUM/GC
+// 1. After sweep/GC
 // 2. After N updates (configurable threshold)
 // 3. Manual REINDEX command
 // 4. When statistics age > threshold (e.g., 1 hour)
@@ -1711,7 +1711,7 @@ Status Executor::executeCreateIndex(const uint8_t* bytecode, size_t* offset,
    - Trigger rebuild if needed
 
 3. **GC integration (2-4 hours)**
-   - Rebuild during VACUUM
+   - Rebuild during sweep/GC
    - Clean up stale statistics
 
 ### Phase 5: Query Planner (20-28 hours)

@@ -54,8 +54,8 @@ This directory contains comprehensive technical specifications for the ScratchBi
 | [**indexes/**](indexes/) | Index implementations | 11 index types including HNSW, LSM, columnstore | ✅ Organized |
 | [**types/**](types/) | Data types | Types, domains, arrays, geometry, timezones | ✅ Organized |
 | [**query/**](query/) | Query optimization | Optimizer, planner | ✅ Organized |
-| [**sblr/**](sblr/) | Bytecode runtime | SBLR opcodes, BLR mapping, execution | ✅ Organized |
-| [**core/**](core/) | Core internals | Y-Valve, thread safety, internal functions | ✅ Organized |
+| [**sblr/**](sblr/) | Bytecode runtime | SBLR opcodes, BLR mapping, execution, performance (Alpha/Beta) | ✅ Organized |
+| [**core/**](core/) | Core internals | Listener/pool architecture, thread safety, internal functions | ✅ Organized |
 | [**catalog/**](catalog/) | System catalog | Catalog structure, schema resolution, components | ✅ Organized |
 
 ### Security & Authentication
@@ -81,7 +81,7 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**network/**](network/) | Network layer & wire protocols | Network layer, listener & parser pool, Y-Valve | ✅ Organized |
+| [**network/**](network/) | Network layer & wire protocols | Network layer, listener & parser pool (legacy Y-Valve term) | ✅ Organized |
 | [**wire_protocols/**](wire_protocols/) | Protocol specifications | TDS (post-gold) and other protocols | ✅ Active |
 | [**api/**](api/) | Client APIs | Client library API, connection pooling | ✅ Organized |
 
@@ -112,6 +112,7 @@ Key network specs:
 | [**compression/**](compression/) | Compression framework | Compression specifications | ✅ Organized |
 | [**udr/**](udr/) | User-Defined Resources | UDR system specification | ✅ Organized |
 | [**triggers/**](triggers/) | Trigger system | Trigger context variables | ✅ Organized |
+| [**scheduler/**](scheduler/) | Job scheduler and runner | Canonical scheduler spec (Alpha + Beta) | ✅ Organized |
 | [**operations/**](operations/) | Operations & monitoring | Prometheus metrics + listener/pool metrics | ✅ Organized |
 | [**admin/**](admin/) | Administration tools | CLI administration + sb_server network CLI | ✅ Organized |
 | [**deployment/**](deployment/) | Deployment | systemd service specification | ✅ Organized |

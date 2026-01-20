@@ -78,7 +78,7 @@ RULES:
 
 ## Critical Sections (Alpha)
 
-Commit sequence (no write-after log (WAL) in Alpha):
+Commit sequence (no write-after log (WAL) in Alpha; optional post-gold only):
 1) Acquire TIP exclusive lock
 2) Update TIP state to Committed
 3) Release TIP lock

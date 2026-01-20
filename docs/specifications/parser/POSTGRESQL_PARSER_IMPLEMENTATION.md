@@ -9,7 +9,7 @@
 - Parses SQL syntax only (no wire protocol)
 - **No PostgreSQL wire protocol support**
 - No system catalog emulation
-- No Y-Valve integration (Y-Valve doesn't exist)
+- Listener/pool integration (no standalone Y-Valve router)
 - Direct API only
 
 **This specification describes a future Phase 2+ feature.**
@@ -18,7 +18,9 @@
 
 ## Overview
 
-This document provides the complete implementation specification for the PostgreSQL parser module (PLANNED) that will interface with the Y-Valve. The parser will handle ALL PostgreSQL-specific logic, keeping the Y-Valve core lean.
+This document provides the complete implementation specification for the PostgreSQL
+parser module (PLANNED) that interfaces with the listener/pool control plane.
+The parser handles ALL PostgreSQL-specific logic, keeping the listener layer lean.
 
 ## Parser Responsibilities (PLANNED)
 
@@ -663,7 +665,7 @@ SELECT event_time AT TIME ZONE 'America/New_York' FROM events;
 
 This PostgreSQL parser implementation:
 - Handles ALL PostgreSQL-specific logic
-- Keeps Y-Valve core minimal
+- Keeps listener/pool control plane minimal
 - Provides full system catalog emulation
 - Supports current version (15.x) with framework for older versions
 - Enables transparent migration from PostgreSQL

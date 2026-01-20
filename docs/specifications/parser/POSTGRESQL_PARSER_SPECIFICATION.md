@@ -1376,7 +1376,7 @@ X'1FF'       -- hexadecimal bit string
 | pg_prepared_xacts | Prepared transactions |
 | pg_stat_activity | Session activity |
 | pg_stat_replication | Replication statistics |
-| pg_stat_wal_receiver | Write-after log (WAL) receiver statistics |
+| pg_stat_wal_receiver | Write-after log (WAL) receiver statistics (optional post-gold) |
 | pg_stat_database | Database statistics |
 | pg_stat_all_tables | Table statistics |
 | pg_stat_all_indexes | Index statistics |

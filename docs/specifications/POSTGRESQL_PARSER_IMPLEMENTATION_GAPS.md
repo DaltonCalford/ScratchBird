@@ -5,6 +5,10 @@
 **Status:** ACTIVE - Alpha Requirement
 **Priority:** CRITICAL - Must complete before Alpha release
 
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
+
 ---
 
 ## Executive Summary

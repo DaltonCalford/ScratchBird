@@ -367,7 +367,7 @@ std::vector<uint32_t> evaluateRLE(const RLERun* runs, size_t num_runs,
 - Use TransactionId (uint64_t), NOT Snapshot
 - TIP-based visibility (Transaction Inventory Pages)
 - xmin/xmax on all versions
-- Soft delete (set xmax, physical removal via VACUUM)
+- Soft delete (set xmax, physical removal via sweep/GC)
 - No PostgreSQL MVCC contamination
 
 ### 4.2 Segment-Level Versioning
@@ -565,7 +565,7 @@ Root Segment (id_column)
 4. Write to new segment
 5. Update segment chain
 6. Mark old segment as deleted (set xmax)
-7. VACUUM will reclaim old segment later
+7. Sweep/GC will reclaim old segment later
 
 ---
 
@@ -646,7 +646,7 @@ Root Segment (id_column)
 - Row-level xmin/xmax vectors
 - TIP-based visibility checks
 - Soft delete handling
-- VACUUM integration
+- Sweep/GC integration
 - Multi-version segment handling
 
 ### 8.5 Batch Processing (20-30 hours)
@@ -683,7 +683,7 @@ Root Segment (id_column)
 - Test visibility across transactions
 - Test concurrent reads
 - Test soft deletes
-- Test VACUUM integration
+- Test sweep/GC integration
 - Test xmin/xmax correctness
 
 ### 9.4 Performance Tests

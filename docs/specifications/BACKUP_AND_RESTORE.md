@@ -4,6 +4,10 @@
 **Last Updated:** 2026-01-07
 **Status:** ✅ Complete
 
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
+
 ---
 
 ## Table of Contents
@@ -1164,8 +1168,8 @@ bool is_tx_committed(uint64_t tx_id, BackupSnapshot* snapshot) {
 
 1. **Run Sweep Before Backup** (recommended for cold backups)
    ```sql
-   -- Force sweep before backup
-   VACUUM FULL;
+   -- Force sweep/GC before backup (VACUUM is a PostgreSQL alias)
+   SWEEP;
    ```
 
 2. **Accept Dead Tuples** (acceptable for hot backups)

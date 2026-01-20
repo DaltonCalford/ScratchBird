@@ -55,7 +55,7 @@ Reuse artifacts: [Component Model Diagrams](../diagrams/component_model_diagrams
 - Provides remote database connectors and local file connectors (UDR-backed).
 - Monitors stale connections/transactions; runs GC, job scheduler tasks, and maintenance jobs (index rebuilds, sweeps).
 - Durability model follows Firebird-style MGA; no write-after log (WAL) in the engine core.
-  - Write-after log (WAL) may exist for replication/PITR.
+  - Optional post-gold write-after log (WAL) may exist for replication/PITR.
   - Beta temporal database is expected to supersede write-after log (WAL) needs for recovery.
 
 ### Parser (Dialect Adapter)

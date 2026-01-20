@@ -823,7 +823,7 @@ CREATE_REPLICATION_SLOT slot_name LOGICAL pgoutput
 TIMELINE_HISTORY 2
 ```
 
-### Write-after Log (WAL) Data Messages
+### Write-after Log (WAL) Data Messages (optional post-gold)
 
 **Scope Note:** ScratchBird does not implement write-after log (WAL)-based replication. This section is included as PostgreSQL protocol reference only.
 

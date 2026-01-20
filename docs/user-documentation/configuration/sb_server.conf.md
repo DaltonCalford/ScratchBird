@@ -256,7 +256,7 @@ Memory per operation for sorts, hash joins, etc.
 maintenance_work_mem = 64MB
 ```
 
-Memory for maintenance operations (VACUUM, CREATE INDEX).
+Memory for maintenance operations (sweep/GC, CREATE INDEX).
 
 **Recommendation:** Higher values speed up maintenance.
 

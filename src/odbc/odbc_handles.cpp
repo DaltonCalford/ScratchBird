@@ -6,6 +6,7 @@
  */
 
 #include "scratchbird/odbc/odbc_handles.h"
+#include "scratchbird/client/driver_config.h"
 #include "scratchbird/odbc/odbc_client_bridge.h"
 #include "scratchbird/core/status.h"
 
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <regex>
 #include <sstream>
 
@@ -1537,77 +1539,68 @@ size_t OdbcConnection::getStatementCount() const {
 }
 
 SQLRETURN OdbcConnection::parseConnectionString(const std::string& conn_str) {
-    // Parse key=value pairs separated by semicolons
-    std::regex pair_regex(R"(([^=;]+)=([^;]*))");
-    std::smatch match;
-    std::string::const_iterator search_start = conn_str.cbegin();
+    std::map<std::string, std::string> params;
+    scratchbird::client::parseKeyValueConnectionString(conn_str, params, nullptr);
 
-    while (std::regex_search(search_start, conn_str.cend(), match, pair_regex)) {
-        std::string key = match[1].str();
-        std::string value = match[2].str();
+    for (const auto& entry : params) {
+        const std::string& key = entry.first;
+        const std::string& value = entry.second;
 
-        // Trim whitespace
-        auto trim = [](std::string& s) {
-            s.erase(0, s.find_first_not_of(" \t"));
-            s.erase(s.find_last_not_of(" \t") + 1);
-        };
-        trim(key);
-        trim(value);
-
-        // Convert key to uppercase for comparison
-        std::string key_upper = key;
-        std::transform(key_upper.begin(), key_upper.end(), key_upper.begin(), ::toupper);
-
-        // Remove braces from driver name
-        if (value.size() >= 2 && value.front() == '{' && value.back() == '}') {
-            value = value.substr(1, value.size() - 2);
-        }
-
-        if (key_upper == "DRIVER") {
+        if (key == "driver") {
             params_.driver = value;
-        } else if (key_upper == "DSN") {
+        } else if (key == "dsn") {
             params_.dsn = value;
-        } else if (key_upper == "SERVER" || key_upper == "HOST") {
+        } else if (key == "server" || key == "host") {
             params_.server = value;
-        } else if (key_upper == "PORT") {
-            params_.port = static_cast<uint16_t>(std::stoi(value));
-        } else if (key_upper == "DATABASE" || key_upper == "DB") {
+        } else if (key == "port") {
+            try {
+                params_.port = static_cast<uint16_t>(std::stoul(value));
+            } catch (...) {
+            }
+        } else if (key == "database" || key == "db") {
             params_.database = value;
-        } else if (key_upper == "UID" || key_upper == "USER") {
+        } else if (key == "uid" || key == "user" || key == "username") {
             params_.user = value;
-        } else if (key_upper == "PWD" || key_upper == "PASSWORD") {
+        } else if (key == "pwd" || key == "password") {
             params_.password = value;
-        } else if (key_upper == "SSL" || key_upper == "SSLMODE") {
+        } else if (key == "ssl" || key == "sslmode") {
             params_.ssl_mode = value;
-        } else if (key_upper == "SSLCERT") {
+        } else if (key == "sslcert") {
             params_.ssl_cert = value;
-        } else if (key_upper == "SSLKEY") {
+        } else if (key == "sslkey") {
             params_.ssl_key = value;
-        } else if (key_upper == "SSLROOTCERT") {
+        } else if (key == "sslrootcert") {
             params_.ssl_root_cert = value;
-        } else if (key_upper == "PROTOCOL") {
+        } else if (key == "protocol") {
             params_.protocol = value;
-        } else if (key_upper == "TIMEOUT" || key_upper == "CONNECTTIMEOUT") {
-            params_.connect_timeout = static_cast<uint32_t>(std::stoi(value));
-        } else if (key_upper == "QUERYTIMEOUT") {
-            params_.query_timeout = static_cast<uint32_t>(std::stoi(value));
-        } else if (key_upper == "APPLICATIONNAME" || key_upper == "APP") {
+        } else if (key == "timeout" || key == "connecttimeout") {
+            try {
+                params_.connect_timeout = static_cast<uint32_t>(std::stoul(value));
+            } catch (...) {
+            }
+        } else if (key == "querytimeout") {
+            try {
+                params_.query_timeout = static_cast<uint32_t>(std::stoul(value));
+            } catch (...) {
+            }
+        } else if (key == "applicationname" || key == "application_name" || key == "app") {
             params_.application_name = value;
-        } else if (key_upper == "SCHEMA" || key_upper == "CURRENTSCHEMA") {
+        } else if (key == "schema" || key == "currentschema") {
             params_.schema = value;
-        } else if (key_upper == "CHARSET" || key_upper == "ENCODING") {
+        } else if (key == "charset" || key == "encoding") {
             params_.charset = value;
-        } else if (key_upper == "READONLY") {
+        } else if (key == "readonly") {
             params_.read_only = (value == "true" || value == "1" || value == "yes");
-        } else if (key_upper == "AUTOCOMMIT") {
+        } else if (key == "autocommit") {
             params_.auto_commit = (value == "true" || value == "1" || value == "yes");
-        } else if (key_upper == "PACKETSIZE") {
-            params_.packet_size = static_cast<uint32_t>(std::stoi(value));
-        } else if (key_upper == "POOLING") {
+        } else if (key == "packetsize") {
+            try {
+                params_.packet_size = static_cast<uint32_t>(std::stoul(value));
+            } catch (...) {
+            }
+        } else if (key == "pooling") {
             params_.pooling = (value == "true" || value == "1" || value == "yes");
         }
-
-        search_start = match.suffix().first;
     }
 
     return SQL_SUCCESS;

@@ -448,7 +448,7 @@ shared_buffers = 128MB
 # Work memory per operation (sorts, hash joins)
 work_mem = 4MB
 
-# Maintenance work memory (VACUUM, CREATE INDEX)
+# Maintenance work memory (sweep/GC, CREATE INDEX)
 maintenance_work_mem = 64MB
 
 # Maximum memory for result sets
@@ -465,7 +465,7 @@ huge_pages = try
 #==============================================================================
 [storage]
 # Optional write-after log (post-gold). MGA does not use write-after log (WAL) for recovery; these are no-ops until implemented.
-# Write-after log (WAL) directory (default: same as data directory)
+# Write-after log (WAL, optional post-gold) directory (default: same as data directory)
 wal_dir =
 
 # Checkpoint interval (seconds)
@@ -474,10 +474,10 @@ checkpoint_interval = 300
 # Checkpoint completion target (0.0 - 1.0)
 checkpoint_completion_target = 0.9
 
-# Maximum write-after log (WAL) size before checkpoint (bytes)
+# Maximum write-after log (WAL, optional post-gold) size before checkpoint (bytes)
 max_wal_size = 1073741824  # 1GB
 
-# Minimum write-after log (WAL) size to retain
+# Minimum write-after log (WAL, optional post-gold) size to retain
 min_wal_size = 80MB
 
 # fsync after each commit: on | off (DANGEROUS if off)
@@ -489,7 +489,7 @@ synchronous_commit = on
 # Full page writes after checkpoint
 full_page_writes = on
 
-# Write-after log (WAL) compression
+# Write-after log (WAL, optional post-gold) compression
 wal_compression = zstd
 
 # Data file sync method: fsync | fdatasync | open_sync | open_datasync
@@ -730,16 +730,18 @@ statsd_prefix = scratchbird
 # MAINTENANCE SECTION
 #==============================================================================
 [maintenance]
-# Auto-vacuum enabled
+# TODO: Rename autovacuum_* to gc_* after current work completes; keep autovacuum_* as
+#       compatibility aliases. No code changes in this phase.
+# Auto sweep/GC enabled (PostgreSQL autovacuum alias)
 autovacuum = true
 
-# Auto-vacuum check interval (seconds)
+# Auto sweep/GC check interval (seconds)
 autovacuum_interval = 60
 
-# Vacuum threshold (dead tuples)
+# GC threshold (dead versions)
 autovacuum_threshold = 50
 
-# Vacuum scale factor
+# GC scale factor
 autovacuum_scale_factor = 0.2
 
 # Analyze threshold
@@ -748,10 +750,10 @@ autoanalyze_threshold = 50
 # Analyze scale factor
 autoanalyze_scale_factor = 0.1
 
-# Maximum auto-vacuum workers
+# Maximum auto sweep/GC workers
 autovacuum_workers = 3
 
-# Auto-vacuum memory limit
+# Auto sweep/GC memory limit
 autovacuum_work_mem = 64MB
 
 # MGA garbage collection interval (seconds)
@@ -1880,7 +1882,7 @@ sb_admin show locks --blocking
 # Buffer pool statistics
 sb_admin show buffers --histogram
 
-# Write-after log status (post-gold)
+# Write-after log status (optional post-gold)
 sb_admin show wal
 
 # Replication status (if enabled)

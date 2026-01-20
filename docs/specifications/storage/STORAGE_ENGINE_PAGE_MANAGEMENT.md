@@ -5,6 +5,10 @@
 
 This document specifies ScratchBird's page management system, including page layouts, free space management, compression, encryption, and integration with the multi-page-size architecture (8K-128K).
 
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
+
 ## 1. Page Structure and Layout
 
 ### 1.1 Universal Page Header
@@ -157,8 +161,8 @@ typedef struct heap_tuple_header {
 #define HEAP_XMAX_INVALID       0x0800     // xmax invalid
 #define HEAP_XMAX_IS_MULTI      0x1000     // xmax is multixact
 #define HEAP_UPDATED            0x2000     // Tuple was updated
-#define HEAP_MOVED_OFF          0x4000     // Moved to another page (vacuum)
-#define HEAP_MOVED_IN           0x8000     // Moved from another page (vacuum)
+#define HEAP_MOVED_OFF          0x4000     // Moved to another page (sweep/GC)
+#define HEAP_MOVED_IN           0x8000     // Moved from another page (sweep/GC)
 ```
 
 ### 1.3 Page Operations
@@ -320,7 +324,7 @@ typedef struct fsm_operations {
                   BlockNumber block,
                   uint16_t free_space);
     
-    // Vacuum FSM
+    // Sweep/GC maintenance of FSM (legacy name)
     void (*vacuum)(FSMPage* fsm);
 } FSMOperations;
 
@@ -463,7 +467,7 @@ Status fsm_reconstruct_from_pages(
             // Read error - mark as allocated (conservative approach)
             // Better to waste space than to double-allocate
             // Double allocation → data corruption
-            // Wasted space → resolved by GC/VACUUM
+            // Wasted space → resolved by sweep/GC
             fsm_mark_allocated(page_mgr, page_id);
             ctx->corrupt_count++;
             LOG_WARNING(STORAGE,
@@ -594,7 +598,7 @@ ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which
    - Read errors → mark page allocated (not free)
    - Better to waste space than double-allocate
    - Double allocation → data corruption (catastrophic)
-   - Wasted space → resolved by VACUUM/GC (acceptable)
+   - Wasted space → resolved by sweep/GC (acceptable)
 
 4. **Performance Characteristics**
    - **Complexity**: O(N) where N = total_pages

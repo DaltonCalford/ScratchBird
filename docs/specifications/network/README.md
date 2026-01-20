@@ -6,7 +6,9 @@ This directory contains network layer and wire protocol specifications for Scrat
 
 ## Overview
 
-ScratchBird implements a sophisticated network layer with the Y-Valve architecture for multi-protocol support, enabling clients to connect using PostgreSQL, MySQL, Firebird, or ScratchBird native protocols (MSSQL/TDS post-gold).
+ScratchBird implements a listener + parser pool architecture for multi-protocol
+support, enabling clients to connect using PostgreSQL, MySQL, Firebird, or
+ScratchBird native protocols (MSSQL/TDS post-gold).
 
 ## Specifications in this Directory
 
@@ -17,13 +19,13 @@ ScratchBird implements a sophisticated network layer with the Y-Valve architectu
 - **[ENGINE_PARSER_IPC_CONTRACT.md](ENGINE_PARSER_IPC_CONTRACT.md)** - Parser <-> engine IPC runtime contract
 - **[DIALECT_AUTH_MAPPING_SPEC.md](DIALECT_AUTH_MAPPING_SPEC.md)** - Dialect auth method mapping to SB auth providers
 - **[WIRE_PROTOCOL_SPECIFICATIONS.md](WIRE_PROTOCOL_SPECIFICATIONS.md)** - Wire protocol specifications overview
-- **[Y_VALVE_DESIGN_PRINCIPLES.md](Y_VALVE_DESIGN_PRINCIPLES.md)** - Y-Valve multi-protocol routing design
+- **[Y_VALVE_DESIGN_PRINCIPLES.md](Y_VALVE_DESIGN_PRINCIPLES.md)** - Listener/pool design principles (legacy Y-Valve terminology)
 
 ## Key Concepts
 
-### Y-Valve Architecture
+### Listener/Parser Pool Architecture
 
-The Y-Valve is ScratchBird's protocol multiplexer:
+The listener/pool control plane is ScratchBird's protocol multiplexer:
 
 1. **Protocol Detection** - Auto-detect client protocol on connection
 2. **Protocol Routing** - Route to appropriate protocol handler
@@ -44,7 +46,7 @@ See [Wire Protocols](../wire_protocols/) for detailed protocol specifications.
 - [Wire Protocols](../wire_protocols/) - Detailed wire protocol specifications
 - [Parser](../parser/) - SQL dialect parsing
 - [Security](../Security%20Design%20Specification/) - Authentication and encryption
-- [Core](../core/) - Y-Valve implementation
+- [Core](../core/) - Listener/pool architecture (legacy Y-Valve spec)
 
 ## Navigation
 

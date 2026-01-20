@@ -53,6 +53,97 @@ namespace scratchbird::core
 
 } // namespace scratchbird::core
 
+namespace
+{
+    bool isZeroIdLocal(const scratchbird::core::ID& id)
+    {
+        for (uint8_t byte : id.bytes)
+        {
+            if (byte != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    auto resolveToastIndexById(scratchbird::core::Database* db,
+                               const scratchbird::core::ID& toast_table_id,
+                               scratchbird::core::CatalogManager::IndexInfo& index_info_out,
+                               scratchbird::core::ErrorContext* ctx) -> scratchbird::core::Status
+    {
+        if (!db)
+        {
+            SET_ERROR_CONTEXT(ctx, scratchbird::core::Status::INVALID_ARGUMENT,
+                              "Database not available");
+            return scratchbird::core::Status::INVALID_ARGUMENT;
+        }
+        auto* catalog = db->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, scratchbird::core::Status::INVALID_ARGUMENT,
+                              "CatalogManager not available");
+            return scratchbird::core::Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<scratchbird::core::CatalogManager::ColumnInfo> columns;
+        auto status = catalog->getColumns(toast_table_id, columns, ctx);
+        if (status != scratchbird::core::Status::OK)
+        {
+            return status;
+        }
+
+        scratchbird::core::ID chunk_id_col{};
+        scratchbird::core::ID chunk_seq_col{};
+        for (const auto& col : columns)
+        {
+            if (col.ordinal == 0)
+            {
+                chunk_id_col = col.column_id;
+            }
+            else if (col.ordinal == 1)
+            {
+                chunk_seq_col = col.column_id;
+            }
+        }
+
+        if (isZeroIdLocal(chunk_id_col) || isZeroIdLocal(chunk_seq_col))
+        {
+            SET_ERROR_CONTEXT(ctx, scratchbird::core::Status::INVALID_ARGUMENT,
+                              "TOAST column IDs missing");
+            return scratchbird::core::Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<scratchbird::core::CatalogManager::IndexInfo> indexes;
+        status = catalog->listIndexesForTable(toast_table_id, indexes, ctx, true);
+        if (status != scratchbird::core::Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto& index_info : indexes)
+        {
+            if (index_info.index_type != scratchbird::core::CatalogManager::IndexType::BTREE)
+            {
+                continue;
+            }
+            if (index_info.column_ids.size() < 2)
+            {
+                continue;
+            }
+            if (index_info.column_ids[0] == chunk_id_col &&
+                index_info.column_ids[1] == chunk_seq_col)
+            {
+                index_info_out = index_info;
+                return scratchbird::core::Status::OK;
+            }
+        }
+
+        SET_ERROR_CONTEXT(ctx, scratchbird::core::Status::NOT_FOUND, "TOAST index not found");
+        return scratchbird::core::Status::NOT_FOUND;
+    }
+} // namespace
+
 namespace scratchbird::core
 {
 
@@ -73,10 +164,8 @@ namespace scratchbird::core
         }
 
         // Use the TOAST index to find the maximum chunk_id without heap scans.
-        std::string toast_name = "sb_toast_" + table_id_.toString();
-        std::string index_name = toast_name + "_idx";
         CatalogManager::IndexInfo index_info;
-        Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);
+        Status status = resolveToastIndexById(db_, toast_table_id_, index_info, ctx);
         if (status != Status::OK)
         {
             next_value_id_ = 1;
@@ -159,6 +248,18 @@ namespace scratchbird::core
                 return status;
             }
         }
+        else if (catalog && table_id_ == catalog->policyToastTableId())
+        {
+            // Policy TOAST table ID is the TOAST table itself.
+            toast_table_id_ = table_id_;
+            status = initializeNextValueId(ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to initialize next_value_id");
+                return status;
+            }
+            return Status::OK;
+        }
 
         CatalogManager::TableInfo info;
         status = catalog->getTable(parent_info.schema_id, toast_name, info, ctx);
@@ -224,8 +325,15 @@ namespace scratchbird::core
         std::string toast_name = "sb_toast_" + table_id_.toString();
 
         // Create TOAST table in same tablespace as parent (Phase 2 Task 2.3)
+        CatalogManager::TableCreateOptions options;
+        options.table_type = CatalogManager::TableType::TOAST;
+        if (catalog && table_id_ == catalog->policyToastTableId())
+        {
+            options.force_table_id = true;
+            options.forced_table_id = table_id_;
+        }
         Status status = catalog->createTable(schema_id, toast_name, columns, toast_table_id_,
-                                             tablespace_id, ctx);
+                                             tablespace_id, ctx, &options);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to create TOAST table");
@@ -419,13 +527,10 @@ namespace scratchbird::core
         -> Status
     {
         StorageEngine *storage = db_->storage_engine();
-        CatalogManager *catalog = db_->catalog_manager();
 
         // Get the index ID for the TOAST table
-        std::string toast_name = "sb_toast_" + table_id_.toString();
-        std::string index_name = toast_name + "_idx";
         CatalogManager::IndexInfo index_info;
-        Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);
+        Status status = resolveToastIndexById(db_, toast_table_id_, index_info, ctx);
         if (status != Status::OK)
         {
             // Fall back to heap scan if index not found
@@ -718,7 +823,6 @@ namespace scratchbird::core
                                        uint64_t xmin, ErrorContext *ctx) -> Status
     {
         StorageEngine *storage = db_->storage_engine();
-        CatalogManager *catalog = db_->catalog_manager();
         BufferPool *buffer_pool = db_->buffer_pool();
 
         // Use page-size-based chunk size for validation (allow legacy chunk sizing)
@@ -727,10 +831,8 @@ namespace scratchbird::core
             max_chunk_size, ToastSettings::getLegacyMaxChunkSize(db_->page_size()));
 
         // Get the index ID for the TOAST table
-        std::string toast_name = "sb_toast_" + table_id_.toString();
-        std::string index_name = toast_name + "_idx";
         CatalogManager::IndexInfo index_info;
-        Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);
+        Status status = resolveToastIndexById(db_, toast_table_id_, index_info, ctx);
         if (status != Status::OK)
         {
             // Fall back to heap scan if index not found

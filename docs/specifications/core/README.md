@@ -14,7 +14,7 @@ The core system specifications define the fundamental architecture, internal API
 
 ### Architecture & Infrastructure
 
-- **[Y_VALVE_ARCHITECTURE.md](Y_VALVE_ARCHITECTURE.md)** - Y-Valve architecture for multi-dialect dispatch and routing
+- **[Y_VALVE_ARCHITECTURE.md](Y_VALVE_ARCHITECTURE.md)** - Listener/pool architecture (legacy Y-Valve spec)
 - **[THREAD_SAFETY.md](THREAD_SAFETY.md)** - Thread safety models and concurrency control
 - **[IMPLEMENTATION_RECOMMENDATIONS.md](IMPLEMENTATION_RECOMMENDATIONS.md)** - Strategic implementation guidance and recommendations
 
@@ -34,7 +34,7 @@ The core system specifications define the fundamental architecture, internal API
 - [Storage Engine](../storage/) - Storage layer implementation
 - [Transaction System](../transaction/) - MGA transaction management
 - [Catalog System](../catalog/) - System catalog structure
-- [Network Layer](../network/) - Network protocols and Y-Valve integration
+- [Network Layer](../network/) - Network protocols and listener/pool integration
 
 ## Navigation
 

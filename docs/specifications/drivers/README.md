@@ -73,7 +73,7 @@ For comprehensive language driver specifications, see [Beta Requirements - Drive
 ## Related Specifications
 
 - [Wire Protocols](../wire_protocols/) - Wire protocol specifications
-- [Network Layer](../network/) - Network layer and Y-Valve
+- [Network Layer](../network/) - Network layer and listener/pool control plane
 - [Beta Requirements - Drivers](../beta_requirements/drivers/) - Language-specific driver specifications
 - [API](../api/) - Client library API
 

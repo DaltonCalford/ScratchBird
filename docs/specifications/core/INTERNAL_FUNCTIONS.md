@@ -51,6 +51,59 @@ Default date time:
 - ST_GEOMETRYTYPE -> EXT_ST_GEOMETRYTYPE -> TEXT
 - ST_ISVALID -> EXT_ST_ISVALID -> BOOLEAN
 
+## Planned Alpha Additions (Python Parity, Firebird-Style)
+These functions/operators are required for Python-to-PSQL migration and follow Firebird/V2
+style (function or predicate keywords rather than Python syntax).
+
+### Operators and Predicates
+- DIV (integer division operator)
+  - Semantics: integer division with truncation toward zero; division-by-zero error.
+  - Nulls: NULL in any operand yields NULL.
+  - Emit: EXT_EXPR_DIV_INT (new) to avoid ambiguity with `/`.
+- STARTING WITH predicate
+  - Syntax: `<expr> [NOT] STARTING WITH <expr>`
+  - Semantics: prefix match; collation-aware; can use indexes.
+  - Emit: EXT_PRED_STARTING_WITH (new).
+- CONTAINING predicate
+  - Syntax: `<expr> [NOT] CONTAINING <expr>`
+  - Semantics: substring match; case-insensitive unless collation dictates otherwise.
+  - Emit: EXT_PRED_CONTAINING (new).
+
+### String Functions
+- REPLACE(str, search, replacement) -> TEXT/VARCHAR
+  - Nulls: if any arg is NULL, result is NULL.
+  - Emit: EXT_FUNC_REPLACE (new).
+- ENDS_WITH(str, suffix) -> BOOLEAN
+  - Semantics: suffix match, collation-aware on `str`.
+  - Emit: EXT_FUNC_ENDS_WITH (new).
+
+### Date/Time Formatting and Parsing
+- TO_CHAR(value, format) -> TEXT
+- TO_DATE(text, format) -> DATE
+- TO_TIMESTAMP(text, format) -> TIMESTAMP (default connection timezone)
+  - Nulls: NULL if any arg is NULL.
+  - Emit: EXT_FUNC_TO_CHAR / EXT_FUNC_TO_DATE / EXT_FUNC_TO_TIMESTAMP (new).
+
+### Array Helpers
+- ARRAY_POSITION(array, value) -> INT64 (1-based index, NULL if not found)
+  - Emit: EXT_FUNC_ARRAY_POSITION (new).
+- ARRAY_SLICE(array, lower, upper) -> ARRAY (JSON array string)
+  - Semantics: inclusive bounds; NULL bounds allowed (open-ended).
+  - Emit: EXT_ARRAY_SLICE (new).
+
+### JSON Predicates
+- JSON_EXISTS(json, path) -> BOOLEAN
+  - Semantics: true if path exists, false otherwise; NULL if json or path is NULL.
+  - Emit: EXT_FUNC_JSON_EXISTS (new).
+- JSON_HAS_KEY(json, key) -> BOOLEAN (convenience)
+  - Semantics: true if object has key; array index checks for numeric key.
+  - Emit: EXT_FUNC_JSON_HAS_KEY (new).
+
+### Scalar Min/Max
+- LEAST(a, b, ...) / GREATEST(a, b, ...) -> common type
+  - Semantics: NULLs ignored unless all args NULL; type promotion rules apply.
+  - Emit: EXT_FUNC_LEAST / EXT_FUNC_GREATEST (new).
+
 ## JSON and JSONB
 JSON:
 - Stored as text.

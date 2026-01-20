@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <ctime>
 #include <iostream>
 #include <memory>
@@ -20,6 +21,7 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
+#include <fcntl.h>
 
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/error_context.h"
@@ -231,12 +233,14 @@ public:
         scratchbird::network::ControlPlaneMessage msg;
         auto status = scratchbird::network::receiveControlPlaneMessage(*socket, msg, nullptr, &ctx);
         if (status != scratchbird::core::Status::OK) {
+            std::cerr << "Control HELLO receive failed: " << ctx.message << "\n";
             socket->close();
             return;
         }
 
         if (msg.header.message_type != static_cast<uint16_t>(
                 scratchbird::network::ControlPlaneMessageType::HELLO)) {
+            std::cerr << "Control HELLO rejected: unexpected message type\n";
             socket->close();
             return;
         }
@@ -245,6 +249,7 @@ public:
         uint32_t pid = 0;
         uint64_t worker_id = 0;
         if (!parseHello(msg.payload, proto, pid, worker_id)) {
+            std::cerr << "Control HELLO rejected: malformed payload\n";
             socket->close();
             return;
         }
@@ -276,9 +281,13 @@ public:
         }
         ack.payload = buildHelloAck(true, "");
         ack.header.payload_len = ack.payload.size();
-        scratchbird::network::sendControlPlaneMessage(*socket, ack,
-                                                      scratchbird::network::INVALID_SOCKET_VALUE,
-                                                      0, nullptr);
+        if (scratchbird::network::sendControlPlaneMessage(*socket, ack,
+                                                          scratchbird::network::INVALID_SOCKET_VALUE,
+                                                          0, &ctx) != scratchbird::core::Status::OK) {
+            std::cerr << "Control HELLO_ACK send failed: " << ctx.message << "\n";
+            socket->close();
+            return;
+        }
 
         auto worker = std::make_shared<ParserWorker>();
         worker->worker_id = worker_id;
@@ -459,6 +468,8 @@ private:
         std::lock_guard<std::mutex> lock(worker->mutex);
         worker->state = WorkerState::FAULT;
         worker->running = false;
+        std::cerr << "[listener_debug] worker fault pid=" << worker->worker_pid
+                  << " reason=" << reason << "\n";
         if (metrics_.parser_recycle_total) {
             metrics_.parser_recycle_total->inc(1.0, {config_.protocol, "default", reason});
         }
@@ -511,6 +522,21 @@ private:
             return false;
         }
         if (pid == 0) {
+            if (!config_.control_socket_dir.empty()) {
+                std::string log_path = config_.control_socket_dir;
+                if (!log_path.empty() && log_path.back() != '/') {
+                    log_path += '/';
+                }
+                log_path += "parser_";
+                log_path += std::to_string(getpid());
+                log_path += ".stderr.log";
+                int fd = ::open(log_path.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
+                if (fd >= 0) {
+                    ::dup2(fd, STDERR_FILENO);
+                    ::close(fd);
+                }
+                std::cerr << "[listener_debug] parser stderr log " << log_path << "\n";
+            }
             std::vector<char*> argv;
             argv.reserve(args.size() + 1);
             for (auto& item : args) {
@@ -583,6 +609,10 @@ private:
             auto status = scratchbird::network::receiveControlPlaneMessage(*worker->control,
                                                                            msg, nullptr, &ctx);
             if (status != scratchbird::core::Status::OK) {
+                std::cerr << "[listener_debug] control plane read failed pid="
+                          << worker->worker_pid << " status="
+                          << static_cast<int>(status) << " msg="
+                          << (ctx.message.empty() ? "none" : ctx.message) << "\n";
                 bool recycle_requested = false;
                 {
                     std::lock_guard<std::mutex> lock(worker->mutex);
@@ -595,6 +625,26 @@ private:
                     ensureMinWorkers();
                 } else {
                     markWorkerFault(worker, "error");
+                }
+                int exit_status = 0;
+                pid_t exited = waitpid(worker->worker_pid, &exit_status, WNOHANG);
+                if (exited == static_cast<pid_t>(worker->worker_pid)) {
+                    if (WIFEXITED(exit_status)) {
+                        std::cerr << "[listener_debug] worker exit pid=" << worker->worker_pid
+                                  << " code=" << WEXITSTATUS(exit_status) << "\n";
+                    } else if (WIFSIGNALED(exit_status)) {
+                        std::cerr << "[listener_debug] worker exit pid=" << worker->worker_pid
+                                  << " signal=" << WTERMSIG(exit_status) << "\n";
+                    } else {
+                        std::cerr << "[listener_debug] worker exit pid=" << worker->worker_pid
+                                  << " status=" << exit_status << "\n";
+                    }
+                } else if (exited == 0) {
+                    std::cerr << "[listener_debug] worker pid=" << worker->worker_pid
+                              << " still running after control plane error\n";
+                } else {
+                    std::cerr << "[listener_debug] waitpid failed pid=" << worker->worker_pid
+                              << " errno=" << errno << "\n";
                 }
                 break;
             }
@@ -804,6 +854,8 @@ private:
             reason_code = 4;
         }
 
+        std::cerr << "[listener_debug] recycle request pid=" << worker->worker_pid
+                  << " reason=" << reason << "\n";
         scratchbird::network::ControlPlaneMessage msg;
         msg.header.message_type = static_cast<uint16_t>(
             scratchbird::network::ControlPlaneMessageType::RECYCLE);

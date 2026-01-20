@@ -73,7 +73,7 @@ protected:
         ASSERT_EQ(db->connect(user_ctx, &ctx), Status::OK) << ctx.message;
 
         // Create a test user
-        executeSQL(admin_ctx.get(), "CREATE USER alice WITH PASSWORD 'password123'");
+        executeSQL(admin_ctx.get(), "CREATE USER alice WITH PASSWORD 'Str0ng#Alice1'");
 
         // Set user_ctx to alice
         CatalogManager::UserInfo alice_user;

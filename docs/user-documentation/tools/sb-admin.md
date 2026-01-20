@@ -285,17 +285,24 @@ Long-running (> 1 min): 1
 
 ## Maintenance Commands
 
-### Vacuum Database
+### Sweep/GC Database
 
 ```bash
-sb_admin vacuum mydb
+sb_admin sweep mydb
 
-# Full vacuum (locks table)
-sb_admin vacuum mydb --full
+# Analyze after sweep/GC
+sb_admin sweep mydb --analyze
 
-# Analyze after vacuum
+# PostgreSQL alias (maps to SWEEP)
 sb_admin vacuum mydb --analyze
 ```
+
+Note: SWEEP is the native command. VACUUM is supported as a compatibility alias.
+
+### SWEEP STATUS (planned)
+
+Read-only status command for sweep/GC. Intended to report MON_SWEEP and transaction
+markers without performing a sweep.
 
 ### Analyze Statistics
 

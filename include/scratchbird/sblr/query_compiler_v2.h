@@ -142,6 +142,13 @@ public:
     void setCurrentSchema(const core::ID& schema_id) { current_schema_ = schema_id; }
 
     /**
+     * Set the schema search path for name resolution
+     *
+     * @param path Schema UUIDs in search order
+     */
+    void setSearchPath(const std::vector<core::ID>& path) { search_path_ = path; }
+
+    /**
      * Enable/disable optimization passes
      *
      * @param enabled True to enable optimizations (default: true)
@@ -170,6 +177,7 @@ private:
     core::CatalogManager* catalog_;
     core::ID default_schema_;
     core::ID current_schema_;
+    std::vector<core::ID> search_path_;
     bool optimizations_enabled_ = true;
     bool stats_enabled_ = false;
 

@@ -316,6 +316,9 @@ private:
     // Flag to indicate a query is currently executing
     std::atomic<bool> query_executing_{false};
 
+    // Stream id generator for COPY streaming
+    uint64_t next_stream_id_{1};
+
     // Mutex for thread safety
     mutable std::mutex mutex_;
 };

@@ -71,6 +71,28 @@ These extended opcodes are reserved and MUST keep their values:
 - EXT_SAVEPOINT_BEGIN     = 0x0212
 - EXT_SAVEPOINT_END       = 0x0213
 
+## Planned Alpha Additions (Reserved, Pending Header Update)
+These values are reserved for the Alpha parity additions below. They are not yet in
+`include/scratchbird/sblr/opcodes.h` and MUST be added there before implementation.
+
+Operators and predicates:
+- EXT_EXPR_DIV_INT         = 0x0214  (DIV integer division operator)
+- EXT_PRED_STARTING_WITH   = 0x0215  (STARTING WITH predicate)
+- EXT_PRED_CONTAINING      = 0x0216  (CONTAINING predicate)
+
+Functions:
+- EXT_FUNC_REPLACE         = 0x0320  (REPLACE(str, search, replacement))
+- EXT_FUNC_ENDS_WITH       = 0x0321  (ENDS_WITH(str, suffix))
+- EXT_FUNC_ARRAY_POSITION  = 0x0322  (ARRAY_POSITION(array, value))
+- EXT_ARRAY_SLICE          = 0x0323  (ARRAY_SLICE(array, lower, upper))
+- EXT_FUNC_JSON_EXISTS     = 0x0324  (JSON_EXISTS(json, path))
+- EXT_FUNC_JSON_HAS_KEY    = 0x0325  (JSON_HAS_KEY(json, key))
+- EXT_FUNC_TO_CHAR         = 0x0326  (TO_CHAR(value, format))
+- EXT_FUNC_TO_DATE         = 0x0327  (TO_DATE(text, format))
+- EXT_FUNC_TO_TIMESTAMP    = 0x0328  (TO_TIMESTAMP(text, format))
+- EXT_FUNC_LEAST           = 0x0329  (LEAST(a, b, ...))
+- EXT_FUNC_GREATEST        = 0x032A  (GREATEST(a, b, ...))
+
 ## Array Extended Opcodes (Low Range)
 - EXT_ARRAY_SUBSCRIPT = 0x0025
 

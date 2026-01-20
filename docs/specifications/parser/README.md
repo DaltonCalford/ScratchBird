@@ -39,7 +39,8 @@ ScratchBird implements a unique multi-dialect SQL parser that supports native Sc
 
 ### Multi-Dialect Architecture
 
-ScratchBird uses a Y-Valve architecture that routes incoming SQL through dialect-specific parsers:
+ScratchBird uses a listener + parser pool architecture that routes incoming SQL
+through dialect-specific parsers:
 
 1. **Native Parser (V2)** - ScratchBird's native SQL dialect
 2. **Emulated Parsers** - PostgreSQL, MySQL, Firebird parsers that generate SBLR bytecode directly (MSSQL post-gold)
@@ -59,7 +60,7 @@ From [EMULATED_DATABASE_PARSER_SPECIFICATION.md](EMULATED_DATABASE_PARSER_SPECIF
 - [DDL Statements](../ddl/) - DDL operation specifications
 - [DML Statements](../dml/) - DML operation specifications
 - [Query Optimization](../query/) - Query optimizer and planner
-- [Y-Valve Architecture](../core/Y_VALVE_ARCHITECTURE.md) - Multi-dialect routing
+- [Listener/Pool Architecture](../core/Y_VALVE_ARCHITECTURE.md) - Multi-dialect routing (legacy Y-Valve spec)
 
 ## Critical Reading
 

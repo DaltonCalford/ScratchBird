@@ -55,7 +55,7 @@ work_mem = 64MB
 
 ### Maintenance Work Memory
 
-Memory for VACUUM, CREATE INDEX, etc.
+Memory for sweep/GC, CREATE INDEX, etc.
 
 ```ini
 [memory]
@@ -318,46 +318,75 @@ END $$;
 
 ---
 
-## Vacuum and Maintenance
+## Sweep/GC and Maintenance
 
-### Manual VACUUM
+### Manual SWEEP/GC
 
 ```sql
--- Standard vacuum (reclaim space)
-VACUUM orders;
+-- Native sweep/GC (database-wide)
+SWEEP;
 
--- Full vacuum (compacts table, locks)
-VACUUM FULL orders;
+-- Sweep + update statistics
+SWEEP ANALYZE;
 
--- Analyze while vacuuming
-VACUUM ANALYZE orders;
+-- PostgreSQL alias (maps to SWEEP)
+VACUUM;
 ```
 
-### Autovacuum Configuration
+Note: VACUUM FULL is not supported. ScratchBird uses Firebird MGA sweep semantics.
+
+### Sweep Status (No Sweep)
+
+```sql
+-- Sweep activity and last sweep details
+SELECT * FROM MON_SWEEP;
+
+-- Sweep pressure (gap between OST and OIT)
+SELECT
+    MON$OLDEST_SNAPSHOT - MON$OLDEST_TRANSACTION AS sweep_gap
+FROM MON_DATABASE;
+
+-- Tables with the most dead versions
+SELECT
+    schema_name,
+    table_name,
+    dead_rows_estimate,
+    live_rows_estimate,
+    last_vacuum_at,
+    last_autovacuum_at
+FROM sys.table_stats
+ORDER BY dead_rows_estimate DESC
+LIMIT 20;
+```
+
+### Auto Sweep/GC Configuration
 
 ```ini
 # sb_server.conf
-[autovacuum]
-autovacuum = on
-autovacuum_vacuum_threshold = 50
-autovacuum_analyze_threshold = 50
-autovacuum_vacuum_scale_factor = 0.2
-autovacuum_analyze_scale_factor = 0.1
+[maintenance]
+autovacuum = on                  # sweep/GC (compatibility alias)
+autovacuum_threshold = 50
+autovacuum_scale_factor = 0.2
+autoanalyze_threshold = 50
+autoanalyze_scale_factor = 0.1
 ```
+
+Note: `autovacuum_*` settings are compatibility aliases for sweep/GC. A future rename
+to `gc_*` is planned.
 
 ### Monitor Bloat
 
 ```sql
--- Table bloat
+-- Table dead-version pressure
 SELECT
-    schemaname,
-    relname,
-    n_dead_tup,
-    n_live_tup,
-    ROUND(n_dead_tup::numeric / NULLIF(n_live_tup, 0) * 100, 2) AS dead_ratio
-FROM pg_stat_user_tables
-WHERE n_dead_tup > 1000
-ORDER BY n_dead_tup DESC;
+    schema_name,
+    table_name,
+    dead_rows_estimate,
+    live_rows_estimate,
+    ROUND(dead_rows_estimate::numeric / NULLIF(live_rows_estimate, 0) * 100, 2) AS dead_ratio
+FROM sys.table_stats
+WHERE dead_rows_estimate > 1000
+ORDER BY dead_rows_estimate DESC;
 ```
 
 ---

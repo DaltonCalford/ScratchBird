@@ -2,6 +2,10 @@
 
 ## IMPLEMENTATION STATUS: 🟢 FULLY IMPLEMENTED - MGA COMPLIANT (Updated 2025-11-03)
 
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
+
 **All TOAST functionality is now complete and MGA-compliant:**
 - ✅ **MGA Compliance**: TupleHeader-based TOAST chunks with xmin/xmax (Phase 1)
 - ✅ **TIP-Based Visibility**: Uses TIP for transaction state, not snapshots (Phase 2)
@@ -20,7 +24,7 @@
 - Chunk format: TupleHeader + value_id (4) + chunk_seq (4) + chunk_size (4)
 - TIP-based visibility: `ToastVisibility::isChunkVisible()` uses TIP, not snapshots
 - Crash recovery: TIP state recovery, NO write-after log (WAL) replay
-- Garbage collection: Vacuum processes TOAST tables with 3-phase GC
+- Garbage collection: Sweep/GC processes TOAST tables with 3-phase GC
 - **MGA Scorecard**: 6/6 (100%) - FULL MGA COMPLIANCE
 
 **Key Implementation Files**:

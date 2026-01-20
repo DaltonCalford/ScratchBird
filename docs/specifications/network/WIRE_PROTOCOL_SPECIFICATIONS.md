@@ -256,18 +256,18 @@ java: JDBC SQL Server driver
 
 ## Implementation Notes
 
-### Y-Valve Router Design
+### Listener/Parser Pool Router Design (Legacy Y-Valve Term)
 ```
-Client Connection → Protocol Detector → Protocol Handler → BLR Generator → Engine
+Client Connection → Listener/Parser Pool → Protocol Handler → SBLR Generator → Engine
 
-Protocol Detector:
+Protocol Detector (listener control plane):
 - Examines first packet
 - PostgreSQL: StartupMessage with version 196608
 - MySQL: Handshake packet
 - Firebird: op_connect
 - TDS (post-gold): Pre-login packet
 
-Protocol Handler:
+Protocol Handler (parser process):
 - Maintains protocol state machine
 - Translates to/from internal format
 - Handles authentication

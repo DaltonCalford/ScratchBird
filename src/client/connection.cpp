@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/client/connection.h"
+#include "scratchbird/client/sql_helpers.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/protocol/wire_protocol.h"
 
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -322,149 +324,6 @@ std::string ResultSet::getUUID(const std::string& column) const {
 }
 
 // ============================================================================
-// PreparedStatement Helper Functions - NET-1: Parameter Substitution
-// ============================================================================
-
-// Escape a string for safe SQL insertion (prevents SQL injection)
-static std::string escapeString(const std::string& str) {
-    std::string result;
-    result.reserve(str.size() * 2 + 2);
-    result += '\'';
-    for (char c : str) {
-        if (c == '\'') {
-            result += "''";  // SQL standard escape for single quotes
-        } else if (c == '\\') {
-            result += "\\\\";  // Escape backslashes
-        } else if (c == '\0') {
-            // Skip null bytes (potential injection vector)
-            continue;
-        } else {
-            result += c;
-        }
-    }
-    result += '\'';
-    return result;
-}
-
-// Convert ColumnValue to SQL literal string with proper escaping
-static std::string columnValueToSqlLiteral(const protocol::ProtocolCodec::ColumnValue& val) {
-    if (val.is_null) {
-        return "NULL";
-    }
-
-    // Determine type based on data size and content
-    // Note: ColumnValue doesn't store type info, so we infer from size
-    if (val.data.size() == 1) {
-        // Boolean (1 byte)
-        return val.data[0] ? "TRUE" : "FALSE";
-    } else if (val.data.size() == 4) {
-        // Int32
-        int32_t value;
-        std::memcpy(&value, val.data.data(), 4);
-        return std::to_string(value);
-    } else if (val.data.size() == 8) {
-        // Could be int64 or double - check if it looks like a reasonable double
-        // We default to treating as int64 first, then check if it might be a double
-        int64_t int_value;
-        std::memcpy(&int_value, val.data.data(), 8);
-
-        double dbl_value;
-        std::memcpy(&dbl_value, val.data.data(), 8);
-
-        // If the double representation is a "normal" floating point number
-        // (not NaN, not infinity, and has a fractional part), use it
-        if (std::isfinite(dbl_value) && dbl_value != static_cast<double>(int_value)) {
-            std::ostringstream oss;
-            oss.precision(17);  // Maximum precision for double
-            oss << dbl_value;
-            return oss.str();
-        }
-
-        return std::to_string(int_value);
-    } else {
-        // String or bytes - treat as string with escaping
-        std::string str(val.data.begin(), val.data.end());
-        return escapeString(str);
-    }
-}
-
-// Substitute parameters in SQL, replacing $1, $2, etc. with escaped values
-static std::string substituteParameters(
-    const std::string& sql,
-    const std::vector<protocol::ProtocolCodec::ColumnValue>& params) {
-
-    std::string result;
-    result.reserve(sql.size() * 2);
-
-    size_t i = 0;
-    while (i < sql.size()) {
-        // Check for parameter placeholder ($1, $2, etc.)
-        if (sql[i] == '$' && i + 1 < sql.size() && std::isdigit(sql[i + 1])) {
-            // Parse parameter number
-            size_t j = i + 1;
-            int param_num = 0;
-            while (j < sql.size() && std::isdigit(sql[j])) {
-                param_num = param_num * 10 + (sql[j] - '0');
-                ++j;
-            }
-
-            // Parameter indices are 1-based, vector is 0-based
-            if (param_num > 0 && static_cast<size_t>(param_num) <= params.size()) {
-                result += columnValueToSqlLiteral(params[param_num - 1]);
-            } else {
-                // Invalid parameter number - leave as-is (will cause SQL error)
-                result += sql.substr(i, j - i);
-            }
-            i = j;
-        } else if (sql[i] == '\'' && i + 1 < sql.size()) {
-            // Skip string literals to avoid replacing $ inside strings
-            result += sql[i++];
-            while (i < sql.size() && sql[i] != '\'') {
-                if (sql[i] == '\'' && i + 1 < sql.size() && sql[i + 1] == '\'') {
-                    result += sql[i++];
-                }
-                result += sql[i++];
-            }
-            if (i < sql.size()) {
-                result += sql[i++];  // Closing quote
-            }
-        } else if (sql[i] == '"' && i + 1 < sql.size()) {
-            // Skip double-quoted identifiers
-            result += sql[i++];
-            while (i < sql.size() && sql[i] != '"') {
-                if (sql[i] == '"' && i + 1 < sql.size() && sql[i + 1] == '"') {
-                    result += sql[i++];
-                }
-                result += sql[i++];
-            }
-            if (i < sql.size()) {
-                result += sql[i++];  // Closing quote
-            }
-        } else if (sql[i] == '-' && i + 1 < sql.size() && sql[i + 1] == '-') {
-            // Skip line comments
-            while (i < sql.size() && sql[i] != '\n') {
-                result += sql[i++];
-            }
-        } else if (sql[i] == '/' && i + 1 < sql.size() && sql[i + 1] == '*') {
-            // Skip block comments
-            result += sql[i++];
-            result += sql[i++];
-            while (i + 1 < sql.size() && !(sql[i] == '*' && sql[i + 1] == '/')) {
-                result += sql[i++];
-            }
-            if (i + 1 < sql.size()) {
-                result += sql[i++];  // *
-                result += sql[i++];  // /
-            }
-        } else {
-            result += sql[i++];
-        }
-    }
-
-    return result;
-}
-
-// ============================================================================
 // PreparedStatement Implementation
 // ============================================================================
 
@@ -699,8 +558,11 @@ public:
             return core::Status::CONNECTION_FAILURE;
         }
 
-        // Authenticate if credentials provided
-        if (!config_.username.empty() && !config_.manual_auth) {
+        // Authenticate if credentials provided (or bootstrap on fresh DB).
+        if (!config_.manual_auth) {
+            if (config_.username.empty()) {
+                config_.username = "bootstrap";
+            }
             status = doAuthenticate(ctx);
             if (!isOk(status)) {
                 return status;
@@ -810,10 +672,20 @@ public:
         if (results) {
             results->impl_->clear();
         }
+        if (ctx)
+        {
+            ctx->code = core::Status::OK;
+            ctx->sqlstate = core::SQLSTATE_SUCCESS;
+            ctx->message.clear();
+        }
 
         auto status = protocol_session_->sendMessage(query_msg, ctx);
         if (!isOk(status)) {
             last_error_ = "Failed to send query";
+            std::fprintf(stderr,
+                         "[ipc_debug] client send query failed status=%d msg=%s\n",
+                         static_cast<int>(status),
+                         ctx && !ctx->message.empty() ? ctx->message.c_str() : "none");
             return status;
         }
 
@@ -891,6 +763,11 @@ public:
                         protocol::ProtocolCodec::parseQueryError(
                             response, error_code, sqlstate, message, detail, hint, ctx
                         );
+                        if (ctx)
+                        {
+                            ctx->set(static_cast<core::Status>(error_code),
+                                     message.c_str(), __FILE__, __LINE__, __func__);
+                        }
                         last_error_ = message;
                         if (!detail.empty()) last_error_ += " (" + detail + ")";
                         return static_cast<core::Status>(error_code);
@@ -954,6 +831,11 @@ public:
                             protocol::ProtocolCodec::parseQueryError(
                                 response, error_code, sqlstate, message, detail, hint, ctx
                             );
+                            if (ctx)
+                            {
+                                ctx->set(static_cast<core::Status>(error_code),
+                                         message.c_str(), __FILE__, __LINE__, __func__);
+                            }
                             last_error_ = message;
                             if (!detail.empty()) last_error_ += " (" + detail + ")";
                             return static_cast<core::Status>(error_code);
@@ -1003,6 +885,10 @@ public:
             status = protocol_session_->receiveMessage(response, ctx);
             if (!isOk(status)) {
                 last_error_ = "Failed to receive response";
+                std::fprintf(stderr,
+                             "[ipc_debug] client receive response failed status=%d msg=%s\n",
+                             static_cast<int>(status),
+                             ctx && !ctx->message.empty() ? ctx->message.c_str() : "none");
                 return status;
             }
 
@@ -1365,7 +1251,12 @@ core::Status Connection::executeQuery(const std::string& sql,
         return core::Status::CONNECTION_FAILURE;
     }
 
-    return impl_->doExecuteQuery(sql, results, ctx);
+    auto status = impl_->doExecuteQuery(sql, results, ctx);
+    if (!isOk(status) && ctx && ctx->message.empty() && !impl_->last_error_.empty())
+    {
+        ctx->set(status, impl_->last_error_.c_str(), __FILE__, __LINE__, __func__);
+    }
+    return status;
 }
 
 core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
@@ -1410,21 +1301,7 @@ core::Status Connection::prepare(const std::string& sql,
         return core::Status::CONNECTION_FAILURE;
     }
 
-    // Count parameters ($1, $2, ... or ?)
-    size_t param_count = 0;
-    for (size_t i = 0; i < sql.size(); ++i) {
-        if (sql[i] == '?') {
-            ++param_count;
-        } else if (sql[i] == '$' && i + 1 < sql.size() && std::isdigit(sql[i + 1])) {
-            size_t num = 0;
-            size_t j = i + 1;
-            while (j < sql.size() && std::isdigit(sql[j])) {
-                num = num * 10 + (sql[j] - '0');
-                ++j;
-            }
-            if (num > param_count) param_count = num;
-        }
-    }
+    size_t param_count = countParameters(sql);
 
     stmt->impl_->sql_ = sql;
     stmt->impl_->param_count_ = param_count;

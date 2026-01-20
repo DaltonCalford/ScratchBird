@@ -5,12 +5,19 @@
  */
 
 #include "scratchbird/client/network_client.h"
+#include "scratchbird/client/driver_config.h"
+#include "scratchbird/client/sql_helpers.h"
+#include "scratchbird/security/scram_auth.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 
 #ifdef _WIN32
 #include <process.h>
@@ -44,40 +51,314 @@ core::Status mapQueryError(const protocol::Message& response,
     return static_cast<core::Status>(error_code);
 }
 
-std::string toLower(const std::string& value) {
-    std::string out = value;
-    std::transform(out.begin(), out.end(), out.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return out;
+std::string normalizeUsername(const std::string& username) {
+    std::string result;
+    result.reserve(username.size());
+
+    for (char c : username) {
+        if (c == '=') {
+            result += "=3D";
+        } else if (c == ',') {
+            result += "=2C";
+        } else {
+            result.push_back(c);
+        }
+    }
+
+    return result;
 }
 
-network::SSLMode parseSslMode(const std::string& value) {
-    auto mode = toLower(value);
-    if (mode == "disable" || mode == "disabled") {
-        return network::SSLMode::DISABLED;
+struct ScramServerFirst {
+    std::string nonce;
+    std::vector<uint8_t> salt;
+    uint32_t iterations{0};
+};
+
+bool parseScramServerFirst(const std::string& message, ScramServerFirst& parsed) {
+    // Format: r=<nonce>,s=<base64-salt>,i=<iterations>
+    size_t r_pos = message.find("r=");
+    size_t s_pos = message.find(",s=");
+    size_t i_pos = message.find(",i=");
+    if (r_pos != 0 || s_pos == std::string::npos || i_pos == std::string::npos) {
+        return false;
     }
-    if (mode == "allow") {
-        return network::SSLMode::ALLOW;
+
+    parsed.nonce = message.substr(2, s_pos - 2);
+    std::string salt_b64 = message.substr(s_pos + 3, i_pos - (s_pos + 3));
+    parsed.salt = security::base64Decode(salt_b64);
+    try {
+        parsed.iterations = static_cast<uint32_t>(std::stoul(message.substr(i_pos + 3)));
+    } catch (...) {
+        return false;
     }
-    if (mode == "prefer") {
-        return network::SSLMode::PREFER;
+
+    return parsed.iterations > 0;
+}
+
+bool parseScramServerFinal(const std::string& message, std::vector<uint8_t>& signature) {
+    // Format: v=<base64-server-signature>
+    if (message.rfind("v=", 0) != 0) {
+        return false;
     }
-    if (mode == "require") {
-        return network::SSLMode::REQUIRE;
+    signature = security::base64Decode(message.substr(2));
+    return !signature.empty();
+}
+
+const EVP_MD* scramDigest(security::ScramAlgorithm algorithm) {
+    return (algorithm == security::ScramAlgorithm::SHA_256) ? EVP_sha256() : EVP_sha512();
+}
+
+bool scramSaltedPassword(const std::string& password,
+                         const std::vector<uint8_t>& salt,
+                         uint32_t iterations,
+                         security::ScramAlgorithm algorithm,
+                         std::vector<uint8_t>& out) {
+    const EVP_MD* md = scramDigest(algorithm);
+    const int hash_len = (algorithm == security::ScramAlgorithm::SHA_256) ? 32 : 64;
+    out.assign(static_cast<size_t>(hash_len), 0);
+    if (PKCS5_PBKDF2_HMAC(password.c_str(),
+                          static_cast<int>(password.size()),
+                          salt.data(),
+                          static_cast<int>(salt.size()),
+                          static_cast<int>(iterations),
+                          md,
+                          hash_len,
+                          out.data()) != 1) {
+        return false;
     }
-    if (mode == "verify_ca") {
-        return network::SSLMode::VERIFY_CA;
+    return true;
+}
+
+bool scramHmac(const std::vector<uint8_t>& key,
+               const std::string& message,
+               security::ScramAlgorithm algorithm,
+               std::vector<uint8_t>& out) {
+    const EVP_MD* md = scramDigest(algorithm);
+    const int hash_len = (algorithm == security::ScramAlgorithm::SHA_256) ? 32 : 64;
+    out.assign(static_cast<size_t>(hash_len), 0);
+    unsigned int out_len = hash_len;
+    if (!HMAC(md,
+              key.data(),
+              static_cast<int>(key.size()),
+              reinterpret_cast<const unsigned char*>(message.data()),
+              message.size(),
+              out.data(),
+              &out_len)) {
+        return false;
     }
-    if (mode == "verify_full") {
-        return network::SSLMode::VERIFY_FULL;
+    out.resize(out_len);
+    return true;
+}
+
+bool scramHash(const std::vector<uint8_t>& input,
+               security::ScramAlgorithm algorithm,
+               std::vector<uint8_t>& out) {
+    const EVP_MD* md = scramDigest(algorithm);
+    const int hash_len = (algorithm == security::ScramAlgorithm::SHA_256) ? 32 : 64;
+    out.assign(static_cast<size_t>(hash_len), 0);
+    unsigned int out_len = hash_len;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        return false;
     }
-    return network::SSLMode::REQUIRE;
+    bool ok = EVP_DigestInit_ex(ctx, md, nullptr) == 1;
+    ok = ok && (EVP_DigestUpdate(ctx, input.data(), input.size()) == 1);
+    ok = ok && (EVP_DigestFinal_ex(ctx, out.data(), &out_len) == 1);
+    EVP_MD_CTX_free(ctx);
+    if (!ok) {
+        return false;
+    }
+    out.resize(out_len);
+    return true;
+}
+
+struct ScramClientExchange {
+    std::string client_nonce;
+    std::string client_first_bare;
+    std::string server_first;
+    std::string client_final;
+    std::vector<uint8_t> expected_server_signature;
+};
+
+core::Status buildScramClientFirst(const std::string& username,
+                                   ScramClientExchange& exchange,
+                                   std::string& error_msg) {
+    exchange.client_nonce = security::generateNonce();
+    exchange.client_first_bare = "n=" + normalizeUsername(username) +
+                                 ",r=" + exchange.client_nonce;
+    if (exchange.client_nonce.empty()) {
+        error_msg = "SCRAM nonce generation failed";
+        return core::Status::INTERNAL_ERROR;
+    }
+    return core::Status::OK;
+}
+
+core::Status handleScramServerFirst(const std::string& password,
+                                    security::ScramAlgorithm algorithm,
+                                    ScramClientExchange& exchange,
+                                    const std::string& server_first,
+                                    std::string& error_msg) {
+    ScramServerFirst parsed;
+    if (!parseScramServerFirst(server_first, parsed)) {
+        error_msg = "Invalid SCRAM server-first message";
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (parsed.nonce.rfind(exchange.client_nonce, 0) != 0) {
+        error_msg = "SCRAM nonce mismatch";
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    std::vector<uint8_t> salted_password;
+    if (!scramSaltedPassword(password, parsed.salt, parsed.iterations, algorithm, salted_password)) {
+        error_msg = "SCRAM salted password derivation failed";
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    std::vector<uint8_t> client_key;
+    if (!scramHmac(salted_password, "Client Key", algorithm, client_key)) {
+        error_msg = "SCRAM client key derivation failed";
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    std::vector<uint8_t> stored_key;
+    if (!scramHash(client_key, algorithm, stored_key)) {
+        error_msg = "SCRAM stored key derivation failed";
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    std::vector<uint8_t> server_key;
+    if (!scramHmac(salted_password, "Server Key", algorithm, server_key)) {
+        error_msg = "SCRAM server key derivation failed";
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    std::string client_final_without_proof = "c=biws,r=" + parsed.nonce;
+    std::string auth_message = exchange.client_first_bare + "," +
+                               server_first + "," +
+                               client_final_without_proof;
+
+    std::vector<uint8_t> client_signature;
+    if (!scramHmac(stored_key, auth_message, algorithm, client_signature)) {
+        error_msg = "SCRAM client signature failed";
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    std::vector<uint8_t> client_proof = client_key;
+    security::xorBytes(client_proof, client_signature);
+    std::string proof_b64 = security::base64Encode(client_proof);
+
+    exchange.server_first = server_first;
+    exchange.client_final = client_final_without_proof + ",p=" + proof_b64;
+
+    if (!scramHmac(server_key, auth_message, algorithm, exchange.expected_server_signature)) {
+        error_msg = "SCRAM server signature failed";
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    return core::Status::OK;
+}
+
+core::Status verifyScramServerFinal(const std::string& server_final,
+                                    const ScramClientExchange& exchange,
+                                    std::string& error_msg) {
+    std::vector<uint8_t> signature;
+    if (!parseScramServerFinal(server_final, signature)) {
+        error_msg = "Invalid SCRAM server-final message";
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (signature != exchange.expected_server_signature) {
+        error_msg = "SCRAM server signature mismatch";
+        return core::Status::INVALID_PASSWORD;
+    }
+    return core::Status::OK;
 }
 
 } // namespace
 
 NetworkClient::NetworkClient() = default;
 NetworkClient::~NetworkClient() = default;
+
+NetworkPreparedStatement::NetworkPreparedStatement() = default;
+NetworkPreparedStatement::~NetworkPreparedStatement() = default;
+
+NetworkPreparedStatement::NetworkPreparedStatement(NetworkPreparedStatement&& other) noexcept = default;
+NetworkPreparedStatement& NetworkPreparedStatement::operator=(NetworkPreparedStatement&& other) noexcept = default;
+
+size_t NetworkPreparedStatement::getParameterCount() const {
+    return param_count_;
+}
+
+bool NetworkPreparedStatement::isValid() const {
+    return valid_;
+}
+
+void NetworkPreparedStatement::clearParameters() {
+    for (auto& param : params_) {
+        param = protocol::ProtocolCodec::ColumnValue(nullptr);
+    }
+}
+
+void NetworkPreparedStatement::setNull(size_t index) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue(nullptr);
+}
+
+void NetworkPreparedStatement::setBool(size_t index, bool value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBool(value);
+}
+
+void NetworkPreparedStatement::setInt16(size_t index, int16_t value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt32(value);
+}
+
+void NetworkPreparedStatement::setInt32(size_t index, int32_t value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt32(value);
+}
+
+void NetworkPreparedStatement::setInt64(size_t index, int64_t value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt64(value);
+}
+
+void NetworkPreparedStatement::setFloat(size_t index, float value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromDouble(value);
+}
+
+void NetworkPreparedStatement::setDouble(size_t index, double value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromDouble(value);
+}
+
+void NetworkPreparedStatement::setString(size_t index, const std::string& value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromString(value);
+}
+
+void NetworkPreparedStatement::setBytes(size_t index, const std::vector<uint8_t>& value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(value.data(), value.size());
+}
+
+void NetworkPreparedStatement::setBytes(size_t index, const uint8_t* data, size_t length) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(data, length);
+}
+
+void NetworkPreparedStatement::setTimestamp(size_t index, int64_t microseconds) {
+    setInt64(index, microseconds);
+}
+
+void NetworkPreparedStatement::setDate(size_t index, int32_t days) {
+    setInt32(index, days);
+}
+
+void NetworkPreparedStatement::setTime(size_t index, int64_t microseconds) {
+    setInt64(index, microseconds);
+}
 
 void applyDriverDefaultsFromEnv(NetworkClientConfig& config) {
     const char* host = std::getenv("SCRATCHBIRD_DRIVER_HOST");
@@ -248,35 +529,175 @@ core::Status NetworkClient::connect(const NetworkClientConfig& config,
     }
 
     if (!config_.username.empty()) {
-        auto auth_msg = protocol::ProtocolCodec::buildAuthRequest(
-            session_id_,
-            config_.username,
-            config_.password
-        );
-        status = sendMessage(auth_msg, ctx);
-        if (status != core::Status::OK) {
-            last_error_ = "Failed to send AUTH_REQUEST";
-            return status;
+        auto do_password_auth = [&]() -> core::Status {
+            auto auth_msg = protocol::ProtocolCodec::buildAuthRequest(
+                session_id_,
+                config_.username,
+                config_.password
+            );
+            auto status = sendMessage(auth_msg, ctx);
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to send AUTH_REQUEST";
+                return status;
+            }
+
+            protocol::Message response;
+            status = receiveMessage(response, ctx);
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to receive AUTH_RESPONSE";
+                return status;
+            }
+
+            if (response.getType() != protocol::MessageType::AUTH_RESPONSE) {
+                last_error_ = "Unexpected response to AUTH_REQUEST";
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+
+            bool success = false;
+            uint32_t user_id = 0;
+            std::string error_msg;
+            status = protocol::ProtocolCodec::parseAuthResponse(
+                response, success, user_id, error_msg, ctx
+            );
+            if (status != core::Status::OK || !success) {
+                last_error_ = error_msg.empty() ? "Authentication failed" : error_msg;
+                return core::Status::INVALID_PASSWORD;
+            }
+            return core::Status::OK;
+        };
+
+        auto do_scram_auth = [&](protocol::AuthMethod method) -> core::Status {
+            ScramClientExchange exchange;
+            std::string error_msg;
+            auto status = buildScramClientFirst(config_.username, exchange, error_msg);
+            if (status != core::Status::OK) {
+                last_error_ = error_msg;
+                return status;
+            }
+
+            std::string client_first = "n,," + exchange.client_first_bare;
+            std::vector<uint8_t> client_first_bytes(client_first.begin(), client_first.end());
+            auto auth_msg = protocol::ProtocolCodec::buildAuthRequest(
+                session_id_,
+                config_.username,
+                method,
+                client_first_bytes
+            );
+            status = sendMessage(auth_msg, ctx);
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to send SCRAM client-first";
+                return status;
+            }
+
+            protocol::Message response;
+            status = receiveMessage(response, ctx);
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to receive SCRAM server-first";
+                return status;
+            }
+
+            if (response.getType() != protocol::MessageType::AUTH_RESPONSE) {
+                last_error_ = "Unexpected response to SCRAM client-first";
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+
+            protocol::AuthStatus auth_status = protocol::AuthStatus::ERROR;
+            uint32_t user_id = 0;
+            std::string auth_error;
+            std::vector<uint8_t> data;
+            status = protocol::ProtocolCodec::parseAuthResponse(
+                response, auth_status, user_id, auth_error, &data, ctx
+            );
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to parse SCRAM server-first";
+                return status;
+            }
+            if (auth_status != protocol::AuthStatus::CONTINUE) {
+                last_error_ = auth_error.empty() ? "SCRAM authentication failed" : auth_error;
+                return core::Status::INVALID_PASSWORD;
+            }
+
+            std::string server_first(data.begin(), data.end());
+            security::ScramAlgorithm algorithm =
+                (method == protocol::AuthMethod::SCRAM_SHA_512)
+                    ? security::ScramAlgorithm::SHA_512
+                    : security::ScramAlgorithm::SHA_256;
+
+            status = handleScramServerFirst(
+                config_.password,
+                algorithm,
+                exchange,
+                server_first,
+                error_msg
+            );
+            if (status != core::Status::OK) {
+                last_error_ = error_msg;
+                return status;
+            }
+
+            std::vector<uint8_t> client_final_bytes(exchange.client_final.begin(),
+                                                     exchange.client_final.end());
+            auth_msg = protocol::ProtocolCodec::buildAuthRequest(
+                session_id_,
+                config_.username,
+                method,
+                client_final_bytes
+            );
+            status = sendMessage(auth_msg, ctx);
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to send SCRAM client-final";
+                return status;
+            }
+
+            status = receiveMessage(response, ctx);
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to receive SCRAM server-final";
+                return status;
+            }
+
+            if (response.getType() != protocol::MessageType::AUTH_RESPONSE) {
+                last_error_ = "Unexpected response to SCRAM client-final";
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+
+            auth_status = protocol::AuthStatus::ERROR;
+            auth_error.clear();
+            data.clear();
+            status = protocol::ProtocolCodec::parseAuthResponse(
+                response, auth_status, user_id, auth_error, &data, ctx
+            );
+            if (status != core::Status::OK) {
+                last_error_ = "Failed to parse SCRAM server-final";
+                return status;
+            }
+            if (auth_status != protocol::AuthStatus::OK) {
+                last_error_ = auth_error.empty() ? "SCRAM authentication failed" : auth_error;
+                return core::Status::INVALID_PASSWORD;
+            }
+
+            std::string server_final(data.begin(), data.end());
+            status = verifyScramServerFinal(server_final, exchange, error_msg);
+            if (status != core::Status::OK) {
+                last_error_ = error_msg;
+                return status;
+            }
+
+            return core::Status::OK;
+        };
+
+        core::Status auth_status = core::Status::OK;
+        if (config_.auth_method == protocol::AuthMethod::SCRAM_SHA_256 ||
+            config_.auth_method == protocol::AuthMethod::SCRAM_SHA_512) {
+            auth_status = do_scram_auth(config_.auth_method);
+            if (auth_status != core::Status::OK && config_.allow_password_fallback) {
+                auth_status = do_password_auth();
+            }
+        } else {
+            auth_status = do_password_auth();
         }
 
-        status = receiveMessage(response, ctx);
-        if (status != core::Status::OK) {
-            last_error_ = "Failed to receive AUTH_RESPONSE";
-            return status;
-        }
-
-        if (response.getType() != protocol::MessageType::AUTH_RESPONSE) {
-            last_error_ = "Unexpected response to AUTH_REQUEST";
-            return core::Status::PROTOCOL_VIOLATION;
-        }
-
-        uint32_t user_id = 0;
-        status = protocol::ProtocolCodec::parseAuthResponse(
-            response, success, user_id, error_msg, ctx
-        );
-        if (status != core::Status::OK || !success) {
-            last_error_ = error_msg.empty() ? "Authentication failed" : error_msg;
-            return core::Status::INVALID_PASSWORD;
+        if (auth_status != core::Status::OK) {
+            return auth_status;
         }
     }
 
@@ -318,6 +739,11 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
     results.rows.clear();
     results.rows_affected = 0;
     results.command_tag.clear();
+    if (ctx) {
+        ctx->code = core::Status::OK;
+        ctx->sqlstate = core::SQLSTATE_SUCCESS;
+        ctx->message.clear();
+    }
 
     if (!isConnected()) {
         last_error_ = "Not connected";
@@ -590,6 +1016,34 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
     }
 }
 
+core::Status NetworkClient::prepare(const std::string& sql,
+                                    NetworkPreparedStatement& stmt,
+                                    core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    (void)ctx;
+    stmt.sql_ = sql;
+    stmt.param_count_ = countParameters(sql);
+    stmt.params_.assign(stmt.param_count_, protocol::ProtocolCodec::ColumnValue(nullptr));
+    stmt.valid_ = true;
+    return core::Status::OK;
+}
+
+core::Status NetworkClient::executePrepared(NetworkPreparedStatement& stmt,
+                                            NetworkResultSet& results,
+                                            core::ErrorContext* ctx) {
+    if (!stmt.isValid()) {
+        last_error_ = "Invalid prepared statement";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    std::string sql = substituteParameters(stmt.sql_, stmt.params_);
+    return executeQuery(sql, results, ctx);
+}
+
 core::Status NetworkClient::beginTransaction(core::ErrorContext* ctx) {
     auto msg = protocol::ProtocolCodec::buildBeginTransaction(session_id_, 0, false);
     auto status = sendMessage(msg, ctx);
@@ -706,22 +1160,7 @@ core::Status NetworkClient::receiveMessage(protocol::Message& msg,
     }
 
     uint8_t header_buf[sizeof(protocol::MessageHeader)];
-    core::Status status;
-    if (tls_active_ && tls_conn_) {
-        size_t offset = 0;
-        while (offset < sizeof(header_buf)) {
-            int read = tls_conn_->read(header_buf + offset,
-                                       static_cast<int>(sizeof(header_buf) - offset));
-            if (read <= 0) {
-                SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "TLS read failed");
-                return core::Status::IO_ERROR;
-            }
-            offset += static_cast<size_t>(read);
-        }
-        status = core::Status::OK;
-    } else {
-        status = socket_->readExact(header_buf, sizeof(header_buf), ctx);
-    }
+    core::Status status = readExactWithTimeout(header_buf, sizeof(header_buf), ctx);
     if (status != core::Status::OK) {
         return status;
     }
@@ -737,25 +1176,72 @@ core::Status NetworkClient::receiveMessage(protocol::Message& msg,
 
     if (header.payload_length > 0) {
         std::vector<uint8_t> payload_buf(header.payload_length);
-        if (tls_active_ && tls_conn_) {
-            size_t offset = 0;
-            while (offset < payload_buf.size()) {
-                int read = tls_conn_->read(payload_buf.data() + offset,
-                                           static_cast<int>(payload_buf.size() - offset));
-                if (read <= 0) {
-                    SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "TLS read failed");
-                    return core::Status::IO_ERROR;
-                }
-                offset += static_cast<size_t>(read);
-            }
-            status = core::Status::OK;
-        } else {
-            status = socket_->readExact(payload_buf.data(), header.payload_length, ctx);
-        }
+        status = readExactWithTimeout(payload_buf.data(), header.payload_length, ctx);
         if (status != core::Status::OK) {
             return status;
         }
         msg.setPayload(payload_buf.data(), header.payload_length);
+    }
+
+    return core::Status::OK;
+}
+
+core::Status NetworkClient::readExactWithTimeout(void* buffer, size_t size,
+                                                 core::ErrorContext* ctx) {
+    if (!socket_ || !socket_->isOpen()) {
+        SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE, "Connection closed");
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    uint8_t* ptr = static_cast<uint8_t*>(buffer);
+    size_t total_read = 0;
+    const uint32_t timeout_ms = config_.read_timeout_ms;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+    while (total_read < size) {
+        uint32_t slice = timeout_ms;
+        if (timeout_ms > 0) {
+            auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "Read timeout");
+                return core::Status::IO_ERROR;
+            }
+            slice = static_cast<uint32_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        }
+
+        if (tls_active_ && tls_conn_) {
+            if (timeout_ms > 0) {
+                if (!socket_->waitReadable(static_cast<int>(slice))) {
+                    SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "Read timeout");
+                    return core::Status::IO_ERROR;
+                }
+            }
+            int read = tls_conn_->read(ptr + total_read,
+                                       static_cast<int>(size - total_read));
+            if (read <= 0) {
+                SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "TLS read failed");
+                return core::Status::IO_ERROR;
+            }
+            total_read += static_cast<size_t>(read);
+            continue;
+        }
+
+        size_t bytes_read = 0;
+        core::Status status;
+        if (timeout_ms > 0) {
+            status = socket_->readWithTimeout(ptr + total_read, size - total_read,
+                                              &bytes_read, slice, ctx);
+        } else {
+            status = socket_->read(ptr + total_read, size - total_read, &bytes_read, ctx);
+        }
+        if (status != core::Status::OK) {
+            return status;
+        }
+        if (bytes_read == 0) {
+            continue;
+        }
+        total_read += bytes_read;
     }
 
     return core::Status::OK;

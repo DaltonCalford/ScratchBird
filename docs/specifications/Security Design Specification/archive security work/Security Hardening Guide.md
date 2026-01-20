@@ -34,7 +34,7 @@ Compared to PostgreSQL and MySQL, Firebird lacks native row-level security, uses
 
 ## Insider threats exploit privilege escalation through security definer functions
 
-Database privilege escalation represents the highest-severity insider threat, with documented CVEs enabling regular users to achieve superuser access. CVE-2020-25695 demonstrates a comprehensive exploit chain in PostgreSQL: attackers create tables with IMMUTABLE functions for indexes, replace functions with SECURITY INVOKER variants containing malicious code, then create deferred triggers that execute with caller privileges when superusers run ANALYZE or VACUUM operations. If autovacuum is enabled, escalation becomes automatic.
+Database privilege escalation represents the highest-severity insider threat, with documented CVEs enabling regular users to achieve superuser access. CVE-2020-25695 demonstrates a comprehensive exploit chain in PostgreSQL: attackers create tables with IMMUTABLE functions for indexes, replace functions with SECURITY INVOKER variants containing malicious code, then create deferred triggers that execute with caller privileges when superusers run ANALYZE or VACUUM operations (PostgreSQL example; ScratchBird uses sweep/GC semantics). If autovacuum is enabled, escalation becomes automatic.
 
 **Security definer function exploitation** occurs through search_path manipulation:
 ```sql

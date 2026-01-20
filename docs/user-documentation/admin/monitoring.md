@@ -65,18 +65,29 @@ WHERE datname NOT LIKE 'template%';
 ### Table Statistics
 
 ```sql
--- Table sizes and row counts
+-- Table sizes and row counts (ScratchBird native)
 SELECT
-    schemaname,
-    relname AS table_name,
-    pg_size_pretty(pg_total_relation_size(schemaname || '.' || relname)) AS total_size,
-    n_live_tup AS rows,
-    n_dead_tup AS dead_rows,
-    last_vacuum,
-    last_autovacuum
-FROM pg_stat_user_tables
-ORDER BY pg_total_relation_size(schemaname || '.' || relname) DESC
+    schema_name,
+    table_name,
+    live_rows_estimate AS rows,
+    dead_rows_estimate AS dead_rows,
+    last_vacuum_at,
+    last_autovacuum_at
+FROM sys.table_stats
+ORDER BY dead_rows_estimate DESC
 LIMIT 20;
+```
+
+### Sweep Status (No Sweep)
+
+```sql
+-- Sweep activity and last sweep details
+SELECT * FROM MON_SWEEP;
+
+-- Sweep pressure (gap between OST and OIT)
+SELECT
+    MON$OLDEST_SNAPSHOT - MON$OLDEST_TRANSACTION AS sweep_gap
+FROM MON_DATABASE;
 ```
 
 ### Index Statistics

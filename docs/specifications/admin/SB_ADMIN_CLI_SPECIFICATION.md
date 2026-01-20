@@ -97,7 +97,7 @@ Subcommands:
   drop <name>     Drop database
   info <name>     Show database information
   size <name>     Show database size
-  vacuum <name>   Run vacuum/garbage collection
+  sweep <name>    Run sweep/GC (VACUUM alias)
   analyze <name>  Update statistics
   check <name>    Check database integrity
 ```
@@ -395,7 +395,7 @@ Check Names:
   disk              Check disk usage
   memory            Check memory usage
   locks             Check for lock issues
-  vacuum            Check vacuum status
+  sweep             Check sweep/GC status
   backup            Check backup status
   queries           Check long-running queries
   custom <query>    Custom SQL check
@@ -479,21 +479,36 @@ Subcommands:
 
 ## 6. Maintenance Commands
 
-### 6.1 Vacuum/GC
+### 6.1 Sweep/GC (VACUUM alias)
 
 ```
-sb_admin vacuum [options]
+sb_admin sweep [options]   # VACUUM alias supported
 
 Options:
   --database <name>   Target database
   --table <name>      Target table
-  --full              Full vacuum (exclusive lock)
-  --analyze           Update statistics after vacuum
+  --full              Not supported (no VACUUM FULL rewrite)
+  --analyze           Update statistics after sweep/GC
   --parallel <n>      Parallel workers
   --verbose           Verbose output
 ```
 
-### 6.2 Reindex
+### 6.2 Sweep Status (planned)
+
+```
+sb_admin sweep status [options]
+
+Options:
+  --database <name>   Target database (default: current)
+  --json              Emit JSON
+  --verbose           Include OIT/OAT/OST markers
+```
+
+**Notes**:
+- Read-only; does not perform a sweep.
+- Returns MON_SWEEP and MON_DATABASE markers for "sweep pressure" analysis.
+
+### 6.3 Reindex
 
 ```
 sb_admin reindex [options]
@@ -505,7 +520,7 @@ Options:
   --concurrently      Non-blocking reindex
 ```
 
-### 6.3 Maintenance Mode
+### 6.4 Maintenance Mode
 
 ```
 sb_admin maintenance <subcommand>

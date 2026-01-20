@@ -109,11 +109,11 @@ typedef enum lock_mode {
     ACCESS_SHARE,               // SELECT
     ROW_SHARE,                  // SELECT FOR UPDATE
     ROW_EXCLUSIVE,              // UPDATE, DELETE, INSERT
-    SHARE_UPDATE_EXCLUSIVE,     // VACUUM, CREATE INDEX CONCURRENTLY
+    SHARE_UPDATE_EXCLUSIVE,     // Sweep/GC, CREATE INDEX CONCURRENTLY
     SHARE,                      // CREATE INDEX
     SHARE_ROW_EXCLUSIVE,        // Like EXCLUSIVE but allows ROW SHARE
     EXCLUSIVE,                  // Blocks ROW SHARE/SELECT FOR UPDATE
-    ACCESS_EXCLUSIVE            // ALTER TABLE, DROP TABLE, VACUUM FULL
+    ACCESS_EXCLUSIVE            // ALTER TABLE, DROP TABLE, exclusive maintenance
 } LockMode;
 
 // Lock compatibility matrix

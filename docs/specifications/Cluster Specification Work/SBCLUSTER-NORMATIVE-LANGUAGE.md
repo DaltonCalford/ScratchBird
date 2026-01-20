@@ -257,7 +257,7 @@ Sections without RFC 2119 keywords are **informative** and provide context, exam
 
 **Examples**:
 ```
-- "Administrators SHOULD schedule VACUUM jobs during low-traffic periods."
+- "Administrators SHOULD schedule sweep/GC jobs during low-traffic periods."
 - "Clusters SHOULD use replication factor >= 2 for production."
 - "Nodes SHOULD monitor peer health every 15 seconds."
 ```

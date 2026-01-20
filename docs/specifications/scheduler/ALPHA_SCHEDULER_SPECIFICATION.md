@@ -25,6 +25,10 @@
 
 ## Executive Summary
 
+**Canonical spec:** This document is a supporting Alpha reference. The canonical scheduler
+spec that consolidates Alpha + Beta behavior and resolves DDL differences is:
+`ScratchBird/docs/specifications/scheduler/SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md`.
+
 ### Purpose
 
 This specification defines a **standalone job scheduler for Alpha** (single-node, non-clustered) that is **forward-compatible** with the full Beta cluster scheduler (SBCLUSTER-09). The Alpha scheduler provides essential scheduling capabilities while avoiding cluster-specific features that don't apply to single-node deployments.
@@ -75,11 +79,11 @@ Alpha parser accepts Beta syntax but ignores cluster-specific features.
 **Example**:
 ```sql
 -- Beta syntax (with job class and partition rule)
-CREATE JOB daily_vacuum
+CREATE JOB daily_sweep
   CLASS = LOCAL_SAFE              -- Accepted, ignored (Alpha has no classes)
   PARTITION BY ALL_SHARDS         -- Accepted, ignored (Alpha has no shards)
   SCHEDULE = '0 2 * * *'
-  AS 'VACUUM ANALYZE';
+  AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 
 -- Result: Job created, executes on single Alpha node, no errors
 ```
@@ -469,13 +473,13 @@ CREATE JOB job_name
 **Alpha Examples**:
 
 ```sql
--- Daily VACUUM (Beta syntax, works in Alpha)
-CREATE JOB daily_vacuum
+-- Daily sweep/GC (Beta syntax, works in Alpha)
+CREATE JOB daily_sweep
   CLASS = LOCAL_SAFE              -- Accepted, ignored in Alpha
   PARTITION BY ALL_SHARDS         -- Accepted, ignored in Alpha
   SCHEDULE = '0 2 * * *'
-  DESCRIPTION = 'Daily VACUUM ANALYZE'
-  AS 'VACUUM ANALYZE';
+  DESCRIPTION = 'Daily sweep/GC + analyze'
+  AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 
 -- Hourly report (Alpha-only syntax)
 CREATE JOB hourly_sales_report
@@ -810,7 +814,7 @@ CREATE INDEX idx_job_deps_job_uuid ON sys.job_dependencies(job_uuid);
 **Acceptance Criteria**:
 - [ ] All unit tests pass (100% code coverage)
 - [ ] All integration tests pass
-- [ ] Example jobs from spec work (daily_vacuum, hourly_report, ETL pipeline)
+- [ ] Example jobs from spec work (daily_sweep, hourly_report, ETL pipeline)
 
 **Estimated Duration**: 1 week
 
@@ -874,12 +878,12 @@ CREATE JOB hourly_report
 
 ```sql
 -- Alpha job (still works in Beta)
-CREATE JOB daily_vacuum
+CREATE JOB daily_sweep
   SCHEDULE = '0 2 * * *'
-  AS 'VACUUM ANALYZE';
+  AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 
 -- Beta enhancement: Add job class and partition rule
-ALTER JOB daily_vacuum
+ALTER JOB daily_sweep
   SET CLASS = LOCAL_SAFE
   SET PARTITION BY ALL_SHARDS;
 
@@ -1122,13 +1126,13 @@ audit_chain_->logEvent(AuditEventType::JOB_EXECUTED, {
 
 ## Examples
 
-### Daily Vacuum
+### Daily Sweep/GC
 
 ```sql
-CREATE JOB daily_vacuum
+CREATE JOB daily_sweep
   SCHEDULE = '0 2 * * *'
-  DESCRIPTION = 'Daily VACUUM ANALYZE'
-  AS 'VACUUM ANALYZE';
+  DESCRIPTION = 'Daily sweep/GC + analyze'
+  AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 ```
 
 ### Hourly Report

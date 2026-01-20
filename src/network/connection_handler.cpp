@@ -103,18 +103,10 @@ ssize_t Connection::readIntoBuffer() {
         return -1;
     }
 
-    // Ensure buffer has space
-    if (read_buffer_.size() - read_offset_ < SOCKET_READ_CHUNK) {
-        // Compact buffer if we've consumed a lot
-        if (read_offset_ > read_buffer_.size() / 2) {
-            read_buffer_.erase(read_buffer_.begin(), read_buffer_.begin() + read_offset_);
-            read_offset_ = 0;
-        }
-        read_buffer_.resize(read_buffer_.size() + SOCKET_READ_CHUNK);
-    }
-
-    size_t bytes_read;
-    auto status = socket_->read(read_buffer_.data() + read_buffer_.size() - SOCKET_READ_CHUNK,
+    size_t bytes_read = 0;
+    const size_t old_size = read_buffer_.size();
+    read_buffer_.resize(old_size + SOCKET_READ_CHUNK);
+    auto status = socket_->read(read_buffer_.data() + old_size,
                                 SOCKET_READ_CHUNK, &bytes_read);
 
     if (status != core::Status::OK) {
@@ -130,7 +122,7 @@ ssize_t Connection::readIntoBuffer() {
     }
 
     // Trim buffer to actual data size
-    read_buffer_.resize(read_buffer_.size() - SOCKET_READ_CHUNK + bytes_read);
+    read_buffer_.resize(old_size + bytes_read);
 
     stats_.bytes_received += bytes_read;
     last_read_ = last_activity_ = std::chrono::steady_clock::now();
@@ -177,9 +169,12 @@ void Connection::consumeReadBuffer(size_t bytes) {
     if (bytes >= read_buffer_.size() - read_offset_) {
         read_buffer_.clear();
         read_offset_ = 0;
-    } else {
-        read_offset_ += bytes;
+        return;
     }
+
+    read_buffer_.erase(read_buffer_.begin() + read_offset_,
+                       read_buffer_.begin() + read_offset_ + bytes);
+    read_offset_ = 0;
 }
 
 void Connection::appendToWriteBuffer(const void* data, size_t size) {

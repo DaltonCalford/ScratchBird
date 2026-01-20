@@ -9,6 +9,9 @@ This directory contains transaction management specifications for ScratchBird's 
 ScratchBird implements a sophisticated transaction system based on Firebird's Multi-Generational Architecture (MGA), providing true MVCC (Multi-Version Concurrency Control) without undo logs. This directory contains specifications for transaction management, locking, distributed transactions, and session control.
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this directory describe an optional post-gold stream for
+replication/PITR only.
 
 ## Specifications in this Directory
 
@@ -60,7 +63,8 @@ Hierarchical locking system:
 **CRITICAL:** ScratchBird implements pure Firebird MGA, NOT PostgreSQL MVCC:
 
 - ✅ **MGA:** Multiple versions in-place, no undo, garbage collection
-- ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL)/undo logs, vacuum
+- ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL)/undo logs, VACUUM
+  (ScratchBird WAL is optional post-gold only)
 
 See [../../MGA_RULES.md](../../MGA_RULES.md) for absolute rules.
 
@@ -68,6 +72,7 @@ See [../../MGA_RULES.md](../../MGA_RULES.md) for absolute rules.
 
 - [Storage Engine](../storage/) - Storage layer and MGA implementation
 - [Indexes](../indexes/) - Index versioning and MGA integration
+- [Firebird GC/Sweep Glossary](FIREBIRD_GC_SWEEP_GLOSSARY.md) - Terms and model alignment
 - [Parser](../parser/) - Transaction control statement parsing
 - [Cluster](../Cluster%20Specification%20Work/) - Distributed transaction coordination
 

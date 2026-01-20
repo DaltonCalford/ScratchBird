@@ -102,6 +102,10 @@ CompilationResultV2 QueryCompilerV2::compileInternal(const std::string& sql) {
 
     SemanticAnalyzerV2 analyzer(*catalog_, parser.stringPool());
     analyzer.setCurrentSchema(current_schema_);
+    if (!search_path_.empty())
+    {
+        analyzer.setSearchPath(search_path_);
+    }
 
     SemanticResult sem_result = analyzer.analyze(parse_result.statement());
 

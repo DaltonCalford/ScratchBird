@@ -10,7 +10,7 @@
 **Completed Index Types (4/12 = 33%):**
 - ✅ **B-Tree Index** - Production ready with prefix compression
   - Location: `src/core/btree.cpp`, `src/core/btree_*.cpp`
-  - All core algorithms implemented (insert, search, remove, split, vacuum)
+  - All core algorithms implemented (insert, search, remove, split, sweep/GC)
   - Lock coupling for concurrency, page compaction and merging
   - **Status:** Production-ready, 100% complete
 
@@ -212,7 +212,7 @@ typedef struct btree_methods {
     
     void (*end_scan)(IndexScanDesc scan);
     
-    // Maintenance
+    // Maintenance (sweep/GC)
     void (*vacuum)(SBBTreeIndex* index,
                   TransactionId oldest_xid);
     
@@ -586,7 +586,7 @@ bool index_get_next(IndexScanDesc* scan, TupleId* tid) {
 ### 5.1 Vacuum and Cleanup
 
 ```c
-// Index vacuum to remove dead tuples
+// Index sweep/GC to remove dead tuples
 void index_vacuum(
     SBBTreeIndex* index,
     TransactionId oldest_xid,
@@ -912,4 +912,3 @@ void index_advisor_analyze(IndexAdvisor* advisor) {
     }
 }
 ```
-

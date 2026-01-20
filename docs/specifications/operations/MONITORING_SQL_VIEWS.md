@@ -213,17 +213,17 @@ Per-table runtime statistics used for pg_stat_all_tables parity.
 | live_rows_estimate | BIGINT | Estimated live rows |
 | dead_rows_estimate | BIGINT | Estimated dead rows |
 | mod_since_analyze | BIGINT | Modifications since last analyze |
-| ins_since_vacuum | BIGINT | Inserts since last vacuum |
-| last_vacuum_at | TIMESTAMPTZ | Last manual vacuum (nullable) |
-| last_autovacuum_at | TIMESTAMPTZ | Last auto vacuum (nullable) |
+| ins_since_vacuum | BIGINT | Inserts since last sweep/GC |
+| last_vacuum_at | TIMESTAMPTZ | Last sweep/GC completion (nullable) |
+| last_autovacuum_at | TIMESTAMPTZ | Last background GC completion (nullable) |
 | last_analyze_at | TIMESTAMPTZ | Last manual analyze (nullable) |
 | last_autoanalyze_at | TIMESTAMPTZ | Last auto analyze (nullable) |
-| vacuum_count | BIGINT | Manual vacuum count |
-| autovacuum_count | BIGINT | Auto vacuum count |
+| vacuum_count | BIGINT | Sweep/GC count (PostgreSQL alias) |
+| autovacuum_count | BIGINT | Background GC count (PostgreSQL alias) |
 | analyze_count | BIGINT | Manual analyze count |
 | autoanalyze_count | BIGINT | Auto analyze count |
-| total_vacuum_time_ms | BIGINT | Cumulative manual vacuum time (ms) |
-| total_autovacuum_time_ms | BIGINT | Cumulative auto vacuum time (ms) |
+| total_vacuum_time_ms | BIGINT | Cumulative sweep/GC time (ms) |
+| total_autovacuum_time_ms | BIGINT | Cumulative background GC time (ms) |
 | total_analyze_time_ms | BIGINT | Cumulative manual analyze time (ms) |
 | total_autoanalyze_time_ms | BIGINT | Cumulative auto analyze time (ms) |
 

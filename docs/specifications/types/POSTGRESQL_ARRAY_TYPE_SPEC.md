@@ -671,6 +671,12 @@ array_dims(arr)                  -- Text representation of dimensions
 cardinality(arr)                 -- Total number of elements
 ```
 
+**Search functions:**
+```sql
+array_position(arr, value)       -- 1-based position or NULL if not found
+array_slice(arr, lower, upper)   -- Convenience wrapper for arr[lower:upper]
+```
+
 **Operators:**
 ```sql
 arr[n]                          -- Element access

@@ -148,7 +148,7 @@ typedef struct storage_interface {
     HeapTuple (*scan_next)(TableScanDesc scan);
     void (*end_scan)(TableScanDesc scan);
     
-    // Vacuum operations
+    // Sweep/GC operations (vacuum alias)
     Status (*vacuum)(SBStorageEngine* engine,
                    RelationId rel_id,
                    VacuumParams* params);

@@ -1262,7 +1262,7 @@ std::vector<SearchResult> IVFIndex::searchWithMGA(const float* query_vector,
 }
 ```
 
-### Vacuum and Cleanup
+### Sweep/GC and Cleanup
 
 ```cpp
 Status IVFIndex::vacuum(TransactionManager* txn_mgr, ErrorContext* ctx) {
@@ -1804,7 +1804,7 @@ Status VirtualMachine::executeIVFSearch(const IVFSearchInstruction& instr,
 **Week 7: MGA Compliance**
 - [ ] Add transaction metadata to inverted list entries
 - [ ] Implement visibility checks in search
-- [ ] Implement vacuum for deleted entries
+- [ ] Implement sweep/GC for deleted entries
 - [ ] Test with concurrent transactions
 
 **Week 8-9: DML Integration**

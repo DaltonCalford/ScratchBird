@@ -494,7 +494,7 @@ Primary (Node A, Shard 001)
 
 **Key Concepts**:
 - **Job Classes**: LOCAL_SAFE, LEADER_ONLY, QUORUM_REQUIRED
-- **Partition Rules**: Execute jobs on specific shards (e.g., VACUUM per shard)
+- **Partition Rules**: Execute jobs on specific shards (e.g., sweep/GC per shard)
 - **Cron Scheduling**: Standard cron expressions for recurring jobs
 - **Scheduler Agents**: Per-node daemons that execute assigned jobs
 
@@ -502,11 +502,11 @@ Primary (Node A, Shard 001)
 
 1. **LOCAL_SAFE**: No coordination needed
    ```sql
-   CREATE JOB daily_vacuum
+   CREATE JOB daily_sweep
      CLASS = LOCAL_SAFE
      PARTITION BY ALL_SHARDS
      SCHEDULE = '0 2 * * *'
-     AS 'VACUUM ANALYZE';
+     AS 'SWEEP ANALYZE';  -- Native sweep/GC command (VACUUM alias available)
    ```
 
 2. **LEADER_ONLY**: Runs on Raft leader only
@@ -526,7 +526,7 @@ Primary (Node A, Shard 001)
    ```
 
 **Partition Rules**:
-- **ALL_SHARDS**: Run on every shard (e.g., VACUUM)
+- **ALL_SHARDS**: Run on every shard (e.g., sweep/GC)
 - **SINGLE_SHARD**: Run on one specific shard
 - **SHARD_SET**: Run on a subset of shards
 

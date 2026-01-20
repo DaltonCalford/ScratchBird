@@ -4,6 +4,10 @@
 **Last Updated:** 2026-01-07
 **Status:** ✅ Complete
 
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
+
 ---
 
 ## Table of Contents
@@ -71,7 +75,7 @@ This document specifies performance benchmarking for ScratchBird Database Engine
 | **Write Latency** | Lower (no write-after log (WAL) sync in core MGA) | Higher (write-after log (WAL) sync) |
 | **Read Latency** | Comparable | Comparable |
 | **Throughput** | Higher (no write-after log (WAL) in core MGA) | Lower (write-after log (WAL) overhead) |
-| **GC Overhead** | Sweep (periodic) | VACUUM (periodic) |
+| **GC Overhead** | Sweep/GC (periodic) | VACUUM (periodic) |
 | **Hot Standby** | Not yet (Beta) | Yes |
 
 Note: Optional write-after log (WAL) for replication/PITR may reintroduce write-after log (WAL)-style overhead.
@@ -427,7 +431,7 @@ WHERE o.order_date > '2025-01-01';
    - Load schema
    - Load initial data
    - Create indexes
-   - Run VACUUM/ANALYZE
+   - Run SWEEP/GC + ANALYZE (VACUUM is a PostgreSQL alias)
    - Restart database
 
 2. Warmup Phase (10-30 seconds)
@@ -580,7 +584,7 @@ checkpoint_interval_sec = 300       # 5 minutes
 
 # Query
 work_mem = 64MB                     # Sort/hash work memory
-maintenance_work_mem = 512MB        # VACUUM, index builds
+maintenance_work_mem = 512MB        # Sweep/GC, index builds
 
 # Logging
 log_min_duration_statement_ms = 1000  # Log slow queries > 1 sec

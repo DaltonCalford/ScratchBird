@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "scratchbird/core/type_extractor.h"
+#include "scratchbird/client/driver_config.h"
 
 namespace scratchbird {
 namespace odbc {
@@ -12,16 +13,6 @@ namespace odbc {
 namespace {
 SQLRETURN statusToReturn(core::Status status) {
     return status == core::Status::OK ? SQL_SUCCESS : SQL_ERROR;
-}
-
-network::SSLMode parseSslMode(const std::string& mode) {
-    if (mode == "disable") return network::SSLMode::DISABLED;
-    if (mode == "allow") return network::SSLMode::ALLOW;
-    if (mode == "prefer") return network::SSLMode::PREFER;
-    if (mode == "require") return network::SSLMode::REQUIRE;
-    if (mode == "verify_ca") return network::SSLMode::VERIFY_CA;
-    if (mode == "verify_full") return network::SSLMode::VERIFY_FULL;
-    return network::SSLMode::PREFER;
 }
 
 constexpr int32_t kDaysFrom1970To2000 = 10957;
@@ -238,7 +229,7 @@ client::NetworkClientConfig OdbcClientBridge::buildConfig(const ConnectionParams
         cfg.read_timeout_ms = params.query_timeout * 1000;
         cfg.write_timeout_ms = params.query_timeout * 1000;
     }
-    cfg.ssl_mode = parseSslMode(params.ssl_mode);
+    cfg.ssl_mode = client::parseSslMode(params.ssl_mode);
     cfg.ssl_cert = params.ssl_cert;
     cfg.ssl_key = params.ssl_key;
     cfg.ssl_root_cert = params.ssl_root_cert;

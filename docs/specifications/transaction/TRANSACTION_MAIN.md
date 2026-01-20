@@ -5,6 +5,9 @@
 ---
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
 
 ## IMPLEMENTATION STATUS: COMPLETED
 
@@ -133,7 +136,7 @@ typedef struct sb_transaction_manager {
     TransactionStats tm_stats;             // Global statistics
 
     // Background workers
-    pthread_t       tm_gc_thread;          // Garbage collector
+    // NOTE: GC thread is owned by Database/GarbageCollector; see TRANSACTION_MGA_CORE.md.
     pthread_t       tm_monitor_thread;     // Monitor thread
     pthread_t       tm_recovery_thread;    // Recovery thread
 } SBTransactionManager;
@@ -154,9 +157,9 @@ typedef struct transaction_config {
     DTxProtocol     tc_default_protocol;   // Default protocol (2PC/3PC/Raft)
     uint32_t        tc_prepare_timeout_ms; // Prepare timeout
 
-    // Garbage collection
-    uint32_t        tc_gc_interval_ms;     // GC interval
-    uint32_t        tc_gc_freeze_min_age;  // Min age to freeze
+    // Garbage collection policy is specified in TRANSACTION_MGA_CORE.md
+    // (GCPolicy + sweep interval + garbage_collection.* settings).
+    // Glossary: FIREBIRD_GC_SWEEP_GLOSSARY.md
 
     // Performance
     bool            tc_enable_group_commit; // Group commit optimization
@@ -438,7 +441,7 @@ void commit_transaction_group(
     // Phase 2: Update TIP for all
     mga_batch_commit(tm->tm_mga_manager, group);
 
-    // Phase 3: Flush write-after log (WAL) once for all
+    // Phase 3: Flush optional post-gold write-after log (WAL) once for all
     flush_wal_for_group(group);
 
     // Phase 4: Release locks for all
@@ -468,7 +471,7 @@ Status execute_read_only_transaction(
 {
     // No locks needed with MGA
     // No TIP updates needed
-    // No write-after log (WAL) needed
+    // No optional post-gold write-after log (WAL) needed
 
     if (rot->rot_distributed) {
         // Use global snapshot for distributed reads
@@ -567,7 +570,7 @@ typedef struct transaction_stats {
     uint64_t        ts_oldest_xid;         // Oldest XID
     uint64_t        ts_oldest_active_xid;  // Oldest active XID
     uint64_t        ts_gc_cycles;          // GC cycles run
-    uint64_t        ts_tuples_vacuumed;    // Tuples vacuumed
+    uint64_t        ts_tuples_vacuumed;    // Tuples swept/GC'ed
 } TransactionStats;
 ```
 
@@ -625,7 +628,8 @@ Status perform_crash_recovery(
     cleanup_incomplete_transactions(tm);
 
     // Phase 6: Start background processes
-    start_garbage_collector(tm);
+    // GC start is managed by Database/GarbageCollector policy (see TRANSACTION_MGA_CORE.md)
+    start_garbage_collector(get_database(tm));
     start_deadlock_detector(tm->tm_lock_manager);
 
     return STATUS_OK;

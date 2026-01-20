@@ -2,6 +2,10 @@
 
 ## 1. Introduction
 
+**Canonical spec:** This document is the Beta/cluster reference. The canonical scheduler
+spec that consolidates Alpha + Beta behavior and resolves DDL differences is:
+`ScratchBird/docs/specifications/scheduler/SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md`.
+
 ### 1.1 Purpose
 This document specifies the distributed scheduler architecture for ScratchBird clusters. The scheduler enables **cluster-controlled job execution** with distributed scheduler agents, job classes for different execution guarantees, and partition rules for shard-specific jobs.
 
@@ -217,7 +221,7 @@ struct SchedulerPolicy {
 **Guarantee**: Job can run on any node without coordination.
 
 **Use Cases**:
-- Per-shard maintenance tasks (VACUUM, ANALYZE)
+- Per-shard maintenance tasks (sweep/GC, ANALYZE)
 - Local cache warming
 - Log rotation
 
@@ -228,11 +232,11 @@ struct SchedulerPolicy {
 
 **Example**:
 ```sql
-CREATE JOB vacuum_tables
+CREATE JOB sweep_tables
   CLASS = LOCAL_SAFE
   PARTITION BY ALL_SHARDS
   SCHEDULE = '0 2 * * *'  -- Daily at 2 AM
-  AS 'VACUUM ANALYZE';
+  AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 ```
 
 ### 4.2 LEADER_ONLY
@@ -799,15 +803,15 @@ TEST(Scheduler, PartitionAllShards) {
 
 ## 12. Examples
 
-### 12.1 Daily Vacuum Job
+### 12.1 Daily Sweep/GC Job
 
 ```sql
-CREATE JOB daily_vacuum
+CREATE JOB daily_sweep
   CLASS = LOCAL_SAFE
   PARTITION BY ALL_SHARDS
   SCHEDULE = '0 2 * * *'
-  DESCRIPTION = 'Daily VACUUM ANALYZE on all shards'
-  AS 'VACUUM ANALYZE';
+  DESCRIPTION = 'Daily sweep/GC + analyze on all shards'
+  AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 ```
 
 ### 12.2 Hourly Report Generation

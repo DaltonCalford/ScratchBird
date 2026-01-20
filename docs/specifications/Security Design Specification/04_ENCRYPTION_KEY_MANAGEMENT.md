@@ -6,6 +6,10 @@
 **Date**: January 2026  
 **Scope**: All deployment modes, Security Levels 2-6  
 
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL encryption in this document applies only to an optional post-gold WAL
+stream for replication/PITR.
+
 ---
 
 ## 1. Introduction

@@ -15,6 +15,7 @@ ScratchBird uses several configuration files:
 | `sb_server.conf` | Main server configuration | `/etc/scratchbird/` |
 | `hba.conf` | Host-based authentication | `/etc/scratchbird/` |
 | SSL certificates | TLS encryption | `/etc/scratchbird/ssl/` |
+| `.scratchbird.yml` | Git integration config (when enabled) | Repository root |
 
 ---
 
@@ -181,6 +182,15 @@ If a setting is not specified, defaults are used:
 3. **Use `reload`** instead of `restart` when possible
 4. **Document changes** with comments
 5. **Use environment variables** for secrets
+
+---
+
+## Upgrade Notes
+
+Git integration configuration keys were normalized in the Git spec to
+`repository.repo_*`. The current parser still expects legacy keys such as
+`repository.url` and `repository.branch` until the config parser update lands.
+Plan to migrate to the canonical names when support is implemented.
 
 ---
 

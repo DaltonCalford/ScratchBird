@@ -6,6 +6,9 @@
 ScratchBird's transaction system is built on Multi-Generational Architecture (MGA/MVCC) inherited from Firebird, enhanced with 64-bit transaction IDs, PostgreSQL-style predicate locking for true serializability, and built-in support for distributed transactions. This specification details the core MGA implementation.
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
 
 ## 1. Transaction ID Management
 
@@ -621,157 +624,128 @@ HeapTuple follow_version_chain(
 }
 ```
 
-## 5. Garbage Collection (Vacuum)
+## 5. Garbage Collection and Sweep (Firebird MGA)
 
-### 5.1 Garbage Collection Process
+### 5.1 Design Model (Firebird)
+
+Firebird MGA does **not** use PostgreSQL-style VACUUM phases. Garbage collection removes
+obsolete **back versions** once they are older than OIT and committed; primary records stay
+stable. GC is split into:
+
+- **Cooperative GC** on record access
+- **Background GC thread** (policy-controlled)
+- **Sweep** (database-wide pass)
+
+Firebird reference points:
+- Sweep pass: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:4735-4842`
+- GC thread: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:5640-5865`
+- GC page notification: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:6430-6489`
+- Sweep trigger: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/tra.cpp:3796-3802`
+- GC policy: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/jrd.cpp:7679-7690`
+
+Glossary: `ScratchBird/docs/specifications/transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md`
+
+### 5.2 MGA Visibility Markers
+
+- **OIT** (Oldest Interesting Transaction) bounds the oldest version that might still be visible.
+- **OAT** (Oldest Active Transaction) identifies the oldest still-running transaction.
+- **OST** (Oldest Snapshot Transaction) tracks the oldest snapshot still in use.
+
+A record version is garbage if:
+- it was deleted/updated by a committed transaction, and
+- its `xmax` is **older than OIT**, and
+- no active snapshot can see it.
+
+### 5.3 Cooperative GC (Record Access)
 
 ```c
-// Garbage collection context
-typedef struct gc_context {
-    // Configuration
-    TransactionId   gc_oldest_xmin;        // Oldest XID to preserve
-    uint32_t        gc_freeze_min_age;     // Min age to freeze
-    uint32_t        gc_freeze_table_age;   // Age to freeze whole table
-    
-    // Progress
-    BlockNumber     gc_current_block;      // Current block being processed
-    uint64_t        gc_tuples_removed;     // Dead tuples removed
-    uint64_t        gc_tuples_frozen;      // Tuples frozen
-    uint64_t        gc_pages_removed;      // Empty pages removed
-    
-    // Statistics
-    uint64_t        gc_dead_tuples;        // Dead tuples found
-    uint64_t        gc_live_tuples;        // Live tuples found
-} GCContext;
-
-// Vacuum (garbage collect) a relation
-Status vacuum_relation(
-    Relation rel,
-    VacuumParams* params)
+bool can_gc(RecordVersion* back, TxnMarkers* m)
 {
-    GCContext gc;
-    gc.gc_oldest_xmin = get_oldest_xmin();
-    gc.gc_freeze_min_age = params->freeze_min_age;
-    
-    // Phase 1: Scan heap and collect dead tuples
-    DeadTupleList* dead_tuples = collect_dead_tuples(rel, &gc);
-    
-    // Phase 2: Remove index entries for dead tuples
-    for (Index* idx : rel->indexes) {
-        vacuum_index(idx, dead_tuples);
-    }
-    
-    // Phase 3: Remove dead tuples from heap
-    for (DeadTuple* dead : dead_tuples) {
-        remove_dead_tuple(rel, dead->tid, &gc);
-    }
-    
-    // Phase 4: Truncate empty pages at end
-    truncate_empty_pages(rel);
-    
-    // Phase 5: Update FSM and VM
-    update_fsm_after_vacuum(rel);
-    update_vm_after_vacuum(rel);
-    
-    // Phase 6: Update statistics
-    update_relation_statistics(rel, &gc);
-    
-    // Phase 7: Update oldest XID if we froze tuples
-    if (gc.gc_tuples_frozen > 0) {
-        update_relation_frozen_xid(rel);
-    }
-    
-    return STATUS_OK;
+    if (back->xmax == INVALID_XID) return false;
+    if (!back->xmax_committed) return false;
+    if (back->xmax >= m->oit) return false;
+    return true;
 }
 
-// Collect dead tuples
-DeadTupleList* collect_dead_tuples(
-    Relation rel,
-    GCContext* gc)
+void gc_on_access(Record* primary, TxnMarkers* m)
 {
-    DeadTupleList* dead_list = create_dead_tuple_list();
-    BlockNumber n_blocks = relation_get_n_blocks(rel);
-    
-    for (BlockNumber blk = 0; blk < n_blocks; blk++) {
-        Buffer buf = read_buffer(rel, blk);
-        Page page = buffer_get_page(buf);
-        
-        // Check all tuples on page
-        OffsetNumber max_off = page_get_max_offset(page);
-        
-        for (OffsetNumber off = FirstOffsetNumber; 
-             off <= max_off; 
-             off = OffsetNumberNext(off)) {
-            
-            ItemId itemid = page_get_itemid(page, off);
-            
-            if (!ItemIdIsNormal(itemid)) {
-                continue;
-            }
-            
-            HeapTupleHeader tuple = page_get_item(page, itemid);
-            
-            // Check if tuple is dead to all
-            if (heap_tuple_is_dead(tuple, gc->gc_oldest_xmin)) {
-                ItemPointer tid = palloc(sizeof(ItemPointerData));
-                ItemPointerSet(tid, blk, off);
-                add_dead_tuple(dead_list, tid);
-                gc->gc_dead_tuples++;
-            } else {
-                gc->gc_live_tuples++;
-                
-                // Check if needs freezing
-                if (should_freeze_tuple(tuple, gc)) {
-                    freeze_tuple(tuple);
-                    gc->gc_tuples_frozen++;
-                    mark_buffer_dirty(buf);
-                }
-            }
-        }
-        
-        release_buffer(buf);
-        gc->gc_current_block = blk;
+    RecordVersion* back = primary->back_version;
+    while (back && can_gc(back, m)) {
+        unlink_back_version(primary, back);
+        remove_index_entries(back);
+        remove_blob_versions(back);
+        free_back_version(back);
+        back = primary->back_version;
     }
-    
-    return dead_list;
-}
-
-// Check if tuple is dead to all transactions
-bool heap_tuple_is_dead(
-    HeapTupleHeader tuple,
-    TransactionId oldest_xmin)
-{
-    TransactionId xmax = tuple->t_xmax;
-    
-    // Not deleted?
-    if (!TransactionIdIsValid(xmax)) {
-        return false;
-    }
-    
-    // Deleted by aborted transaction?
-    if (tuple->t_infomask & HEAP_XMAX_ABORTED) {
-        return false;
-    }
-    
-    // Deleted by transaction still visible to someone?
-    if (xmax >= oldest_xmin) {
-        return false;
-    }
-    
-    // Check if delete is committed
-    if (!(tuple->t_infomask & HEAP_XMAX_COMMITTED)) {
-        TransactionState state = get_transaction_state(xmax);
-        if (state != TXN_STATE_COMMITTED) {
-            return false;
-        }
-        
-        // Set hint bit for next time
-        tuple->t_infomask |= HEAP_XMAX_COMMITTED;
-    }
-    
-    return true;  // Dead to all
 }
 ```
+
+### 5.4 Candidate Page Tracking (Firebird Model)
+
+Firebird tracks GC candidates with a **per-relation GC bitmap** keyed by data page sequence.
+When a record access discovers GC candidates, it calls `notify_garbage_collector`, which:
+- marks the relation bitmap for the page,
+- sets `gc_pending`,
+- optionally wakes the GC thread if the oldest snapshot advanced.
+
+Reference: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:6430-6489`.
+
+### 5.5 Background GC Thread (Firebird Pattern)
+
+The GC thread runs only when policy includes background GC. It:
+- attaches as a dedicated "Garbage Collector" attachment,
+- uses a **read-only, read committed, no-lock** transaction,
+- scans relation GC bitmaps for candidate pages,
+- iterates candidate pages with `VIO_next_record` to drive per-record GC,
+- refreshes `tra_oldest` / `tra_oldest_active` to keep GC decisions current,
+- flushes pages opportunistically after GC.
+
+Reference: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:5640-5865`.
+
+### 5.6 Sweep (Database-wide Pass)
+
+Sweep is a forced GC pass, triggered when `(OST - OIT) > sweep_interval`. It:
+- acquires a single **sweep lock**,
+- iterates all non-temporary relations,
+- scans all records with sweeper flags to force GC,
+- does **not** remove primary records (only back versions).
+
+References:
+- Trigger: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/tra.cpp:3796-3802`
+- Locking: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/Database.cpp:245-350`
+- Sweep scan: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:4791-4837`
+
+### 5.7 ScratchBird Canonical Behavior (Aligned to Firebird)
+
+- GC removes **back versions only**, never primary record slots.
+- GC eligibility is based on OIT and committed `xmax`.
+- Index and blob/TOAST entries for removed back versions must be cleaned.
+- Cooperative GC may run on record/page access and DML paths.
+- Background GC is policy-controlled (cooperative/background/combined).
+- Sweep is the database-wide pass to force GC; it should not introduce
+  PostgreSQL VACUUM phases (FSM/VM, relation stats, or page truncation).
+
+### 5.8 Deviations from Firebird 6.0 (Explicit)
+
+- **Candidate tracking**: Firebird uses relation GC bitmaps and a wake semaphore
+  (`vio.cpp:6430-6489`). ScratchBird uses a global dirty-page map keyed by page_id
+  and marks pages on DML (`ScratchBird/src/core/storage_engine.cpp:1000-1004`).
+- **Background GC attachment**: Firebird GC runs as a dedicated attachment with a
+  precommitted read-only transaction (`vio.cpp:5640-5777`). ScratchBird's GC loop
+  operates without an explicit transaction context and reads OIT directly
+  (`ScratchBird/src/core/garbage_collector.cpp:269-399`).
+- **Sweep**: Firebird starts a sweeper thread based on sweep interval and enforces
+  a single sweep via the sweep lock (`tra.cpp:3796-3802`, `Database.cpp:245-350`).
+  ScratchBird's `SweepManager` advances OIT and notifies GC but does not reclaim
+  space yet (`ScratchBird/src/core/sweep_manager.cpp:215-228`).
+- **VACUUM phases**: Firebird does not implement PostgreSQL-style VACUUM phases.
+  ScratchBird currently has a `Vacuum` utility that performs heap scans and
+  pruning plus a `freezeTable` helper (`ScratchBird/src/core/vacuum.cpp:40-107`,
+  `ScratchBird/src/core/vacuum.cpp:597-703`). These are non-Firebird extensions
+  and must obey MGA rules (no primary record removal).
+- **Policy/config**: Firebird uses GC policy from config and sweep interval stored
+  in the database header (`jrd.cpp:7679-7690`, `ods.h:575`). ScratchBird uses
+  `garbage_collection.*` config keys for policy/interval/rate.
 
 ## 6. Savepoints and Nested Transactions
 
@@ -1059,4 +1033,6 @@ This MGA core implementation provides:
 6. **Savepoints** and nested transaction support
 7. **Two-phase commit** for distributed transactions
 
-The system is designed to work without write-after log (WAL) for basic ACID properties (minus durability), with write-after log (WAL) added later only for crash recovery. This follows Firebird's proven MGA design while adding modern enhancements.
+The system is designed to work without write-after log (WAL) for basic ACID
+properties (minus durability), with an optional post-gold write-after log (WAL)
+added only for replication/PITR (not crash recovery).

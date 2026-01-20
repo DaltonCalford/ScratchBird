@@ -357,7 +357,7 @@ This document defines the **implementation boundary** for ScratchBird cluster fe
 - No scheduler (manual operations via scripts)
 
 **Beta Requirements**:
-- Basic scheduler for maintenance jobs (VACUUM, etc.)
+- Basic scheduler for maintenance jobs (sweep/GC, etc.)
 - Cron-like scheduling
 
 **GA Enhancements**:

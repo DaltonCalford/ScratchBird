@@ -358,7 +358,7 @@ scratchbird_disk_usage_bytes{type="temp"} 536870912
 | `database` | (database name) | Database name |
 | `table` | (table name) | Table name |
 | `index` | (index name) | Index name |
-| `type` | data, wal, temp, backup | Storage type |
+| `type` | data, wal (optional post-gold), temp, backup | Storage type |
 
 ---
 

@@ -29,11 +29,11 @@ This document provides a comprehensive index of all core implementation specific
 ### 2. Network Layer
 **File**: `NETWORK_LAYER_SPEC.md`
 **Status**: ✅ Complete
-**Phase**: 19 (Network Protocol), 25 (Y-Valve Framework)
+**Phase**: 19 (Network Protocol), 25 (Listener/Pool Framework; legacy Y-Valve)
 
 **Key Features**:
 - Enhanced connection pooling (Firebird efficiency + PostgreSQL robustness)
-- Multi-protocol support via Y-Valve router
+- Multi-protocol support via listener/pool control plane
 - Protocol translation cache
 - Connection multiplexing
 - Zero-copy networking
@@ -42,7 +42,7 @@ This document provides a comprehensive index of all core implementation specific
 - Connection migration for failover
 
 **Implementation Approach**:
-- Leverage existing Y-Valve architecture
+- Leverage existing listener/pool architecture (legacy Y-Valve spec)
 - Implement sophisticated pooling with per-workload pools
 - Add protocol translation cache for multi-dialect performance
 
@@ -119,7 +119,7 @@ This document provides a comprehensive index of all core implementation specific
    - Adaptive index recommendations
 
 2. **Network ↔ All Components**:
-   - Y-Valve routes queries to appropriate backends
+   - Listener/pool routes connections to appropriate parsers
    - Connection pooling manages database connections
    - Protocol handlers translate to BLR
 
@@ -146,7 +146,7 @@ This document provides a comprehensive index of all core implementation specific
 - Hash indexes (`INDEX_IMPLEMENTATION_SPEC.md` §3.1)
 - Protocol compression (`NETWORK_LAYER_SPEC.md` §4.2)
 - Join ordering (`QUERY_OPTIMIZER_SPEC.md` §3.3)
-- Parallel vacuum (future `STORAGE_ENGINE_SPEC.md`)
+- Parallel sweep/GC (future `STORAGE_ENGINE_SPEC.md`)
 - Deadlock detection (future `TRANSACTION_LOCK_SPEC.md`)
 
 ### Phase 3: Advanced (Months 7-9)
@@ -187,7 +187,7 @@ For each implemented component:
 
 - `IMPLEMENTATION_RECOMMENDATIONS.md`: Overall hybrid approach strategy
 - `MGA_IMPLEMENTATION.md`: Existing MGA specification
-- `Y_VALVE_ARCHITECTURE.md`: Existing Y-Valve specification
+- `Y_VALVE_ARCHITECTURE.md`: Listener/pool architecture (legacy Y-Valve spec)
 - `BLR_SPECIFICATION.md`: Binary Language Representation
 - `BLR_ADVANCED_FEATURES.md`: BLR for advanced features
 - `C_API_SPECIFICATION.md`: C API for all components

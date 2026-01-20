@@ -81,6 +81,8 @@ Detailed technical specs for all features:
 - **[Network Listener and Parser Pool Spec](specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md)** - Listener startup, parser pools, and socket handoff
 - **[Storage Engine Spec](specifications/STORAGE_ENGINE_SPEC.md)** - Storage engine architecture
 - **[Transaction Management](specifications/TRANSACTION_MANAGEMENT.md)** - MGA transaction system
+- **[Git Metadata Integration](specifications/core/GIT_METADATA_INTEGRATION_SPECIFICATION.md)** - Git-based schema version control
+- **[Scheduler and Job Runner](specifications/scheduler/SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md)** - Canonical scheduler spec
 
 **Note:** Completed index specifications (BITMAP, BRIN, GIST, HNSW, SPGIST) and low-level specs have been archived to `specifications/archive/index_completion_specs_2025/`
 

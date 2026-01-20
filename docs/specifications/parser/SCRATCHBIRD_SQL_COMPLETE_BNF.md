@@ -1097,7 +1097,7 @@ UPPERCASE    Terminal (keyword)
   | <bitwise_operator>
 
 <arithmetic_operator> ::=
-    '+' | '-' | '*' | '/' | '%' | '^' | '**'
+    '+' | '-' | '*' | '/' | '%' | '^' | '**' | DIV
 
 <comparison_operator> ::=
     '=' | '<>' | '!=' | '<' | '>' | '<=' | '>='
@@ -1111,6 +1111,8 @@ UPPERCASE    Terminal (keyword)
   | [ NOT ] LIKE <pattern> [ ESCAPE <escape_character> ]
   | [ NOT ] ILIKE <pattern> [ ESCAPE <escape_character> ]
   | [ NOT ] SIMILAR TO <pattern> [ ESCAPE <escape_character> ]
+  | [ NOT ] STARTING WITH <expression>
+  | [ NOT ] CONTAINING <expression>
   | [ NOT ] REGEXP <pattern>
   | <quantified_comparison>
 
@@ -1178,6 +1180,8 @@ UPPERCASE    Terminal (keyword)
   | <describe_command>
   | <explain_command>
   | <analyze_command>
+  | <sweep_command>
+  | <sweep_status_command>
   | <vacuum_command>
   | <copy_command>
   | <set_command>
@@ -1209,6 +1213,19 @@ UPPERCASE    Terminal (keyword)
 
 <analyze_command> ::=
     ANALYZE [ VERBOSE ] [ <table_name> [ '(' <column_list> ')' ] ]
+
+<sweep_command> ::=
+    SWEEP [ VERBOSE ] [ ANALYZE ]
+
+Note: SWEEP is the native ScratchBird/Firebird MGA maintenance command. VACUUM is a
+PostgreSQL-compatibility alias that maps to sweep/GC semantics; VACUUM FULL is not
+supported.
+
+<sweep_status_command> ::=
+    SWEEP STATUS [ VERBOSE ]
+
+Note: SWEEP STATUS is a planned read-only monitoring statement. It returns sweep
+statistics and transaction markers without performing a sweep.
 
 <vacuum_command> ::=
     VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ]
@@ -1462,11 +1479,11 @@ Highest to Lowest:
 3.  .                       (member selection)
 4.  - + ~                   (unary operators)
 5.  ^                       (exponentiation)
-6.  * / %                   (multiplication, division, modulo)
+6.  * / % DIV               (multiplication, division, modulo)
 7.  + -                     (addition, subtraction)
 8.  << >> & | #             (bitwise operators)
 9.  = <> < > <= >= !=       (comparison)
-10. BETWEEN IN LIKE ILIKE SIMILAR TO EXISTS
+10. BETWEEN IN LIKE ILIKE SIMILAR TO STARTING WITH CONTAINING EXISTS
 11. IS NULL, IS NOT NULL, IS TRUE, IS FALSE
 12. NOT                     (logical NOT)
 13. AND                     (logical AND)
@@ -1518,11 +1535,12 @@ Categories include:
 - Aggregate functions (COUNT, SUM, AVG, MIN, MAX, etc.)
 - Window functions (ROW_NUMBER, RANK, DENSE_RANK, etc.)
 - String functions (CONCAT, SUBSTRING, TRIM, etc.)
-- Date/Time functions (CURRENT_DATE, EXTRACT, ALTER_ELEMENT, DATE_ADD, etc.)
-- Mathematical functions (ABS, ROUND, POWER, etc.)
+- String functions (CONCAT, SUBSTRING, TRIM, REPLACE, ENDS_WITH, etc.)
+- Date/Time functions (CURRENT_DATE, EXTRACT, DATE_ADD, DATE_DIFF, TO_CHAR, TO_DATE, TO_TIMESTAMP, etc.)
+- Mathematical functions (ABS, ROUND, POWER, LEAST, GREATEST, etc.)
 - UUID functions (gen_uuid_v7, uuid_to_string, etc.)
-- JSON functions (JSON_EXTRACT, JSON_ARRAY, etc.)
-- Array functions (ARRAY_AGG, UNNEST, etc.)
+- JSON functions (JSON_EXTRACT, JSON_ARRAY, JSON_EXISTS, etc.)
+- Array functions (ARRAY_AGG, UNNEST, ARRAY_POSITION, ARRAY_SLICE, etc.)
 - System functions (CURRENT_USER, VERSION, etc.)
 
 ## Appendix B: System Tables and Views

@@ -952,7 +952,7 @@ std::vector<TID> InvertedIndex::search(const std::string& query,
 
 ### Garbage Collection Integration
 
-During VACUUM/GC, remove references to deleted documents:
+During sweep/GC, remove references to deleted documents:
 
 ```cpp
 Status InvertedIndex::removeDeadEntries(const std::vector<TID>& dead_tids,

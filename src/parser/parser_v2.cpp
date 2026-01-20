@@ -331,7 +331,7 @@ CreateUserStmt* Parser::parseCreateUser() {
     auto* stmt = arena_.create<CreateUserStmt>();
     stmt->user_name = expectIdentifier("Expected user name");
 
-    if (matchContextual("WITH")) {
+    if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
         // Optional WITH before options
     }
 
@@ -348,7 +348,7 @@ CreateUserStmt* Parser::parseCreateUser() {
             stmt->is_superuser = true;
         } else if (matchContextual("NOSUPERUSER")) {
             stmt->is_superuser = false;
-        } else if (matchContextual("WITH")) {
+        } else if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
             continue;
         } else {
             break;

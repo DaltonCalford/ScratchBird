@@ -88,7 +88,7 @@ typedef struct sb_buffer_pool {
     
     // Ring buffers (PostgreSQL-style)
     RingBuffer*     bp_ring_sequential;    // Sequential scan ring
-    RingBuffer*     bp_ring_vacuum;        // Vacuum operations ring
+    RingBuffer*     bp_ring_vacuum;        // Sweep/GC operations ring
     RingBuffer*     bp_ring_bulkwrite;     // Bulk write ring
     
     // Adaptive hash index (MySQL-style)
@@ -321,7 +321,7 @@ BufferDesc* buffer_fetch_page(
             buf = ring_get_buffer(pool->bp_ring_sequential, tag, pool);
             break;
             
-        case BAS_VACUUM:
+        case BAS_VACUUM: // Sweep/GC access strategy (PostgreSQL alias)
             buf = ring_get_buffer(pool->bp_ring_vacuum, tag, pool);
             break;
             

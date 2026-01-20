@@ -1263,6 +1263,10 @@ isc_que_events(status, &db_handle, &event_handle,
               event_callback, result_buffer);
 ```
 
+**Firebird note:** Event notifications are delivered on commit only. ScratchBird
+Firebird emulation follows this behavior and does not support immediate delivery
+or event message payloads.
+
 ### 5. External Tables
 ```cpp
 // Create external table

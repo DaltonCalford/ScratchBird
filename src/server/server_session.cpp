@@ -15,16 +15,363 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/auth_provider.h"
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/logger.h"
 #include "scratchbird/security/scram_auth.h"
 
 #include <cstring>
 #include <cctype>
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include <iostream>
+#include <cstdio>
+#include <functional>
+#include <streambuf>
+#include <stdexcept>
 
 namespace scratchbird {
 namespace server {
+
+namespace {
+
+struct CopyStreamState {
+    uint64_t stream_id{0};
+    uint64_t total_bytes{0};
+    uint32_t in_window_bytes{0};
+    uint32_t in_window_grant{65536};
+    uint32_t in_low_watermark{32768};
+    uint32_t out_window_bytes{0};
+    bool out_paused{false};
+};
+
+class CopyOutStreambuf : public std::streambuf {
+public:
+    using WriteFn = std::function<bool(const uint8_t*, size_t, std::string&)>;
+
+    CopyOutStreambuf(size_t buffer_size, WriteFn write_fn)
+        : write_fn_(std::move(write_fn)) {
+        if (buffer_size == 0) {
+            buffer_size = 65536;
+        }
+        buffer_.resize(buffer_size);
+        setp(buffer_.data(), buffer_.data() + buffer_.size());
+    }
+
+    ~CopyOutStreambuf() override {
+        sync();
+    }
+
+protected:
+    int_type overflow(int_type ch) override {
+        if (ch != traits_type::eof()) {
+            *pptr() = static_cast<char>(ch);
+            pbump(1);
+        }
+        if (!flushBuffer()) {
+            return traits_type::eof();
+        }
+        return ch;
+    }
+
+    int sync() override {
+        return flushBuffer() ? 0 : -1;
+    }
+
+private:
+    bool flushBuffer() {
+        size_t len = static_cast<size_t>(pptr() - pbase());
+        if (len == 0) {
+            return true;
+        }
+        std::string error;
+        bool ok = write_fn_(reinterpret_cast<const uint8_t*>(buffer_.data()), len, error);
+        if (!ok) {
+            throw std::runtime_error(error.empty() ? "COPY OUT stream error" : error);
+        }
+        setp(buffer_.data(), buffer_.data() + buffer_.size());
+        return true;
+    }
+
+    std::vector<char> buffer_;
+    WriteFn write_fn_;
+};
+
+class CopyInStreambuf : public std::streambuf {
+public:
+    using ReadFn = std::function<bool(std::string&, bool&, std::string&)>;
+
+    explicit CopyInStreambuf(ReadFn read_fn)
+        : read_fn_(std::move(read_fn)) {}
+
+protected:
+    int_type underflow() override {
+        if (done_) {
+            return traits_type::eof();
+        }
+
+        std::string chunk;
+        std::string error;
+        bool ok = read_fn_(chunk, done_, error);
+        if (!ok) {
+            throw std::runtime_error(error.empty() ? "COPY IN stream error" : error);
+        }
+        if (chunk.empty()) {
+            return traits_type::eof();
+        }
+
+        buffer_ = std::move(chunk);
+        setg(buffer_.data(), buffer_.data(), buffer_.data() + buffer_.size());
+        return traits_type::to_int_type(*gptr());
+    }
+
+private:
+    ReadFn read_fn_;
+    std::string buffer_;
+    bool done_ = false;
+};
+
+bool parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout) {
+    from_stdin = false;
+    to_stdout = false;
+
+    auto trim_left = [](const std::string& input) {
+        size_t pos = 0;
+        while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
+            ++pos;
+        }
+        return input.substr(pos);
+    };
+
+    std::string trimmed = trim_left(sql);
+    if (trimmed.size() < 4) {
+        return false;
+    }
+
+    std::string upper = trimmed;
+    std::transform(upper.begin(), upper.end(), upper.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+
+    if (upper.rfind("COPY", 0) != 0) {
+        return false;
+    }
+    if (upper.size() > 4) {
+        char next = upper[4];
+        if (!std::isspace(static_cast<unsigned char>(next)) && next != '(') {
+            return false;
+        }
+    }
+
+    if (upper.find("FROM STDIN") != std::string::npos) {
+        from_stdin = true;
+    }
+    if (upper.find("TO STDOUT") != std::string::npos) {
+        to_stdout = true;
+    }
+    return from_stdin || to_stdout;
+}
+
+core::Status sendCopyInPreamble(protocol::ProtocolSession* session,
+                                CopyStreamState& state,
+                                core::ErrorContext* ctx) {
+    auto status = session->sendMessage(
+        protocol::ProtocolCodec::buildCopyInResponse(protocol::CopyFormat::TEXT, {}), ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    status = session->sendMessage(
+        protocol::ProtocolCodec::buildStreamReady(state.stream_id, 0, 0), ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    state.in_window_bytes += state.in_window_grant;
+    status = session->sendMessage(
+        protocol::ProtocolCodec::buildStreamControl(protocol::StreamControlType::START,
+                                                    state.in_window_grant, 0),
+        ctx);
+    return status;
+}
+
+core::Status sendCopyOutPreamble(protocol::ProtocolSession* session,
+                                 CopyStreamState& state,
+                                 core::ErrorContext* ctx) {
+    auto status = session->sendMessage(
+        protocol::ProtocolCodec::buildCopyOutResponse(protocol::CopyFormat::TEXT, {}), ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    return session->sendMessage(
+        protocol::ProtocolCodec::buildStreamReady(state.stream_id, 0, 0), ctx);
+}
+
+bool readCopyInChunk(protocol::ProtocolSession* session,
+                     CopyStreamState& state,
+                     std::string& out,
+                     bool& done,
+                     std::string& error) {
+    out.clear();
+    done = false;
+
+    while (true) {
+        protocol::Message msg;
+        core::ErrorContext ctx;
+        auto status = session->receiveMessage(msg, &ctx);
+        if (status != core::Status::OK) {
+            error = ctx.message.empty() ? "Failed to receive COPY data" : ctx.message;
+            return false;
+        }
+
+        switch (msg.getType()) {
+            case protocol::MessageType::COPY_DATA: {
+                const uint8_t* data = nullptr;
+                size_t len = 0;
+                if (protocol::ProtocolCodec::parseCopyData(msg, &data, &len, nullptr) !=
+                    core::Status::OK) {
+                    error = "Malformed COPY_DATA payload";
+                    return false;
+                }
+                out.assign(reinterpret_cast<const char*>(data), len);
+                state.total_bytes += len;
+
+                if (state.in_window_bytes > 0) {
+                    if (len >= state.in_window_bytes) {
+                        state.in_window_bytes = 0;
+                    } else {
+                        state.in_window_bytes -= static_cast<uint32_t>(len);
+                    }
+                }
+                if (state.in_window_grant > 0 &&
+                    state.in_window_bytes <= state.in_low_watermark) {
+                    state.in_window_bytes += state.in_window_grant;
+                    session->sendMessage(
+                        protocol::ProtocolCodec::buildStreamControl(
+                            protocol::StreamControlType::RESUME,
+                            state.in_window_grant,
+                            0),
+                        nullptr);
+                }
+                return true;
+            }
+            case protocol::MessageType::COPY_DONE:
+                done = true;
+                return true;
+            case protocol::MessageType::COPY_FAIL: {
+                std::string fail;
+                protocol::ProtocolCodec::parseCopyFail(msg, fail, nullptr);
+                error = fail.empty() ? "COPY failed" : fail;
+                return false;
+            }
+            case protocol::MessageType::STREAM_CONTROL: {
+                protocol::StreamControlType control;
+                uint32_t window = 0;
+                uint32_t timeout_ms = 0;
+                if (protocol::ProtocolCodec::parseStreamControl(
+                        msg, control, window, timeout_ms) != core::Status::OK) {
+                    error = "Malformed STREAM_CONTROL message";
+                    return false;
+                }
+                (void)timeout_ms;
+                if (control == protocol::StreamControlType::CANCEL) {
+                    error = "COPY canceled by client";
+                    return false;
+                }
+                break;
+            }
+            case protocol::MessageType::QUERY_CANCEL:
+                error = "COPY canceled by client";
+                return false;
+            default:
+                error = "Unexpected message during COPY IN";
+                return false;
+        }
+    }
+}
+
+bool waitForCopyOutWindow(protocol::ProtocolSession* session,
+                          CopyStreamState& state,
+                          std::string& error) {
+    while (state.out_window_bytes == 0 || state.out_paused) {
+        protocol::Message msg;
+        core::ErrorContext ctx;
+        auto status = session->receiveMessage(msg, &ctx);
+        if (status != core::Status::OK) {
+            error = ctx.message.empty() ? "Failed to receive STREAM_CONTROL" : ctx.message;
+            return false;
+        }
+
+        switch (msg.getType()) {
+            case protocol::MessageType::STREAM_CONTROL: {
+                protocol::StreamControlType control;
+                uint32_t window = 0;
+                uint32_t timeout_ms = 0;
+                if (protocol::ProtocolCodec::parseStreamControl(
+                        msg, control, window, timeout_ms) != core::Status::OK) {
+                    error = "Malformed STREAM_CONTROL message";
+                    return false;
+                }
+                (void)timeout_ms;
+                if (control == protocol::StreamControlType::PAUSE) {
+                    state.out_paused = true;
+                    break;
+                }
+                if (control == protocol::StreamControlType::RESUME ||
+                    control == protocol::StreamControlType::START ||
+                    control == protocol::StreamControlType::ACK) {
+                    state.out_paused = false;
+                    state.out_window_bytes += window;
+                    break;
+                }
+                if (control == protocol::StreamControlType::CANCEL) {
+                    error = "COPY canceled by client";
+                    return false;
+                }
+                break;
+            }
+            case protocol::MessageType::QUERY_CANCEL:
+                error = "COPY canceled by client";
+                return false;
+            default:
+                error = "Unexpected message during COPY OUT";
+                return false;
+        }
+    }
+    return true;
+}
+
+bool sendCopyOutChunk(protocol::ProtocolSession* session,
+                      CopyStreamState& state,
+                      const uint8_t* data,
+                      size_t len,
+                      std::string& error) {
+    size_t offset = 0;
+    while (offset < len) {
+        if (state.out_window_bytes == 0 || state.out_paused) {
+            if (!waitForCopyOutWindow(session, state, error)) {
+                return false;
+            }
+        }
+
+        size_t chunk = len - offset;
+        if (state.out_window_bytes > 0) {
+            chunk = std::min<size_t>(chunk, state.out_window_bytes);
+        }
+
+        auto status = session->sendMessage(
+            protocol::ProtocolCodec::buildCopyData(data + offset, chunk), nullptr);
+        if (status != core::Status::OK) {
+            error = "Failed to send COPY data";
+            return false;
+        }
+
+        state.out_window_bytes = (state.out_window_bytes > chunk)
+            ? (state.out_window_bytes - static_cast<uint32_t>(chunk))
+            : 0;
+        state.total_bytes += chunk;
+        offset += chunk;
+    }
+    return true;
+}
+
+} // namespace
 
 // ============================================================================
 // ServerSession Implementation
@@ -85,9 +432,18 @@ core::Status ServerSession::run() {
         if (status != core::Status::OK) {
             if (status == core::Status::CONNECTION_FAILURE) {
                 // Clean disconnect
+                std::fprintf(stderr,
+                             "[ipc_debug] server session %s disconnect: %s\n",
+                             sessionIdString().c_str(),
+                             ctx.message.empty() ? "connection failure" : ctx.message.c_str());
                 break;
             }
             // Error receiving message
+            std::fprintf(stderr,
+                         "[ipc_debug] server session %s receive error: %d %s\n",
+                         sessionIdString().c_str(),
+                         static_cast<int>(status),
+                         ctx.message.empty() ? "none" : ctx.message.c_str());
             sendError("Protocol error: " + ctx.message);
             break;
         }
@@ -245,6 +601,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             sendError("Failed to initialize connection context");
             return connect_status;
         }
+        conn_ctx_->setAutocommitMode(true);
 
         // Preserve the protocol session UUID for dormant reattach diagnostics.
         core::ID protocol_session_id;
@@ -387,6 +744,9 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
 }
 
 core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core::ErrorContext* ctx) {
+    std::fprintf(stderr,
+                 "[ipc_debug] server session %s received DISCONNECT\n",
+                 sessionIdString().c_str());
     state_ = SessionState::CLOSING;
 
     // Fire ON DISCONNECT database triggers (Firebird-style) before closing
@@ -640,6 +1000,15 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         }
     } ctx_guard(conn_ctx_.get());
 
+    bool copy_from_stdin = false;
+    bool copy_to_stdout = false;
+    bool copy_active = parseCopyQuery(sql, copy_from_stdin, copy_to_stdout);
+    CopyStreamState copy_state;
+    std::unique_ptr<CopyInStreambuf> copy_in_buf;
+    std::unique_ptr<CopyOutStreambuf> copy_out_buf;
+    std::unique_ptr<std::istream> copy_in_stream;
+    std::unique_ptr<std::ostream> copy_out_stream;
+
     std::vector<uint8_t> bytecode;
     std::string error_msg;
 
@@ -682,6 +1051,39 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         if (!compiler_v2_) {
             compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(database_);
         }
+        if (conn_ctx_ && database_ && database_->catalog_manager())
+        {
+            auto is_zero_uuid = [](const core::ID& id) {
+                for (uint8_t byte : id.bytes)
+                {
+                    if (byte != 0)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            const auto& schema_id = conn_ctx_->getCurrentSchemaId();
+            if (!is_zero_uuid(schema_id))
+            {
+                compiler_v2_->setCurrentSchema(schema_id);
+            }
+
+            std::vector<core::ID> search_path_ids;
+            const auto& search_path = conn_ctx_->search_path();
+            search_path_ids.reserve(search_path.size());
+            for (const auto& path : search_path)
+            {
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext path_ctx;
+                if (database_->catalog_manager()->getSchema(path, schema_info, &path_ctx) ==
+                    core::Status::OK)
+                {
+                    search_path_ids.push_back(schema_info.schema_id);
+                }
+            }
+            compiler_v2_->setSearchPath(search_path_ids);
+        }
         auto compile_result = compiler_v2_->compile(sql);
         if (!compile_result.success()) {
             error_msg = compile_result.errors().empty() ? "Compilation error" : compile_result.errors()[0];
@@ -691,6 +1093,8 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
     }
 
     if (!error_msg.empty()) {
+        std::fprintf(stderr, "[compile_error] sql='%s' msg='%s'\n",
+                     sql.c_str(), error_msg.c_str());
         stats_.queries_failed++;
         if (conn_ctx_) {
             conn_ctx_->endStatementTrackingFailure(
@@ -699,16 +1103,121 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         return sendError(error_msg, "42000", ctx);
     }
 
-    // Execute the bytecode
-    sblr::ExecutionResult exec_result = executor_->execute(bytecode);
+    if (copy_active) {
+        copy_state.stream_id = next_stream_id_++;
+        if (copy_from_stdin) {
+            auto status = sendCopyInPreamble(protocol_session_.get(), copy_state, ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+            auto read_fn = [this, &copy_state](std::string& out, bool& done, std::string& error) {
+                return readCopyInChunk(protocol_session_.get(), copy_state, out, done, error);
+            };
+            copy_in_buf = std::make_unique<CopyInStreambuf>(std::move(read_fn));
+            copy_in_stream = std::make_unique<std::istream>(copy_in_buf.get());
+            executor_->setCopyInputStream(copy_in_stream.get());
+        } else if (copy_to_stdout) {
+            auto status = sendCopyOutPreamble(protocol_session_.get(), copy_state, ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+            auto write_fn = [this, &copy_state](const uint8_t* data, size_t len, std::string& error) {
+                return sendCopyOutChunk(protocol_session_.get(), copy_state, data, len, error);
+            };
+            copy_out_buf = std::make_unique<CopyOutStreambuf>(65536, std::move(write_fn));
+            copy_out_stream = std::make_unique<std::ostream>(copy_out_buf.get());
+            executor_->setCopyOutputStream(copy_out_stream.get());
+        }
+    }
 
-    if (!exec_result.success()) {
+    struct CopyStreamGuard {
+        sblr::Executor* executor = nullptr;
+        explicit CopyStreamGuard(sblr::Executor* exec) : executor(exec) {}
+        ~CopyStreamGuard() {
+            if (executor) {
+                executor->setCopyInputStream(nullptr);
+                executor->setCopyOutputStream(nullptr);
+            }
+        }
+    } copy_guard(copy_active ? executor_.get() : nullptr);
+
+    // Execute the bytecode
+    sblr::ExecutionResult exec_result;
+    try {
+        exec_result = executor_->execute(bytecode);
+    } catch (const std::exception& ex) {
         stats_.queries_failed++;
+        if (copy_active) {
+            protocol_session_->sendMessage(
+                protocol::ProtocolCodec::buildCopyFail(ex.what()), nullptr);
+        }
         if (conn_ctx_) {
             conn_ctx_->endStatementTrackingFailure(
                 static_cast<uint32_t>(core::Status::INTERNAL_ERROR), "42000");
         }
+        return sendError(ex.what(), "42000", ctx);
+    }
+
+    if (!exec_result.success()) {
+        stats_.queries_failed++;
+        if (copy_active) {
+            protocol_session_->sendMessage(
+                protocol::ProtocolCodec::buildCopyFail(exec_result.error()), nullptr);
+        }
+        if (conn_ctx_) {
+            conn_ctx_->endStatementTrackingFailure(
+                static_cast<uint32_t>(core::Status::INTERNAL_ERROR), "42000");
+        }
+        std::fprintf(stderr, "[exec_error] sql='%s' msg='%s'\n",
+                     sql.c_str(), exec_result.error().c_str());
         return sendError(exec_result.error(), "42000", ctx);
+    }
+
+    if (copy_active) {
+        if (copy_out_stream) {
+            try {
+                copy_out_stream->flush();
+            } catch (const std::exception& ex) {
+                protocol_session_->sendMessage(
+                    protocol::ProtocolCodec::buildCopyFail(ex.what()), nullptr);
+                if (conn_ctx_) {
+                    conn_ctx_->endStatementTrackingFailure(
+                        static_cast<uint32_t>(core::Status::IO_ERROR), "42000");
+                }
+                return sendError(ex.what(), "42000", ctx);
+            }
+        }
+
+        int64_t rows = exec_result.affectedCount();
+        if (copy_to_stdout) {
+            auto status = protocol_session_->sendMessage(
+                protocol::ProtocolCodec::buildCopyDone(), ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+        }
+
+        auto status = protocol_session_->sendMessage(
+            protocol::ProtocolCodec::buildStreamEnd(copy_state.stream_id,
+                                                   static_cast<uint64_t>(rows),
+                                                   copy_state.total_bytes),
+            ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        std::string tag = "COPY " + std::to_string(rows);
+        protocol::Message response = protocol::ProtocolCodec::buildCommandComplete(tag, rows);
+        status = protocol_session_->sendMessage(response, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        protocol::Message end_msg = protocol::ProtocolCodec::buildEndOfResults();
+        status = protocol_session_->sendMessage(end_msg, ctx);
+        if (conn_ctx_) {
+            conn_ctx_->endStatementTrackingSuccess(rows);
+        }
+        return status;
     }
 
     // Send results
@@ -734,7 +1243,12 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         if (conn_ctx_) {
             conn_ctx_->endStatementTrackingSuccess(exec_result.affectedCount());
         }
-        return protocol_session_->sendMessage(response, ctx);
+        core::Status send_status = protocol_session_->sendMessage(response, ctx);
+        if (send_status != core::Status::OK) {
+            return send_status;
+        }
+        protocol::Message end_msg = protocol::ProtocolCodec::buildEndOfResults();
+        return protocol_session_->sendMessage(end_msg, ctx);
     }
 }
 
@@ -827,7 +1341,12 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
     if (conn_ctx_) {
         conn_ctx_->endStatementTrackingSuccess(exec_result.affectedCount());
     }
-    return protocol_session_->sendMessage(response, ctx);
+    core::Status send_status = protocol_session_->sendMessage(response, ctx);
+    if (send_status != core::Status::OK) {
+        return send_status;
+    }
+    protocol::Message end_msg = protocol::ProtocolCodec::buildEndOfResults();
+    return protocol_session_->sendMessage(end_msg, ctx);
 }
 
 // Helper function to convert DataType to WireType

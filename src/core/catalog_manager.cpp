@@ -2139,24 +2139,25 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::PAGE_CORRUPT;
         }
 
-        // Create ToastManager for policy expressions
+        // Create ToastManager for policy expressions (defer assignment until initialized)
         LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - Creating TOAST manager");
-        policy_toast_manager_ = std::make_unique<ToastManager>(db_, policy_toast_table_id_);
+        auto manager = std::make_unique<ToastManager>(db_, policy_toast_table_id_);
 
         // Initialize the TOAST table (creates sb_toast_<table_id> catalog table)
         LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - Initializing TOAST table");
-        Status status = policy_toast_manager_->initialize(ctx);
+        Status status = manager->initialize(ctx);
         LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - TOAST initialization returned status=%d", static_cast<int>(status));
         if (status != Status::OK)
         {
             DEBUG_LOG_DB("Failed to initialize policy TOAST manager: " << static_cast<int>(status));
             // Non-fatal - expressions will fall back to in-memory cache only
             // Clear the manager so we don't try to use it
-            policy_toast_manager_.reset();
+            manager.reset();
         }
         else
         {
             DEBUG_LOG_DB("Policy TOAST storage initialized successfully");
+            policy_toast_manager_ = std::move(manager);
         }
 
         return Status::OK;
@@ -2908,6 +2909,39 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Phase 3.4.8: Use actual TOAST storage if available
         if (policy_toast_manager_)
         {
+            auto toast_ready = [&]() -> bool
+            {
+                CatalogManager::TableInfo toast_info;
+                ErrorContext toast_ctx;
+                const ID& toast_table_id = policy_toast_manager_->toastTableId();
+                if (isZeroUuidLocal(toast_table_id))
+                {
+                    return false;
+                }
+                return getTable(toast_table_id, toast_info, &toast_ctx) == Status::OK;
+            };
+
+            if (!toast_ready())
+            {
+                ErrorContext init_ctx;
+                policy_toast_manager_.reset();
+                initializePolicyToast(&init_ctx);
+            }
+
+            if (!policy_toast_manager_ || !toast_ready())
+            {
+                // Fallback: If TOAST table is unavailable, retain values in memory.
+                std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
+                if (toast_fallback_next_oid_ == 0)
+                {
+                    toast_fallback_next_oid_ = 1;
+                }
+                oid_out = toast_fallback_next_oid_++;
+                toast_fallback_cache_[oid_out] = str;
+                DEBUG_LOG_DB("TOAST unavailable, using in-memory OID: " << oid_out);
+                return Status::OK;
+            }
+
             // Convert string to byte vector
             std::vector<uint8_t> data(str.begin(), str.end());
 
@@ -2925,29 +2959,84 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
             if (status != Status::OK)
             {
-                LOG_ERROR(CATALOG,
-                          "Policy TOAST write failed: status=%d parent_table_id=%s toast_table_id=%s size=%zu detail=%s",
-                          static_cast<int>(status),
-                          policy_toast_table_id_.toString().c_str(),
-                          policy_toast_manager_->toastTableId().toString().c_str(),
-                          data.size(),
-                          (ctx && !ctx->message.empty()) ? ctx->message.c_str() : "");
-                DEBUG_LOG_DB("Failed to TOAST policy expression: " << static_cast<int>(status));
-                std::string detail;
-                if (ctx && !ctx->message.empty())
+                auto is_missing_toast = [&](Status st, const ErrorContext* err) -> bool
                 {
-                    detail = ctx->message;
-                }
-                if (!detail.empty())
+                    if (st == Status::NOT_FOUND || st == Status::INVALID_ARGUMENT)
+                    {
+                        return true;
+                    }
+                    if (st == Status::INTERNAL_ERROR)
+                    {
+                        if (!err)
+                        {
+                            return true;
+                        }
+                        if (err->message.find("sb_toast_") != std::string::npos ||
+                            err->message.find("Table not found") != std::string::npos)
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                if (is_missing_toast(status, ctx))
                 {
-                    std::string message = "Failed to store expression in TOAST: " + detail;
-                    SET_ERROR_CONTEXT(ctx, status, message.c_str());
+                    ErrorContext init_ctx;
+                    policy_toast_manager_.reset();
+                    initializePolicyToast(&init_ctx);
+                    if (policy_toast_manager_)
+                    {
+                        status = policy_toast_manager_->toastValue(
+                            data.data(), data.size(),
+                            ToastStrategy::EXTENDED,
+                            xmin,
+                            &pointer,
+                            ctx);
+                    }
                 }
-                else
+
+                if (status != Status::OK)
                 {
-                    SET_ERROR_CONTEXT(ctx, status, "Failed to store expression in TOAST");
+                    LOG_ERROR(CATALOG,
+                              "Policy TOAST write failed: status=%d parent_table_id=%s toast_table_id=%s size=%zu detail=%s",
+                              static_cast<int>(status),
+                              policy_toast_table_id_.toString().c_str(),
+                              policy_toast_manager_ ? policy_toast_manager_->toastTableId().toString().c_str() : "n/a",
+                              data.size(),
+                              (ctx && !ctx->message.empty()) ? ctx->message.c_str() : "");
+                    DEBUG_LOG_DB("Failed to TOAST policy expression: " << static_cast<int>(status));
+
+                    if (is_missing_toast(status, ctx))
+                    {
+                        // Fallback: retain values in memory if TOAST table is unavailable.
+                        std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
+                        if (toast_fallback_next_oid_ == 0)
+                        {
+                            toast_fallback_next_oid_ = 1;
+                        }
+                        oid_out = toast_fallback_next_oid_++;
+                        toast_fallback_cache_[oid_out] = str;
+                        DEBUG_LOG_DB("TOAST write failed; using in-memory OID: " << oid_out);
+                        return Status::OK;
+                    }
+
+                    std::string detail;
+                    if (ctx && !ctx->message.empty())
+                    {
+                        detail = ctx->message;
+                    }
+                    if (!detail.empty())
+                    {
+                        std::string message = "Failed to store expression in TOAST: " + detail;
+                        SET_ERROR_CONTEXT(ctx, status, message.c_str());
+                    }
+                    else
+                    {
+                        SET_ERROR_CONTEXT(ctx, status, "Failed to store expression in TOAST");
+                    }
+                    return status;
                 }
-                return status;
             }
 
             // Return the TOAST value_id as the OID
@@ -2984,6 +3073,37 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Phase 3.4.8: Use actual TOAST storage if available
         if (policy_toast_manager_)
         {
+            auto toast_ready = [&]() -> bool
+            {
+                CatalogManager::TableInfo toast_info;
+                ErrorContext toast_ctx;
+                const ID& toast_table_id = policy_toast_manager_->toastTableId();
+                if (isZeroUuidLocal(toast_table_id))
+                {
+                    return false;
+                }
+                return getTable(toast_table_id, toast_info, &toast_ctx) == Status::OK;
+            };
+
+            if (!toast_ready())
+            {
+                ErrorContext init_ctx;
+                policy_toast_manager_.reset();
+                initializePolicyToast(&init_ctx);
+            }
+
+            if (!policy_toast_manager_ || !toast_ready())
+            {
+                // Fallback: Load from in-memory cache.
+                std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
+                auto it = toast_fallback_cache_.find(oid);
+                if (it != toast_fallback_cache_.end())
+                {
+                    str_out = it->second;
+                    return Status::OK;
+                }
+            }
+
             // Create a ToastPointer with the value_id (OID)
             ToastPointer pointer;
             memset(&pointer, 0, sizeof(ToastPointer));
@@ -2998,12 +3118,57 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // Read from TOAST
             std::vector<uint8_t> data;
             Status status = policy_toast_manager_->detoastValue(&pointer, &data, xmin, ctx);
-
             if (status != Status::OK)
             {
-                DEBUG_LOG_DB("Failed to detoast policy expression: " << static_cast<int>(status));
-                SET_ERROR_CONTEXT(ctx, status, "Failed to load expression from TOAST");
-                return status;
+                auto is_missing_toast = [&](Status st, const ErrorContext* err) -> bool
+                {
+                    if (st == Status::NOT_FOUND || st == Status::INVALID_ARGUMENT)
+                    {
+                        return true;
+                    }
+                    if (st == Status::INTERNAL_ERROR)
+                    {
+                        if (!err)
+                        {
+                            return true;
+                        }
+                        if (err->message.find("sb_toast_") != std::string::npos ||
+                            err->message.find("Table not found") != std::string::npos)
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                if (is_missing_toast(status, ctx))
+                {
+                    ErrorContext init_ctx;
+                    policy_toast_manager_.reset();
+                    initializePolicyToast(&init_ctx);
+                    if (policy_toast_manager_)
+                    {
+                        status = policy_toast_manager_->detoastValue(&pointer, &data, xmin, ctx);
+                    }
+                }
+
+                if (status != Status::OK)
+                {
+                    // Fallback: Load from in-memory cache if TOAST is unavailable.
+                    {
+                        std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
+                        auto it = toast_fallback_cache_.find(oid);
+                        if (it != toast_fallback_cache_.end())
+                        {
+                            str_out = it->second;
+                            return Status::OK;
+                        }
+                    }
+
+                    DEBUG_LOG_DB("Failed to detoast policy expression: " << static_cast<int>(status));
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to load expression from TOAST");
+                    return status;
+                }
             }
 
             // Convert byte vector back to string
@@ -5889,7 +6054,26 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Create table info
         TableInfo table;
-        table.table_id = generateUuidV7();
+        if (options && options->force_table_id)
+        {
+            if (isZeroUuidLocal(options->forced_table_id))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Forced table ID cannot be zero");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (table_cache_.find(options->forced_table_id) != table_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Forced table ID already exists");
+                return Status::INVALID_ARGUMENT;
+            }
+            table.table_id = options->forced_table_id;
+        }
+        else
+        {
+            table.table_id = generateUuidV7();
+        }
         table.schema_id = schema_id;
         table.table_name = table_name;
         table.owner_id = resolveOwnerFromSession(this, ctx);
@@ -6145,6 +6329,53 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 }
                 info = table_info;
                 return Status::OK;
+            }
+        }
+
+        // Internal TOAST tables live in sys schema; fall back if lookup schema doesn't match.
+        const std::string toast_prefix = "sb_toast_";
+        if (table_name.size() >= toast_prefix.size() &&
+            std::equal(toast_prefix.begin(), toast_prefix.end(), table_name.begin(),
+                       [](char a, char b)
+                       {
+                           return std::tolower(static_cast<unsigned char>(a)) ==
+                                  std::tolower(static_cast<unsigned char>(b));
+                       }))
+        {
+            ID sys_schema_id{};
+            for (const auto& [id, info] : schema_cache_)
+            {
+                if (IdentifierUtils::namesMatch("sys", false, info.schema_name,
+                                                info.name_is_delimited))
+                {
+                    sys_schema_id = info.schema_id;
+                    break;
+                }
+            }
+
+            if (!isZeroUuidLocal(sys_schema_id) && sys_schema_id != schema_id)
+            {
+                for (const auto& [id, table_info] : table_cache_)
+                {
+                    if (table_info.schema_id == sys_schema_id &&
+                        IdentifierUtils::namesMatch(table_name, false /*search_delimited*/,
+                                                    table_info.table_name, table_info.name_is_delimited))
+                    {
+                        info = table_info;
+                        return Status::OK;
+                    }
+                }
+            }
+
+            // Last-resort lookup: TOAST tables are uniquely named, so match across schemas.
+            for (const auto& [id, table_info] : table_cache_)
+            {
+                if (IdentifierUtils::namesMatch(table_name, false /*search_delimited*/,
+                                                table_info.table_name, table_info.name_is_delimited))
+                {
+                    info = table_info;
+                    return Status::OK;
+                }
             }
         }
 
@@ -24446,6 +24677,111 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
     return Status::OK;
 }
 
+auto CatalogManager::ensureUserExists(const std::string& username, const std::string& password_hash,
+                                      const ID& default_schema_id, bool is_superuser,
+                                      ID& user_id_out, ErrorContext* ctx) -> Status
+{
+    std::unique_lock<CatalogMutex> lock(mutex_);
+
+    Status status = UTF8Utils::validateStorageCapacity(username,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Username too long or invalid UTF-8");
+        return status;
+    }
+
+    auto predicate = [&username](const UserRecord& rec) {
+        return rec.is_valid &&
+            IdentifierUtils::namesMatch(username, false /*search_delimited*/,
+                                        std::string(rec.username), false /*stored_delimited*/);
+    };
+
+    auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status == Status::OK)
+    {
+        user_id_out = result.record.user_id;
+        return Status::OK;
+    }
+    if (result.status != Status::NOT_FOUND)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User lookup failed");
+        return result.status;
+    }
+
+    SchemaInfo public_schema;
+    bool need_public_schema = isZeroUuidLocal(default_schema_id);
+    lock.unlock();
+    if (need_public_schema)
+    {
+        ErrorContext schema_ctx;
+        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        if (schema_status != Status::OK)
+        {
+            schema_status = getSchema("root", public_schema, &schema_ctx);
+        }
+        if (schema_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, schema_status, "Failed to resolve public schema");
+            return schema_status;
+        }
+    }
+    lock.lock();
+
+    result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status == Status::OK)
+    {
+        user_id_out = result.record.user_id;
+        return Status::OK;
+    }
+    if (result.status != Status::NOT_FOUND)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User lookup failed");
+        return result.status;
+    }
+
+    user_id_out = generateUuidV7();
+
+    UserRecord user_rec;
+    memset(&user_rec, 0, sizeof(UserRecord));
+    user_rec.user_id = user_id_out;
+
+    std::string truncated_username = UTF8Utils::truncateToBytes(username,
+        sizeof(user_rec.username));
+    strncpy(user_rec.username, truncated_username.c_str(),
+            sizeof(user_rec.username) - 1);
+
+    uint64_t xmin = 0;
+    user_rec.password_hash_oid = 0;
+    user_rec.user_metadata_oid = 0;
+    if (!password_hash.empty())
+    {
+        status = storeStringInToast(password_hash, xmin, user_rec.password_hash_oid, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to store password hash in TOAST");
+            return status;
+        }
+    }
+    user_rec.default_schema_id = need_public_schema ? public_schema.schema_id : default_schema_id;
+    user_rec.is_active = 1;
+    user_rec.is_superuser = is_superuser ? 1 : 0;
+    user_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    user_rec.last_login_time = 0;
+    user_rec.is_valid = 1;
+
+    status = writeRecordToHeapPage(users_table_page_, user_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write user record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Created user: " << username << " (ID: " << user_id_out.toString() << ")");
+    return Status::OK;
+}
+
 auto CatalogManager::getUser(const ID& user_id, UserInfo& user_out,
                              ErrorContext* ctx) -> Status
 {
@@ -24472,13 +24808,58 @@ auto CatalogManager::getUser(const ID& user_id, UserInfo& user_out,
     user_out.user_metadata = "";
     if (result.record.password_hash_oid != 0)
     {
-        loadStringFromToast(result.record.password_hash_oid, xmin, user_out.password_hash, ctx);
+        Status load_status = loadStringFromToast(result.record.password_hash_oid, xmin,
+                                                 user_out.password_hash, ctx);
+        if (load_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, load_status, "Failed to load user password hash");
+            return load_status;
+        }
     }
     if (result.record.user_metadata_oid != 0)
     {
-        loadStringFromToast(result.record.user_metadata_oid, xmin, user_out.user_metadata, ctx);
+        Status load_status = loadStringFromToast(result.record.user_metadata_oid, xmin,
+                                                 user_out.user_metadata, ctx);
+        if (load_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, load_status, "Failed to load user metadata");
+            return load_status;
+        }
     }
 
+    user_out.default_schema_id = result.record.default_schema_id;
+    user_out.is_active = result.record.is_active != 0;
+    user_out.is_superuser = result.record.is_superuser != 0;
+    user_out.created_time = result.record.created_time;
+    user_out.last_login_time = result.record.last_login_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::getUserBasic(const ID& user_id, BasicUserInfo& user_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    return getUserBasicUnlocked(user_id, user_out, ctx);
+}
+
+// Internal unlocked version - caller must hold mutex_
+auto CatalogManager::getUserBasicUnlocked(const ID& user_id, BasicUserInfo& user_out,
+                                          ErrorContext* ctx) -> Status
+{
+    auto predicate = [&user_id](const UserRecord& rec) {
+        return rec.is_valid && rec.user_id == user_id;
+    };
+
+    auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User not found");
+        return result.status;
+    }
+
+    user_out.user_id = result.record.user_id;
+    user_out.username = std::string(result.record.username);
     user_out.default_schema_id = result.record.default_schema_id;
     user_out.is_active = result.record.is_active != 0;
     user_out.is_superuser = result.record.is_superuser != 0;
@@ -24493,7 +24874,9 @@ auto CatalogManager::getUserByNameUnlocked(const std::string& username, UserInfo
                                            ErrorContext* ctx) -> Status
 {
     auto predicate = [&username](const UserRecord& rec) {
-        return rec.is_valid && (std::string(rec.username) == username);
+        return rec.is_valid &&
+            IdentifierUtils::namesMatch(username, false /*search_delimited*/,
+                                        std::string(rec.username), false /*stored_delimited*/);
     };
 
     auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
@@ -28608,9 +28991,8 @@ auto CatalogManager::hasPermission(const ID& user_id, const ID& object_id,
 
     has_perm_out = false;
 
-    // Get user info - superusers have all permissions
-    UserInfo user;
-    Status status = getUser(user_id, user, ctx);
+    BasicUserInfo user;
+    Status status = getUserBasicUnlocked(user_id, user, ctx);
     if (status != Status::OK)
     {
         return status;

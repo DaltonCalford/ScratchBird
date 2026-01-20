@@ -157,17 +157,17 @@ Row set is derived from `sys.table_stats`.
 | n_live_tup | sys.table_stats.live_rows_estimate |  |
 | n_dead_tup | sys.table_stats.dead_rows_estimate |  |
 | n_mod_since_analyze | sys.table_stats.mod_since_analyze |  |
-| n_ins_since_vacuum | sys.table_stats.ins_since_vacuum |  |
-| last_vacuum | sys.table_stats.last_vacuum_at |  |
-| last_autovacuum | sys.table_stats.last_autovacuum_at |  |
+| n_ins_since_vacuum | sys.table_stats.ins_since_vacuum | Since last sweep/GC |
+| last_vacuum | sys.table_stats.last_vacuum_at | Sweep/GC completion time |
+| last_autovacuum | sys.table_stats.last_autovacuum_at | Background GC completion time |
 | last_analyze | sys.table_stats.last_analyze_at |  |
 | last_autoanalyze | sys.table_stats.last_autoanalyze_at |  |
-| vacuum_count | sys.table_stats.vacuum_count |  |
-| autovacuum_count | sys.table_stats.autovacuum_count |  |
+| vacuum_count | sys.table_stats.vacuum_count | Sweep/GC runs (PostgreSQL alias) |
+| autovacuum_count | sys.table_stats.autovacuum_count | Background GC runs (PostgreSQL alias) |
 | analyze_count | sys.table_stats.analyze_count |  |
 | autoanalyze_count | sys.table_stats.autoanalyze_count |  |
-| total_vacuum_time | sys.table_stats.total_vacuum_time_ms | Convert ms to seconds |
-| total_autovacuum_time | sys.table_stats.total_autovacuum_time_ms | Convert ms to seconds |
+| total_vacuum_time | sys.table_stats.total_vacuum_time_ms | Sweep/GC time; convert ms to seconds |
+| total_autovacuum_time | sys.table_stats.total_autovacuum_time_ms | Background GC time; convert ms to seconds |
 | total_analyze_time | sys.table_stats.total_analyze_time_ms | Convert ms to seconds |
 | total_autoanalyze_time | sys.table_stats.total_autoanalyze_time_ms | Convert ms to seconds |
 

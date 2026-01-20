@@ -10,6 +10,10 @@ ScratchBird implements a comprehensive job scheduler for automated database main
 
 ## Specifications in this Directory
 
+- **[SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md](SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md)** - Canonical scheduler and job runner spec (Alpha + Beta)
+  - Consolidates Alpha and Beta scheduler behavior
+  - Clarifies scheduler vs event notifications
+  - Security-hardening and cluster-ready rules
 - **[ALPHA_SCHEDULER_SPECIFICATION.md](ALPHA_SCHEDULER_SPECIFICATION.md)** - Alpha standalone scheduler specification
   - Single-threaded scheduler embedded in engine process
   - Non-clustered, single-node operation
@@ -59,12 +63,20 @@ Alpha scheduler accepts Beta syntax but ignores cluster-specific features:
 
 ```sql
 -- Works in both Alpha and Beta
-CREATE JOB daily_vacuum
+CREATE JOB daily_sweep
   CLASS = LOCAL_SAFE              -- Alpha: Accepted, ignored
   PARTITION BY ALL_SHARDS         -- Alpha: Accepted, ignored
   SCHEDULE = '0 2 * * *'          -- Alpha: Fully supported
-  AS 'VACUUM ANALYZE';            -- Alpha: Fully supported
+  AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 ```
+
+Note: VACUUM is a PostgreSQL-compatibility command that maps to Firebird-style sweep/GC
+in ScratchBird. It does not imply PostgreSQL VACUUM phases.
+
+### Event Notifications
+
+Event notifications (Firebird-style POST_EVENT) are a separate feature and are
+specified in `ScratchBird/docs/specifications/ddl/DDL_EVENTS.md`.
 
 ## Catalog Schema
 
@@ -75,16 +87,23 @@ Jobs are stored in system catalog:
 CREATE TABLE sys.jobs (
     job_uuid UUID PRIMARY KEY,
     job_name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
     job_class VARCHAR(20),              -- Alpha: stored but unused
     job_type VARCHAR(20) NOT NULL,      -- SQL | PROCEDURE | EXTERNAL
     job_sql TEXT,
-    schedule_type VARCHAR(20) NOT NULL, -- ONE_TIME | RECURRING
+    schedule_kind VARCHAR(20) NOT NULL, -- CRON | AT | EVERY
     cron_expression VARCHAR(100),
+    interval_seconds BIGINT,
+    starts_at BIGINT,
+    ends_at BIGINT,
+    schedule_tz VARCHAR(64),
     next_run_time BIGINT,
     partition_strategy VARCHAR(20),     -- Alpha: stored but unused
     max_retries INTEGER DEFAULT 3,
     retry_backoff_seconds INTEGER DEFAULT 60,
+    timeout_seconds INTEGER DEFAULT 3600,
     created_by_user_uuid UUID NOT NULL,
+    run_as_role_uuid UUID,
     state VARCHAR(20) NOT NULL DEFAULT 'ENABLED'
 );
 
@@ -97,7 +116,7 @@ CREATE TABLE sys.job_runs (
     scheduled_time BIGINT NOT NULL,
     started_at BIGINT,
     completed_at BIGINT,
-    state VARCHAR(20) NOT NULL,         -- PENDING | RUNNING | COMPLETED | FAILED
+    state VARCHAR(20) NOT NULL,         -- PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
     retry_count INTEGER DEFAULT 0,
     result_message TEXT,
     rows_affected BIGINT,
@@ -106,11 +125,11 @@ CREATE TABLE sys.job_runs (
 
 -- Job dependencies (DAG support)
 CREATE TABLE sys.job_dependencies (
-    parent_job_uuid UUID NOT NULL,
-    child_job_uuid UUID NOT NULL,
-    PRIMARY KEY (parent_job_uuid, child_job_uuid),
-    FOREIGN KEY (parent_job_uuid) REFERENCES sys.jobs(job_uuid),
-    FOREIGN KEY (child_job_uuid) REFERENCES sys.jobs(job_uuid)
+    job_uuid UUID NOT NULL,
+    depends_on_job_uuid UUID NOT NULL,
+    PRIMARY KEY (job_uuid, depends_on_job_uuid),
+    FOREIGN KEY (job_uuid) REFERENCES sys.jobs(job_uuid),
+    FOREIGN KEY (depends_on_job_uuid) REFERENCES sys.jobs(job_uuid)
 );
 ```
 
@@ -120,8 +139,10 @@ CREATE TABLE sys.job_dependencies (
 ```sql
 CREATE JOB job_name
   [CLASS = LOCAL_SAFE | LEADER_ONLY | QUORUM_REQUIRED]
-  [PARTITION BY ALL_SHARDS | SINGLE_SHARD | DYNAMIC]
-  SCHEDULE = 'cron_expression'
+  [PARTITION BY ALL_SHARDS | SINGLE_SHARD | SHARD_SET | DYNAMIC]
+  SCHEDULE = CRON 'cron_expression'
+           | AT 'timestamp'
+           | EVERY interval [STARTS 'timestamp'] [ENDS 'timestamp']
   [MAX_RETRIES = n]
   [RETRY_BACKOFF = n]
   AS 'sql_statement';
@@ -137,7 +158,7 @@ ALTER JOB job_name
 
 ### DROP JOB
 ```sql
-DROP JOB [IF EXISTS] job_name [CASCADE | RESTRICT];
+DROP JOB job_name [KEEP HISTORY];
 ```
 
 ### Manual Execution
@@ -145,13 +166,18 @@ DROP JOB [IF EXISTS] job_name [CASCADE | RESTRICT];
 EXECUTE JOB job_name;
 ```
 
+### Cancel a Job Run
+```sql
+CANCEL JOB RUN job_run_uuid;
+```
+
 ## Example Jobs
 
-### Daily Vacuum
+### Daily Sweep/GC
 ```sql
-CREATE JOB daily_vacuum
+CREATE JOB daily_sweep
   SCHEDULE = '0 2 * * *'  -- Run at 2:00 AM daily
-  AS 'VACUUM ANALYZE';
+  AS 'SWEEP ANALYZE';
 ```
 
 ### Hourly Statistics Update
@@ -183,6 +209,7 @@ CREATE JOB load_data
 
 **Alpha:** Specified, not yet implemented
 **Beta:** Specified (see [Cluster Specification Work](../Cluster%20Specification%20Work/SBCLUSTER-09-SCHEDULER.md))
+**Canonical:** [SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md](SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md)
 
 ## Related Specifications
 

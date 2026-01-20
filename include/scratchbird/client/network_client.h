@@ -37,6 +37,9 @@ struct NetworkClientConfig {
     std::string ssl_cert;
     std::string ssl_key;
     std::string ssl_root_cert;
+
+    protocol::AuthMethod auth_method{protocol::AuthMethod::SCRAM_SHA_256};
+    bool allow_password_fallback{false};
 };
 
 struct NetworkColumn {
@@ -50,6 +53,42 @@ struct NetworkResultSet {
     std::vector<std::vector<protocol::ProtocolCodec::ColumnValue>> rows;
     int64_t rows_affected{0};
     std::string command_tag;
+};
+
+class NetworkPreparedStatement {
+public:
+    NetworkPreparedStatement();
+    ~NetworkPreparedStatement();
+
+    NetworkPreparedStatement(NetworkPreparedStatement&& other) noexcept;
+    NetworkPreparedStatement& operator=(NetworkPreparedStatement&& other) noexcept;
+    NetworkPreparedStatement(const NetworkPreparedStatement&) = delete;
+    NetworkPreparedStatement& operator=(const NetworkPreparedStatement&) = delete;
+
+    size_t getParameterCount() const;
+    bool isValid() const;
+    void clearParameters();
+
+    void setNull(size_t index);
+    void setBool(size_t index, bool value);
+    void setInt16(size_t index, int16_t value);
+    void setInt32(size_t index, int32_t value);
+    void setInt64(size_t index, int64_t value);
+    void setFloat(size_t index, float value);
+    void setDouble(size_t index, double value);
+    void setString(size_t index, const std::string& value);
+    void setBytes(size_t index, const std::vector<uint8_t>& value);
+    void setBytes(size_t index, const uint8_t* data, size_t length);
+    void setTimestamp(size_t index, int64_t microseconds);
+    void setDate(size_t index, int32_t days);
+    void setTime(size_t index, int64_t microseconds);
+
+private:
+    friend class NetworkClient;
+    std::string sql_;
+    size_t param_count_{0};
+    std::vector<protocol::ProtocolCodec::ColumnValue> params_;
+    bool valid_{false};
 };
 
 class NetworkClient {
@@ -67,6 +106,12 @@ public:
     core::Status executeQuery(const std::string& sql,
                               NetworkResultSet& results,
                               core::ErrorContext* ctx = nullptr);
+    core::Status prepare(const std::string& sql,
+                         NetworkPreparedStatement& stmt,
+                         core::ErrorContext* ctx = nullptr);
+    core::Status executePrepared(NetworkPreparedStatement& stmt,
+                                 NetworkResultSet& results,
+                                 core::ErrorContext* ctx = nullptr);
 
     core::Status beginTransaction(core::ErrorContext* ctx = nullptr);
     core::Status commit(core::ErrorContext* ctx = nullptr);
@@ -80,6 +125,8 @@ private:
                              core::ErrorContext* ctx = nullptr);
     core::Status receiveMessage(protocol::Message& msg,
                                 core::ErrorContext* ctx = nullptr);
+    core::Status readExactWithTimeout(void* buffer, size_t size,
+                                      core::ErrorContext* ctx = nullptr);
 
     NetworkClientConfig config_{};
     std::unique_ptr<network::Socket> socket_{};

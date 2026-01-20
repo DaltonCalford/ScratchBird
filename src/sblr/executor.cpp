@@ -2879,6 +2879,16 @@ namespace scratchbird
                 {
                     conn_ctx->clearStatementXID();
                 }
+                if (std::string(e.what()).find("sb_toast_") != std::string::npos)
+                {
+                    std::string sql;
+                    if (conn_ctx)
+                    {
+                        sql = conn_ctx->lastStatementText();
+                    }
+                    LOG_ERROR(EXECUTOR, "Execution error for SQL '%s': %s",
+                              sql.c_str(), e.what());
+                }
                 return ExecutionResult(std::string("Execution error: ") + e.what());
             }
         }
@@ -5730,13 +5740,19 @@ namespace scratchbird
                 create_opts_ptr = &create_opts;
             }
 
+            core::ErrorContext table_ctx;
             status = db_->catalog_manager()->createTable(schema_info.schema_id, resolved_table_name,
                                                          columns,
-                                                         table_id, tablespace_id, nullptr,
+                                                         table_id, tablespace_id, &table_ctx,
                                                          create_opts_ptr);
             if (status != core::Status::OK)
             {
-                error("Failed to create table");
+                std::string err_msg = "Failed to create table";
+                if (!table_ctx.message.empty())
+                {
+                    err_msg += ": " + table_ctx.message;
+                }
+                error(err_msg);
             }
             LOG_INFO(EXECUTOR, "CREATE TABLE catalog entry created: %s", resolved_table_name.c_str());
 
@@ -34635,7 +34651,12 @@ namespace scratchbird
 
             if (status != core::Status::OK)
             {
-                error("CREATE USER failed: " + std::string("Operation failed"));
+                std::string err_msg = "CREATE USER failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::USER, user_id);

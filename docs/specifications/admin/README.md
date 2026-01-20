@@ -42,7 +42,7 @@ sb-admin show-stats --database mydb
 sb-admin show-connections
 
 # Maintenance
-sb-admin vacuum --database mydb --analyze
+sb-admin sweep --database mydb --analyze    # native sweep/GC (VACUUM alias)
 sb-admin reindex --database mydb --table users
 ```
 

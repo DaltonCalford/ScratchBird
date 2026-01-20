@@ -5,6 +5,10 @@
 **Status:** DRAFT - Implementation Required
 **Related:** `/docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`, `/docs/audit/parsers/COMPARISON_MATRIX.md`
 
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+Any WAL references in this document describe an optional post-gold stream for
+replication/PITR only.
+
 ---
 
 ## Executive Summary
@@ -729,7 +733,7 @@ CREATE UNLOGGED TABLE test (id INT);  -- Creates normal logged table
 
 **Characteristics (PostgreSQL semantics):**
 - NOT written to write-after log (WAL, optional)
-- Faster INSERT/UPDATE/DELETE (no write-after log overhead)
+- Faster INSERT/UPDATE/DELETE (no optional post-gold write-after log overhead)
 - NOT crash-safe (truncated on crash recovery)
 - Use case: Temporary data, staging tables, caches
 
@@ -737,8 +741,8 @@ CREATE UNLOGGED TABLE test (id INT);  -- Creates normal logged table
 
 1. **Bytecode Extension:** Add `unlogged` flag to CREATE_TABLE opcode
 2. **Catalog Storage:** Store `is_unlogged` flag in table metadata
-3. **Storage Engine:** Skip write-after log (if introduced)
-4. **Crash Recovery:** Truncate unlogged tables only if a write-after log durability path exists
+3. **Storage Engine:** Skip optional post-gold write-after log (if introduced)
+4. **Durability/PITR:** Truncate unlogged tables only if an optional post-gold write-after log durability path exists
 
 **Priority:** 🟡 **MEDIUM** - Performance feature, not critical for correctness
 
@@ -1239,11 +1243,11 @@ SELECT RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION') FROM RDB$DATABASE;  -- FAILS
 - [ ] Implement executor support for PSQL opcodes
 
 ### Medium Priority (Other Parsed-But-Not-Implemented Features)
-- [ ] **UNLOGGED TABLES** - Implement write-after log bypass for performance
+- [ ] **UNLOGGED TABLES** - Implement optional post-gold write-after log bypass for performance
   - [ ] Emit unlogged flag in bytecode
   - [ ] Store in catalog metadata
-  - [ ] Skip write-after log writes in storage engine
-  - [ ] Truncate unlogged tables on crash recovery if write-after log durability is introduced
+  - [ ] Skip optional post-gold write-after log writes in storage engine
+  - [ ] Truncate unlogged tables for durability/PITR if optional post-gold write-after log is introduced
 - [ ] **WITH CHECK OPTION** (views) - Enforce view constraints on INSERT/UPDATE
   - [ ] Emit WITH CHECK OPTION flags to bytecode
   - [ ] Store in view metadata

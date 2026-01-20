@@ -415,7 +415,7 @@ namespace scratchbird::core
 
         // Schema navigation support (hierarchical schemas)
         std::string current_schema_name_ = "public";  // Current schema name
-        std::vector<std::string> search_path_ = {"public"};  // Schema search path
+        std::vector<std::string> search_path_ = {"public", "sys"};  // Schema search path
         std::string dialect_tag_ = "scratchbird";
 
         // Security context stack (Phase 3.1 - SQL Object Permissions)

@@ -14,6 +14,9 @@ SBLR (ScratchBird Bytecode Language Runtime) is ScratchBird's bytecode execution
 
 - **[Appendix_A_SBLR_BYTECODE.md](Appendix_A_SBLR_BYTECODE.md)** (519 lines) - Complete SBLR bytecode specification
 - **[SBLR_OPCODE_REGISTRY.md](SBLR_OPCODE_REGISTRY.md)** (84 lines) - Central registry of SBLR opcodes
+- **[SBLR_EXECUTION_PERFORMANCE_RESEARCH.md](SBLR_EXECUTION_PERFORMANCE_RESEARCH.md)** - Performance research and options for faster SBLR execution
+- **[SBLR_EXECUTION_PERFORMANCE_ALPHA.md](SBLR_EXECUTION_PERFORMANCE_ALPHA.md)** - Alpha performance spec (tier 0-2)
+- **[SBLR_EXECUTION_PERFORMANCE_BETA.md](SBLR_EXECUTION_PERFORMANCE_BETA.md)** - Beta performance spec (JIT/AOT, vectorization)
 
 ### Domain Integration
 

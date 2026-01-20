@@ -8,7 +8,8 @@
 
 ---
 
-**Scope Note:** "WAL" references in this spec refer to an optional per-index write-after log and do not imply a global recovery log.
+**Scope Note:** "WAL" references in this spec refer to an optional post-gold
+per-index write-after log and do not imply a global recovery log.
 
 ## ⚠️ CRITICAL REQUIREMENTS
 
@@ -642,7 +643,7 @@ Status SSTableWriter::finish(ErrorContext* ctx) {
 - Use `TransactionId` (uint64_t), NOT `Snapshot` or `SnapshotData`
 - TIP-based visibility (Transaction Inventory Pages)
 - xmin/xmax on all versions
-- Soft delete (set xmax, physical removal via VACUUM)
+- Soft delete (set xmax, physical removal via sweep/GC)
 - No PostgreSQL MVCC contamination
 
 ### 5.2 MGA in Memtable

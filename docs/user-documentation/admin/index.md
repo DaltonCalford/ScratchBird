@@ -21,6 +21,13 @@ Server administration and maintenance tasks.
 
 ## Quick Reference
 
+### Sweep vs VACUUM
+
+- **SWEEP** is the native ScratchBird/Firebird MGA maintenance command.
+- **VACUUM** is a PostgreSQL-compatibility alias for SWEEP.
+- **VACUUM FULL** is not supported.
+- Use `MON_SWEEP` and `MON_DATABASE` for sweep status without running a sweep.
+
 ### Server Control
 
 ```bash

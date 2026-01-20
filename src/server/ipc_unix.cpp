@@ -27,6 +27,7 @@
 #include <poll.h>
 #include <errno.h>
 #include <cstring>
+#include <cstdio>
 #include <atomic>
 #include <algorithm>
 
@@ -379,6 +380,8 @@ public:
         }
 
         listening_ = true;
+        std::fprintf(stderr, "[ipc_debug] unix socket listening path=%s\n",
+                     socket_path_.c_str());
         return core::Status::OK;
     }
 
@@ -483,6 +486,8 @@ public:
         }
 
         listening_ = false;
+        std::fprintf(stderr, "[ipc_debug] unix socket closed path=%s\n",
+                     socket_path_.c_str());
     }
 
     bool isListening() const override {
@@ -546,6 +551,9 @@ public:
                               "Already connected");
             return core::Status::INVALID_ARGUMENT;
         }
+
+        std::fprintf(stderr, "[ipc_debug] unix client connect path=%s\n",
+                     socket_path_.c_str());
 
         // Create socket
         int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -611,6 +619,10 @@ public:
                 if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_len) < 0 ||
                     error != 0) {
                     ::close(fd);
+                    std::fprintf(stderr,
+                                 "[ipc_debug] unix client connect failed path=%s err=%s\n",
+                                 socket_path_.c_str(),
+                                 std::string(strerror(error ? error : errno)).c_str());
                     SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE,
                                       ("connect() failed: " +
                                        std::string(strerror(error ? error : errno))).c_str());
@@ -618,6 +630,10 @@ public:
                 }
             } else {
                 ::close(fd);
+                std::fprintf(stderr,
+                             "[ipc_debug] unix client connect failed path=%s err=%s\n",
+                             socket_path_.c_str(),
+                             std::string(strerror(errno)).c_str());
                 SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE,
                                   ("connect() failed: " + std::string(strerror(errno))).c_str());
                 return core::Status::CONNECTION_FAILURE;

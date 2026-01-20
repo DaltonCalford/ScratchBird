@@ -65,6 +65,12 @@ ScratchBird uses standard SQL with PostgreSQL-style extensions. When connected v
 | [JSON Types](data-types/json-types.md) | JSON and JSONB |
 | [Special Types](data-types/special-types.md) | UUID, BOOLEAN, arrays |
 
+### Migration Guides
+
+| Topic | Description |
+|-------|-------------|
+| [Python to PSQL](python-to-psql-migration.md) | Map Python idioms to PSQL equivalents |
+
 ---
 
 ## SQL Syntax Basics

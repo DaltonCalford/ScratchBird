@@ -569,7 +569,7 @@ while (!shutdown)
 **Test File**: `tests/integration/test_sweep_gc.cpp`
 
 **Test Cases**:
-1. ✅ VACUUM removes dead entries from all indexes
+1. ✅ Sweep/GC removes dead entries from all indexes
 2. ✅ Concurrent index scans during GC
 3. ✅ Multiple indexes on same table
 4. ✅ Large table with many dead tuples

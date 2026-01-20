@@ -60,6 +60,15 @@ std::string computeMd5ResponseFromStored(const std::string& stored_md5, const ui
     return "md5" + computeMd5Hex(input);
 }
 
+bool isZeroUuidLocal(const ID& id) {
+    for (uint8_t byte : id.bytes) {
+        if (byte != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void parseScramEntry(const Json& entry, size_t key_len, ScramRecord& out) {
     if (!entry.is_object()) {
         return;
@@ -281,7 +290,15 @@ AuthResult LocalAuthProvider::authenticate(
     }
 
     if (bootstrap_allowed) {
-        // Fresh database with no real users - allow bootstrap authentication
+        // Fresh database with no real users - allow bootstrap authentication.
+        // Bind to SYSTEM user so the session can be created from catalog IDs.
+        ID system_user_id = catalog_->getSystemUserId(&ctx);
+        if (isZeroUuidLocal(system_user_id))
+        {
+            error_msg_out = "Authentication failed";
+            return AuthResult::PROVIDER_ERROR;
+        }
+
         ID authkey_id{};
         CatalogManager::AuthKeyInfo authkey_info;
         authkey_info.issuer = "bootstrap";
@@ -295,9 +312,9 @@ AuthResult LocalAuthProvider::authenticate(
 
         login_tracker_->recordSuccessfulLogin(username);
 
-        user_info_out.user_id = generateUuidV7();
-        user_info_out.username = username;
-        user_info_out.display_name = username;
+        user_info_out.user_id = system_user_id;
+        user_info_out.username = "SYSTEM";
+        user_info_out.display_name = user_info_out.username;
         user_info_out.email.clear();
         user_info_out.external_groups.clear();
         user_info_out.external_id.clear();

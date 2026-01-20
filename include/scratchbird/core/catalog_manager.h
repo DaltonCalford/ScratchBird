@@ -429,6 +429,8 @@ public:
             uint64_t creating_transaction_id = 0;
             ID temp_parent_table_id{};
             ID temp_schema_id{};
+            bool force_table_id = false;
+            ID forced_table_id{};
         };
 
         struct TempObjectOptions
@@ -874,6 +876,18 @@ public:
             std::string username;
             std::string password_hash;  // Stored in TOAST on disk
             std::string user_metadata;  // JSON metadata (stored in TOAST on disk)
+            ID default_schema_id;
+            bool is_active = true;
+            bool is_superuser = false;
+            uint64_t created_time = 0;
+            uint64_t last_login_time = 0;
+        };
+
+        // Minimal user info without TOAST access (password/metadata omitted).
+        struct BasicUserInfo
+        {
+            ID user_id;
+            std::string username;
             ID default_schema_id;
             bool is_active = true;
             bool is_superuser = false;
@@ -2398,10 +2412,17 @@ public:
                        const ID& default_schema_id, bool is_superuser,
                        ID& user_id_out, ErrorContext* ctx = nullptr) -> Status;
 
+        auto ensureUserExists(const std::string& username, const std::string& password_hash,
+                             const ID& default_schema_id, bool is_superuser,
+                             ID& user_id_out, ErrorContext* ctx = nullptr) -> Status;
+
         auto getSystemUserId(ErrorContext* ctx = nullptr) -> ID;
 
         auto getUser(const ID& user_id, UserInfo& user_out,
                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUserBasic(const ID& user_id, BasicUserInfo& user_out,
+                         ErrorContext* ctx = nullptr) -> Status;
 
         auto getUserByName(const std::string& username, UserInfo& user_out,
                           ErrorContext* ctx = nullptr) -> Status;
@@ -3709,6 +3730,8 @@ public:
                                ColumnInfo &info, ErrorContext *ctx) -> Status;
 
         // Internal unlocked version of getUserByName - caller must hold mutex_
+        auto getUserBasicUnlocked(const ID& user_id, BasicUserInfo& user_out,
+                                 ErrorContext* ctx) -> Status;
         auto getUserByNameUnlocked(const std::string& username, UserInfo& user_out,
                                    ErrorContext* ctx) -> Status;
         auto getSystemUserIdUnlocked(ErrorContext* ctx) -> ID;

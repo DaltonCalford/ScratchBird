@@ -876,7 +876,7 @@ struct CommandComplete {
 #define CMD_SET          14
 #define CMD_SHOW         15
 #define CMD_EXPLAIN      16
-#define CMD_VACUUM       17
+#define CMD_VACUUM       17  // SWEEP/VACUUM (native sweep/GC + PostgreSQL alias)
 #define CMD_TRUNCATE     18
 #define CMD_MERGE        19
 ```
@@ -1551,6 +1551,7 @@ struct SubscribeMessage {
 #define SUB_TYPE_CHANNEL    0   // LISTEN/NOTIFY channel
 #define SUB_TYPE_TABLE      1   // Table change notifications
 #define SUB_TYPE_QUERY      2   // Query result change (materialized view refresh)
+#define SUB_TYPE_EVENT      3   // Firebird-style POST_EVENT notifications
 ```
 
 ### 13.1.1 UNSUBSCRIBE Message
@@ -1583,6 +1584,27 @@ struct NotificationMessage {
     uint64_t row_id;          // Affected row (if applicable)
 };
 ```
+
+**Payload layout by subscription type:**
+
+- **SUB_TYPE_CHANNEL**: payload is an opaque byte array (client-defined).
+- **SUB_TYPE_TABLE**: payload is optional; change_type/row_id fields are present.
+- **SUB_TYPE_QUERY**: payload is optional; content is client-defined.
+- **SUB_TYPE_EVENT**: payload is structured as:
+
+```c
+struct EventNotificationPayload {
+    uint8_t  event_uuid[16];   // UUIDv7 for this event instance
+    uint8_t  delivery_mode;    // 0=ON_COMMIT, 1=IMMEDIATE
+    uint8_t  reserved[3];
+    uint32_t message_length;   // 0 if no message
+    uint8_t  message[];        // Optional message (native clients only)
+};
+```
+
+For SUB_TYPE_EVENT, `channel` is the event name (Firebird limit: 127 bytes),
+and `payload_length` includes the entire EventNotificationPayload.
+`message_length` is limited to 1024 bytes (see DDL_EVENTS).
 
 ### 13.3 Keepalive Messages
 

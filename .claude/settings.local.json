@@ -55,7 +55,10 @@
       "Bash(do)",
       "Bash(if [ -f \"docs/specifications/beta_requirements/$dir/README.md\" ])",
       "Bash(then)",
-      "Bash(else)"
+      "Bash(else)",
+      "Bash(./sync-to-wiki.sh)",
+      "Bash(./sync-to-wiki.sh:*)",
+      "Bash(/home/dcalford/CliWork/ScratchBird/wiki/scripts/sync-to-wiki.sh)"
     ]
   }
 }

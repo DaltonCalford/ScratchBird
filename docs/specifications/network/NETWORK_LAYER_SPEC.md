@@ -3,7 +3,11 @@
 
 ## Overview
 
-ScratchBird's network layer combines Firebird's efficient connection pooling, PostgreSQL's robust protocol handling, MySQL's result caching, and SQL Server's connection context preservation. The Y-Valve router provides multi-protocol support with intelligent routing and caching. This specification aligns with Phase 19 (Network Protocol) and enhances the existing Y-Valve architecture.
+ScratchBird's network layer combines Firebird's efficient connection pooling,
+PostgreSQL's robust protocol handling, MySQL's result caching, and SQL Server's
+connection context preservation. Multi-protocol support is implemented by the
+listener + parser pool control plane; historical "Y-Valve" references in this
+document map to that listener/pool layer.
 
 **Scope Note:** TDS/MSSQL protocol support is post-gold; any TDS references are forward-looking.
 
@@ -311,13 +315,13 @@ bool validate_postgresql_connection(PooledConnection* conn) {
 }
 ```
 
-## 2. Y-Valve Router Enhancements
+## 2. Listener/Pool Router Enhancements
 
 ### 2.1 Smart Routing and Load Balancing
 
 ```c
-// Enhanced Y-Valve router with smart routing
-typedef struct yvalve_router {
+// Enhanced listener/pool router with smart routing
+typedef struct listener_router {
     // Router identity
     UUID            router_uuid;        // Router UUID
     char            router_name[64];    // Router name
@@ -340,7 +344,7 @@ typedef struct yvalve_router {
     
     // Statistics
     RouterStatistics stats;
-} YValveRouter;
+} ListenerRouter;
 
 // Routing rule for smart query routing
 typedef struct routing_rule {
@@ -363,8 +367,8 @@ typedef struct routing_rule {
 } RoutingRule;
 
 // Route query to appropriate backend
-PooledConnection* yvalve_route_query(
-    YValveRouter* router,
+PooledConnection* listener_route_query(
+    ListenerRouter* router,
     const ParsedQuery* query,
     const SessionContext* session)
 {
@@ -1124,13 +1128,13 @@ PoolStatistics* get_pool_statistics(SBConnectionPool* pool) {
 }
 ```
 
-## 9. Integration with Y-Valve
+## 9. Integration with Listener/Pool Control Plane
 
-### 9.1 Y-Valve Connection Management
+### 9.1 Listener/Pool Connection Management
 
 ```c
-// Y-Valve integration point
-typedef struct yvalve_connection_manager {
+// Listener/pool integration point
+typedef struct listener_connection_manager {
     // Connection pools
     SBConnectionPool** pools;           // Array of pools
     uint32_t        pool_count;         // Number of pools
@@ -1139,15 +1143,15 @@ typedef struct yvalve_connection_manager {
     ProtocolHandler** handlers;         // Protocol handlers
     
     // Routing engine
-    YValveRouter*   router;             // Router
+    ListenerRouter* router;             // Router
     
     // Global statistics
     GlobalNetworkStats* global_stats;
-} YValveConnectionManager;
+} ListenerConnectionManager;
 
-// Handle incoming connection through Y-Valve
-Status yvalve_handle_connection(
-    YValveConnectionManager* manager,
+// Handle incoming connection through listener/pool
+Status listener_handle_connection(
+    ListenerConnectionManager* manager,
     int client_fd,
     struct sockaddr* client_addr)
 {
@@ -1167,7 +1171,7 @@ Status yvalve_handle_connection(
     request.username = startup.username;
     request.protocol = protocol;
     
-    PooledConnection* conn = yvalve_route_query(
+    PooledConnection* conn = listener_route_query(
         manager->router,
         NULL,  // No query yet
         &request);
@@ -1193,7 +1197,7 @@ Status yvalve_handle_connection(
 Following the ProjectPlan phases:
 
 1. **Phase 19**: Basic network protocol and server
-2. **Phase 25**: Y-Valve framework implementation
+2. **Phase 25**: Listener/pool framework implementation (legacy Y-Valve)
 3. **Enhancement**: Connection pooling and caching
 4. **Future**: Multiplexing, migration, and advanced features
 

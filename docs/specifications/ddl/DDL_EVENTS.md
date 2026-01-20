@@ -1,129 +1,181 @@
-# **Event System Specification**
+# Event Notifications Specification
 
-## **1\. Introduction**
+**Document:** DDL_EVENTS.md  
+**Status:** Alpha (Firebird compatibility)  
+**Version:** 2.0  
+**Date:** 2026-01-09  
+**Authority:** Chief Architect
 
-The ScratchBird Event System provides a mechanism for scheduling the execution of SQL code at a specific time, or on a recurring basis. This is a powerful tool for automating routine database maintenance, generating periodic reports, or running data processing tasks without the need for an external scheduler like cron.
+---
 
-Events are first-class database objects that are managed via DDL commands. Each event is associated with a block of SQL code that will be executed when the event's schedule is triggered.
+## 1. Purpose
 
-## **2\. Creating Events**
+ScratchBird supports Firebird-style event notifications for push-style updates to
+clients. Events are **not** scheduled jobs. Instead, they are lightweight signals
+posted by SQL or PSQL that notify registered clients on commit. ScratchBird native
+clients can optionally receive immediate (out-of-transaction) events.
 
-The CREATE EVENT statement defines a new scheduled event.
+Event notifications are used for:
+- Client UI refresh or invalidation
+- Out-of-band "data changed" signaling
+- Simple workflow triggers outside the SQL transaction flow
 
-### **CREATE EVENT**
+---
 
-**Syntax:**
+## 2. Core Concepts
 
-CREATE EVENT \[ IF NOT EXISTS \] event\_name  
-    ON SCHEDULE schedule\_definition  
-    \[ ON COMPLETION \[ NOT \] PRESERVE \]  
-    \[ ENABLE | DISABLE \]  
-    \[ COMMENT 'comment\_string' \]  
-    DO event\_body;
+### 2.1 Event Name
+- Event names are strings up to **127 bytes** (Firebird limit).
+- Matching is exact byte match; the listener must register the same name.
+- Recommended: include a UUID in the name for uniqueness, for example:
+  `order_ready.018f6a8d-2aa5-7e2a-8a2b-0e3a4f1b2c3d`
 
-**Key Clauses:**
+### 2.2 Event UUID (internal)
+- Each POST_EVENT generates an **event UUID** (UUIDv7) for the notification instance.
+- The engine stores event UUIDs as internal IDs and only exposes UUIDs in user-facing
+  replies where supported.
+- Firebird protocol clients only receive event **names** and **counts**.
+- ScratchBird native clients may receive the event UUID.
 
-* **event\_name**: A unique name for the event.  
-* **ON SCHEDULE**: Defines when the event should run. (See section 2.1)  
-* **ON COMPLETION \[NOT\] PRESERVE**:  
-  * NOT PRESERVE (Default): The event is dropped automatically after it executes once (for AT schedules).  
-  * PRESERVE: The event definition is kept after it executes. This is the default and required for recurring (EVERY) events.  
-* **ENABLE | DISABLE**:  
-  * ENABLE (Default): The event is active and will run according to its schedule.  
-  * DISABLE: The event is created but is inactive until explicitly enabled.  
-* **DO event\_body**: The SQL statement or block of code to be executed. This can be a simple DML statement or a complex BEGIN...END block.
+### 2.3 Message Payload (optional)
+- ScratchBird can attach an optional message payload (text, up to 1024 bytes).
+- Firebird protocol does not carry payloads; payloads are available only to
+  ScratchBird-native clients.
 
-### **2.1. Schedule Definitions**
+### 2.4 Delivery Modes
 
-The ON SCHEDULE clause is the core of the event's definition.
+**ON COMMIT (default):**
+- Events are queued in the transaction.
+- If the transaction commits, the event is delivered.
+- If the transaction rolls back, the event is discarded.
+- This is the only mode supported in Firebird emulation.
 
-#### **AT timestamp**
+**IMMEDIATE (ScratchBird extension, native only):**
+- Events are delivered at the time of posting.
+- Delivery is independent of transaction commit/rollback.
+- Firebird dialect rejects IMMEDIATE (syntax error).
 
-Executes the event once at a specific, absolute point in time.
+---
 
-**Example:**
+## 3. Posting Events
 
-\-- Run a year-end closing procedure at the end of 2025  
-CREATE EVENT year\_end\_close  
-    ON SCHEDULE AT '2025-12-31 23:59:00'  
-    DO CALL run\_year\_end\_procedures();
+### 3.1 POST_EVENT Statement
 
-#### **EVERY interval**
+**Syntax (ScratchBird native):**
 
-Executes the event repeatedly at a specified interval.
+```sql
+POST_EVENT 'event_name'
+  [ON COMMIT | IMMEDIATE]
+  [MESSAGE 'optional_message'];
+```
 
-**Syntax:**
+**Syntax (Firebird emulation):**
 
-EVERY interval  
-    \[ STARTS 'timestamp' \]  
-    \[ ENDS 'timestamp' \]
+```sql
+POST_EVENT 'event_name';
+```
 
-**Example:**
+**Notes:**
+- `ON COMMIT` is the default and matches Firebird behavior.
+- `IMMEDIATE` is a ScratchBird extension (native only).
+- MESSAGE is optional and is ignored by Firebird protocol clients.
+- Firebird emulation supports only the Firebird syntax shown above.
 
-\-- Truncate a log table every night at 1:00 AM  
-CREATE EVENT cleanup\_logs  
-    ON SCHEDULE EVERY 1 DAY  
-    STARTS (CURRENT\_DATE \+ INTERVAL '1 day' \+ INTERVAL '1 hour') \-- Start tomorrow at 1 AM  
-    DO TRUNCATE TABLE daily\_action\_logs;
+**Examples:**
 
-\-- Generate a summary report every 15 minutes, starting now, for the next 8 hours  
-CREATE EVENT generate\_hourly\_summaries  
-    ON SCHEDULE EVERY 15 MINUTE  
-    STARTS CURRENT\_TIMESTAMP  
-    ENDS CURRENT\_TIMESTAMP \+ INTERVAL '8 hour'  
-    ON COMPLETION PRESERVE  
-    DO CALL update\_dashboard\_summary();
+```sql
+-- Firebird-compatible (on commit)
+POST_EVENT 'new_order';
 
-## **3\. Managing Events**
+-- Name includes UUID for uniqueness
+POST_EVENT 'order_ready.018f6a8d-2aa5-7e2a-8a2b-0e3a4f1b2c3d';
 
-Existing events can be modified or removed.
+-- Immediate notification (ScratchBird native only)
+POST_EVENT 'cache_invalidate' IMMEDIATE;
 
-### **ALTER EVENT**
+-- Immediate with message (native clients only)
+POST_EVENT 'sync_required' IMMEDIATE MESSAGE 'row=12345';
+```
 
-Modifies the definition of an existing event. You can change its schedule, body, status, or other properties.
+---
 
-**Syntax:**
+## 4. Event Registration and Delivery
 
-ALTER EVENT event\_name  
-    \[ ON SCHEDULE schedule\_definition \]  
-    \[ RENAME TO new\_event\_name \]  
-    \[ ENABLE | DISABLE \]  
-    \[ COMMENT 'new\_comment' \]  
-    \[ DO event\_body \];
+### 4.1 Firebird Wire Protocol
 
-**Example:**
+Firebird-compatible clients register for events using:
+- `op_que_events` to arm a listener
+- `op_event` for notifications
+- `op_cancel_events` to stop listening
 
-\-- Change the daily log cleanup to run at 2:30 AM instead of 1:00 AM  
-ALTER EVENT cleanup\_logs  
-    ON SCHEDULE EVERY 1 DAY  
-    STARTS (CURRENT\_DATE \+ INTERVAL '1 day' \+ INTERVAL '2 hour' \+ INTERVAL '30 minute');
+Details are defined in:
+`ScratchBird/docs/specifications/wire_protocols/firebird_wire_protocol.md`
 
-\-- Disable an event temporarily  
-ALTER EVENT generate\_hourly\_summaries DISABLE;
+Behavior:
+- Each event name has a counter.
+- Notifications deliver updated counts.
+- Clients compute deltas and re-arm with `op_que_events`.
+- Events are delivered only on commit (Firebird semantics).
 
-### **DROP EVENT**
+### 4.2 ScratchBird Native Protocol
 
-Removes an event from the database.
+ScratchBird native clients may receive:
+- Event name
+- Count delta
+- Event UUID
+- Optional message payload
 
-**Syntax:**
+### 4.3 Client API Notes
 
-DROP EVENT \[ IF EXISTS \] event\_name;
+See `ScratchBird/docs/specifications/future/C_API_SPECIFICATION.md` for:
+- `sb_register_event`
+- `sb_wait_for_event`
+- `sb_post_event`
+- `sb_unregister_event`
 
-## **4\. System Integration**
+---
 
-### **Event Scheduler Thread**
+## 5. Security and Limits
 
-The ScratchBird server runs a dedicated event scheduler thread that is responsible for monitoring the event queue and executing events at their scheduled times. This thread is managed internally by the database.
+### 5.1 Posting Rules
+- `POST_EVENT` is allowed for authenticated sessions by default.
+- Optional config can restrict posting to specific roles or allowlisted prefixes.
 
-### **System Views**
+### 5.2 Listener Rules
+- Event registration is per-attachment.
+- Optional config can restrict which roles can register listeners.
 
-You can monitor the status of events through the information\_schema.
+### 5.3 Resource Limits
+- Max events per registration: configurable (default 64).
+- Max event name length: 127 bytes.
+- Max message length: 1024 bytes (native clients only).
 
-\-- View all defined events and their properties  
-SELECT \* FROM information\_schema.events;
+---
 
-\-- Example Output:  
-\-- | event\_name                | schedule\_body                                      | status  |  
-\-- |---------------------------|----------------------------------------------------|---------|  
-\-- | cleanup\_logs              | EVERY 1 DAY STARTS ...                             | ENABLED |  
-\-- | generate\_hourly\_summaries | EVERY 15 MINUTE STARTS ... ENDS ...                | DISABLED|  
+## 6. Observability
+
+Suggested audit events:
+- EVENT_POSTED
+- EVENT_DELIVERED
+
+Suggested monitoring:
+- total_events_posted
+- events_delivered
+- listeners_active
+
+---
+
+## 7. Non-Goals
+
+- Events do **not** schedule jobs.
+- Events are not persistent catalog objects.
+- Events are not stored in sys.jobs or sys.job_runs.
+
+---
+
+## 8. References
+
+- Firebird language reference: POST_EVENT behavior and 127-byte name limit
+  (`ScratchBird/docs/specifications/reference/firebird/FirebirdReferenceDocument.md`)
+- Firebird wire protocol event ops:
+  `ScratchBird/docs/specifications/wire_protocols/firebird_wire_protocol.md`
