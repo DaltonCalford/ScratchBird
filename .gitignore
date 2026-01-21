@@ -84,6 +84,11 @@ Thumbs.db
 Testing/
 ctest-
 
+# Gradle caches/build output
+.gradle/
+jdbc/.gradle/
+jdbc/build/
+
 # Logs
 *.log
 
