@@ -576,6 +576,26 @@ set_target_properties(scratchbird_odbc PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+add_library(scratchbird_odbc_driver SHARED
+    ${SCRATCHBIRD_ODBC_SOURCES}
+)
+
+target_include_directories(scratchbird_odbc_driver PUBLIC
+    ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(scratchbird_odbc_driver PUBLIC Threads::Threads scratchbird_core scratchbird_lib)
+
+target_compile_definitions(scratchbird_odbc_driver PRIVATE SCRATCHBIRD_ODBC_EXPORTS)
+
+set_target_properties(scratchbird_odbc_driver PROPERTIES
+    OUTPUT_NAME scratchbird_odbc
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
 message(STATUS "ODBC library: scratchbird_odbc (ODBC 3.8 driver)")
 
 # ==============================================================================
@@ -904,7 +924,7 @@ set_target_properties(sb_my_isql PROPERTIES
 message(STATUS "CLI tool: sb_my_isql (MySQL SQL shell)")
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_testing
+install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_odbc_driver scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

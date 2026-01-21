@@ -167,6 +167,7 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 - [Transaction System](../transaction/) - Distributed transaction coordination
 - [Replication (Beta Requirements)](../beta_requirements/replication/) - Replication specifications
 - [Operations](../operations/) - Observability metrics
+- [Parallel Execution Architecture](../query/PARALLEL_EXECUTION_ARCHITECTURE.md) - Parallel query execution model (Beta)
 
 ## Critical Reading
 

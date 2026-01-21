@@ -264,11 +264,11 @@ EOF
 
 # List major specifications
 major_specs=(
-    "docs/specifications/POSTGRESQL_PARSER_IMPLEMENTATION.md"
-    "docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md"
-    "docs/specifications/INDEX_ARCHITECTURE.md"
-    "docs/specifications/HEAP_TOAST_INTEGRATION.md"
-    "docs/specifications/SBLR_DOMAIN_PAYLOADS.md"
+    "docs/specifications/parser/POSTGRESQL_PARSER_IMPLEMENTATION.md"
+    "docs/specifications/sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md"
+    "docs/specifications/indexes/INDEX_ARCHITECTURE.md"
+    "docs/specifications/storage/HEAP_TOAST_INTEGRATION.md"
+    "docs/specifications/sblr/SBLR_DOMAIN_PAYLOADS.md"
 )
 
 echo "**Key Specifications:**" >> "$OUTPUT_FILE"

@@ -18,10 +18,10 @@ design for reference only.
 
 ## Related Specs
 
-- [Component Model and Responsibilities](COMPONENT_MODEL_AND_RESPONSIBILITIES.md)
+- [Component Model and Responsibilities](../catalog/COMPONENT_MODEL_AND_RESPONSIBILITIES.md)
 
-Reuse artifacts: [Component Model Diagrams](../diagrams/component_model_diagrams.md),
-[Component Responsibility Matrix](../diagrams/component_responsibility_matrix.md).
+Reuse artifacts: [Component Model Diagrams](../../diagrams/component_model_diagrams.md),
+[Component Responsibility Matrix](../../diagrams/component_responsibility_matrix.md).
 
 ---
 

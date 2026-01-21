@@ -40,8 +40,8 @@ This document consolidates the current component model (Engine, Parser, Network 
 +---------------------------------------------------------------+
 ```
 
-Reuse artifacts: [Component Model Diagrams](../diagrams/component_model_diagrams.md) and
-[Component Responsibility Matrix](../diagrams/component_responsibility_matrix.md).
+Reuse artifacts: [Component Model Diagrams](../../diagrams/component_model_diagrams.md) and
+[Component Responsibility Matrix](../../diagrams/component_responsibility_matrix.md).
 
 ## Component Responsibilities
 

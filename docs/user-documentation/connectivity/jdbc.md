@@ -8,7 +8,33 @@ Connect to ScratchBird from Java applications.
 
 ## Overview
 
-ScratchBird supports JDBC connectivity through PostgreSQL and MySQL JDBC drivers since it implements both wire protocols.
+ScratchBird ships a native JDBC driver (Type 4) that speaks the ScratchBird wire protocol on port 3092. PostgreSQL/MySQL JDBC drivers remain supported for compatibility testing and migrations.
+
+---
+
+## ScratchBird JDBC Driver (Native)
+
+### Build
+
+```bash
+cd jdbc
+gradle jar
+```
+
+Jar output: `jdbc/build/libs/scratchbird-jdbc.jar`
+
+### Connection URL
+
+```
+jdbc:scratchbird://host[:port]/database
+```
+
+### Example
+
+```java
+String url = "jdbc:scratchbird://localhost:3092/mydb";
+Connection conn = DriverManager.getConnection(url, "admin", "secret");
+```
 
 ---
 
@@ -16,7 +42,8 @@ ScratchBird supports JDBC connectivity through PostgreSQL and MySQL JDBC drivers
 
 | Protocol | Driver | Best For |
 |----------|--------|----------|
-| PostgreSQL | PostgreSQL JDBC | Most applications |
+| ScratchBird (native) | ScratchBird JDBC | Direct native protocol |
+| PostgreSQL | PostgreSQL JDBC | Compatibility testing |
 | MySQL | MySQL Connector/J | MySQL-specific apps |
 | Firebird | Jaybird | Firebird-specific apps |
 

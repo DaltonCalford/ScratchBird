@@ -65,7 +65,7 @@ const pool = new Pool({
 ### Java (JDBC)
 
 ```java
-String url = "jdbc:postgresql://localhost:5432/mydb";
+String url = "jdbc:scratchbird://localhost:3092/mydb";
 Connection conn = DriverManager.getConnection(url, "admin", "secret");
 ```
 

@@ -177,8 +177,8 @@ ScratchBird supports DML from multiple dialects:
 
 Before working on DML implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ FIRST:** [04_DML_STATEMENTS_OVERVIEW.md](04_DML_STATEMENTS_OVERVIEW.md) - DML overview
 4. **READ:** [../transaction/TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md) - MGA snapshot visibility
 

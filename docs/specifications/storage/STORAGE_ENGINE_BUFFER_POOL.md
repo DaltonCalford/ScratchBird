@@ -3,28 +3,38 @@
 
 ---
 
-## IMPLEMENTATION STATUS: 🔴 MOSTLY NOT IMPLEMENTED - DESIGN SPECIFICATION
+## IMPLEMENTATION STATUS: PARTIAL (ALPHA TARGET)
 
-**Current Alpha Implementation:**
-- Simple 32-page LRU buffer pool only
-- Single buffer pool (no multiple pools)
-- No adaptive hash index
-- No ring buffers
-- No read-ahead capabilities
-- No background workers
-- Basic page caching only
+**Current Alpha Implementation (code-truth):**
+- Fixed-size buffer pool (configurable); GPID-based page IDs
+- Partitioned page table with per-partition locks
+- Clock-sweep eviction with LRU fallback and dirty-page preference
+- Adaptive background writer with dirty-ratio thresholds
+- Dirty page counter + basic hit/miss/eviction/flush stats
+- Page pin/unpin + per-page content mutex
 
-**This specification describes the target architecture for Phase 2+.**
+**Not Yet Implemented (Alpha target in this spec):**
+- Scan-resistant ring buffers (sequential scan / sweep-GC / bulk write)
+- Read-ahead policy for large scans
+- Young/old or midpoint insertion to prevent scan pollution
+- Multiple buffer pools by workload or tablespace
+- Adaptive hash index in the buffer pool
 
-See `include/scratchbird/core/buffer_pool.h` for current simple implementation.
+**Canonical cache architecture:** `docs/specifications/core/CACHE_AND_BUFFER_ARCHITECTURE.md`
+
+This specification describes the **Alpha target** buffer-pool design for a single node.
+
+See `include/scratchbird/core/buffer_pool.h` and `src/core/buffer_pool.cpp` for current implementation details.
 
 ---
 
 ## Overview
 
-ScratchBird's buffer pool management (PLANNED) will combine PostgreSQL's ring buffer concept, MySQL InnoDB's adaptive hash index, Firebird's efficient page management, and SQL Server's read-ahead capabilities. The system will support multiple page sizes (8K-128K) and provide workload-specific buffer pools.
+ScratchBird's buffer pool management combines an implemented clock-sweep core with planned PostgreSQL-style ring buffers, MySQL InnoDB midpoint insertion/adaptive hash concepts, Firebird-style page management efficiency, and SQL Server-style read-ahead. The Alpha target includes scan-resistance and read-ahead while keeping the design compatible with future multi-pool layouts.
 
 ## 1. Buffer Pool Architecture
+
+**Note:** The structures in this section define the target architecture. The current Alpha implementation is in `include/scratchbird/core/buffer_pool.h` and `src/core/buffer_pool.cpp`.
 
 ### 1.1 Core Buffer Pool Structure
 

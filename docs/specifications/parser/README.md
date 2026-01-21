@@ -66,9 +66,9 @@ From [EMULATED_DATABASE_PARSER_SPECIFICATION.md](EMULATED_DATABASE_PARSER_SPECIF
 
 Before working on parser implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - Absolute MGA architecture rules
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - Absolute MGA architecture rules
 2. **MUST READ:** [EMULATED_DATABASE_PARSER_SPECIFICATION.md](EMULATED_DATABASE_PARSER_SPECIFICATION.md) - Parser architecture
-3. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+3. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 
 ## Navigation
 

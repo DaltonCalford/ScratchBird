@@ -7,6 +7,7 @@
 **WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
 Any WAL references in this document describe an optional post-gold stream for
 replication/PITR only.
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
 
 ---
 
@@ -61,20 +62,20 @@ This document specifies performance benchmarking for ScratchBird Database Engine
 
 ### 1.4. MGA-Specific Considerations
 
-**ScratchBird uses Firebird MGA, not PostgreSQL write-after log (WAL, optional post-gold):**
+**ScratchBird uses Firebird MGA, not PostgreSQL write-after log (WAL):**
 
-- **No write-after log write overhead** - Faster commit in core MGA (no write-after log (WAL, optional post-gold) flush)
+- **No write-after log write overhead** - Faster commit in core MGA (no write-after log (WAL) flush)
 - **Multi-Version In-Page** - Page updates may be larger than PostgreSQL
 - **Sweep Overhead** - Garbage collection runs periodically
 - **Transaction Marker Reads** - Must check OIT, OAT, OST, NEXT
 
 **Performance Implications:**
 
-| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL, optional post-gold)) |
+| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL)) |
 |--------|-------------------|------------------|
-| **Write Latency** | Lower (no write-after log (WAL, optional post-gold) sync in core MGA) | Higher (write-after log (WAL, optional post-gold) sync) |
+| **Write Latency** | Lower (no write-after log (WAL) sync in core MGA) | Higher (write-after log (WAL) sync) |
 | **Read Latency** | Comparable | Comparable |
-| **Throughput** | Higher (no write-after log (WAL, optional post-gold) in core MGA) | Lower (write-after log (WAL, optional post-gold) overhead) |
+| **Throughput** | Higher (no write-after log (WAL) in core MGA) | Lower (write-after log (WAL) overhead) |
 | **GC Overhead** | Sweep/GC (periodic) | VACUUM (periodic) |
 | **Hot Standby** | Not yet (Beta) | Yes |
 
@@ -791,7 +792,7 @@ LIMIT 10;
 | **p95 Latency** | 0.8 ms | 1.2 ms |
 | **CPU Usage** | 65% | 72% |
 | **I/O Util** | 42% | 58% |
-| **Reason** | No write-after log (WAL, optional post-gold) sync overhead | Write-after log (WAL, optional post-gold) fsync required |
+| **Reason** | No write-after log (WAL) sync overhead | Write-after log (WAL) fsync required |
 
 **Benchmark:** Read-heavy OLTP (100 concurrent clients)
 
@@ -822,7 +823,7 @@ LIMIT 10;
 | **Throughput** | 15,200 TPS | 14,500 TPS |
 | **p95 Latency** | 0.8 ms | 0.9 ms |
 | **CPU Usage** | 65% | 68% |
-| **Reason** | No write-after log (WAL, optional post-gold) overhead | Redo log overhead |
+| **Reason** | No write-after log (WAL) overhead | Redo log overhead |
 
 **Note:** Comparisons are illustrative. Actual performance depends on workload, configuration, and hardware.
 

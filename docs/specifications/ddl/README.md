@@ -139,8 +139,8 @@ See [CASCADE_DROP_SPECIFICATION.md](CASCADE_DROP_SPECIFICATION.md) for detailed 
 
 Before working on DDL implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ FIRST:** [02_DDL_STATEMENTS_OVERVIEW.md](02_DDL_STATEMENTS_OVERVIEW.md) - DDL overview
 4. **VERIFY:** Catalog infrastructure exists before implementing DDL operations
 

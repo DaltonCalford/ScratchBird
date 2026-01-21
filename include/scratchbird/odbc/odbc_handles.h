@@ -310,7 +310,7 @@ public:
      * @brief Execute prepared statement
      */
     SQLRETURN executePrepared(uint64_t stmt_id,
-                              const std::vector<std::vector<uint8_t>>& params,
+                              const std::vector<ParameterLiteral>& params,
                               std::vector<std::vector<std::string>>& results,
                               std::vector<ColumnMetadata>& columns,
                               SQLLEN& rows_affected);
@@ -328,6 +328,7 @@ public:
 
 private:
     SQLRETURN parseConnectionString(const std::string& conn_str);
+    SQLRETURN applyDsnConfig(const std::string& dsn_name);
     SQLRETURN establishConnection();
     SQLRETURN applyAutocommitSetting();
     SQLRETURN applyIsolationSetting();
@@ -602,6 +603,12 @@ public:
     SQLRETURN getAttribute(SQLINTEGER attribute, SQLPOINTER value,
                            SQLINTEGER buffer_length, SQLINTEGER* string_length);
 
+    /**
+     * @brief Set result set for catalog/metadata queries
+     */
+    void setCatalogResult(std::vector<ColumnMetadata> columns,
+                          std::vector<std::vector<std::string>> rows);
+
     // =========================================================================
     // Accessors
     // =========================================================================
@@ -614,9 +621,7 @@ public:
 private:
     SQLRETURN bindResultData();
     SQLRETURN convertAndStore(size_t col_index, const std::string& value);
-    std::vector<std::vector<uint8_t>> buildParameterData();
-    void setCatalogResult(std::vector<ColumnMetadata> columns,
-                          std::vector<std::vector<std::string>> rows);
+    std::vector<ParameterLiteral> buildParameterData();
 
     OdbcConnection* conn_;
 

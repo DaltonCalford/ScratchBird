@@ -92,8 +92,8 @@ See [FIREBIRD_BLR_TO_SBLR_MAPPING.md](FIREBIRD_BLR_TO_SBLR_MAPPING.md) for detai
 
 Before working on SBLR implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ IN ORDER:**
    - [Appendix_A_SBLR_BYTECODE.md](Appendix_A_SBLR_BYTECODE.md) - Core bytecode spec
    - [SBLR_OPCODE_REGISTRY.md](SBLR_OPCODE_REGISTRY.md) - Opcode reference

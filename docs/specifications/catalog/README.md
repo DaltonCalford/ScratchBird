@@ -100,8 +100,8 @@ All dialect-specific views map to the core `sys` catalog tables.
 
 Before working on catalog implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ IN ORDER:**
    - [SYSTEM_CATALOG_STRUCTURE.md](SYSTEM_CATALOG_STRUCTURE.md) - Catalog structure
    - [SCHEMA_PATH_RESOLUTION.md](SCHEMA_PATH_RESOLUTION.md) - Name resolution

@@ -2,9 +2,9 @@
 
 **Firebird-style MGA database engine** with multi-dialect wire compatibility and advanced distributed cluster capabilities.
 
-**Current Phase:** Alpha IP layer (network listeners + connection pools + parser agents)
+**Current Phase:** Alpha network service layer (listener/pool/parser/server operational; drivers/auth wiring in progress)
 **Project Age:** ~6 months (July 2025 - present)
-**Status:** Alpha parser remediation complete; IP layer and CLI/network integration in progress; see `docs/status/` and `docs/testing/`
+**Status:** Parser remediation complete; listener/pool/parser/server process working; driver integration + auth wiring in progress; see `docs/IMPLEMENTATION_STATUS_DASHBOARD.md`
 
 ---
 
@@ -37,14 +37,15 @@ ScratchBird is a next-generation database management system that combines:
 - Core engine (MGA, storage, SBLR runtime) for embedded, IPC, and network use
 - Parser remediation and dialect bytecode alignment complete
 - Engine-enforced security; parser/listener treated as untrusted
+- Listener/pool/parser/server process operational with socket handoff per dialect
 - Shared SBLR cache with per-connection compile caches
 
 ### 🚧 In Progress
 
-- IP layer: network listeners, connection pools, and parser agents bridging client protocols to the server over IP
-- Configuration and driver readiness for ScratchBird native connectivity
-- CLI updates to support network modes and listener orchestration
-- Listener/pool behavior alignment and wire-protocol parity tests
+- Server auth wiring (HBA/SCRAM/TLS/MFA hooks) and protocol handshake hardening
+- Driver integration and client readiness (ODBC/JDBC + tooling; see `docs/planning/`)
+- CLI updates for network modes, listener orchestration, and monitoring
+- Dialect parity + adapter e2e suites per dialect (no cross-dialect fallbacks)
 
 ### 📋 Beta (Deferred)
 
@@ -89,7 +90,7 @@ ctest --output-on-failure -C Debug --test-dir build
 ### Core Components
 
 - **Storage Engine** - Multi-Generational Architecture (MGA) with MVCC
-- **SBLR Runtime** - ScratchBird Bytecode Language Runtime (40,353 LOC)
+- **SBLR Runtime** - ScratchBird Bytecode Language Runtime
 - **SQL Parsers** - 4 dialects: V2 (native), Firebird, PostgreSQL, MySQL
 - **Query Optimizer** - Cost-based optimization with push-down support
 - **Security Subsystem** - Authentication, authorization, encryption, masking, audit
@@ -100,16 +101,18 @@ ctest --output-on-failure -C Debug --test-dir build
 
 ```
 src/
-├── core/           99,702 LOC   Core engine, catalog, transactions
-├── sblr/           40,353 LOC   Bytecode runtime
-├── parser/         23,444 LOC   SQL parsers (4 dialects)
-├── optimizer/       8,292 LOC   Query optimizer
-├── security/        8,875 LOC   Security subsystem
-├── server/          6,594 LOC   Server components
-├── odbc/            3,301 LOC   ODBC driver
-├── network/         3,047 LOC   Network layer
+├── core/           Core engine, catalog, transactions
+├── sblr/           Bytecode runtime
+├── parser/         SQL parsers (4 dialects)
+├── optimizer/      Query optimizer
+├── security/       Security subsystem
+├── server/         Server components
+├── odbc/           ODBC driver
+├── network/        Network layer
 └── [16 other modules]
 ```
+
+See `PROJECT_STATS.md` for current file and LOC counts.
 
 ---
 
@@ -135,10 +138,10 @@ Run `./scripts/generate-all-stats.sh` to generate current statistics:
 
 ### Documentation Directories
 
-- **docs/specifications/** - Technical specifications (275+ files)
-  - **Cluster Specification Work/** - Beta cluster architecture (16 files) ✅
-  - **Security Design Specification/** - Security architecture (16 files) ✅
-  - **beta_requirements/** - Beta requirements tracking (67 categories)
+- **docs/specifications/** - Technical specifications (430 files)
+  - **Cluster Specification Work/** - Beta cluster architecture (19 files) ✅
+  - **Security Design Specification/** - Security architecture (30 specs) ✅
+  - **beta_requirements/** - Beta requirements tracking (70 directories)
 - **docs/planning/** - Implementation plans (Plans 01-17)
 - **docs/design/** - Architecture and design documents
 - **docs/findings/** - Analysis and investigation reports
@@ -156,22 +159,22 @@ Run `./scripts/generate-all-stats.sh` to generate current statistics:
 ctest --test-dir build
 
 # Run specific test categories
-ctest --test-dir build -R unit        # Unit tests (73 suites)
-ctest --test-dir build -R integration # Integration tests (64 suites)
-ctest --test-dir build -R compat      # Compatibility tests (113 files)
+ctest --test-dir build -R unit        # Unit test suites
+ctest --test-dir build -R integration # Integration test suites
+ctest --test-dir build -R compat      # Compatibility tests
 ```
 
 ### Test Statistics
 
-| Category | Count | Status |
-|----------|-------|--------|
-| **Unit Tests** | 2,578 tests | ✅ 100% pass |
-| **Integration Tests** | 353 tests | ✅ 100% pass |
-| **Benchmark Tests** | 92 tests | ✅ Active |
-| **Compatibility Tests** | 22,000+ tests | ✅ Complete |
-| **Total** | 25,000+ tests | ✅ 71% coverage |
+| Category | Count | Notes |
+|----------|-------|-------|
+| **Unit Test Suites** | 73 | File count (`PROJECT_STATS.md`) |
+| **Integration Test Suites** | 67 | File count (`PROJECT_STATS.md`) |
+| **Benchmark Suites** | 2 | File count (`PROJECT_STATS.md`) |
+| **Total Test Suites** | 142 | File count (`PROJECT_STATS.md`) |
+| **Test Files (all)** | 334 | Includes helpers/fixtures |
 
-**PostgreSQL Compatibility:** 113 comprehensive test files covering all data types, indexes, triggers, views, functions, constraints, transactions, DDL, and DML operations.
+Compatibility suites exist for PostgreSQL, MySQL, and Firebird; see `tests/compatibility/` for coverage scope.
 
 ---
 
@@ -245,10 +248,10 @@ See `docs/specifications/Cluster Specification Work/SBCLUSTER-SUMMARY.md` for co
 
 ```
 ScratchBird/
-├── src/                    Source code (242,136 LOC, 20 modules)
-├── include/                Public headers (86,138 LOC)
-├── tests/                  Test suites (171,471 LOC, 25,000+ tests)
-├── docs/                   Documentation (1,385 files)
+├── src/                    Source code
+├── include/                Public headers
+├── tests/                  Test suite
+├── docs/                   Documentation
 ├── wiki/                   User documentation (infrastructure ready)
 ├── scripts/                Automation scripts
 ├── build/                  Build directory (generated)
@@ -257,6 +260,8 @@ ScratchBird/
 ├── IMPLEMENTATION_STANDARDS.md  Implementation requirements
 └── OFFICIAL_ROADMAP.md     Project roadmap
 ```
+
+See `PROJECT_STATS.md` for current counts.
 
 ### Key Development Documents
 
@@ -279,8 +284,8 @@ ScratchBird/
 
 ### Code Quality
 
-- **Test Coverage:** 71% by LOC (excellent for Alpha stage)
-- **Test Pass Rate:** 100% (2,007/2,007 CTest)
+- **Test Status:** See `docs/IMPLEMENTATION_STATUS_DASHBOARD.md` for last run and gating notes
+- **Coverage:** See `PROJECT_STATS.md` and `docs/DOCUMENTATION_COVERAGE.md`
 - **Code Style:** C++17/20, consistent formatting
 - **Documentation:** Comprehensive inline and external documentation
 - **Security:** Built-in security by design
@@ -313,26 +318,27 @@ ScratchBird/
 
 ## Roadmap
 
-### Alpha Phase (Current - IP Layer)
+### Alpha Phase (Current - Network Service)
 
 - ✅ Plan 01: Core Storage & GC
 - ✅ Plan 02: UUID Resolution & Rename/Move
 - ✅ Plan 03: Security Context/Auth/Audit
 - ✅ Plan 03B: Domain Infrastructure
 - ✅ Plan 04: Domain DDL (all parsers complete)
-- 🚧 IP layer: listeners, connection pools, parser agents, and CLI network support
+- ✅ Listener/pool/parser/server process operational
+- 🚧 Driver adapters (ODBC/JDBC), auth wiring, and dialect e2e parity
 
 ### Pre-Beta Phase (Next)
 
-After Alpha IP layer completion:
+After Alpha network service completion:
 - Finalize planning and specification phase
 - Audit and verification of Alpha deliverables
 - Prepare infrastructure for Beta cluster implementation
-- Plan 05: ODBC Driver (upcoming phase)
+- Driver adapter delivery milestones (ODBC/JDBC)
 
 ### Beta Phase (Planned)
 
-**Specifications:** ✅ Complete (16 documents, 12,794 lines)
+**Specifications:** ✅ Complete (see `docs/specifications/Cluster Specification Work/`)
 
 **Implementation:** 8-11 months estimated
 - Distributed cluster with Raft consensus
@@ -409,12 +415,13 @@ Contributions welcome! Please:
 - `docs/specifications/beta_requirements/COMPLETION_STATUS.md` - Beta requirements tracker
 
 **Quick Stats (snapshot; re-generate for current numbers):**
-- 606,000+ lines of code
-- 25,000+ test cases (71% coverage)
-- 1,584+ commits
-- 1,385 documentation files
-- 100% test pass rate (2,007/2,007)
-- 7 contributors (3 human, 4 AI/automation)
+- 582 C++ source files
+- 335 test files (142 test targets)
+- 1,830 documentation files
+- 1,605 commits (99 in last 30 days)
+- 159 wiki pages (67 planned)
+- 9 beta P0 requirements + 10 unspecified
+- Last full ctest: 2,286 passed, 0 failed, 18 skipped
 
 ---
 

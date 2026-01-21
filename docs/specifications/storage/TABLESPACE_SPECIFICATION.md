@@ -24,18 +24,18 @@ This document specifies the tablespace feature for ScratchBird, enabling multi-f
 
 ## Table of Contents
 
-1. [Research Summary](#research-summary)
-2. [Tablespace Concepts](#tablespace-concepts)
-3. [Architecture Design](#architecture-design)
-4. [Data Structures](#data-structures)
-5. [API Specification](#api-specification)
-6. [Migration and Online Operations](#migration-and-online-operations)
-7. [Partitioning and Data Placement](#partitioning-and-data-placement)
-8. [Attach/Detach Operations](#attachdetach-operations)
-9. [Integration Points](#integration-points)
-10. [Implementation Plan](#implementation-plan)
-11. [Testing Strategy](#testing-strategy)
-12. [Appendix: Research Findings](#appendix-research-findings)
+1. [Research Summary](#1-research-summary)
+2. [Tablespace Concepts](#2-tablespace-concepts)
+3. [Architecture Design](#3-architecture-design)
+4. [Data Structures](#4-data-structures)
+5. [API Specification](#5-api-specification)
+6. [Migration and Online Operations](#6-migration-and-online-operations)
+7. [Partitioning and Data Placement](#7-partitioning-and-data-placement)
+8. [Attach/Detach Operations](#8-attachdetach-operations)
+9. [Integration Points](#9-integration-points)
+10. [Implementation Plan](#10-implementation-plan)
+11. [Testing Strategy](#11-testing-strategy)
+12. [Appendix: Research Findings](#12-appendix-research-findings)
 
 ---
 
@@ -747,7 +747,7 @@ public:
 3. Copy all existing tuples to shadow table (batched, with progress tracking)
 4. Create triggers to capture concurrent INSERT/UPDATE/DELETE into delta log
 5. Release SHARE LOCK (table now fully available for reads/writes)
-6. **Catch-up Phase**: Apply delta log changes to shadow table (repeat until delta is small)
+6. **Catch-up Pass**: Apply delta log changes to shadow table (repeat until delta is small)
 7. Acquire **EXCLUSIVE LOCK** briefly (milliseconds)
 8. Apply final delta log changes
 9. Swap table metadata (catalog update)
@@ -763,7 +763,7 @@ public:
 - Requires additional space (shadow table)
 - Triggers add overhead during migration
 
-**Implementation Priority**: **Phase 2** (offline migration in Phase 1)
+**Implementation Priority**: **Alpha** (offline migration included; online migration post-alpha)
 
 ---
 
@@ -1017,7 +1017,7 @@ CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 
 ## 10. Implementation Plan
 
-### Phase 1: Core Infrastructure (40-60 hours)
+### Alpha Stage 1: Core Infrastructure (40-60 hours)
 
 #### Task 1.1: Data Structures and Catalog (12-16 hours)
 - Define `TablespaceHeader` structure
@@ -1057,7 +1057,7 @@ CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 - `src/core/tablespace.cpp` (~600 lines)
 - Integration with `page_manager.cpp` (~400 lines)
 
-### Phase 2: SQL DDL and Catalog Operations (30-40 hours)
+### Alpha Stage 2: SQL DDL and Catalog Operations (30-40 hours)
 
 #### Task 2.1: CREATE/DROP TABLESPACE (12-16 hours)
 - SQL parser support for `CREATE TABLESPACE` syntax
@@ -1091,7 +1091,7 @@ CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 - StorageEngine changes (~300 lines)
 - Unit tests (~300 lines)
 
-### Phase 3: Autoextend and Growth (20-30 hours)
+### Alpha Stage 3: Autoextend and Growth (20-30 hours)
 
 #### Task 3.1: Autoextend Implementation (12-18 hours)
 - Implement `PageManager::extendTablespace()` based on autoextend parameters
@@ -1112,7 +1112,7 @@ CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 - PageManager method (~200 lines)
 - Unit tests (~200 lines)
 
-### Phase 4: Migration (Offline Only) (30-40 hours)
+### Alpha Stage 4: Migration (Offline Only) (30-40 hours)
 
 #### Task 4.1: Offline Table Migration (20-28 hours)
 - Implement `CatalogManager::moveTableToTablespace()` (offline mode)
@@ -1140,35 +1140,35 @@ CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 
 ---
 
-### Summary: Phase 1-4 Total
+### Summary: Alpha Stages 1-4 Total
 
-| Phase | Task | Estimated Hours | Priority |
+| Stage | Task | Estimated Hours | Priority |
 |-------|------|-----------------|----------|
-| 1 | Core Infrastructure | 40-60 | CRITICAL |
-| 2 | SQL DDL | 30-40 | HIGH |
-| 3 | Autoextend | 20-30 | MEDIUM |
-| 4 | Migration (Offline) | 30-40 | HIGH |
+| Alpha 1 | Core Infrastructure | 40-60 | CRITICAL |
+| Alpha 2 | SQL DDL | 30-40 | HIGH |
+| Alpha 3 | Autoextend | 20-30 | MEDIUM |
+| Alpha 4 | Migration (Offline) | 30-40 | HIGH |
 | **TOTAL** | | **120-170** | |
 
 **Adjusted Total**: **120-180 hours** (3-4.5 weeks for single developer)
 
 ---
 
-### Future Phases (Post-BETA)
+### Post-Alpha Extensions
 
-#### Phase 5: Online Migration (40-60 hours)
+#### Stage 5: Online Migration (40-60 hours) (post-alpha)
 - Implement shadow table approach
 - Delta log for concurrent writes
 - Catch-up phase with incremental application
 - Brief exclusive lock for final swap
 
-#### Phase 6: Attach/Detach (20-30 hours)
+#### Stage 6: Attach/Detach (20-30 hours) (post-alpha)
 - ALTER TABLESPACE ATTACH/DETACH syntax
 - UUID validation and FORCE option
 - Cross-database attach with warnings
 - Recovery from detached tablespace (startup error handling)
 
-#### Phase 7: Advanced Features (30-50 hours)
+#### Stage 7: Advanced Features (30-50 hours) (post-alpha)
 - Per-tablespace buffer pools
 - Tablespace-level backup/restore
 - Parallel extension (multi-threaded autoextend)
@@ -1340,12 +1340,12 @@ This specification provides a comprehensive design for tablespaces in ScratchBir
 **Next Steps**:
 1. Review and approve specification
 2. Allocate engineering resources (estimated 120-180 hours)
-3. Implement Phase 1 (Core Infrastructure)
-4. Implement Phase 2 (SQL DDL)
-5. Implement Phase 3 (Autoextend)
-6. Implement Phase 4 (Offline Migration)
-7. Beta testing with real workloads
-8. Plan Phase 5-7 (Online Migration, Attach/Detach, Advanced Features)
+3. Implement Alpha Stage 1 (Core Infrastructure)
+4. Implement Alpha Stage 2 (SQL DDL)
+5. Implement Alpha Stage 3 (Autoextend)
+6. Implement Alpha Stage 4 (Offline Migration)
+7. Alpha validation with real workloads
+8. Plan post-alpha stages 5-7 (Online Migration, Attach/Detach, Advanced Features)
 
 ---
 

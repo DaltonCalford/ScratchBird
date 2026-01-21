@@ -7,11 +7,11 @@ Any WAL references in this document describe an optional post-gold stream for
 replication/PITR only.
 
 **All TOAST functionality is now complete and MGA-compliant:**
-- ✅ **MGA Compliance**: TupleHeader-based TOAST chunks with xmin/xmax (Phase 1)
-- ✅ **TIP-Based Visibility**: Uses TIP for transaction state, not snapshots (Phase 2)
-- ✅ **Index Integration**: IndexKeyExtractor detoasts before indexing (Phase 3)
-- ✅ **Garbage Collection**: 3-phase GC (orphan detection, cleanup, TIP-based) (Phase 4)
-- ✅ **Comprehensive Testing**: 8 test files, 43+ test cases (Phase 5)
+- ✅ **MGA Compliance**: TupleHeader-based TOAST chunks with xmin/xmax (Alpha)
+- ✅ **TIP-Based Visibility**: Uses TIP for transaction state, not snapshots (Alpha)
+- ✅ **Index Integration**: IndexKeyExtractor detoasts before indexing (Alpha)
+- ✅ **Garbage Collection**: 3-stage GC (orphan detection, cleanup, TIP-based) (Alpha)
+- ✅ **Comprehensive Testing**: 8 test files, 43+ test cases (Alpha)
 - ✅ Value ID recovery on database reopen (fixes data corruption risk)
 - ✅ Chunk cleanup on partial write failures (fixes storage leaks)
 - ✅ B-tree index scan for efficient deletion (O(log n) instead of O(n))
@@ -30,9 +30,9 @@ replication/PITR only.
 **Key Implementation Files**:
 - `include/scratchbird/core/toast.h` - TOAST chunk format, ToastVisibility class
 - `src/core/toast.cpp` - ToastManager, TIP-based visibility
-- `src/core/index_key_extractor.cpp` - Index detoasting (Phase 3)
-- `src/core/garbage_collector.cpp` - TOAST GC (Phase 4)
-- `src/core/vacuum.cpp` - TOAST table processing (Phase 4)
+- `src/core/index_key_extractor.cpp` - Index detoasting (Alpha)
+- `src/core/garbage_collector.cpp` - TOAST GC (Alpha)
+- `src/core/vacuum.cpp` - TOAST table processing (Alpha)
 
 ## Overview
 

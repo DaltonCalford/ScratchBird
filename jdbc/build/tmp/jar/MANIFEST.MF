@@ -1,0 +1,5 @@
+Manifest-Version: 1.0
+Implementation-Title: ScratchBird JDBC Driver
+Implementation-Version: 0.1.0
+Automatic-Module-Name: com.scratchbird.jdbc
+

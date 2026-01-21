@@ -524,11 +524,11 @@ Status perform_checkpoint(
 {
     CheckpointerContext* ckpt = engine->se_checkpointer;
     
-    // Phase 1: Mark checkpoint start
+    // Step 1: Mark checkpoint start
     LSN checkpoint_lsn = get_current_lsn();
     ckpt->ckpt_state = CKPT_STATE_STARTING;
     
-    // Phase 2: Flush all dirty buffers
+    // Step 2: Flush all dirty buffers
     uint64_t pages_to_write = count_dirty_pages(engine->se_buffer_manager);
     uint64_t pages_written = 0;
     
@@ -551,13 +551,13 @@ Status perform_checkpoint(
         }
     }
     
-    // Phase 3: Write checkpoint record
+    // Step 3: Write checkpoint record
     write_checkpoint_record(checkpoint_lsn);
     
-    // Phase 4: Update control file
+    // Step 4: Update control file
     update_control_file_checkpoint(checkpoint_lsn);
     
-    // Phase 5: Clean up optional write-after log (post-gold)
+    // Step 5: Clean up optional write-after log (post-gold)
     if (params->remove_old_wal) {
         remove_old_wal_files(checkpoint_lsn);
     }
@@ -788,12 +788,15 @@ void log_page_modification(
 
 ## Implementation Timeline
 
-Following the ProjectPlan phases:
+Alpha scope:
 
-1. **Phase 4**: Heap storage and basic page management
-2. **Phase 6**: Integration with MGA transactions
-3. **Phase 16**: Optional write-after log (post-gold, secondary to MGA)
-4. **Enhancement**: Advanced features (compression, encryption, multi-page-size)
+1. Heap storage and basic page management
+2. Integration with MGA transactions and buffer pool coordination
+
+Post-alpha scope:
+
+1. Optional write-after log (post-gold, secondary to MGA)
+2. Advanced features (compression, encryption, multi-page-size)
 
 ## Conclusion
 

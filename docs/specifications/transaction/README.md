@@ -66,7 +66,7 @@ Hierarchical locking system:
 - ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL, optional post-gold)/undo logs, VACUUM
   (ScratchBird WAL is optional post-gold only)
 
-See [../../MGA_RULES.md](../../MGA_RULES.md) for absolute rules.
+See [../../../MGA_RULES.md](../../../MGA_RULES.md) for absolute rules.
 
 ## Related Specifications
 
@@ -85,8 +85,8 @@ For Firebird transaction model details, see:
 
 Before working on transaction implementation:
 
-1. **MUST READ FIRST:** [../../MGA_RULES.md](../../MGA_RULES.md) - **ABSOLUTE** MGA rules (NO EXCEPTIONS)
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ FIRST:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - **ABSOLUTE** MGA rules (NO EXCEPTIONS)
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ IN ORDER:**
    - [TRANSACTION_MAIN.md](TRANSACTION_MAIN.md) - Core transaction architecture
    - [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md) - MGA implementation

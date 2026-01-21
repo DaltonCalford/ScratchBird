@@ -38,10 +38,10 @@ The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, REC
 | SBSEC-07    | Network Presence Binding      |
 | SBSEC-08    | Audit and Compliance          |
 | SBSEC-09    | Security Levels               |
-| SBARCH-01   | [Component Model and Responsibilities](../COMPONENT_MODEL_AND_RESPONSIBILITIES.md) |
+| SBARCH-01   | [Component Model and Responsibilities](../catalog/COMPONENT_MODEL_AND_RESPONSIBILITIES.md) |
 
-Reuse artifacts: [Component Model Diagrams](../diagrams/component_model_diagrams.md),
-[Component Responsibility Matrix](../diagrams/component_responsibility_matrix.md).
+Reuse artifacts: [Component Model Diagrams](../../diagrams/component_model_diagrams.md),
+[Component Responsibility Matrix](../../diagrams/component_responsibility_matrix.md).
 
 ---
 

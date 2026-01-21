@@ -140,11 +140,11 @@ public class SBCallableStatement extends SBPreparedStatement implements Callable
     }
 
     @Override
-    public Date getDate(int parameterIndex) throws SQLException {
+    public java.sql.Date getDate(int parameterIndex) throws SQLException {
         Object value = outParameters.get(parameterIndex);
         if (value == null) return null;
-        if (value instanceof Date) return (Date) value;
-        return Date.valueOf(value.toString());
+        if (value instanceof java.sql.Date) return (java.sql.Date) value;
+        return java.sql.Date.valueOf(value.toString());
     }
 
     @Override
@@ -206,7 +206,7 @@ public class SBCallableStatement extends SBPreparedStatement implements Callable
     }
 
     @Override
-    public Date getDate(int parameterIndex, Calendar cal) throws SQLException {
+    public java.sql.Date getDate(int parameterIndex, Calendar cal) throws SQLException {
         return getDate(parameterIndex);
     }
 
@@ -278,7 +278,7 @@ public class SBCallableStatement extends SBPreparedStatement implements Callable
     }
 
     @Override
-    public Date getDate(String parameterName) throws SQLException {
+    public java.sql.Date getDate(String parameterName) throws SQLException {
         return getDate(getParameterIndex(parameterName));
     }
 
@@ -328,7 +328,7 @@ public class SBCallableStatement extends SBPreparedStatement implements Callable
     }
 
     @Override
-    public Date getDate(String parameterName, Calendar cal) throws SQLException {
+    public java.sql.Date getDate(String parameterName, Calendar cal) throws SQLException {
         return getDate(getParameterIndex(parameterName), cal);
     }
 
@@ -409,7 +409,7 @@ public class SBCallableStatement extends SBPreparedStatement implements Callable
     }
 
     @Override
-    public void setDate(String parameterName, Date x) throws SQLException {
+    public void setDate(String parameterName, java.sql.Date x) throws SQLException {
         setDate(getParameterIndex(parameterName), x);
     }
 
@@ -454,7 +454,7 @@ public class SBCallableStatement extends SBPreparedStatement implements Callable
     }
 
     @Override
-    public void setDate(String parameterName, Date x, Calendar cal) throws SQLException {
+    public void setDate(String parameterName, java.sql.Date x, Calendar cal) throws SQLException {
         setDate(getParameterIndex(parameterName), x, cal);
     }
 

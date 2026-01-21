@@ -223,8 +223,8 @@ CREATE JOB load_data
 
 Before working on scheduler implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ:** [ALPHA_SCHEDULER_SPECIFICATION.md](ALPHA_SCHEDULER_SPECIFICATION.md) - Alpha scheduler design
 4. **READ:** [../Cluster%20Specification%20Work/SBCLUSTER-09-SCHEDULER.md](../Cluster%20Specification%20Work/SBCLUSTER-09-SCHEDULER.md) - Beta scheduler design
 

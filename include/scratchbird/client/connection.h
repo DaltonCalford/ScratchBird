@@ -63,6 +63,8 @@ struct ConnectionConfig {
     uint32_t query_timeout_ms = 30000;      // Query timeout
     uint32_t read_timeout_ms = 30000;       // Socket read timeout
     uint32_t write_timeout_ms = 30000;      // Socket write timeout
+    uint32_t copy_window_bytes = 65536;     // COPY stream window
+    uint32_t copy_chunk_bytes = 16384;      // COPY chunk size
 
     // Auto-start settings
     bool auto_start_server = true;          // Auto-start server if not running
@@ -374,6 +376,9 @@ public:
     void setTimestamp(size_t index, int64_t microseconds);
     void setDate(size_t index, int32_t days);
     void setTime(size_t index, int64_t microseconds);
+    void setUUID(size_t index, const std::vector<uint8_t>& value);
+    void setUUID(size_t index, const std::string& value);
+    void setNull(size_t index, protocol::WireType type);
 
     /**
      * Clear all bound parameters

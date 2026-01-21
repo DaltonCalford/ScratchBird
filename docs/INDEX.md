@@ -83,6 +83,8 @@ Detailed technical specs for all features:
 - **[Transaction Management](specifications/TRANSACTION_MANAGEMENT.md)** - MGA transaction system
 - **[Git Metadata Integration](specifications/core/GIT_METADATA_INTEGRATION_SPECIFICATION.md)** - Git-based schema version control
 - **[Scheduler and Job Runner](specifications/scheduler/SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md)** - Canonical scheduler spec
+- **[Parallel Execution Architecture](specifications/query/PARALLEL_EXECUTION_ARCHITECTURE.md)** - Parallel query execution model (Beta)
+- **[Cache and Buffer Architecture](specifications/core/CACHE_AND_BUFFER_ARCHITECTURE.md)** - Cache/buffer architecture (current + target)
 
 **Note:** Completed index specifications (BITMAP, BRIN, GIST, HNSW, SPGIST) and low-level specs have been archived to `specifications/archive/index_completion_specs_2025/`
 

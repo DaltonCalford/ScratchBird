@@ -136,8 +136,8 @@ See [DATA_TYPE_PERSISTENCE_AND_CASTS.md](DATA_TYPE_PERSISTENCE_AND_CASTS.md) for
 
 Before working on type system implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ IN ORDER:**
    - [03_TYPES_AND_DOMAINS.md](03_TYPES_AND_DOMAINS.md) - Type system overview
    - [DDL_DOMAINS_COMPREHENSIVE.md](DDL_DOMAINS_COMPREHENSIVE.md) - Domain specification

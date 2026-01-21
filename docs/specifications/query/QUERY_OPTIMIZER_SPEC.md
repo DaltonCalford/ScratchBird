@@ -1247,3 +1247,7 @@ Following the ProjectPlan phases:
 4. **Future**: Machine learning cost model
 
 This specification provides a complete blueprint for ScratchBird's query optimizer, combining proven techniques with modern adaptive features.
+
+## Related Specifications
+
+- [PARALLEL_EXECUTION_ARCHITECTURE.md](PARALLEL_EXECUTION_ARCHITECTURE.md) - Parallel execution model (Beta)

@@ -7,6 +7,7 @@
 **WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
 Any WAL references in this document describe an optional post-gold stream for
 replication/PITR only.
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
 
 ---
 
@@ -1102,21 +1103,21 @@ SELECT * FROM employees FOR SYSTEM_TIME BETWEEN
 
 ## 8. MGA-Specific Considerations
 
-### 8.1. MGA vs. Write-after log (WAL, optional post-gold)-Based Backup
+### 8.1. MGA vs. Write-after log (WAL)-Based Backup
 
 **Critical Difference:**
 
-| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL, optional post-gold)) |
+| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL)) |
 |--------|-------------------|------------------|
-| **Recovery** | No write-after log (WAL, optional post-gold) replay | Write-after log (WAL, optional post-gold) replay required |
-| **Consistency** | Snapshot isolation | Write-after log (WAL, optional post-gold) checkpoint |
+| **Recovery** | No write-after log (WAL) replay | Write-after log (WAL) replay required |
+| **Consistency** | Snapshot isolation | Write-after log (WAL) checkpoint |
 | **Backup Mode** | Snapshot transaction | pg_start_backup() |
 | **Concurrency** | No blocking | No blocking |
-| **Record Versions** | Multiple versions backed up | Single version + write-after log (WAL, optional post-gold) |
+| **Record Versions** | Multiple versions backed up | Single version + write-after log (WAL) |
 
 **MGA Implications:**
 
-1. **No write-after log (WAL, optional post-gold) Dependency** - Backup does not require write-after log (WAL, optional post-gold) archiving for recovery
+1. **No write-after log (WAL) Dependency** - Backup does not require write-after log (WAL) archiving for recovery
 2. **Snapshot Visibility** - Backup sees consistent snapshot using transaction markers
 3. **Old Versions** - Backup may include dead tuples (before sweep)
 4. **Transaction Markers** - OIT, OAT, OST, NEXT must be preserved
@@ -2867,10 +2868,10 @@ BENCHMARK(BackupPerformance) {
 
 ## Appendix C: References
 
-- [Firebird MGA Architecture](../MGA_RULES.md)
+- [Firebird MGA Architecture](../../MGA_RULES.md)
 - [ScratchBird Security Specification](Security Design Specification/00_SECURITY_SPEC_INDEX.md)
 - [ScratchBird Cluster Specification](Cluster Specification Work/SBCLUSTER-SUMMARY.md)
-- [Transaction Model Specification](FIREBIRD_TRANSACTION_MODEL_SPEC.md)
+- [Transaction Model Specification](sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md)
 - [PostgreSQL Backup and Recovery](https://www.postgresql.org/docs/current/backup.html)
 - [Firebird Backup and Restore](https://firebirdsql.org/file/documentation/html/en/refdocs/fblangref40/firebird-40-language-reference.html#fblangref40-management-backup)
 

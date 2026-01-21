@@ -10,7 +10,10 @@
   - [x] Semantic analyzer v2, SBLR bytecode generator v2  
 - **Alpha 3 – Network & Service** *(current)*  
   - [x] Network stack, service mode, security (core+enterprise), pooling  
-  - [x] Wire adapters (FB/MySQL/PG/native), ODBC/JDBC, FDW/UDR framework  
+  - [x] Listener/pool/parser/server process operational (per-dialect pools + socket handoff)  
+  - [x] Wire adapters (FB/MySQL/PG/native) + FDW/UDR framework  
+  - [ ] Driver adapters (ODBC/JDBC) readiness and integration (tracked in `docs/planning/`)  
+  - [ ] Server auth wiring (HBA/SCRAM/TLS/MFA)  
   - [ ] Dependency integrity: create/alter validation, drop protection, refresh on alters  
   - [ ] Dialect parity + adapter e2e suites per dialect (no cross-dialect fallbacks)  
 

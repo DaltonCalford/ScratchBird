@@ -97,8 +97,8 @@ See [INDEX_GC_PROTOCOL.md](INDEX_GC_PROTOCOL.md) for:
 
 Before working on index implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ IN ORDER:**
    - [INDEX_ARCHITECTURE.md](INDEX_ARCHITECTURE.md) - Core architecture
    - [INDEX_IMPLEMENTATION_GUIDE.md](INDEX_IMPLEMENTATION_GUIDE.md) - Implementation guide

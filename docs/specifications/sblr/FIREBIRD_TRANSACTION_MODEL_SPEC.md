@@ -1528,10 +1528,10 @@ FROM sb_gc_stats;
 
 ### 12.3 Related ScratchBird Documents
 
-- [Transaction Management Design](TRANSACTION_MANAGEMENT_DESIGN.md) - Always-in-transaction model
-- [Alpha 1.2 Requirements](../issues/ALPHA_1_2_REQUIREMENTS.md) - Core design principles
-- [Code Audit Report](../audits/audit_2025_10_06.md) - Current implementation status
-- [TODO CRIT-002](../development/TODO.md) - ConnectionContext implementation
+- [Transaction Management Design](../../design/TRANSACTION_MANAGEMENT_DESIGN.md) - Always-in-transaction model
+- [Alpha 1.2 Requirements](../../Alpha_Phase_1_Archive/issues/ALPHA_1_2_REQUIREMENTS.md) - Core design principles
+- [Code Audit Report](../../Alpha_Phase_1_Archive/status_archive/2025-10-pre-phase2-3/audits-old/OctAudit/audit_2025_10_06.md) - Current implementation status
+- [TODO CRIT-002](../../development/TODO.md) - ConnectionContext implementation
 
 ---
 

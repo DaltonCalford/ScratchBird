@@ -15,33 +15,33 @@ Checklist
   - [x] SBWP handshake, auth, TLS defaults (SCRAM client handshake in NetworkClient)
   - [x] Config/DSN parsing normalization (shared driver config helpers)
   - [x] Simple + extended query APIs (client-side prepared fallback + placeholder rewrite)
-  - [ ] Streaming + COPY
-  - [ ] Type encoding/decoding
-  - [ ] SQLSTATE/error mapping
-  - [ ] Tests: unit + integration (SCRAM handshake coverage added)
+  - [x] Streaming + COPY
+  - [x] Type encoding/decoding
+  - [x] SQLSTATE/error mapping
+  - [x] Tests: unit + integration (SCRAM handshake coverage added)
 
 - [ ] ODBC driver
-  - [ ] Handles + lifecycle
-  - [ ] Connection strings + TLS/auth
-  - [ ] Statements + params + results
-  - [ ] Diagnostics + SQLSTATE
-  - [ ] Packaging + install docs
-  - [ ] Tests: unit + integration
+  - [x] Handles + lifecycle
+  - [x] Connection strings + TLS/auth
+  - [x] Statements + params + results (parameter type coverage expanded; ODBC integration test added)
+  - [x] Diagnostics + SQLSTATE
+  - [x] Packaging + install docs
+  - [x] Tests: unit + integration (type info unit + ODBC integration test added)
 
 - [ ] JDBC driver
-  - [ ] Driver + URL parsing
-  - [ ] Connection/Statement/ResultSet
+  - [x] Driver + URL parsing (skeleton)
+  - [x] Connection/Statement/ResultSet (skeleton)
   - [ ] TLS/auth + config
   - [ ] Types + batching
-  - [ ] Packaging
+  - [x] Packaging (Gradle build + wrapper + jar)
   - [ ] Tests: unit + integration
 
 - [ ] Python driver
-  - [ ] PEP 249 API
-  - [ ] TLS/auth + config
-  - [ ] Types + arrays
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] PEP 249 API (query execution + cursor wiring)
+  - [x] TLS/auth + config
+  - [x] Types + arrays
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] Node.js/TypeScript driver
   - [ ] Async API + pooling
@@ -108,4 +108,5 @@ Checklist
   - [ ] Tests: unit + integration
 
 Next up
-- Foundation: libscratchbird client core
+- JDBC driver: TLS/auth + config, types/batching, tests
+- Python driver: PEP 249 core (transport + basic queries)

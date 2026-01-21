@@ -8,6 +8,7 @@ TOAST (The Oversized-Attribute Storage Technique) is a mechanism for storing lar
 **WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
 Any WAL references in this document describe an optional post-gold stream for
 replication/PITR only.
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
 
 ## Architecture
 
@@ -31,7 +32,7 @@ replication/PITR only.
 |----------|-------------|-----------|
 | PLAIN | Store inline (no TOAST) | Small values < 2KB |
 | EXTENDED | Out-of-line, uncompressed | Medium values or incompressible |
-| COMPRESSED | Inline, compressed | Not implemented (future) |
+| COMPRESSED | Inline, compressed | Not implemented (optional post-alpha) |
 | EXTERNAL | Out-of-line, compressed | Large compressible values |
 
 ## Implementation Details
@@ -172,11 +173,11 @@ bool isChunkVisible(uint64_t chunk_xmin, uint64_t chunk_xmax,
 
 ### Key Differences from PostgreSQL MVCC
 
-| Aspect | PostgreSQL (MVCC/write-after log (WAL, optional post-gold)) | ScratchBird (MGA/TIP) |
+| Aspect | PostgreSQL (MVCC/write-after log (WAL)) | ScratchBird (MGA/TIP) |
 |--------|----------------------|----------------------|
-| Visibility Source | Snapshot + write-after log (WAL, optional post-gold) | TIP state only |
-| Crash Recovery | write-after log (WAL, optional post-gold) replay | TIP state check |
-| Transaction State | In-memory + write-after log (WAL, optional post-gold) | TIP (2-bit state) |
+| Visibility Source | Snapshot + write-after log (WAL) | TIP state only |
+| Crash Recovery | write-after log (WAL) replay | TIP state check |
+| Transaction State | In-memory + write-after log (WAL) | TIP (2-bit state) |
 | Chunk Lifecycle | Snapshot-based | TIP-based |
 | Garbage Collection | Snapshot horizon | TIP state + orphan detection |
 
@@ -212,7 +213,7 @@ Each transaction has one of 4 states in TIP:
 
 TOAST chunks are garbage collected during database sweep/GC using a **3-phase approach**:
 
-### Phase 1: Orphan Detection
+### Orphan Detection (Alpha)
 
 **Problem**: TOAST chunks whose parent tuples have been deleted or aborted.
 
@@ -236,7 +237,7 @@ Status status = gc->detectOrphanedToastChunks(
 3. Scan TOAST table for all value IDs
 4. Find orphans: value IDs in TOAST but not referenced
 
-### Phase 2: Orphan Cleanup
+### Orphan Cleanup (Alpha)
 
 **Solution**: Physically delete all chunks for orphaned values.
 
@@ -245,7 +246,7 @@ uint64_t chunks_deleted = 0;
 
 Status status = gc->cleanOrphanedToastChunks(
     toast_table_id,
-    orphaned_value_ids,  // From Phase 1
+    orphaned_value_ids,  // From orphan detection
     &chunks_deleted,
     &ctx
 );
@@ -253,7 +254,7 @@ Status status = gc->cleanOrphanedToastChunks(
 
 **Note**: Orphaned chunks have no parent tuples, so safe to delete physically without transaction coordination.
 
-### Phase 3: TIP-Based GC
+### TIP-Based GC (Alpha)
 
 **Problem**: TOAST chunks where xmax transaction has committed (deletion finalized).
 
@@ -285,18 +286,18 @@ TOAST garbage collection is integrated into database sweep/GC:
 if (table.table_type == CatalogManager::TableType::TOAST) {
     auto* gc = db_->garbage_collector();
 
-    // Phase 1: Detect orphans
+    // Detect orphans
     std::unordered_set<uint32_t> orphaned_value_ids;
     gc->detectOrphanedToastChunks(table.table_id, &orphaned_value_ids, ctx);
 
-    // Phase 2: Clean orphans
+    // Clean orphans
     if (!orphaned_value_ids.empty()) {
         uint64_t orphans_deleted = 0;
         gc->cleanOrphanedToastChunks(table.table_id, orphaned_value_ids,
                                     &orphans_deleted, ctx);
     }
 
-    // Phase 3: TIP-based GC
+    // TIP-based GC
     uint64_t tip_deleted = 0;
     gc->cleanToastChunksByTIP(table.table_id, &tip_deleted, ctx);
 }

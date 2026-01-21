@@ -20,6 +20,7 @@ This document specifies the distributed query execution architecture for Scratch
 - **SBCLUSTER-04**: Security Bundle (enforcement gates)
 - **SBCLUSTER-05**: Sharding (shard routing, shard-local MVCC)
 - **SBCLUSTER-02**: Membership and Identity (node roles, COORDINATOR)
+- **PARALLEL_EXECUTION_ARCHITECTURE.md**: Parallel execution model (Beta) - see `docs/specifications/query/`
 
 ### 1.4 Terminology
 - **Coordinator**: Node that receives a query and orchestrates distributed execution
@@ -1059,6 +1060,7 @@ With N shards executing in parallel:
 - **SBCLUSTER-04**: Security Bundle
 - **SBCLUSTER-05**: Sharding
 - **SBCLUSTER-02**: Membership and Identity
+- **PARALLEL_EXECUTION_ARCHITECTURE.md**: Parallel execution model (Beta)
 
 ### 14.2 External References
 - **Google Spanner**: "Spanner: Google's Globally Distributed Database", OSDI 2012

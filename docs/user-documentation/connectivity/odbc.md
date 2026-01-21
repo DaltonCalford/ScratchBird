@@ -24,7 +24,7 @@ ODBC (Open Database Connectivity) provides a standard API for database access. S
    # RHEL/Fedora
    sudo dnf install unixODBC
    ```
-2. Copy the driver library to your ODBC driver directory (example path shown below).
+2. Build and install the ScratchBird ODBC driver (see "Build From Source").
 3. Register the driver in `odbcinst.ini` (see next section).
 
 ### Windows
@@ -40,6 +40,32 @@ ODBC (Open Database Connectivity) provides a standard API for database access. S
 
 ---
 
+## Build From Source
+
+### Linux/macOS
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 24
+cmake --install build --prefix /usr/local
+```
+
+This installs the shared driver library:
+- Linux: `/usr/local/lib/libscratchbird_odbc.so`
+- macOS: `/usr/local/lib/libscratchbird_odbc.dylib`
+
+### Windows (MSVC)
+
+```powershell
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+cmake --install build --prefix C:\ScratchBird
+```
+
+This installs `scratchbird_odbc.dll` under `C:\ScratchBird\bin`.
+
+---
+
 ## Driver Registration (odbcinst.ini)
 
 ### Linux (system-wide)
@@ -49,8 +75,8 @@ Edit `/etc/odbcinst.ini`:
 ```ini
 [ScratchBird]
 Description = ScratchBird ODBC Driver
-Driver = /usr/lib/x86_64-linux-gnu/odbc/libscratchbird_odbc.so
-Setup = /usr/lib/x86_64-linux-gnu/odbc/libscratchbird_odbc.so
+Driver = /usr/local/lib/libscratchbird_odbc.so
+Setup = /usr/local/lib/libscratchbird_odbc.so
 UsageCount = 1
 ```
 

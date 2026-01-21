@@ -15,6 +15,7 @@ namespace scratchbird::core
     {
         Status code{Status::OK};       // Error code
         const char* sqlstate{SQLSTATE_SUCCESS}; // SQLSTATE (5-char SQL standard error code)
+        std::string sqlstate_text;     // Owned SQLSTATE when custom values are provided
         std::string message;           // Human-readable description
         std::string& error_message = message;  // Alias for legacy code
         const char *file{nullptr};     // Source file
@@ -55,6 +56,7 @@ namespace scratchbird::core
         {
             code = err_code;
             sqlstate = statusToSQLState(err_code); // Automatically map Status to SQLSTATE
+            sqlstate_text.clear();
             message = (msg != nullptr) ? msg : "";
             file = f;
             line = l;
@@ -64,7 +66,14 @@ namespace scratchbird::core
         // Optional: Override SQLSTATE manually (for specific cases)
         void setSQLState(const char* custom_sqlstate)
         {
-            sqlstate = custom_sqlstate;
+            if (custom_sqlstate == nullptr)
+            {
+                sqlstate = statusToSQLState(code);
+                sqlstate_text.clear();
+                return;
+            }
+            sqlstate_text = custom_sqlstate;
+            sqlstate = sqlstate_text.c_str();
         }
     };
 

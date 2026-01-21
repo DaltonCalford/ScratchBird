@@ -14,7 +14,7 @@
 4. [Catalog Root Page](#catalog-root-page)
 5. [System Tables](#system-tables)
 6. [In-Memory Structures](#in-memory-structures)
-7. [Missing/Deferred Features](#missing-deferred-features)
+7. [Missing/Deferred Features](#missingdeferred-features)
 8. [Recommendations](#recommendations)
 
 ---
@@ -52,6 +52,8 @@ When `Database::create()` is called, the following pages are initialized:
 | 1 | Catalog Root | System catalog page (see below) |
 | 2 | FSM | Free Space Map |
 | 3+ | Data | Available for allocation |
+
+## System Schemas
 
 ### Default Schemas Created
 

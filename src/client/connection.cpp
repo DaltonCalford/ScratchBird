@@ -8,6 +8,7 @@
 #include "scratchbird/client/sql_helpers.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/protocol/wire_protocol.h"
+#include "scratchbird/core/firebird_datetime.h"
 
 #include <algorithm>
 #include <atomic>
@@ -20,6 +21,7 @@
 #include <mutex>
 #include <queue>
 #include <sstream>
+#include <iomanip>
 #include <thread>
 #include <iostream>
 #include <condition_variable>
@@ -39,6 +41,197 @@
 
 namespace scratchbird {
 namespace client {
+
+namespace {
+std::string bytesToHex(const std::vector<uint8_t>& data);
+std::string formatUuidBytes(const std::vector<uint8_t>& data);
+
+int64_t floorDiv(int64_t a, int64_t b) {
+    if (b == 0) {
+        return 0;
+    }
+    int64_t q = a / b;
+    int64_t r = a % b;
+    if ((r != 0) && ((r < 0) != (b < 0))) {
+        --q;
+    }
+    return q;
+}
+
+bool parseTimeString(const std::string& text, int64_t& micros_out, int32_t& offset_seconds_out) {
+    offset_seconds_out = 0;
+    std::string time_part = text;
+    size_t z_pos = time_part.find('Z');
+    if (z_pos != std::string::npos) {
+        time_part = time_part.substr(0, z_pos);
+    }
+    size_t offset_pos = time_part.find_last_of("+-");
+    if (offset_pos != std::string::npos && offset_pos > 0 && time_part[offset_pos - 1] != 'e') {
+        std::string offset = time_part.substr(offset_pos);
+        time_part = time_part.substr(0, offset_pos);
+        int sign = offset[0] == '-' ? -1 : 1;
+        int hours = 0;
+        int minutes = 0;
+        if (std::sscanf(offset.c_str() + 1, "%d:%d", &hours, &minutes) >= 1) {
+            offset_seconds_out = sign * (hours * 3600 + minutes * 60);
+        }
+    }
+
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    int micros = 0;
+    size_t dot = time_part.find('.');
+    std::string base = time_part;
+    std::string frac;
+    if (dot != std::string::npos) {
+        base = time_part.substr(0, dot);
+        frac = time_part.substr(dot + 1);
+    }
+    if (std::sscanf(base.c_str(), "%d:%d:%d", &hour, &minute, &second) < 2) {
+        return false;
+    }
+    if (!frac.empty()) {
+        if (frac.size() > 6) {
+            frac.resize(6);
+        }
+        while (frac.size() < 6) {
+            frac.push_back('0');
+        }
+        micros = std::atoi(frac.c_str());
+    }
+    micros_out = (static_cast<int64_t>(hour) * 3600 +
+                  static_cast<int64_t>(minute) * 60 +
+                  static_cast<int64_t>(second)) * 1000000LL + micros;
+    return true;
+}
+
+int32_t daysSince2000FromDateString(const std::string& text) {
+    int32_t mjd = core::FirebirdDateTime::parseDate(text);
+    if (mjd < 0) {
+        return 0;
+    }
+    const int32_t base_mjd = core::FirebirdDateTime::dateToMJD(2000, 1, 1);
+    return mjd - base_mjd;
+}
+
+std::string formatDateFromDaysSince2000(int32_t days_since_2000) {
+    const int32_t base_mjd = core::FirebirdDateTime::dateToMJD(2000, 1, 1);
+    int32_t mjd = base_mjd + days_since_2000;
+    return core::FirebirdDateTime::formatDate(mjd);
+}
+
+std::string formatTimeFromMicros(int64_t micros) {
+    const int64_t micros_per_day = 24LL * 60LL * 60LL * 1000000LL;
+    int64_t normalized = micros % micros_per_day;
+    if (normalized < 0) {
+        normalized += micros_per_day;
+    }
+    int64_t total_seconds = normalized / 1000000;
+    int64_t micro_remainder = normalized % 1000000;
+    int hour = static_cast<int>(total_seconds / 3600);
+    int minute = static_cast<int>((total_seconds / 60) % 60);
+    int second = static_cast<int>(total_seconds % 60);
+    std::ostringstream oss;
+    oss << std::setfill('0') << std::setw(2) << hour << ":"
+        << std::setw(2) << minute << ":" << std::setw(2) << second;
+    if (micro_remainder != 0) {
+        oss << "." << std::setw(6) << micro_remainder;
+    }
+    return oss.str();
+}
+
+std::string formatTimestampFromMicros(int64_t micros) {
+    int64_t seconds = floorDiv(micros, 1000000);
+    int64_t micro_remainder = micros - seconds * 1000000;
+    if (micro_remainder < 0) {
+        micro_remainder += 1000000;
+        --seconds;
+    }
+    int64_t days = floorDiv(seconds, 86400);
+    int64_t seconds_of_day = seconds - days * 86400;
+    if (seconds_of_day < 0) {
+        seconds_of_day += 86400;
+        --days;
+    }
+    int hour = static_cast<int>(seconds_of_day / 3600);
+    int minute = static_cast<int>((seconds_of_day / 60) % 60);
+    int second = static_cast<int>(seconds_of_day % 60);
+    int32_t mjd = static_cast<int32_t>(days + core::FirebirdDateTime::UNIX_EPOCH_MJD);
+    std::ostringstream oss;
+    oss << core::FirebirdDateTime::formatDate(mjd) << " "
+        << std::setfill('0') << std::setw(2) << hour << ":"
+        << std::setw(2) << minute << ":" << std::setw(2) << second;
+    if (micro_remainder != 0) {
+        oss << "." << std::setw(6) << micro_remainder;
+    }
+    return oss.str();
+}
+
+std::string bytesToHex(const std::vector<uint8_t>& data) {
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(data.size() * 2);
+    for (uint8_t byte : data) {
+        out.push_back(kHex[(byte >> 4) & 0x0F]);
+        out.push_back(kHex[byte & 0x0F]);
+    }
+    return out;
+}
+
+std::string formatUuidBytes(const std::vector<uint8_t>& data) {
+    if (data.size() != 16) {
+        return "";
+    }
+    char buf[37];
+    std::snprintf(buf, sizeof(buf),
+                  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                  data[0], data[1], data[2], data[3],
+                  data[4], data[5], data[6], data[7],
+                  data[8], data[9], data[10], data[11],
+                  data[12], data[13], data[14], data[15]);
+    return std::string(buf);
+}
+
+int64_t microsFromTimestampString(const std::string& text) {
+    std::string date_part;
+    std::string time_part;
+    size_t split = text.find('T');
+    if (split == std::string::npos) {
+        split = text.find(' ');
+    }
+    if (split == std::string::npos) {
+        return 0;
+    }
+    date_part = text.substr(0, split);
+    time_part = text.substr(split + 1);
+
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    if (std::sscanf(date_part.c_str(), "%d-%d-%d", &year, &month, &day) != 3) {
+        return 0;
+    }
+
+    int64_t time_micros = 0;
+    int32_t offset_seconds = 0;
+    if (!parseTimeString(time_part, time_micros, offset_seconds)) {
+        return 0;
+    }
+
+    int32_t mjd = core::FirebirdDateTime::dateToMJD(year, month, day);
+    int64_t base_seconds =
+        static_cast<int64_t>(mjd - core::FirebirdDateTime::UNIX_EPOCH_MJD) * 86400;
+    int64_t total_seconds = base_seconds + time_micros / 1000000;
+    int64_t micros = (time_micros % 1000000);
+    if (micros < 0) {
+        micros += 1000000;
+        --total_seconds;
+    }
+    total_seconds -= offset_seconds;
+    return total_seconds * 1000000 + micros;
+}
+} // namespace
 
 // Helper to check if status is OK
 inline bool isOk(core::Status status) {
@@ -211,6 +404,55 @@ double ResultSet::getDouble(size_t column) const {
 std::string ResultSet::getString(size_t column) const {
     if (isNull(column)) return "";
     const auto& val = impl_->rows_[impl_->current_row_][column];
+    protocol::WireType type = protocol::WireType::UNKNOWN;
+    if (column < impl_->columns_.size()) {
+        type = impl_->columns_[column].type;
+    }
+    switch (type) {
+        case protocol::WireType::BOOLEAN:
+            return (!val.data.empty() && val.data[0]) ? "true" : "false";
+        case protocol::WireType::INT16: {
+            if (val.data.size() < sizeof(int16_t)) return "0";
+            int16_t out;
+            std::memcpy(&out, val.data.data(), sizeof(out));
+            return std::to_string(out);
+        }
+        case protocol::WireType::INT32: {
+            if (val.data.size() < sizeof(int32_t)) return "0";
+            int32_t out;
+            std::memcpy(&out, val.data.data(), sizeof(out));
+            return std::to_string(out);
+        }
+        case protocol::WireType::INT64: {
+            if (val.data.size() < sizeof(int64_t)) return "0";
+            int64_t out;
+            std::memcpy(&out, val.data.data(), sizeof(out));
+            return std::to_string(out);
+        }
+        case protocol::WireType::FLOAT32:
+        case protocol::WireType::FLOAT64: {
+            if (val.data.size() < sizeof(double)) return "0";
+            double out;
+            std::memcpy(&out, val.data.data(), sizeof(out));
+            std::ostringstream oss;
+            oss.precision(17);
+            oss << out;
+            return oss.str();
+        }
+        case protocol::WireType::DATE:
+            return formatDateFromDaysSince2000(getDate(column));
+        case protocol::WireType::TIME:
+            return formatTimeFromMicros(getTime(column));
+        case protocol::WireType::TIMESTAMP:
+        case protocol::WireType::TIMESTAMPTZ:
+            return formatTimestampFromMicros(getTimestamp(column));
+        case protocol::WireType::UUID:
+            return getUUID(column);
+        case protocol::WireType::BYTEA:
+            return bytesToHex(val.data);
+        default:
+            break;
+    }
     return std::string(reinterpret_cast<const char*>(val.data.data()), val.data.size());
 }
 
@@ -220,31 +462,83 @@ std::vector<uint8_t> ResultSet::getBytes(size_t column) const {
 }
 
 int64_t ResultSet::getTimestamp(size_t column) const {
-    return getInt64(column);
+    if (isNull(column)) return 0;
+    const auto& val = impl_->rows_[impl_->current_row_][column];
+    protocol::WireType type = protocol::WireType::UNKNOWN;
+    if (column < impl_->columns_.size()) {
+        type = impl_->columns_[column].type;
+    }
+    if (type != protocol::WireType::TIMESTAMP &&
+        type != protocol::WireType::TIMESTAMPTZ &&
+        val.data.size() >= sizeof(int64_t)) {
+        int64_t out;
+        std::memcpy(&out, val.data.data(), sizeof(out));
+        return out;
+    }
+    if (val.data.size() == sizeof(int64_t) &&
+        (type == protocol::WireType::TIMESTAMP || type == protocol::WireType::TIMESTAMPTZ)) {
+        int64_t out;
+        std::memcpy(&out, val.data.data(), sizeof(out));
+        return out;
+    }
+    std::string text(reinterpret_cast<const char*>(val.data.data()), val.data.size());
+    return microsFromTimestampString(text);
 }
 
 int32_t ResultSet::getDate(size_t column) const {
-    return getInt32(column);
+    if (isNull(column)) return 0;
+    const auto& val = impl_->rows_[impl_->current_row_][column];
+    protocol::WireType type = protocol::WireType::UNKNOWN;
+    if (column < impl_->columns_.size()) {
+        type = impl_->columns_[column].type;
+    }
+    if (type != protocol::WireType::DATE && val.data.size() >= sizeof(int32_t)) {
+        int32_t out;
+        std::memcpy(&out, val.data.data(), sizeof(out));
+        return out;
+    }
+    if (val.data.size() == sizeof(int32_t) && type == protocol::WireType::DATE) {
+        int32_t out;
+        std::memcpy(&out, val.data.data(), sizeof(out));
+        return out;
+    }
+    std::string text(reinterpret_cast<const char*>(val.data.data()), val.data.size());
+    return daysSince2000FromDateString(text);
 }
 
 int64_t ResultSet::getTime(size_t column) const {
-    return getInt64(column);
+    if (isNull(column)) return 0;
+    const auto& val = impl_->rows_[impl_->current_row_][column];
+    protocol::WireType type = protocol::WireType::UNKNOWN;
+    if (column < impl_->columns_.size()) {
+        type = impl_->columns_[column].type;
+    }
+    if (type != protocol::WireType::TIME && val.data.size() >= sizeof(int64_t)) {
+        int64_t out;
+        std::memcpy(&out, val.data.data(), sizeof(out));
+        return out;
+    }
+    if (val.data.size() == sizeof(int64_t) && type == protocol::WireType::TIME) {
+        int64_t out;
+        std::memcpy(&out, val.data.data(), sizeof(out));
+        return out;
+    }
+    std::string text(reinterpret_cast<const char*>(val.data.data()), val.data.size());
+    int64_t micros = 0;
+    int32_t offset_seconds = 0;
+    if (!parseTimeString(text, micros, offset_seconds)) {
+        return 0;
+    }
+    return micros - static_cast<int64_t>(offset_seconds) * 1000000LL;
 }
 
 std::string ResultSet::getUUID(size_t column) const {
     if (isNull(column)) return "";
     const auto& val = impl_->rows_[impl_->current_row_][column];
-    if (val.data.size() != 16) return "";
-
-    // Format as UUID string
-    char buf[37];
-    snprintf(buf, sizeof(buf),
-             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-             val.data[0], val.data[1], val.data[2], val.data[3],
-             val.data[4], val.data[5], val.data[6], val.data[7],
-             val.data[8], val.data[9], val.data[10], val.data[11],
-             val.data[12], val.data[13], val.data[14], val.data[15]);
-    return std::string(buf);
+    if (val.data.size() == 16) {
+        return formatUuidBytes(val.data);
+    }
+    return std::string(reinterpret_cast<const char*>(val.data.data()), val.data.size());
 }
 
 const uint8_t* ResultSet::getRaw(size_t column, size_t* length) const {
@@ -333,6 +627,7 @@ public:
     uint32_t statement_id_ = 0;
     size_t param_count_ = 0;
     std::vector<protocol::ProtocolCodec::ColumnValue> params_;
+    std::vector<protocol::WireType> param_types_;
     bool valid_ = false;
 };
 
@@ -357,68 +652,133 @@ bool PreparedStatement::isValid() const {
 void PreparedStatement::setNull(size_t index) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue(nullptr);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::NULL_TYPE;
+    }
+}
+
+void PreparedStatement::setNull(size_t index, protocol::WireType type) {
+    if (index == 0 || index > impl_->params_.size()) return;
+    impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue(nullptr);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = type;
+    }
 }
 
 void PreparedStatement::setBool(size_t index, bool value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBool(value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::BOOLEAN;
+    }
 }
 
 void PreparedStatement::setInt16(size_t index, int16_t value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt32(value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::INT16;
+    }
 }
 
 void PreparedStatement::setInt32(size_t index, int32_t value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt32(value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::INT32;
+    }
 }
 
 void PreparedStatement::setInt64(size_t index, int64_t value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt64(value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::INT64;
+    }
 }
 
 void PreparedStatement::setFloat(size_t index, float value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromDouble(value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::FLOAT32;
+    }
 }
 
 void PreparedStatement::setDouble(size_t index, double value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromDouble(value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::FLOAT64;
+    }
 }
 
 void PreparedStatement::setString(size_t index, const std::string& value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromString(value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::VARCHAR;
+    }
 }
 
 void PreparedStatement::setBytes(size_t index, const std::vector<uint8_t>& value) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(value.data(), value.size());
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::BYTEA;
+    }
 }
 
 void PreparedStatement::setBytes(size_t index, const uint8_t* data, size_t length) {
     if (index == 0 || index > impl_->params_.size()) return;
     impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(data, length);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::BYTEA;
+    }
 }
 
 void PreparedStatement::setTimestamp(size_t index, int64_t microseconds) {
     setInt64(index, microseconds);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::TIMESTAMP;
+    }
 }
 
 void PreparedStatement::setDate(size_t index, int32_t days) {
     setInt32(index, days);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::DATE;
+    }
 }
 
 void PreparedStatement::setTime(size_t index, int64_t microseconds) {
     setInt64(index, microseconds);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::TIME;
+    }
+}
+
+void PreparedStatement::setUUID(size_t index, const std::vector<uint8_t>& value) {
+    if (index == 0 || index > impl_->params_.size()) return;
+    impl_->params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(value.data(), value.size());
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::UUID;
+    }
+}
+
+void PreparedStatement::setUUID(size_t index, const std::string& value) {
+    setString(index, value);
+    if (index <= impl_->param_types_.size()) {
+        impl_->param_types_[index - 1] = protocol::WireType::UUID;
+    }
 }
 
 void PreparedStatement::clearParameters() {
     for (auto& p : impl_->params_) {
         p = protocol::ProtocolCodec::ColumnValue(nullptr);
+    }
+    for (auto& t : impl_->param_types_) {
+        t = protocol::WireType::UNKNOWN;
     }
 }
 
@@ -689,7 +1049,8 @@ public:
             return status;
         }
 
-        const uint32_t kCopyWindow = 65536;
+        const uint32_t copy_window = config_.copy_window_bytes == 0 ? 65536 : config_.copy_window_bytes;
+        const uint32_t copy_chunk = config_.copy_chunk_bytes == 0 ? 16384 : config_.copy_chunk_bytes;
 
         auto handle_copy_out = [&]() -> core::Status {
             std::ostream* out = copy_output_stream_ ? copy_output_stream_ : &std::cout;
@@ -707,7 +1068,7 @@ public:
                 switch (response.getType()) {
                     case protocol::MessageType::STREAM_READY: {
                         stream_ready = true;
-                        window = kCopyWindow;
+                        window = copy_window;
                         auto ctrl = protocol::ProtocolCodec::buildStreamControl(
                             protocol::StreamControlType::START, window, 0);
                         status = protocol_session_->sendMessage(ctrl, ctx);
@@ -737,7 +1098,7 @@ public:
                             }
                         }
                         if (stream_ready && window == 0) {
-                            window = kCopyWindow;
+                            window = copy_window;
                             auto ctrl = protocol::ProtocolCodec::buildStreamControl(
                                 protocol::StreamControlType::ACK, window, 0);
                             status = protocol_session_->sendMessage(ctrl, ctx);
@@ -785,6 +1146,7 @@ public:
             std::istream* in = copy_input_stream_ ? copy_input_stream_ : &std::cin;
             uint32_t window = 0;
             bool done = false;
+            bool stream_started = false;
 
             while (!done) {
                 if (window == 0) {
@@ -797,6 +1159,17 @@ public:
 
                     switch (response.getType()) {
                         case protocol::MessageType::STREAM_READY:
+                            if (!stream_started) {
+                                window = copy_window;
+                                auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                                    protocol::StreamControlType::START, window, 0);
+                                status = protocol_session_->sendMessage(ctrl, ctx);
+                                if (!isOk(status)) {
+                                    last_error_ = "Failed to send STREAM_CONTROL START";
+                                    return status;
+                                }
+                                stream_started = true;
+                            }
                             break;
                         case protocol::MessageType::STREAM_CONTROL: {
                             protocol::StreamControlType control;
@@ -848,7 +1221,7 @@ public:
                     }
                 }
 
-                size_t to_read = std::min<size_t>(window, 16384);
+                size_t to_read = std::min<size_t>(window, copy_chunk);
                 std::string buffer(to_read, '\0');
                 in->read(buffer.data(), static_cast<std::streamsize>(to_read));
                 std::streamsize got = in->gcount();
@@ -1306,6 +1679,7 @@ core::Status Connection::prepare(const std::string& sql,
     stmt->impl_->sql_ = sql;
     stmt->impl_->param_count_ = param_count;
     stmt->impl_->params_.resize(param_count);
+    stmt->impl_->param_types_.assign(param_count, protocol::WireType::UNKNOWN);
     stmt->impl_->valid_ = true;
 
     // Note: In a full implementation, we would send PREPARE to server
@@ -1324,7 +1698,8 @@ core::Status Connection::executeQuery(PreparedStatement& stmt,
 
     // NET-1: Parameter substitution with proper escaping for SQL injection prevention
     // Substitute $1, $2, etc. with escaped parameter values
-    std::string sql = substituteParameters(stmt.impl_->sql_, stmt.impl_->params_);
+    std::string sql = substituteParameters(stmt.impl_->sql_, stmt.impl_->params_,
+                                           stmt.impl_->param_types_);
 
     return executeQuery(sql, results, ctx);
 }

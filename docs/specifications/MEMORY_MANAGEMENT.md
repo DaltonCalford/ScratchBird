@@ -7,6 +7,7 @@
 **WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
 Any WAL references in this document describe an optional post-gold stream for
 replication/PITR only.
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
 
 ---
 
@@ -199,13 +200,13 @@ struct TransactionState {
 
 **Comparison with PostgreSQL:**
 
-| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL, optional post-gold)) |
+| Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL)) |
 |--------|-------------------|------------------|
-| **Write-after log (WAL, optional post-gold) Buffers** | Not needed | 16 MB default |
+| **Write-after log (WAL) Buffers** | Not needed | 16 MB default |
 | **Version Storage** | In-page (xmin/xmax) | TOAST + HOT |
 | **Commit Log** | Commit bitmap | CLOG files |
-| **Recovery** | No write-after log (WAL, optional post-gold) replay | Write-after log (WAL, optional post-gold) replay |
-| **Memory Overhead** | Lower (no write-after log (WAL, optional post-gold)) | Higher (write-after log (WAL, optional post-gold) + buffers) |
+| **Recovery** | No write-after log (WAL) replay | Write-after log (WAL) replay |
+| **Memory Overhead** | Lower (no write-after log (WAL)) | Higher (write-after log (WAL) + buffers) |
 
 ---
 
@@ -1622,7 +1623,7 @@ memory_metrics_interval_sec = 60
 
 ## Appendix C: References
 
-- [Firebird MGA Architecture](../MGA_RULES.md)
+- [Firebird MGA Architecture](../../MGA_RULES.md)
 - [PostgreSQL Buffer Management](https://www.postgresql.org/docs/current/storage.html)
 - [jemalloc Documentation](http://jemalloc.net/)
 - [Linux Huge Pages](https://www.kernel.org/doc/Documentation/vm/hugetlbpage.txt)

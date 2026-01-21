@@ -61,10 +61,16 @@ declare -A category_p2
 declare -A category_complete
 declare -A category_partial
 declare -A category_pending
+declare -A category_seen
+categories=()
 
-categories=("drivers" "integrations" "cloud" "extensions" "deployment" "monitoring" "migration" "security")
-
-for category in "${categories[@]}"; do
+init_category() {
+    local category="$1"
+    if [ -n "${category_seen[$category]+x}" ]; then
+        return
+    fi
+    category_seen[$category]=1
+    categories+=("$category")
     category_counts[$category]=0
     category_p0[$category]=0
     category_p1[$category]=0
@@ -72,7 +78,7 @@ for category in "${categories[@]}"; do
     category_complete[$category]=0
     category_partial[$category]=0
     category_pending[$category]=0
-done
+}
 
 total_items=0
 total_p0=0
@@ -86,18 +92,17 @@ log_info "Scanning README files for priority and status markers..."
 
 # Scan each README file
 while IFS= read -r readme; do
-    # Determine category from path
-    category=""
-    for cat in "${categories[@]}"; do
-        if [[ "$readme" == *"/$cat/"* ]]; then
-            category="$cat"
-            break
-        fi
-    done
-
+    # Determine category from path (first segment under beta_requirements)
+    rel_path="${readme#${BETA_ROOT}/}"
+    if [ "$rel_path" = "README.md" ]; then
+        continue
+    fi
+    category="${rel_path%%/*}"
     if [ -z "$category" ]; then
         continue
     fi
+
+    init_category "$category"
 
     # Extract priority
     priority=""
@@ -134,6 +139,8 @@ while IFS= read -r readme; do
     ((total_items++)) || true
 
 done <<< "$readmes"
+
+total_unclassified=$((total_items - total_p0 - total_p1 - total_p2))
 
 # ============================================================================
 # GENERATE MARKDOWN REPORT
@@ -190,6 +197,7 @@ cat >> "$OUTPUT_FILE" << EOF
 | **P0** (Critical) | $total_p0 | - | - | - | - |
 | **P1** (High) | $total_p1 | - | - | - | - |
 | **P2** (Medium) | $total_p2 | - | - | - | - |
+| **Unspecified** | $total_unclassified | - | - | - | - |
 
 ### P0 Items (Beta Critical)
 These items MUST be completed before Beta release.
@@ -202,11 +210,13 @@ These items MUST be completed before Beta release.
 
 EOF
 
+sorted_categories=$(printf "%s\n" "${categories[@]}" | sort)
+
 # Generate category table
 echo "| Category | Total | P0 | P1 | P2 | Complete | Partial | Pending | Progress |" >> "$OUTPUT_FILE"
 echo "|----------|-------|----|----|----|---------|---------|---------|---------:|" >> "$OUTPUT_FILE"
 
-for category in "${categories[@]}"; do
+while IFS= read -r category; do
     count=${category_counts[$category]}
     if [ $count -gt 0 ]; then
         p0=${category_p0[$category]}
@@ -217,12 +227,12 @@ for category in "${categories[@]}"; do
         pending=${category_pending[$category]}
         progress=$(awk "BEGIN {printf \"%.0f\", $complete * 100.0 / $count}")
 
-        # Capitalize category name
-        cat_name=$(echo "${category:0:1}" | tr '[:lower:]' '[:upper:]')${category:1}
+        # Format category name
+        cat_name=$(echo "$category" | tr '-' ' ' | sed 's/\\b\\(.\\)/\\u\\1/g')
 
         echo "| **$cat_name** | $count | $p0 | $p1 | $p2 | $complete | $partial | $pending | $progress% |" >> "$OUTPUT_FILE"
     fi
-done
+done <<< "$sorted_categories"
 
 cat >> "$OUTPUT_FILE" << EOF
 
@@ -233,13 +243,13 @@ cat >> "$OUTPUT_FILE" << EOF
 EOF
 
 # Generate detailed status for each category
-for category in "${categories[@]}"; do
+while IFS= read -r category; do
     count=${category_counts[$category]}
     if [ $count -eq 0 ]; then
         continue
     fi
 
-    cat_name=$(echo "${category:0:1}" | tr '[:lower:]' '[:upper:]')${category:1}
+    cat_name=$(echo "$category" | tr '-' ' ' | sed 's/\b\(.\)/\u\1/g')
     complete=${category_complete[$category]}
     partial=${category_partial[$category]}
     pending=${category_pending[$category]}
@@ -253,7 +263,7 @@ for category in "${categories[@]}"; do
 EOF
 
     # List items in this category
-    category_readmes=$(find "$BETA_ROOT/$category" -name "README.md" 2>/dev/null | sort)
+    category_readmes=$(find "$BETA_ROOT/$category" -name "README.md" ! -path "*/archive/*" 2>/dev/null | sort)
 
     if [ -n "$category_readmes" ]; then
         echo "| Item | Priority | Status |" >> "$OUTPUT_FILE"
@@ -294,7 +304,7 @@ EOF
 
         echo "" >> "$OUTPUT_FILE"
     fi
-done
+done <<< "$sorted_categories"
 
 cat >> "$OUTPUT_FILE" << EOF
 
@@ -308,7 +318,7 @@ The following P0 items are critical for Beta release:
 EOF
 
 # List P0 drivers
-p0_drivers=$(find "$BETA_ROOT/drivers" -name "README.md" -exec grep -l "Priority.*P0" {} \; 2>/dev/null | sort)
+p0_drivers=$(find "$BETA_ROOT/drivers" -name "README.md" ! -path "*/archive/*" -exec grep -l "Priority.*P0" {} \; 2>/dev/null | sort)
 
 if [ -n "$p0_drivers" ]; then
     echo "" >> "$OUTPUT_FILE"
@@ -339,16 +349,17 @@ cat >> "$OUTPUT_FILE" << EOF
 EOF
 
 # List other P0 items
-other_p0=$(find "$BETA_ROOT" -name "README.md" ! -path "*/drivers/*" -exec grep -l "Priority.*P0" {} \; 2>/dev/null | sort)
+other_p0=$(find "$BETA_ROOT" -name "README.md" ! -path "*/archive/*" ! -path "$BETA_ROOT/README.md" ! -path "*/drivers/*" -exec grep -l "Priority.*P0" {} \; 2>/dev/null | sort)
 
 if [ -n "$other_p0" ]; then
     echo "" >> "$OUTPUT_FILE"
     while IFS= read -r readme; do
-        item_dir=$(dirname "$readme")
-        category=$(basename "$(dirname "$item_dir")")
+        rel_path="${readme#${BETA_ROOT}/}"
+        category="${rel_path%%/*}"
+        item_dir=$(dirname "$rel_path")
         item_name=$(basename "$item_dir")
 
-        cat_formatted=$(echo "${category:0:1}" | tr '[:lower:]' '[:upper:]')${category:1}
+        cat_formatted=$(echo "$category" | tr '-' ' ' | sed 's/\b\(.\)/\u\1/g')
         item_formatted=$(echo "$item_name" | tr '-' ' ' | sed 's/\b\(.\)/\u\1/g')
 
         # Check status
@@ -360,7 +371,11 @@ if [ -n "$other_p0" ]; then
             status="⏳ Pending"
         fi
 
-        echo "- **$cat_formatted / $item_formatted** - $status" >> "$OUTPUT_FILE"
+        if [ "$item_name" = "$category" ]; then
+            echo "- **$cat_formatted** - $status" >> "$OUTPUT_FILE"
+        else
+            echo "- **$cat_formatted / $item_formatted** - $status" >> "$OUTPUT_FILE"
+        fi
     done <<< "$other_p0"
 else
     echo "" >> "$OUTPUT_FILE"
@@ -379,6 +394,7 @@ cat >> "$OUTPUT_FILE" << EOF
 | P0 (Critical) | $total_p0 | - | - |
 | P1 (High) | $total_p1 | - | - |
 | P2 (Medium) | $total_p2 | - | - |
+| Unspecified | $total_unclassified | - | - |
 
 ### By Category
 EOF
@@ -387,12 +403,12 @@ EOF
 echo "| Category | Completion | Status |" >> "$OUTPUT_FILE"
 echo "|----------|-----------|--------|" >> "$OUTPUT_FILE"
 
-for category in "${categories[@]}"; do
+while IFS= read -r category; do
     count=${category_counts[$category]}
     if [ $count -gt 0 ]; then
         complete=${category_complete[$category]}
         progress=$(awk "BEGIN {printf \"%.0f\", $complete * 100.0 / $count}")
-        cat_name=$(echo "${category:0:1}" | tr '[:lower:]' '[:upper:]')${category:1}
+        cat_name=$(echo "$category" | tr '-' ' ' | sed 's/\b\(.\)/\u\1/g')
 
         # Status icon based on progress
         if [ "$progress" -ge 80 ]; then
@@ -405,7 +421,7 @@ for category in "${categories[@]}"; do
 
         echo "| $cat_name | $progress% ($complete/$count) | $status_icon |" >> "$OUTPUT_FILE"
     fi
-done
+done <<< "$sorted_categories"
 
 cat >> "$OUTPUT_FILE" << EOF
 
@@ -413,10 +429,27 @@ cat >> "$OUTPUT_FILE" << EOF
 
 ## 🎯 Next Steps
 
+EOF
+
+# Build list of categories that contain P0 items
+p0_categories=()
+for category in "${categories[@]}"; do
+    if [ ${category_p0[$category]} -gt 0 ]; then
+        p0_categories+=("$category")
+    fi
+done
+
+p0_category_list=$(printf "%s\n" "${p0_categories[@]}" | sort | tr '-' ' ' | sed 's/\b\(.\)/\u\1/g' | paste -sd ", " -)
+if [ -z "$p0_category_list" ]; then
+    p0_category_list="(none listed)"
+fi
+
+cat >> "$OUTPUT_FILE" << EOF
+
 ### Immediate Priorities
-1. Complete all P0 driver specifications
-2. Complete P0 deployment requirements
-3. Complete P0 security requirements
+1. Complete all P0 items in: $p0_category_list
+2. Add Priority markers to remaining beta README files (if any)
+3. Update status markers as items complete
 
 ### This Week
 - Focus on P0 items with "Pending" status

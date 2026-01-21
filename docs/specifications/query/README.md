@@ -11,6 +11,7 @@ ScratchBird implements a cost-based query optimizer that generates optimal execu
 ## Specifications in this Directory
 
 - **[QUERY_OPTIMIZER_SPEC.md](QUERY_OPTIMIZER_SPEC.md)** (1,248 lines) - Comprehensive query optimizer specification
+- **[PARALLEL_EXECUTION_ARCHITECTURE.md](PARALLEL_EXECUTION_ARCHITECTURE.md)** - Parallel execution architecture (Beta)
 
 ## Key Features
 
@@ -22,6 +23,8 @@ The query optimizer uses cost models for:
 - **Join ordering** - Determine most efficient join order
 - **Scan methods** - Sequential scan vs. index scan vs. bitmap scan
 - **Parallelism** - Parallel query execution planning
+
+See **PARALLEL_EXECUTION_ARCHITECTURE.md** for the execution model and cluster extension details.
 
 ### Query Transformations
 
@@ -61,8 +64,8 @@ The optimizer understands MGA transaction semantics:
 
 Before working on query optimization:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ:** [QUERY_OPTIMIZER_SPEC.md](QUERY_OPTIMIZER_SPEC.md) - Query optimizer specification
 
 ## Navigation

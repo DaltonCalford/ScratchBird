@@ -16,6 +16,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <map>
 #include <regex>
 #include <sstream>
@@ -108,6 +111,178 @@ std::string toUpper(std::string value) {
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     }
     return value;
+}
+
+std::string toLower(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::string formatDateStruct(const SQL_DATE_STRUCT& date) {
+    std::ostringstream oss;
+    oss << std::setw(4) << std::setfill('0') << static_cast<int>(date.year)
+        << "-" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(date.month)
+        << "-" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(date.day);
+    return oss.str();
+}
+
+std::string formatTimeStruct(const SQL_TIME_STRUCT& time) {
+    std::ostringstream oss;
+    oss << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(time.hour)
+        << ":" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(time.minute)
+        << ":" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(time.second);
+    return oss.str();
+}
+
+std::string formatTimestampStruct(const SQL_TIMESTAMP_STRUCT& ts) {
+    unsigned int micros = static_cast<unsigned int>(ts.fraction / 1000);
+    std::ostringstream oss;
+    oss << std::setw(4) << std::setfill('0') << static_cast<int>(ts.year)
+        << "-" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(ts.month)
+        << "-" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(ts.day)
+        << " " << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(ts.hour)
+        << ":" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(ts.minute)
+        << ":" << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(ts.second);
+    if (micros > 0) {
+        oss << "." << std::setw(6) << std::setfill('0') << micros;
+    }
+    return oss.str();
+}
+
+std::string formatGuidStruct(const SQLGUID& guid) {
+    char buf[37];
+    std::snprintf(buf, sizeof(buf),
+                  "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                  guid.Data1,
+                  guid.Data2,
+                  guid.Data3,
+                  guid.Data4[0], guid.Data4[1],
+                  guid.Data4[2], guid.Data4[3], guid.Data4[4],
+                  guid.Data4[5], guid.Data4[6], guid.Data4[7]);
+    return std::string(buf);
+}
+
+struct IniSection {
+    std::map<std::string, std::string> entries;
+};
+
+std::vector<std::string> splitPaths(const std::string& value) {
+    std::vector<std::string> parts;
+#ifdef _WIN32
+    const char separator = ';';
+#else
+    const char separator = ':';
+#endif
+    size_t start = 0;
+    while (start <= value.size()) {
+        size_t pos = value.find(separator, start);
+        if (pos == std::string::npos) {
+            pos = value.size();
+        }
+        std::string part = trimString(value.substr(start, pos - start));
+        if (!part.empty()) {
+            parts.push_back(part);
+        }
+        if (pos == value.size()) {
+            break;
+        }
+        start = pos + 1;
+    }
+    return parts;
+}
+
+void addIniPath(std::vector<std::string>& paths, const std::string& path) {
+    if (path.empty()) {
+        return;
+    }
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        paths.push_back(path);
+    }
+}
+
+std::vector<std::string> getOdbcIniPaths() {
+    std::vector<std::string> paths;
+    const char* odbcini_env = std::getenv("ODBCINI");
+    if (odbcini_env && *odbcini_env) {
+        for (const auto& path : splitPaths(odbcini_env)) {
+            addIniPath(paths, path);
+        }
+        return paths;
+    }
+
+#ifdef _WIN32
+    return paths;
+#else
+    const char* odbc_sys = std::getenv("ODBCSYSINI");
+    if (odbc_sys && *odbc_sys) {
+        addIniPath(paths, std::string(odbc_sys) + "/odbc.ini");
+    }
+    addIniPath(paths, "/etc/odbc.ini");
+
+    const char* home = std::getenv("HOME");
+    if (home && *home) {
+        addIniPath(paths, std::string(home) + "/.odbc.ini");
+        addIniPath(paths, std::string(home) + "/Library/ODBC/odbc.ini");
+    }
+#endif
+
+    return paths;
+}
+
+bool parseIniFile(const std::string& path, std::map<std::string, IniSection>& sections) {
+    std::ifstream file(path);
+    if (!file) {
+        return false;
+    }
+
+    std::string current_section;
+    std::string line;
+    while (std::getline(file, line)) {
+        std::string trimmed = trimString(line);
+        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') {
+            continue;
+        }
+
+        if (trimmed.front() == '[' && trimmed.back() == ']') {
+            current_section = toLower(trimString(trimmed.substr(1, trimmed.size() - 2)));
+            continue;
+        }
+
+        size_t eq = trimmed.find('=');
+        if (eq == std::string::npos || current_section.empty()) {
+            continue;
+        }
+
+        std::string key = toLower(trimString(trimmed.substr(0, eq)));
+        std::string value = trimString(trimmed.substr(eq + 1));
+        if (!key.empty()) {
+            sections[current_section].entries[key] = value;
+        }
+    }
+
+    return true;
+}
+
+bool loadIniSection(const std::string& section_name, std::map<std::string, std::string>& entries) {
+    if (section_name.empty()) {
+        return false;
+    }
+    std::string section_key = toLower(section_name);
+    for (const auto& path : getOdbcIniPaths()) {
+        std::map<std::string, IniSection> sections;
+        if (!parseIniFile(path, sections)) {
+            continue;
+        }
+        auto it = sections.find(section_key);
+        if (it != sections.end()) {
+            entries = it->second.entries;
+            return true;
+        }
+    }
+    return false;
 }
 
 constexpr SQLUINTEGER kSqlConformanceEntry =
@@ -638,6 +813,54 @@ ParsedTypeInfo parseTypeString(const std::string& type_str) {
     return info;
 }
 
+struct TypeInfoEntry {
+    const char* type_name;
+    SQLSMALLINT data_type;
+    SQLINTEGER column_size;
+    const char* literal_prefix;
+    const char* literal_suffix;
+    const char* create_params;
+    SQLSMALLINT nullable;
+    SQLSMALLINT case_sensitive;
+    SQLSMALLINT searchable;
+    SQLSMALLINT unsigned_attr;
+    SQLSMALLINT fixed_prec_scale;
+    SQLSMALLINT auto_unique;
+    const char* local_type_name;
+    SQLSMALLINT min_scale;
+    SQLSMALLINT max_scale;
+    SQLSMALLINT sql_data_type;
+    SQLSMALLINT sql_datetime_sub;
+    SQLSMALLINT num_prec_radix;
+    SQLSMALLINT interval_precision;
+};
+
+constexpr TypeInfoEntry kTypeInfoEntries[] = {
+    {"CHAR", SQL_CHAR, 255, "'", "'", "length", SQL_NULLABLE, 1, 3, 0, 0, 0, "CHAR", 0, 0, SQL_CHAR, 0, 0, 0},
+    {"VARCHAR", SQL_VARCHAR, 65535, "'", "'", "length", SQL_NULLABLE, 1, 3, 0, 0, 0, "VARCHAR", 0, 0, SQL_VARCHAR, 0, 0, 0},
+    {"TEXT", SQL_LONGVARCHAR, 2147483647, "'", "'", "", SQL_NULLABLE, 1, 3, 0, 0, 0, "TEXT", 0, 0, SQL_LONGVARCHAR, 0, 0, 0},
+    {"JSON", SQL_LONGVARCHAR, 2147483647, "'", "'", "", SQL_NULLABLE, 1, 3, 0, 0, 0, "JSON", 0, 0, SQL_LONGVARCHAR, 0, 0, 0},
+    {"JSONB", SQL_LONGVARCHAR, 2147483647, "'", "'", "", SQL_NULLABLE, 1, 3, 0, 0, 0, "JSONB", 0, 0, SQL_LONGVARCHAR, 0, 0, 0},
+    {"XML", SQL_LONGVARCHAR, 2147483647, "'", "'", "", SQL_NULLABLE, 1, 3, 0, 0, 0, "XML", 0, 0, SQL_LONGVARCHAR, 0, 0, 0},
+    {"BINARY", SQL_BINARY, 255, "0x", "", "length", SQL_NULLABLE, 0, 3, 0, 0, 0, "BINARY", 0, 0, SQL_BINARY, 0, 0, 0},
+    {"VARBINARY", SQL_VARBINARY, 65535, "0x", "", "length", SQL_NULLABLE, 0, 3, 0, 0, 0, "VARBINARY", 0, 0, SQL_VARBINARY, 0, 0, 0},
+    {"BLOB", SQL_LONGVARBINARY, 2147483647, "0x", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "BLOB", 0, 0, SQL_LONGVARBINARY, 0, 0, 0},
+    {"BOOLEAN", SQL_BIT, 1, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "BOOLEAN", 0, 0, SQL_BIT, 0, 0, 0},
+    {"TINYINT", SQL_TINYINT, 3, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "TINYINT", 0, 0, SQL_TINYINT, 0, 10, 0},
+    {"SMALLINT", SQL_SMALLINT, 5, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "SMALLINT", 0, 0, SQL_SMALLINT, 0, 10, 0},
+    {"INTEGER", SQL_INTEGER, 10, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "INTEGER", 0, 0, SQL_INTEGER, 0, 10, 0},
+    {"BIGINT", SQL_BIGINT, 19, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "BIGINT", 0, 0, SQL_BIGINT, 0, 10, 0},
+    {"DECIMAL", SQL_DECIMAL, 38, "", "", "precision,scale", SQL_NULLABLE, 0, 3, 0, 0, 0, "DECIMAL", 0, 9, SQL_DECIMAL, 0, 10, 0},
+    {"NUMERIC", SQL_NUMERIC, 38, "", "", "precision,scale", SQL_NULLABLE, 0, 3, 0, 0, 0, "NUMERIC", 0, 9, SQL_NUMERIC, 0, 10, 0},
+    {"REAL", SQL_REAL, 7, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "REAL", 0, 0, SQL_REAL, 0, 2, 0},
+    {"FLOAT", SQL_FLOAT, 15, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "FLOAT", 0, 0, SQL_FLOAT, 0, 2, 0},
+    {"DOUBLE", SQL_DOUBLE, 15, "", "", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "DOUBLE", 0, 0, SQL_DOUBLE, 0, 2, 0},
+    {"DATE", SQL_TYPE_DATE, 10, "'", "'", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "DATE", 0, 0, SQL_TYPE_DATE, 0, 0, 0},
+    {"TIME", SQL_TYPE_TIME, 8, "'", "'", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "TIME", 0, 0, SQL_TYPE_TIME, 0, 0, 0},
+    {"TIMESTAMP", SQL_TYPE_TIMESTAMP, 26, "'", "'", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "TIMESTAMP", 0, 6, SQL_TYPE_TIMESTAMP, 0, 0, 0},
+    {"UUID", SQL_GUID, 36, "'", "'", "", SQL_NULLABLE, 0, 3, 0, 0, 0, "UUID", 0, 0, SQL_GUID, 0, 0, 0},
+};
+
 std::string sqlTypeName(SQLSMALLINT type) {
     switch (type) {
         case SQL_CHAR: return "CHAR";
@@ -874,11 +1097,9 @@ SQLRETURN OdbcConnection::connect(const SQLCHAR* dsn, SQLSMALLINT dsn_len,
             std::string(reinterpret_cast<const char*>(password), password_len);
     }
 
-    // TODO: Look up DSN in odbc.ini to get connection parameters
-    // For now, use DSN as server name
-    params_.dsn = dsn_str;
-    if (!dsn_str.empty() && params_.server.empty()) {
-        params_.server = dsn_str;
+    auto dsn_result = applyDsnConfig(dsn_str);
+    if (dsn_result != SQL_SUCCESS) {
+        return dsn_result;
     }
 
     return establishConnection();
@@ -1439,9 +1660,6 @@ SQLRETURN OdbcConnection::getFunctions(SQLUSMALLINT function_id, SQLUSMALLINT* s
         1,   // SQLAllocHandle
         2,   // SQLBindCol
         3,   // SQLBindParameter
-        4,   // SQLBrowseConnect
-        5,   // SQLBulkOperations
-        6,   // SQLCancel
         7,   // SQLCloseCursor
         8,   // SQLColAttribute
         9,   // SQLColumnPrivileges
@@ -1488,7 +1706,6 @@ SQLRETURN OdbcConnection::getFunctions(SQLUSMALLINT function_id, SQLUSMALLINT* s
         50,  // SQLSetDescField
         51,  // SQLSetDescRec
         52,  // SQLSetEnvAttr
-        53,  // SQLSetPos
         54,  // SQLSetStmtAttr
         55,  // SQLSpecialColumns
         56,  // SQLStatistics
@@ -1501,8 +1718,14 @@ SQLRETURN OdbcConnection::getFunctions(SQLUSMALLINT function_id, SQLUSMALLINT* s
         *supported = 0;
     } else if (function_id == 999) {
         // SQL_API_ODBC3_ALL_FUNCTIONS - return bitmap
-        // For simplicity, just mark all as supported
-        std::memset(supported, 0xFF, 250);
+        std::memset(supported, 0, 250);
+        for (auto func : supported_functions) {
+            size_t word = func >> 4;
+            size_t bit = func & 0x0F;
+            if (word < 250) {
+                supported[word] |= static_cast<SQLUSMALLINT>(1u << bit);
+            }
+        }
     } else {
         // Check specific function
         *supported = 0;
@@ -1514,6 +1737,68 @@ SQLRETURN OdbcConnection::getFunctions(SQLUSMALLINT function_id, SQLUSMALLINT* s
         }
     }
 
+    return SQL_SUCCESS;
+}
+
+SQLRETURN OdbcConnection::getTypeInfo(SQLSMALLINT data_type, OdbcStatement* stmt) {
+    clearDiagnostics();
+
+    if (!stmt) {
+        setError("HY009", 0, "Invalid use of null pointer");
+        return SQL_ERROR;
+    }
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("TYPE_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("DATA_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("COLUMN_SIZE", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("LITERAL_PREFIX", SQL_VARCHAR, 32));
+    cols.push_back(makeCatalogColumn("LITERAL_SUFFIX", SQL_VARCHAR, 32));
+    cols.push_back(makeCatalogColumn("CREATE_PARAMS", SQL_VARCHAR, 32));
+    cols.push_back(makeCatalogColumn("NULLABLE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("CASE_SENSITIVE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("SEARCHABLE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("UNSIGNED_ATTRIBUTE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("FIXED_PREC_SCALE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("AUTO_UNIQUE_VALUE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("LOCAL_TYPE_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("MINIMUM_SCALE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("MAXIMUM_SCALE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("SQL_DATA_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("SQL_DATETIME_SUB", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("NUM_PREC_RADIX", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("INTERVAL_PRECISION", SQL_SMALLINT));
+
+    std::vector<std::vector<std::string>> rows;
+    bool all_types = (data_type == SQL_UNKNOWN_TYPE);
+    for (const auto& entry : kTypeInfoEntries) {
+        if (!all_types && entry.data_type != data_type) {
+            continue;
+        }
+        rows.push_back({
+            entry.type_name,
+            std::to_string(entry.data_type),
+            std::to_string(entry.column_size),
+            entry.literal_prefix ? entry.literal_prefix : "",
+            entry.literal_suffix ? entry.literal_suffix : "",
+            entry.create_params ? entry.create_params : "",
+            std::to_string(entry.nullable),
+            std::to_string(entry.case_sensitive),
+            std::to_string(entry.searchable),
+            std::to_string(entry.unsigned_attr),
+            std::to_string(entry.fixed_prec_scale),
+            std::to_string(entry.auto_unique),
+            entry.local_type_name ? entry.local_type_name : "",
+            std::to_string(entry.min_scale),
+            std::to_string(entry.max_scale),
+            std::to_string(entry.sql_data_type),
+            std::to_string(entry.sql_datetime_sub),
+            std::to_string(entry.num_prec_radix),
+            std::to_string(entry.interval_precision)
+        });
+    }
+
+    stmt->setCatalogResult(std::move(cols), std::move(rows));
     return SQL_SUCCESS;
 }
 
@@ -1542,8 +1827,22 @@ SQLRETURN OdbcConnection::parseConnectionString(const std::string& conn_str) {
     std::map<std::string, std::string> params;
     scratchbird::client::parseKeyValueConnectionString(conn_str, params, nullptr);
 
+    std::string dsn_value;
     for (const auto& entry : params) {
-        const std::string& key = entry.first;
+        if (toLower(entry.first) == "dsn") {
+            dsn_value = entry.second;
+            break;
+        }
+    }
+    if (!dsn_value.empty()) {
+        auto dsn_result = applyDsnConfig(dsn_value);
+        if (dsn_result != SQL_SUCCESS) {
+            return dsn_result;
+        }
+    }
+
+    for (const auto& entry : params) {
+        const std::string key = toLower(entry.first);
         const std::string& value = entry.second;
 
         if (key == "driver") {
@@ -1601,6 +1900,179 @@ SQLRETURN OdbcConnection::parseConnectionString(const std::string& conn_str) {
         } else if (key == "pooling") {
             params_.pooling = (value == "true" || value == "1" || value == "yes");
         }
+    }
+
+    return SQL_SUCCESS;
+}
+
+SQLRETURN OdbcConnection::applyDsnConfig(const std::string& dsn_name) {
+    if (dsn_name.empty()) {
+        return SQL_SUCCESS;
+    }
+
+    std::map<std::string, std::string> entries;
+    if (!loadIniSection(dsn_name, entries)) {
+        setError("IM002", 0, "Data source name not found and no default driver specified");
+        return SQL_ERROR;
+    }
+
+    params_.dsn = dsn_name;
+
+    auto getEntry = [&](const char* key) -> std::string {
+        auto it = entries.find(toLower(key));
+        if (it == entries.end()) {
+            return {};
+        }
+        return it->second;
+    };
+
+    auto driver = getEntry("driver");
+    if (!driver.empty()) {
+        params_.driver = driver;
+    }
+
+    auto server = getEntry("server");
+    if (server.empty()) {
+        server = getEntry("host");
+    }
+    if (!server.empty()) {
+        params_.server = server;
+    }
+
+    auto port = getEntry("port");
+    if (!port.empty()) {
+        try {
+            params_.port = static_cast<uint16_t>(std::stoul(port));
+        } catch (...) {
+        }
+    }
+
+    auto database = getEntry("database");
+    if (database.empty()) {
+        database = getEntry("db");
+    }
+    if (!database.empty()) {
+        params_.database = database;
+    }
+
+    if (params_.user.empty()) {
+        auto uid = getEntry("uid");
+        if (uid.empty()) {
+            uid = getEntry("user");
+        }
+        if (uid.empty()) {
+            uid = getEntry("username");
+        }
+        if (!uid.empty()) {
+            params_.user = uid;
+        }
+    }
+
+    if (params_.password.empty()) {
+        auto pwd = getEntry("pwd");
+        if (pwd.empty()) {
+            pwd = getEntry("password");
+        }
+        if (!pwd.empty()) {
+            params_.password = pwd;
+        }
+    }
+
+    auto ssl_mode = getEntry("ssl");
+    if (ssl_mode.empty()) {
+        ssl_mode = getEntry("sslmode");
+    }
+    if (!ssl_mode.empty()) {
+        params_.ssl_mode = ssl_mode;
+    }
+
+    auto ssl_cert = getEntry("sslcert");
+    if (!ssl_cert.empty()) {
+        params_.ssl_cert = ssl_cert;
+    }
+
+    auto ssl_key = getEntry("sslkey");
+    if (!ssl_key.empty()) {
+        params_.ssl_key = ssl_key;
+    }
+
+    auto ssl_root = getEntry("sslrootcert");
+    if (!ssl_root.empty()) {
+        params_.ssl_root_cert = ssl_root;
+    }
+
+    auto protocol = getEntry("protocol");
+    if (!protocol.empty()) {
+        params_.protocol = protocol;
+    }
+
+    auto timeout = getEntry("timeout");
+    if (timeout.empty()) {
+        timeout = getEntry("connecttimeout");
+    }
+    if (!timeout.empty()) {
+        try {
+            params_.connect_timeout = static_cast<uint32_t>(std::stoul(timeout));
+        } catch (...) {
+        }
+    }
+
+    auto query_timeout = getEntry("querytimeout");
+    if (!query_timeout.empty()) {
+        try {
+            params_.query_timeout = static_cast<uint32_t>(std::stoul(query_timeout));
+        } catch (...) {
+        }
+    }
+
+    auto app_name = getEntry("applicationname");
+    if (app_name.empty()) {
+        app_name = getEntry("application_name");
+    }
+    if (app_name.empty()) {
+        app_name = getEntry("app");
+    }
+    if (!app_name.empty()) {
+        params_.application_name = app_name;
+    }
+
+    auto schema = getEntry("schema");
+    if (schema.empty()) {
+        schema = getEntry("currentschema");
+    }
+    if (!schema.empty()) {
+        params_.schema = schema;
+    }
+
+    auto charset = getEntry("charset");
+    if (charset.empty()) {
+        charset = getEntry("encoding");
+    }
+    if (!charset.empty()) {
+        params_.charset = charset;
+    }
+
+    auto read_only = toLower(getEntry("readonly"));
+    if (!read_only.empty()) {
+        params_.read_only = (read_only == "true" || read_only == "1" || read_only == "yes");
+    }
+
+    auto auto_commit = toLower(getEntry("autocommit"));
+    if (!auto_commit.empty()) {
+        params_.auto_commit = (auto_commit == "true" || auto_commit == "1" || auto_commit == "yes");
+    }
+
+    auto packet_size = getEntry("packetsize");
+    if (!packet_size.empty()) {
+        try {
+            params_.packet_size = static_cast<uint32_t>(std::stoul(packet_size));
+        } catch (...) {
+        }
+    }
+
+    auto pooling = toLower(getEntry("pooling"));
+    if (!pooling.empty()) {
+        params_.pooling = (pooling == "true" || pooling == "1" || pooling == "yes");
     }
 
     return SQL_SUCCESS;
@@ -1731,7 +2203,7 @@ SQLRETURN OdbcConnection::prepareSQL(const std::string& sql, uint64_t& stmt_id,
 }
 
 SQLRETURN OdbcConnection::executePrepared(uint64_t stmt_id,
-                                           const std::vector<std::vector<uint8_t>>& params,
+                                           const std::vector<ParameterLiteral>& params,
                                            std::vector<std::vector<std::string>>& results,
                                            std::vector<ColumnMetadata>& columns,
                                            SQLLEN& rows_affected) {
@@ -1749,12 +2221,11 @@ SQLRETURN OdbcConnection::executePrepared(uint64_t stmt_id,
         for (char ch : sql) {
             if (ch == '?' && param_index < params.size()) {
                 const auto& param = params[param_index++];
-                if (param.empty()) {
+                if (param.text.empty()) {
                     out += "NULL";
-                } else {
+                } else if (param.quoted) {
                     out += "'";
-                    for (uint8_t byte : param) {
-                        char c = static_cast<char>(byte);
+                    for (char c : param.text) {
                         if (c == '\'') {
                             out += "''";
                         } else {
@@ -1762,6 +2233,8 @@ SQLRETURN OdbcConnection::executePrepared(uint64_t stmt_id,
                         }
                     }
                     out += "'";
+                } else {
+                    out += param.text;
                 }
             } else {
                 out.push_back(ch);
@@ -2671,8 +3144,8 @@ SQLRETURN OdbcStatement::convertAndStore(size_t /*col_index*/, const std::string
     return SQL_SUCCESS;
 }
 
-std::vector<std::vector<uint8_t>> OdbcStatement::buildParameterData() {
-    std::vector<std::vector<uint8_t>> result;
+std::vector<ParameterLiteral> OdbcStatement::buildParameterData() {
+    std::vector<ParameterLiteral> result;
 
     for (SQLUSMALLINT i = 1; i <= param_bindings_.size(); ++i) {
         auto it = param_bindings_.find(i);
@@ -2689,28 +3162,109 @@ std::vector<std::vector<uint8_t>> OdbcStatement::buildParameterData() {
             continue;
         }
 
-        // Convert parameter to bytes based on value type
-        std::vector<uint8_t> param_data;
+        ParameterLiteral literal;
+        literal.quoted = true;
 
         switch (binding.value_type) {
             case SQL_C_CHAR: {
+                if (!binding.parameter_value) {
+                    break;
+                }
                 const char* str = static_cast<const char*>(binding.parameter_value);
                 SQLLEN len = (binding.str_len_or_ind && *binding.str_len_or_ind != SQL_NTS) ?
                     *binding.str_len_or_ind : static_cast<SQLLEN>(std::strlen(str));
-                param_data.assign(str, str + len);
+                literal.text.assign(str, str + len);
                 break;
             }
             case SQL_C_LONG:
             case SQL_C_SLONG: {
                 SQLINTEGER val = *static_cast<const SQLINTEGER*>(binding.parameter_value);
-                std::string str = std::to_string(val);
-                param_data.assign(str.begin(), str.end());
+                literal.text = std::to_string(val);
+                literal.quoted = false;
+                break;
+            }
+            case SQL_C_SHORT:
+            case SQL_C_SSHORT: {
+                SQLSMALLINT val = *static_cast<const SQLSMALLINT*>(binding.parameter_value);
+                literal.text = std::to_string(val);
+                literal.quoted = false;
+                break;
+            }
+            case SQL_C_SBIGINT: {
+                int64_t val = *static_cast<const int64_t*>(binding.parameter_value);
+                literal.text = std::to_string(val);
+                literal.quoted = false;
                 break;
             }
             case SQL_C_DOUBLE: {
                 SQLDOUBLE val = *static_cast<const SQLDOUBLE*>(binding.parameter_value);
-                std::string str = std::to_string(val);
-                param_data.assign(str.begin(), str.end());
+                literal.text = std::to_string(val);
+                literal.quoted = false;
+                break;
+            }
+            case SQL_C_FLOAT: {
+                SQLREAL val = *static_cast<const SQLREAL*>(binding.parameter_value);
+                literal.text = std::to_string(val);
+                literal.quoted = false;
+                break;
+            }
+            case SQL_C_BIT: {
+                unsigned char val = *static_cast<const unsigned char*>(binding.parameter_value);
+                literal.text = val ? "1" : "0";
+                literal.quoted = false;
+                break;
+            }
+            case SQL_C_BINARY: {
+                if (!binding.parameter_value || binding.buffer_length <= 0) {
+                    break;
+                }
+                SQLLEN len = binding.buffer_length;
+                if (binding.str_len_or_ind && *binding.str_len_or_ind >= 0) {
+                    len = *binding.str_len_or_ind;
+                }
+                const uint8_t* data = static_cast<const uint8_t*>(binding.parameter_value);
+                std::string hex;
+                hex.reserve(static_cast<size_t>(len) * 2);
+                static const char kHex[] = "0123456789ABCDEF";
+                for (SQLLEN idx = 0; idx < len; ++idx) {
+                    uint8_t byte = data[idx];
+                    hex.push_back(kHex[(byte >> 4) & 0x0F]);
+                    hex.push_back(kHex[byte & 0x0F]);
+                }
+                literal.text = "X'" + hex + "'";
+                literal.quoted = false;
+                break;
+            }
+            case SQL_C_DATE: {
+                if (!binding.parameter_value) {
+                    break;
+                }
+                const auto& date = *static_cast<const SQL_DATE_STRUCT*>(binding.parameter_value);
+                literal.text = formatDateStruct(date);
+                break;
+            }
+            case SQL_C_TIME: {
+                if (!binding.parameter_value) {
+                    break;
+                }
+                const auto& time = *static_cast<const SQL_TIME_STRUCT*>(binding.parameter_value);
+                literal.text = formatTimeStruct(time);
+                break;
+            }
+            case SQL_C_TIMESTAMP: {
+                if (!binding.parameter_value) {
+                    break;
+                }
+                const auto& ts = *static_cast<const SQL_TIMESTAMP_STRUCT*>(binding.parameter_value);
+                literal.text = formatTimestampStruct(ts);
+                break;
+            }
+            case SQL_C_GUID: {
+                if (!binding.parameter_value) {
+                    break;
+                }
+                const auto& guid = *static_cast<const SQLGUID*>(binding.parameter_value);
+                literal.text = formatGuidStruct(guid);
                 break;
             }
             // Add more type conversions as needed
@@ -2718,12 +3272,13 @@ std::vector<std::vector<uint8_t>> OdbcStatement::buildParameterData() {
                 // Default: treat as binary
                 if (binding.parameter_value && binding.buffer_length > 0) {
                     const uint8_t* data = static_cast<const uint8_t*>(binding.parameter_value);
-                    param_data.assign(data, data + binding.buffer_length);
+                    literal.text.assign(reinterpret_cast<const char*>(data),
+                                        reinterpret_cast<const char*>(data + binding.buffer_length));
                 }
                 break;
         }
 
-        result.push_back(std::move(param_data));
+        result.push_back(std::move(literal));
     }
 
     return result;

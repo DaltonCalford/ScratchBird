@@ -32,6 +32,8 @@ struct NetworkClientConfig {
     uint32_t connect_timeout_ms{network::DEFAULT_CONNECT_TIMEOUT_MS};
     uint32_t read_timeout_ms{network::DEFAULT_READ_TIMEOUT_MS};
     uint32_t write_timeout_ms{network::DEFAULT_WRITE_TIMEOUT_MS};
+    uint32_t copy_window_bytes{65536};
+    uint32_t copy_chunk_bytes{16384};
 
     network::SSLMode ssl_mode{network::SSLMode::REQUIRE};
     std::string ssl_cert;
@@ -82,12 +84,16 @@ public:
     void setTimestamp(size_t index, int64_t microseconds);
     void setDate(size_t index, int32_t days);
     void setTime(size_t index, int64_t microseconds);
+    void setUUID(size_t index, const std::vector<uint8_t>& value);
+    void setUUID(size_t index, const std::string& value);
+    void setNull(size_t index, protocol::WireType type);
 
 private:
     friend class NetworkClient;
     std::string sql_;
     size_t param_count_{0};
     std::vector<protocol::ProtocolCodec::ColumnValue> params_;
+    std::vector<protocol::WireType> param_types_;
     bool valid_{false};
 };
 

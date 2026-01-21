@@ -750,6 +750,14 @@ struct ParameterBinding {
 };
 
 /**
+ * @brief Parameter literal for SQL substitution
+ */
+struct ParameterLiteral {
+    std::string text;
+    bool quoted{true};
+};
+
+/**
  * @brief Result column metadata
  */
 struct ColumnMetadata {

@@ -53,7 +53,7 @@ Comprehensive testing specifications covering Alpha and Beta test plans, compati
 
 ## Related Specifications
 
-- [Implementation Standards](../../IMPLEMENTATION_STANDARDS.md) - Testing requirements for all features
+- [Implementation Standards](../../../IMPLEMENTATION_STANDARDS.md) - Testing requirements for all features
 - [Beta Requirements](../beta_requirements/) - Compatibility testing specifications
 
 ## Navigation

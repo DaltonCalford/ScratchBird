@@ -22,20 +22,20 @@ This directory contains comprehensive technical specifications for the ScratchBi
 **For Implementers:**
 1. Start with [MGA_RULES.md](../../MGA_RULES.md) - **CRITICAL** architecture rules
 2. Read [IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation requirements
-3. Review [CORE_IMPLEMENTATION_SPECS_SUMMARY.md](CORE_IMPLEMENTATION_SPECS_SUMMARY.md)
+3. Review [CORE_IMPLEMENTATION_SPECS_SUMMARY.md](core/CORE_IMPLEMENTATION_SPECS_SUMMARY.md)
 4. Follow reading order below for your area
 
 **For Architects:**
-1. [Security Architecture](security/00_SECURITY_SPEC_INDEX.md) - Complete security design (19 specs)
-2. [Cluster Architecture](cluster/SBCLUSTER-SUMMARY.md) - Distributed system design (18 specs)
-3. [Transaction System](TRANSACTION_MAIN.md) - MGA transaction model
-4. [Storage Engine](STORAGE_ENGINE_MAIN.md) - Storage architecture
+1. [Security Architecture](Security%20Design%20Specification/00_SECURITY_SPEC_INDEX.md) - Complete security design (19 specs)
+2. [Cluster Architecture](Cluster%20Specification%20Work/SBCLUSTER-SUMMARY.md) - Distributed system design (18 specs)
+3. [Transaction System](transaction/TRANSACTION_MAIN.md) - MGA transaction model
+4. [Storage Engine](storage/STORAGE_ENGINE_MAIN.md) - Storage architecture
 
 **For Security Reviewers:**
-1. [Security Specifications](security/) - 19 comprehensive security specs
-2. [Cluster Security](cluster/SBCLUSTER-04-SECURITY-BUNDLE.md)
-3. [Authentication](AUTH_CORE_FRAMEWORK.md)
-4. [Authorization](security/03_AUTHORIZATION_MODEL.md)
+1. [Security Specifications](Security%20Design%20Specification/) - 19 comprehensive security specs
+2. [Cluster Security](Cluster%20Specification%20Work/SBCLUSTER-04-SECURITY-BUNDLE.md)
+3. [Authentication](Security%20Design%20Specification/AUTH_CORE_FRAMEWORK.md)
+4. [Authorization](Security%20Design%20Specification/03_AUTHORIZATION_MODEL.md)
 
 ---
 
@@ -72,10 +72,10 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**cluster/**](cluster/) | Distributed cluster architecture | 18 specs | ✅ Complete |
-| [Raft Consensus](cluster/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) | Cluster config management | CCE specification | ✅ Complete |
-| [Sharding](cluster/SBCLUSTER-05-SHARDING.md) | Data partitioning | Consistent hashing | ✅ Complete |
-| [Replication](cluster/SBCLUSTER-07-REPLICATION.md) | Data replication | Async logical stream (optional write-after log) | ✅ Complete |
+| [**cluster/**](Cluster%20Specification%20Work/) | Distributed cluster architecture | 18 specs | ✅ Complete |
+| [Raft Consensus](Cluster%20Specification%20Work/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) | Cluster config management | CCE specification | ✅ Complete |
+| [Sharding](Cluster%20Specification%20Work/SBCLUSTER-05-SHARDING.md) | Data partitioning | Consistent hashing | ✅ Complete |
+| [Replication](Cluster%20Specification%20Work/SBCLUSTER-07-REPLICATION.md) | Data replication | Async logical stream (optional write-after log) | ✅ Complete |
 
 ### Network & Connectivity
 
@@ -108,7 +108,7 @@ Key network specs:
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**replication/**](replication/) | Replication protocols | Replication, shadow protocols, optional write-after log | ✅ Organized |
+| [**replication/**](beta_requirements/replication/) | Replication protocols | Replication, shadow protocols, optional write-after log | ✅ Organized |
 | [**compression/**](compression/) | Compression framework | Compression specifications | ✅ Organized |
 | [**udr/**](udr/) | User-Defined Resources | UDR system specification | ✅ Organized |
 | [**triggers/**](triggers/) | Trigger system | Trigger context variables | ✅ Organized |
@@ -124,7 +124,7 @@ Key network specs:
 |-----------|-------------|-------|--------|
 | **udr_connectors/** | UDR connectors | 7 connector specs | ⚠️ Consolidate |
 | **remote_database_udr/** | Remote DB adapters | 10 adapter specs | ⚠️ Consolidate |
-| [UDR System](10-UDR-System-Specification.md) | UDR architecture | System design | ✅ Active |
+| [UDR System](Alpha%20Phase%202/10-UDR-System-Specification.md) | UDR architecture | System design | ✅ Active |
 
 ### Reference Material
 
@@ -148,213 +148,216 @@ Key network specs:
 SQL grammar and parser specifications:
 
 **Core Grammar:**
-- [SCRATCHBIRD_SQL_COMPLETE_BNF.md](SCRATCHBIRD_SQL_COMPLETE_BNF.md) (1,527 lines) - Complete SQL BNF grammar
-- [ScratchBird Master Grammar Specification v2.0.md](ScratchBird%20Master%20Grammar%20Specification%20v2.0.md) - V2 grammar overview
-- [ScratchBird SQL Language Specification - Master Document.md](ScratchBird%20SQL%20Language%20Specification%20-%20Master%20Document.md)
-- [01_SQL_DIALECT_OVERVIEW.md](01_SQL_DIALECT_OVERVIEW.md) (115 lines) - SQL dialect overview
+- [SCRATCHBIRD_SQL_COMPLETE_BNF.md](parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md) (1,527 lines) - Complete SQL BNF grammar
+- [ScratchBird Master Grammar Specification v2.0.md](parser/ScratchBird%20Master%20Grammar%20Specification%20v2.0.md) - V2 grammar overview
+- [ScratchBird SQL Language Specification - Master Document.md](parser/ScratchBird%20SQL%20Language%20Specification%20-%20Master%20Document.md)
+- [01_SQL_DIALECT_OVERVIEW.md](parser/01_SQL_DIALECT_OVERVIEW.md) (115 lines) - SQL dialect overview
 
 **Parser Architecture:**
-- [EMULATED_DATABASE_PARSER_SPECIFICATION.md](EMULATED_DATABASE_PARSER_SPECIFICATION.md) (303 lines) - **CRITICAL** - Parser rules
-- [08_PARSER_AND_DEVELOPER_EXPERIENCE.md](08_PARSER_AND_DEVELOPER_EXPERIENCE.md) (163 lines) - Parser DX
+- [EMULATED_DATABASE_PARSER_SPECIFICATION.md](parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md) (303 lines) - **CRITICAL** - Parser rules
+- [08_PARSER_AND_DEVELOPER_EXPERIENCE.md](parser/08_PARSER_AND_DEVELOPER_EXPERIENCE.md) (163 lines) - Parser DX
 
 **Emulated Parsers:**
-- [POSTGRESQL_PARSER_SPECIFICATION.md](POSTGRESQL_PARSER_SPECIFICATION.md) (1,626 lines)
-- [POSTGRESQL_PARSER_IMPLEMENTATION.md](POSTGRESQL_PARSER_IMPLEMENTATION.md) (671 lines)
-- [MYSQL_PARSER_SPECIFICATION.md](MYSQL_PARSER_SPECIFICATION.md) (949 lines)
+- [POSTGRESQL_PARSER_SPECIFICATION.md](parser/POSTGRESQL_PARSER_SPECIFICATION.md) (1,626 lines)
+- [POSTGRESQL_PARSER_IMPLEMENTATION.md](parser/POSTGRESQL_PARSER_IMPLEMENTATION.md) (671 lines)
+- [MYSQL_PARSER_SPECIFICATION.md](parser/MYSQL_PARSER_SPECIFICATION.md) (949 lines)
 
 ### DDL Statements
 
 All Data Definition Language specifications:
 
 **Overview:**
-- [02_DDL_STATEMENTS_OVERVIEW.md](02_DDL_STATEMENTS_OVERVIEW.md) - DDL operations overview
+- [02_DDL_STATEMENTS_OVERVIEW.md](ddl/02_DDL_STATEMENTS_OVERVIEW.md) - DDL operations overview
 
 **Database Objects:**
-- [DDL_DATABASES.md](DDL_DATABASES.md) - CREATE/ALTER/DROP DATABASE
-- [DDL_SCHEMAS.md](DDL_SCHEMAS.md) - Schema management
-- [DDL_TABLES.md](DDL_TABLES.md) - Table creation and modification
-- [DDL_VIEWS.md](DDL_VIEWS.md) - View management
-- [DDL_INDEXES.md](DDL_INDEXES.md) - Index creation
-- [DDL_SEQUENCES.md](DDL_SEQUENCES.md) - Sequence management
+- [DDL_DATABASES.md](ddl/DDL_DATABASES.md) - CREATE/ALTER/DROP DATABASE
+- [DDL_SCHEMAS.md](ddl/DDL_SCHEMAS.md) - Schema management
+- [DDL_TABLES.md](ddl/DDL_TABLES.md) - Table creation and modification
+- [DDL_VIEWS.md](ddl/DDL_VIEWS.md) - View management
+- [DDL_INDEXES.md](ddl/DDL_INDEXES.md) - Index creation
+- [DDL_SEQUENCES.md](ddl/DDL_SEQUENCES.md) - Sequence management
 
 **Advanced Objects:**
-- [DDL_DOMAINS_COMPREHENSIVE.md](DDL_DOMAINS_COMPREHENSIVE.md) (963 lines) - Complete domain specification
-- [DDL_FUNCTIONS.md](DDL_FUNCTIONS.md) - User-defined functions
-- [DDL_PROCEDURES.md](DDL_PROCEDURES.md) - Stored procedures
-- [DDL_PACKAGES.md](DDL_PACKAGES.md) - Package objects
-- [DDL_TRIGGERS.md](DDL_TRIGGERS.md) - Trigger management
-- [DDL_EVENTS.md](DDL_EVENTS.md) - Event management
-- [DDL_EXCEPTIONS.md](DDL_EXCEPTIONS.md) - Exception handling
-- [DDL_USER_DEFINED_RESOURCES.md](DDL_USER_DEFINED_RESOURCES.md) - UDR management
+- [DDL_DOMAINS_COMPREHENSIVE.md](types/DDL_DOMAINS_COMPREHENSIVE.md) (963 lines) - Complete domain specification
+- [DDL_FUNCTIONS.md](ddl/DDL_FUNCTIONS.md) - User-defined functions
+- [DDL_PROCEDURES.md](ddl/DDL_PROCEDURES.md) - Stored procedures
+- [DDL_PACKAGES.md](ddl/DDL_PACKAGES.md) - Package objects
+- [DDL_TRIGGERS.md](ddl/DDL_TRIGGERS.md) - Trigger management
+- [DDL_EVENTS.md](ddl/DDL_EVENTS.md) - Event management
+- [DDL_EXCEPTIONS.md](ddl/DDL_EXCEPTIONS.md) - Exception handling
+- [DDL_USER_DEFINED_RESOURCES.md](ddl/DDL_USER_DEFINED_RESOURCES.md) - UDR management
 
 **Security & Access:**
-- [DDL_ROLES_AND_GROUPS.md](DDL_ROLES_AND_GROUPS.md) - Role-based access control
-- [DDL_ROW_LEVEL_SECURITY.md](DDL_ROW_LEVEL_SECURITY.md) - RLS implementation
+- [DDL_ROLES_AND_GROUPS.md](ddl/DDL_ROLES_AND_GROUPS.md) - Role-based access control
+- [DDL_ROW_LEVEL_SECURITY.md](ddl/DDL_ROW_LEVEL_SECURITY.md) - RLS implementation
 
 **Advanced Features:**
-- [DDL_TABLE_PARTITIONING.md](DDL_TABLE_PARTITIONING.md) - Table partitioning
-- [DDL_TEMPORAL_TABLES.md](DDL_TEMPORAL_TABLES.md) - Temporal table support
-- [09_DDL_FOREIGN_DATA.md](09_DDL_FOREIGN_DATA.md) - Foreign data wrappers
-- [CASCADE_DROP_SPECIFICATION.md](CASCADE_DROP_SPECIFICATION.md) (1,029 lines) - Cascade operations
+- [DDL_TABLE_PARTITIONING.md](ddl/DDL_TABLE_PARTITIONING.md) - Table partitioning
+- [DDL_TEMPORAL_TABLES.md](ddl/DDL_TEMPORAL_TABLES.md) - Temporal table support
+- [09_DDL_FOREIGN_DATA.md](ddl/09_DDL_FOREIGN_DATA.md) - Foreign data wrappers
+- [CASCADE_DROP_SPECIFICATION.md](ddl/CASCADE_DROP_SPECIFICATION.md) (1,029 lines) - Cascade operations
 
 ### DML Statements
 
 Data Manipulation Language specifications:
 
-- [04_DML_STATEMENTS_OVERVIEW.md](04_DML_STATEMENTS_OVERVIEW.md) - DML overview
-- [DML_SELECT.md](DML_SELECT.md) - Query operations
-- [DML_INSERT.md](DML_INSERT.md) - Insert operations
-- [DML_UPDATE.md](DML_UPDATE.md) - Update operations
-- [DML_DELETE.md](DML_DELETE.md) - Delete operations
-- [DML_MERGE.md](DML_MERGE.md) - Merge/upsert operations
-- [DML_XML_JSON_TABLES.md](DML_XML_JSON_TABLES.md) - XML/JSON table functions
+- [04_DML_STATEMENTS_OVERVIEW.md](dml/04_DML_STATEMENTS_OVERVIEW.md) - DML overview
+- [DML_SELECT.md](dml/DML_SELECT.md) - Query operations
+- [DML_INSERT.md](dml/DML_INSERT.md) - Insert operations
+- [DML_UPDATE.md](dml/DML_UPDATE.md) - Update operations
+- [DML_DELETE.md](dml/DML_DELETE.md) - Delete operations
+- [DML_MERGE.md](dml/DML_MERGE.md) - Merge/upsert operations
+- [DML_XML_JSON_TABLES.md](dml/DML_XML_JSON_TABLES.md) - XML/JSON table functions
 
 ### Transaction System
 
 Multi-Generational Architecture (MGA) and transaction management:
 
 **Core Specifications:**
-- [TRANSACTION_MAIN.md](TRANSACTION_MAIN.md) (741 lines) - Main transaction spec
-- [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md) (1,059 lines) - MGA implementation
-- [TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md) (1,120 lines) - Lock management
-- [TRANSACTION_DISTRIBUTED.md](TRANSACTION_DISTRIBUTED.md) (1,136 lines) - Distributed transactions
-- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md) (1,024 lines) - MGA details
-- [07_TRANSACTION_AND_SESSION_CONTROL.md](07_TRANSACTION_AND_SESSION_CONTROL.md) (181 lines) - Session control
+- [TRANSACTION_MAIN.md](transaction/TRANSACTION_MAIN.md) (741 lines) - Main transaction spec
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md) (1,059 lines) - MGA implementation
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md) (1,120 lines) - Lock management
+- [TRANSACTION_DISTRIBUTED.md](transaction/TRANSACTION_DISTRIBUTED.md) (1,136 lines) - Distributed transactions
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md) (1,024 lines) - MGA details
+- [07_TRANSACTION_AND_SESSION_CONTROL.md](transaction/07_TRANSACTION_AND_SESSION_CONTROL.md) (181 lines) - Session control
 
 **Reference:**
-- [FIREBIRD_TRANSACTION_MODEL_SPEC.md](FIREBIRD_TRANSACTION_MODEL_SPEC.md) (1,570 lines) - Firebird reference
+- [FIREBIRD_TRANSACTION_MODEL_SPEC.md](sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md) (1,570 lines) - Firebird reference
 
 ### Storage Engine
 
 Storage layer and buffer management:
 
 **Core Storage:**
-- [STORAGE_ENGINE_MAIN.md](STORAGE_ENGINE_MAIN.md) (804 lines) - Storage architecture
-- [STORAGE_ENGINE_BUFFER_POOL.md](STORAGE_ENGINE_BUFFER_POOL.md) (1,025 lines) - Buffer pool
-- [STORAGE_ENGINE_PAGE_MANAGEMENT.md](STORAGE_ENGINE_PAGE_MANAGEMENT.md) (1,288 lines) - Page management
-- [ON_DISK_FORMAT.md](ON_DISK_FORMAT.md) (552 lines) - Disk format
+- [STORAGE_ENGINE_MAIN.md](storage/STORAGE_ENGINE_MAIN.md) (804 lines) - Storage architecture
+- [STORAGE_ENGINE_BUFFER_POOL.md](storage/STORAGE_ENGINE_BUFFER_POOL.md) (1,025 lines) - Buffer pool
+- [STORAGE_ENGINE_PAGE_MANAGEMENT.md](storage/STORAGE_ENGINE_PAGE_MANAGEMENT.md) (1,288 lines) - Page management
+- [ON_DISK_FORMAT.md](storage/ON_DISK_FORMAT.md) (552 lines) - Disk format
 
 **Large Objects:**
-- [HEAP_TOAST_INTEGRATION.md](HEAP_TOAST_INTEGRATION.md) (195 lines) - TOAST integration
-- [TOAST_LOB_STORAGE.md](TOAST_LOB_STORAGE.md) (506 lines) - LOB storage
+- [HEAP_TOAST_INTEGRATION.md](storage/HEAP_TOAST_INTEGRATION.md) (195 lines) - TOAST integration
+- [TOAST_LOB_STORAGE.md](storage/TOAST_LOB_STORAGE.md) (506 lines) - LOB storage
 
 **Advanced:**
-- [TABLESPACE_SPECIFICATION.md](TABLESPACE_SPECIFICATION.md) (1,352 lines) - Tablespace management
-- [EXTENDED_PAGE_SIZES.md](EXTENDED_PAGE_SIZES.md) (107 lines) - Configurable page sizes
-- [COMPRESSION_FRAMEWORK.md](COMPRESSION_FRAMEWORK.md) (234 lines) - Compression support
-- [COLUMNSTORE_SPEC.md](COLUMNSTORE_SPEC.md) (712 lines) - Columnar storage
+- [TABLESPACE_SPECIFICATION.md](storage/TABLESPACE_SPECIFICATION.md) (1,352 lines) - Tablespace management
+- [EXTENDED_PAGE_SIZES.md](storage/EXTENDED_PAGE_SIZES.md) (107 lines) - Configurable page sizes
+- [COMPRESSION_FRAMEWORK.md](compression/COMPRESSION_FRAMEWORK.md) (234 lines) - Compression support
+- [COLUMNSTORE_SPEC.md](indexes/COLUMNSTORE_SPEC.md) (712 lines) - Columnar storage
 - [MEMORY_MANAGEMENT.md](MEMORY_MANAGEMENT.md) (95 lines) - ⚠️ Needs expansion
-- [THREAD_SAFETY.md](THREAD_SAFETY.md) (105 lines) - Thread safety
+- [THREAD_SAFETY.md](core/THREAD_SAFETY.md) (105 lines) - Thread safety
+- [CACHE_AND_BUFFER_ARCHITECTURE.md](core/CACHE_AND_BUFFER_ARCHITECTURE.md) - Cache/buffer architecture (current + target)
 
 **Alternative Storage:**
-- [LSM_TREE_SPEC.md](LSM_TREE_SPEC.md) (1,596 lines) - LSM tree design
-- [LSM_TREE_ARCHITECTURE.md](LSM_TREE_ARCHITECTURE.md) (493 lines) - LSM architecture
+- [LSM_TREE_SPEC.md](indexes/LSM_TREE_SPEC.md) (1,596 lines) - LSM tree design
+- [LSM_TREE_ARCHITECTURE.md](indexes/LSM_TREE_ARCHITECTURE.md) (493 lines) - LSM architecture
 
 ### Index System
 
 11 index types and index infrastructure:
 
 **Core Infrastructure:**
-- [INDEX_ARCHITECTURE.md](INDEX_ARCHITECTURE.md) (983 lines) - Index architecture
-- [INDEX_IMPLEMENTATION_GUIDE.md](INDEX_IMPLEMENTATION_GUIDE.md) (1,135 lines) - Implementation guide
-- [INDEX_IMPLEMENTATION_SPEC.md](INDEX_IMPLEMENTATION_SPEC.md) (915 lines) - Implementation spec
-- [INDEX_GC_PROTOCOL.md](INDEX_GC_PROTOCOL.md) (622 lines) - Garbage collection
+- [INDEX_ARCHITECTURE.md](indexes/INDEX_ARCHITECTURE.md) (983 lines) - Index architecture
+- [INDEX_IMPLEMENTATION_GUIDE.md](indexes/INDEX_IMPLEMENTATION_GUIDE.md) (1,135 lines) - Implementation guide
+- [INDEX_IMPLEMENTATION_SPEC.md](indexes/INDEX_IMPLEMENTATION_SPEC.md) (915 lines) - Implementation spec
+- [INDEX_GC_PROTOCOL.md](indexes/INDEX_GC_PROTOCOL.md) (622 lines) - Garbage collection
 
 **Advanced Index Types:**
-- [AdvancedIndexes.md](AdvancedIndexes.md) (1,283 lines) - Advanced index overview
-- [BloomFilterIndex.md](BloomFilterIndex.md) (1,529 lines) - Bloom filter index
-- [InvertedIndex.md](InvertedIndex.md) (2,333 lines) - Inverted index (full-text)
-- [IVFIndex.md](IVFIndex.md) (2,243 lines) - IVF vector index
-- [ZoneMapsIndex.md](ZoneMapsIndex.md) (2,222 lines) - Zone maps index
+- [AdvancedIndexes.md](indexes/AdvancedIndexes.md) (1,283 lines) - Advanced index overview
+- [BloomFilterIndex.md](indexes/BloomFilterIndex.md) (1,529 lines) - Bloom filter index
+- [InvertedIndex.md](indexes/InvertedIndex.md) (2,333 lines) - Inverted index (full-text)
+- [IVFIndex.md](indexes/IVFIndex.md) (2,243 lines) - IVF vector index
+- [ZoneMapsIndex.md](indexes/ZoneMapsIndex.md) (2,222 lines) - Zone maps index
 
 ### Type System
 
 Data types, domains, and type coercion:
 
-- [03_TYPES_AND_DOMAINS.md](03_TYPES_AND_DOMAINS.md) (285 lines) - Type system overview
-- [DATA_TYPE_PERSISTENCE_AND_CASTS.md](DATA_TYPE_PERSISTENCE_AND_CASTS.md) (129 lines) - Type persistence
-- [POSTGRESQL_ARRAY_TYPE_SPEC.md](POSTGRESQL_ARRAY_TYPE_SPEC.md) (883 lines) - Array types
-- [MULTI_GEOMETRY_TYPES_SPEC.md](MULTI_GEOMETRY_TYPES_SPEC.md) (718 lines) - Geometric types
-- [UUID_IDENTITY_COLUMNS.md](UUID_IDENTITY_COLUMNS.md) (536 lines) - UUID support
-- [character_sets_and_collations.md](character_sets_and_collations.md) (780 lines) - Character sets
-- [design_limits.md](design_limits.md) (225 lines) - System limits
+- [03_TYPES_AND_DOMAINS.md](types/03_TYPES_AND_DOMAINS.md) (285 lines) - Type system overview
+- [DATA_TYPE_PERSISTENCE_AND_CASTS.md](types/DATA_TYPE_PERSISTENCE_AND_CASTS.md) (129 lines) - Type persistence
+- [POSTGRESQL_ARRAY_TYPE_SPEC.md](types/POSTGRESQL_ARRAY_TYPE_SPEC.md) (883 lines) - Array types
+- [MULTI_GEOMETRY_TYPES_SPEC.md](types/MULTI_GEOMETRY_TYPES_SPEC.md) (718 lines) - Geometric types
+- [UUID_IDENTITY_COLUMNS.md](types/UUID_IDENTITY_COLUMNS.md) (536 lines) - UUID support
+- [character_sets_and_collations.md](types/character_sets_and_collations.md) (780 lines) - Character sets
+- [design_limits.md](core/design_limits.md) (225 lines) - System limits
 
 ### Query Processing
 
 Query optimization and execution:
 
-- [QUERY_OPTIMIZER_SPEC.md](QUERY_OPTIMIZER_SPEC.md) (1,248 lines) - Query optimizer
+- [QUERY_OPTIMIZER_SPEC.md](query/QUERY_OPTIMIZER_SPEC.md) (1,248 lines) - Query optimizer
+- [PARALLEL_EXECUTION_ARCHITECTURE.md](query/PARALLEL_EXECUTION_ARCHITECTURE.md) - Parallel execution architecture (Beta)
 
 ### SBLR Bytecode
 
 ScratchBird Bytecode Language Runtime:
 
-- [Appendix_A_SBLR_BYTECODE.md](Appendix_A_SBLR_BYTECODE.md) (519 lines) - SBLR bytecode spec
-- [SBLR_OPCODE_REGISTRY.md](SBLR_OPCODE_REGISTRY.md) (84 lines) - Opcode registry
-- [SBLR_DOMAIN_PAYLOADS.md](SBLR_DOMAIN_PAYLOADS.md) (215 lines) - Domain payloads
-- [FIREBIRD_BLR_TO_SBLR_MAPPING.md](FIREBIRD_BLR_TO_SBLR_MAPPING.md) (173 lines) - Firebird BLR mapping
-- [FIREBIRD_BLR_FIXTURES.md](FIREBIRD_BLR_FIXTURES.md) (153 lines) - BLR fixtures
+- [Appendix_A_SBLR_BYTECODE.md](sblr/Appendix_A_SBLR_BYTECODE.md) (519 lines) - SBLR bytecode spec
+- [SBLR_OPCODE_REGISTRY.md](sblr/SBLR_OPCODE_REGISTRY.md) (84 lines) - Opcode registry
+- [SBLR_DOMAIN_PAYLOADS.md](sblr/SBLR_DOMAIN_PAYLOADS.md) (215 lines) - Domain payloads
+- [FIREBIRD_BLR_TO_SBLR_MAPPING.md](sblr/FIREBIRD_BLR_TO_SBLR_MAPPING.md) (173 lines) - Firebird BLR mapping
+- [FIREBIRD_BLR_FIXTURES.md](sblr/FIREBIRD_BLR_FIXTURES.md) (153 lines) - BLR fixtures
 
 ### Authentication
 
 Authentication frameworks and methods:
 
 **Core Framework:**
-- [AUTH_CORE_FRAMEWORK.md](AUTH_CORE_FRAMEWORK.md) (1,263 lines) - Core auth framework
-- [EXTERNAL_AUTHENTICATION_DESIGN.md](EXTERNAL_AUTHENTICATION_DESIGN.md) (484 lines) - External auth
-- [ROLE_COMPOSITION_AND_HIERARCHIES.md](ROLE_COMPOSITION_AND_HIERARCHIES.md) (451 lines) - Role hierarchies
+- [AUTH_CORE_FRAMEWORK.md](Security%20Design%20Specification/AUTH_CORE_FRAMEWORK.md) (1,263 lines) - Core auth framework
+- [EXTERNAL_AUTHENTICATION_DESIGN.md](Security%20Design%20Specification/EXTERNAL_AUTHENTICATION_DESIGN.md) (484 lines) - External auth
+- [ROLE_COMPOSITION_AND_HIERARCHIES.md](Security%20Design%20Specification/ROLE_COMPOSITION_AND_HIERARCHIES.md) (451 lines) - Role hierarchies
 
 **Authentication Methods:**
-- [AUTH_PASSWORD_METHODS.md](AUTH_PASSWORD_METHODS.md) (1,260 lines) - Password authentication
-- [AUTH_CERTIFICATE_TLS.md](AUTH_CERTIFICATE_TLS.md) (1,419 lines) - Certificate-based auth
-- [AUTH_ENTERPRISE_LDAP_KERBEROS.md](AUTH_ENTERPRISE_LDAP_KERBEROS.md) (1,116 lines) - Enterprise auth
-- [AUTH_MODERN_OAUTH_MFA.md](AUTH_MODERN_OAUTH_MFA.md) (1,511 lines) - OAuth & MFA
+- [AUTH_PASSWORD_METHODS.md](Security%20Design%20Specification/AUTH_PASSWORD_METHODS.md) (1,260 lines) - Password authentication
+- [AUTH_CERTIFICATE_TLS.md](Security%20Design%20Specification/AUTH_CERTIFICATE_TLS.md) (1,419 lines) - Certificate-based auth
+- [AUTH_ENTERPRISE_LDAP_KERBEROS.md](Security%20Design%20Specification/AUTH_ENTERPRISE_LDAP_KERBEROS.md) (1,116 lines) - Enterprise auth
+- [AUTH_MODERN_OAUTH_MFA.md](Security%20Design%20Specification/AUTH_MODERN_OAUTH_MFA.md) (1,511 lines) - OAuth & MFA
 
 ### Replication & Backup
 
 Durability and replication:
 
 - [BACKUP_AND_RESTORE.md](BACKUP_AND_RESTORE.md) (72 lines) - ⚠️ Needs major expansion
-- [WAL_IMPLEMENTATION.md](WAL_IMPLEMENTATION.md) (79 lines) - Optional write-after log (post-gold)
-- [REPLICATION_AND_SHADOW_PROTOCOLS.md](REPLICATION_AND_SHADOW_PROTOCOLS.md) (589 lines) - Replication
+- [WAL_IMPLEMENTATION.md](beta_requirements/replication/WAL_IMPLEMENTATION.md) (79 lines) - Optional write-after log (post-gold)
+- [REPLICATION_AND_SHADOW_PROTOCOLS.md](beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md) (589 lines) - Replication
 
 ### Special Features
 
 Unique ScratchBird features:
 
-- [GIT_METADATA_INTEGRATION_SPECIFICATION.md](GIT_METADATA_INTEGRATION_SPECIFICATION.md) (981 lines) - Git integration
-- [LIVE_MIGRATION_PASSTHROUGH_SPECIFICATION.md](LIVE_MIGRATION_PASSTHROUGH_SPECIFICATION.md) (1,824 lines) - Live migration
-- [TRIGGER_CONTEXT_VARIABLES.md](TRIGGER_CONTEXT_VARIABLES.md) (592 lines) - Trigger variables
-- [EXTRACT_AND_ALTER_ELEMENT.md](EXTRACT_AND_ALTER_ELEMENT.md) (390 lines) - Element operations
-- [INTERNAL_FUNCTIONS.md](INTERNAL_FUNCTIONS.md) (98 lines) - Internal functions
+- [GIT_METADATA_INTEGRATION_SPECIFICATION.md](core/GIT_METADATA_INTEGRATION_SPECIFICATION.md) (981 lines) - Git integration
+- [LIVE_MIGRATION_PASSTHROUGH_SPECIFICATION.md](core/LIVE_MIGRATION_PASSTHROUGH_SPECIFICATION.md) (1,824 lines) - Live migration
+- [TRIGGER_CONTEXT_VARIABLES.md](triggers/TRIGGER_CONTEXT_VARIABLES.md) (592 lines) - Trigger variables
+- [EXTRACT_AND_ALTER_ELEMENT.md](ddl/EXTRACT_AND_ALTER_ELEMENT.md) (390 lines) - Element operations
+- [INTERNAL_FUNCTIONS.md](core/INTERNAL_FUNCTIONS.md) (98 lines) - Internal functions
 
 ### Tools & Administration
 
 Administrative tools and interfaces:
 
-- [SB_ADMIN_CLI_SPECIFICATION.md](SB_ADMIN_CLI_SPECIFICATION.md) (608 lines) - Admin CLI
-- [SB_SERVER_NETWORK_CLI_SPECIFICATION.md](SB_SERVER_NETWORK_CLI_SPECIFICATION.md) (new) - sb_server network CLI
-- [SB_ISQL_CLI_SPECIFICATION.md](SB_ISQL_CLI_SPECIFICATION.md) (new) - sb_isql network CLI
-- [SB_TOOLING_NETWORK_SPEC.md](SB_TOOLING_NETWORK_SPEC.md) (new) - Remote tooling support
-- [FlameRobin_Specification_for_AI.md](FlameRobin_Specification_for_AI.md) (442 lines) - FlameRobin integration
-- [PROMETHEUS_METRICS_REFERENCE.md](PROMETHEUS_METRICS_REFERENCE.md) (824 lines) - Metrics export
-- [LISTENER_POOL_METRICS.md](LISTENER_POOL_METRICS.md) (new) - Listener/pool metrics
+- [SB_ADMIN_CLI_SPECIFICATION.md](admin/SB_ADMIN_CLI_SPECIFICATION.md) (608 lines) - Admin CLI
+- [SB_SERVER_NETWORK_CLI_SPECIFICATION.md](admin/SB_SERVER_NETWORK_CLI_SPECIFICATION.md) (new) - sb_server network CLI
+- [SB_ISQL_CLI_SPECIFICATION.md](tools/SB_ISQL_CLI_SPECIFICATION.md) (new) - sb_isql network CLI
+- [SB_TOOLING_NETWORK_SPEC.md](tools/SB_TOOLING_NETWORK_SPEC.md) (new) - Remote tooling support
+- [FlameRobin_Specification_for_AI.md](drivers/FlameRobin_Specification_for_AI.md) (442 lines) - FlameRobin integration
+- [PROMETHEUS_METRICS_REFERENCE.md](operations/PROMETHEUS_METRICS_REFERENCE.md) (824 lines) - Metrics export
+- [LISTENER_POOL_METRICS.md](operations/LISTENER_POOL_METRICS.md) (new) - Listener/pool metrics
 - [PERFORMANCE_BENCHMARKS.md](PERFORMANCE_BENCHMARKS.md) (52 lines) - ⚠️ Needs expansion
 
 ### Deployment
 
 Deployment and operations:
 
-- [SYSTEMD_SERVICE_SPECIFICATION.md](SYSTEMD_SERVICE_SPECIFICATION.md) (2,127 lines) - systemd integration
-- [ALPHA3_TEST_PLAN.md](ALPHA3_TEST_PLAN.md) (727 lines) - Test planning
+- [SYSTEMD_SERVICE_SPECIFICATION.md](deployment/SYSTEMD_SERVICE_SPECIFICATION.md) (2,127 lines) - systemd integration
+- [ALPHA3_TEST_PLAN.md](testing/ALPHA3_TEST_PLAN.md) (727 lines) - Test planning
 
 ### Architecture
 
 Core architecture documents:
 
-- [COMPONENT_MODEL_AND_RESPONSIBILITIES.md](COMPONENT_MODEL_AND_RESPONSIBILITIES.md) (155 lines) - Component model
-- [IMPLEMENTATION_RECOMMENDATIONS.md](IMPLEMENTATION_RECOMMENDATIONS.md) (436 lines) - Strategic recommendations
-- [CORE_IMPLEMENTATION_SPECS_SUMMARY.md](CORE_IMPLEMENTATION_SPECS_SUMMARY.md) (204 lines) - Implementation summary
+- [COMPONENT_MODEL_AND_RESPONSIBILITIES.md](catalog/COMPONENT_MODEL_AND_RESPONSIBILITIES.md) (155 lines) - Component model
+- [IMPLEMENTATION_RECOMMENDATIONS.md](core/IMPLEMENTATION_RECOMMENDATIONS.md) (436 lines) - Strategic recommendations
+- [CORE_IMPLEMENTATION_SPECS_SUMMARY.md](core/CORE_IMPLEMENTATION_SPECS_SUMMARY.md) (204 lines) - Implementation summary
+- [CACHE_AND_BUFFER_ARCHITECTURE.md](core/CACHE_AND_BUFFER_ARCHITECTURE.md) - Cache/buffer architecture (current + target)
 
 ---
 
@@ -376,35 +379,37 @@ Core architecture documents:
 1. **Essential Reading** (Must Read First)
    - [../../MGA_RULES.md](../../MGA_RULES.md) - **CRITICAL** - MGA architecture rules
    - [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation requirements
-   - [EMULATED_DATABASE_PARSER_SPECIFICATION.md](EMULATED_DATABASE_PARSER_SPECIFICATION.md) - Parser architecture
+   - [EMULATED_DATABASE_PARSER_SPECIFICATION.md](parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md) - Parser architecture
 
 2. **Core Engine** (Read in Order)
-   - [TRANSACTION_MAIN.md](TRANSACTION_MAIN.md) → [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md)
-   - [STORAGE_ENGINE_MAIN.md](STORAGE_ENGINE_MAIN.md) → [STORAGE_ENGINE_BUFFER_POOL.md](STORAGE_ENGINE_BUFFER_POOL.md)
-   - [INDEX_ARCHITECTURE.md](INDEX_ARCHITECTURE.md) → [INDEX_IMPLEMENTATION_GUIDE.md](INDEX_IMPLEMENTATION_GUIDE.md)
+   - [TRANSACTION_MAIN.md](transaction/TRANSACTION_MAIN.md) → [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+   - [STORAGE_ENGINE_MAIN.md](storage/STORAGE_ENGINE_MAIN.md) → [STORAGE_ENGINE_BUFFER_POOL.md](storage/STORAGE_ENGINE_BUFFER_POOL.md)
+   - [INDEX_ARCHITECTURE.md](indexes/INDEX_ARCHITECTURE.md) → [INDEX_IMPLEMENTATION_GUIDE.md](indexes/INDEX_IMPLEMENTATION_GUIDE.md)
 
 3. **SQL Layer** (Read in Order)
-   - [SCRATCHBIRD_SQL_COMPLETE_BNF.md](SCRATCHBIRD_SQL_COMPLETE_BNF.md)
-   - [02_DDL_STATEMENTS_OVERVIEW.md](02_DDL_STATEMENTS_OVERVIEW.md)
-   - [04_DML_STATEMENTS_OVERVIEW.md](04_DML_STATEMENTS_OVERVIEW.md)
-   - [QUERY_OPTIMIZER_SPEC.md](QUERY_OPTIMIZER_SPEC.md)
+   - [SCRATCHBIRD_SQL_COMPLETE_BNF.md](parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md)
+   - [02_DDL_STATEMENTS_OVERVIEW.md](ddl/02_DDL_STATEMENTS_OVERVIEW.md)
+   - [04_DML_STATEMENTS_OVERVIEW.md](dml/04_DML_STATEMENTS_OVERVIEW.md)
+   - [QUERY_OPTIMIZER_SPEC.md](query/QUERY_OPTIMIZER_SPEC.md)
+   - [PARALLEL_EXECUTION_ARCHITECTURE.md](query/PARALLEL_EXECUTION_ARCHITECTURE.md)
 
 ### For Security Reviewers
 
-1. [security/00_SECURITY_SPEC_INDEX.md](security/00_SECURITY_SPEC_INDEX.md) - Start here
-2. [security/01_SECURITY_ARCHITECTURE.md](security/01_SECURITY_ARCHITECTURE.md) - Architecture
-3. [security/02_IDENTITY_AUTHENTICATION.md](security/02_IDENTITY_AUTHENTICATION.md) - Authentication
-4. [security/03_AUTHORIZATION_MODEL.md](security/03_AUTHORIZATION_MODEL.md) - Authorization
-5. [security/04_ENCRYPTION_KEY_MANAGEMENT.md](security/04_ENCRYPTION_KEY_MANAGEMENT.md) - Encryption
-6. [security/08_AUDIT_COMPLIANCE.md](security/08_AUDIT_COMPLIANCE.md) - Audit
+1. [security/00_SECURITY_SPEC_INDEX.md](Security%20Design%20Specification/00_SECURITY_SPEC_INDEX.md) - Start here
+2. [security/01_SECURITY_ARCHITECTURE.md](Security%20Design%20Specification/01_SECURITY_ARCHITECTURE.md) - Architecture
+3. [security/02_IDENTITY_AUTHENTICATION.md](Security%20Design%20Specification/02_IDENTITY_AUTHENTICATION.md) - Authentication
+4. [security/03_AUTHORIZATION_MODEL.md](Security%20Design%20Specification/03_AUTHORIZATION_MODEL.md) - Authorization
+5. [security/04_ENCRYPTION_KEY_MANAGEMENT.md](Security%20Design%20Specification/04_ENCRYPTION_KEY_MANAGEMENT.md) - Encryption
+6. [security/08_AUDIT_COMPLIANCE.md](Security%20Design%20Specification/08_AUDIT_COMPLIANCE.md) - Audit
 
 ### For Cluster/Distributed Architects
 
-1. [cluster/SBCLUSTER-SUMMARY.md](cluster/SBCLUSTER-SUMMARY.md) - Executive summary
-2. [cluster/SBCLUSTER-00-GUIDING-PRINCIPLES.md](cluster/SBCLUSTER-00-GUIDING-PRINCIPLES.md) - Principles
-3. [cluster/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md](cluster/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) - CCE & Raft
-4. [cluster/SBCLUSTER-05-SHARDING.md](cluster/SBCLUSTER-05-SHARDING.md) - Sharding
-5. [cluster/SBCLUSTER-07-REPLICATION.md](cluster/SBCLUSTER-07-REPLICATION.md) - Replication
+1. [cluster/SBCLUSTER-SUMMARY.md](Cluster%20Specification%20Work/SBCLUSTER-SUMMARY.md) - Executive summary
+2. [cluster/SBCLUSTER-00-GUIDING-PRINCIPLES.md](Cluster%20Specification%20Work/SBCLUSTER-00-GUIDING-PRINCIPLES.md) - Principles
+3. [cluster/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md](Cluster%20Specification%20Work/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) - CCE & Raft
+4. [cluster/SBCLUSTER-05-SHARDING.md](Cluster%20Specification%20Work/SBCLUSTER-05-SHARDING.md) - Sharding
+5. [cluster/SBCLUSTER-07-REPLICATION.md](Cluster%20Specification%20Work/SBCLUSTER-07-REPLICATION.md) - Replication
+6. [PARALLEL_EXECUTION_ARCHITECTURE.md](query/PARALLEL_EXECUTION_ARCHITECTURE.md) - Parallel execution model (Beta)
 
 ---
 

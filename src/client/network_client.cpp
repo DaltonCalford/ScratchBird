@@ -48,7 +48,19 @@ core::Status mapQueryError(const protocol::Message& response,
     if (!detail.empty()) {
         message += " (" + detail + ")";
     }
-    return static_cast<core::Status>(error_code);
+    auto status = static_cast<core::Status>(error_code);
+    if (ctx) {
+        ctx->code = status;
+        ctx->message = message;
+        if (!sqlstate.empty()) {
+            ctx->setSQLState(sqlstate.c_str());
+        } else {
+            ctx->sqlstate = core::statusToSQLState(status);
+            ctx->sqlstate_text.clear();
+        }
+        ctx->hint = hint;
+    }
+    return status;
 }
 
 std::string normalizeUsername(const std::string& username) {
@@ -296,68 +308,133 @@ void NetworkPreparedStatement::clearParameters() {
     for (auto& param : params_) {
         param = protocol::ProtocolCodec::ColumnValue(nullptr);
     }
+    for (auto& type : param_types_) {
+        type = protocol::WireType::UNKNOWN;
+    }
 }
 
 void NetworkPreparedStatement::setNull(size_t index) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue(nullptr);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::NULL_TYPE;
+    }
+}
+
+void NetworkPreparedStatement::setNull(size_t index, protocol::WireType type) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue(nullptr);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = type;
+    }
 }
 
 void NetworkPreparedStatement::setBool(size_t index, bool value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBool(value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::BOOLEAN;
+    }
 }
 
 void NetworkPreparedStatement::setInt16(size_t index, int16_t value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt32(value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::INT16;
+    }
 }
 
 void NetworkPreparedStatement::setInt32(size_t index, int32_t value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt32(value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::INT32;
+    }
 }
 
 void NetworkPreparedStatement::setInt64(size_t index, int64_t value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromInt64(value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::INT64;
+    }
 }
 
 void NetworkPreparedStatement::setFloat(size_t index, float value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromDouble(value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::FLOAT32;
+    }
 }
 
 void NetworkPreparedStatement::setDouble(size_t index, double value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromDouble(value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::FLOAT64;
+    }
 }
 
 void NetworkPreparedStatement::setString(size_t index, const std::string& value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromString(value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::VARCHAR;
+    }
 }
 
 void NetworkPreparedStatement::setBytes(size_t index, const std::vector<uint8_t>& value) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(value.data(), value.size());
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::BYTEA;
+    }
 }
 
 void NetworkPreparedStatement::setBytes(size_t index, const uint8_t* data, size_t length) {
     if (index == 0 || index > params_.size()) return;
     params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(data, length);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::BYTEA;
+    }
 }
 
 void NetworkPreparedStatement::setTimestamp(size_t index, int64_t microseconds) {
     setInt64(index, microseconds);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::TIMESTAMP;
+    }
 }
 
 void NetworkPreparedStatement::setDate(size_t index, int32_t days) {
     setInt32(index, days);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::DATE;
+    }
 }
 
 void NetworkPreparedStatement::setTime(size_t index, int64_t microseconds) {
     setInt64(index, microseconds);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::TIME;
+    }
+}
+
+void NetworkPreparedStatement::setUUID(size_t index, const std::vector<uint8_t>& value) {
+    if (index == 0 || index > params_.size()) return;
+    params_[index - 1] = protocol::ProtocolCodec::ColumnValue::fromBytes(value.data(), value.size());
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::UUID;
+    }
+}
+
+void NetworkPreparedStatement::setUUID(size_t index, const std::string& value) {
+    setString(index, value);
+    if (index <= param_types_.size()) {
+        param_types_[index - 1] = protocol::WireType::UUID;
+    }
 }
 
 void applyDriverDefaultsFromEnv(NetworkClientConfig& config) {
@@ -757,7 +834,8 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
         return status;
     }
 
-    const uint32_t kCopyWindow = 65536;
+    const uint32_t copy_window = config_.copy_window_bytes == 0 ? 65536 : config_.copy_window_bytes;
+    const uint32_t copy_chunk = config_.copy_chunk_bytes == 0 ? 16384 : config_.copy_chunk_bytes;
 
     auto handle_copy_out = [&]() -> core::Status {
         std::ostream* out = copy_output_stream_ ? copy_output_stream_ : &std::cout;
@@ -775,7 +853,7 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
             switch (response.getType()) {
                 case protocol::MessageType::STREAM_READY: {
                     stream_ready = true;
-                    window = kCopyWindow;
+                    window = copy_window;
                     auto ctrl = protocol::ProtocolCodec::buildStreamControl(
                         protocol::StreamControlType::START, window, 0);
                     status = sendMessage(ctrl, ctx);
@@ -805,7 +883,7 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
                         }
                     }
                     if (stream_ready && window == 0) {
-                        window = kCopyWindow;
+                        window = copy_window;
                         auto ctrl = protocol::ProtocolCodec::buildStreamControl(
                             protocol::StreamControlType::ACK, window, 0);
                         status = sendMessage(ctrl, ctx);
@@ -844,6 +922,7 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
         std::istream* in = copy_input_stream_ ? copy_input_stream_ : &std::cin;
         uint32_t window = 0;
         bool done = false;
+        bool stream_started = false;
 
         while (!done) {
             if (window == 0) {
@@ -856,6 +935,17 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
 
                 switch (response.getType()) {
                     case protocol::MessageType::STREAM_READY:
+                        if (!stream_started) {
+                            window = copy_window;
+                            auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                                protocol::StreamControlType::START, window, 0);
+                            status = sendMessage(ctrl, ctx);
+                            if (status != core::Status::OK) {
+                                last_error_ = "Failed to send STREAM_CONTROL START";
+                                return status;
+                            }
+                            stream_started = true;
+                        }
                         break;
                     case protocol::MessageType::STREAM_CONTROL: {
                         protocol::StreamControlType control;
@@ -898,7 +988,7 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
                 }
             }
 
-            size_t to_read = std::min<size_t>(window, 16384);
+            size_t to_read = std::min<size_t>(window, copy_chunk);
             std::string buffer(to_read, '\0');
             in->read(buffer.data(), static_cast<std::streamsize>(to_read));
             std::streamsize got = in->gcount();
@@ -1028,6 +1118,7 @@ core::Status NetworkClient::prepare(const std::string& sql,
     stmt.sql_ = sql;
     stmt.param_count_ = countParameters(sql);
     stmt.params_.assign(stmt.param_count_, protocol::ProtocolCodec::ColumnValue(nullptr));
+    stmt.param_types_.assign(stmt.param_count_, protocol::WireType::UNKNOWN);
     stmt.valid_ = true;
     return core::Status::OK;
 }
@@ -1040,7 +1131,7 @@ core::Status NetworkClient::executePrepared(NetworkPreparedStatement& stmt,
         return core::Status::INVALID_ARGUMENT;
     }
 
-    std::string sql = substituteParameters(stmt.sql_, stmt.params_);
+    std::string sql = substituteParameters(stmt.sql_, stmt.params_, stmt.param_types_);
     return executeQuery(sql, results, ctx);
 }
 

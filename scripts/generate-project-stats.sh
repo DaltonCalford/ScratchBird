@@ -88,18 +88,37 @@ PLANNING_FILES=$(find docs/planning/ -type f -name "*.md" 2>/dev/null | wc -l ||
 log_info "Collecting Beta requirements statistics..."
 
 # Beta requirements statistics
-BETA_DIRS=$(find docs/specifications/beta_requirements/ -mindepth 1 -type d 2>/dev/null | wc -l || echo 0)
+BETA_ROOT="docs/specifications/beta_requirements"
+BETA_DIRS=$(find "$BETA_ROOT" -mindepth 1 -type d ! -path "*/archive/*" 2>/dev/null | wc -l || echo 0)
 
-# Count P0/P1/P2 items (search for priority markers in README files)
-# Search in all README.md files recursively
-P0_COUNT=$(find docs/specifications/beta_requirements/ -name "README.md" -exec grep -l "Priority.*P0" {} \; 2>/dev/null | wc -l | tr -d ' \n')
-P1_COUNT=$(find docs/specifications/beta_requirements/ -name "README.md" -exec grep -l "Priority.*P1" {} \; 2>/dev/null | wc -l | tr -d ' \n')
-P2_COUNT=$(find docs/specifications/beta_requirements/ -name "README.md" -exec grep -l "Priority.*P2" {} \; 2>/dev/null | wc -l | tr -d ' \n')
+P0_COUNT=0
+P1_COUNT=0
+P2_COUNT=0
+UNSPEC_COUNT=0
+TOTAL_BETA_ITEMS=0
+DRIVER_TOTAL=0
+P0_DRIVER_COUNT=0
 
-# Ensure they're valid integers
-P0_COUNT=${P0_COUNT:-0}
-P1_COUNT=${P1_COUNT:-0}
-P2_COUNT=${P2_COUNT:-0}
+while IFS= read -r -d '' readme; do
+    if [ "$readme" = "$BETA_ROOT/README.md" ]; then
+        continue
+    fi
+    ((TOTAL_BETA_ITEMS++)) || true
+    if grep -q "Priority.*P0" "$readme"; then
+        ((P0_COUNT++)) || true
+    elif grep -q "Priority.*P1" "$readme"; then
+        ((P1_COUNT++)) || true
+    elif grep -q "Priority.*P2" "$readme"; then
+        ((P2_COUNT++)) || true
+    else
+        ((UNSPEC_COUNT++)) || true
+    fi
+done < <(find "$BETA_ROOT" -name "README.md" ! -path "*/archive/*" -print0 2>/dev/null)
+
+if [ -d "$BETA_ROOT/drivers" ]; then
+    DRIVER_TOTAL=$(find "$BETA_ROOT/drivers" -name "README.md" ! -path "*/archive/*" ! -path "$BETA_ROOT/drivers/README.md" 2>/dev/null | wc -l || echo 0)
+    P0_DRIVER_COUNT=$(find "$BETA_ROOT/drivers" -name "README.md" ! -path "*/archive/*" ! -path "$BETA_ROOT/drivers/README.md" -exec grep -l "Priority.*P0" {} \; 2>/dev/null | wc -l || echo 0)
+fi
 
 log_info "Collecting test statistics..."
 
@@ -256,16 +275,17 @@ EOF
 
 | Category | Count |
 |----------|-------|
-| **Total Specifications** | $BETA_DIRS directories |
+| **Total Items** | $TOTAL_BETA_ITEMS items |
+| **Categories** | $BETA_DIRS directories |
 | **P0 (Critical)** | $P0_COUNT items |
 | **P1 (High)** | $P1_COUNT items |
 | **P2 (Medium)** | $P2_COUNT items |
+| **Unspecified** | $UNSPEC_COUNT items |
 
 ### Priority Breakdown
 EOF
 
-    # Calculate completion percentages (estimated based on file presence)
-    TOTAL_REQUIREMENTS=$((P0_COUNT + P1_COUNT + P2_COUNT))
+    TOTAL_REQUIREMENTS=$TOTAL_BETA_ITEMS
 
     if [ $TOTAL_REQUIREMENTS -gt 0 ]; then
         cat >> "$OUTPUT_FILE" << EOF
@@ -274,16 +294,11 @@ EOF
 | P0 (Critical - Beta Required) | $P0_COUNT | $(( P0_COUNT * 100 / TOTAL_REQUIREMENTS ))% |
 | P1 (High - Post-Beta) | $P1_COUNT | $(( P1_COUNT * 100 / TOTAL_REQUIREMENTS ))% |
 | P2 (Medium - Future) | $P2_COUNT | $(( P2_COUNT * 100 / TOTAL_REQUIREMENTS ))% |
+| Unspecified | $UNSPEC_COUNT | $(( UNSPEC_COUNT * 100 / TOTAL_REQUIREMENTS ))% |
 | **Total** | **$TOTAL_REQUIREMENTS** | **100%** |
 
 ### P0 Drivers (Beta Critical)
-- Python ✅ Specified
-- Node.js/TypeScript ✅ Specified
-- Java (JDBC) ✅ Specified
-- C#/.NET ✅ Specified
-- Go ✅ Specified
-- PHP ✅ Specified
-- Pascal/Delphi ✅ Specified (Firebird migration strategy)
+See \`docs/specifications/beta_requirements/COMPLETION_STATUS.md\` for the authoritative driver list.
 
 EOF
     fi
@@ -348,7 +363,8 @@ ScratchBird/
 
 **Beta Readiness:**
 - P0 Requirements: **$P0_COUNT** items identified
-- Driver Specs: **7/7** P0 drivers specified ✅
+- Unspecified Requirements: **$UNSPEC_COUNT** items
+- Driver Specs: **$P0_DRIVER_COUNT/$DRIVER_TOTAL** P0 drivers specified ✅
 - Wiki Infrastructure: **100%** complete ✅
 
 **Development Velocity:**
@@ -402,10 +418,14 @@ elif [ "$OUTPUT_FORMAT" = "json" ]; then
   },
   "beta_requirements": {
     "total_directories": $BETA_DIRS,
+    "total_items": $TOTAL_BETA_ITEMS,
     "p0_items": $P0_COUNT,
     "p1_items": $P1_COUNT,
     "p2_items": $P2_COUNT,
-    "total_requirements": $((P0_COUNT + P1_COUNT + P2_COUNT))
+    "unspecified_items": $UNSPEC_COUNT,
+    "total_requirements": $TOTAL_BETA_ITEMS,
+    "driver_total": $DRIVER_TOTAL,
+    "p0_driver_items": $P0_DRIVER_COUNT
   },
   "repository": {
     "total_commits": $TOTAL_COMMITS,
@@ -433,6 +453,6 @@ if [ "$OUTPUT_FORMAT" = "md" ]; then
     echo "  Tests:        $((UNIT_TESTS + INTEGRATION_TESTS + BENCHMARK_TESTS)) total tests"
     echo "  Docs:         $MD_FILES markdown files"
     echo "  Wiki:         $WIKI_PAGES / 67 pages ($(( WIKI_PAGES * 100 / 67 ))%)"
-    echo "  Beta Reqs:    $P0_COUNT P0, $P1_COUNT P1, $P2_COUNT P2"
+    echo "  Beta Reqs:    $P0_COUNT P0, $P1_COUNT P1, $P2_COUNT P2, $UNSPEC_COUNT unspecified"
     echo "  Commits:      $TOTAL_COMMITS total, $COMMITS_30D (30d)"
 fi

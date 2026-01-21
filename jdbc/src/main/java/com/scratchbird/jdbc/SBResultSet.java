@@ -189,16 +189,16 @@ public class SBResultSet implements ResultSet {
     }
 
     @Override
-    public Date getDate(int columnIndex) throws SQLException {
+    public java.sql.Date getDate(int columnIndex) throws SQLException {
         Object value = getObject(columnIndex);
         if (value == null) return null;
-        if (value instanceof Date) return (Date) value;
-        if (value instanceof java.util.Date) return new Date(((java.util.Date) value).getTime());
-        return Date.valueOf(value.toString());
+        if (value instanceof java.sql.Date) return (java.sql.Date) value;
+        if (value instanceof java.util.Date) return new java.sql.Date(((java.util.Date) value).getTime());
+        return java.sql.Date.valueOf(value.toString());
     }
 
     @Override
-    public Date getDate(int columnIndex, Calendar cal) throws SQLException {
+    public java.sql.Date getDate(int columnIndex, Calendar cal) throws SQLException {
         // TODO: Apply calendar timezone
         return getDate(columnIndex);
     }
@@ -329,12 +329,12 @@ public class SBResultSet implements ResultSet {
     }
 
     @Override
-    public Date getDate(String columnLabel) throws SQLException {
+    public java.sql.Date getDate(String columnLabel) throws SQLException {
         return getDate(findColumn(columnLabel));
     }
 
     @Override
-    public Date getDate(String columnLabel, Calendar cal) throws SQLException {
+    public java.sql.Date getDate(String columnLabel, Calendar cal) throws SQLException {
         return getDate(findColumn(columnLabel), cal);
     }
 
@@ -431,7 +431,7 @@ public class SBResultSet implements ResultSet {
             return type.cast(getBoolean(columnIndex));
         } else if (type == BigDecimal.class) {
             return type.cast(getBigDecimal(columnIndex));
-        } else if (type == Date.class) {
+        } else if (type == java.sql.Date.class) {
             return type.cast(getDate(columnIndex));
         } else if (type == Time.class) {
             return type.cast(getTime(columnIndex));
@@ -691,7 +691,7 @@ public class SBResultSet implements ResultSet {
     }
 
     @Override
-    public void updateDate(int columnIndex, Date x) throws SQLException {
+    public void updateDate(int columnIndex, java.sql.Date x) throws SQLException {
         throw new SQLFeatureNotSupportedException("Result set is read-only");
     }
 
@@ -787,7 +787,7 @@ public class SBResultSet implements ResultSet {
     }
 
     @Override
-    public void updateDate(String columnLabel, Date x) throws SQLException {
+    public void updateDate(String columnLabel, java.sql.Date x) throws SQLException {
         updateDate(findColumn(columnLabel), x);
     }
 

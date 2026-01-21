@@ -65,13 +65,14 @@ Automatic out-of-line storage for large values:
 - [Index System](../indexes/) - Index storage structures
 - [Compression](../compression/) - Compression framework
 - [Types System](../types/) - Data type storage requirements
+- [Cache/Buffer Architecture](../core/CACHE_AND_BUFFER_ARCHITECTURE.md) - Cross-layer cache design
 
 ## Critical Reading
 
 Before working on storage implementation:
 
-1. **MUST READ:** [../../MGA_RULES.md](../../MGA_RULES.md) - Absolute MGA architecture rules
-2. **MUST READ:** [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
+1. **MUST READ:** [../../../MGA_RULES.md](../../../MGA_RULES.md) - Absolute MGA architecture rules
+2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ FIRST:** [STORAGE_ENGINE_MAIN.md](STORAGE_ENGINE_MAIN.md) - Core storage architecture
 4. **READ NEXT:** [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md) - MGA implementation details
 

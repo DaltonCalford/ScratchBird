@@ -93,6 +93,25 @@ std::string getIPCPath(const std::string& database_name, IPCMethod method) {
             std::filesystem::path base = std::filesystem::path("build") / "ipc";
             std::error_code ec;
             std::filesystem::create_directories(base, ec);
+#ifndef _WIN32
+            if (ec || ::access(base.c_str(), W_OK) != 0) {
+                std::filesystem::path fallback = std::filesystem::path("build") / "ipc_user";
+                std::error_code fallback_ec;
+                std::filesystem::create_directories(fallback, fallback_ec);
+                if (!fallback_ec) {
+                    base = fallback;
+                }
+            }
+#else
+            if (ec) {
+                std::filesystem::path fallback = std::filesystem::path("build") / "ipc_user";
+                std::error_code fallback_ec;
+                std::filesystem::create_directories(fallback, fallback_ec);
+                if (!fallback_ec) {
+                    base = fallback;
+                }
+            }
+#endif
             auto path = base / ("scratchbird-" + safe_name + ".sock");
             return path.string();
         }
@@ -110,6 +129,25 @@ std::string getIPCPath(const std::string& database_name, IPCMethod method) {
             std::filesystem::path base = std::filesystem::path("build") / "ipc";
             std::error_code ec;
             std::filesystem::create_directories(base, ec);
+#ifndef _WIN32
+            if (ec || ::access(base.c_str(), W_OK) != 0) {
+                std::filesystem::path fallback = std::filesystem::path("build") / "ipc_user";
+                std::error_code fallback_ec;
+                std::filesystem::create_directories(fallback, fallback_ec);
+                if (!fallback_ec) {
+                    base = fallback;
+                }
+            }
+#else
+            if (ec) {
+                std::filesystem::path fallback = std::filesystem::path("build") / "ipc_user";
+                std::error_code fallback_ec;
+                std::filesystem::create_directories(fallback, fallback_ec);
+                if (!fallback_ec) {
+                    base = fallback;
+                }
+            }
+#endif
             auto path = base / ("scratchbird-" + safe_name + ".sock");
             return path.string();
     }
@@ -142,6 +180,45 @@ std::string getPIDFilePath(const std::string& database_name) {
     auto path = base / ("scratchbird-" + safe_name + ".pid");
     return path.string();
 #endif
+}
+
+bool looksLikeTcpEndpoint(const std::string& endpoint) {
+    if (endpoint.empty()) {
+        return false;
+    }
+    if (endpoint.find('/') != std::string::npos || endpoint.find('\\') != std::string::npos) {
+        return false;
+    }
+    auto colon = endpoint.rfind(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 >= endpoint.size()) {
+        return false;
+    }
+    for (size_t i = colon + 1; i < endpoint.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(endpoint[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool parseTcpEndpointPort(const std::string& endpoint, uint16_t& port_out) {
+    if (!looksLikeTcpEndpoint(endpoint)) {
+        return false;
+    }
+    auto colon = endpoint.rfind(':');
+    if (colon == std::string::npos || colon + 1 >= endpoint.size()) {
+        return false;
+    }
+    try {
+        unsigned long port = std::stoul(endpoint.substr(colon + 1));
+        if (port == 0 || port > 65535) {
+            return false;
+        }
+        port_out = static_cast<uint16_t>(port);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 // ============================================================================
@@ -246,26 +323,36 @@ IPCMethod stringToIPCMethod(const std::string& str) {
 
 std::unique_ptr<IPCServer> IPCServer::create(const IPCServerConfig& config,
                                               core::ErrorContext* ctx) {
-    IPCMethod method = config.method;
+    IPCServerConfig resolved = config;
+    IPCMethod method = resolved.method;
 
     // Resolve AUTO to platform default
     if (method == IPCMethod::AUTO) {
         method = getDefaultIPCMethod();
+        if (looksLikeTcpEndpoint(resolved.socket_path)) {
+            method = IPCMethod::TCP_LOCALHOST;
+        }
+    }
+    if (method == IPCMethod::TCP_LOCALHOST) {
+        uint16_t port = 0;
+        if (parseTcpEndpointPort(resolved.socket_path, port)) {
+            resolved.tcp_port = port;
+        }
     }
 
     switch (method) {
 #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
         case IPCMethod::UNIX_SOCKET:
-            return createUnixSocketServer(config, ctx);
+            return createUnixSocketServer(resolved, ctx);
 #endif
 
 #ifdef _WIN32
         case IPCMethod::NAMED_PIPE:
-            return createNamedPipeServer(config, ctx);
+            return createNamedPipeServer(resolved, ctx);
 #endif
 
         case IPCMethod::TCP_LOCALHOST:
-            return createTCPServer(config, ctx);
+            return createTCPServer(resolved, ctx);
 
         default:
             // Unsupported method on this platform
@@ -280,26 +367,36 @@ std::unique_ptr<IPCServer> IPCServer::create(const IPCServerConfig& config,
 
 std::unique_ptr<IPCClient> IPCClient::create(const IPCClientConfig& config,
                                               core::ErrorContext* ctx) {
-    IPCMethod method = config.method;
+    IPCClientConfig resolved = config;
+    IPCMethod method = resolved.method;
 
     // Resolve AUTO to platform default
     if (method == IPCMethod::AUTO) {
         method = getDefaultIPCMethod();
+        if (looksLikeTcpEndpoint(resolved.socket_path)) {
+            method = IPCMethod::TCP_LOCALHOST;
+        }
+    }
+    if (method == IPCMethod::TCP_LOCALHOST) {
+        uint16_t port = 0;
+        if (parseTcpEndpointPort(resolved.socket_path, port)) {
+            resolved.tcp_port = port;
+        }
     }
 
     switch (method) {
 #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
         case IPCMethod::UNIX_SOCKET:
-            return createUnixSocketClient(config, ctx);
+            return createUnixSocketClient(resolved, ctx);
 #endif
 
 #ifdef _WIN32
         case IPCMethod::NAMED_PIPE:
-            return createNamedPipeClient(config, ctx);
+            return createNamedPipeClient(resolved, ctx);
 #endif
 
         case IPCMethod::TCP_LOCALHOST:
-            return createTCPClient(config, ctx);
+            return createTCPClient(resolved, ctx);
 
         default:
             SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
@@ -307,7 +404,7 @@ std::unique_ptr<IPCClient> IPCClient::create(const IPCClientConfig& config,
                                std::string(ipcMethodToString(method))).c_str());
 
             // Fall back to TCP
-            return createTCPClient(config, ctx);
+            return createTCPClient(resolved, ctx);
     }
 }
 

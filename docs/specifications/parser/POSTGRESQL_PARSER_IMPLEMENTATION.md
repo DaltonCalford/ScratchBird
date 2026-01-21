@@ -596,7 +596,7 @@ TEST(PostgreSQLParser, VersionCompatibility) {
 External parsers must handle character set conversion between client and database:
 
 **References**:
-- [character_sets_and_collations.md](character_sets_and_collations.md) - Character set and collation system
+- [character_sets_and_collations.md](../types/character_sets_and_collations.md) - Character set and collation system
 - Character set specification at connection, table, and column levels
 - UTF-8 as default for all system objects
 - Collation-aware string operations
@@ -617,7 +617,7 @@ auto converted = charset_manager.convert(
 External parsers must handle timezone-aware timestamp operations:
 
 **References**:
-- [TIMEZONE_SYSTEM_CATALOG.md](TIMEZONE_SYSTEM_CATALOG.md) - Complete timezone specification
+- [TIMEZONE_SYSTEM_CATALOG.md](../types/TIMEZONE_SYSTEM_CATALOG.md) - Complete timezone specification
 - `pg_timezone` system catalog table
 - `TIMESTAMP WITH TIME ZONE` type support
 - `AT TIME ZONE` operator

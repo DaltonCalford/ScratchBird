@@ -120,7 +120,7 @@ This specification is split into multiple files for maintainability:
 
 ## Integration with UDR System
 
-This plugin implements the UDR interfaces defined in [10-UDR-System-Specification.md](../10-UDR-System-Specification.md):
+This plugin implements the UDR interfaces defined in [10-UDR-System-Specification.md](../udr/10-UDR-System-Specification.md):
 
 ```cpp
 // Plugin module entry point
@@ -182,10 +182,10 @@ LIMIT 10000;
 
 ## Related Specifications
 
-- [10-UDR-System-Specification.md](../10-UDR-System-Specification.md) - UDR plugin interfaces
-- [CONNECTION_POOLING_SPECIFICATION.md](../CONNECTION_POOLING_SPECIFICATION.md) - Local connection pooling (reference architecture)
+- [10-UDR-System-Specification.md](../udr/10-UDR-System-Specification.md) - UDR plugin interfaces
+- [CONNECTION_POOLING_SPECIFICATION.md](../api/CONNECTION_POOLING_SPECIFICATION.md) - Local connection pooling (reference architecture)
 - [wire_protocols/](../wire_protocols/) - Wire protocol specifications for each database type
-- [SECURITY_SYSTEM_SPECIFICATION.md](../SECURITY_SYSTEM_SPECIFICATION.md) - Security and authentication
+- [00_SECURITY_SPEC_INDEX.md](../Security%20Design%20Specification/00_SECURITY_SPEC_INDEX.md) - Security and authentication
 
 ---
 
