@@ -4,6 +4,7 @@
 Implement full tablespace functionality per Alpha decisions and close all gaps listed in:
 - `ScratchBird/docs/findings/TABLESPACE_DECISIONS_AND_SCOPE.md`
 - `ScratchBird/docs/findings/TABLESPACE_IMPLEMENTATION_AUDIT.md`
+- `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS.md`
 
 ## Guiding Decisions (Locked)
 - IDs: 0 = primary, 1 = reserved (future), 2..65535 = custom.
@@ -87,6 +88,14 @@ Acceptance: V2 can execute tablespace DDL; emulated parsers reject per parity.
 - Files: `ScratchBird/src/core/btree.cpp`, `ScratchBird/src/core/bitmap_index.cpp`,
   `ScratchBird/src/core/gin_index.cpp`
 
+**TS-P3-04** Implement index TID updates for all non-BTree/Hash types used in migrations.
+- Scope: Vector/HNSW, Full-text, GIN, GiST, SP-GiST, BRIN, R-tree
+- Files: `ScratchBird/src/core/catalog_manager.cpp`,
+  index implementations under `ScratchBird/src/core/`
+
+**TS-P3-05** Fix GiST index cache cleanup (remove deliberate leak once types are fully integrated).
+- Files: `ScratchBird/src/sblr/index_cache.cpp`
+
 Acceptance: standard DML works on tables outside primary tablespace.
 
 ## Phase 4: Startup + Recovery + Attach
@@ -120,3 +129,6 @@ Acceptance: test suite covers core tablespace flows and failure modes.
 - ScratchBird is currently treated as read-only in this workspace; code work should start
   after explicit approval to modify the engine.
 - Root_gpid change affects on-disk format; bump version and ensure no silent mixing.
+
+## Recent Progress
+- 2026-01-21: No tablespace-specific phase items completed in this update; validation runs are green with `SCRATCHBIRD_TEST_NETWORK=1`.

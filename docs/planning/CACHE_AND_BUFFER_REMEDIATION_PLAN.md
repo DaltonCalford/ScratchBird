@@ -102,3 +102,6 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 ## Dependencies / Notes
 - ScratchBird code is read-only in this workspace; this plan is a roadmap for implementation.
 - See `ScratchBird/docs/findings/CACHE_AND_BUFFER_IMPLEMENTATION_REVIEW.md` for code-truth references.
+
+## Recent Progress
+- 2026-01-21: No cache/buffer phase items completed in this update; full `ctest` run remains green.
