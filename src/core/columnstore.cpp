@@ -65,10 +65,10 @@ Status ColumnstoreIndex::create(Database *db,
                                 const std::vector<UuidV7Bytes> &column_uuids,
                                 uint32_t segment_size,
                                 CompressionType compression,
-                                uint32_t *root_page_out,
+                                GPID root_gpid,
                                 ErrorContext *ctx)
 {
-    if (!db)
+    if (!db || root_gpid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database is null");
         return Status::INVALID_ARGUMENT;
@@ -81,22 +81,51 @@ Status ColumnstoreIndex::create(Database *db,
     }
 
     // Phase 7: Create metadata page (page 0) to store configuration
-    uint32_t metadata_page = 0;
     Status status = createMetadataPage(db, index_uuid, table_uuid, column_uuids,
-                                      segment_size, compression, &metadata_page, ctx);
+                                      segment_size, compression, root_gpid, ctx);
     if (status != Status::OK)
         return status;
-
-    // Metadata page serves as the root page
-    if (root_page_out)
-        *root_page_out = metadata_page;
 
     return Status::OK;
 }
 
+Status ColumnstoreIndex::create(Database *db,
+                                const UuidV7Bytes &index_uuid,
+                                const UuidV7Bytes &table_uuid,
+                                const std::vector<UuidV7Bytes> &column_uuids,
+                                uint32_t segment_size,
+                                CompressionType compression,
+                                uint32_t *root_page_out,
+                                ErrorContext *ctx)
+{
+    if (!db || !root_page_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to ColumnstoreIndex::create");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    PageManager *page_mgr = db->page_manager();
+    if (!page_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    GPID root_gpid = 0;
+    Status status = page_mgr->allocatePageInTablespace(0, &root_gpid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    *root_page_out = static_cast<uint32_t>(getPageNumber(root_gpid));
+    return create(db, index_uuid, table_uuid, column_uuids,
+                  segment_size, compression, root_gpid, ctx);
+}
+
 std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
                                                          const UuidV7Bytes &index_uuid,
-                                                         uint32_t root_page,
+                                                         GPID root_gpid,
                                                          uint32_t segment_size,
                                                          ErrorContext *ctx)
 {
@@ -106,14 +135,15 @@ std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
     // Phase 7: Read metadata from page 0
     SBColumnstoreIndex index_info;
     std::memcpy(&index_info.idx_uuid, &index_uuid, sizeof(ID));
-    index_info.idx_root_page = root_page;
+    index_info.idx_root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    index_info.idx_tablespace_id = getTablespaceID(root_gpid);
 
     auto index = std::make_unique<ColumnstoreIndex>(db, index_info);
 
     // Try to read metadata from page 0
-    if (root_page != 0)
+    if (index_info.idx_root_page != 0)
     {
-        Status status = index->readMetadataPage(root_page, ctx);
+        Status status = index->readMetadataPage(index_info.idx_root_page, ctx);
         if (status != Status::OK)
         {
             // Fall back to parameters if metadata page doesn't exist or can't be read
@@ -133,6 +163,21 @@ std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
     }
 
     return index;
+}
+
+GPID ColumnstoreIndex::indexGPID(uint64_t page_num) const
+{
+    return makeGPID(index_info_.idx_tablespace_id, page_num);
+}
+
+Status ColumnstoreIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+{
+    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+}
+
+Status ColumnstoreIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
+{
+    return db_->buffer_pool()->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
 }
 
 // ============================================================================
@@ -232,11 +277,11 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
                 if (bp)
                 {
                     void *page_buffer = nullptr;
-                    if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                    if (pinIndexPage(current_page, &page_buffer, ctx) == Status::OK)
                     {
                         auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
                         current_page = page->cs_next_segment;
-                        bp->unpinPage(current_page, false, ctx);
+                        unpinIndexPage(current_page, false, ctx);
                     }
                     else
                     {
@@ -287,11 +332,11 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
                     if (bp)
                     {
                         void *page_buffer = nullptr;
-                        if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                        if (pinIndexPage(current_page, &page_buffer, ctx) == Status::OK)
                         {
                             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
                             current_page = page->cs_next_segment;
-                            bp->unpinPage(current_page, false, ctx);
+                            unpinIndexPage(current_page, false, ctx);
                         }
                         else
                         {
@@ -394,11 +439,11 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
             if (bp)
             {
                 void *page_buffer = nullptr;
-                if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                if (pinIndexPage(current_page, &page_buffer, ctx) == Status::OK)
                 {
                     auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
                     current_page = page->cs_next_segment;
-                    bp->unpinPage(current_page, false, ctx);
+                    unpinIndexPage(current_page, false, ctx);
                 }
                 else
                 {
@@ -541,7 +586,7 @@ Status ColumnstoreIndex::getStats(ColumnstoreStats *stats_out, ErrorContext *ctx
     {
         // Pin segment page
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page, &page_buffer, ctx);
         if (status != Status::OK)
             return status;
 
@@ -565,7 +610,7 @@ Status ColumnstoreIndex::getStats(ColumnstoreStats *stats_out, ErrorContext *ctx
 
         // Move to next segment
         uint32_t next_page = page->cs_next_segment;
-        buffer_pool->unpinPage(current_page, false, ctx);
+        unpinIndexPage(current_page, false, ctx);
 
         current_page = next_page;
     }
@@ -1414,6 +1459,260 @@ Status ColumnstoreIndex::decompressBitpack(const std::vector<uint8_t> &compresse
 }
 
 // ============================================================================
+// Delta Compression (Bit-packed deltas)
+// ============================================================================
+
+Status ColumnstoreIndex::compressDelta(const ColumnSegment &segment,
+                                       std::vector<uint8_t> *compressed_out,
+                                       ErrorContext *ctx)
+{
+    if (!compressed_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "compressed_out is null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (segment.row_count == 0)
+    {
+        compressed_out->clear();
+        return Status::OK;
+    }
+
+    if (segment.null_count != 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Delta compression does not support NULL values");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (segment.data_type != DataType::INT8 &&
+        segment.data_type != DataType::INT16 &&
+        segment.data_type != DataType::INT32 &&
+        segment.data_type != DataType::INT64 &&
+        segment.data_type != DataType::UINT8 &&
+        segment.data_type != DataType::UINT16 &&
+        segment.data_type != DataType::UINT32 &&
+        segment.data_type != DataType::UINT64)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Delta compression only supports integer types");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    size_t value_size = getDataTypeSize(segment.data_type);
+    if (segment.data.size() < segment.row_count * value_size)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Segment data size mismatch");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const uint8_t *data_ptr = segment.data.data();
+    std::vector<int64_t> values(segment.row_count, 0);
+
+    for (uint32_t i = 0; i < segment.row_count; ++i)
+    {
+        switch (segment.data_type)
+        {
+        case DataType::INT8:
+            values[i] = static_cast<int64_t>(*reinterpret_cast<const int8_t *>(data_ptr + i * value_size));
+            break;
+        case DataType::INT16:
+            values[i] = static_cast<int64_t>(*reinterpret_cast<const int16_t *>(data_ptr + i * value_size));
+            break;
+        case DataType::INT32:
+            values[i] = static_cast<int64_t>(*reinterpret_cast<const int32_t *>(data_ptr + i * value_size));
+            break;
+        case DataType::INT64:
+            values[i] = *reinterpret_cast<const int64_t *>(data_ptr + i * value_size);
+            break;
+        case DataType::UINT8:
+            values[i] = static_cast<int64_t>(*reinterpret_cast<const uint8_t *>(data_ptr + i * value_size));
+            break;
+        case DataType::UINT16:
+            values[i] = static_cast<int64_t>(*reinterpret_cast<const uint16_t *>(data_ptr + i * value_size));
+            break;
+        case DataType::UINT32:
+            values[i] = static_cast<int64_t>(*reinterpret_cast<const uint32_t *>(data_ptr + i * value_size));
+            break;
+        case DataType::UINT64:
+            values[i] = static_cast<int64_t>(*reinterpret_cast<const uint64_t *>(data_ptr + i * value_size));
+            break;
+        default:
+            break;
+        }
+    }
+
+    int64_t base_value = values[0];
+    if (segment.row_count == 1)
+    {
+        compressed_out->resize(sizeof(int64_t));
+        std::memcpy(compressed_out->data(), &base_value, sizeof(int64_t));
+        return Status::OK;
+    }
+
+    std::vector<int64_t> deltas;
+    deltas.reserve(segment.row_count - 1);
+    for (uint32_t i = 1; i < segment.row_count; ++i)
+    {
+        deltas.push_back(values[i] - values[i - 1]);
+    }
+
+    ColumnSegment delta_segment;
+    delta_segment.data_type = DataType::INT64;
+    delta_segment.row_count = static_cast<uint32_t>(deltas.size());
+    delta_segment.null_count = 0;
+    delta_segment.null_bitmap.clear();
+    delta_segment.data.resize(deltas.size() * sizeof(int64_t));
+    std::memcpy(delta_segment.data.data(), deltas.data(), delta_segment.data.size());
+
+    std::vector<uint8_t> delta_compressed;
+    Status status = compressBitpack(delta_segment, &delta_compressed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    compressed_out->clear();
+    compressed_out->resize(sizeof(int64_t));
+    std::memcpy(compressed_out->data(), &base_value, sizeof(int64_t));
+    compressed_out->insert(compressed_out->end(), delta_compressed.begin(), delta_compressed.end());
+
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::decompressDelta(const std::vector<uint8_t> &compressed,
+                                         DataType data_type,
+                                         uint32_t row_count,
+                                         ColumnSegment *segment_out,
+                                         ErrorContext *ctx)
+{
+    if (!segment_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "segment_out is null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (row_count == 0)
+    {
+        segment_out->data.clear();
+        segment_out->row_count = 0;
+        return Status::OK;
+    }
+
+    if (compressed.size() < sizeof(int64_t))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                         "Corrupted delta data (header too small)");
+        return Status::COMPRESSION_ERROR;
+    }
+
+    int64_t base_value = 0;
+    std::memcpy(&base_value, compressed.data(), sizeof(int64_t));
+
+    if (row_count == 1)
+    {
+        segment_out->data_type = data_type;
+        segment_out->row_count = 1;
+        segment_out->data.resize(getDataTypeSize(data_type));
+        uint8_t *data_ptr = segment_out->data.data();
+
+        switch (data_type)
+        {
+        case DataType::INT8:
+            *reinterpret_cast<int8_t *>(data_ptr) = static_cast<int8_t>(base_value);
+            break;
+        case DataType::INT16:
+            *reinterpret_cast<int16_t *>(data_ptr) = static_cast<int16_t>(base_value);
+            break;
+        case DataType::INT32:
+            *reinterpret_cast<int32_t *>(data_ptr) = static_cast<int32_t>(base_value);
+            break;
+        case DataType::INT64:
+            *reinterpret_cast<int64_t *>(data_ptr) = base_value;
+            break;
+        case DataType::UINT8:
+            *reinterpret_cast<uint8_t *>(data_ptr) = static_cast<uint8_t>(base_value);
+            break;
+        case DataType::UINT16:
+            *reinterpret_cast<uint16_t *>(data_ptr) = static_cast<uint16_t>(base_value);
+            break;
+        case DataType::UINT32:
+            *reinterpret_cast<uint32_t *>(data_ptr) = static_cast<uint32_t>(base_value);
+            break;
+        case DataType::UINT64:
+            *reinterpret_cast<uint64_t *>(data_ptr) = static_cast<uint64_t>(base_value);
+            break;
+        default:
+            break;
+        }
+
+        return Status::OK;
+    }
+
+    std::vector<uint8_t> delta_compressed(compressed.begin() + sizeof(int64_t), compressed.end());
+    ColumnSegment delta_segment;
+    delta_segment.null_bitmap.clear();
+    delta_segment.null_count = 0;
+
+    Status status = decompressBitpack(delta_compressed, DataType::INT64,
+                                      row_count - 1, &delta_segment, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    segment_out->data_type = data_type;
+    segment_out->row_count = row_count;
+    size_t value_size = getDataTypeSize(data_type);
+    segment_out->data.resize(static_cast<size_t>(row_count) * value_size);
+
+    std::vector<int64_t> values(row_count, 0);
+    values[0] = base_value;
+    const int64_t *delta_ptr = reinterpret_cast<const int64_t *>(delta_segment.data.data());
+    for (uint32_t i = 1; i < row_count; ++i)
+    {
+        values[i] = values[i - 1] + delta_ptr[i - 1];
+    }
+
+    uint8_t *data_ptr = segment_out->data.data();
+    for (uint32_t i = 0; i < row_count; ++i)
+    {
+        switch (data_type)
+        {
+        case DataType::INT8:
+            *reinterpret_cast<int8_t *>(data_ptr + i * value_size) = static_cast<int8_t>(values[i]);
+            break;
+        case DataType::INT16:
+            *reinterpret_cast<int16_t *>(data_ptr + i * value_size) = static_cast<int16_t>(values[i]);
+            break;
+        case DataType::INT32:
+            *reinterpret_cast<int32_t *>(data_ptr + i * value_size) = static_cast<int32_t>(values[i]);
+            break;
+        case DataType::INT64:
+            *reinterpret_cast<int64_t *>(data_ptr + i * value_size) = values[i];
+            break;
+        case DataType::UINT8:
+            *reinterpret_cast<uint8_t *>(data_ptr + i * value_size) = static_cast<uint8_t>(values[i]);
+            break;
+        case DataType::UINT16:
+            *reinterpret_cast<uint16_t *>(data_ptr + i * value_size) = static_cast<uint16_t>(values[i]);
+            break;
+        case DataType::UINT32:
+            *reinterpret_cast<uint32_t *>(data_ptr + i * value_size) = static_cast<uint32_t>(values[i]);
+            break;
+        case DataType::UINT64:
+            *reinterpret_cast<uint64_t *>(data_ptr + i * value_size) = static_cast<uint64_t>(values[i]);
+            break;
+        default:
+            break;
+        }
+    }
+
+    return Status::OK;
+}
+
+// ============================================================================
 // Predicate Pushdown
 // ============================================================================
 
@@ -1914,7 +2213,7 @@ Status ColumnstoreIndex::findSegment(const ID &column_uuid,
     {
         // Pin segment page
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page, &page_buffer, ctx);
         if (status != Status::OK)
             return status;
 
@@ -1925,13 +2224,13 @@ Status ColumnstoreIndex::findSegment(const ID &column_uuid,
         {
             // Found the segment!
             *segment_page_out = current_page;
-            buffer_pool->unpinPage(current_page, false, ctx);
+            unpinIndexPage(current_page, false, ctx);
             return Status::OK;
         }
 
         // Move to next segment
         uint32_t next_page = page->cs_next_segment;
-        buffer_pool->unpinPage(current_page, false, ctx);
+        unpinIndexPage(current_page, false, ctx);
 
         current_page = next_page;
     }
@@ -2028,6 +2327,12 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
             return status;
         break;
 
+    case CompressionType::DELTA:
+        status = compressDelta(segment, &compressed, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+
     default:
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown compression type");
         return Status::INVALID_ARGUMENT;
@@ -2050,16 +2355,18 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
     for (size_t i = 0; i < total_pages; ++i)
     {
         uint32_t page_num = 0;
-        status = page_mgr->allocatePage(page_num, ctx);
+        GPID page_gpid = 0;
+        status = page_mgr->allocatePageInTablespace(index_info_.idx_tablespace_id, &page_gpid, ctx);
         if (status != Status::OK)
         {
             // Clean up already allocated pages on failure
             for (uint32_t cleanup_page : allocated_pages)
             {
-                page_mgr->freePage(cleanup_page, ctx);
+                page_mgr->freePageGlobal(makeGPID(index_info_.idx_tablespace_id, cleanup_page), ctx);
             }
             return status;
         }
+        page_num = static_cast<uint32_t>(getPageNumber(page_gpid));
         allocated_pages.push_back(page_num);
     }
 
@@ -2074,7 +2381,7 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
 
         // Pin page and initialize
         void *page_buffer = nullptr;
-        status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+        status = pinIndexPage(current_page, &page_buffer, ctx);
         if (status != Status::OK)
         {
             // Clean up on failure
@@ -2171,7 +2478,7 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         std::memcpy(data_area, compressed.data() + data_offset, data_chunk_size);
 
         // Unpin page (mark dirty)
-        buffer_pool->unpinPage(current_page, true, ctx);
+        unpinIndexPage(current_page, true, ctx);
     }
 
     // Return first page as segment page
@@ -2198,7 +2505,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
 
     // Pin first segment page
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(segment_page, &page_buffer, ctx);
+    Status status = pinIndexPage(segment_page, &page_buffer, ctx);
     if (status != Status::OK)
         return status;
 
@@ -2237,17 +2544,17 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
         // For pages after the first, pin the next page
         if (page_idx > 0)
         {
-            buffer_pool->unpinPage(current_page, false, ctx);
+            unpinIndexPage(current_page, false, ctx);
 
             // Get next page from previous page's cs_next_segment
             void *prev_page_buffer = nullptr;
-            Status pin_status = buffer_pool->pinPage(current_page, &prev_page_buffer, ctx);
+            Status pin_status = pinIndexPage(current_page, &prev_page_buffer, ctx);
             if (pin_status != Status::OK)
                 return pin_status;
 
             auto *prev_page = static_cast<const SBColumnstorePage *>(prev_page_buffer);
             current_page = static_cast<uint32_t>(prev_page->cs_next_segment);
-            buffer_pool->unpinPage(current_page, false, ctx);
+            unpinIndexPage(current_page, false, ctx);
 
             if (current_page == 0)
             {
@@ -2257,7 +2564,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
             }
 
             // Pin next page
-            pin_status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+            pin_status = pinIndexPage(current_page, &page_buffer, ctx);
             if (pin_status != Status::OK)
                 return pin_status;
 
@@ -2274,7 +2581,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
     }
 
     // Unpin last page
-    buffer_pool->unpinPage(current_page, false, ctx);
+    unpinIndexPage(current_page, false, ctx);
 
     // Decompress based on compression type
     switch (segment_out->compression)
@@ -2351,6 +2658,13 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
     case CompressionType::BITPACK:
         status = decompressBitpack(compressed, segment_out->data_type,
                                   segment_out->row_count, segment_out, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+
+    case CompressionType::DELTA:
+        status = decompressDelta(compressed, segment_out->data_type,
+                                 segment_out->row_count, segment_out, ctx);
         if (status != Status::OK)
             return status;
         break;
@@ -2485,7 +2799,7 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
                                             const std::vector<UuidV7Bytes> &column_uuids,
                                             uint32_t segment_size,
                                             CompressionType compression,
-                                            uint32_t *metadata_page_out,
+                                            GPID metadata_gpid,
                                             ErrorContext *ctx)
 {
     if (!db)
@@ -2495,42 +2809,38 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
         return Status::INVALID_ARGUMENT;
     }
 
-    if (!metadata_page_out)
+    if (metadata_gpid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                         "Output parameter cannot be null");
+                         "Metadata GPID cannot be zero");
         return Status::INVALID_ARGUMENT;
     }
 
-    // Step 1: Allocate metadata page
-    PageManager *page_mgr = db->page_manager();
-    if (!page_mgr)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                         "PageManager not available");
-        return Status::INVALID_ARGUMENT;
-    }
-
-    uint32_t metadata_page = 0;
-    Status alloc_status = page_mgr->allocatePage(metadata_page, ctx);
-    if (alloc_status != Status::OK)
-        return alloc_status;
+    uint32_t metadata_page = static_cast<uint32_t>(getPageNumber(metadata_gpid));
 
     // Step 2: Pin page for writing
     BufferPool *buffer_pool = db->buffer_pool();
     if (!buffer_pool)
     {
-        page_mgr->freePage(metadata_page, ctx);
+        PageManager *page_mgr = db->page_manager();
+        if (page_mgr)
+        {
+            page_mgr->freePageGlobal(metadata_gpid, ctx);
+        }
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                          "BufferPool not available");
         return Status::INVALID_ARGUMENT;
     }
 
     void *page_buffer = nullptr;
-    Status pin_status = buffer_pool->pinPage(metadata_page, &page_buffer, ctx);
+    Status pin_status = buffer_pool->pinPageGlobal(metadata_gpid, &page_buffer, ctx);
     if (pin_status != Status::OK)
     {
-        page_mgr->freePage(metadata_page, ctx);
+        PageManager *page_mgr = db->page_manager();
+        if (page_mgr)
+        {
+            page_mgr->freePageGlobal(metadata_gpid, ctx);
+        }
         return pin_status;
     }
 
@@ -2581,8 +2891,12 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     const size_t PAGE_SIZE = db->page_size();
     if (sizeof(SBColumnstoreMetadataPage) + uuid_array_size > PAGE_SIZE)
     {
-        buffer_pool->unpinPage(metadata_page, false, ctx);
-        page_mgr->freePage(metadata_page, ctx);
+        buffer_pool->unpinPageGlobal(metadata_gpid, false, ctx);
+        PageManager *page_mgr = db->page_manager();
+        if (page_mgr)
+        {
+            page_mgr->freePageGlobal(metadata_gpid, ctx);
+        }
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                          "Too many columns for metadata page");
         return Status::INVALID_ARGUMENT;
@@ -2595,30 +2909,24 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     }
 
     // Step 5: Mark page dirty and unpin
-    Status unpin_status = buffer_pool->unpinPage(metadata_page, true, ctx);
+    Status unpin_status = buffer_pool->unpinPageGlobal(metadata_gpid, true, ctx);
     if (unpin_status != Status::OK)
     {
-        page_mgr->freePage(metadata_page, ctx);
+        PageManager *page_mgr = db->page_manager();
+        if (page_mgr)
+        {
+            page_mgr->freePageGlobal(metadata_gpid, ctx);
+        }
         return unpin_status;
     }
-
-    *metadata_page_out = metadata_page;
     return Status::OK;
 }
 
 Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *ctx)
 {
     // Step 1: Pin metadata page
-    BufferPool *buffer_pool = db_->buffer_pool();
-    if (!buffer_pool)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                         "BufferPool not available");
-        return Status::INVALID_ARGUMENT;
-    }
-
     void *page_buffer = nullptr;
-    Status pin_status = buffer_pool->pinPage(metadata_page, &page_buffer, ctx);
+    Status pin_status = pinIndexPage(metadata_page, &page_buffer, ctx);
     if (pin_status != Status::OK)
         return pin_status;
 
@@ -2628,7 +2936,7 @@ Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *
     // Verify page type
     if (meta_page->cs_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE))
     {
-        buffer_pool->unpinPage(metadata_page, false, ctx);
+    unpinIndexPage(metadata_page, false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                          "Invalid page type for columnstore metadata");
         return Status::INVALID_ARGUMENT;
@@ -2658,7 +2966,7 @@ Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *
     }
 
     // Step 4: Unpin page
-    Status unpin_status = buffer_pool->unpinPage(metadata_page, false, ctx);
+    Status unpin_status = unpinIndexPage(metadata_page, false, ctx);
     return unpin_status;
 }
 
@@ -2754,7 +3062,7 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
     uint32_t new_segment_last_page = new_segment_page;
     {
         void *page_buffer = nullptr;
-        Status pin_status = buffer_pool->pinPage(new_segment_last_page, &page_buffer, ctx);
+        Status pin_status = pinIndexPage(new_segment_last_page, &page_buffer, ctx);
         if (pin_status != Status::OK)
             return pin_status;
 
@@ -2764,16 +3072,16 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         while (page->cs_next_segment != 0)
         {
             uint32_t next_page = page->cs_next_segment;
-            buffer_pool->unpinPage(new_segment_last_page, false, ctx);
+            unpinIndexPage(new_segment_last_page, false, ctx);
 
             new_segment_last_page = next_page;
-            pin_status = buffer_pool->pinPage(new_segment_last_page, &page_buffer, ctx);
+            pin_status = pinIndexPage(new_segment_last_page, &page_buffer, ctx);
             if (pin_status != Status::OK)
                 return pin_status;
             page = static_cast<const SBColumnstorePage *>(page_buffer);
         }
 
-        buffer_pool->unpinPage(new_segment_last_page, false, ctx);
+        unpinIndexPage(new_segment_last_page, false, ctx);
     }
 
     // Link new segment to the chain using cached last segment page (O(1) instead of O(n))
@@ -2792,24 +3100,24 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         {
             // Link previous segment's last page to new segment's first page
             void *page_buffer = nullptr;
-            Status link_status = buffer_pool->pinPage(prev_page, &page_buffer, ctx);
+            Status link_status = pinIndexPage(prev_page, &page_buffer, ctx);
             if (link_status != Status::OK)
                 return link_status;
 
             auto *prev_seg = static_cast<SBColumnstorePage *>(page_buffer);
             prev_seg->cs_next_segment = new_segment_page;
 
-            buffer_pool->unpinPage(prev_page, true, ctx);  // Mark dirty
+            unpinIndexPage(prev_page, true, ctx);  // Mark dirty
 
             // Set prev pointer in new segment's first page
-            Status new_pin_status = buffer_pool->pinPage(new_segment_page, &page_buffer, ctx);
+            Status new_pin_status = pinIndexPage(new_segment_page, &page_buffer, ctx);
             if (new_pin_status != Status::OK)
                 return new_pin_status;
 
             auto *new_seg = static_cast<SBColumnstorePage *>(page_buffer);
             new_seg->cs_prev_segment = prev_page;
 
-            buffer_pool->unpinPage(new_segment_page, true, ctx);  // Mark dirty
+            unpinIndexPage(new_segment_page, true, ctx);  // Mark dirty
         }
 
         // Update cached last segment page to the last page of the new segment
@@ -2926,13 +3234,13 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             // Entire segment is invisible, skip to next
             void *page_buffer = nullptr;
             uint32_t old_page = iterator->current_segment_page;
-            Status status = buffer_pool->pinPage(old_page, &page_buffer, ctx);
+            Status status = pinIndexPage(old_page, &page_buffer, ctx);
             if (status != Status::OK)
                 return status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             iterator->current_segment_page = page->cs_next_segment;
-            buffer_pool->unpinPage(old_page, false, ctx);
+            unpinIndexPage(old_page, false, ctx);
 
             iterator->segment_cached = false;
             segments_processed++;
@@ -2946,13 +3254,13 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             // Skip this segment entirely
             void *page_buffer = nullptr;
             uint32_t old_page = iterator->current_segment_page;
-            Status status = buffer_pool->pinPage(old_page, &page_buffer, ctx);
+            Status status = pinIndexPage(old_page, &page_buffer, ctx);
             if (status != Status::OK)
                 return status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             iterator->current_segment_page = page->cs_next_segment;
-            buffer_pool->unpinPage(old_page, false, ctx);
+            unpinIndexPage(old_page, false, ctx);
 
             iterator->segment_cached = false;
             segments_processed++;
@@ -3044,13 +3352,13 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             // Move to next segment
             void *page_buffer = nullptr;
             uint32_t old_page = iterator->current_segment_page;
-            Status status = buffer_pool->pinPage(old_page, &page_buffer, ctx);
+            Status status = pinIndexPage(old_page, &page_buffer, ctx);
             if (status != Status::OK)
                 return status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             iterator->current_segment_page = page->cs_next_segment;
-            buffer_pool->unpinPage(old_page, false, ctx);
+            unpinIndexPage(old_page, false, ctx);
 
             iterator->segment_cached = false;
             iterator->offset_in_segment = 0;

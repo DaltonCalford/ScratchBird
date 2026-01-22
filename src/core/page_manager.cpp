@@ -13,6 +13,65 @@
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        Status decodeTablespaceHeader(const uint8_t *buffer,
+                                      TablespaceHeader *header_out,
+                                      uint16_t *version_out,
+                                      ErrorContext *ctx)
+        {
+            if (!buffer || !header_out)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null tablespace header buffer");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const auto *page_header = reinterpret_cast<const PageHeader *>(buffer);
+            uint16_t version = page_header->version;
+            if (version_out != nullptr)
+            {
+                *version_out = version;
+            }
+
+            if (version == TABLESPACE_HEADER_VERSION_V1)
+            {
+                const auto *legacy = reinterpret_cast<const TablespaceHeaderV1 *>(buffer);
+                std::memset(header_out, 0, sizeof(*header_out));
+                header_out->page_header = legacy->page_header;
+                std::memcpy(header_out->tablespace_name, legacy->tablespace_name,
+                            sizeof(legacy->tablespace_name));
+                header_out->tablespace_name[sizeof(legacy->tablespace_name)] = '\0';
+                header_out->tablespace_uuid = legacy->tablespace_uuid;
+                header_out->database_uuid = legacy->database_uuid;
+                header_out->tablespace_id = legacy->tablespace_id;
+                header_out->page_size = legacy->page_size;
+                header_out->creation_time = legacy->creation_time;
+                header_out->last_checkpoint = legacy->last_checkpoint;
+                header_out->autoextend_enabled = legacy->autoextend_enabled;
+                header_out->autoextend_size_mb = legacy->autoextend_size_mb;
+                header_out->max_size_mb = legacy->max_size_mb;
+                std::memcpy(header_out->reserved1, legacy->reserved1, sizeof(legacy->reserved1));
+                header_out->total_pages = legacy->total_pages;
+                header_out->free_pages = legacy->free_pages;
+                header_out->next_page_number = legacy->next_page_number;
+                header_out->fsm_root_page = legacy->fsm_root_page;
+                header_out->oldest_transaction_id = legacy->oldest_transaction_id;
+                header_out->latest_completed_xid = legacy->latest_completed_xid;
+                std::memcpy(header_out->reserved2, legacy->reserved2, sizeof(legacy->reserved2));
+                return Status::OK;
+            }
+
+            if (version == TABLESPACE_HEADER_VERSION_V2)
+            {
+                std::memcpy(header_out, buffer, sizeof(*header_out));
+                return Status::OK;
+            }
+
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Unsupported tablespace header version: " + std::to_string(version)).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+    }
 
     PageManager::PageManager(Database *db, uint32_t page_size)
         : db_(db), page_size_(page_size), total_pages_(0), free_pages_(0), dirty_(false)
@@ -990,7 +1049,7 @@ namespace scratchbird::core
 
         // Initialize PageHeader portion
         header->page_header.magic = K_MAGIC_SBRD;
-        header->page_header.version = 1;
+        header->page_header.version = TABLESPACE_HEADER_VERSION_V2;
         header->page_header.page_type = PAGE_TYPE_DATABASE_HEADER; // Tablespace header uses same type
         header->page_header.page_size = page_size_;
         header->page_header.page_id = 0;
@@ -1239,18 +1298,30 @@ namespace scratchbird::core
             return Status::IO_ERROR;
         }
 
-        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+        auto *page_header = reinterpret_cast<PageHeader *>(header_buffer.get());
 
         // Step 4: Validate PageHeader magic
-        if (header->page_header.magic != K_MAGIC_SBRD)
+        if (page_header->magic != K_MAGIC_SBRD)
         {
             ::close(fd);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                              ("Invalid tablespace file: bad magic number (expected 0x" +
                               std::to_string(K_MAGIC_SBRD) + ", got 0x" +
-                              std::to_string(header->page_header.magic) + ")").c_str());
+                              std::to_string(page_header->magic) + ")").c_str());
             return Status::PAGE_CORRUPT;
         }
+
+        TablespaceHeader header_snapshot{};
+        uint16_t header_version = 0;
+        Status header_status = decodeTablespaceHeader(header_buffer.get(), &header_snapshot,
+                                                      &header_version, ctx);
+        if (header_status != Status::OK)
+        {
+            ::close(fd);
+            return header_status;
+        }
+
+        const TablespaceHeader *header = &header_snapshot;
 
         // Step 5: Validate page_size matches
         if (header->page_size != page_size_)
@@ -1538,7 +1609,16 @@ namespace scratchbird::core
             return Status::IO_ERROR;
         }
 
-        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+        TablespaceHeader header_snapshot{};
+        uint16_t header_version = 0;
+        Status header_status = decodeTablespaceHeader(header_buffer.get(), &header_snapshot,
+                                                      &header_version, ctx);
+        if (header_status != Status::OK)
+        {
+            return header_status;
+        }
+
+        const TablespaceHeader *header = &header_snapshot;
 
         // Step 4: Check if autoextend is enabled
         if (!header->autoextend_enabled)
@@ -1566,6 +1646,7 @@ namespace scratchbird::core
         // Step 6: Check MAXSIZE limit before extending
         uint64_t current_total_pages = header->total_pages;
         uint64_t new_total_pages = current_total_pages + pages_to_add;
+        uint64_t new_free_pages = header->free_pages + pages_to_add;
 
         if (header->max_size_mb > 0)
         {
@@ -1676,8 +1757,18 @@ namespace scratchbird::core
         }
 
         // Step 9: Update TablespaceHeader.total_pages and free_pages
-        header->total_pages = new_total_pages;
-        header->free_pages += pages_to_add;
+        if (header_version == TABLESPACE_HEADER_VERSION_V1)
+        {
+            auto *legacy_header = reinterpret_cast<TablespaceHeaderV1 *>(header_buffer.get());
+            legacy_header->total_pages = new_total_pages;
+            legacy_header->free_pages = new_free_pages;
+        }
+        else
+        {
+            auto *current_header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+            current_header->total_pages = new_total_pages;
+            current_header->free_pages = new_free_pages;
+        }
 
         // Write updated header back to page 0
         ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
@@ -1695,12 +1786,12 @@ namespace scratchbird::core
                 "Successfully extended tablespace %u: total_pages=%lu, free_pages=%lu",
                 tablespace_id,
                 static_cast<unsigned long>(new_total_pages),
-                static_cast<unsigned long>(header->free_pages));
+                static_cast<unsigned long>(new_free_pages));
 
         // Step 10: Update sb_tablespace statistics (Phase 3 Task 3.1.4)
         // Calculate sizes in MB
         uint64_t total_size_mb = (new_total_pages * page_size_) / (1024 * 1024);
-        uint64_t free_size_mb = (header->free_pages * page_size_) / (1024 * 1024);
+        uint64_t free_size_mb = (new_free_pages * page_size_) / (1024 * 1024);
 
         // Get current time for last_extended_time
         auto now = std::chrono::system_clock::now();
@@ -1793,28 +1884,63 @@ namespace scratchbird::core
             return Status::IO_ERROR;
         }
 
-        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
-
-        // Update fields if provided
-        if (name != nullptr)
+        auto *page_header = reinterpret_cast<PageHeader *>(header_buffer.get());
+        if (page_header->version == TABLESPACE_HEADER_VERSION_V1)
         {
-            std::strncpy(header->tablespace_name, name, sizeof(header->tablespace_name) - 1);
-            header->tablespace_name[sizeof(header->tablespace_name) - 1] = '\0';
+            auto *header = reinterpret_cast<TablespaceHeaderV1 *>(header_buffer.get());
+
+            if (name != nullptr)
+            {
+                std::strncpy(header->tablespace_name, name, sizeof(header->tablespace_name) - 1);
+                header->tablespace_name[sizeof(header->tablespace_name) - 1] = '\0';
+            }
+
+            if (autoextend_enabled != nullptr)
+            {
+                header->autoextend_enabled = *autoextend_enabled;
+            }
+
+            if (autoextend_size_mb != nullptr)
+            {
+                header->autoextend_size_mb = *autoextend_size_mb;
+            }
+
+            if (max_size_mb != nullptr)
+            {
+                header->max_size_mb = *max_size_mb;
+            }
         }
-
-        if (autoextend_enabled != nullptr)
+        else if (page_header->version == TABLESPACE_HEADER_VERSION_V2)
         {
-            header->autoextend_enabled = *autoextend_enabled;
+            auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+
+            if (name != nullptr)
+            {
+                std::strncpy(header->tablespace_name, name, sizeof(header->tablespace_name) - 1);
+                header->tablespace_name[sizeof(header->tablespace_name) - 1] = '\0';
+            }
+
+            if (autoextend_enabled != nullptr)
+            {
+                header->autoextend_enabled = *autoextend_enabled;
+            }
+
+            if (autoextend_size_mb != nullptr)
+            {
+                header->autoextend_size_mb = *autoextend_size_mb;
+            }
+
+            if (max_size_mb != nullptr)
+            {
+                header->max_size_mb = *max_size_mb;
+            }
         }
-
-        if (autoextend_size_mb != nullptr)
+        else
         {
-            header->autoextend_size_mb = *autoextend_size_mb;
-        }
-
-        if (max_size_mb != nullptr)
-        {
-            header->max_size_mb = *max_size_mb;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Unsupported tablespace header version: " +
+                              std::to_string(page_header->version)).c_str());
+            return Status::INVALID_ARGUMENT;
         }
 
         // Write updated header back
@@ -1877,11 +2003,21 @@ namespace scratchbird::core
             return Status::IO_ERROR;
         }
 
-        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+        TablespaceHeader header_snapshot{};
+        uint16_t header_version = 0;
+        Status header_status = decodeTablespaceHeader(header_buffer.get(), &header_snapshot,
+                                                      &header_version, ctx);
+        if (header_status != Status::OK)
+        {
+            return header_status;
+        }
+
+        const TablespaceHeader *header = &header_snapshot;
 
         // Step 4: Calculate new file size
         uint64_t current_total_pages = header->total_pages;
         uint64_t new_total_pages = current_total_pages + num_pages;
+        uint64_t new_free_pages = header->free_pages + num_pages;
 
         // Check MAXSIZE limit if set
         if (header->max_size_mb > 0)
@@ -2030,8 +2166,18 @@ namespace scratchbird::core
         }
 
         // Step 8: Update TablespaceHeader.total_pages and free_pages
-        header->total_pages = new_total_pages;
-        header->free_pages += num_pages;
+        if (header_version == TABLESPACE_HEADER_VERSION_V1)
+        {
+            auto *legacy_header = reinterpret_cast<TablespaceHeaderV1 *>(header_buffer.get());
+            legacy_header->total_pages = new_total_pages;
+            legacy_header->free_pages = new_free_pages;
+        }
+        else
+        {
+            auto *current_header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+            current_header->total_pages = new_total_pages;
+            current_header->free_pages = new_free_pages;
+        }
 
         // Write updated header back to page 0
         ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
@@ -2058,7 +2204,7 @@ namespace scratchbird::core
                 "Successfully preallocated %u pages for tablespace %u: total_pages=%lu, free_pages=%lu",
                 num_pages, tablespace_id,
                 static_cast<unsigned long>(new_total_pages),
-                static_cast<unsigned long>(header->free_pages));
+                static_cast<unsigned long>(new_free_pages));
 
         return Status::OK;
     }

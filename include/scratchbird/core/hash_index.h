@@ -6,6 +6,8 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/bloom_filter.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -94,13 +96,13 @@ namespace scratchbird
             HashIndex(Database *db, const UuidV7Bytes &index_uuid);
 
             // Create a new hash index
-            // Allocates meta page, initial directory, and initial bucket pages
+            // Initializes preallocated meta page and allocates initial directory/bucket pages
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
-                                 uint32_t *meta_page_out, ErrorContext *ctx = nullptr);
+                                 GPID meta_gpid, ErrorContext *ctx = nullptr);
 
             // Open an existing hash index
             static std::unique_ptr<HashIndex> open(Database *db, const UuidV7Bytes &index_uuid,
-                                                   uint32_t meta_page, ErrorContext *ctx = nullptr);
+                                                   GPID meta_gpid, ErrorContext *ctx = nullptr);
 
             // Destructor
             ~HashIndex();
@@ -183,11 +185,22 @@ namespace scratchbird
                                            uint64_t *pages_modified_out = nullptr,
                                            ErrorContext *ctx = nullptr);
 
+            Status attachBloomFilter(const BloomFilterConfig &config,
+                                     uint64_t estimated_keys,
+                                     ErrorContext *ctx = nullptr);
+            Status loadBloomFilter(GPID meta_gpid, double target_fpr,
+                                   ErrorContext *ctx = nullptr);
+            Status detachBloomFilter(ErrorContext *ctx = nullptr);
+            Status rebuildBloomFilter(ErrorContext *ctx = nullptr);
+            BloomFilter *getBloomFilter() const { return bloom_filter_.get(); }
+
         private:
             Database *db_;
             BufferPool *buffer_pool_;
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
+            uint16_t tablespace_id_ = 0;
+            std::unique_ptr<BloomFilter> bloom_filter_;
 
             // P2-5: Concurrent directory resize infrastructure
             // Reader-writer lock for directory access
@@ -217,6 +230,10 @@ namespace scratchbird
 
             // P2-5: Helper to refresh cached directory info from meta page
             void refreshCachedDirectoryInfo(ErrorContext *ctx);
+
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
+            GPID indexGPID(uint64_t page_num) const;
 
             // No copy or move
             HashIndex(const HashIndex &) = delete;

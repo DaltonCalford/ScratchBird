@@ -12,6 +12,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/transaction_manager.h"  // Firebird MGA: For isVersionVisible (TIP-based visibility)
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/gpid.h"
 
 namespace scratchbird::core
 {
@@ -113,10 +114,10 @@ namespace scratchbird::core
     }
 
     auto BTree::create(Database *db, const UuidV7Bytes &index_uuid, const UuidV7Bytes &table_uuid,
-                       const std::vector<UuidV7Bytes> &column_uuids, uint32_t *root_page_out,
+                       const std::vector<UuidV7Bytes> &column_uuids, GPID root_gpid,
                        ErrorContext *ctx) -> Status
     {
-        if (!db || !root_page_out)
+        if (!db || root_gpid == 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to BTree::create");
             return Status::INVALID_ARGUMENT;
@@ -129,25 +130,11 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        PageManager *page_manager = db->page_manager();
-        if (!page_manager)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database has no page manager");
-            return Status::INVALID_ARGUMENT;
-        }
-
-        // Step 1: Allocate root page
-        uint32_t root_page = 0;
-        Status status = page_manager->allocatePage(root_page, ctx);
-        if (status != Status::OK)
-        {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate root page for B-tree");
-            return status;
-        }
+        uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
 
         // Step 2: Pin root page
         void *root_page_data_ptr = nullptr;
-        status = buffer_pool->pinPage(root_page, &root_page_data_ptr, ctx);
+        Status status = buffer_pool->pinPageGlobal(root_gpid, &root_page_data_ptr, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin root page for B-tree");
@@ -212,27 +199,24 @@ namespace scratchbird::core
             status = btree_page.initialize(index_uuid, table_uuid, 0, page->btr_flags);
             if (status != Status::OK)
             {
-                buffer_pool->unpinPage(root_page, false, ctx);
+                buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to initialize B-tree page");
                 return status;
             }
         }
         catch (const std::exception &e)
         {
-            buffer_pool->unpinPage(root_page, false, ctx);
+            buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
             return Status::INVALID_ARGUMENT;
         }
 
         // Step 7: Unpin page (mark dirty)
-        buffer_pool->unpinPage(root_page, true, ctx);
-
-        // Step 8: Return root page number
-        *root_page_out = root_page;
+        buffer_pool->unpinPageGlobal(root_gpid, true, ctx);
         return Status::OK;
     }
 
-    auto BTree::open(Database *db, const UuidV7Bytes &index_uuid, uint32_t root_page,
+    auto BTree::open(Database *db, const UuidV7Bytes &index_uuid, GPID root_gpid,
                      ErrorContext *ctx) -> std::unique_ptr<BTree>
     {
         if (!db)
@@ -248,9 +232,11 @@ namespace scratchbird::core
             return nullptr;
         }
 
+        uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+
         // Step 1: Pin root page to validate
         void *root_page_data_ptr = nullptr;
-        Status status = buffer_pool->pinPage(root_page, &root_page_data_ptr, ctx);
+        Status status = buffer_pool->pinPageGlobal(root_gpid, &root_page_data_ptr, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin root page");
@@ -263,7 +249,7 @@ namespace scratchbird::core
         if (page->btr_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_LEAF) &&
             page->btr_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_INTERNAL))
         {
-            buffer_pool->unpinPage(root_page, false, ctx);
+            buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid B-tree page type");
             return nullptr;
         }
@@ -271,7 +257,7 @@ namespace scratchbird::core
         // Step 3: Verify index_uuid matches
         if (std::memcmp(page->btr_index_uuid.bytes.data(), index_uuid.bytes.data(), 16) != 0)
         {
-            buffer_pool->unpinPage(root_page, false, ctx);
+            buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "B-tree index UUID mismatch");
             return nullptr;
         }
@@ -288,6 +274,7 @@ namespace scratchbird::core
 
         index_info.idx_flags = 0;
         index_info.idx_root_page = root_page;
+        index_info.idx_tablespace_id = getTablespaceID(root_gpid);
 
         // Calculate tree height by traversing from root
         // For now, we'll set it based on the root's level
@@ -299,10 +286,25 @@ namespace scratchbird::core
         index_info.idx_deleted_count = 0;
 
         // Step 5: Unpin page
-        buffer_pool->unpinPage(root_page, false, ctx);
+        buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
 
         // Step 6: Create and return BTree instance
         return std::make_unique<BTree>(db, index_info);
+    }
+
+    GPID BTree::indexGPID(uint64_t page_num) const
+    {
+        return makeGPID(index_info_.idx_tablespace_id, page_num);
+    }
+
+    Status BTree::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+    {
+        return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+    }
+
+    Status BTree::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
+    {
+        return db_->buffer_pool()->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
@@ -334,7 +336,7 @@ namespace scratchbird::core
 
         BufferPool *bp = db_->buffer_pool();
         void *page_data_ptr;
-        status = bp->pinPage(leaf_page_num, &page_data_ptr, ctx);
+        status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx);
         if (status != Status::OK)
         {
             // Release lock acquired by find_leaf_page
@@ -369,7 +371,7 @@ namespace scratchbird::core
             if (status == Status::PAGE_FULL)
             {
                 // Page is full - need to split
-                bp->unpinPage(leaf_page_num, false, ctx);
+                unpinIndexPage(leaf_page_num, false, ctx);
 
                 // Release lock before split (split will re-acquire locks)
                 if (lock_mgr != nullptr)
@@ -394,7 +396,7 @@ namespace scratchbird::core
             }
             else if (status != Status::OK)
             {
-                bp->unpinPage(leaf_page_num, false, ctx);
+                unpinIndexPage(leaf_page_num, false, ctx);
 
                 // Release lock on error
                 if (lock_mgr != nullptr)
@@ -410,7 +412,7 @@ namespace scratchbird::core
             }
 
             // Mark page as dirty since we modified it
-            bp->unpinPage(leaf_page_num, true, ctx);
+            unpinIndexPage(leaf_page_num, true, ctx);
 
             // Release lock after successful insert
             if (lock_mgr != nullptr)
@@ -422,11 +424,20 @@ namespace scratchbird::core
                 lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
             }
 
+            if (bloom_filter_)
+            {
+                Status bf_status = bloom_filter_->insert(key.data(), key.size(), ctx);
+                if (bf_status != Status::OK)
+                {
+                    LOG_WARNING(STORAGE, "B-Tree bloom filter insert failed: %d", static_cast<int>(bf_status));
+                }
+            }
+
             return Status::OK;
         }
         catch (const std::exception &e)
         {
-            bp->unpinPage(leaf_page_num, false, ctx);
+            unpinIndexPage(leaf_page_num, false, ctx);
 
             // Release lock on exception
             if (lock_mgr != nullptr)
@@ -593,7 +604,7 @@ namespace scratchbird::core
         while (true)
         {
             void *page_data_ptr;
-            Status status = bp->pinPage(current_page_num, &page_data_ptr, ctx);
+            Status status = pinIndexPage(current_page_num, &page_data_ptr, ctx);
             if (status != Status::OK)
             {
                 // Release previous lock if held
@@ -689,7 +700,7 @@ namespace scratchbird::core
                 status = lock_mgr->acquireLock(proc_id, page_tag, lock_mode, true, 0, ctx);
                 if (status != Status::OK)
                 {
-                    bp->unpinPage(current_page_num, false, ctx);
+                    unpinIndexPage(current_page_num, false, ctx);
 
                     // CRITICAL: If we fail to acquire child lock, keep parent lock held
                     // Release previous lock if held (cleanup on error)
@@ -728,7 +739,7 @@ namespace scratchbird::core
             {
                 // Found leaf page - keep lock held and return
                 *page_num_out = current_page_num;
-                bp->unpinPage(current_page_num, false, ctx);
+                unpinIndexPage(current_page_num, false, ctx);
                 // Note: Lock is kept held on leaf page for caller
                 return Status::OK;
             }
@@ -781,7 +792,7 @@ namespace scratchbird::core
                 if (next_page_num == 0)
                 {
                     // Missing rightmost child pointer - this is a corruption issue
-                    bp->unpinPage(current_page_num, false, ctx);
+                    unpinIndexPage(current_page_num, false, ctx);
 
                     // Release lock on current page before returning error
                     if (lock_mgr != nullptr)
@@ -801,7 +812,7 @@ namespace scratchbird::core
                 }
             }
 
-            bp->unpinPage(current_page_num, false, ctx);
+            unpinIndexPage(current_page_num, false, ctx);
 
             // Track previous page for lock coupling
             previous_page_num = current_page_num;
@@ -816,6 +827,11 @@ namespace scratchbird::core
                        std::vector<TID> *tids_out,
                        ErrorContext *ctx) -> Status
     {
+        if (bloom_filter_ && !bloom_filter_->test(key.data(), key.size(), ctx))
+        {
+            return Status::NOT_FOUND;
+        }
+
         uint64_t leaf_page_num;
         Status status = find_leaf_page(key, &leaf_page_num, false, ctx);
         if (status != Status::OK)
@@ -830,7 +846,7 @@ namespace scratchbird::core
 
         BufferPool *bp = db_->buffer_pool();
         void *page_data_ptr;
-        status = bp->pinPage(leaf_page_num, &page_data_ptr, ctx);
+        status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx);
         if (status != Status::OK)
         {
             // Release lock acquired by find_leaf_page
@@ -850,7 +866,7 @@ namespace scratchbird::core
         // Firebird MGA: Pass transaction ID to searchPage for TIP-based visibility filtering
         bool found = searchPage(page, key, current_xid, tids_out);
 
-        bp->unpinPage(leaf_page_num, false, ctx);
+        unpinIndexPage(leaf_page_num, false, ctx);
 
         // Release lock after search
         if (lock_mgr != nullptr)
@@ -897,7 +913,7 @@ namespace scratchbird::core
 
         BufferPool *bp = db_->buffer_pool();
         void *page_data_ptr;
-        status = bp->pinPage(leaf_page_num, &page_data_ptr, ctx);
+        status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx);
         if (status != Status::OK)
         {
             // Release lock acquired by find_leaf_page
@@ -972,7 +988,7 @@ namespace scratchbird::core
 
         if (!found)
         {
-            bp->unpinPage(leaf_page_num, false, ctx);
+            unpinIndexPage(leaf_page_num, false, ctx);
 
             // Release lock on not found
             if (lock_mgr != nullptr)
@@ -998,7 +1014,7 @@ namespace scratchbird::core
         page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
 
         // Mark page as dirty since we modified it
-        bp->unpinPage(leaf_page_num, true, ctx);
+        unpinIndexPage(leaf_page_num, true, ctx);
 
         // Release lock after successful remove
         if (lock_mgr != nullptr)
@@ -1032,7 +1048,7 @@ namespace scratchbird::core
 
         BufferPool *bp = db_->buffer_pool();
         void *page_buffer;
-        status = bp->pinPage(leaf_page_num, &page_buffer, ctx);
+        status = pinIndexPage(leaf_page_num, &page_buffer, ctx);
         if (status != Status::OK)
         {
             // Release lock acquired by find_leaf_page
@@ -1095,7 +1111,7 @@ namespace scratchbird::core
         }
 
         // Unpin page (mark dirty if modified)
-        bp->unpinPage(leaf_page_num, found, ctx);
+        unpinIndexPage(leaf_page_num, found, ctx);
 
         // Release lock
         if (lock_mgr != nullptr)
@@ -1171,31 +1187,32 @@ namespace scratchbird::core
         PageManager *pm = db_->page_manager();
 
         // Allocate new right page
-        uint32_t right_page_num_u32;
-        Status status = pm->allocatePage(right_page_num_u32, ctx);
+        GPID right_gpid = 0;
+        Status status = pm->allocatePageInTablespace(index_info_.idx_tablespace_id, &right_gpid, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new page for split");
             return status;
         }
+        uint32_t right_page_num_u32 = static_cast<uint32_t>(getPageNumber(right_gpid));
         uint64_t right_page_num = right_page_num_u32;
 
         // Pin both pages
         void *left_page_data_ptr;
         void *right_page_data_ptr;
 
-        status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+        status = pinIndexPage(left_page_num, &left_page_data_ptr, ctx);
         if (status != Status::OK)
         {
-            pm->freePage(right_page_num_u32, ctx);
+            pm->freePageGlobal(right_gpid, ctx);
             return status;
         }
 
-        status = bp->pinPage(right_page_num, &right_page_data_ptr, ctx);
+        status = pinIndexPage(right_page_num, &right_page_data_ptr, ctx);
         if (status != Status::OK)
         {
-            bp->unpinPage(left_page_num, false, ctx);
-            pm->freePage(right_page_num_u32, ctx);
+            unpinIndexPage(left_page_num, false, ctx);
+            pm->freePageGlobal(right_gpid, ctx);
             return status;
         }
 
@@ -1246,9 +1263,9 @@ namespace scratchbird::core
                     status = right_btree_page.add_node(node_key, tuple, node->btn_xmin, ctx);
                     if (status != Status::OK)
                     {
-                        bp->unpinPage(left_page_num, false, ctx);
-                        bp->unpinPage(right_page_num, false, ctx);
-                        pm->freePage(right_page_num_u32, ctx);
+                        unpinIndexPage(left_page_num, false, ctx);
+                        unpinIndexPage(right_page_num, false, ctx);
+                        pm->freePageGlobal(right_gpid, ctx);
                         return status;
                     }
                 }
@@ -1300,21 +1317,21 @@ namespace scratchbird::core
                         // CRITICAL FIX (Issue 2.7): Failed to acquire lock - MUST NOT continue
                         // Continuing without lock can cause B-tree corruption via race condition
                         // Two concurrent splits could both try to update the same sibling pointer
-                        bp->unpinPage(left_page_num, false, ctx);
-                        bp->unpinPage(right_page_num, false, ctx);
-                        pm->freePage(right_page_num_u32, ctx);
+                        unpinIndexPage(left_page_num, false, ctx);
+                        unpinIndexPage(right_page_num, false, ctx);
+                        pm->freePageGlobal(right_gpid, ctx);
                         SET_ERROR_CONTEXT(ctx, status, "Failed to acquire lock on old right sibling during leaf split");
                         return status;
                     }
                 }
 
                 void *old_right_data_ptr;
-                status = bp->pinPage(old_right_sibling, &old_right_data_ptr, ctx);
+                status = pinIndexPage(old_right_sibling, &old_right_data_ptr, ctx);
                 if (status == Status::OK)
                 {
                     auto *old_right_page = reinterpret_cast<SBBTreePage *>(old_right_data_ptr);
                     old_right_page->btr_left_sibling = right_page_num;
-                    bp->unpinPage(old_right_sibling, true, ctx);
+                    unpinIndexPage(old_right_sibling, true, ctx);
                 }
 
                 // Release lock on old right sibling
@@ -1346,17 +1363,17 @@ namespace scratchbird::core
                                                sep_key_data + separator_node->btn_key_len);
 
             // Unpin both pages (mark as dirty)
-            bp->unpinPage(left_page_num, true, ctx);
-            bp->unpinPage(right_page_num, true, ctx);
+            unpinIndexPage(left_page_num, true, ctx);
+            unpinIndexPage(right_page_num, true, ctx);
 
             // Insert separator key into parent
             return insert_into_parent(left_page_num, separator_key, right_page_num, ctx);
         }
         catch (const std::exception &e)
         {
-            bp->unpinPage(left_page_num, false, ctx);
-            bp->unpinPage(right_page_num, false, ctx);
-            pm->freePage(right_page_num_u32, ctx);
+            unpinIndexPage(left_page_num, false, ctx);
+            unpinIndexPage(right_page_num, false, ctx);
+            pm->freePageGlobal(right_gpid, ctx);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
             return Status::INVALID_ARGUMENT;
         }
@@ -1370,31 +1387,32 @@ namespace scratchbird::core
         PageManager *pm = db_->page_manager();
 
         // Allocate new right internal page
-        uint32_t new_right_page_num_u32;
-        Status status = pm->allocatePage(new_right_page_num_u32, ctx);
+        GPID new_right_gpid = 0;
+        Status status = pm->allocatePageInTablespace(index_info_.idx_tablespace_id, &new_right_gpid, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new internal page for split");
             return status;
         }
+        uint32_t new_right_page_num_u32 = static_cast<uint32_t>(getPageNumber(new_right_gpid));
         uint64_t new_right_page_num = new_right_page_num_u32;
 
         // Pin both pages
         void *left_page_data_ptr;
         void *new_right_page_data_ptr;
 
-        status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+        status = pinIndexPage(left_page_num, &left_page_data_ptr, ctx);
         if (status != Status::OK)
         {
-            pm->freePage(new_right_page_num_u32, ctx);
+            pm->freePageGlobal(new_right_gpid, ctx);
             return status;
         }
 
-        status = bp->pinPage(new_right_page_num, &new_right_page_data_ptr, ctx);
+        status = pinIndexPage(new_right_page_num, &new_right_page_data_ptr, ctx);
         if (status != Status::OK)
         {
-            bp->unpinPage(left_page_num, false, ctx);
-            pm->freePage(new_right_page_num_u32, ctx);
+            unpinIndexPage(left_page_num, false, ctx);
+            pm->freePageGlobal(new_right_gpid, ctx);
             return status;
         }
 
@@ -1477,11 +1495,11 @@ namespace scratchbird::core
 
                 // Update child's parent pointer
                 void *child_page_data_ptr;
-                if (bp->pinPage(child_page, &child_page_data_ptr, ctx) == Status::OK)
+                if (pinIndexPage(child_page, &child_page_data_ptr, ctx) == Status::OK)
                 {
                     auto *child_page_ptr = reinterpret_cast<SBBTreePage *>(child_page_data_ptr);
                     child_page_ptr->btr_parent_page = new_right_page_num;
-                    bp->unpinPage(child_page, true, ctx);
+                    unpinIndexPage(child_page, true, ctx);
                 }
             }
 
@@ -1541,21 +1559,21 @@ namespace scratchbird::core
                         // CRITICAL FIX (Issue 2.7): Failed to acquire lock - MUST NOT continue
                         // Continuing without lock can cause B-tree corruption via race condition
                         // Two concurrent splits could both try to update the same sibling pointer
-                        bp->unpinPage(left_page_num, false, ctx);
-                        bp->unpinPage(new_right_page_num, false, ctx);
-                        pm->freePage(new_right_page_num_u32, ctx);
+                        unpinIndexPage(left_page_num, false, ctx);
+                        unpinIndexPage(new_right_page_num, false, ctx);
+                        pm->freePageGlobal(new_right_gpid, ctx);
                         SET_ERROR_CONTEXT(ctx, status, "Failed to acquire lock on old right sibling during internal split");
                         return status;
                     }
                 }
 
                 void *old_right_data_ptr;
-                status = bp->pinPage(old_right_sibling, &old_right_data_ptr, ctx);
+                status = pinIndexPage(old_right_sibling, &old_right_data_ptr, ctx);
                 if (status == Status::OK)
                 {
                     auto *old_right_page = reinterpret_cast<SBBTreePage *>(old_right_data_ptr);
                     old_right_page->btr_left_sibling = new_right_page_num;
-                    bp->unpinPage(old_right_sibling, true, ctx);
+                    unpinIndexPage(old_right_sibling, true, ctx);
                 }
 
                 // Release lock on old right sibling
@@ -1570,17 +1588,17 @@ namespace scratchbird::core
             }
 
             // Unpin both pages (mark as dirty)
-            bp->unpinPage(left_page_num, true, ctx);
-            bp->unpinPage(new_right_page_num, true, ctx);
+            unpinIndexPage(left_page_num, true, ctx);
+            unpinIndexPage(new_right_page_num, true, ctx);
 
             // Insert promoted key into parent
             return insert_into_parent(left_page_num, promoted_key, new_right_page_num, ctx);
         }
         catch (const std::exception &e)
         {
-            bp->unpinPage(left_page_num, false, ctx);
-            bp->unpinPage(new_right_page_num, false, ctx);
-            pm->freePage(new_right_page_num_u32, ctx);
+            unpinIndexPage(left_page_num, false, ctx);
+            unpinIndexPage(new_right_page_num, false, ctx);
+            pm->freePageGlobal(new_right_gpid, ctx);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
             return Status::INVALID_ARGUMENT;
         }
@@ -1594,7 +1612,7 @@ namespace scratchbird::core
 
         // Pin left page to get parent info
         void *left_page_data_ptr;
-        Status status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+        Status status = pinIndexPage(left_page_num, &left_page_data_ptr, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -1604,7 +1622,7 @@ namespace scratchbird::core
         uint64_t parent_page_num = left_page->btr_parent_page;
         bool left_is_root = (left_page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0;
 
-        bp->unpinPage(left_page_num, false, ctx);
+        unpinIndexPage(left_page_num, false, ctx);
 
         // If no parent (was root), create new root
         if (parent_page_num == 0 || left_is_root)
@@ -1614,7 +1632,7 @@ namespace scratchbird::core
 
         // Pin parent page
         void *parent_page_data_ptr;
-        status = bp->pinPage(parent_page_num, &parent_page_data_ptr, ctx);
+        status = pinIndexPage(parent_page_num, &parent_page_data_ptr, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -1629,7 +1647,7 @@ namespace scratchbird::core
         if (parent_page->btr_free_space < (required_space + sizeof(uint16_t)))
         {
             // Parent is full, need to split it
-            bp->unpinPage(parent_page_num, false, ctx);
+            unpinIndexPage(parent_page_num, false, ctx);
             return split_internal_page(parent_page_num, separator_key, right_page_num, ctx);
         }
 
@@ -1700,7 +1718,7 @@ namespace scratchbird::core
         parent_page->btr_free_space -= (required_space + sizeof(uint16_t));
 
         // Unpin parent (mark as dirty)
-        bp->unpinPage(parent_page_num, true, ctx);
+        unpinIndexPage(parent_page_num, true, ctx);
 
         return Status::OK;
     }
@@ -1712,13 +1730,14 @@ namespace scratchbird::core
         PageManager *pm = db_->page_manager();
 
         // Allocate new root page
-        uint32_t new_root_page_num_u32;
-        Status status = pm->allocatePage(new_root_page_num_u32, ctx);
+        GPID new_root_gpid = 0;
+        Status status = pm->allocatePageInTablespace(index_info_.idx_tablespace_id, &new_root_gpid, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new root page");
             return status;
         }
+        uint32_t new_root_page_num_u32 = static_cast<uint32_t>(getPageNumber(new_root_gpid));
         uint64_t new_root_page_num = new_root_page_num_u32;
 
         // Pin all three pages
@@ -1726,27 +1745,27 @@ namespace scratchbird::core
         void *right_page_data_ptr;
         void *new_root_page_data_ptr;
 
-        status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+        status = pinIndexPage(left_page_num, &left_page_data_ptr, ctx);
         if (status != Status::OK)
         {
-            pm->freePage(new_root_page_num_u32, ctx);
+            pm->freePageGlobal(new_root_gpid, ctx);
             return status;
         }
 
-        status = bp->pinPage(right_page_num, &right_page_data_ptr, ctx);
+        status = pinIndexPage(right_page_num, &right_page_data_ptr, ctx);
         if (status != Status::OK)
         {
-            bp->unpinPage(left_page_num, false, ctx);
-            pm->freePage(new_root_page_num_u32, ctx);
+            unpinIndexPage(left_page_num, false, ctx);
+            pm->freePageGlobal(new_root_gpid, ctx);
             return status;
         }
 
-        status = bp->pinPage(new_root_page_num, &new_root_page_data_ptr, ctx);
+        status = pinIndexPage(new_root_page_num, &new_root_page_data_ptr, ctx);
         if (status != Status::OK)
         {
-            bp->unpinPage(left_page_num, false, ctx);
-            bp->unpinPage(right_page_num, false, ctx);
-            pm->freePage(new_root_page_num_u32, ctx);
+            unpinIndexPage(left_page_num, false, ctx);
+            unpinIndexPage(right_page_num, false, ctx);
+            pm->freePageGlobal(new_root_gpid, ctx);
             return status;
         }
 
@@ -1819,18 +1838,18 @@ namespace scratchbird::core
             index_info_.idx_height++;
 
             // Unpin all pages (mark as dirty)
-            bp->unpinPage(left_page_num, true, ctx);
-            bp->unpinPage(right_page_num, true, ctx);
-            bp->unpinPage(new_root_page_num, true, ctx);
+            unpinIndexPage(left_page_num, true, ctx);
+            unpinIndexPage(right_page_num, true, ctx);
+            unpinIndexPage(new_root_page_num, true, ctx);
 
             return Status::OK;
         }
         catch (const std::exception &e)
         {
-            bp->unpinPage(left_page_num, false, ctx);
-            bp->unpinPage(right_page_num, false, ctx);
-            bp->unpinPage(new_root_page_num, false, ctx);
-            pm->freePage(new_root_page_num_u32, ctx);
+            unpinIndexPage(left_page_num, false, ctx);
+            unpinIndexPage(right_page_num, false, ctx);
+            unpinIndexPage(new_root_page_num, false, ctx);
+            pm->freePageGlobal(new_root_gpid, ctx);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
             return Status::INVALID_ARGUMENT;
         }
@@ -1857,7 +1876,7 @@ namespace scratchbird::core
 
         // Pin root page
         void *root_page_data_ptr = nullptr;
-        Status status = bp->pinPage(root_page, &root_page_data_ptr, ctx);
+        Status status = pinIndexPage(root_page, &root_page_data_ptr, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin root page for vacuum");
@@ -1867,7 +1886,7 @@ namespace scratchbird::core
         auto *root = reinterpret_cast<SBBTreePage *>(root_page_data_ptr);
         uint16_t tree_height = root->btr_level + 1;
 
-        bp->unpinPage(root_page, false, ctx);
+        unpinIndexPage(root_page, false, ctx);
 
         // Vacuum pages level by level, bottom-up
         // This allows us to merge pages and update parent pointers correctly
@@ -1883,7 +1902,7 @@ namespace scratchbird::core
             for (int16_t l = tree_height - 1; l > level; --l)
             {
                 void *page_data_ptr = nullptr;
-                status = bp->pinPage(current_page, &page_data_ptr, ctx);
+                status = pinIndexPage(current_page, &page_data_ptr, ctx);
                 if (status != Status::OK)
                 {
                     continue;
@@ -1906,7 +1925,7 @@ namespace scratchbird::core
                     current_page = static_cast<uint32_t>(page->btr_rightmost_child);
                 }
 
-                bp->unpinPage(static_cast<uint32_t>(page->btr_header.page_id), false, ctx);
+                unpinIndexPage(static_cast<uint32_t>(page->btr_header.page_id), false, ctx);
             }
 
             // Now traverse all siblings at this level
@@ -1915,7 +1934,7 @@ namespace scratchbird::core
                 pages_at_level.push_back(current_page);
 
                 void *page_data_ptr = nullptr;
-                status = bp->pinPage(current_page, &page_data_ptr, ctx);
+                status = pinIndexPage(current_page, &page_data_ptr, ctx);
                 if (status != Status::OK)
                 {
                     break;
@@ -1924,7 +1943,7 @@ namespace scratchbird::core
                 auto *page = reinterpret_cast<SBBTreePage *>(page_data_ptr);
                 uint64_t next_page = page->btr_right_sibling;
 
-                bp->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
 
                 current_page = static_cast<uint32_t>(next_page);
             }
@@ -1951,14 +1970,14 @@ namespace scratchbird::core
                 void *left_data_ptr = nullptr;
                 void *right_data_ptr = nullptr;
 
-                status = bp->pinPage(left_page, &left_data_ptr, ctx);
+                status = pinIndexPage(left_page, &left_data_ptr, ctx);
                 if (status != Status::OK)
                     continue;
 
-                status = bp->pinPage(right_page, &right_data_ptr, ctx);
+                status = pinIndexPage(right_page, &right_data_ptr, ctx);
                 if (status != Status::OK)
                 {
-                    bp->unpinPage(left_page, false, ctx);
+                    unpinIndexPage(left_page, false, ctx);
                     continue;
                 }
 
@@ -1967,8 +1986,8 @@ namespace scratchbird::core
 
                 bool should_merge = shouldMergePages(left_page_hdr, right_page_hdr);
 
-                bp->unpinPage(left_page, false, ctx);
-                bp->unpinPage(right_page, false, ctx);
+                unpinIndexPage(left_page, false, ctx);
+                unpinIndexPage(right_page, false, ctx);
 
                 if (should_merge)
                 {
@@ -1995,7 +2014,7 @@ namespace scratchbird::core
         BufferPool *bp = db_->buffer_pool();
 
         void *page_data_ptr = nullptr;
-        Status status = bp->pinPage(page_id, &page_data_ptr, ctx);
+        Status status = pinIndexPage(page_id, &page_data_ptr, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -2007,7 +2026,7 @@ namespace scratchbird::core
         // Check if page has garbage
         if (!(page->btr_flags & static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE)))
         {
-            bp->unpinPage(page_id, false, ctx);
+            unpinIndexPage(page_id, false, ctx);
             return Status::OK;
         }
 
@@ -2031,7 +2050,7 @@ namespace scratchbird::core
         {
             // Clear the HAS_GARBAGE flag
             page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
-            bp->unpinPage(page_id, true, ctx);
+            unpinIndexPage(page_id, true, ctx);
             return Status::OK;
         }
 
@@ -2042,11 +2061,11 @@ namespace scratchbird::core
         {
             stats.pages_vacuumed++;
             stats.nodes_removed += deleted_count;
-            bp->unpinPage(page_id, true, ctx);
+            unpinIndexPage(page_id, true, ctx);
         }
         else
         {
-            bp->unpinPage(page_id, false, ctx);
+            unpinIndexPage(page_id, false, ctx);
         }
 
         return status;
@@ -2190,16 +2209,16 @@ namespace scratchbird::core
         void *left_data_ptr = nullptr;
         void *right_data_ptr = nullptr;
 
-        Status status = bp->pinPage(left_page_id, &left_data_ptr, ctx);
+        Status status = pinIndexPage(left_page_id, &left_data_ptr, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        status = bp->pinPage(right_page_id, &right_data_ptr, ctx);
+        status = pinIndexPage(right_page_id, &right_data_ptr, ctx);
         if (status != Status::OK)
         {
-            bp->unpinPage(left_page_id, false, ctx);
+            unpinIndexPage(left_page_id, false, ctx);
             return status;
         }
 
@@ -2232,8 +2251,8 @@ namespace scratchbird::core
             if (left_page->btr_free_space < node_size + sizeof(uint16_t))
             {
                 // Not enough space, abort merge
-                bp->unpinPage(left_page_id, false, ctx);
-                bp->unpinPage(right_page_id, false, ctx);
+                unpinIndexPage(left_page_id, false, ctx);
+                unpinIndexPage(right_page_id, false, ctx);
                 return Status::PAGE_FULL;
             }
 
@@ -2260,13 +2279,13 @@ namespace scratchbird::core
         if (right_page->btr_right_sibling != 0)
         {
             void *right_sibling_data_ptr = nullptr;
-            status = bp->pinPage(static_cast<uint32_t>(right_page->btr_right_sibling),
+            status = pinIndexPage(static_cast<uint32_t>(right_page->btr_right_sibling),
                                  &right_sibling_data_ptr, ctx);
             if (status == Status::OK)
             {
                 auto *right_sibling = reinterpret_cast<SBBTreePage *>(right_sibling_data_ptr);
                 right_sibling->btr_left_sibling = left_page_id;
-                bp->unpinPage(static_cast<uint32_t>(right_page->btr_right_sibling), true, ctx);
+                unpinIndexPage(static_cast<uint32_t>(right_page->btr_right_sibling), true, ctx);
             }
         }
 
@@ -2276,11 +2295,11 @@ namespace scratchbird::core
         uint64_t parent_page_num = right_page->btr_parent_page;
 
         // Mark pages as dirty and unpin before updating parent
-        bp->unpinPage(left_page_id, true, ctx);
-        bp->unpinPage(right_page_id, false, ctx);
+        unpinIndexPage(left_page_id, true, ctx);
+        unpinIndexPage(right_page_id, false, ctx);
 
         // Free the right page
-        pm->freePage(right_page_id, ctx);
+        pm->freePageGlobal(indexGPID(right_page_id), ctx);
 
         // Update parent if it exists (not root)
         if (parent_page_num != 0)
@@ -2312,7 +2331,7 @@ namespace scratchbird::core
 
         // Pin parent page
         void *parent_data_ptr = nullptr;
-        Status status = bp->pinPage(parent_page_num, &parent_data_ptr, ctx);
+        Status status = pinIndexPage(parent_page_num, &parent_data_ptr, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -2358,12 +2377,12 @@ namespace scratchbird::core
                     uint32_t node_size = sizeof(SBBTreeNode) + last_node->btn_key_len;
                     parent_page->btr_free_space += (node_size + sizeof(uint16_t));
 
-                    bp->unpinPage(parent_page_num, true, ctx);
+                    unpinIndexPage(parent_page_num, true, ctx);
                     return Status::OK;
                 }
             }
 
-            bp->unpinPage(parent_page_num, false, ctx);
+            unpinIndexPage(parent_page_num, false, ctx);
             return Status::NOT_FOUND;
         }
 
@@ -2375,7 +2394,7 @@ namespace scratchbird::core
         // Set HAS_GARBAGE flag to indicate page needs vacuuming
         parent_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
 
-        bp->unpinPage(parent_page_num, true, ctx);
+        unpinIndexPage(parent_page_num, true, ctx);
 
         return Status::OK;
     }
@@ -2410,7 +2429,7 @@ namespace scratchbird::core
         for (const TID &tid : dead_tids)
         {
             uint64_t legacy = convertTIDtoLegacy(tid);
-            if (legacy != 0)  // Skip custom tablespace TIDs (not supported in ALPHA)
+            if (legacy != 0)
             {
                 dead_set.insert(legacy);
             }
@@ -2436,7 +2455,7 @@ namespace scratchbird::core
         while (true)
         {
             void *page_buffer = nullptr;
-            Status pin_status = bp->pinPage(current_page_num, &page_buffer, ctx);
+            Status pin_status = pinIndexPage(current_page_num, &page_buffer, ctx);
             if (pin_status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, pin_status, "Failed to pin page during GC navigation");
@@ -2449,7 +2468,7 @@ namespace scratchbird::core
             if (level == 0)
             {
                 // We've reached a leaf, unpin and break
-                bp->unpinPage(current_page_num, false, ctx);
+                unpinIndexPage(current_page_num, false, ctx);
                 break;
             }
 
@@ -2457,7 +2476,7 @@ namespace scratchbird::core
             if (page->btr_count == 0)
             {
                 // Empty internal node - shouldn't happen, but handle gracefully
-                bp->unpinPage(current_page_num, false, ctx);
+                unpinIndexPage(current_page_num, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED, "Empty internal node encountered");
                 return Status::INDEX_CORRUPTED;
             }
@@ -2468,7 +2487,7 @@ namespace scratchbird::core
                 page_data + sizeof(SBBTreePage));
 
             uint64_t next_page = first_node->btn_child_page;
-            bp->unpinPage(current_page_num, false, ctx);
+            unpinIndexPage(current_page_num, false, ctx);
 
             current_page_num = next_page;
         }
@@ -2479,7 +2498,7 @@ namespace scratchbird::core
         while (leaf_page_num != 0)
         {
             void *page_buffer = nullptr;
-            Status pin_status = bp->pinPage(leaf_page_num, &page_buffer, ctx);
+            Status pin_status = pinIndexPage(leaf_page_num, &page_buffer, ctx);
             if (pin_status != Status::OK)
             {
                 LOG_WARNING(VACUUM, "B-Tree GC: Failed to pin leaf page %lu: %d",
@@ -2496,7 +2515,7 @@ namespace scratchbird::core
             {
                 LOG_WARNING(VACUUM, "B-Tree GC: Expected leaf page but got level %u at page %lu",
                             page->btr_level, leaf_page_num);
-                bp->unpinPage(leaf_page_num, false, ctx);
+                unpinIndexPage(leaf_page_num, false, ctx);
                 had_errors = true;
                 break;
             }
@@ -2566,7 +2585,7 @@ namespace scratchbird::core
             uint64_t next_leaf = page->btr_right_sibling;
 
             // Unpin current page
-            bp->unpinPage(leaf_page_num, page_modified, ctx);
+            unpinIndexPage(leaf_page_num, page_modified, ctx);
 
             // Move to next leaf
             leaf_page_num = next_leaf;
@@ -2580,6 +2599,16 @@ namespace scratchbird::core
         if (pages_modified_out != nullptr)
         {
             *pages_modified_out = total_pages_modified;
+        }
+
+        if (bloom_filter_ && total_entries_removed > 0)
+        {
+            Status bf_status = rebuildBloomFilter(ctx);
+            if (bf_status != Status::OK)
+            {
+                LOG_WARNING(VACUUM, "B-Tree bloom filter rebuild failed: %d",
+                            static_cast<int>(bf_status));
+            }
         }
 
         // Return appropriate status
@@ -2668,7 +2697,7 @@ namespace scratchbird::core
         while (true)
         {
             void *page_buffer = nullptr;
-            Status pin_status = bp->pinPage(current_page_num, &page_buffer, ctx);
+            Status pin_status = pinIndexPage(current_page_num, &page_buffer, ctx);
             if (pin_status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, pin_status,
@@ -2682,7 +2711,7 @@ namespace scratchbird::core
             if (level == 0)
             {
                 // We've reached a leaf, unpin and break
-                bp->unpinPage(current_page_num, false, ctx);
+                unpinIndexPage(current_page_num, false, ctx);
                 break;
             }
 
@@ -2690,7 +2719,7 @@ namespace scratchbird::core
             if (page->btr_count == 0)
             {
                 // Empty internal node - shouldn't happen, but handle gracefully
-                bp->unpinPage(current_page_num, false, ctx);
+                unpinIndexPage(current_page_num, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED,
                                 "Empty internal node encountered during TID update");
                 return Status::INDEX_CORRUPTED;
@@ -2702,7 +2731,7 @@ namespace scratchbird::core
             auto *first_node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[0]);
 
             uint64_t next_page = first_node->btn_child_page;
-            bp->unpinPage(current_page_num, false, ctx);
+            unpinIndexPage(current_page_num, false, ctx);
 
             current_page_num = next_page;
         }
@@ -2713,7 +2742,7 @@ namespace scratchbird::core
         while (leaf_page_num != 0)
         {
             void *page_buffer = nullptr;
-            Status pin_status = bp->pinPage(leaf_page_num, &page_buffer, ctx);
+            Status pin_status = pinIndexPage(leaf_page_num, &page_buffer, ctx);
             if (pin_status != Status::OK)
             {
                 LOG_WARNING(CATALOG,
@@ -2732,7 +2761,7 @@ namespace scratchbird::core
                 LOG_WARNING(CATALOG,
                            "B-Tree TID update: Expected leaf page but got level %u at page %lu",
                            page->btr_level, leaf_page_num);
-                bp->unpinPage(leaf_page_num, false, ctx);
+                unpinIndexPage(leaf_page_num, false, ctx);
                 had_errors = true;
                 break;
             }
@@ -2774,7 +2803,8 @@ namespace scratchbird::core
                     // For legacy format, GPID = makeGPID(0, page_id)
                     uint32_t page_id = static_cast<uint32_t>(legacy_tid >> 32);
                     uint16_t item_id = static_cast<uint16_t>((legacy_tid >> 16) & 0xFFFF);
-                    GPID old_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+                    uint16_t tablespace_id = static_cast<uint16_t>(legacy_tid & 0xFFFF);
+                    GPID old_gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_id));
 
                     // Check if this GPID was migrated
                     auto it = tid_mapping.find(old_gpid);
@@ -2783,13 +2813,21 @@ namespace scratchbird::core
                         // Found! Update TID with new GPID
                         GPID new_gpid = it->second;
 
-                        // Extract new page number from new GPID
                         uint64_t new_page_number = getPageNumber(TID(new_gpid, 0));
-                        uint32_t new_page_id = static_cast<uint32_t>(new_page_number);
+                        if (new_page_number > 0xFFFFFFFFULL)
+                        {
+                            had_errors = true;
+                            LOG_WARNING(STORAGE, "BTree migration: new page number exceeds legacy TID encoding: %lu",
+                                       new_page_number);
+                            continue;
+                        }
 
-                        // Construct new legacy TID with updated page_id
+                        uint32_t new_page_id = static_cast<uint32_t>(new_page_number);
+                        uint16_t new_tablespace_id = getTablespaceID(new_gpid);
+
                         uint64_t new_legacy_tid = (static_cast<uint64_t>(new_page_id) << 32) |
-                                                 (static_cast<uint64_t>(item_id) << 16);
+                                                 (static_cast<uint64_t>(item_id) << 16) |
+                                                 static_cast<uint64_t>(new_tablespace_id);
 
                         // Update the TID in-place
                         tuple_ids[i] = new_legacy_tid;
@@ -2810,7 +2848,7 @@ namespace scratchbird::core
             uint64_t next_leaf = page->btr_right_sibling;
 
             // Unpin current page (mark dirty if modified)
-            bp->unpinPage(leaf_page_num, page_modified, ctx);
+            unpinIndexPage(leaf_page_num, page_modified, ctx);
 
             // Move to next leaf
             leaf_page_num = next_leaf;
@@ -2914,16 +2952,19 @@ namespace scratchbird::core
         {
             // Allocate a new leaf page
             uint32_t leaf_page_num = 0;
-            Status status = page_manager->allocatePage(leaf_page_num, ctx);
+            GPID leaf_gpid = 0;
+            Status status = page_manager->allocatePageInTablespace(index_info_.idx_tablespace_id,
+                                                                  &leaf_gpid, ctx);
             if (status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to allocate leaf page during bulk load");
                 return status;
             }
+            leaf_page_num = static_cast<uint32_t>(getPageNumber(leaf_gpid));
 
             // Pin and initialize the page
             void *page_data_ptr = nullptr;
-            status = buffer_pool->pinPage(leaf_page_num, &page_data_ptr, ctx);
+            status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx);
             if (status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to pin leaf page during bulk load");
@@ -3001,29 +3042,29 @@ namespace scratchbird::core
 
                 // Update previous page's right sibling pointer
                 void *prev_page_ptr = nullptr;
-                status = buffer_pool->pinPage(leaf_pages.back(), &prev_page_ptr, ctx);
+                status = pinIndexPage(leaf_pages.back(), &prev_page_ptr, ctx);
                 if (status == Status::OK)
                 {
                     auto *prev_page = reinterpret_cast<SBBTreePage *>(prev_page_ptr);
                     prev_page->btr_right_sibling = leaf_page_num;
-                    buffer_pool->unpinPage(leaf_pages.back(), true, ctx);
+                    unpinIndexPage(leaf_pages.back(), true, ctx);
                 }
             }
 
             leaf_pages.push_back(leaf_page_num);
-            buffer_pool->unpinPage(leaf_page_num, true, ctx);
+            unpinIndexPage(leaf_page_num, true, ctx);
         }
 
         // Mark last leaf page as rightmost
         if (!leaf_pages.empty())
         {
             void *last_page_ptr = nullptr;
-            Status status = buffer_pool->pinPage(leaf_pages.back(), &last_page_ptr, ctx);
+            Status status = pinIndexPage(leaf_pages.back(), &last_page_ptr, ctx);
             if (status == Status::OK)
             {
                 auto *last_page = reinterpret_cast<SBBTreePage *>(last_page_ptr);
                 last_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
-                buffer_pool->unpinPage(leaf_pages.back(), true, ctx);
+                unpinIndexPage(leaf_pages.back(), true, ctx);
             }
         }
 
@@ -3035,12 +3076,12 @@ namespace scratchbird::core
         if (leaf_pages.size() == 1)
         {
             void *root_page_ptr = nullptr;
-            Status status = buffer_pool->pinPage(leaf_pages[0], &root_page_ptr, ctx);
+            Status status = pinIndexPage(leaf_pages[0], &root_page_ptr, ctx);
             if (status == Status::OK)
             {
                 auto *root_page = reinterpret_cast<SBBTreePage *>(root_page_ptr);
                 root_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::ROOT);
-                buffer_pool->unpinPage(leaf_pages[0], true, ctx);
+                unpinIndexPage(leaf_pages[0], true, ctx);
             }
             index_info_.idx_root_page = leaf_pages[0];
             index_info_.idx_height = 1;
@@ -3078,15 +3119,18 @@ namespace scratchbird::core
             {
                 // Allocate internal page
                 uint32_t internal_page_num = 0;
-                Status status = page_manager->allocatePage(internal_page_num, ctx);
+                GPID internal_gpid = 0;
+                Status status = page_manager->allocatePageInTablespace(index_info_.idx_tablespace_id,
+                                                                      &internal_gpid, ctx);
                 if (status != Status::OK)
                 {
                     SET_ERROR_CONTEXT(ctx, status, "Failed to allocate internal page during bulk load");
                     return status;
                 }
+                internal_page_num = static_cast<uint32_t>(getPageNumber(internal_gpid));
 
                 void *page_data_ptr = nullptr;
-                status = buffer_pool->pinPage(internal_page_num, &page_data_ptr, ctx);
+                status = pinIndexPage(internal_page_num, &page_data_ptr, ctx);
                 if (status != Status::OK)
                 {
                     SET_ERROR_CONTEXT(ctx, status, "Failed to pin internal page during bulk load");
@@ -3202,12 +3246,12 @@ namespace scratchbird::core
 
                     // Update parent pointer of this child page
                     void *child_ptr = nullptr;
-                    status = buffer_pool->pinPage(current_level[child_idx], &child_ptr, ctx);
+                    status = pinIndexPage(current_level[child_idx], &child_ptr, ctx);
                     if (status == Status::OK)
                     {
                         auto *child_page = reinterpret_cast<SBBTreePage *>(child_ptr);
                         child_page->btr_parent_page = internal_page_num;
-                        buffer_pool->unpinPage(current_level[child_idx], true, ctx);
+                        unpinIndexPage(current_level[child_idx], true, ctx);
                     }
 
                     child_idx++;
@@ -3227,29 +3271,29 @@ namespace scratchbird::core
                     page->btr_left_sibling = next_level.back();
 
                     void *prev_page_ptr = nullptr;
-                    status = buffer_pool->pinPage(next_level.back(), &prev_page_ptr, ctx);
+                    status = pinIndexPage(next_level.back(), &prev_page_ptr, ctx);
                     if (status == Status::OK)
                     {
                         auto *prev_page = reinterpret_cast<SBBTreePage *>(prev_page_ptr);
                         prev_page->btr_right_sibling = internal_page_num;
-                        buffer_pool->unpinPage(next_level.back(), true, ctx);
+                        unpinIndexPage(next_level.back(), true, ctx);
                     }
                 }
 
                 next_level.push_back(internal_page_num);
-                buffer_pool->unpinPage(internal_page_num, true, ctx);
+                unpinIndexPage(internal_page_num, true, ctx);
             }
 
             // Mark last internal page as rightmost
             if (!next_level.empty())
             {
                 void *last_page_ptr = nullptr;
-                Status status = buffer_pool->pinPage(next_level.back(), &last_page_ptr, ctx);
+                Status status = pinIndexPage(next_level.back(), &last_page_ptr, ctx);
                 if (status == Status::OK)
                 {
                     auto *last_page = reinterpret_cast<SBBTreePage *>(last_page_ptr);
                     last_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
-                    buffer_pool->unpinPage(next_level.back(), true, ctx);
+                    unpinIndexPage(next_level.back(), true, ctx);
                 }
             }
 
@@ -3265,18 +3309,116 @@ namespace scratchbird::core
         if (!current_level.empty())
         {
             void *root_page_ptr = nullptr;
-            Status status = buffer_pool->pinPage(current_level[0], &root_page_ptr, ctx);
+            Status status = pinIndexPage(current_level[0], &root_page_ptr, ctx);
             if (status == Status::OK)
             {
                 auto *root_page = reinterpret_cast<SBBTreePage *>(root_page_ptr);
                 root_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::ROOT);
                 root_page->btr_parent_page = 0; // Root has no parent
-                buffer_pool->unpinPage(current_level[0], true, ctx);
+                unpinIndexPage(current_level[0], true, ctx);
             }
             index_info_.idx_root_page = current_level[0];
             index_info_.idx_height = level;
             index_info_.idx_page_count = leaf_pages.size() + (current_level.size() > 1 ? current_level.size() : 0);
             index_info_.idx_tuple_count = entries.size();
+        }
+
+        return Status::OK;
+    }
+
+    Status BTree::attachBloomFilter(const BloomFilterConfig &config,
+                                    uint64_t estimated_keys,
+                                    ErrorContext *ctx)
+    {
+        if (bloom_filter_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Bloom filter already attached");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        GPID meta_gpid = 0;
+        Status status = BloomFilter::create(db_, index_info_.idx_uuid, config, estimated_keys,
+                                           index_info_.idx_tablespace_id, &meta_gpid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        bloom_filter_ = BloomFilter::open(db_, meta_gpid, ctx);
+        if (!bloom_filter_)
+        {
+            return Status::IO_ERROR;
+        }
+        bloom_filter_->setTargetFpr(config.target_fpr);
+
+        return rebuildBloomFilter(ctx);
+    }
+
+    Status BTree::loadBloomFilter(GPID meta_gpid, double target_fpr, ErrorContext *ctx)
+    {
+        if (bloom_filter_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Bloom filter already attached");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        bloom_filter_ = BloomFilter::open(db_, meta_gpid, ctx);
+        if (!bloom_filter_)
+        {
+            return Status::IO_ERROR;
+        }
+
+        bloom_filter_->setTargetFpr(target_fpr);
+        return Status::OK;
+    }
+
+    Status BTree::detachBloomFilter(ErrorContext *ctx)
+    {
+        if (!bloom_filter_)
+        {
+            return Status::OK;
+        }
+
+        Status status = bloom_filter_->drop(ctx);
+        bloom_filter_.reset();
+        return status;
+    }
+
+    Status BTree::rebuildBloomFilter(ErrorContext *ctx)
+    {
+        if (!bloom_filter_)
+        {
+            return Status::OK;
+        }
+
+        Status status = bloom_filter_->clear(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        TransactionManager *txn_mgr = db_->transaction_manager();
+        uint64_t oit = txn_mgr ? txn_mgr->getOldestInterestingTransaction() : 0;
+        auto iter = rangeScan(nullptr, nullptr, oit, true, true, ctx);
+        if (!iter)
+        {
+            return Status::IO_ERROR;
+        }
+
+        std::vector<uint8_t> key;
+        TID tid;
+        while (iter->hasNext())
+        {
+            status = iter->next(&key, &tid, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = bloom_filter_->insert(key.data(), key.size(), ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
         }
 
         return Status::OK;
@@ -3295,7 +3437,7 @@ namespace scratchbird::core
 
         // Pin the page to check its fill ratio
         void *page_data_ptr = nullptr;
-        Status status = bp->pinPage(page_num, &page_data_ptr, ctx);
+        Status status = pinIndexPage(page_num, &page_data_ptr, ctx);
         if (status != Status::OK)
         {
             return;
@@ -3306,7 +3448,7 @@ namespace scratchbird::core
         // Don't merge root pages
         if ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0)
         {
-            bp->unpinPage(page_num, false, ctx);
+            unpinIndexPage(page_num, false, ctx);
             return;
         }
 
@@ -3319,7 +3461,7 @@ namespace scratchbird::core
         if (fill_percent >= 50)
         {
             // Page is sufficiently full, no merge needed
-            bp->unpinPage(page_num, false, ctx);
+            unpinIndexPage(page_num, false, ctx);
             return;
         }
 
@@ -3328,17 +3470,17 @@ namespace scratchbird::core
         uint64_t right_sibling = page->btr_right_sibling;
         uint64_t parent_page = page->btr_parent_page;
 
-        bp->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
 
         // Try to merge with right sibling first (more common in B-tree operations)
         if (right_sibling != 0)
         {
             void *right_data_ptr = nullptr;
-            status = bp->pinPage(right_sibling, &right_data_ptr, ctx);
+            status = pinIndexPage(right_sibling, &right_data_ptr, ctx);
             if (status == Status::OK)
             {
                 void *left_data_ptr = nullptr;
-                status = bp->pinPage(page_num, &left_data_ptr, ctx);
+                status = pinIndexPage(page_num, &left_data_ptr, ctx);
                 if (status == Status::OK)
                 {
                     auto *left_page_hdr = reinterpret_cast<SBBTreePage *>(left_data_ptr);
@@ -3346,8 +3488,8 @@ namespace scratchbird::core
 
                     bool should_merge = shouldMergePages(left_page_hdr, right_page_hdr);
 
-                    bp->unpinPage(page_num, false, ctx);
-                    bp->unpinPage(right_sibling, false, ctx);
+                    unpinIndexPage(page_num, false, ctx);
+                    unpinIndexPage(right_sibling, false, ctx);
 
                     if (should_merge)
                     {
@@ -3359,7 +3501,7 @@ namespace scratchbird::core
                 }
                 else
                 {
-                    bp->unpinPage(right_sibling, false, ctx);
+                    unpinIndexPage(right_sibling, false, ctx);
                 }
             }
         }
@@ -3368,11 +3510,11 @@ namespace scratchbird::core
         if (left_sibling != 0)
         {
             void *left_data_ptr = nullptr;
-            status = bp->pinPage(left_sibling, &left_data_ptr, ctx);
+            status = pinIndexPage(left_sibling, &left_data_ptr, ctx);
             if (status == Status::OK)
             {
                 void *right_data_ptr = nullptr;
-                status = bp->pinPage(page_num, &right_data_ptr, ctx);
+                status = pinIndexPage(page_num, &right_data_ptr, ctx);
                 if (status == Status::OK)
                 {
                     auto *left_page_hdr = reinterpret_cast<SBBTreePage *>(left_data_ptr);
@@ -3380,8 +3522,8 @@ namespace scratchbird::core
 
                     bool should_merge = shouldMergePages(left_page_hdr, right_page_hdr);
 
-                    bp->unpinPage(left_sibling, false, ctx);
-                    bp->unpinPage(page_num, false, ctx);
+                    unpinIndexPage(left_sibling, false, ctx);
+                    unpinIndexPage(page_num, false, ctx);
 
                     if (should_merge)
                     {
@@ -3393,7 +3535,7 @@ namespace scratchbird::core
                 }
                 else
                 {
-                    bp->unpinPage(left_sibling, false, ctx);
+                    unpinIndexPage(left_sibling, false, ctx);
                 }
             }
         }

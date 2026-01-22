@@ -12,6 +12,7 @@ The system catalog stores all database metadata including tables, columns, index
 
 - **[SYSTEM_CATALOG_STRUCTURE.md](SYSTEM_CATALOG_STRUCTURE.md)** - Complete system catalog table structure
 - **[SCHEMA_PATH_RESOLUTION.md](SCHEMA_PATH_RESOLUTION.md)** - Schema search path and name resolution
+- **[SCHEMA_PATH_SECURITY_DEFAULTS.md](SCHEMA_PATH_SECURITY_DEFAULTS.md)** - Schema path security defaults
 - **[COMPONENT_MODEL_AND_RESPONSIBILITIES.md](COMPONENT_MODEL_AND_RESPONSIBILITIES.md)** (155 lines) - Component architecture and responsibilities
 - **[CATALOG_CORRECTION_PLAN.md](CATALOG_CORRECTION_PLAN.md)** - Catalog structure correction and migration plan
 

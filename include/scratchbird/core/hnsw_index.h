@@ -7,6 +7,7 @@
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/vector.h"
+#include "scratchbird/core/gpid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -155,15 +156,27 @@ namespace scratchbird
             void setTID(const TID &tid) { node_gpid = tid.gpid; node_slot = tid.slot; }
 
             // Variable-length data follows:
-            // - uint64_t neighbors[node_num_neighbors]  // Neighbor TIDs (legacy format for internal use)
+            // - HnswNeighbor neighbors[node_num_neighbors]  // Neighbor TIDs (GPID + slot)
             // - uint8_t vector_data[node_vector_len]    // Encoded vector
             //
             // Access via:
-            //   const uint64_t* get_neighbors() const { return (uint64_t*)(this + 1); }
+            //   const HnswNeighbor* get_neighbors() const { return (HnswNeighbor*)(this + 1); }
             //   const uint8_t* get_vector_data() const {
             //       return (uint8_t*)(get_neighbors() + node_num_neighbors);
             //   }
         };
+
+        struct HnswNeighbor
+        {
+            GPID neighbor_gpid;
+            uint16_t neighbor_slot;
+            uint8_t neighbor_padding[6];
+
+            TID getTID() const { return TID(neighbor_gpid, neighbor_slot); }
+            void setTID(const TID &tid) { neighbor_gpid = tid.gpid; neighbor_slot = tid.slot; }
+        };
+
+        static_assert(sizeof(HnswNeighbor) == 16, "HnswNeighbor must be 16 bytes");
 
 #pragma pack(pop)
 
@@ -176,6 +189,7 @@ namespace scratchbird
             ID idx_table_uuid;                  // Table UUID
             std::vector<ID> idx_column_uuids;   // Indexed columns (usually 1)
             uint32_t idx_root_page;             // Root page number
+            uint16_t idx_tablespace_id = 0;
             uint32_t idx_m;                     // Max connections per node (default 16)
             uint32_t idx_ef_construction;       // Build expansion factor (default 200)
             uint32_t idx_ef_search;             // Search expansion factor (default 100)
@@ -223,12 +237,12 @@ namespace scratchbird
                                  uint32_t m = 16,                     // Max connections
                                  uint32_t ef_construction = 200,      // Build expansion
                                  uint32_t ef_search = 100,            // Search expansion
-                                 uint32_t *root_page_out = nullptr,
+                                 GPID root_gpid = 0,
                                  ErrorContext *ctx = nullptr);
 
             static std::unique_ptr<HnswIndex> open(Database *db,
                                                    const UuidV7Bytes &index_uuid,
-                                                   uint32_t root_page,
+                                                   GPID root_gpid,
                                                    ErrorContext *ctx = nullptr);
 
             /**
@@ -386,7 +400,7 @@ namespace scratchbird
             Status find_nearest(const VectorValue &query,
                                 uint32_t k,
                                 uint16_t layer,
-                                uint64_t entry_point,
+                                const TID &entry_point,
                                 uint64_t current_xid,
                                 std::vector<HnswSearchResult> *results_out,
                                 ErrorContext *ctx);
@@ -407,19 +421,19 @@ namespace scratchbird
             /**
              * Add bi-directional link between nodes
              */
-            Status add_link(uint64_t from_tid, uint64_t to_tid,
+            Status add_link(const TID &from_tid, const TID &to_tid,
                             uint16_t layer, ErrorContext *ctx);
 
             /**
              * Remove link between nodes
              */
-            Status remove_link(uint64_t from_tid, uint64_t to_tid,
+            Status remove_link(const TID &from_tid, const TID &to_tid,
                                uint16_t layer, ErrorContext *ctx);
 
             /**
              * Find node by tuple ID
              */
-            Status find_node(uint64_t tuple_id,
+            Status find_node(const TID &tuple_id,
                              SBHnswNode **node_out,
                              uint64_t *page_num_out,
                              ErrorContext *ctx);
@@ -427,23 +441,23 @@ namespace scratchbird
             /**
              * Prune connections to maintain M limit
              */
-            Status prune_connections(uint64_t node_tid, uint16_t layer,
+            Status prune_connections(const TID &node_tid, uint16_t layer,
                                      ErrorContext *ctx);
 
             /**
              * Create a new node in the graph
              */
             Status create_node(const VectorValue &vector,
-                              uint64_t tuple_id,
+                              const TID &tuple_id,
                               uint16_t layer,
-                              const std::vector<uint64_t> &neighbors,
+                              const std::vector<TID> &neighbors,
                               uint64_t current_xid,
                               ErrorContext *ctx);
 
             /**
              * Find entry point (node with highest layer)
              */
-            uint64_t find_entry_point(ErrorContext *ctx) const;
+            TID find_entry_point(ErrorContext *ctx) const;
 
             /**
              * Get maximum layer in the index
@@ -459,7 +473,7 @@ namespace scratchbird
             /**
              * Get vector data from a node
              */
-            Status get_node_vector(uint64_t tuple_id,
+            Status get_node_vector(const TID &tuple_id,
                                    VectorValue *vector_out,
                                    ErrorContext *ctx);
 
@@ -469,10 +483,14 @@ namespace scratchbird
              */
             Status reorganize_page_for_node_update(
                 uint64_t page_num,
-                uint64_t target_tid,
+                const TID &target_tid,
                 uint16_t new_num_neighbors,
-                const std::vector<uint64_t> &new_neighbors,
+                const std::vector<TID> &new_neighbors,
                 ErrorContext *ctx);
+
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr) const;
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr) const;
+            GPID indexGPID(uint64_t page_num) const;
 
             // Random number generator for layer selection
             mutable std::mt19937 rng_;

@@ -18,6 +18,8 @@ must be implemented for ScratchBird native protocol connectivity.
 - **[JDBC_DRIVER_SPECIFICATION.md](JDBC_DRIVER_SPECIFICATION.md)** - JDBC driver specification
 - **[ODBC_DRIVER_SPECIFICATION.md](ODBC_DRIVER_SPECIFICATION.md)** - ODBC driver specification
 - **[ALPHA_DRIVER_BOOTSTRAP.md](ALPHA_DRIVER_BOOTSTRAP.md)** - Alpha driver bootstrap requirements (native protocol)
+- **[NATIVE_DRIVER_CONFORMANCE.md](NATIVE_DRIVER_CONFORMANCE.md)** - Native protocol conformance (SBWP v1.1)
+- **[DRIVER_METADATA_QUERY_CONTRACT.md](DRIVER_METADATA_QUERY_CONTRACT.md)** - Metadata query contract for drivers
 
 ### Protocol-Specific Drivers
 

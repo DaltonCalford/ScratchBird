@@ -5,6 +5,7 @@ This directory holds optional beta-phase engine features that are not required f
 ## Index
 
 - [STORAGE_ENCODING_OPTIMIZATIONS.md](STORAGE_ENCODING_OPTIMIZATIONS.md) - Varlen header v2, per-column TOAST, packed NUMERIC
+- [TABLESPACE_SHRINK_COMPACTION.md](TABLESPACE_SHRINK_COMPACTION.md) - Tablespace shrink/compaction (MGA-safe)
 
 ## Notes
 

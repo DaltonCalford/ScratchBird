@@ -447,6 +447,22 @@ set_tests_properties(ClientConnectionTests PROPERTIES
     TIMEOUT 120
 )
 
+# C API Client Tests
+add_executable(test_client_c_api unit/test_c_client_api.cpp)
+target_link_libraries(test_client_c_api
+    scratchbird_client
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME ClientCApiTests COMMAND test_client_c_api)
+set_tests_properties(ClientCApiTests PROPERTIES
+    LABELS "integration;client;c_api"
+    TIMEOUT 120
+)
+
 # Client-Server Integration Tests (Local Server Architecture - Phase 4/5)
 # ==============================================================================
 # NOTE: These tests spawn a real sb_server process

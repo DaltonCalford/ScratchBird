@@ -177,6 +177,9 @@ Extended metrics for emulation (required for parity views):
 - query_rows_returned_total (counter; from scratchbird_query_rows_returned_sum)
 - query_rows_affected_total{type=insert|update|delete} (counter; from scratchbird_query_rows_affected_sum)
 - buffer_pool_reads_total{source=cache|disk}
+- copy_rows_total{direction=from|to}
+- copy_bytes_total{direction=from|to}
+- copy_errors_total
 - uptime_seconds
 - page_size_bytes
 - ods_major
@@ -256,6 +259,67 @@ Instrumentation notes:
 - stat_group=2/3 are required for MON$IO_STATS groups 2/3 parity.
 - Buffer manager must attribute page operations to the current statement and
   transaction via execution context (statement_id/transaction_id).
+
+### 8) sys.tablespace_migrations (Beta)
+
+Online tablespace migration state (Beta). Backed by `pg_tablespace_migrations`.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| table_id | UUID | Table identifier |
+| source_tablespace_id | SMALLINT | Source tablespace id |
+| target_tablespace_id | SMALLINT | Target tablespace id |
+| shadow_table_id | UUID | Shadow table identifier |
+| delta_log_id | UUID | Delta log identifier |
+| state | TEXT | PREPARE/COPY/CATCH_UP/CUTOVER/CLEANUP/DONE/FAILED/CANCELED |
+| migration_start_xid | BIGINT | Migration start transaction id |
+| cutover_xid | BIGINT | Cutover transaction id |
+| rows_copied | BIGINT | Rows copied so far |
+| rows_total_est | BIGINT | Estimated total rows |
+| rows_per_sec | DOUBLE | Smoothed rows per second |
+| eta_seconds | BIGINT | Estimated seconds remaining |
+| last_lag_ms | BIGINT | Last observed catch-up lag (ms) |
+| last_lag_sample_at | TIMESTAMPTZ | Lag sample timestamp |
+| throttle_state | TEXT | NONE/LAG/IO/MANUAL |
+| throttle_sleep_ms | INT | Current throttle delay (ms) |
+| last_progress_at | TIMESTAMPTZ | Last progress update |
+| last_error_code | INT | Last error code (nullable) |
+| created_at | TIMESTAMPTZ | Migration start time |
+| updated_at | TIMESTAMPTZ | Last state update time |
+
+Notes:
+- This view is Beta-only and requires online tablespace migration support.
+- When `state=DONE`, the old storage is eligible for sweep/GC after pre-cutover snapshots finish.
+
+### 9) sys.shard_migrations (Beta, Cluster)
+
+Cluster shard migration state (Beta). Backed by `pg_shard_migrations`.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| migration_id | UUID | Migration identifier |
+| source_shard_id | UUID | Source shard uuid |
+| target_shard_id | UUID | Target shard uuid |
+| state | TEXT | PREPARE/COPY/CATCH_UP/CUTOVER/CLEANUP/DONE/FAILED/CANCELED |
+| migration_start_xid | BIGINT | Migration start transaction id |
+| cutover_xid | BIGINT | Cutover transaction id |
+| bytes_copied | BIGINT | Bytes copied so far |
+| rows_copied | BIGINT | Rows copied so far |
+| bytes_per_sec | DOUBLE | Smoothed bytes per second |
+| rows_per_sec | DOUBLE | Smoothed rows per second |
+| eta_seconds | BIGINT | Estimated seconds remaining |
+| last_lag_ms | BIGINT | Last observed catch-up lag (ms) |
+| last_lag_sample_at | TIMESTAMPTZ | Lag sample timestamp |
+| throttle_state | TEXT | NONE/LAG/IO/MANUAL |
+| throttle_sleep_ms | INT | Current throttle delay (ms) |
+| last_progress_at | TIMESTAMPTZ | Last progress update |
+| last_error_code | INT | Last error code (nullable) |
+| created_at | TIMESTAMPTZ | Migration start time |
+| updated_at | TIMESTAMPTZ | Last state update time |
+
+Notes:
+- This view is Beta-only and requires sharding.
+- Rows are visible only to superusers or cluster administrators.
 
 ## Emulation Mapping (High-Level)
 

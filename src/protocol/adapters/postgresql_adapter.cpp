@@ -144,7 +144,7 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     // Set search_path to emulated schema (if it exists or can be created)
     if (!search_path_set_) {
         std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-        std::string schema_name = "emulation.postgresql.localhost.databases." + db_name;
+        std::string schema_name = "remote.emulation.postgresql.localhost.databases." + db_name;
         std::string set_path = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
         client::ResultSet rs;
         auto set_status = client_->executeQuery(set_path, &rs, ctx);
@@ -1458,12 +1458,12 @@ void PostgresqlAdapter::sendReadyForQuery(network::Connection* conn) {
 }
 
 core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* ctx) {
-    if (!database_) {
+    if (!engineDatabase()) {
         SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Database not initialized");
         return core::Status::INVALID_ARGUMENT;
     }
 
-    auto* catalog = database_->catalog_manager();
+    auto* catalog = engineDatabase()->catalog_manager();
     if (!catalog) {
         SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Catalog manager not available");
         return core::Status::INVALID_ARGUMENT;
@@ -1480,7 +1480,7 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
         db_name = "default";
     }
 
-    std::string schema_name = "emulation.postgresql.localhost.databases." + db_name;
+    std::string schema_name = "remote.emulation.postgresql.localhost.databases." + db_name;
 
     core::CatalogManager::SchemaInfo schema_info;
     auto status = catalog->getSchema(schema_name, schema_info, ctx);
@@ -1553,9 +1553,9 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
         return status;
     }
 
-    sblr::PostgreSQLQueryCompiler compiler(database_.get());
+    sblr::PostgreSQLQueryCompiler compiler(engineDatabase());
     std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-    compiler.setDefaultSchema("emulation.postgresql.localhost.databases." + db_name);
+    compiler.setDefaultSchema("remote.emulation.postgresql.localhost.databases." + db_name);
     if (pg_schema_id_ != core::ID{}) {
         compiler.setCurrentSchema(pg_schema_id_);
     }

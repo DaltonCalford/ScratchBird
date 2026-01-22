@@ -8,7 +8,7 @@ This directory contains the complete distributed cluster architecture specificat
 
 Comprehensive cluster architecture for distributed ScratchBird deployments, including Raft consensus, sharding, replication, backup/restore, job scheduling, and observability.
 
-**Total Specifications:** 18 documents covering all aspects of cluster operation
+**Total Specifications:** 19 documents covering all aspects of cluster operation
 **Status:** ✅ Complete and comprehensive
 **Target Release:** Beta
 
@@ -36,6 +36,7 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 ### Data Management
 
 - **[SBCLUSTER-05-SHARDING.md](SBCLUSTER-05-SHARDING.md)** - Data sharding and consistent hashing
+- **[SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md](SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md)** - Shard migration and rebalancing
 - **[SBCLUSTER-06-DISTRIBUTED-QUERY.md](SBCLUSTER-06-DISTRIBUTED-QUERY.md)** - Distributed query execution
 - **[SBCLUSTER-07-REPLICATION.md](SBCLUSTER-07-REPLICATION.md)** - Asynchronous replication and write-after log (WAL) streaming
 

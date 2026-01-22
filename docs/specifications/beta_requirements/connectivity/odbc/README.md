@@ -1,7 +1,7 @@
-# ODBC Driver Specification (PLACEHOLDER)
+# ODBC Driver Specification
 
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** Business intelligence tools, enterprise reporting, Microsoft ecosystem
 **Use Cases:** Tableau, Power BI, Excel, Access, SSRS, Crystal Reports, QlikView, general ODBC applications
 
@@ -27,11 +27,11 @@ ODBC (Open Database Connectivity) is the industry-standard database access metho
 
 ---
 
-## Specification Documents (TO BE CREATED)
+## Specification Documents
 
 ### Required Documents
 
-- [ ] **SPECIFICATION.md** - Detailed technical specification
+- [x] **[SPECIFICATION.md](SPECIFICATION.md)** - Detailed technical specification (draft)
   - ODBC 3.8 API compliance matrix
   - Function implementation (SQLConnect, SQLPrepare, SQLExecute, etc.)
   - Type mappings (ODBC SQL types ↔ ScratchBird types)
@@ -576,7 +576,7 @@ sudo odbcinst -i -d -f /etc/scratchbird-odbc/odbcinst.ini
 
 ## Next Steps
 
-1. **Create detailed SPECIFICATION.md** with complete ODBC 3.8 API mapping
+1. **Expand SPECIFICATION.md** with complete ODBC 3.8 API mapping
 2. **Develop IMPLEMENTATION_PLAN.md** with milestones and timeline
 3. **Write TESTING_CRITERIA.md** with ODBC compliance test requirements
 4. **Begin prototype** with core connection and query functions
@@ -587,5 +587,5 @@ sudo odbcinst -i -d -f /etc/scratchbird-odbc/odbcinst.ini
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD

@@ -18,6 +18,8 @@
 #include <cstring>
 #include <unistd.h>
 
+#include "scratchbird/network/network.h"
+#include "scratchbird/network/socket.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/core/error_context.h"
 #include "test_helpers.h"
@@ -29,6 +31,25 @@ namespace {
 bool isNetworkRestrictedError(const ErrorContext& ctx) {
     return ctx.message.find("Operation not permitted") != std::string::npos ||
            ctx.message.find("Permission denied") != std::string::npos;
+}
+
+uint16_t reserveTcpPort() {
+    scratchbird::network::NetworkInitGuard guard;
+    auto sock = scratchbird::network::Socket::create(
+        scratchbird::network::AddressFamily::IPV4);
+    if (!sock) {
+        return 0;
+    }
+    ErrorContext ctx;
+    scratchbird::network::NetworkAddress addr("127.0.0.1", 0);
+    if (sock->bind(addr, &ctx) != Status::OK) {
+        return 0;
+    }
+    auto local = sock->getLocalAddress();
+    if (!local.has_value()) {
+        return 0;
+    }
+    return local->port;
 }
 } // namespace
 
@@ -179,12 +200,13 @@ protected:
         if (!scratchbird::testing::networkTestsEnabled()) {
             GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
         }
-        // Use unique port for each test to avoid port conflicts during parallel execution
-        // Each process gets a unique port range based on its PID
-        // PID % 1000 gives us 1000 port ranges of 10 ports each
-        static std::atomic<uint16_t> port_counter{0};
-        uint16_t base_port = 20000 + (static_cast<uint16_t>(getpid()) % 1000) * 10;
-        test_port_ = base_port + (port_counter++ % 10);
+        test_port_ = reserveTcpPort();
+        if (test_port_ == 0) {
+            // Fallback to a deterministic range if ephemeral reservation fails.
+            static std::atomic<uint16_t> port_counter{0};
+            uint16_t base_port = 20000 + (static_cast<uint16_t>(getpid()) % 1000) * 10;
+            test_port_ = base_port + (port_counter++ % 10);
+        }
     }
 
     void TearDown() override {}

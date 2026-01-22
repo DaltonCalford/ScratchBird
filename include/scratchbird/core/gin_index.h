@@ -6,6 +6,8 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/bloom_filter.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -369,11 +371,13 @@ namespace scratchbird
 
             // Create a new GIN index
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
+                                 GPID meta_gpid, ErrorContext *ctx = nullptr);
+            static Status create(Database *db, const UuidV7Bytes &index_uuid,
                                  uint32_t *meta_page_out, ErrorContext *ctx = nullptr);
 
             // Open an existing GIN index
             static std::unique_ptr<GinIndex> open(Database *db, const UuidV7Bytes &index_uuid,
-                                                  uint32_t meta_page, ErrorContext *ctx = nullptr);
+                                                  GPID meta_gpid, ErrorContext *ctx = nullptr);
 
             // Destructor
             ~GinIndex();
@@ -519,24 +523,24 @@ namespace scratchbird
             };
 
             // Range query: find TIDs with keys in range
-            std::vector<uint64_t> findInRange(
+            std::vector<TID> findInRange(
                 const RangeQuery &range,
                 ErrorContext *ctx = nullptr);
 
             // Optimized wildcard query with B-Tree prefix scan
-            std::vector<uint64_t> findWithWildcardOptimized(
+            std::vector<TID> findWithWildcardOptimized(
                 const void *pattern, size_t pattern_len,
                 ErrorContext *ctx = nullptr);
 
             // Optimized fuzzy matching with BK-tree
-            std::vector<uint64_t> findFuzzyOptimized(
+            std::vector<TID> findFuzzyOptimized(
                 const void *key_data, size_t key_len,
                 uint32_t max_edit_distance,
                 ErrorContext *ctx = nullptr);
 
             // Parallel multi-key AND query
             // P0-6: Fixed to accept current_xid for proper MGA visibility
-            std::vector<uint64_t> findAllParallel(
+            std::vector<TID> findAllParallel(
                 const std::vector<std::vector<uint8_t>> &keys,
                 uint64_t current_xid,
                 uint32_t max_threads,
@@ -544,18 +548,22 @@ namespace scratchbird
 
             // Parallel multi-key OR query
             // P0-6: Fixed to accept current_xid for proper MGA visibility
-            std::vector<uint64_t> findAnyParallel(
+            std::vector<TID> findAnyParallel(
                 const std::vector<std::vector<uint8_t>> &keys,
                 uint64_t current_xid,
                 uint32_t max_threads,
                 ErrorContext *ctx = nullptr);
 
             // SIMD-optimized intersection
-            static std::vector<uint64_t> mergeTidListsSIMD(
+            static std::vector<TID> mergeTidListsSIMD(
+                const std::vector<std::vector<TID>> &tid_lists);
+            static std::vector<TID> mergeTidListsSIMD(
                 const std::vector<std::vector<uint64_t>> &tid_lists);
 
             // SIMD-optimized union
-            static std::vector<uint64_t> unionTidListsSIMD(
+            static std::vector<TID> unionTidListsSIMD(
+                const std::vector<std::vector<TID>> &tid_lists);
+            static std::vector<TID> unionTidListsSIMD(
                 const std::vector<std::vector<uint64_t>> &tid_lists);
 
             // Get index UUID
@@ -613,14 +621,25 @@ namespace scratchbird
                 uint64_t *pages_modified_out = nullptr,
                 ErrorContext *ctx = nullptr);
 
+            Status attachBloomFilter(const BloomFilterConfig &config,
+                                     uint64_t estimated_keys,
+                                     ErrorContext *ctx = nullptr);
+            Status loadBloomFilter(GPID meta_gpid, double target_fpr,
+                                   ErrorContext *ctx = nullptr);
+            Status detachBloomFilter(ErrorContext *ctx = nullptr);
+            Status rebuildBloomFilter(ErrorContext *ctx = nullptr);
+            BloomFilter *getBloomFilter() const { return bloom_filter_.get(); }
+
         private:
             Database *db_;
             BufferPool *buffer_pool_;
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
+            uint16_t tablespace_id_ = 0;
+            std::unique_ptr<BloomFilter> bloom_filter_;
 
-            // Helper: Insert into pending list (internal - uses legacy format)
-            Status insertIntoPendingList(const std::vector<uint8_t> &key, uint64_t tuple_id_legacy,
+            // Helper: Insert into pending list
+            Status insertIntoPendingList(const std::vector<uint8_t> &key, const TID &tuple_id,
                                          ErrorContext *ctx);
 
             // Helper: Find or create posting list for a key
@@ -628,8 +647,8 @@ namespace scratchbird
                                            uint64_t *posting_page_out,
                                            ErrorContext *ctx);
 
-            // Helper: Insert TID into posting list (internal - uses legacy format)
-            Status insertIntoPostingList(uint32_t posting_page, uint64_t tuple_id_legacy,
+            // Helper: Insert TID into posting list
+            Status insertIntoPostingList(uint32_t posting_page, const TID &tuple_id,
                                          ErrorContext *ctx);
 
             // Helper: Convert posting list to posting tree
@@ -637,69 +656,73 @@ namespace scratchbird
 
             // === Posting Tree Operations ===
 
-            // Helper: Insert TID into posting tree (internal - uses legacy format)
-            Status insertIntoPostingTree(uint32_t posting_page, uint64_t tid_legacy,
+            // Helper: Insert TID into posting tree
+            Status insertIntoPostingTree(uint32_t posting_page, const TID &tid,
                                          ErrorContext *ctx);
 
             // Helper: Search for TID in posting tree (returns true if found)
-            bool searchPostingTree(uint32_t tree_root_page, uint64_t tid,
+            bool searchPostingTree(uint32_t tree_root_page, const TID &tid,
                                    ErrorContext *ctx);
 
             // Helper: Get all TIDs from posting tree (with MGA visibility filtering)
             Status getPostingTreeTids(uint32_t tree_root_page,
-                                      std::vector<uint64_t> *tids_out,
+                                      std::vector<TID> *tids_out,
                                       uint64_t current_xid,
                                       ErrorContext *ctx);
 
             // Helper: Insert into posting tree leaf node (may cause split)
-            Status insertIntoPostingTreeLeaf(uint32_t leaf_page, uint64_t tid,
+            Status insertIntoPostingTreeLeaf(uint32_t leaf_page, const TID &tid,
                                              uint32_t *new_sibling_out,
-                                             uint64_t *separator_tid_out,
+                                             TID *separator_tid_out,
                                              ErrorContext *ctx);
 
             // Helper: Insert into posting tree internal node (may cause split)
             Status insertIntoPostingTreeInternal(uint32_t internal_page,
-                                                 uint64_t separator_tid,
+                                                 const TID &separator_tid,
                                                  uint32_t child_page,
                                                  uint32_t *new_sibling_out,
-                                                 uint64_t *separator_tid_out,
+                                                 TID *separator_tid_out,
                                                  ErrorContext *ctx);
 
             // Helper: Split posting tree leaf node
             Status splitPostingTreeLeaf(uint32_t leaf_page,
                                         uint32_t *new_sibling_out,
-                                        uint64_t *separator_tid_out,
+                                        TID *separator_tid_out,
                                         ErrorContext *ctx);
 
             // Helper: Split posting tree internal node
             Status splitPostingTreeInternal(uint32_t internal_page,
                                             uint32_t *new_sibling_out,
-                                            uint64_t *separator_tid_out,
+                                            TID *separator_tid_out,
                                             ErrorContext *ctx);
 
             // Helper: Find leaf page for TID in posting tree
-            Status findPostingTreeLeaf(uint32_t tree_root_page, uint64_t tid,
+            Status findPostingTreeLeaf(uint32_t tree_root_page, const TID &tid,
                                        uint32_t *leaf_page_out,
                                        ErrorContext *ctx);
 
             // === Posting List/Tree Removal Operations ===
 
             // Helper: Remove TID from posting list or tree
-            Status removeFromPostingList(uint32_t posting_page, uint64_t tid,
+            Status removeFromPostingList(uint32_t posting_page, const TID &tid,
                                          ErrorContext *ctx);
 
             // Helper: Remove TID from posting list (simple array)
-            Status removeFromPostingListArray(uint32_t posting_page, uint64_t tid,
+            Status removeFromPostingListArray(uint32_t posting_page, const TID &tid,
                                               ErrorContext *ctx);
 
             // Helper: Remove TID from posting tree (B-Tree of TIDs)
-            Status removeFromPostingTree(uint32_t tree_root_page, uint64_t tid,
+            Status removeFromPostingTree(uint32_t tree_root_page, const TID &tid,
                                          ErrorContext *ctx);
 
             // Helper: Remove TID from posting tree leaf
-            Status removeFromPostingTreeLeaf(uint32_t leaf_page, uint64_t tid,
+            Status removeFromPostingTreeLeaf(uint32_t leaf_page, const TID &tid,
                                              bool *entry_removed_out,
                                              ErrorContext *ctx);
+
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
+            GPID indexGPID(uint64_t page_num) const;
 
             // === Entry Tree (Keys B-Tree) Operations ===
 
@@ -763,17 +786,17 @@ namespace scratchbird
 
             // Helper: Get all TIDs from posting list (with MGA visibility filtering)
             Status getPostingListTids(uint32_t posting_page,
-                                      std::vector<uint64_t> *tids_out,
+                                      std::vector<TID> *tids_out,
                                       uint64_t current_xid,
                                       ErrorContext *ctx);
 
             // Helper: Merge sorted TID lists (for AND operation)
-            static std::vector<uint64_t> mergeTidLists(
-                const std::vector<std::vector<uint64_t>> &tid_lists);
+            static std::vector<TID> mergeTidLists(
+                const std::vector<std::vector<TID>> &tid_lists);
 
             // Helper: Union sorted TID lists (for OR operation)
-            static std::vector<uint64_t> unionTidLists(
-                const std::vector<std::vector<uint64_t>> &tid_lists);
+            static std::vector<TID> unionTidLists(
+                const std::vector<std::vector<TID>> &tid_lists);
 
             // ===== Firebird MGA: TIP-based Visibility Helpers =====
 
@@ -786,9 +809,9 @@ namespace scratchbird
             // For each TID, checks if the corresponding heap tuple is visible to current transaction
             // Uses TIP-based visibility (Firebird MGA), NOT snapshots
             // Returns a new vector containing only visible TIDs
-            std::vector<uint64_t> filterTidsByVisibility(const std::vector<uint64_t> &tids,
-                                                          uint64_t current_xid,
-                                                          ErrorContext *ctx);
+            std::vector<TID> filterTidsByVisibility(const std::vector<TID> &tids,
+                                                    uint64_t current_xid,
+                                                    ErrorContext *ctx);
 
             // ===== Phase 6 Helper Methods =====
 
@@ -815,9 +838,9 @@ namespace scratchbird
             static bool hasSIMDSupport();
 
             // Helper: SIMD-optimized two-pointer intersection
-            static std::vector<uint64_t> intersectTwoListsSIMD(
-                const std::vector<uint64_t> &list1,
-                const std::vector<uint64_t> &list2);
+            static std::vector<TID> intersectTwoListsSIMD(
+                const std::vector<TID> &list1,
+                const std::vector<TID> &list2);
 
             // No copy or move
             GinIndex(const GinIndex &) = delete;

@@ -456,7 +456,6 @@ uint32_t runSession(const ParserConfig& config,
             continue;
         }
 
-        std::cerr << "[parser_debug] handleData status=" << static_cast<int>(status) << "\n";
         adapter->sendError(&conn, "Protocol error");
         flushWrites(conn);
         conn.close(scratchbird::network::CloseReason::PROTOCOL_ERROR);

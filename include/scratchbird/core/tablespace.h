@@ -47,7 +47,7 @@ class ErrorContext;
  * Size: Padded to page boundary (page_size bytes)
  */
 #pragma pack(push, 1)
-struct TablespaceHeader
+struct TablespaceHeaderV1
 {
     PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0 (includes table_id)
 
@@ -85,6 +85,46 @@ struct TablespaceHeader
 };
 #pragma pack(pop)
 
+constexpr uint16_t TABLESPACE_HEADER_VERSION_V1 = 1;
+constexpr uint16_t TABLESPACE_HEADER_VERSION_V2 = 2;
+
+#pragma pack(push, 1)
+struct TablespaceHeader
+{
+    PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0 (includes table_id)
+
+    // === Identification (96 bytes) ===
+    char tablespace_name[64];      // Tablespace name (max 63 chars + null terminator)
+    UuidV7Bytes tablespace_uuid;   // UUID v7 for this tablespace (16 bytes)
+    UuidV7Bytes database_uuid;     // Database UUID (16 bytes) - for validation during attach
+
+    // === Configuration (64 bytes) ===
+    uint32_t tablespace_id;        // Tablespace ID (0 = primary, 1 = reserved, 2-65535 custom)
+    uint32_t page_size;            // Must match database page_size (e.g., 16384)
+    uint64_t creation_time;        // Unix timestamp in microseconds
+    uint64_t last_checkpoint;      // Last checkpoint timestamp (microseconds)
+    uint32_t autoextend_enabled;   // 1 = autoextend enabled, 0 = disabled
+    uint32_t autoextend_size_mb;   // Extend by N MB each time (default: 100)
+    uint64_t max_size_mb;          // Maximum size in MB (0 = unlimited)
+    uint64_t reserved1[3];         // Reserved for future use
+
+    // === File Layout (32 bytes) ===
+    uint64_t total_pages;          // Total pages in this tablespace file
+    uint64_t free_pages;           // Number of free pages (tracked in FSM)
+    uint64_t next_page_number;     // Next page to allocate (hint for FSM)
+    uint64_t fsm_root_page;        // FSM root page for this tablespace (usually page 1)
+
+    // === Transaction Info (32 bytes) ===
+    // These are synced with primary database for MVCC consistency
+    uint64_t oldest_transaction_id;  // Oldest Interesting Transaction (OIT)
+    uint64_t latest_completed_xid;   // Latest completed transaction
+    uint64_t reserved2[2];           // Reserved for future use
+
+    // === Padding ===
+    // Padded to page boundary at runtime based on page_size
+};
+#pragma pack(pop)
+
 /**
  * SBTablespaceCatalog - pg_tablespace system table entry
  *
@@ -99,7 +139,7 @@ struct SBTablespaceCatalog
     uint8_t reserved1[7];          // Padding for alignment
 
     // === Identification (82 bytes) ===
-    uint16_t tablespace_id;        // Tablespace ID (1-65535, 0 = primary file)
+    uint16_t tablespace_id;        // Tablespace ID (0 = primary, 1 = reserved, 2-65535 custom)
     char tablespace_name[64];      // Name (null-terminated, max 63 chars)
     UuidV7Bytes tablespace_uuid;   // UUID v7 (16 bytes)
 
@@ -181,7 +221,7 @@ struct SBTablespaceFileCatalog
 struct TablespaceInfo
 {
     // === Identification ===
-    uint16_t tablespace_id = 0;                // Tablespace ID (0 = primary, 1-65535 = custom)
+    uint16_t tablespace_id = 0;                // Tablespace ID (0 = primary, 1 = reserved, 2-65535 custom)
     std::string tablespace_name;               // Human-readable name
     UuidV7Bytes tablespace_uuid;               // UUID v7
 
@@ -245,24 +285,24 @@ struct TablespaceConfig
  * The header must be padded to page_size. This is enforced at runtime
  * when creating/opening tablespace files.
  *
- * Fixed fields occupy 272 bytes (updated for ON_DISK_FORMAT.md v1.4.0):
+ * Fixed fields occupy 304 bytes (updated for ON_DISK_FORMAT.md v1.4.0):
  * - PageHeader: 80 bytes (includes table_id field at offset 0x30)
- * - Identification: 64 bytes
+ * - Identification: 96 bytes
  * - Configuration: 64 bytes
  * - File Layout: 32 bytes
  * - Transaction Info: 32 bytes
- * Total: 272 bytes
+ * Total: 304 bytes
  *
- * Remaining bytes (page_size - 272) are padding.
+ * Remaining bytes (page_size - 304) are padding.
  */
 static_assert(sizeof(PageHeader) == 80, "PageHeader must be 80 bytes per ON_DISK_FORMAT.md v1.4.0");
 static_assert(offsetof(TablespaceHeader, tablespace_name) == 80,
               "tablespace_name offset incorrect");
-static_assert(offsetof(TablespaceHeader, tablespace_id) == 144,
+static_assert(offsetof(TablespaceHeader, tablespace_id) == 176,
               "tablespace_id offset incorrect");
-static_assert(offsetof(TablespaceHeader, total_pages) == 208,
+static_assert(offsetof(TablespaceHeader, total_pages) == 240,
               "total_pages offset incorrect");
-static_assert(offsetof(TablespaceHeader, oldest_transaction_id) == 240,
+static_assert(offsetof(TablespaceHeader, oldest_transaction_id) == 272,
               "oldest_transaction_id offset incorrect");
 
 /**

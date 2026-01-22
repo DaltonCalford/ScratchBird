@@ -4,7 +4,7 @@
  * Compiles PostgreSQL SQL to SBLR bytecode using the PostgreSQL parser.
  * The PostgreSQL parser generates SBLR bytecode directly.
  *
- * Default schema: emulation.postgresql.localhost.databases.default
+ * Default schema: remote.emulation.postgresql.localhost.databases.default
  */
 
 #include "scratchbird/sblr/postgresql_query_compiler.h"
@@ -26,15 +26,16 @@ PostgreSQLQueryCompiler::PostgreSQLQueryCompiler(core::Database* db)
         core::ErrorContext ctx;
 
         // Try to find or create the PostgreSQL emulation schema hierarchy:
-        // emulation.postgresql.localhost.databases.default.public
+        // remote.emulation.postgresql.localhost.databases.default.public
         // For now, use public schema as default
-        if (catalog_->getSchema("public", schema_info, &ctx) == core::Status::OK) {
+        if (catalog_->getSchema("users.public", schema_info, &ctx) == core::Status::OK ||
+            catalog_->getSchema("public", schema_info, &ctx) == core::Status::OK) {
             current_schema_ = schema_info.schema_id;
         }
     }
 
     // Default search path for PostgreSQL
-    search_path_ = {"public"};
+    search_path_ = {"users.public"};
 }
 
 PostgreSQLQueryCompiler::~PostgreSQLQueryCompiler() = default;

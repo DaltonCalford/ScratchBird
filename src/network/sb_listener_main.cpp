@@ -468,8 +468,6 @@ private:
         std::lock_guard<std::mutex> lock(worker->mutex);
         worker->state = WorkerState::FAULT;
         worker->running = false;
-        std::cerr << "[listener_debug] worker fault pid=" << worker->worker_pid
-                  << " reason=" << reason << "\n";
         if (metrics_.parser_recycle_total) {
             metrics_.parser_recycle_total->inc(1.0, {config_.protocol, "default", reason});
         }
@@ -535,7 +533,6 @@ private:
                     ::dup2(fd, STDERR_FILENO);
                     ::close(fd);
                 }
-                std::cerr << "[listener_debug] parser stderr log " << log_path << "\n";
             }
             std::vector<char*> argv;
             argv.reserve(args.size() + 1);
@@ -609,10 +606,6 @@ private:
             auto status = scratchbird::network::receiveControlPlaneMessage(*worker->control,
                                                                            msg, nullptr, &ctx);
             if (status != scratchbird::core::Status::OK) {
-                std::cerr << "[listener_debug] control plane read failed pid="
-                          << worker->worker_pid << " status="
-                          << static_cast<int>(status) << " msg="
-                          << (ctx.message.empty() ? "none" : ctx.message) << "\n";
                 bool recycle_requested = false;
                 {
                     std::lock_guard<std::mutex> lock(worker->mutex);
@@ -628,24 +621,7 @@ private:
                 }
                 int exit_status = 0;
                 pid_t exited = waitpid(worker->worker_pid, &exit_status, WNOHANG);
-                if (exited == static_cast<pid_t>(worker->worker_pid)) {
-                    if (WIFEXITED(exit_status)) {
-                        std::cerr << "[listener_debug] worker exit pid=" << worker->worker_pid
-                                  << " code=" << WEXITSTATUS(exit_status) << "\n";
-                    } else if (WIFSIGNALED(exit_status)) {
-                        std::cerr << "[listener_debug] worker exit pid=" << worker->worker_pid
-                                  << " signal=" << WTERMSIG(exit_status) << "\n";
-                    } else {
-                        std::cerr << "[listener_debug] worker exit pid=" << worker->worker_pid
-                                  << " status=" << exit_status << "\n";
-                    }
-                } else if (exited == 0) {
-                    std::cerr << "[listener_debug] worker pid=" << worker->worker_pid
-                              << " still running after control plane error\n";
-                } else {
-                    std::cerr << "[listener_debug] waitpid failed pid=" << worker->worker_pid
-                              << " errno=" << errno << "\n";
-                }
+                (void)exited;
                 break;
             }
             auto type = static_cast<scratchbird::network::ControlPlaneMessageType>(
@@ -854,8 +830,6 @@ private:
             reason_code = 4;
         }
 
-        std::cerr << "[listener_debug] recycle request pid=" << worker->worker_pid
-                  << " reason=" << reason << "\n";
         scratchbird::network::ControlPlaneMessage msg;
         msg.header.message_type = static_cast<uint16_t>(
             scratchbird::network::ControlPlaneMessageType::RECYCLE);

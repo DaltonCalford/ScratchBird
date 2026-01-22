@@ -142,6 +142,43 @@ UPPERCASE    Terminal (keyword)
   | EXTERNAL
   | VIRTUAL
 
+### 2.4 Alter Operations (stubs)
+
+```ebnf
+<alter_statement> ::=
+    <alter_table_tablespace>
+  | <alter_table_shard>
+  | <alter_table_rls>
+
+<alter_table_tablespace> ::=
+    ALTER TABLE <table_name>
+    SET TABLESPACE <tablespace_name>
+    [ ONLINE [ WITH '(' <tablespace_online_option_list> ')' ] ]
+
+<tablespace_online_option_list> ::=
+    <tablespace_online_option> { ',' <tablespace_online_option> }
+
+<tablespace_online_option> ::=
+    BATCH_SIZE '=' <integer_literal>
+  | MAX_LAG_MS '=' <integer_literal>
+  | THROTTLE_MS '=' <integer_literal>
+  | LOCK_TIMEOUT_MS '=' <integer_literal>
+
+<alter_table_shard> ::=
+    ALTER TABLE <table_name> <shard_action>
+
+<shard_action> ::=
+    SPLIT SHARD
+  | MERGE SHARDS
+  | MOVE SHARD <shard_id> TO <node_id>
+  | REBALANCE
+
+<shard_id> ::= <identifier> | <uuid_literal>
+<node_id> ::= <identifier> | <uuid_literal>
+```
+
+Note: shard actions are cluster/Beta-only and require a sharding-capable deployment.
+
 <table_element> ::=
     <column_definition>
   | <table_constraint>

@@ -375,7 +375,7 @@ bool buildFirebirdSchemaPath(const std::string& db_path,
     }
 
     auto path_components = splitFirebirdPathComponents(spec.file_path);
-    std::string schema = "emulation.firebird." + server_out;
+    std::string schema = "remote.emulation.firebird." + server_out;
     for (const auto& comp : path_components) {
         if (!comp.empty()) {
             schema.push_back('.');
@@ -390,12 +390,12 @@ bool buildFirebirdSchemaPath(const std::string& db_path,
 
 /**
  * Ensure the Firebird emulation schema hierarchy exists
- * Creates: emulation, emulation.firebird, emulation.firebird.{server}
+ * Creates: remote.emulation.firebird, remote.emulation.firebird.{server}
  */
 bool ensureFirebirdSchemaHierarchy(core::CatalogManager* catalog, const std::string& server) {
     if (!catalog) return false;
 
-    std::string path = "emulation.firebird." + server;
+    std::string path = "remote.emulation.firebird." + server;
     core::ErrorContext ctx;
     core::ID schema_id;
     core::Status status = catalog->createSchemaPath(
@@ -409,7 +409,7 @@ bool ensureFirebirdSchemaHierarchy(core::CatalogManager* catalog, const std::str
 
 /**
  * Handle CREATE DATABASE command
- * Creates schema at emulation.firebird.{server}.{path...}.{database}
+ * Creates schema at remote.emulation.firebird.{server}.{path...}.{database}
  * and generates RDB$ system views
  */
 bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
@@ -538,7 +538,7 @@ bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
 
 /**
  * Handle CONNECT command
- * Switches to schema at emulation.firebird.{server}.{path...}.{database}
+ * Switches to schema at remote.emulation.firebird.{server}.{path...}.{database}
  */
 bool handleConnect(const std::string& dbPath, core::Database& db) {
     std::string dbName;
@@ -581,7 +581,7 @@ bool handleConnect(const std::string& dbPath, core::Database& db) {
 
 /**
  * Handle DROP DATABASE command
- * Drops schema at emulation.firebird.{server}.{path...}.{database}
+ * Drops schema at remote.emulation.firebird.{server}.{path...}.{database}
  */
 bool handleDropDatabase(const std::string& dbPath, core::Database& db) {
     std::string dbName;

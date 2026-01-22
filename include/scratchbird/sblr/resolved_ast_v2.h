@@ -773,6 +773,10 @@ struct ResolvedCreateIndexStmt : public ResolvedStatement {
 
     uint16_t tablespace_id = 0;
     StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+
+    bool bloom_filter_enabled = false;
+    bool bloom_fpr_set = false;
+    double bloom_fpr = 0.01;
 };
 
 /**

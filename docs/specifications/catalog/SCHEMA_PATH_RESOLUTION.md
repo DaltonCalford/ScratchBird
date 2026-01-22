@@ -23,7 +23,7 @@ authoritative reference for parser, executor, and adapter behavior.
      1) active role default schema (if set)
      2) user default schema (if set)
      3) group default schema (if set; deterministic tie-breaker by lexicographic group name)
-     4) `public` schema
+     4) `users.public` schema
    - If the current schema cannot be resolved, resolution is an error (no silent fallback).
 
 2) Unqualified object name (no schema path)
@@ -98,8 +98,8 @@ as `SELECT * FROM name`.
   `public`, `shared`). Exact syntax and security gating are defined by the
   security subsystem.
 - Optional security-gated behavior: relative paths (leading dot) may be
-  resolved against each search-path entry as a base. This must be explicitly
-  allowed by a security setting; exact syntax and defaults are TBD.
+  resolved against each search-path entry as a base. Defaults and security
+  gating are defined in `docs/specifications/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md`.
 
 ## Examples
 Assume:
@@ -107,12 +107,12 @@ Assume:
 - Search path: `current`, `home`, `public`, `shared`
 - `current` resolves to `users.alice`
 - `home` resolves to `users.alice`
-- `public` resolves to `public`
+- `public` resolves to `users.public`
 - `shared` resolves to `shared`
 
 Examples:
 - `SELECT * FROM tablename`
-  - Try `users.alice.tablename`, then `public.tablename`, then `shared.tablename`.
+  - Try `users.alice.tablename`, then `users.public.tablename`, then `shared.tablename`.
 - `SELECT * FROM .tablename`
   - Resolve only `users.alice.tablename`; error if not found.
 - `SELECT * FROM .dev.myproj.tablename`
@@ -120,10 +120,10 @@ Examples:
 - `SELECT * FROM users.alice.dev.tablename`
   - Resolve absolute path; error if not found.
 - `SELECT * FROM .dev.myproj.tablename` (if relative search across search_path is enabled)
-  - Try `users.alice.dev.myproj.tablename`, then `public.dev.myproj.tablename`,
+  - Try `users.alice.dev.myproj.tablename`, then `users.public.dev.myproj.tablename`,
     then `shared.dev.myproj.tablename`.
 - `SELECT * FROM !:tablename`
-  - Resolve only `users.alice.tablename`; do not search `public` or `shared`.
+  - Resolve only `users.alice.tablename`; do not search `users.public` or `shared`.
 - `SELECT * FROM !:.dev.myproj.tablename`
   - Resolve `users.alice.dev.myproj.tablename`; `!:` is redundant but allowed.
 - `SELECT * FROM !:users.alice.dev.tablename`

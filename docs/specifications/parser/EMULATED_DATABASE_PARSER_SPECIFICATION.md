@@ -158,8 +158,8 @@ and relative/absolute semantics.
 ```
 ScratchBird Database (single .sbdb file)
 └── /sys                           # System schemas
-└── /remote                        # Remote/emulated databases
-    └── /emulated
+└── /remote                        # Remote/emulation databases
+    └── /emulation
         └── /firebird              # Firebird emulation root
             └── /localhost         # Server name
                 └── /employee      # "Database" = schema
@@ -171,7 +171,7 @@ ScratchBird Database (single .sbdb file)
 ### CREATE DATABASE in Firebird
 
 When a Firebird client issues `CREATE DATABASE 'employee'`:
-1. ScratchBird creates a new SCHEMA: `/remote/emulated/firebird/localhost/employee`
+1. ScratchBird creates a new SCHEMA: `/remote/emulation/firebird/localhost/employee`
 2. NOT a new physical database file
 3. The Firebird parser translates this to schema creation SBLR
 

@@ -994,6 +994,16 @@ Status InvertedIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
 
 ---
 
+## Tablespace + TID/GPID Requirements
+
+- **TID format:** Posting lists must store `TID` values with full `GPID + slot` (no legacy 32-bit page IDs).
+- **Document ID mapping:** Any doc-id indirection must round-trip through `TID` without dropping `tablespace_id`.
+- **Tablespace routing:** On-disk pages for the inverted index must allocate/pin via `root_gpid` and `tablespace_id`.
+- **Visibility checks:** Heap tuple fetches must use `pinPageGlobal` on the `GPID` embedded in `TID`.
+- **Migration:** `updateTIDsAfterMigration` must rewrite posting lists for migrated `GPID`s, including compressed segments.
+
+---
+
 ## Core API
 
 **File:** `include/scratchbird/core/inverted_index.h`

@@ -10,6 +10,7 @@
 #include "scratchbird/core/compression.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/gpid.h"
 #include <cstring>
 #include <algorithm>
 
@@ -175,7 +176,8 @@ namespace scratchbird::core
         SBBTreeIndex btree_info;
         btree_info.idx_uuid = index_info.index_id;
         btree_info.idx_table_uuid = index_info.table_id;
-        btree_info.idx_root_page = index_info.root_page;
+        btree_info.idx_root_page = static_cast<uint32_t>(getPageNumber(index_info.root_gpid));
+        btree_info.idx_tablespace_id = getTablespaceID(index_info.root_gpid);
 
         BTree btree(db_, btree_info);
         auto iter = btree.rangeScan(nullptr, nullptr, 0, true, true, ctx);
@@ -804,7 +806,8 @@ namespace scratchbird::core
                 // Clean up any chunks we already inserted
                 for (const auto &chunk : inserted_chunks)
                 {
-                    storage->deleteTuple(toast_table_id_, chunk.first, chunk.second, ctx);
+                    storage->deleteTuple(toast_table_id_, chunk.first, chunk.second,
+                                         UINT16_MAX, ctx);
                 }
 
                 return status;

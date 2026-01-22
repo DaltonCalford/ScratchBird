@@ -6,10 +6,12 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/gpid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
 #include <shared_mutex>
+#include <unordered_map>
 #include <functional>
 #include <string>
 #include <map>
@@ -340,7 +342,7 @@ public:
      * @param table_uuid Table UUID
      * @param column_ids Columns being indexed
      * @param opclass Operator class to use
-     * @param root_page_out Output: root page number
+     * @param root_gpid Root page GPID
      * @param ctx Error context
      * @return Status code
      */
@@ -349,7 +351,22 @@ public:
                         const ID& table_uuid,
                         const std::vector<ID>& column_ids,
                         std::shared_ptr<GiSTOperatorClass> opclass,
-                        uint32_t* root_page_out,
+                        GPID root_gpid,
+                        ErrorContext* ctx = nullptr);
+    static Status create(Database* db,
+                        const ID& index_uuid,
+                        const ID& table_uuid,
+                        const std::vector<ID>& column_ids,
+                        std::shared_ptr<GiSTOperatorClass> opclass,
+                        uint16_t tablespace_id,
+                        uint32_t *root_page_out,
+                        ErrorContext* ctx = nullptr);
+    static Status create(Database* db,
+                        const ID& index_uuid,
+                        const ID& table_uuid,
+                        const std::vector<ID>& column_ids,
+                        std::shared_ptr<GiSTOperatorClass> opclass,
+                        uint32_t *root_page_out,
                         ErrorContext* ctx = nullptr);
 
     /**
@@ -360,7 +377,7 @@ public:
      * @param table_uuid Table UUID
      * @param column_ids Columns being indexed
      * @param opclass Operator class to use
-     * @param root_page Root page number
+     * @param root_gpid Root page GPID
      * @param ctx Error context
      * @return Unique pointer to opened index, or nullptr on error
      */
@@ -369,7 +386,7 @@ public:
                                            const ID& table_uuid,
                                            const std::vector<ID>& column_ids,
                                            std::shared_ptr<GiSTOperatorClass> opclass,
-                                           uint32_t root_page,
+                                           GPID root_gpid,
                                            ErrorContext* ctx = nullptr);
 
     /**
@@ -378,13 +395,13 @@ public:
      *
      * @param db Database instance
      * @param index_uuid Index UUID
-     * @param root_page Root page number
+     * @param root_gpid Root page GPID
      * @param ctx Error context
      * @return Unique pointer to opened index, or nullptr on error
      */
     static std::unique_ptr<GiSTIndex> open(Database* db,
                                            const ID& index_uuid,
-                                           uint32_t root_page,
+                                           GPID root_gpid,
                                            ErrorContext* ctx = nullptr);
 
     ~GiSTIndex();
@@ -467,6 +484,16 @@ public:
                             uint64_t* pages_modified_out = nullptr,
                             ErrorContext* ctx = nullptr) override;
 
+    /**
+     * Update TIDs after table migration
+     *
+     * Updates leaf entry TIDs based on the provided mapping (old GPID -> new GPID).
+     */
+    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                   uint64_t* tids_updated_out = nullptr,
+                                   uint64_t* pages_modified_out = nullptr,
+                                   ErrorContext* ctx = nullptr);
+
     const char* indexTypeName() const override { return "GiST"; }
 
     // Additional GC methods
@@ -524,6 +551,9 @@ private:
     bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const;
     Status loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* ctx);
     Status allocatePage(uint64_t* page_num, ErrorContext* ctx);
+    GPID indexGPID(uint64_t page_num) const;
+    Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext* ctx);
+    Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext* ctx);
 
     // Member variables
     Database* db_;
@@ -536,6 +566,7 @@ private:
     std::shared_ptr<GiSTOperatorClass> opclass_;
 
     uint64_t root_page_;
+    uint16_t tablespace_id_;
     uint16_t height_;
     uint64_t entry_count_;
     uint64_t deleted_count_;

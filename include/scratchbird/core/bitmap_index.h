@@ -10,6 +10,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/gpid.h"
 #include <vector>
 #include <cstdint>
 #include <memory>
@@ -223,9 +224,14 @@ namespace scratchbird
         {
         public:
             // Constructor
-            BitmapIndex(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page);
+            BitmapIndex(Database *db, const UuidV7Bytes &index_uuid, GPID meta_gpid);
 
             // Create a new bitmap index
+            static Status create(
+                Database *db,
+                const UuidV7Bytes &index_uuid,
+                GPID meta_gpid,
+                ErrorContext *ctx = nullptr);
             static Status create(
                 Database *db,
                 const UuidV7Bytes &index_uuid,
@@ -236,7 +242,7 @@ namespace scratchbird
             static std::unique_ptr<BitmapIndex> open(
                 Database *db,
                 const UuidV7Bytes &index_uuid,
-                uint32_t meta_page,
+                GPID meta_gpid,
                 ErrorContext *ctx = nullptr);
 
             // Destructor
@@ -369,46 +375,51 @@ namespace scratchbird
             BufferPool *buffer_pool_;
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
+            uint16_t tablespace_id_ = 0;
 
             // Cached meta page data
             uint32_t num_distinct_values_;
             uint32_t total_tuples_;
             uint32_t dictionary_page_;
             std::unordered_map<uint32_t, std::shared_ptr<RoaringBitmap>> bitmap_cache_;
+
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
+            GPID indexGPID(uint64_t page_num) const;
         };
 
         // Roaring Bitmap implementation
         class RoaringBitmap
         {
         public:
-            RoaringBitmap(Database *db, uint32_t root_page);
+            RoaringBitmap(Database *db, GPID root_gpid);
             ~RoaringBitmap();
 
             // TASK-CRITICAL-2: MGA-compliant add with xmin tracking
             // Add a value to the bitmap with insert transaction ID
             // Firebird MGA: Per MGA_RULES.md Rule 6 - store xmin with each entry
-            Status add(uint64_t value, uint64_t xmin, ErrorContext *ctx = nullptr);
+            Status add(const TID &tid, uint64_t xmin, ErrorContext *ctx = nullptr);
 
             // TASK-CRITICAL-2: MGA-compliant remove with xmax marking (logical deletion)
             // Mark value as deleted by setting xmax (Firebird MGA: NO physical removal)
             // Per MGA_RULES.md Rule 5: Use back-versioning with xmax tombstones
-            Status remove(uint64_t value, uint64_t xmax, ErrorContext *ctx = nullptr);
+            Status remove(const TID &tid, uint64_t xmax, ErrorContext *ctx = nullptr);
 
             // Check if value exists
-            bool contains(uint64_t value, ErrorContext *ctx = nullptr);
+            bool contains(const TID &tid, ErrorContext *ctx = nullptr);
 
             // Get all values as a sorted vector (ignores visibility)
-            std::vector<uint64_t> toArray(ErrorContext *ctx = nullptr);
+            std::vector<TID> toArray(ErrorContext *ctx = nullptr);
 
             // TASK-CRITICAL-2: Get all versioned entries for visibility filtering
             // Returns entries with xmin/xmax for TIP-based visibility checks
             // Firebird MGA: Per MGA_RULES.md Rule 3 - use TIP for visibility
-            std::vector<std::pair<uint64_t, VersionedBitmapEntry>> toVersionedArray(ErrorContext *ctx = nullptr);
+            std::vector<std::pair<TID, VersionedBitmapEntry>> toVersionedArray(ErrorContext *ctx = nullptr);
 
             // TASK-CRITICAL-2: Get visible entries only (MGA-compliant filtering)
             // Filters entries using TIP-based visibility at index level (no heap access)
             // Firebird MGA: Per MGA_RULES.md Rule 11 - use TransactionId, NOT Snapshot
-            std::vector<uint64_t> toVisibleArray(uint64_t current_xid,
+            std::vector<TID> toVisibleArray(uint64_t current_xid,
                                                   class TransactionManager *txn_mgr,
                                                   ErrorContext *ctx = nullptr);
 
@@ -441,7 +452,7 @@ namespace scratchbird
 
             struct Container
             {
-                uint64_t key;              // High 48 bits (for 64-bit TID support)
+                uint64_t key;              // Heap GPID for this container
                 ContainerType type;
                 uint16_t num_values;
                 uint32_t page_number;
@@ -469,9 +480,14 @@ namespace scratchbird
             Database *db_;
             BufferPool *buffer_pool_;
             uint32_t root_page_;
+            uint16_t tablespace_id_;
             uint64_t cardinality_; // 64-bit for large indexes
 
             std::vector<Container> containers_; // In-memory container cache
+
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr) const;
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr) const;
+            GPID indexGPID(uint64_t page_num) const;
         };
 
         // Iterator for scanning a Roaring Bitmap
@@ -481,7 +497,7 @@ namespace scratchbird
             RoaringBitmapIterator(const RoaringBitmap &bitmap);
 
             bool hasNext() const;
-            uint64_t next(); // Returns 64-bit value
+            TID next(); // Returns TID
             void reset();
 
         private:

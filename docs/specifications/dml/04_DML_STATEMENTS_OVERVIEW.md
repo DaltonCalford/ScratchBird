@@ -24,5 +24,4 @@ The DML statements in ScratchBird are detailed in the following specifications. 
 | **UPDATE** | Modifies existing rows in a table that match specified criteria. | [DML\_UPDATE.md](DML_UPDATE.md) |
 | **DELETE** | Removes existing rows from a table that match specified criteria. | [DML\_DELETE.md](DML_DELETE.md) |
 | **MERGE** | Performs a conditional INSERT, UPDATE, or DELETE on a target table based on its comparison with a source dataset. | [DML\_MERGE.md](DML_MERGE.md) |
-| **COPY** | A command for high-performance bulk data loading and unloading between a table and a file. | _Specification TBD_ |
-
+| **COPY** | A command for high-performance bulk data loading and unloading between a table and a file. | [DML_COPY.md](DML_COPY.md) |

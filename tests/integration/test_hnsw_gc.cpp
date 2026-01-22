@@ -80,16 +80,19 @@ TEST_F(HnswGCTest, BasicGCMarksDeletedNodes)
     UuidV7Bytes column_uuid = generateUuidV7();
 
     // Create HNSW index (3 dimensions)
-    uint32_t root_page = 0;
-    Status status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate HNSW root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
                                      {column_uuid}, 3,
                                      DistanceMetric::EUCLIDEAN,
-                                     16, 200, 100, &root_page, nullptr);
+                                     16, 200, 100, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to create HNSW index";
     ASSERT_GT(root_page, 0);
 
     // Open index
-    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, nullptr);
+    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_NE(hnsw, nullptr) << "Failed to open HNSW index";
 
     // Insert 5 vectors
@@ -150,17 +153,21 @@ TEST_F(HnswGCTest, GCSurvivesRestart)
     UuidV7Bytes table_uuid = generateUuidV7();
     UuidV7Bytes column_uuid = generateUuidV7();
 
+    GPID root_gpid = 0;
     uint32_t root_page = 0;
 
     // Phase 1: Create index, insert, GC
     {
-        Status status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
+        Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+        ASSERT_EQ(status, Status::OK) << "Failed to allocate HNSW root page";
+        root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+        status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
                                          {column_uuid}, 2,
                                          DistanceMetric::EUCLIDEAN,
-                                         16, 200, 100, &root_page, nullptr);
+                                         16, 200, 100, root_gpid, nullptr);
         ASSERT_EQ(status, Status::OK);
 
-        auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, nullptr);
+        auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
         ASSERT_NE(hnsw, nullptr);
 
         // Insert 3 vectors
@@ -227,14 +234,17 @@ TEST_F(HnswGCTest, EmptyDeadTidsIsNoOp)
     UuidV7Bytes column_uuid = generateUuidV7();
 
     // Create HNSW index
-    uint32_t root_page = 0;
-    Status status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate HNSW root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
                                      {column_uuid}, 2,
                                      DistanceMetric::EUCLIDEAN,
-                                     16, 200, 100, &root_page, nullptr);
+                                     16, 200, 100, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, nullptr);
+    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert one vector
@@ -271,14 +281,17 @@ TEST_F(HnswGCTest, MultipleGCPasses)
     UuidV7Bytes column_uuid = generateUuidV7();
 
     // Create HNSW index
-    uint32_t root_page = 0;
-    Status status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate HNSW root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = HnswIndex::create(db_.get(), index_uuid, table_uuid,
                                      {column_uuid}, 2,
                                      DistanceMetric::EUCLIDEAN,
-                                     16, 200, 100, &root_page, nullptr);
+                                     16, 200, 100, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, nullptr);
+    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert 6 vectors

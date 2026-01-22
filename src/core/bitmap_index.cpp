@@ -73,11 +73,12 @@ namespace scratchbird
         // BitmapIndex Implementation
         // ========================================
 
-        BitmapIndex::BitmapIndex(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page)
+        BitmapIndex::BitmapIndex(Database *db, const UuidV7Bytes &index_uuid, GPID meta_gpid)
             : db_(db),
               buffer_pool_(db->buffer_pool()),
               index_uuid_(index_uuid),
-              meta_page_(meta_page),
+              meta_page_(static_cast<uint32_t>(getPageNumber(meta_gpid))),
+              tablespace_id_(getTablespaceID(meta_gpid)),
               num_distinct_values_(0),
               total_tuples_(0),
               dictionary_page_(0)
@@ -89,10 +90,10 @@ namespace scratchbird
         Status BitmapIndex::create(
             Database *db,
             const UuidV7Bytes &index_uuid,
-            uint32_t *meta_page_out,
+            GPID meta_gpid,
             ErrorContext *ctx)
         {
-            if (!db || !meta_page_out)
+            if (!db || meta_gpid == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   "Invalid arguments to BitmapIndex::create");
@@ -106,17 +107,11 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
-            // Allocate meta page
-            uint32_t meta_page_num = 0;
-            Status status = db->page_manager()->allocatePage(meta_page_num, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
+            uint32_t meta_page_num = static_cast<uint32_t>(getPageNumber(meta_gpid));
 
             // Pin and initialize meta page
             uint8_t *meta_data = nullptr;
-            status = buffer_pool->pinPage(meta_page_num, (void **)&meta_data, ctx);
+            Status status = buffer_pool->pinPageGlobal(meta_gpid, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -135,16 +130,45 @@ namespace scratchbird
             meta->bmp_total_tuples = 0;
             meta->bmp_dictionary_page = 0;
 
-            buffer_pool->unpinPage(meta_page_num, true, ctx);
-
-            *meta_page_out = meta_page_num;
+            buffer_pool->unpinPageGlobal(meta_gpid, true, ctx);
             return Status::OK;
+        }
+
+        Status BitmapIndex::create(
+            Database *db,
+            const UuidV7Bytes &index_uuid,
+            uint32_t *meta_page_out,
+            ErrorContext *ctx)
+        {
+            if (!db || !meta_page_out)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Invalid arguments to BitmapIndex::create");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            PageManager *page_mgr = db->page_manager();
+            if (!page_mgr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database has no page manager");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            GPID meta_gpid = 0;
+            Status status = page_mgr->allocatePageInTablespace(0, &meta_gpid, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            *meta_page_out = static_cast<uint32_t>(getPageNumber(meta_gpid));
+            return create(db, index_uuid, meta_gpid, ctx);
         }
 
         std::unique_ptr<BitmapIndex> BitmapIndex::open(
             Database *db,
             const UuidV7Bytes &index_uuid,
-            uint32_t meta_page,
+            GPID meta_gpid,
             ErrorContext *ctx)
         {
             if (!db)
@@ -153,7 +177,7 @@ namespace scratchbird
                 return nullptr;
             }
 
-            auto index = std::make_unique<BitmapIndex>(db, index_uuid, meta_page);
+            auto index = std::make_unique<BitmapIndex>(db, index_uuid, meta_gpid);
 
             Status status = index->loadMetaPage(ctx);
             if (status != Status::OK)
@@ -164,10 +188,25 @@ namespace scratchbird
             return index;
         }
 
+        GPID BitmapIndex::indexGPID(uint64_t page_num) const
+        {
+            return makeGPID(tablespace_id_, page_num);
+        }
+
+        Status BitmapIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+        {
+            return buffer_pool_->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+        }
+
+        Status BitmapIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
+        {
+            return buffer_pool_->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
+        }
+
         Status BitmapIndex::loadMetaPage(ErrorContext *ctx)
         {
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -178,7 +217,7 @@ namespace scratchbird
             // Verify page type
             if (meta->bmp_header.page_type != static_cast<uint16_t>(PageType::BITMAP_INDEX_META))
             {
-                buffer_pool_->unpinPage(meta_page_, false, ctx);
+                unpinIndexPage(meta_page_, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid bitmap index meta page type");
                 return Status::PAGE_CORRUPT;
             }
@@ -188,7 +227,7 @@ namespace scratchbird
             total_tuples_ = meta->bmp_total_tuples;
             dictionary_page_ = meta->bmp_dictionary_page;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
             return Status::OK;
         }
 
@@ -224,7 +263,7 @@ namespace scratchbird
             while (current_page != 0)
             {
                 uint8_t *page_data = nullptr;
-                Status status = buffer_pool_->pinPage(current_page, (void **)&page_data, ctx);
+                Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     return 0;
@@ -247,7 +286,7 @@ namespace scratchbird
                         {
                             *bitmap_root_out = entry->bitmap_root_page;
                             uint32_t cardinality = entry->cardinality;
-                            buffer_pool_->unpinPage(current_page, false, ctx);
+                            unpinIndexPage(current_page, false, ctx);
                             return cardinality;
                         }
                     }
@@ -256,7 +295,7 @@ namespace scratchbird
                 }
 
                 uint32_t next_page = dict_page->bmp_dict_next_page;
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
                 current_page = next_page;
             }
 
@@ -272,14 +311,16 @@ namespace scratchbird
             if (dictionary_page_ == 0)
             {
                 uint32_t page_num = 0;
-                Status status = db_->page_manager()->allocatePage(page_num, ctx);
+                GPID page_gpid = 0;
+                Status status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &page_gpid, ctx);
                 if (status != Status::OK)
                 {
                     return 0;
                 }
+                page_num = static_cast<uint32_t>(getPageNumber(page_gpid));
 
                 uint8_t *page_data = nullptr;
-                status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                status = pinIndexPage(page_num, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     return 0;
@@ -297,22 +338,22 @@ namespace scratchbird
                 dict_page->bmp_dict_free_offset = sizeof(SBBitmapDictionaryPage);
                 dict_page->bmp_dict_next_page = 0;
 
-                buffer_pool_->unpinPage(page_num, true, ctx);
+                unpinIndexPage(page_num, true, ctx);
 
                 dictionary_page_ = page_num;
 
                 // Update meta page
                 uint8_t *meta_data = nullptr;
-                buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+                pinIndexPage(meta_page_, (void **)&meta_data, ctx);
                 auto *meta = reinterpret_cast<SBBitmapIndexMetaPage *>(meta_data);
                 meta->bmp_dictionary_page = dictionary_page_;
-                buffer_pool_->unpinPage(meta_page_, true, ctx);
+                unpinIndexPage(meta_page_, true, ctx);
             }
 
             // Find page with enough space or allocate new one
             uint32_t current_page = dictionary_page_;
             uint8_t *page_data = nullptr;
-            Status status = buffer_pool_->pinPage(current_page, (void **)&page_data, ctx);
+            Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
             if (status != Status::OK)
             {
                 return 0;
@@ -326,20 +367,22 @@ namespace scratchbird
             {
                 // Need new page - allocate and chain it
                 uint32_t new_dict_page = 0;
-                status = db_->page_manager()->allocatePage(new_dict_page, ctx);
+                GPID new_dict_gpid = 0;
+                status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_dict_gpid, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    unpinIndexPage(current_page, false, ctx);
                     LOG_ERROR(STORAGE, "Failed to allocate new dictionary page: %d", static_cast<int>(status));
                     return 0;
                 }
+                new_dict_page = static_cast<uint32_t>(getPageNumber(new_dict_gpid));
 
                 // Initialize new dictionary page
                 uint8_t *new_page_data = nullptr;
-                status = buffer_pool_->pinPage(new_dict_page, (void **)&new_page_data, ctx);
+                status = pinIndexPage(new_dict_page, (void **)&new_page_data, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    unpinIndexPage(current_page, false, ctx);
                     LOG_ERROR(STORAGE, "Failed to pin new dictionary page: %d", static_cast<int>(status));
                     return 0;
                 }
@@ -357,7 +400,7 @@ namespace scratchbird
 
                 // Link current page to new page
                 dict_page->bmp_dict_next_page = new_dict_page;
-                buffer_pool_->unpinPage(current_page, true, ctx); // Mark dirty
+                unpinIndexPage(current_page, true, ctx); // Mark dirty
 
                 // Switch to new page
                 current_page = new_dict_page;
@@ -369,18 +412,20 @@ namespace scratchbird
 
             // Now we have a page with space - allocate bitmap root page
             uint32_t bitmap_root = 0;
-            status = db_->page_manager()->allocatePage(bitmap_root, ctx);
+            GPID bitmap_gpid = 0;
+            status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &bitmap_gpid, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
                 return 0;
             }
+            bitmap_root = static_cast<uint32_t>(getPageNumber(bitmap_gpid));
 
             uint8_t *bitmap_data = nullptr;
-            status = buffer_pool_->pinPage(bitmap_root, (void **)&bitmap_data, ctx);
+            status = pinIndexPage(bitmap_root, (void **)&bitmap_data, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
                 return 0;
             }
 
@@ -394,7 +439,7 @@ namespace scratchbird
             root_page->rbr_num_containers = 0;
             root_page->rbr_total_cardinality = 0;
 
-            buffer_pool_->unpinPage(bitmap_root, true, ctx);
+            unpinIndexPage(bitmap_root, true, ctx);
 
             // Add entry to dictionary
             uint8_t *entry_location = page_data + dict_page->bmp_dict_free_offset;
@@ -411,15 +456,15 @@ namespace scratchbird
             dict_page->bmp_dict_count++;
             dict_page->bmp_dict_free_offset += entry_size;
 
-            buffer_pool_->unpinPage(current_page, true, ctx);
+            unpinIndexPage(current_page, true, ctx);
 
             // Update meta page
             uint8_t *meta_data = nullptr;
-            buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             auto *meta = reinterpret_cast<SBBitmapIndexMetaPage *>(meta_data);
             meta->bmp_num_distinct_values++;
             num_distinct_values_ = meta->bmp_num_distinct_values;
-            buffer_pool_->unpinPage(meta_page_, true, ctx);
+            unpinIndexPage(meta_page_, true, ctx);
 
             return bitmap_root;
         }
@@ -434,7 +479,9 @@ namespace scratchbird
                 return it->second;
             }
 
-            auto bitmap = std::make_shared<RoaringBitmap>(db_, bitmap_root_page);
+            auto bitmap = std::make_shared<RoaringBitmap>(
+                db_,
+                makeGPID(tablespace_id_, bitmap_root_page));
             bitmap_cache_.emplace(bitmap_root_page, bitmap);
             return bitmap;
         }
@@ -471,10 +518,6 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
-            // Convert TID struct to uint64_t for bitmap storage
-            // Uses full 64-bit value (GPID-compatible)
-            uint64_t tid_value = convertTIDtoLegacy(tid);
-
             // Find or create dictionary entry
             uint32_t bitmap_root = 0;
             uint32_t cardinality = findDictionaryEntry(value_data, value_len, &bitmap_root, ctx);
@@ -497,7 +540,7 @@ namespace scratchbird
 
             // TASK-CRITICAL-2: Add with xmin for MGA compliance
             // Firebird MGA: Store transaction ID for TIP-based visibility
-            Status status = bitmap->add(tid_value, current_xid, ctx);
+            Status status = bitmap->add(tid, current_xid, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -505,11 +548,11 @@ namespace scratchbird
 
             // Update total tuples count
             uint8_t *meta_data = nullptr;
-            buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             auto *meta = reinterpret_cast<SBBitmapIndexMetaPage *>(meta_data);
             meta->bmp_total_tuples++;
             total_tuples_ = meta->bmp_total_tuples;
-            buffer_pool_->unpinPage(meta_page_, true, ctx);
+            unpinIndexPage(meta_page_, true, ctx);
 
             return Status::OK;
         }
@@ -537,9 +580,6 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
-            // Convert TID struct to 64-bit value for bitmap storage
-            uint64_t tid_value = convertTIDtoLegacy(tid);
-
             // We need to mark this TID as deleted in ALL bitmaps since we don't know which value it had
             // CRITICAL: This is LOGICAL deletion (set xmax), NOT physical removal
             // This requires scanning all dictionary entries
@@ -562,7 +602,7 @@ namespace scratchbird
             while (current_dict_page != 0)
             {
                 uint8_t *page_data = nullptr;
-                status = buffer_pool_->pinPage(current_dict_page, (void **)&page_data, ctx);
+                status = pinIndexPage(current_dict_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     LOG_WARNING(STORAGE, "remove: Failed to pin dictionary page %u", current_dict_page);
@@ -590,7 +630,7 @@ namespace scratchbird
                         {
                             // TASK-CRITICAL-2: Mark TID as deleted with xmax (Firebird MGA)
                             // Per MGA_RULES.md Rule 5: Logical deletion only
-                            Status remove_status = bitmap->remove(tid_value, current_xid, ctx);
+                            Status remove_status = bitmap->remove(tid, current_xid, ctx);
                             if (remove_status == Status::OK)
                             {
                                 // Update dictionary entry cardinality (includes invisible entries)
@@ -603,7 +643,7 @@ namespace scratchbird
                     entry_data += sizeof(BitmapDictionaryEntry) + entry->value_length;
                 }
 
-                buffer_pool_->unpinPage(current_dict_page, false, ctx);
+                unpinIndexPage(current_dict_page, false, ctx);
 
                 // Move to next dictionary page
                 current_dict_page = next_page;
@@ -653,7 +693,7 @@ namespace scratchbird
 
                 // Pin the heap page
                 uint8_t *page_data = nullptr;
-                Status status = buffer_pool->pinPage(page_id, (void **)&page_data, ctx);
+                Status status = pinIndexPage(page_id, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     // If we can't read the page, skip this TID
@@ -666,7 +706,7 @@ namespace scratchbird
 
                 if (item_id >= item_count)
                 {
-                    buffer_pool->unpinPage(page_id, false, ctx);
+                    unpinIndexPage(page_id, false, ctx);
                     continue; // Invalid item ID
                 }
 
@@ -675,7 +715,7 @@ namespace scratchbird
 
                 if (item.offset == 0 || item.length == 0)
                 {
-                    buffer_pool->unpinPage(page_id, false, ctx);
+                    unpinIndexPage(page_id, false, ctx);
                     continue; // Dead tuple
                 }
 
@@ -709,7 +749,7 @@ namespace scratchbird
                     visible_tids.push_back(tid);
                 }
 
-                buffer_pool->unpinPage(page_id, false, ctx);
+                unpinIndexPage(page_id, false, ctx);
             }
 
             return visible_tids;
@@ -756,15 +796,9 @@ namespace scratchbird
             // Firebird MGA: Per MGA_RULES.md Rule 11 - use TransactionId, NOT Snapshot
             // This eliminates the 20-40% overhead from heap-level post-filtering
             TransactionManager *txn_mgr = db_->transaction_manager();
-            std::vector<uint64_t> tid_values = bitmap->toVisibleArray(current_xid, txn_mgr, ctx);
+            std::vector<TID> tid_values = bitmap->toVisibleArray(current_xid, txn_mgr, ctx);
             results->reserve(tid_values.size());
-
-            // Convert 64-bit values to TID structs
-            for (uint64_t tid_value : tid_values)
-            {
-                TID tid = convertLegacyTID(tid_value);
-                results->push_back(tid);
-            }
+            results->insert(results->end(), tid_values.begin(), tid_values.end());
 
             // Note: No heap-level post-filtering needed - visibility already checked at index level!
 
@@ -911,14 +945,9 @@ namespace scratchbird
             }
 
             // Convert bitmap to TID list (64-bit values)
-            std::vector<uint64_t> tid_values = not_bitmap->toArray(ctx);
+            std::vector<TID> tid_values = not_bitmap->toArray(ctx);
             results.reserve(tid_values.size());
-
-            for (uint64_t tid_value : tid_values)
-            {
-                TID tid = convertLegacyTID(tid_value);
-                results.push_back(tid);
-            }
+            results.insert(results.end(), tid_values.begin(), tid_values.end());
 
             // Firebird MGA: Post-filter results by heap tuple visibility using TIP lookups
             results = filterTidsByVisibility(results, current_xid, ctx);
@@ -952,7 +981,7 @@ namespace scratchbird
                 while (current_dict_page != 0 && total_pages_scanned < 1000) // Limit scan to prevent long delays
                 {
                     uint8_t *page_data = nullptr;
-                    Status status = buffer_pool_->pinPage(current_dict_page, (void **)&page_data, ctx);
+                    Status status = pinIndexPage(current_dict_page, (void **)&page_data, ctx);
                     if (status != Status::OK)
                     {
                         break; // Can't calculate, use default
@@ -990,7 +1019,7 @@ namespace scratchbird
                         entry_data += sizeof(BitmapDictionaryEntry) + entry->value_length;
                     }
 
-                    buffer_pool_->unpinPage(current_dict_page, false, ctx);
+                    unpinIndexPage(current_dict_page, false, ctx);
                     current_dict_page = next_page;
                     total_pages_scanned++;
                 }
@@ -1013,32 +1042,48 @@ namespace scratchbird
         // RoaringBitmap Implementation
         // ========================================
 
-        RoaringBitmap::RoaringBitmap(Database *db, uint32_t root_page)
+        RoaringBitmap::RoaringBitmap(Database *db, GPID root_gpid)
             : db_(db),
               buffer_pool_(db->buffer_pool()),
-              root_page_(root_page),
+              root_page_(static_cast<uint32_t>(getPageNumber(root_gpid))),
+              tablespace_id_(getTablespaceID(root_gpid)),
               cardinality_(0)
         {
             // Load root page to get cardinality
             uint8_t *root_data = nullptr;
             ErrorContext ctx;
-            if (buffer_pool_->pinPage(root_page, (void **)&root_data, &ctx) == Status::OK)
+            if (pinIndexPage(root_page_, (void **)&root_data, &ctx) == Status::OK)
             {
                 auto *root = reinterpret_cast<SBRoaringBitmapRootPage *>(root_data);
                 cardinality_ = root->rbr_total_cardinality;
-                buffer_pool_->unpinPage(root_page, false, &ctx);
+                unpinIndexPage(root_page_, false, &ctx);
             }
         }
 
         RoaringBitmap::~RoaringBitmap() = default;
 
+        GPID RoaringBitmap::indexGPID(uint64_t page_num) const
+        {
+            return makeGPID(tablespace_id_, page_num);
+        }
+
+        Status RoaringBitmap::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx) const
+        {
+            return buffer_pool_->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+        }
+
+        Status RoaringBitmap::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx) const
+        {
+            return buffer_pool_->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
+        }
+
         // TASK-CRITICAL-2: MGA-compliant add with xmin tracking
         // Firebird MGA: Per MGA_RULES.md Rule 6 - store xmin with each entry
-        Status RoaringBitmap::add(uint64_t value, uint64_t xmin, ErrorContext *ctx)
+        Status RoaringBitmap::add(const TID &tid, uint64_t xmin, ErrorContext *ctx)
         {
             // Split 64-bit value: high 48 bits for container key, low 16 bits for value
-            uint64_t high = value >> 16;
-            uint16_t low = value & 0xFFFF;
+            uint64_t high = tid.gpid;
+            uint16_t low = tid.slot;
 
             Container *container = findOrCreateContainer(high, ctx);
             if (!container)
@@ -1128,10 +1173,10 @@ namespace scratchbird
 
                 // Update root page cardinality
                 uint8_t *root_data = nullptr;
-                buffer_pool_->pinPage(root_page_, (void **)&root_data, ctx);
+                pinIndexPage(root_page_, (void **)&root_data, ctx);
                 auto *root = reinterpret_cast<SBRoaringBitmapRootPage *>(root_data);
                 root->rbr_total_cardinality = cardinality_;
-                buffer_pool_->unpinPage(root_page_, true, ctx);
+                unpinIndexPage(root_page_, true, ctx);
             }
 
             return status;
@@ -1139,11 +1184,11 @@ namespace scratchbird
 
         // TASK-CRITICAL-2: MGA-compliant remove with xmax marking (logical deletion)
         // Firebird MGA: Per MGA_RULES.md Rule 5 - NO physical removal, only xmax tombstones
-        Status RoaringBitmap::remove(uint64_t value, uint64_t xmax, ErrorContext *ctx)
+        Status RoaringBitmap::remove(const TID &tid, uint64_t xmax, ErrorContext *ctx)
         {
             // Split 64-bit value: high 48 bits for container key, low 16 bits for value
-            uint64_t high = value >> 16;
-            uint16_t low = value & 0xFFFF;
+            uint64_t high = tid.gpid;
+            uint16_t low = tid.slot;
 
             // Find the container for this high 16 bits
             Container *container = nullptr;
@@ -1215,11 +1260,11 @@ namespace scratchbird
             return status;
         }
 
-        bool RoaringBitmap::contains(uint64_t value, ErrorContext *ctx)
+        bool RoaringBitmap::contains(const TID &tid, ErrorContext *ctx)
         {
             // Split 64-bit value: high 48 bits for container key, low 16 bits for value
-            uint64_t high = value >> 16;
-            uint16_t low = value & 0xFFFF;
+            uint64_t high = tid.gpid;
+            uint16_t low = tid.slot;
 
             for (const auto &container : containers_)
             {
@@ -1251,9 +1296,9 @@ namespace scratchbird
         }
 
         // Returns all TIDs (ignores visibility - includes deleted entries)
-        std::vector<uint64_t> RoaringBitmap::toArray(ErrorContext *ctx)
+        std::vector<TID> RoaringBitmap::toArray(ErrorContext *ctx)
         {
-            std::vector<uint64_t> results;
+            std::vector<TID> results;
             results.reserve(cardinality_);
 
             // Load all containers if not cached
@@ -1261,15 +1306,14 @@ namespace scratchbird
 
             for (const auto &container : containers_)
             {
-                // Reconstruct 64-bit value: high 48 bits from container key, low 16 bits from data
-                uint64_t high_bits = container.key << 16;
+                GPID gpid = container.key;
 
                 if (container.type == ContainerType::ARRAY)
                 {
                     // TASK-CRITICAL-2: Extract TIDs from versioned entries
                     for (const auto& entry : container.array_data_versioned)
                     {
-                        results.push_back(high_bits | entry.tid_low);
+                        results.emplace_back(gpid, entry.tid_low);
                     }
                 }
                 else if (container.type == ContainerType::BITSET)
@@ -1285,7 +1329,7 @@ namespace scratchbird
                             if (word & (1ULL << bit_idx))
                             {
                                 uint16_t low = word_idx * 64 + bit_idx;
-                                results.push_back(high_bits | low);
+                                results.emplace_back(gpid, low);
                             }
                         }
                     }
@@ -1296,21 +1340,20 @@ namespace scratchbird
         }
 
         // TASK-CRITICAL-2: Get all versioned entries with xmin/xmax
-        std::vector<std::pair<uint64_t, VersionedBitmapEntry>> RoaringBitmap::toVersionedArray(ErrorContext *ctx)
+        std::vector<std::pair<TID, VersionedBitmapEntry>> RoaringBitmap::toVersionedArray(ErrorContext *ctx)
         {
-            std::vector<std::pair<uint64_t, VersionedBitmapEntry>> results;
+            std::vector<std::pair<TID, VersionedBitmapEntry>> results;
             results.reserve(cardinality_);
 
             for (const auto &container : containers_)
             {
-                uint64_t high_bits = container.key << 16;
+                GPID gpid = container.key;
 
                 if (container.type == ContainerType::ARRAY)
                 {
                     for (const auto& entry : container.array_data_versioned)
                     {
-                        uint64_t tid = high_bits | entry.tid_low;
-                        results.push_back(std::make_pair(tid, entry));
+                        results.emplace_back(TID(gpid, entry.tid_low), entry);
                     }
                 }
                 else if (container.type == ContainerType::BITSET)
@@ -1318,8 +1361,7 @@ namespace scratchbird
                     // For bitset, extract entries from bitset_versions
                     for (const auto& kv : container.bitset_versions)
                     {
-                        uint64_t tid = high_bits | kv.first;
-                        results.push_back(std::make_pair(tid, kv.second));
+                        results.emplace_back(TID(gpid, kv.first), kv.second);
                     }
                 }
             }
@@ -1330,11 +1372,11 @@ namespace scratchbird
         // TASK-CRITICAL-2: Get only visible entries (MGA-compliant index-level visibility)
         // Firebird MGA: Per MGA_RULES.md Rule 11 - use TransactionId, NOT Snapshot
         // This eliminates the need for heap access (20-40% performance improvement)
-        std::vector<uint64_t> RoaringBitmap::toVisibleArray(uint64_t current_xid,
+        std::vector<TID> RoaringBitmap::toVisibleArray(uint64_t current_xid,
                                                              TransactionManager *txn_mgr,
                                                              ErrorContext *ctx)
         {
-            std::vector<uint64_t> results;
+            std::vector<TID> results;
             results.reserve(cardinality_);
 
             if (!txn_mgr)
@@ -1345,7 +1387,7 @@ namespace scratchbird
 
             for (const auto &container : containers_)
             {
-                uint64_t high_bits = container.key << 16;
+                GPID gpid = container.key;
 
                 if (container.type == ContainerType::ARRAY)
                 {
@@ -1355,7 +1397,7 @@ namespace scratchbird
                         // Per MGA_RULES.md Rule 3: Use TIP-based visibility
                         if (entry.isVisible(current_xid, txn_mgr))
                         {
-                            results.push_back(high_bits | entry.tid_low);
+                            results.emplace_back(gpid, entry.tid_low);
                         }
                     }
                 }
@@ -1366,7 +1408,7 @@ namespace scratchbird
                         // TASK-CRITICAL-2: Index-level visibility check (no heap access!)
                         if (kv.second.isVisible(current_xid, txn_mgr))
                         {
-                            results.push_back(high_bits | kv.first);
+                            results.emplace_back(gpid, kv.first);
                         }
                     }
                 }
@@ -1442,11 +1484,13 @@ namespace scratchbird
             uint32_t page_num = container.page_number;
             if (page_num == 0)
             {
-                Status status = db_->page_manager()->allocatePage(page_num, ctx);
+                GPID new_gpid = 0;
+                Status status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_gpid, ctx);
                 if (status != Status::OK)
                 {
                     return status;
                 }
+                page_num = static_cast<uint32_t>(getPageNumber(new_gpid));
 
                 // Update container page number in our cache
                 for (auto &c : containers_)
@@ -1461,7 +1505,7 @@ namespace scratchbird
 
             // Save container data
             uint8_t *page_data = nullptr;
-            Status status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+            Status status = pinIndexPage(page_num, (void **)&page_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1492,7 +1536,7 @@ namespace scratchbird
                             container.bitset_data.size() * sizeof(uint64_t));
             }
 
-            buffer_pool_->unpinPage(page_num, true, ctx);
+            unpinIndexPage(page_num, true, ctx);
             return Status::OK;
         }
 
@@ -1889,28 +1933,6 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // PHASE 1.5: Convert TID structs to legacy format set for lookup
-            std::set<uint32_t> dead_set_32bit;
-            for (const TID &tid : dead_tids)
-            {
-                uint64_t legacy = convertTIDtoLegacy(tid);
-                if (legacy != 0)  // Skip custom tablespace TIDs
-                {
-                    // Bitmap uses 32-bit integers, convert legacy TID
-                    uint32_t tid_32 = static_cast<uint32_t>(legacy & 0xFFFFFFFF);
-                    dead_set_32bit.insert(tid_32);
-                }
-            }
-
-            if (dead_set_32bit.empty())
-            {
-                if (entries_removed_out)
-                    *entries_removed_out = 0;
-                if (pages_modified_out)
-                    *pages_modified_out = 0;
-                return Status::OK;
-            }
-
             // ===== Strategy: Iterate all dictionary entries, remove dead TIDs from each bitmap =====
             //
             // Bitmap indexes store: value → RoaringBitmap (set of TIDs with that value)
@@ -1923,7 +1945,7 @@ namespace scratchbird
             while (current_dict_page != 0)
             {
                 uint8_t *page_data = nullptr;
-                status = buffer_pool_->pinPage(current_dict_page, (void **)&page_data, ctx);
+                status = pinIndexPage(current_dict_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     LOG_WARNING(VACUUM, "Bitmap GC: Failed to pin dictionary page %u: %d",
@@ -1953,9 +1975,9 @@ namespace scratchbird
                             // Remove each dead TID from this bitmap
                             // Use a high xmax value to mark as deleted (e.g., max uint64_t)
                             uint64_t xmax = std::numeric_limits<uint64_t>::max();
-                            for (uint32_t tid_32 : dead_set_32bit)
+                            for (const TID &tid : dead_tids)
                             {
-                                Status remove_status = bitmap->remove(static_cast<uint64_t>(tid_32), xmax, ctx);
+                                Status remove_status = bitmap->remove(tid, xmax, ctx);
                                 if (remove_status == Status::OK)
                                 {
                                     total_entries_removed++;
@@ -1971,7 +1993,7 @@ namespace scratchbird
                     entry_data += sizeof(BitmapDictionaryEntry) + entry->value_length;
                 }
 
-                buffer_pool_->unpinPage(current_dict_page, false, ctx);
+                unpinIndexPage(current_dict_page, false, ctx);
 
                 // Move to next dictionary page
                 current_dict_page = next_page;
@@ -2006,16 +2028,15 @@ namespace scratchbird
             return container_index_ < bitmap_.containers_.size();
         }
 
-        uint64_t RoaringBitmapIterator::next()
+        TID RoaringBitmapIterator::next()
         {
             const auto &container = bitmap_.containers_[container_index_];
-            // Reconstruct 64-bit value from container key (high 48 bits) and value (low 16 bits)
-            uint64_t high_bits = container.key << 16;
-            uint64_t result = 0;
+            GPID gpid = container.key;
+            uint16_t slot = 0;
 
             if (container.type == ContainerType::ARRAY)
             {
-                result = high_bits | container.array_data_versioned[value_index_].tid_low;
+                slot = container.array_data_versioned[value_index_].tid_low;
                 value_index_++;
 
                 if (value_index_ >= container.array_data_versioned.size())
@@ -2042,7 +2063,7 @@ namespace scratchbird
                     uint64_t word = container.bitset_data[word_idx];
                     if (word & (1ULL << bit_idx))
                     {
-                        result = high_bits | static_cast<uint16_t>(value_index_);
+                        slot = static_cast<uint16_t>(value_index_);
                         value_index_++;
                         break;
                     }
@@ -2051,7 +2072,7 @@ namespace scratchbird
                 }
             }
 
-            return result;
+            return TID(gpid, slot);
         }
 
         void RoaringBitmapIterator::reset()
@@ -2105,12 +2126,9 @@ namespace scratchbird
                 return Status::NOT_FOUND;
             }
 
-            // Get next TID from bitmap (in legacy uint64_t format)
-            uint64_t legacy_tid = iterator_->next();
+            // Get next TID from bitmap
+            TID tid = iterator_->next();
             scanned_count_++;
-
-            // Convert legacy TID to TID struct
-            TID tid = convertLegacyTID(legacy_tid);
 
             // Check visibility using TIP-based filtering (Firebird MGA)
             if (!db_)

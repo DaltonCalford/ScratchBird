@@ -4,6 +4,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/gpid.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/types.h"
 #include <cstdint>
@@ -292,6 +293,7 @@ struct SBColumnstoreIndex
     ID idx_table_uuid;                  // Table UUID
     std::vector<ID> idx_column_uuids;   // Indexed columns
     uint32_t idx_root_page;             // Root segment page
+    uint16_t idx_tablespace_id = 0;
     uint32_t idx_segment_size;          // Rows per segment (default 1024)
     uint8_t idx_compression_type;       // Default compression type
     uint64_t idx_total_segments;        // Total number of segments
@@ -374,12 +376,20 @@ public:
                         const std::vector<UuidV7Bytes> &column_uuids,
                         uint32_t segment_size = 1024,
                         CompressionType compression = CompressionType::RLE,
-                        uint32_t *root_page_out = nullptr,
+                        GPID root_gpid = 0,
+                        ErrorContext *ctx = nullptr);
+    static Status create(Database *db,
+                        const UuidV7Bytes &index_uuid,
+                        const UuidV7Bytes &table_uuid,
+                        const std::vector<UuidV7Bytes> &column_uuids,
+                        uint32_t segment_size,
+                        CompressionType compression,
+                        uint32_t *root_page_out,
                         ErrorContext *ctx = nullptr);
 
     static std::unique_ptr<ColumnstoreIndex> open(Database *db,
                                                    const UuidV7Bytes &index_uuid,
-                                                   uint32_t root_page,
+                                                   GPID root_gpid,
                                                    uint32_t segment_size = 1024,
                                                    ErrorContext *ctx = nullptr);
 
@@ -557,6 +567,16 @@ public:
                             ColumnSegment *segment_out,
                             ErrorContext *ctx);
 
+    Status compressDelta(const ColumnSegment &segment,
+                         std::vector<uint8_t> *compressed_out,
+                         ErrorContext *ctx);
+
+    Status decompressDelta(const std::vector<uint8_t> &compressed,
+                           DataType data_type,
+                           uint32_t row_count,
+                           ColumnSegment *segment_out,
+                           ErrorContext *ctx);
+
     /**
      * Apply predicate to segment (predicate pushdown)
      *
@@ -576,6 +596,10 @@ public:
 private:
     Database *db_;
     SBColumnstoreIndex index_info_;
+
+    GPID indexGPID(uint64_t page_num) const;
+    Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+    Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
 
     // Last segment page cache - avoids O(n) traversal when appending segments
     uint32_t last_segment_page_ = 0;
@@ -656,7 +680,7 @@ private:
                                      const std::vector<UuidV7Bytes> &column_uuids,
                                      uint32_t segment_size,
                                      CompressionType compression,
-                                     uint32_t *metadata_page_out,
+                                     GPID metadata_gpid,
                                      ErrorContext *ctx);
 
     /**

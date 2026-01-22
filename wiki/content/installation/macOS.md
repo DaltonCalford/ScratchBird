@@ -255,7 +255,7 @@ fb_port = 3050
 enabled = false
 
 [memory]
-shared_buffers = 128MB
+buffer_pool_size = 128MB
 work_mem = 4MB
 
 [logging]

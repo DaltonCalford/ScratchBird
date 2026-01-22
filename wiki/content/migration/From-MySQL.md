@@ -1027,7 +1027,7 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM orders WHERE customer_id = 123;
 # sb_server.conf
 
 [memory]
-shared_buffers = 256MB
+buffer_pool_size = 256MB
 work_mem = 4MB
 
 [mysql]

@@ -110,9 +110,19 @@ require_client_cert = false
 # MEMORY SECTION
 #==============================================================================
 [memory]
-# Shared buffer pool size
+# Buffer pool size
 # Format: 128MB, 1GB, etc.
-shared_buffers = 128MB
+buffer_pool_size = 128MB
+
+# Buffer pool page size (bytes)
+buffer_pool_page_size = 8192
+
+# Background writer controls
+buffer_pool_bgwriter_enabled = true
+buffer_pool_bgwriter_max_pages = 1000
+buffer_pool_dirty_ratio_low = 0.10
+buffer_pool_dirty_ratio_high = 0.30
+buffer_pool_dirty_ratio_checkpoint = 0.40
 
 # Work memory per operation (sorts, hash joins)
 work_mem = 4MB

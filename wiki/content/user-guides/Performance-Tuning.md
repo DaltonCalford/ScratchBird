@@ -336,7 +336,7 @@ LIMIT 20;
 
 [memory]
 # Shared buffer pool - start with 25% of RAM (max 8GB for most workloads)
-shared_buffers = 2GB
+buffer_pool_size = 2GB
 
 # Per-operation memory for sorts, joins, etc.
 # Higher = faster complex queries, but uses more RAM per connection
@@ -351,7 +351,7 @@ temp_buffers = 32MB
 
 **Guidelines:**
 
-| System RAM | shared_buffers | work_mem | maintenance_work_mem |
+| System RAM | buffer_pool_size | work_mem | maintenance_work_mem |
 |------------|----------------|----------|----------------------|
 | 2 GB | 512 MB | 4 MB | 64 MB |
 | 4 GB | 1 GB | 8 MB | 128 MB |
@@ -747,7 +747,7 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT ...your query...;
 | Symptom | Cause | Solution |
 |---------|-------|----------|
 | Seq Scan on large table | Missing index | Add appropriate index |
-| High Buffers read | Data not cached | Increase shared_buffers |
+| High Buffers read | Data not cached | Increase buffer_pool_size |
 | Sort on disk | work_mem too low | Increase work_mem |
 | Nested Loop slow | Poor join order | Check statistics, ANALYZE |
 
@@ -830,7 +830,7 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT ...;
 - [ ] Statistics are up to date
 - [ ] Connection pooling is configured
 - [ ] work_mem is appropriate for workload
-- [ ] shared_buffers is 25% of RAM (max 8GB)
+- [ ] buffer_pool_size is 25% of RAM (max 8GB)
 
 ---
 

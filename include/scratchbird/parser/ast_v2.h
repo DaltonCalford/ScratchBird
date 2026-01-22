@@ -551,6 +551,15 @@ struct IndexColumn {
 };
 
 /**
+ * Index options
+ */
+struct IndexOptions {
+    bool bloom_filter_enabled = false;
+    bool bloom_fpr_set = false;
+    double bloom_fpr = 0.01;
+};
+
+/**
  * CREATE INDEX statement
  */
 class CreateIndexStmt : public Statement {
@@ -567,6 +576,7 @@ public:
 
     IndexType index_type = IndexType::BTREE;
     std::vector<IndexColumn> columns;
+    IndexOptions options;
 
     // Partial index
     Expression* where_clause = nullptr;

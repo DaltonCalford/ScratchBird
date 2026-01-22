@@ -55,9 +55,13 @@ namespace scratchbird::core
         Database *db_;
         StorageEngine *engine_;
         ID table_id_;
+        uint16_t tablespace_id_ = PRIMARY_TABLESPACE_ID;
         uint32_t current_page_;
         uint16_t current_item_;
         uint32_t last_page_;
+        size_t current_page_index_ = 0;
+        std::vector<GPID> allocated_pages_;
+        GPID current_gpid_ = INVALID_GPID;
         bool done_;
         bool filter_session_ = false;
         ID session_id_{};
@@ -132,10 +136,13 @@ namespace scratchbird::core
 
         // Delete a tuple (mark as deleted)
         auto deleteTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
+                         uint16_t tablespace_id_override = UINT16_MAX,
                          ErrorContext *ctx = nullptr) -> Status;
 
         // Delete a tuple by TID
         auto deleteTuple(const ID &table_id, uint64_t tid, uint64_t xmax,
+                         ErrorContext *ctx = nullptr) -> Status;
+        auto deleteTuple(const ID &table_id, const TID &tid,
                          ErrorContext *ctx = nullptr) -> Status;
 
         // Update a tuple (MGA Phase 3: Version Chains)
@@ -185,11 +192,11 @@ namespace scratchbird::core
 
         // Find a page with free space for a tuple
         auto findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,
-                          ErrorContext *ctx) -> Status;
+                          uint16_t tablespace_id, ErrorContext *ctx) -> Status;
 
         // Allocate a new heap page for a table
-        auto allocateHeapPage(const ID &table_id, uint32_t *page_id_out, ErrorContext *ctx)
-            -> Status;
+        auto allocateHeapPage(const ID &table_id, uint16_t tablespace_id, uint32_t *page_id_out,
+                              ErrorContext *ctx) -> Status;
 
         // Get or create ToastManager for a table
         auto getOrCreateToastManager(const ID &table_id, ErrorContext *ctx) -> ToastManager *;

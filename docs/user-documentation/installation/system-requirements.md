@@ -232,7 +232,7 @@ scratchbird hard nproc 4096
 When running ScratchBird in a VM:
 
 1. **CPU**: Allocate sufficient vCPUs for your workload
-2. **Memory**: Don't overcommit; ensure shared_buffers fits in RAM
+2. **Memory**: Don't overcommit; ensure buffer_pool_size fits in RAM
 3. **Storage**: Use paravirtualized disk drivers (virtio)
 4. **Network**: Use paravirtualized network (virtio-net)
 

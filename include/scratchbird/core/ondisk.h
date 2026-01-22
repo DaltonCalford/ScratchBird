@@ -35,6 +35,8 @@ namespace scratchbird::core
         PAGE_TYPE_SPGIST = 23,      // SP-GiST index page
         PAGE_TYPE_BRIN = 24,        // BRIN (Block Range Index) page
         PAGE_TYPE_COLUMNSTORE = 25, // Columnstore index page
+        PAGE_TYPE_BLOOM_FILTER_META = 26, // Bloom filter meta page
+        PAGE_TYPE_BLOOM_FILTER_DATA = 27  // Bloom filter data page
     };
 
     // Page flags (bitwise OR)

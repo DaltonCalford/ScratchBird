@@ -12,6 +12,14 @@
 #include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
 #include "scratchbird/core/function_invoker.h"
 // Index headers needed for template implementation
+#include "scratchbird/core/btree.h"
+#include "scratchbird/core/hash_index.h"
+#include "scratchbird/core/gin_index.h"
+#include "scratchbird/core/hnsw_index.h"
+#include "scratchbird/core/bitmap_index.h"
+#include "scratchbird/core/brin_index.h"
+#include "scratchbird/core/rtree_index.h"
+#include "scratchbird/core/columnstore_index.h"
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/lsm_tree_index.h"
@@ -22,6 +30,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <atomic>
+#include <type_traits>
 #include <iosfwd>
 
 namespace scratchbird
@@ -30,6 +39,7 @@ namespace scratchbird
     namespace core
     {
         class ConnectionContext;
+        class HashIndex;
     }
 
     namespace sblr
@@ -1126,7 +1136,7 @@ namespace scratchbird
             // If not in cache, opens index and adds to cache.
             template<typename IndexT>
             IndexT* getOrOpenIndex(const core::ID& index_uuid, IndexType type,
-                                  uint32_t root_page, core::ErrorContext* ctx);
+                                  uint64_t root_handle, core::ErrorContext* ctx);
 
             // Index operation helpers
             core::Status routeIndexInsert(IndexType type, const core::ID& index_uuid,
@@ -1187,7 +1197,7 @@ namespace scratchbird
 
         template<typename IndexT>
         IndexT* Executor::getOrOpenIndex(const core::ID& index_uuid, IndexType type,
-                                        uint32_t root_page, core::ErrorContext* ctx)
+                                        uint64_t root_handle, core::ErrorContext* ctx)
         {
             // Try to get from cache first
             void* cached_ptr = index_cache_.get(index_uuid, type);
@@ -1198,7 +1208,24 @@ namespace scratchbird
             }
 
             // Cache miss - open index
-            auto index_ptr = IndexT::open(db_, index_uuid, root_page, ctx);
+            std::unique_ptr<IndexT> index_ptr;
+            if constexpr (std::is_same_v<IndexT, core::BTree> ||
+                          std::is_same_v<IndexT, core::HashIndex> ||
+                          std::is_same_v<IndexT, core::GinIndex> ||
+                          std::is_same_v<IndexT, core::HnswIndex> ||
+                          std::is_same_v<IndexT, core::BitmapIndex> ||
+                          std::is_same_v<IndexT, core::BrinIndex> ||
+                          std::is_same_v<IndexT, core::GiSTIndex> ||
+                          std::is_same_v<IndexT, core::SPGiSTIndex> ||
+                          std::is_same_v<IndexT, core::ColumnstoreIndexSimple> ||
+                          std::is_same_v<IndexT, core::RTreeIndex>)
+            {
+                index_ptr = IndexT::open(db_, index_uuid, static_cast<core::GPID>(root_handle), ctx);
+            }
+            else
+            {
+                index_ptr = IndexT::open(db_, index_uuid, static_cast<uint32_t>(root_handle), ctx);
+            }
             if (!index_ptr)
             {
                 return nullptr;

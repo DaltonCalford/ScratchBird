@@ -78,81 +78,6 @@ uint16_t reservePort() {
     return local->port;
 }
 
-void dumpSysSchemaTables(ScratchBirdServer* server) {
-    if (!server) {
-        std::fprintf(stderr, "[catalog_dump] server unavailable\n");
-        return;
-    }
-    auto* db = server->database();
-    if (!db) {
-        std::fprintf(stderr, "[catalog_dump] database unavailable\n");
-        return;
-    }
-    auto* catalog = db->catalog_manager();
-    if (!catalog) {
-        std::fprintf(stderr, "[catalog_dump] catalog manager unavailable\n");
-        return;
-    }
-
-    scratchbird::core::ErrorContext ctx;
-    std::vector<scratchbird::core::CatalogManager::SchemaInfo> schemas;
-    auto status = catalog->listSchemas(schemas, &ctx);
-    if (status != Status::OK) {
-        std::fprintf(stderr, "[catalog_dump] listSchemas failed: %d %s\n",
-                     static_cast<int>(status), ctx.message.c_str());
-        return;
-    }
-
-    scratchbird::core::CatalogManager::SchemaInfo sys_schema;
-    bool found = false;
-    for (const auto& schema : schemas) {
-        if (schema.schema_name == "sys" || schema.schema_name == "SYS") {
-            sys_schema = schema;
-            found = true;
-            break;
-        }
-    }
-
-    if (!found) {
-        std::fprintf(stderr, "[catalog_dump] sys schema not found (schemas=%zu)\n",
-                     schemas.size());
-        return;
-    }
-
-    std::vector<scratchbird::core::CatalogManager::TableInfo> tables;
-    status = catalog->listTables(sys_schema.schema_id, tables, &ctx);
-    if (status != Status::OK) {
-        std::fprintf(stderr, "[catalog_dump] listTables(sys) failed: %d %s\n",
-                     static_cast<int>(status), ctx.message.c_str());
-        return;
-    }
-
-    const auto& policy_toast_id = catalog->policyToastTableId();
-    std::fprintf(stderr, "[catalog_dump] policy_toast_table_id=%s\n",
-                 policy_toast_id.toString().c_str());
-    scratchbird::core::CatalogManager::TableInfo toast_info;
-    scratchbird::core::ErrorContext toast_ctx;
-    auto toast_status = catalog->getTable(policy_toast_id, toast_info, &toast_ctx);
-    std::fprintf(stderr, "[catalog_dump] getTable(policy_toast_table_id) status=%d %s\n",
-                 static_cast<int>(toast_status),
-                 toast_ctx.message.empty() ? "ok" : toast_ctx.message.c_str());
-    if (toast_status == Status::OK) {
-        std::fprintf(stderr, "[catalog_dump] policy_toast name=%s id=%s type=%d\n",
-                     toast_info.table_name.c_str(),
-                     toast_info.table_id.toString().c_str(),
-                     static_cast<int>(toast_info.table_type));
-    }
-
-    std::fprintf(stderr, "[catalog_dump] sys schema id=%s tables=%zu\n",
-                 sys_schema.schema_id.toString().c_str(), tables.size());
-    for (const auto& table : tables) {
-        std::fprintf(stderr, "[catalog_dump] sys table name=%s id=%s type=%d\n",
-                     table.table_name.c_str(),
-                     table.table_id.toString().c_str(),
-                     static_cast<int>(table.table_type));
-    }
-}
-
 } // namespace
 
 TEST(NativeListenerSmokeTest, EndToEndQueryAndCopyOverIPC) {
@@ -181,8 +106,6 @@ TEST(NativeListenerSmokeTest, EndToEndQueryAndCopyOverIPC) {
     auto server = std::make_unique<ScratchBirdServer>(server_cfg);
     ASSERT_EQ(server->startAsync(&ctx), Status::OK) << ctx.message;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    dumpSysSchemaTables(server.get());
-
     client::Connection setup_conn;
     client::ConnectionConfig cc;
     cc.database_name = db_name;

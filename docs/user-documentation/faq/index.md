@@ -124,7 +124,7 @@ Performance is competitive with PostgreSQL for most workloads. Specific benchmar
 ### How much RAM should I allocate?
 
 General guidelines:
-- `shared_buffers`: 25% of RAM, up to 8 GB
+- `buffer_pool_size`: 25% of RAM, up to 8 GB
 - Leave room for OS cache and work_mem
 
 ### Why are queries slow?

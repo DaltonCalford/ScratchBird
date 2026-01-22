@@ -29,11 +29,35 @@ Jar output: `jdbc/build/libs/scratchbird-jdbc.jar`
 jdbc:scratchbird://host[:port]/database
 ```
 
+### SSL/TLS Options
+
+Use standard JDBC properties:
+
+```
+sslmode=disable|allow|prefer|require|verify-ca|verify-full
+sslrootcert=/path/to/ca.pem
+sslcert=/path/to/client-keystore.p12
+sslpassword=keystore_password
+```
+
 ### Example
 
 ```java
 String url = "jdbc:scratchbird://localhost:3092/mydb";
 Connection conn = DriverManager.getConnection(url, "admin", "secret");
+```
+
+### Example with Properties
+
+```java
+Properties props = new Properties();
+props.setProperty("user", "admin");
+props.setProperty("password", "secret");
+props.setProperty("sslmode", "require");
+props.setProperty("sslrootcert", "/etc/ssl/certs/ca.pem");
+
+Connection conn = DriverManager.getConnection(
+    "jdbc:scratchbird://localhost:3092/mydb", props);
 ```
 
 ---

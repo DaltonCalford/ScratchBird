@@ -24,7 +24,7 @@ namespace scratchbird::core
         // Navigate to leftmost leaf
         BufferPool *bp = db_->buffer_pool();
         void *page_buffer;
-        Status status = bp->pinPage(current_page, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -41,7 +41,7 @@ namespace scratchbird::core
 
             if (page->btr_count == 0)
             {
-                bp->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Empty internal node");
                 return Status::PAGE_CORRUPT;
             }
@@ -50,7 +50,7 @@ namespace scratchbird::core
                 reinterpret_cast<uint8_t *>(page_buffer) + offsets[0]);
 
             uint32_t next_page = static_cast<uint32_t>(first_node->btn_child_page);
-            bp->unpinPage(current_page, false, ctx);
+            unpinIndexPage(current_page, false, ctx);
 
             if (next_page == 0)
             {
@@ -59,7 +59,7 @@ namespace scratchbird::core
             }
 
             current_page = next_page;
-            status = bp->pinPage(current_page, &page_buffer, ctx);
+            status = pinIndexPage(current_page, &page_buffer, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -67,7 +67,7 @@ namespace scratchbird::core
             page = reinterpret_cast<SBBTreePage *>(page_buffer);
         }
 
-        bp->unpinPage(current_page, false, ctx);
+        unpinIndexPage(current_page, false, ctx);
 
         // Now current_page is leftmost leaf - traverse all leaves
         while (current_page != 0)
@@ -80,7 +80,7 @@ namespace scratchbird::core
             }
 
             // Get next sibling
-            status = bp->pinPage(current_page, &page_buffer, ctx);
+            status = pinIndexPage(current_page, &page_buffer, ctx);
             if (status != Status::OK)
             {
                 break;
@@ -89,7 +89,7 @@ namespace scratchbird::core
             page = reinterpret_cast<SBBTreePage *>(page_buffer);
             uint32_t next_page = static_cast<uint32_t>(page->btr_right_sibling);
 
-            bp->unpinPage(current_page, false, ctx);
+            unpinIndexPage(current_page, false, ctx);
 
             current_page = next_page;
         }
@@ -111,7 +111,7 @@ namespace scratchbird::core
 
         BufferPool *bp = db_->buffer_pool();
         void *page_buffer;
-        Status status = bp->pinPage(page_id, &page_buffer, ctx);
+        Status status = pinIndexPage(page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -143,7 +143,7 @@ namespace scratchbird::core
         if (!has_deleted)
         {
             // No deleted nodes - nothing to do
-            bp->unpinPage(page_id, false, ctx);
+            unpinIndexPage(page_id, false, ctx);
             return Status::OK;
         }
 
@@ -156,7 +156,7 @@ namespace scratchbird::core
         stats.pages_vacuumed++;
 
         // Unpin with dirty flag
-        bp->unpinPage(page_id, true, ctx);
+        unpinIndexPage(page_id, true, ctx);
 
         return Status::OK;
     }

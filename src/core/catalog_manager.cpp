@@ -11,6 +11,10 @@
 #include "scratchbird/core/btree.h"       // Phase 5 Task 5.2: B-Tree TID updates
 #include "scratchbird/core/hash_index.h"  // Phase 5 Task 5.3.1: Hash index TID updates
 #include "scratchbird/core/rtree.h"       // Phase 2 Task 9.2: R-tree spatial index
+#include "scratchbird/core/hnsw_index.h"
+#include "scratchbird/core/gin_index.h"
+#include "scratchbird/core/gist_index.h"
+#include "scratchbird/core/brin_index.h"
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include "scratchbird/core/config.h"
 #include <cstring>
@@ -34,6 +38,7 @@
 #include <unordered_set>  // Phase 1.4: Visited set for group transitive closure
 #include <filesystem>  // WP-2 CAT-5: Tablespace file deletion
 #include "scratchbird/core/connection_context.h"  // Phase 3.1: Object permissions grantor tracking
+#include "scratchbird/core/tablespace.h"
 
 namespace scratchbird::core
 {
@@ -45,6 +50,62 @@ std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str);
 bool isReasonableSequenceName(const std::string& name);
 void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                    std::vector<std::string>& names_out);
+Status decodeTablespaceHeaderBuffer(const uint8_t *buffer,
+                                   TablespaceHeader *header_out,
+                                   uint16_t *version_out,
+                                   ErrorContext *ctx)
+{
+    if (!buffer || !header_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null tablespace header buffer");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const auto *page_header = reinterpret_cast<const PageHeader *>(buffer);
+    uint16_t version = page_header->version;
+    if (version_out != nullptr)
+    {
+        *version_out = version;
+    }
+
+    if (version == TABLESPACE_HEADER_VERSION_V1)
+    {
+        const auto *legacy = reinterpret_cast<const TablespaceHeaderV1 *>(buffer);
+        std::memset(header_out, 0, sizeof(*header_out));
+        header_out->page_header = legacy->page_header;
+        std::memcpy(header_out->tablespace_name, legacy->tablespace_name,
+                    sizeof(legacy->tablespace_name));
+        header_out->tablespace_name[sizeof(legacy->tablespace_name)] = '\0';
+        header_out->tablespace_uuid = legacy->tablespace_uuid;
+        header_out->database_uuid = legacy->database_uuid;
+        header_out->tablespace_id = legacy->tablespace_id;
+        header_out->page_size = legacy->page_size;
+        header_out->creation_time = legacy->creation_time;
+        header_out->last_checkpoint = legacy->last_checkpoint;
+        header_out->autoextend_enabled = legacy->autoextend_enabled;
+        header_out->autoextend_size_mb = legacy->autoextend_size_mb;
+        header_out->max_size_mb = legacy->max_size_mb;
+        std::memcpy(header_out->reserved1, legacy->reserved1, sizeof(legacy->reserved1));
+        header_out->total_pages = legacy->total_pages;
+        header_out->free_pages = legacy->free_pages;
+        header_out->next_page_number = legacy->next_page_number;
+        header_out->fsm_root_page = legacy->fsm_root_page;
+        header_out->oldest_transaction_id = legacy->oldest_transaction_id;
+        header_out->latest_completed_xid = legacy->latest_completed_xid;
+        std::memcpy(header_out->reserved2, legacy->reserved2, sizeof(legacy->reserved2));
+        return Status::OK;
+    }
+
+    if (version == TABLESPACE_HEADER_VERSION_V2)
+    {
+        std::memcpy(header_out, buffer, sizeof(*header_out));
+        return Status::OK;
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                     ("Unsupported tablespace header version: " + std::to_string(version)).c_str());
+    return Status::INVALID_ARGUMENT;
+}
 bool isZeroUuidLocal(const ID& id) {
     for (auto b : id.bytes) {
         if (b != 0) {
@@ -338,6 +399,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Phase 5: Future expansion
         uint32_t tablespaces_page;    // Page containing tablespaces table
+        uint32_t tablespace_files_page; // Page containing tablespace files table
         uint32_t extensions_page;     // Page containing extensions table
         uint32_t foreign_keys_page;   // Page containing foreign keys table (Phase D - FK Persistence)
 
@@ -370,7 +432,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         ID policy_toast_table_id;     // UUID for policy expression TOAST storage
 
-        uint8_t reserved[3808];       // Padding for 4KB page (288 bytes used)
+        uint8_t reserved[3804];       // Padding for 4KB page (292 bytes used)
     };
 
     // Schema record on disk
@@ -412,7 +474,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID schema_id;
         char table_name[512];          // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         ID owner_id;                   // Owner UUID reference (NOT name - allows rename without breaking dependencies)
-        uint32_t root_page;
+        uint64_t root_gpid;
         uint32_t column_count;
         uint64_t row_count;
         uint8_t table_type;            // TableType enum
@@ -493,7 +555,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID table_id;
         char index_name[512];      // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         ID owner_id;               // Owner UUID reference (NOT name)
-        uint32_t root_page;
+        uint64_t root_gpid;
         uint8_t index_type;        // IndexType enum
         uint8_t is_unique;
         uint16_t column_count;
@@ -1821,6 +1883,20 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = db_->write_page(emulated_dbs_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
+        // Tablespaces table
+        status = pm->allocatePage(tablespaces_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = tablespaces_table_page_;
+        status = db_->write_page(tablespaces_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Tablespace files table
+        status = pm->allocatePage(tablespace_files_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = tablespace_files_table_page_;
+        status = db_->write_page(tablespace_files_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
         // Phase D: Foreign keys table (FK Disk Persistence)
         status = pm->allocatePage(foreign_keys_table_page_, ctx);
         if (status != Status::OK) return status;
@@ -1927,7 +2003,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
         security_policy_epoch_ = epoch_record.global_epoch;
 
-        // Create default schema hierarchy (22 schemas)
+        // Create default schema hierarchy (18 schemas)
         // Schema tree structure:
         // root (top-level)
         // ├── sys (system catalogs)
@@ -1940,24 +2016,18 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // │   └── agents (background agents)
         // ├── app (application data)
         // ├── users (user home directories - DIFFERENT from sys.sec.users)
+        // │   └── public (default user schema)
         // ├── remote (remote/federated objects)
-        // ├── emulation (emulated database schema roots)
-        // │   ├── mysql (MySQL compatibility)
-        // │   ├── postgresql (PostgreSQL compatibility)
-        // │   ├── mssql (SQL Server compatibility)
-        // │   └── firebird (Firebird compatibility)
-        // ├── emulated (alias schema roots)
-        // │   ├── mysql (MySQL aliases)
-        // │   ├── postgresql (PostgreSQL aliases)
-        // │   ├── mssql (SQL Server aliases)
-        // │   └── firebird (Firebird aliases)
-        // └── public (default user schema)
+        // │   └── emulation (emulated database schema roots)
+        // │       ├── mysql (MySQL compatibility)
+        // │       ├── postgresql (PostgreSQL compatibility)
+        // │       ├── mssql (SQL Server compatibility)
+        // │       └── firebird (Firebird compatibility)
 
         ID root_id, sys_id, sec_id, srv_id, users_sec_id, roles_id, groups_id;
         ID mon_id, agents_id, app_id, users_home_id, remote_id, public_id;
-        ID emulation_id, emulated_id;
+        ID emulation_id;
         ID mysql_id, postgresql_id, mssql_id, firebird_id;
-        ID alias_mysql_id, alias_postgresql_id, alias_mssql_id, alias_firebird_id;
 
         // Level 0: root
         status = createSchemaInternal("root", "system", root_id, ID(), ctx, db_->uuid());
@@ -1976,13 +2046,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = createSchemaInternal("remote", "system", remote_id, root_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("emulation", "system", emulation_id, root_id, ctx);
-        if (status != Status::OK) return status;
-
-        status = createSchemaInternal("emulated", "system", emulated_id, root_id, ctx);
-        if (status != Status::OK) return status;
-
-        status = createSchemaInternal("public", "system", public_id, root_id, ctx);
+        status = createSchemaInternal("public", "system", public_id, users_home_id, ctx);
         if (status != Status::OK) return status;
 
         // Level 2: sys.* schemas
@@ -2008,7 +2072,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = createSchemaInternal("groups", "system", groups_id, sec_id, ctx);
         if (status != Status::OK) return status;
 
-        // Level 2: emulation.* schemas
+        // Level 2: remote.emulation.*
+        status = createSchemaInternal("emulation", "system", emulation_id, remote_id, ctx);
+        if (status != Status::OK) return status;
+
+        // Level 3: remote.emulation.* schemas
         status = createSchemaInternal("mysql", "system", mysql_id, emulation_id, ctx);
         if (status != Status::OK) return status;
 
@@ -2021,20 +2089,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = createSchemaInternal("firebird", "system", firebird_id, emulation_id, ctx);
         if (status != Status::OK) return status;
 
-        // Level 2: emulated.* alias schemas
-        status = createSchemaInternal("mysql", "system", alias_mysql_id, emulated_id, ctx);
-        if (status != Status::OK) return status;
-
-        status = createSchemaInternal("postgresql", "system", alias_postgresql_id, emulated_id, ctx);
-        if (status != Status::OK) return status;
-
-        status = createSchemaInternal("mssql", "system", alias_mssql_id, emulated_id, ctx);
-        if (status != Status::OK) return status;
-
-        status = createSchemaInternal("firebird", "system", alias_firebird_id, emulated_id, ctx);
-        if (status != Status::OK) return status;
-
-        DEBUG_LOG_DB("System catalog initialized with 22 schemas in hierarchy");
+        DEBUG_LOG_DB("System catalog initialized with 18 schemas in hierarchy");
         DEBUG_LOG_DB("  schemas page=" << schemas_table_page_
                      << ", tables page=" << tables_table_page_
                      << ", columns page=" << columns_table_page_);
@@ -2401,6 +2456,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 {
                     return status;
                 }
+                status = backfill_catalog_page(tablespace_files_table_page_, "tablespace_files");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
                 status = backfill_catalog_page(extensions_table_page_, "extensions");
                 if (status != Status::OK)
                 {
@@ -2506,6 +2566,189 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     return status;
                 }
 
+                auto find_child_schema = [&](const ID& parent_id, const std::string& name, ID& id_out) -> bool {
+                    for (const auto& [id, info] : schema_cache_)
+                    {
+                        if (info.parent_schema_id != parent_id)
+                        {
+                            continue;
+                        }
+                        if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                                        info.schema_name, info.name_is_delimited))
+                        {
+                            id_out = id;
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                auto move_schema_parent = [&](const ID& schema_id, const ID& target_parent_id) -> Status {
+                    auto it = schema_cache_.find(schema_id);
+                    if (it == schema_cache_.end())
+                    {
+                        return Status::NOT_FOUND;
+                    }
+                    if (it->second.parent_schema_id == target_parent_id)
+                    {
+                        return Status::OK;
+                    }
+                    for (const auto& [id, info] : schema_cache_)
+                    {
+                        if (id == schema_id || info.parent_schema_id != target_parent_id)
+                        {
+                            continue;
+                        }
+                        if (IdentifierUtils::namesConflict(it->second.schema_name,
+                                                           false /*new_is_delimited*/,
+                                                           info.schema_name,
+                                                           info.name_is_delimited))
+                        {
+                            return Status::FILE_EXISTS;
+                        }
+                    }
+                    SchemaInfo old_info = it->second;
+                    SchemaInfo& schema = it->second;
+                    schema.parent_schema_id = target_parent_id;
+                    schema.last_modified_time =
+                        std::chrono::system_clock::now().time_since_epoch().count();
+
+                    SchemaRecord record{};
+                    record.schema_id = schema.schema_id;
+                    record.parent_schema_id = schema.parent_schema_id;
+                    std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
+                    record.schema_name[schema.schema_name.size()] = '\0';
+                    record.owner_id = schema.owner_id;
+                    record.default_tablespace_id = schema.default_tablespace_id;
+                    record.permissions = schema.permissions;
+                    record.default_charset = schema.default_charset;
+                    record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
+                    record.default_collation_id = schema.default_collation_id;
+                    record.acl_oid = schema.acl_oid;
+                    record.created_time = schema.created_time;
+                    record.last_modified_time = schema.last_modified_time;
+                    record.is_valid = 1;
+
+                    auto predicate = [&schema_id](const SchemaRecord& rec) {
+                        return rec.schema_id == schema_id && rec.is_valid == 1;
+                    };
+                    Status update_status = updateRecordInHeapPage(schemas_table_page_, predicate, record, ctx);
+                    if (update_status != Status::OK)
+                    {
+                        it->second = old_info;
+                        return update_status;
+                    }
+                    return Status::OK;
+                };
+
+                auto ensure_schema = [&](const std::string& name, const ID& parent_id, ID& id_out) -> Status {
+                    if (find_child_schema(parent_id, name, id_out))
+                    {
+                        return Status::OK;
+                    }
+                    return createSchemaInternal(name, "system", id_out, parent_id, ctx);
+                };
+
+                ID root_id{};
+                for (const auto& [id, info] : schema_cache_)
+                {
+                    if (isZeroUuidLocal(info.parent_schema_id) &&
+                        IdentifierUtils::namesMatch("root", false /*search_delimited*/,
+                                                    info.schema_name,
+                                                    info.name_is_delimited))
+                    {
+                        root_id = id;
+                        break;
+                    }
+                }
+                if (isZeroUuidLocal(root_id))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Root schema missing");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                ID users_id{};
+                status = ensure_schema("users", root_id, users_id);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                ID remote_id{};
+                status = ensure_schema("remote", root_id, remote_id);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                ID public_id{};
+                if (!find_child_schema(users_id, "public", public_id))
+                {
+                    ID legacy_public{};
+                    if (find_child_schema(root_id, "public", legacy_public))
+                    {
+                        status = move_schema_parent(legacy_public, users_id);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                        public_id = legacy_public;
+                    }
+                    else
+                    {
+                        status = ensure_schema("public", users_id, public_id);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                    }
+                }
+
+                ID emulation_id{};
+                if (!find_child_schema(remote_id, "emulation", emulation_id))
+                {
+                    ID legacy_emulation{};
+                    if (find_child_schema(root_id, "emulation", legacy_emulation))
+                    {
+                        status = move_schema_parent(legacy_emulation, remote_id);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                        emulation_id = legacy_emulation;
+                    }
+                    else
+                    {
+                        status = ensure_schema("emulation", remote_id, emulation_id);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                    }
+                }
+
+                ID dialect_id{};
+                status = ensure_schema("mysql", emulation_id, dialect_id);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = ensure_schema("postgresql", emulation_id, dialect_id);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = ensure_schema("mssql", emulation_id, dialect_id);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = ensure_schema("firebird", emulation_id, dialect_id);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
                 ID system_user_id = getSystemUserIdUnlocked(ctx);
                 if (isZeroUuidLocal(system_user_id))
                 {
@@ -2545,6 +2788,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
                 // Load tablespaces
                 status = readTablespaceRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = readTablespaceFileRecords(ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -3358,6 +3606,103 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         if (!resolved_ok && has_root && start == root_schema_id)
         {
             resolved_ok = resolve_from_start(ID{}, resolved);
+        }
+        if (!resolved_ok &&
+            IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
+                                        "public", false /*stored_delimited*/))
+        {
+            std::vector<std::string> public_fallback;
+            public_fallback.reserve(components.size() + 1);
+            public_fallback.emplace_back("users");
+            public_fallback.insert(public_fallback.end(), components.begin(), components.end());
+            auto fallback_resolve = [&](const ID& start_id) -> bool {
+                ID current = start_id;
+                for (const auto& component : public_fallback)
+                {
+                    auto child_it = children.find(current);
+                    if (child_it == children.end())
+                    {
+                        return false;
+                    }
+                    bool found = false;
+                    for (const auto& child_id : child_it->second)
+                    {
+                        const auto& child_info = schema_cache_.at(child_id);
+                        if (IdentifierUtils::namesMatch(component, false /*search_delimited*/,
+                                                        child_info.schema_name,
+                                                        child_info.name_is_delimited))
+                        {
+                            current = child_id;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                    {
+                        return false;
+                    }
+                }
+                resolved = current;
+                return true;
+            };
+
+            if (has_root && fallback_resolve(root_schema_id))
+            {
+                resolved_ok = true;
+            }
+            else if (fallback_resolve(ID{}))
+            {
+                resolved_ok = true;
+            }
+        }
+        if (!resolved_ok)
+        {
+            std::vector<ID> candidates;
+            for (const auto& [id, schema_info] : schema_cache_)
+            {
+                if (IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
+                                                schema_info.schema_name,
+                                                schema_info.name_is_delimited))
+                {
+                    candidates.push_back(id);
+                }
+            }
+
+            for (size_t idx = 1; idx < components.size() && !candidates.empty(); ++idx)
+            {
+                std::vector<ID> next_candidates;
+                for (const auto& parent_id : candidates)
+                {
+                    auto child_it = children.find(parent_id);
+                    if (child_it == children.end())
+                    {
+                        continue;
+                    }
+                    for (const auto& child_id : child_it->second)
+                    {
+                        const auto& child_info = schema_cache_.at(child_id);
+                        if (IdentifierUtils::namesMatch(components[idx], false /*search_delimited*/,
+                                                        child_info.schema_name,
+                                                        child_info.name_is_delimited))
+                        {
+                            next_candidates.push_back(child_id);
+                        }
+                    }
+                }
+                candidates.swap(next_candidates);
+            }
+
+            if (candidates.size() == 1)
+            {
+                resolved = candidates.front();
+                resolved_ok = true;
+            }
+            else if (candidates.size() > 1)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("Schema path is ambiguous: " + schema_name).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
         }
         if (!resolved_ok)
         {
@@ -4425,7 +4770,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
         ID current_schema_id = conn_ctx ? conn_ctx->getCurrentSchemaId() : ID{};
         std::vector<std::string> search_path = conn_ctx ? conn_ctx->search_path()
-                                                        : std::vector<std::string>{"public"};
+                                                        : std::vector<std::string>{};
+        if (search_path.empty())
+        {
+            search_path = {"public"};
+        }
         std::string dialect_tag = opts.dialect_tag;
         if (dialect_tag.empty() && conn_ctx)
         {
@@ -4636,9 +4985,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         auto resolve_schema_path = [&](PathType type,
                                        const std::vector<std::string>& components,
                                        ID& schema_id_out) -> Status {
-            auto resolve_from_start = [&](const ID& start, ID& resolved_out) -> bool {
+            auto resolve_from_start = [&](const ID& start,
+                                          const std::vector<std::string>& parts,
+                                          ID& resolved_out) -> bool {
                 ID current = start;
-                for (const auto& component : components)
+                for (const auto& component : parts)
                 {
                     ID next_id{};
                     if (!find_schema_child(current, component, next_id))
@@ -4665,16 +5016,33 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     tried_root = true;
                 }
 
-                if (resolve_from_start(start, resolved))
+                if (resolve_from_start(start, components, resolved))
                 {
                     schema_id_out = resolved;
                     return Status::OK;
                 }
 
-                if (tried_root && resolve_from_start(ID{}, resolved))
+                if (tried_root && resolve_from_start(ID{}, components, resolved))
                 {
                     schema_id_out = resolved;
                     return Status::OK;
+                }
+
+                if (!components.empty() &&
+                    IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
+                                                "public", false /*stored_delimited*/))
+                {
+                    std::vector<std::string> public_fallback;
+                    public_fallback.reserve(components.size() + 1);
+                    public_fallback.emplace_back("users");
+                    public_fallback.insert(public_fallback.end(), components.begin(), components.end());
+
+                    if (resolve_from_start(root_schema_id, public_fallback, resolved) ||
+                        resolve_from_start(ID{}, public_fallback, resolved))
+                    {
+                        schema_id_out = resolved;
+                        return Status::OK;
+                    }
                 }
 
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema path not found");
@@ -4708,7 +5076,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
 
             ID resolved;
-            if (!resolve_from_start(start, resolved))
+            if (!resolve_from_start(start, components, resolved))
             {
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema path not found");
                 return Status::NOT_FOUND;
@@ -6081,7 +6449,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
         }
-        table.root_page = root_page;
+        table.root_gpid = makeGPID(tablespace_id, root_page);
         table.column_count = columns.size();
         table.row_count = 0;
         table.table_type = options ? options->table_type : TableType::HEAP;
@@ -6134,6 +6502,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         column_cache_[table.table_id] = columns_with_ids;
         table_count_++;
         table_id = table.table_id;
+
+        status = updateTablespaceCounts(tablespace_id, 1, 0, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Phase 2: Create dependencies for domain-based columns (column -> domain)
         for (const auto& col : columns_with_ids) {
@@ -6707,12 +7081,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Allocate root page for index data
         PageManager *pm = db_->page_manager();
-        uint32_t root_page;
-        Status status = pm->allocatePage(root_page, ctx);
+        GPID root_gpid = 0;
+        Status status = pm->allocatePageInTablespace(tablespace_id, &root_gpid, ctx);
         if (status != Status::OK)
         {
             return status;
         }
+
+        uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
 
         // Create index info
         IndexInfo index;
@@ -6724,7 +7100,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
         }
-        index.root_page = root_page;
+        index.root_gpid = root_gpid;
         index.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
         index.index_type = index_type;
         index.is_unique = is_unique;
@@ -6749,13 +7125,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = writeIndexRecord(index, ctx);
         if (status != Status::OK)
         {
-            pm->freePage(root_page, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
             return status;
         }
 
         // Update cache
         index_cache_[index.index_id] = index;
         index_id = index.index_id;
+
+        status = updateTablespaceCounts(tablespace_id, 0, 1, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Update root page to persist catalog metadata (WP-2 CAT-M2)
         status = writeCatalogRoot(ctx);
@@ -6773,7 +7155,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             // Rollback: Remove catalog entry
             index_cache_.erase(index.index_id);
-            pm->freePage(root_page, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
             return status;
         }
 
@@ -6955,7 +7337,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
         }
-        index.root_page = root_page;
+        index.root_gpid = makeGPID(tablespace_id, root_page);
         index.tablespace_id = tablespace_id;
         index.index_type = index_type;
         index.is_unique = is_unique;
@@ -7024,6 +7406,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Update cache
         index_cache_[index.index_id] = index;
         index_id = index.index_id;
+
+        status = updateTablespaceCounts(tablespace_id, 0, 1, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Update root page to persist catalog metadata (WP-2 CAT-M2)
         status = writeCatalogRoot(ctx);
@@ -7229,6 +7617,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->emulation_servers_page = emulation_servers_table_page_;
         root->emulated_dbs_page = emulated_dbs_table_page_;
         root->tablespaces_page = tablespaces_table_page_;
+        root->tablespace_files_page = tablespace_files_table_page_;
         root->extensions_page = extensions_table_page_;
         root->foreign_keys_page = foreign_keys_table_page_;
 
@@ -7326,6 +7715,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         emulation_servers_table_page_ = root->emulation_servers_page;
         emulated_dbs_table_page_ = root->emulated_dbs_page;
         tablespaces_table_page_ = root->tablespaces_page;
+        tablespace_files_table_page_ = root->tablespace_files_page;
         extensions_table_page_ = root->extensions_page;
         foreign_keys_table_page_ = root->foreign_keys_page;
 
@@ -7915,7 +8305,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.table_name[table.table_name.size()] = '\0';
 
         record.owner_id = table.owner_id;      // UUID-based owner reference
-        record.root_page = table.root_page;
+        record.root_gpid = table.root_gpid;
         record.column_count = table.column_count;
         record.row_count = table.row_count;
         record.table_type = static_cast<uint8_t>(table.table_type);
@@ -8150,6 +8540,72 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         return found ? Status::OK : Status::NOT_FOUND;
     }
 
+    auto CatalogManager::updateIndexParams(const ID &index_id,
+                                           const std::string &index_params,
+                                           ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        BufferPool *bp = db_->buffer_pool();
+        void *page_data;
+        Status status = bp->pinPage(indexes_table_page_, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
+        auto *mutable_page_data = static_cast<uint8_t*>(page_data);
+        bool found = false;
+        uint32_t new_oid = 0;
+
+        for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+        {
+            const uint8_t *tuple_data;
+            uint32_t tuple_size;
+
+            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            {
+                if (tuple_size >= sizeof(TupleHeader) + sizeof(IndexRecord))
+                {
+                    const ptrdiff_t offset =
+                        tuple_data - static_cast<const uint8_t*>(page_data);
+                    auto *record = reinterpret_cast<IndexRecord*>(
+                        mutable_page_data + offset + sizeof(TupleHeader));
+
+                    if (record->index_id == index_id && record->is_valid == 1)
+                    {
+                        if (!index_params.empty())
+                        {
+                            uint64_t xmin = 0;
+                            status = storeStringInToast(index_params, xmin, new_oid, ctx);
+                            if (status != Status::OK)
+                            {
+                                bp->unpinPage(indexes_table_page_, false, ctx);
+                                return status;
+                            }
+                        }
+                        record->index_params_oid = new_oid;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        bp->unpinPage(indexes_table_page_, found, ctx);
+        if (found)
+        {
+            auto it = index_cache_.find(index_id);
+            if (it != index_cache_.end())
+            {
+                it->second.index_params_oid = new_oid;
+            }
+        }
+
+        return found ? Status::OK : Status::NOT_FOUND;
+    }
+
     auto CatalogManager::readTableRecords(ErrorContext *ctx) -> Status
     {
         auto converter = [](const TableRecord &record, TableInfo &info)
@@ -8161,7 +8617,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.schema_id = record.schema_id;
             info.table_name = record.table_name;
             info.owner_id = record.owner_id;   // UUID-based owner reference
-            info.root_page = record.root_page;
+            info.root_gpid = record.root_gpid;
             info.column_count = record.column_count;
             info.row_count = record.row_count;
             info.table_type = static_cast<TableType>(record.table_type);
@@ -8373,7 +8829,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::memcpy(record.index_name, index.index_name.c_str(), index.index_name.size());
         record.index_name[index.index_name.size()] = '\0';
         record.owner_id = index.owner_id;
-        record.root_page = index.root_page;
+        record.root_gpid = index.root_gpid;
         record.index_type = static_cast<uint8_t>(index.index_type);
         record.is_unique = static_cast<uint8_t>(index.is_unique);
         record.column_count = index.column_ids.size();
@@ -8422,7 +8878,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.table_id = record.table_id;
             info.index_name = record.index_name;
             info.owner_id = record.owner_id;
-            info.root_page = record.root_page;
+            info.root_gpid = record.root_gpid;
             info.index_type = static_cast<IndexType>(record.index_type);
             info.is_unique = record.is_unique;
             info.column_ids.assign(record.column_ids, record.column_ids + record.column_count);
@@ -9568,6 +10024,205 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         return bp->unpinPage(tablespaces_table_page_, false, ctx);
     }
 
+    auto CatalogManager::writeTablespaceFileRecord(uint16_t tablespace_id, uint16_t file_index,
+                                                   const std::string &file_path, uint64_t starting_page,
+                                                   uint64_t page_count, uint64_t max_pages, bool is_online,
+                                                   uint64_t created_time, uint64_t last_modified_time,
+                                                   ErrorContext *ctx) -> Status
+    {
+        SBTablespaceFileCatalog record = {};
+        record.is_valid = 1;
+        record.tablespace_id = tablespace_id;
+        record.file_index = file_index;
+
+        auto matcher = [tablespace_id, file_index](const SBTablespaceFileCatalog &r) {
+            return r.is_valid && r.tablespace_id == tablespace_id && r.file_index == file_index;
+        };
+        auto existing = findRecordInHeapPage<SBTablespaceFileCatalog>(tablespace_files_table_page_,
+                                                                      matcher, ctx);
+        if (existing.status == Status::OK)
+        {
+            record.file_uuid = existing.record.file_uuid;
+        }
+        else if (existing.status == Status::NOT_FOUND)
+        {
+            record.file_uuid = generateUuidV7();
+        }
+        else
+        {
+            return existing.status;
+        }
+
+        std::strncpy(record.file_path, file_path.c_str(), 255);
+        record.file_path[255] = '\0';
+        record.starting_page = starting_page;
+        record.page_count = page_count;
+        record.max_pages = max_pages;
+        record.is_online = is_online ? 1 : 0;
+        record.created_time = created_time;
+        record.last_modified_time = last_modified_time;
+
+        return updateRecordInHeapPage<SBTablespaceFileCatalog>(tablespace_files_table_page_, matcher,
+                                                               record, ctx);
+    }
+
+    auto CatalogManager::writeTablespaceFileRecords(const TablespaceInfo &tablespace,
+                                                    ErrorContext *ctx) -> Status
+    {
+        if (tablespace.file_paths.empty())
+        {
+            return Status::OK;
+        }
+
+        for (size_t i = 0; i < tablespace.file_paths.size(); ++i)
+        {
+            const auto &path = tablespace.file_paths[i];
+            if (path.empty())
+            {
+                continue;
+            }
+
+            Status status = writeTablespaceFileRecord(
+                tablespace.tablespace_id,
+                static_cast<uint16_t>(i),
+                path,
+                0,
+                0,
+                0,
+                true,
+                tablespace.created_time,
+                tablespace.last_modified_time,
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::readTablespaceFileRecords(ErrorContext *ctx) -> Status
+    {
+        if (tablespace_files_table_page_ == 0)
+        {
+            return Status::OK;
+        }
+
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer = nullptr;
+        Status status = bp->pinPage(tablespace_files_table_page_, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin sb_tablespace_files page");
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        std::unordered_map<uint16_t, std::vector<SBTablespaceFileCatalog>> file_records;
+
+        for (uint32_t i = 0; i < heap->record_count; i++)
+        {
+            auto *record = reinterpret_cast<SBTablespaceFileCatalog *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid)
+            {
+                record->file_path[255] = '\0';
+                file_records[record->tablespace_id].push_back(*record);
+            }
+
+            offset += sizeof(SBTablespaceFileCatalog);
+        }
+
+        for (auto &[tablespace_id, records] : file_records)
+        {
+            auto it = tablespace_cache_.find(tablespace_id);
+            if (it == tablespace_cache_.end())
+            {
+                continue;
+            }
+
+            const auto fallback_paths = it->second.file_paths;
+
+            std::sort(records.begin(), records.end(),
+                      [](const SBTablespaceFileCatalog &a, const SBTablespaceFileCatalog &b)
+                      { return a.file_index < b.file_index; });
+
+            it->second.file_paths.clear();
+            for (const auto &record : records)
+            {
+                if (record.file_path[0] == '\0')
+                {
+                    continue;
+                }
+                it->second.file_paths.push_back(std::string(record.file_path));
+            }
+
+            if (it->second.file_paths.empty() && !fallback_paths.empty())
+            {
+                it->second.file_paths = fallback_paths;
+            }
+        }
+
+        return bp->unpinPage(tablespace_files_table_page_, false, ctx);
+    }
+
+    auto CatalogManager::deleteTablespaceFileRecords(uint16_t tablespace_id, ErrorContext *ctx)
+        -> Status
+    {
+        auto matcher = [tablespace_id](const SBTablespaceFileCatalog &r) {
+            return r.is_valid && r.tablespace_id == tablespace_id;
+        };
+
+        while (true)
+        {
+            Status status = deleteRecordFromHeapPage<SBTablespaceFileCatalog>(
+                tablespace_files_table_page_, matcher, ctx);
+            if (status == Status::NOT_FOUND)
+            {
+                return Status::OK;
+            }
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+    }
+
+    auto CatalogManager::updateTablespaceCounts(uint16_t tablespace_id, int64_t table_delta,
+                                                int64_t index_delta, ErrorContext *ctx) -> Status
+    {
+        auto it = tablespace_cache_.find(tablespace_id);
+        if (it == tablespace_cache_.end())
+        {
+            LOG_WARNING(CATALOG, "Tablespace ID %u not found for count update", tablespace_id);
+            return Status::OK;
+        }
+
+        auto clamp_delta = [](uint64_t current, int64_t delta) -> uint64_t {
+            if (delta >= 0)
+            {
+                return current + static_cast<uint64_t>(delta);
+            }
+
+            uint64_t abs_delta = static_cast<uint64_t>(-delta);
+            if (current < abs_delta)
+            {
+                return 0;
+            }
+
+            return current - abs_delta;
+        };
+
+        TablespaceInfo &info = it->second;
+        info.table_count = clamp_delta(info.table_count, table_delta);
+        info.index_count = clamp_delta(info.index_count, index_delta);
+
+        return writeTablespaceRecord(info, ctx);
+    }
+
     // ===== Tablespace Operations (Phase 2 Task 2.1) =====
 
     auto CatalogManager::createTablespace(const std::string &tablespace_name,
@@ -9621,7 +10276,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         // Allocate new tablespace ID (find next available)
-        uint16_t new_id = 2; // Start from 2 (0 = invalid, 1 = primary)
+        uint16_t new_id = 2; // Start from 2 (0 = primary, 1 = reserved)
         while (tablespace_cache_.find(new_id) != tablespace_cache_.end())
         {
             new_id++;
@@ -9682,6 +10337,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         if (status != Status::OK)
         {
             // Rollback: close and delete the tablespace file
+            pm->closeTablespace(new_id, ctx);
+            return status;
+        }
+
+        status = writeTablespaceFileRecords(info, ctx);
+        if (status != Status::OK)
+        {
+            auto matcher = [tablespace_id = info.tablespace_id](const SBTablespaceCatalog &r) {
+                return r.is_valid && r.tablespace_id == tablespace_id;
+            };
+            deleteRecordFromHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, matcher, ctx);
             pm->closeTablespace(new_id, ctx);
             return status;
         }
@@ -9864,6 +10530,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to delete tablespace from catalog");
+            return status;
+        }
+
+        status = deleteTablespaceFileRecords(ts_id, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to delete tablespace file catalog entries");
             return status;
         }
 
@@ -10230,16 +10903,27 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::IO_ERROR;
         }
 
-        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+        auto *page_header = reinterpret_cast<PageHeader *>(header_buffer.get());
 
         // Validate magic number
-        if (header->page_header.magic != K_MAGIC_SBRD)
+        if (page_header->magic != K_MAGIC_SBRD)
         {
             ::close(fd);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                              ("Invalid tablespace file: bad magic number in " + file_path).c_str());
             return Status::INVALID_ARGUMENT;
         }
+
+        TablespaceHeader header_snapshot{};
+        Status header_status = decodeTablespaceHeaderBuffer(header_buffer.get(), &header_snapshot,
+                                                            nullptr, ctx);
+        if (header_status != Status::OK)
+        {
+            ::close(fd);
+            return header_status;
+        }
+
+        const TablespaceHeader *header = &header_snapshot;
 
         // ===== STEP 3: Check compatibility =====
 
@@ -10285,7 +10969,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // ===== STEP 5: Allocate new tablespace_id =====
 
         uint16_t new_ts_id = 0;
-        for (uint16_t candidate = 1; candidate < 65535; ++candidate)
+        for (uint16_t candidate = 2; candidate < 65535; ++candidate)
         {
             if (tablespace_cache_.find(candidate) == tablespace_cache_.end())
             {
@@ -10298,7 +10982,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             ::close(fd);
             SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
-                             "No available tablespace IDs (all 1-65534 in use)");
+                             "No available tablespace IDs (all 2-65534 in use)");
             return Status::OUT_OF_RANGE;
         }
 
@@ -10377,6 +11061,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             db_->page_manager()->closeTablespace(new_ts_id, ctx);
             db_->unregisterTablespaceFile(new_ts_id, ctx);
             SET_ERROR_CONTEXT(ctx, status, "Failed to write tablespace catalog entry");
+            return status;
+        }
+
+        status = writeTablespaceFileRecords(ts_info, ctx);
+        if (status != Status::OK)
+        {
+            auto matcher = [tablespace_id = ts_info.tablespace_id](const SBTablespaceCatalog &r) {
+                return r.is_valid && r.tablespace_id == tablespace_id;
+            };
+            deleteRecordFromHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, matcher, ctx);
+            db_->page_manager()->closeTablespace(new_ts_id, ctx);
+            db_->unregisterTablespaceFile(new_ts_id, ctx);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write tablespace file catalog entry");
             return status;
         }
 
@@ -10548,6 +11245,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
+        status = deleteTablespaceFileRecords(tablespace_id, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to delete tablespace file catalog entries");
+            return status;
+        }
+
         LOG_INFO(CATALOG, "Removing tablespace '%s' from catalog", tablespace_name.c_str());
 
         // ===== STEP 9: Remove from cache =====
@@ -10663,7 +11367,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         uint16_t source_ts_id = table_info.tablespace_id;
-        uint32_t root_page = table_info.root_page;
+        uint32_t root_page = static_cast<uint32_t>(getPageNumber(table_info.root_gpid));
 
         LOG_INFO(CATALOG, "Enumerating heap pages for table '%s' (root_page: %u) in tablespace %u",
                 table_info.table_name.c_str(),
@@ -11010,10 +11714,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // ===== STEP 2: Update each index =====
         for (const auto &index_info : indexes)
         {
+            uint32_t root_page = static_cast<uint32_t>(getPageNumber(index_info.root_gpid));
             LOG_INFO(CATALOG, "Updating index '%s' (type: %u, root_page: %u)",
                     index_info.index_name.c_str(),
                     static_cast<uint8_t>(index_info.index_type),
-                    index_info.root_page);
+                    root_page);
 
             // STUB: In full implementation, we would:
             // 1. Open the index structure (B-Tree, Hash, etc.)
@@ -11037,7 +11742,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     btree_index.idx_uuid = index_info.index_id;
                     btree_index.idx_table_uuid = index_info.table_id;
                     btree_index.idx_column_ids = index_info.column_ids;
-                    btree_index.idx_root_page = index_info.root_page;
+                    btree_index.idx_root_page = root_page;
+                    btree_index.idx_tablespace_id = getTablespaceID(index_info.root_gpid);
                     btree_index.idx_collation_id = index_info.collation_id;
                     btree_index.idx_flags = index_info.is_unique ? 1 : 0;
                     btree_index.idx_height = 0;      // Not used by updateTIDsAfterMigration
@@ -11046,13 +11752,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     btree_index.idx_deleted_count = 0; // Not used by updateTIDsAfterMigration
 
                     std::unique_ptr<BTree> btree = BTree::open(db_, index_info.index_id,
-                                                              index_info.root_page, ctx);
+                                                              index_info.root_gpid, ctx);
                     if (!btree)
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                         "Failed to open B-Tree index");
                         LOG_ERROR(CATALOG, "Failed to open B-Tree index '%s' (root page %u)",
-                                 index_info.index_name.c_str(), index_info.root_page);
+                                 index_info.index_name.c_str(), root_page);
                         return Status::INVALID_ARGUMENT;
                     }
 
@@ -11088,13 +11794,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
                     // Open the Hash index
                     std::unique_ptr<HashIndex> hash_index = HashIndex::open(db_, index_info.index_id,
-                                                                            index_info.root_page, ctx);
+                                                                            index_info.root_gpid, ctx);
                     if (!hash_index)
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                         "Failed to open Hash index");
                         LOG_ERROR(CATALOG, "Failed to open Hash index '%s' (meta page %u)",
-                                 index_info.index_name.c_str(), index_info.root_page);
+                                 index_info.index_name.c_str(), root_page);
                         return Status::INVALID_ARGUMENT;
                     }
 
@@ -11123,107 +11829,237 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 break;
 
             case IndexType::VECTOR:
-                // PHASE 5 TASK 5.3.2: Vector/HNSW TID updates - NOT YET IMPLEMENTED
-                LOG_WARNING(CATALOG,
-                           "Index '%s': Vector/HNSW index TID update not yet implemented",
-                           index_info.index_name.c_str());
-                LOG_WARNING(CATALOG,
-                           "This index will be INVALID after migration - recommend DROP + RECREATE");
-                LOG_WARNING(CATALOG,
-                           "Workaround: DROP INDEX '%s'; then recreate after migration",
-                           index_info.index_name.c_str());
-                // Future implementation requires:
-                // - Traverse HNSW graph layers (layer 0 to max_layer)
-                // - Update neighbor TIDs in each node
-                // - Update entry point TIDs
-                // - Complexity: ~6-8 hours (graph structure, multi-layer traversal)
+                {
+                    LOG_INFO(CATALOG, "Index '%s': Vector/HNSW index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<HnswIndex> hnsw_index = HnswIndex::open(db_, index_info.index_id,
+                                                                            index_info.root_gpid, ctx);
+                    if (!hnsw_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open HNSW index");
+                        LOG_ERROR(CATALOG, "Failed to open HNSW index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = hnsw_index->updateTIDsAfterMigration(tid_mapping,
+                                                                                &tids_updated,
+                                                                                &pages_modified,
+                                                                                ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in HNSW index");
+                        LOG_ERROR(CATALOG, "HNSW TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
                 break;
 
             case IndexType::FULLTEXT:
-                // PHASE 5 TASK 5.3.3: Full-Text TID updates - NOT YET IMPLEMENTED
-                LOG_WARNING(CATALOG,
-                           "Index '%s': Full-text index TID update not yet implemented",
-                           index_info.index_name.c_str());
-                LOG_WARNING(CATALOG,
-                           "This index will be INVALID after migration - recommend DROP + RECREATE");
-                LOG_WARNING(CATALOG,
-                           "Workaround: DROP INDEX '%s'; then recreate after migration",
-                           index_info.index_name.c_str());
-                // Future implementation requires:
-                // - Scan inverted index posting lists
-                // - Each posting contains (term, position, TID)
-                // - Update TIDs using tid_mapping
-                // - Complexity: ~4-6 hours (posting list traversal)
+                {
+                    LOG_INFO(CATALOG, "Index '%s': Full-text index (GIN) - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<GinIndex> gin_index = GinIndex::open(db_, index_info.index_id,
+                                                                         index_info.root_gpid, ctx);
+                    if (!gin_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open FULLTEXT/Gin index");
+                        LOG_ERROR(CATALOG, "Failed to open FULLTEXT/Gin index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = gin_index->updateTIDsAfterMigration(tid_mapping,
+                                                                               &tids_updated,
+                                                                               &pages_modified,
+                                                                               ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in FULLTEXT/Gin index");
+                        LOG_ERROR(CATALOG, "FULLTEXT/Gin TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
                 break;
 
             case IndexType::GIN:
-                // PHASE 5 TASK 5.3.4: GIN TID updates - NOT YET IMPLEMENTED
-                LOG_WARNING(CATALOG,
-                           "Index '%s': GIN index TID update not yet implemented",
-                           index_info.index_name.c_str());
-                LOG_WARNING(CATALOG,
-                           "This index will be INVALID after migration - recommend DROP + RECREATE");
-                LOG_WARNING(CATALOG,
-                           "Workaround: DROP INDEX '%s'; then recreate after migration",
-                           index_info.index_name.c_str());
-                // Future implementation requires:
-                // - Scan GIN B-Tree (keys)
-                // - Traverse posting trees for each key
-                // - Update TIDs in posting lists using tid_mapping
-                // - Complexity: ~5-7 hours (dual tree structure)
+                {
+                    LOG_INFO(CATALOG, "Index '%s': GIN index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<GinIndex> gin_index = GinIndex::open(db_, index_info.index_id,
+                                                                         index_info.root_gpid, ctx);
+                    if (!gin_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open GIN index");
+                        LOG_ERROR(CATALOG, "Failed to open GIN index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = gin_index->updateTIDsAfterMigration(tid_mapping,
+                                                                               &tids_updated,
+                                                                               &pages_modified,
+                                                                               ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in GIN index");
+                        LOG_ERROR(CATALOG, "GIN TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
                 break;
 
             case IndexType::GIST:
-                // PHASE 5 TASK 5.3.5: GIST TID updates - NOT YET IMPLEMENTED
-                LOG_WARNING(CATALOG,
-                           "Index '%s': GIST index TID update not yet implemented",
-                           index_info.index_name.c_str());
-                LOG_WARNING(CATALOG,
-                           "This index will be INVALID after migration - recommend DROP + RECREATE");
-                LOG_WARNING(CATALOG,
-                           "Workaround: DROP INDEX '%s'; then recreate after migration",
-                           index_info.index_name.c_str());
-                // Future implementation requires:
-                // - Depth-first traversal of GIST tree
-                // - Leaf nodes contain (predicate, TID) pairs
-                // - Update TIDs using tid_mapping
-                // - Recompute bounding boxes if needed
-                // - Complexity: ~4-6 hours (tree traversal + predicate updates)
+                {
+                    LOG_INFO(CATALOG, "Index '%s': GiST index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<GiSTIndex> gist_index = GiSTIndex::open(db_, index_info.index_id,
+                                                                            index_info.root_gpid, ctx);
+                    if (!gist_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open GiST index");
+                        LOG_ERROR(CATALOG, "Failed to open GiST index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = gist_index->updateTIDsAfterMigration(tid_mapping,
+                                                                                &tids_updated,
+                                                                                &pages_modified,
+                                                                                ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in GiST index");
+                        LOG_ERROR(CATALOG, "GiST TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
                 break;
 
             case IndexType::BRIN:
-                // PHASE 5 TASK 5.3.6: BRIN TID updates - NOT YET IMPLEMENTED
-                LOG_WARNING(CATALOG,
-                           "Index '%s': BRIN index TID update not yet implemented",
-                           index_info.index_name.c_str());
-                LOG_WARNING(CATALOG,
-                           "This index will be INVALID after migration - recommend DROP + RECREATE");
-                LOG_WARNING(CATALOG,
-                           "Workaround: DROP INDEX '%s'; then recreate after migration",
-                           index_info.index_name.c_str());
-                // Future implementation requires:
-                // - Scan BRIN summary pages
-                // - Each summary references a range of heap pages (start_gpid, end_gpid)
-                // - Update page range references using tid_mapping
-                // - Recompute min/max values if page boundaries changed
-                // - Complexity: ~3-4 hours (summary page scan + range updates)
+                {
+                    LOG_INFO(CATALOG, "Index '%s': BRIN index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<BrinIndex> brin_index = BrinIndex::open(db_, index_info.index_id,
+                                                                            index_info.root_gpid, ctx);
+                    if (!brin_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open BRIN index");
+                        LOG_ERROR(CATALOG, "Failed to open BRIN index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t ranges_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = brin_index->updateTIDsAfterMigration(tid_mapping,
+                                                                                &ranges_updated,
+                                                                                &pages_modified,
+                                                                                ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in BRIN index");
+                        LOG_ERROR(CATALOG, "BRIN TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu ranges across %lu pages",
+                            index_info.index_name.c_str(), ranges_updated, pages_modified);
+                    total_pages_modified += pages_modified;
+                }
                 break;
 
             case IndexType::RTREE:
-                // PHASE 2 TASK 9.2: R-tree TID updates - NOT YET IMPLEMENTED
-                LOG_WARNING(CATALOG,
-                           "Index '%s': R-tree index TID update not yet implemented",
-                           index_info.index_name.c_str());
-                LOG_WARNING(CATALOG,
-                           "This index will be INVALID after migration - recommend DROP + RECREATE");
-                LOG_WARNING(CATALOG,
-                           "Workaround: DROP INDEX '%s'; then recreate after migration",
-                           index_info.index_name.c_str());
-                // Future implementation requires:
-                // - Traverse R-tree from root to leaves
-                // - Leaf nodes contain (bbox, TID) pairs
-                // - Update TIDs using tid_mapping
-                // - Complexity: ~4-6 hours (tree traversal + leaf TID updates)
+                {
+                    LOG_INFO(CATALOG, "Index '%s': R-tree index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    uint32_t max_entries = index_info.rtree_max_entries;
+                    std::unique_ptr<RTree> rtree = RTree::open(db_, index_info.index_id,
+                                                               index_info.root_gpid, max_entries, ctx);
+                    if (!rtree)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open R-tree index");
+                        LOG_ERROR(CATALOG, "Failed to open R-tree index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = rtree->updateTIDsAfterMigration(tid_mapping,
+                                                                           &tids_updated,
+                                                                           &pages_modified,
+                                                                           ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in R-tree index");
+                        LOG_ERROR(CATALOG, "R-tree TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
                 break;
 
             default:
@@ -11747,6 +12583,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         LOG_INFO(CATALOG,
                 "Table '%s' catalog updated: tablespace_id changed from %u to %u",
                 table_info.table_name.c_str(), source_tablespace_id, target_tablespace_id);
+
+        Status count_status = updateTablespaceCounts(source_tablespace_id, -1, 0, ctx);
+        if (count_status != Status::OK)
+        {
+            return count_status;
+        }
+        count_status = updateTablespaceCounts(target_tablespace_id, 1, 0, ctx);
+        if (count_status != Status::OK)
+        {
+            return count_status;
+        }
 
         // ===== STEP 8: Deallocate source pages (Phase 5 Task 5.1.4) =====
         // After successful migration, free the source pages to reclaim disk space
@@ -14248,6 +15095,12 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         return status;
     }
 
+    status = updateTablespaceCounts(table_info.tablespace_id, -1, 0, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
     // 7. Clear dependencies (remove this table from dependency graph)
     // Use internal version that assumes locks already held
     clearDependenciesForInternal(table_id, ctx);
@@ -14270,9 +15123,16 @@ Status CatalogManager::dropIndexInternal(const ID &index_id, ErrorContext *ctx)
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index not found");
         return Status::NOT_FOUND;
     }
+    uint16_t tablespace_id = index_it->second.tablespace_id;
 
     // 2. Soft delete the index record (mark is_valid = 0)
     Status status = deleteIndexRecord(index_id, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    status = updateTablespaceCounts(tablespace_id, 0, -1, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -14428,7 +15288,7 @@ Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow
                                           .count();
     shadow_index.build_completed_time = 0;
     shadow_index.logical_index_id = existing_index.logical_index_id;
-    shadow_index.root_page = 0;
+    shadow_index.root_gpid = 0;
 
     // Allocate root page for shadow index
     PageManager *pm = db_->page_manager();
@@ -14437,16 +15297,18 @@ Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
         return Status::INVALID_ARGUMENT;
     }
-    Status status = pm->allocatePage(shadow_index.root_page, ctx);
+    GPID shadow_root_gpid = 0;
+    Status status = pm->allocatePageInTablespace(shadow_index.tablespace_id, &shadow_root_gpid, ctx);
     if (status != Status::OK)
     {
         return status;
     }
+    shadow_index.root_gpid = shadow_root_gpid;
 
     status = writeIndexRecord(shadow_index, ctx);
     if (status != Status::OK)
     {
-        pm->freePage(shadow_index.root_page, ctx);
+        pm->freePageGlobal(shadow_root_gpid, ctx);
         SET_ERROR_CONTEXT(ctx, status, "Failed to write shadow index record");
         return status;
     }
@@ -14467,7 +15329,7 @@ Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow
     if (status != Status::OK)
     {
         index_cache_.erase(shadow_index.index_id);
-        pm->freePage(shadow_index.root_page, ctx);
+        pm->freePageGlobal(shadow_root_gpid, ctx);
         return status;
     }
 
@@ -14491,7 +15353,7 @@ Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow
             index_object_cache_.erase(shadow_index.index_id);
         }
         index_cache_.erase(shadow_index.index_id);
-        pm->freePage(shadow_index.root_page, ctx);
+        pm->freePageGlobal(shadow_root_gpid, ctx);
         LOG_ERROR(CATALOG, "Failed to create dependency for shadow index");
         return status;
     }
@@ -15487,7 +16349,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             std::memcpy(record.table_name, table.table_name.c_str(), table.table_name.size());
             record.table_name[table.table_name.size()] = '\0';
             record.owner_id = table.owner_id;
-            record.root_page = table.root_page;
+            record.root_gpid = table.root_gpid;
             record.column_count = table.column_count;
             record.row_count = table.row_count;
             record.table_type = static_cast<uint8_t>(table.table_type);
@@ -15598,7 +16460,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             std::memcpy(record.index_name, index.index_name.c_str(), index.index_name.size());
             record.index_name[index.index_name.size()] = '\0';
             record.owner_id = index.owner_id;
-            record.root_page = index.root_page;
+            record.root_gpid = index.root_gpid;
             record.index_type = static_cast<uint8_t>(index.index_type);
             record.is_unique = static_cast<uint8_t>(index.is_unique);
             record.column_count = static_cast<uint16_t>(index.column_ids.size());
@@ -16731,7 +17593,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             std::memcpy(record.table_name, table.table_name.c_str(), table.table_name.size());
             record.table_name[table.table_name.size()] = '\0';
             record.owner_id = table.owner_id;
-            record.root_page = table.root_page;
+            record.root_gpid = table.root_gpid;
             record.column_count = table.column_count;
             record.row_count = table.row_count;
             record.table_type = static_cast<uint8_t>(table.table_type);
@@ -24611,10 +25473,10 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
     if (need_public_schema)
     {
         ErrorContext schema_ctx;
-        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        Status schema_status = getSchema("users.public", public_schema, &schema_ctx);
         if (schema_status != Status::OK)
         {
-            schema_status = getSchema("root", public_schema, &schema_ctx);
+            schema_status = getSchema("public", public_schema, &schema_ctx);
         }
         if (schema_status != Status::OK)
         {
@@ -24716,10 +25578,10 @@ auto CatalogManager::ensureUserExists(const std::string& username, const std::st
     if (need_public_schema)
     {
         ErrorContext schema_ctx;
-        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        Status schema_status = getSchema("users.public", public_schema, &schema_ctx);
         if (schema_status != Status::OK)
         {
-            schema_status = getSchema("root", public_schema, &schema_ctx);
+            schema_status = getSchema("public", public_schema, &schema_ctx);
         }
         if (schema_status != Status::OK)
         {
@@ -25133,10 +25995,10 @@ auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id
     if (need_public_schema)
     {
         ErrorContext schema_ctx;
-        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        Status schema_status = getSchema("users.public", public_schema, &schema_ctx);
         if (schema_status != Status::OK)
         {
-            schema_status = getSchema("root", public_schema, &schema_ctx);
+            schema_status = getSchema("public", public_schema, &schema_ctx);
         }
         if (schema_status != Status::OK)
         {
@@ -25700,10 +26562,10 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
     if (need_public_schema)
     {
         ErrorContext schema_ctx;
-        Status schema_status = getSchema("public", public_schema, &schema_ctx);
+        Status schema_status = getSchema("users.public", public_schema, &schema_ctx);
         if (schema_status != Status::OK)
         {
-            schema_status = getSchema("root", public_schema, &schema_ctx);
+            schema_status = getSchema("public", public_schema, &schema_ctx);
         }
         if (schema_status != Status::OK)
         {
@@ -26972,11 +27834,11 @@ auto CatalogManager::createSession(const ID& user_id, const ID& authkey_id,
     if (isZeroUuidLocal(session_out.current_schema_id))
     {
         SchemaInfo schema_info;
-        Status schema_status = getSchema("public", schema_info, ctx);
-        if (schema_status != Status::OK)
-        {
-            schema_status = getSchema("root", schema_info, ctx);
-        }
+    Status schema_status = getSchema("users.public", schema_info, ctx);
+    if (schema_status != Status::OK)
+    {
+        schema_status = getSchema("public", schema_info, ctx);
+    }
         if (schema_status == Status::OK)
         {
             session_out.current_schema_id = schema_info.schema_id;

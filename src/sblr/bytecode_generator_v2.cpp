@@ -1420,6 +1420,17 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
 
     current_result_->writeByte(index_type);
 
+    uint32_t options_flags = 0;
+    if (stmt->bloom_filter_enabled)
+    {
+        options_flags |= 0x01;
+    }
+    current_result_->writeInt32(options_flags);
+    if (stmt->bloom_filter_enabled)
+    {
+        current_result_->writeDouble(stmt->bloom_fpr);
+    }
+
     std::function<std::unique_ptr<core::Expression>(ResolvedExpression*)> to_core_expr;
     to_core_expr = [&](ResolvedExpression* expr) -> std::unique_ptr<core::Expression> {
         if (!expr) {

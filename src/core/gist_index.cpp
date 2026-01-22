@@ -11,6 +11,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include <algorithm>
@@ -42,6 +43,7 @@ GiSTIndex::GiSTIndex(Database* db,
     , column_ids_(column_ids)
     , opclass_(opclass)
     , root_page_(0)
+    , tablespace_id_(0)
     , height_(0)
     , entry_count_(0)
     , deleted_count_(0)
@@ -58,10 +60,10 @@ Status GiSTIndex::create(Database* db,
                          const ID& table_uuid,
                          const std::vector<ID>& column_ids,
                          std::shared_ptr<GiSTOperatorClass> opclass,
-                         uint32_t* root_page_out,
+                         GPID root_gpid,
                          ErrorContext* ctx)
 {
-    if (!db || !opclass || !root_page_out)
+    if (!db || !opclass || root_gpid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to GiSTIndex::create");
         return Status::INVALID_ARGUMENT;
@@ -69,6 +71,8 @@ Status GiSTIndex::create(Database* db,
 
     // Create index instance
     GiSTIndex index(db, index_uuid, table_uuid, column_ids, opclass);
+    index.tablespace_id_ = getTablespaceID(root_gpid);
+    index.root_page_ = getPageNumber(root_gpid);
 
     // Initialize (allocates root page)
     Status status = index.initialize(ctx);
@@ -77,10 +81,52 @@ Status GiSTIndex::create(Database* db,
         return status;
     }
 
-    // Return root page number
-    *root_page_out = static_cast<uint32_t>(index.root_page_);
-
     return Status::OK;
+}
+
+Status GiSTIndex::create(Database* db,
+                         const ID& index_uuid,
+                         const ID& table_uuid,
+                         const std::vector<ID>& column_ids,
+                         std::shared_ptr<GiSTOperatorClass> opclass,
+                         uint16_t tablespace_id,
+                         uint32_t *root_page_out,
+                         ErrorContext* ctx)
+{
+    if (!db || !root_page_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to GiSTIndex::create");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    PageManager *page_mgr = db->page_manager();
+    if (!page_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    GPID root_gpid = 0;
+    Status status = page_mgr->allocatePageInTablespace(tablespace_id, &root_gpid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    *root_page_out = static_cast<uint32_t>(getPageNumber(root_gpid));
+    return create(db, index_uuid, table_uuid, column_ids, opclass, root_gpid, ctx);
+}
+
+Status GiSTIndex::create(Database* db,
+                         const ID& index_uuid,
+                         const ID& table_uuid,
+                         const std::vector<ID>& column_ids,
+                         std::shared_ptr<GiSTOperatorClass> opclass,
+                         uint32_t *root_page_out,
+                         ErrorContext* ctx)
+{
+    return create(db, index_uuid, table_uuid, column_ids, opclass,
+                  PRIMARY_TABLESPACE_ID, root_page_out, ctx);
 }
 
 std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
@@ -88,7 +134,7 @@ std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
                                             const ID& table_uuid,
                                             const std::vector<ID>& column_ids,
                                             std::shared_ptr<GiSTOperatorClass> opclass,
-                                            uint32_t root_page,
+                                            GPID root_gpid,
                                             ErrorContext* ctx)
 {
     if (!db || !opclass)
@@ -101,16 +147,17 @@ std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
     auto index = std::make_unique<GiSTIndex>(db, index_uuid, table_uuid, column_ids, opclass);
 
     // Set root page (don't call initialize, index already exists)
-    index->root_page_ = root_page;
+    index->root_page_ = getPageNumber(root_gpid);
+    index->tablespace_id_ = getTablespaceID(root_gpid);
 
     // Load index metadata from root page (November 20, 2025)
     ErrorContext load_ctx;
     SBGiSTPage* root = nullptr;
-    Status status = index->loadPage(root_page, &root, &load_ctx);
+    Status status = index->loadPage(index->root_page_, &root, &load_ctx);
     if (status == Status::OK && root)
     {
         // Calculate height by traversing to leaf
-        uint64_t current_page = root_page;
+        uint64_t current_page = index->root_page_;
         uint32_t height = 0;
         while (current_page != 0)
         {
@@ -153,7 +200,7 @@ std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
 
 std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
                                             const ID& index_uuid,
-                                            uint32_t root_page,
+                                            GPID root_gpid,
                                             ErrorContext* ctx)
 {
     if (!db)
@@ -187,8 +234,9 @@ std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
         return nullptr;
     }
 
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
     SBGiSTPage* root = nullptr;
-    Status pin_status = buffer_pool->pinPage(root_page, reinterpret_cast<void**>(&root), ctx);
+    Status pin_status = buffer_pool->pinPageGlobal(root_gpid, reinterpret_cast<void**>(&root), ctx);
     if (pin_status != Status::OK || !root)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to load GiST root page");
@@ -207,7 +255,22 @@ std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
     }
 
     // Call the full open() method with loaded metadata
-    return open(db, index_uuid, index_info.table_id, index_info.column_ids, opclass, root_page, ctx);
+    return open(db, index_uuid, index_info.table_id, index_info.column_ids, opclass, root_gpid, ctx);
+}
+
+GPID GiSTIndex::indexGPID(uint64_t page_num) const
+{
+    return makeGPID(tablespace_id_, page_num);
+}
+
+Status GiSTIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext* ctx)
+{
+    return buffer_pool_->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+}
+
+Status GiSTIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext* ctx)
+{
+    return buffer_pool_->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
 }
 
 Status GiSTIndex::initialize(ErrorContext* ctx)
@@ -217,16 +280,19 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
     LOG_INFO(CATALOG, "Initializing GiST index with operator class %s",
              opclass_->getOpClassName().c_str());
 
-    // Allocate root page
-    Status status = allocatePage(&root_page_, ctx);
-    if (status != Status::OK)
+    // Allocate root page if not already assigned
+    if (root_page_ == 0)
     {
-        return status;
+        Status status = allocatePage(&root_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
     }
 
     // Initialize root as empty leaf
     SBGiSTPage* root = nullptr;
-    status = loadPage(root_page_, &root, ctx);
+    Status status = loadPage(root_page_, &root, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -363,7 +429,7 @@ Status GiSTIndex::insert(const GiSTPredicate& predicate,
         GiSTPredicate old_root_pred = opclass_->unionPredicates(old_root_predicates);
 
         // Unpin old_root (we're done reading it)
-        buffer_pool_->unpinPage(static_cast<uint32_t>(old_root), false, ctx);
+        unpinIndexPage(static_cast<uint32_t>(old_root), false, ctx);
 
         // Add entry pointing to old_root (left child)
         uint8_t* new_root_entry_ptr = reinterpret_cast<uint8_t*>(new_root) + sizeof(SBGiSTPage);
@@ -404,7 +470,7 @@ Status GiSTIndex::insert(const GiSTPredicate& predicate,
         new_root->gist_free_space -= right_entry_size;
 
         // Mark new root as dirty
-        buffer_pool_->unpinPage(static_cast<uint32_t>(root_page_), true, ctx);
+        unpinIndexPage(static_cast<uint32_t>(root_page_), true, ctx);
 
         height_++;
 
@@ -443,7 +509,7 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
         if (page->gist_free_space < entry_size)
         {
             // Need to split - unpin first
-            buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+            unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
             return splitPage(page_num, nullptr, new_right_pred, new_right_page, ctx);
         }
 
@@ -469,7 +535,7 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
         page->gist_total_entries++;
 
         // Mark page as dirty
-        buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+        unpinIndexPage(static_cast<uint32_t>(page_num), true, ctx);
 
         return Status::OK;
     }
@@ -502,7 +568,7 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
             {
                 // Need to split this internal node too
                 // First, unpin the current page
-                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+                unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
 
                 // Split this page and propagate upward
                 return splitPage(page_num, nullptr, new_right_pred, new_right_page, ctx);
@@ -529,7 +595,7 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
             page->gist_free_space -= entry_size;
 
             // Mark page as dirty
-            buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+            unpinIndexPage(static_cast<uint32_t>(page_num), true, ctx);
 
             LOG_DEBUG(CATALOG, "Added split child entry to internal page %lu, new child %lu",
                      page_num, child_new_right);
@@ -537,7 +603,7 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
         else
         {
             // No split, just unpin the page (not modified)
-            buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+            unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
         }
 
         return Status::OK;
@@ -692,7 +758,7 @@ Status GiSTIndex::removeRecursive(uint64_t page_num,
                          page_num, tid.gpid, tid.slot, current_xid);
 
                 // Mark page as dirty
-                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+                unpinIndexPage(static_cast<uint32_t>(page_num), true, ctx);
                 return Status::OK;
             }
 
@@ -700,7 +766,7 @@ Status GiSTIndex::removeRecursive(uint64_t page_num,
         }
 
         // Not found on this leaf
-        buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
         return Status::NOT_FOUND;
     }
     else
@@ -732,7 +798,7 @@ Status GiSTIndex::removeRecursive(uint64_t page_num,
                 uint64_t child_page = entry->entry_child_page;
 
                 // Unpin current page before recursing
-                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+                unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
 
                 // Recurse into child
                 status = removeRecursive(child_page, predicate, tid, current_xid, ctx);
@@ -759,7 +825,7 @@ Status GiSTIndex::removeRecursive(uint64_t page_num,
         }
 
         // Not found in any subtree
-        buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
         return Status::NOT_FOUND;
     }
 }
@@ -1028,8 +1094,8 @@ Status GiSTIndex::splitPage(uint64_t page_num,
              page_num, page_num, page->gist_count, *new_right_page, right_page->gist_count);
 
     // Unpin both pages (mark as dirty)
-    buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
-    buffer_pool_->unpinPage(static_cast<uint32_t>(*new_right_page), true, ctx);
+    unpinIndexPage(static_cast<uint32_t>(page_num), true, ctx);
+    unpinIndexPage(static_cast<uint32_t>(*new_right_page), true, ctx);
 
     return Status::OK;
 }
@@ -1166,7 +1232,7 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
                 uint64_t child_page = entry->entry_child_page;
 
                 // Unpin current page before recursing
-                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), page_modified, ctx);
+                unpinIndexPage(static_cast<uint32_t>(page_num), page_modified, ctx);
 
                 // Recurse into child
                 status = removeDeadEntriesRecursive(child_page, dead_tid_set, oit,
@@ -1272,7 +1338,93 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
     }
 
     // Unpin page (mark dirty if modified)
-    buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), page_modified, ctx);
+    unpinIndexPage(static_cast<uint32_t>(page_num), page_modified, ctx);
+
+    return Status::OK;
+}
+
+Status GiSTIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                           uint64_t* tids_updated_out,
+                                           uint64_t* pages_modified_out,
+                                           ErrorContext* ctx)
+{
+    std::unique_lock lock(mutex_);
+
+    if (tids_updated_out)
+    {
+        *tids_updated_out = 0;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = 0;
+    }
+
+    if (root_page_ == 0 || tid_mapping.empty())
+    {
+        return Status::OK;
+    }
+
+    uint64_t tids_updated = 0;
+    uint64_t pages_modified = 0;
+    std::vector<uint64_t> stack;
+    stack.push_back(root_page_);
+
+    while (!stack.empty())
+    {
+        uint64_t page_num = stack.back();
+        stack.pop_back();
+
+        void* page_buffer = nullptr;
+        Status status = pinIndexPage(page_num, &page_buffer, ctx);
+        if (status != Status::OK || !page_buffer)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin GiST page during TID update");
+            return Status::IO_ERROR;
+        }
+
+        auto* page = reinterpret_cast<SBGiSTPage*>(page_buffer);
+        bool is_leaf = (page->gist_flags & static_cast<uint16_t>(GiSTFlags::LEAF)) != 0;
+        bool page_dirty = false;
+
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+        for (uint16_t i = 0; i < page->gist_count; ++i)
+        {
+            auto* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+
+            if (is_leaf)
+            {
+                auto it = tid_mapping.find(entry->entry_row_id.gpid);
+                if (it != tid_mapping.end())
+                {
+                    entry->entry_row_id.gpid = it->second;
+                    page_dirty = true;
+                    ++tids_updated;
+                }
+            }
+            else
+            {
+                stack.push_back(entry->entry_child_page);
+            }
+
+            entry_ptr += entry->entry_size;
+        }
+
+        if (page_dirty)
+        {
+            ++pages_modified;
+        }
+
+        unpinIndexPage(static_cast<uint32_t>(page_num), page_dirty, ctx);
+    }
+
+    if (tids_updated_out)
+    {
+        *tids_updated_out = tids_updated;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = pages_modified;
+    }
 
     return Status::OK;
 }
@@ -1316,7 +1468,7 @@ Status GiSTIndex::loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* c
 {
     // Pin page from buffer pool
     void* page_buffer = nullptr;
-    Status status = buffer_pool_->pinPage(static_cast<uint32_t>(page_num), &page_buffer, ctx);
+    Status status = pinIndexPage(page_num, &page_buffer, ctx);
     if (status != Status::OK)
     {
         if (ctx)
@@ -1333,43 +1485,51 @@ Status GiSTIndex::loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* c
 
 Status GiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
 {
-    // STOR-M2: Proper page allocation via buffer pool
-    // Uses buffer pool's allocatePage which handles the free page list internally
-    uint32_t allocated_page_id = 0;
-    void* page_buffer = nullptr;
+    PageManager* page_mgr = db_->page_manager();
+    if (!page_mgr)
+    {
+        if (ctx && ctx->message.empty())
+        {
+            ctx->code = Status::IO_ERROR;
+            ctx->message = "Page manager not available for GiST allocation";
+        }
+        return Status::IO_ERROR;
+    }
 
-    Status status = buffer_pool_->allocatePage(&allocated_page_id, &page_buffer, ctx);
+    GPID new_gpid = 0;
+    Status status = page_mgr->allocatePageInTablespace(tablespace_id_, &new_gpid, ctx);
     if (status != Status::OK)
     {
         if (ctx && ctx->message.empty())
         {
             ctx->code = Status::IO_ERROR;
-            ctx->message = "Failed to allocate GiST page from buffer pool";
+            ctx->message = "Failed to allocate GiST page in tablespace";
         }
         return Status::IO_ERROR;
     }
 
-    *page_num = static_cast<uint64_t>(allocated_page_id);
+    *page_num = static_cast<uint64_t>(getPageNumber(new_gpid));
 
-    // Initialize the page as empty GiST page
-    if (page_buffer)
+    void* page_buffer = nullptr;
+    status = pinIndexPage(*page_num, &page_buffer, ctx);
+    if (status != Status::OK)
     {
-        SBGiSTPage* gist_page = reinterpret_cast<SBGiSTPage*>(page_buffer);
-        gist_page->gist_header.page_type = PAGE_TYPE_GIST;
-        gist_page->gist_header.version = 1;
-        gist_page->gist_count = 0;
-        gist_page->gist_level = 0;
-        gist_page->gist_flags = 0;
-        gist_page->gist_right_sibling = 0;
-        gist_page->gist_left_sibling = 0;
-        gist_page->gist_parent_page = 0;
-        gist_page->gist_xmin = 0;
-        gist_page->gist_xmax = 0;
-
-        // Mark page as dirty since we initialized it
-        buffer_pool_->unpinPage(allocated_page_id, true, ctx);
+        return status;
     }
 
+    SBGiSTPage* gist_page = reinterpret_cast<SBGiSTPage*>(page_buffer);
+    gist_page->gist_header.page_type = PAGE_TYPE_GIST;
+    gist_page->gist_header.version = 1;
+    gist_page->gist_count = 0;
+    gist_page->gist_level = 0;
+    gist_page->gist_flags = 0;
+    gist_page->gist_right_sibling = 0;
+    gist_page->gist_left_sibling = 0;
+    gist_page->gist_parent_page = 0;
+    gist_page->gist_xmin = 0;
+    gist_page->gist_xmax = 0;
+
+    unpinIndexPage(*page_num, true, ctx);
     return Status::OK;
 }
 

@@ -303,6 +303,7 @@ public:
 
     void setServerVersion(const std::string& version) { server_version_ = version; }
     const std::string& getServerVersion() const { return server_version_; }
+    void setRemoteCredentials(const std::string& username, const std::string& password);
 
 protected:
     // Execute against native server over IPC (bridge path)
@@ -460,6 +461,7 @@ private:
     // Client info from attach
     uint8_t sql_dialect_ = 3;
     std::string client_charset_ = "UTF8";
+    std::string remote_password_;
 
     // Remote engine client (IPC to native ScratchBird server)
     client::ConnectionConfig client_config_;

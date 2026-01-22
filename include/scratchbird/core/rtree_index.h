@@ -7,6 +7,7 @@
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/rtree.h"
+#include "scratchbird/core/gpid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -26,15 +27,15 @@ namespace scratchbird
         {
         public:
             // Constructor
-            RTreeIndex(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page);
+            RTreeIndex(Database *db, const UuidV7Bytes &index_uuid, GPID meta_gpid);
 
             // Create a new R-Tree index
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
-                                 uint32_t *meta_page_out, ErrorContext *ctx = nullptr);
+                                 GPID meta_gpid, ErrorContext *ctx = nullptr);
 
             // Open an existing R-Tree index
             static std::unique_ptr<RTreeIndex> open(Database *db, const UuidV7Bytes &index_uuid,
-                                                    uint32_t meta_page, ErrorContext *ctx = nullptr);
+                                                    GPID meta_gpid, ErrorContext *ctx = nullptr);
 
             // Destructor
             ~RTreeIndex();
@@ -64,12 +65,12 @@ namespace scratchbird
 
             // Get index metadata
             const UuidV7Bytes &getIndexUuid() const { return index_uuid_; }
-            uint32_t getMetaPage() const { return meta_page_; }
+            uint32_t getMetaPage() const { return static_cast<uint32_t>(getPageNumber(meta_gpid_)); }
 
         private:
             Database *db_;
             UuidV7Bytes index_uuid_;
-            uint32_t meta_page_;
+            GPID meta_gpid_;
             uint32_t root_page_;
 
             // Delegate to the real RTree implementation

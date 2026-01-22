@@ -10,6 +10,7 @@
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/tid_resolver.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/gpid.h"
 #include <memory>
 #include <vector>
 
@@ -39,11 +40,11 @@ class Database;
  *
  * Usage:
  *   // Create index
- *   uint32_t root_page;
- *   FullTextIndex::create(db, index_uuid, table_uuid, column_ids, &root_page, ctx);
+ *   GPID root_gpid;
+ *   FullTextIndex::create(db, index_uuid, table_uuid, column_ids, root_gpid, ctx);
  *
  *   // Open index
- *   auto index = FullTextIndex::open(db, index_uuid, table_uuid, column_ids, root_page, ctx);
+ *   auto index = FullTextIndex::open(db, index_uuid, table_uuid, column_ids, root_gpid, ctx);
  *
  *   // Insert tsvector value
  *   TSVector vec = TSVector::fromString("'cat':1,3 'dog':2");
@@ -81,7 +82,7 @@ public:
      * @param index_uuid UUID for the new index
      * @param table_uuid UUID of the table being indexed
      * @param column_ids Columns being indexed
-     * @param root_page_out Output: root page number
+     * @param root_gpid Root page GPID
      * @param ctx Error context
      * @return Status code
      */
@@ -89,7 +90,7 @@ public:
                         const ID& index_uuid,
                         const ID& table_uuid,
                         const std::vector<ID>& column_ids,
-                        uint32_t* root_page_out,
+                        GPID root_gpid,
                         ErrorContext* ctx = nullptr);
 
     /**
@@ -99,7 +100,7 @@ public:
      * @param index_uuid UUID of the index
      * @param table_uuid UUID of the table being indexed
      * @param column_ids Columns being indexed
-     * @param root_page Root page number
+     * @param root_gpid Root page GPID
      * @param ctx Error context
      * @return Unique pointer to opened index, or nullptr on error
      */
@@ -107,7 +108,7 @@ public:
                                                const ID& index_uuid,
                                                const ID& table_uuid,
                                                const std::vector<ID>& column_ids,
-                                               uint32_t root_page,
+                                               GPID root_gpid,
                                                ErrorContext* ctx = nullptr);
 
     /**

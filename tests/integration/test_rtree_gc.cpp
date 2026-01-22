@@ -19,6 +19,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/rtree_index.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/types.h"
 #include <filesystem>
@@ -91,13 +92,16 @@ TEST_F(RTreeGCTest, BasicGCRemovesDeadEntries)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create R-Tree index
-    uint32_t root_page = 0;
-    Status status = RTreeIndex::create(db_.get(), index_uuid, &root_page, nullptr);
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate RTree root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = RTreeIndex::create(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to create R-Tree index";
     ASSERT_GT(root_page, 0);
 
     // Open index
-    auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_page, nullptr);
+    auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_NE(rtree, nullptr) << "Failed to open R-Tree index";
 
     // Get current XID for inserts
@@ -165,14 +169,18 @@ TEST_F(RTreeGCTest, GCEffectsPersistAcrossRestart)
     // Generate unique UUIDs
     UuidV7Bytes index_uuid = generateUuidV7();
 
+    GPID root_gpid = 0;
     uint32_t root_page = 0;
 
     // Phase 1: Create index, insert, and run GC
     {
-        Status status = RTreeIndex::create(db_.get(), index_uuid, &root_page, nullptr);
+        Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+        ASSERT_EQ(status, Status::OK) << "Failed to allocate RTree root page";
+        root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+        status = RTreeIndex::create(db_.get(), index_uuid, root_gpid, nullptr);
         ASSERT_EQ(status, Status::OK);
 
-        auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_page, nullptr);
+        auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
         ASSERT_NE(rtree, nullptr);
 
         // Get current XID
@@ -243,11 +251,14 @@ TEST_F(RTreeGCTest, EmptyDeadTidsIsNoOp)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create R-Tree index
-    uint32_t root_page = 0;
-    Status status = RTreeIndex::create(db_.get(), index_uuid, &root_page, nullptr);
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate RTree root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = RTreeIndex::create(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_page, nullptr);
+    auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_NE(rtree, nullptr);
 
     // Insert one entry
@@ -283,11 +294,14 @@ TEST_F(RTreeGCTest, UnaffectedEntriesNotRemoved)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create R-Tree index
-    uint32_t root_page = 0;
-    Status status = RTreeIndex::create(db_.get(), index_uuid, &root_page, nullptr);
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate RTree root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = RTreeIndex::create(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_page, nullptr);
+    auto rtree = RTreeIndex::open(db_.get(), index_uuid, root_gpid, nullptr);
     ASSERT_NE(rtree, nullptr);
 
     // Get current XID

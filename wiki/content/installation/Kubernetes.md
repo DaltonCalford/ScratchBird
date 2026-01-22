@@ -210,7 +210,7 @@ data:
     enabled = false
 
     [memory]
-    shared_buffers = 256MB
+    buffer_pool_size = 256MB
     work_mem = 8MB
 
     [logging]

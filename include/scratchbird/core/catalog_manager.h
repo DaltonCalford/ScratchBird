@@ -15,6 +15,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/gpid.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/types.h"
@@ -386,7 +387,7 @@ public:
             std::string table_name;
             bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;                       // Owner UUID reference (NOT name)
-            uint32_t root_page = 0;            // Root page of table data
+            GPID root_gpid = 0;                // Root page of table data (GPID)
             uint32_t column_count = 0;
             uint64_t row_count = 0;            // Estimated row count
             TableType table_type = TableType::HEAP;
@@ -640,7 +641,7 @@ public:
             std::string index_name;
             bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;                   // Owner UUID reference (NOT name)
-            uint32_t root_page = 0;
+            GPID root_gpid = 0;            // Root page of index (GPID)
             uint16_t tablespace_id = 0;    // Tablespace ID (0 = primary file, 1-65535 = custom)
             IndexType index_type = IndexType::BTREE;
             bool is_unique = false;
@@ -1754,6 +1755,8 @@ public:
                              ErrorContext *ctx = nullptr) -> Status;
         auto updateTableStorageParams(const ID& table_id, const std::string& storage_params,
                                       ErrorContext* ctx = nullptr) -> Status;
+        auto updateIndexParams(const ID &index_id, const std::string &index_params,
+                               ErrorContext *ctx = nullptr) -> Status;
         auto renameObject(ObjectType object_type, const ID& object_id,
                           const std::string& new_name, ErrorContext* ctx = nullptr) -> Status;
         auto moveObject(ObjectType object_type, const ID& object_id,
@@ -4499,6 +4502,16 @@ public:
             -> Status;
         auto writeTablespaceRecord(const TablespaceInfo &tablespace, ErrorContext *ctx) -> Status;
         auto readTablespaceRecords(ErrorContext *ctx) -> Status;
+        auto writeTablespaceFileRecord(uint16_t tablespace_id, uint16_t file_index,
+                                       const std::string &file_path, uint64_t starting_page,
+                                       uint64_t page_count, uint64_t max_pages, bool is_online,
+                                       uint64_t created_time, uint64_t last_modified_time,
+                                       ErrorContext *ctx) -> Status;
+        auto writeTablespaceFileRecords(const TablespaceInfo &tablespace, ErrorContext *ctx) -> Status;
+        auto readTablespaceFileRecords(ErrorContext *ctx) -> Status;
+        auto deleteTablespaceFileRecords(uint16_t tablespace_id, ErrorContext *ctx) -> Status;
+        auto updateTablespaceCounts(uint16_t tablespace_id, int64_t table_delta,
+                                    int64_t index_delta, ErrorContext *ctx) -> Status;
 
         // OPT-1, OPT-2: Statistics persistence methods
         auto writeStatisticRecord(const StatisticInfo &info, ErrorContext *ctx) -> Status;

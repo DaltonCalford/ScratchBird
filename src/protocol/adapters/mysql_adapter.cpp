@@ -167,7 +167,7 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     // Switch to emulated MySQL schema for this database if possible
     if (!default_db_set_) {
         std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-        std::string schema_name = "emulation.mysql.localhost.databases." + db_name;
+        std::string schema_name = "remote.emulation.mysql.localhost.databases." + db_name;
         std::string use_stmt = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
         client::ResultSet rs;
         auto set_status = client_->executeQuery(use_stmt, &rs, ctx);
@@ -398,10 +398,10 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
 
     last_warnings_.clear();
 
-    sblr::MySQLQueryCompiler compiler(database_.get());
+    sblr::MySQLQueryCompiler compiler(engineDatabase());
     std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-    compiler.setDefaultSchema("emulation.mysql.localhost.databases." + db_name);
-    compiler.setCompatibilityMode(resolveMysqlCompat(database_.get(), db_name, &ctx));
+    compiler.setDefaultSchema("remote.emulation.mysql.localhost.databases." + db_name);
+    compiler.setCompatibilityMode(resolveMysqlCompat(engineDatabase(), db_name, &ctx));
     auto result = compiler.compile(sql);
     last_warnings_ = result.warnings();
     if (!result.success()) {
@@ -1706,7 +1706,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     }
 
     std::string db_name = database_name_.empty() ? "default" : database_name_;
-    std::string base_schema = "emulation.mysql.localhost.databases." + db_name;
+    std::string base_schema = "remote.emulation.mysql.localhost.databases." + db_name;
     std::string info_schema = base_schema + ".information_schema";
 
     auto safeExec = [&](const std::string& sql) {

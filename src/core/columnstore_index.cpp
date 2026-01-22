@@ -15,39 +15,49 @@
 namespace scratchbird {
 namespace core {
 
-    ColumnstoreIndexSimple::ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page)
-        : db_(db), index_uuid_(index_uuid), meta_page_(meta_page), peer_meta_page_(0), generation_(0)
+    ColumnstoreIndexSimple::ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, GPID meta_gpid)
+        : db_(db),
+          index_uuid_(index_uuid),
+          meta_page_(static_cast<uint32_t>(getPageNumber(meta_gpid))),
+          peer_meta_page_(0),
+          tablespace_id_(getTablespaceID(meta_gpid)),
+          generation_(0)
     {
     }
 
     ColumnstoreIndexSimple::~ColumnstoreIndexSimple() = default;
 
     Status ColumnstoreIndexSimple::create(Database *db, const UuidV7Bytes &index_uuid,
-                                    uint32_t *meta_page_out, ErrorContext *ctx)
+                                    GPID meta_gpid, ErrorContext *ctx)
     {
         // Plan 01 Task C: Allocate dual meta pages for crash-safe catalog persistence
         auto page_mgr = db->page_manager();
         auto buffer_pool = db->buffer_pool();
-
-        // Allocate meta_page_a (primary)
-        uint32_t meta_page_a;
-        Status status = page_mgr->allocatePage(meta_page_a, ctx);
-        if (status != Status::OK)
+        if (!page_mgr || !buffer_pool)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate meta_page_a");
-            return status;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing database components");
+            return Status::INVALID_ARGUMENT;
         }
 
+        // Allocate meta_page_a (primary)
+        if (meta_gpid == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Meta GPID cannot be zero");
+            return Status::INVALID_ARGUMENT;
+        }
+        uint16_t tablespace_id = getTablespaceID(meta_gpid);
+        uint32_t meta_page_a = static_cast<uint32_t>(getPageNumber(meta_gpid));
+
         // Allocate meta_page_b (secondary/peer)
-        uint32_t meta_page_b;
-        status = page_mgr->allocatePage(meta_page_b, ctx);
+        uint32_t meta_page_b = 0;
+        GPID meta_page_b_gpid = 0;
+        Status status = page_mgr->allocatePageInTablespace(tablespace_id, &meta_page_b_gpid, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to allocate meta_page_b");
-            // Free meta_page_a before returning
-            page_mgr->freePage(meta_page_a, nullptr);
             return status;
         }
+        meta_page_b = static_cast<uint32_t>(getPageNumber(meta_page_b_gpid));
 
         // Initialize both meta pages with empty catalog (generation = 0)
         ColumnstoreMetaHeader header;
@@ -70,42 +80,37 @@ namespace core {
 
         // Write to meta_page_a
         void* buffer_a = nullptr;
-        status = buffer_pool->pinPage(meta_page_a, &buffer_a, ctx);
+        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_a), &buffer_a, ctx);
         if (status != Status::OK)
         {
-            page_mgr->freePage(meta_page_a, nullptr);
-            page_mgr->freePage(meta_page_b, nullptr);
+            page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_a), nullptr);
+            page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_b), nullptr);
             return status;
         }
         memcpy(buffer_a, &header, sizeof(header));
-        buffer_pool->unpinPage(meta_page_a, true, ctx);
+        buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, meta_page_a), true, ctx);
 
         // Write to meta_page_b (same content)
         void* buffer_b = nullptr;
-        status = buffer_pool->pinPage(meta_page_b, &buffer_b, ctx);
+        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_b), &buffer_b, ctx);
         if (status != Status::OK)
         {
-            page_mgr->freePage(meta_page_a, nullptr);
-            page_mgr->freePage(meta_page_b, nullptr);
+            page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_a), nullptr);
+            page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_b), nullptr);
             return status;
         }
         memcpy(buffer_b, &header, sizeof(header));
-        buffer_pool->unpinPage(meta_page_b, true, ctx);
-
-        if (meta_page_out)
-        {
-            *meta_page_out = meta_page_a;
-        }
+        buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, meta_page_b), true, ctx);
 
         return Status::OK;
     }
 
     std::unique_ptr<ColumnstoreIndexSimple> ColumnstoreIndexSimple::open(Database *db,
                                                               const UuidV7Bytes &index_uuid,
-                                                              uint32_t meta_page,
+                                                              GPID meta_gpid,
                                                               ErrorContext *ctx)
     {
-        auto index = std::make_unique<ColumnstoreIndexSimple>(db, index_uuid, meta_page);
+        auto index = std::make_unique<ColumnstoreIndexSimple>(db, index_uuid, meta_gpid);
 
         // Load segment catalog from meta page
         Status status = index->loadSegmentCatalog(ctx);
@@ -122,6 +127,21 @@ namespace core {
         }
 
         return index;
+    }
+
+    GPID ColumnstoreIndexSimple::indexGPID(uint64_t page_num) const
+    {
+        return makeGPID(tablespace_id_, page_num);
+    }
+
+    Status ColumnstoreIndexSimple::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx) const
+    {
+        return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+    }
+
+    Status ColumnstoreIndexSimple::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx) const
+    {
+        return db_->buffer_pool()->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
     }
 
     Status ColumnstoreIndexSimple::insertColumn(uint16_t column_id, uint32_t row_count,
@@ -148,11 +168,13 @@ namespace core {
         // Allocate page for compressed data
         auto page_mgr = db_->page_manager();
         uint32_t data_page;
-        status = page_mgr->allocatePage(data_page, ctx);
+        GPID data_gpid = 0;
+        status = page_mgr->allocatePageInTablespace(tablespace_id_, &data_gpid, ctx);
         if (status != Status::OK)
         {
             return status;
         }
+        data_page = static_cast<uint32_t>(getPageNumber(data_gpid));
 
         // In production: write compressed data to page
         // For now, we track the page number in metadata
@@ -567,7 +589,7 @@ namespace core {
         auto readMetaPage = [&](uint32_t page_id, ColumnstoreMetaHeader* header_out, std::vector<ColumnSegment>* segments_out) -> bool
         {
             void* buffer = nullptr;
-            Status status = buffer_pool->pinPage(page_id, &buffer, nullptr);
+            Status status = pinIndexPage(page_id, &buffer, nullptr);
             if (status != Status::OK)
             {
                 return false;
@@ -579,7 +601,7 @@ namespace core {
             // Validate magic
             if (header_out->magic != COLUMNSTORE_META_MAGIC)
             {
-                buffer_pool->unpinPage(page_id, false, nullptr);
+                unpinIndexPage(page_id, false, nullptr);
                 return false;
             }
 
@@ -590,7 +612,7 @@ namespace core {
 
             if (calculated_crc != header_out->checksum)
             {
-                buffer_pool->unpinPage(page_id, false, nullptr);
+                unpinIndexPage(page_id, false, nullptr);
                 return false;
             }
 
@@ -601,7 +623,7 @@ namespace core {
                 segments_out->assign(segments_ptr, segments_ptr + header_out->segment_count);
             }
 
-            buffer_pool->unpinPage(page_id, false, nullptr);
+            unpinIndexPage(page_id, false, nullptr);
             return true;
         };
 
@@ -727,18 +749,18 @@ namespace core {
 
         // Write to meta_page_a (primary)
         void* buffer_a = nullptr;
-        Status status = buffer_pool->pinPage(meta_page_, &buffer_a, ctx);
+        Status status = pinIndexPage(meta_page_, &buffer_a, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_a for write");
             return status;
         }
         memcpy(buffer_a, catalog_data.data(), catalog_data.size());
-        buffer_pool->unpinPage(meta_page_, true, ctx);
+        unpinIndexPage(meta_page_, true, ctx);
 
         // Write to meta_page_b (peer)
         void* buffer_b = nullptr;
-        status = buffer_pool->pinPage(peer_meta_page_, &buffer_b, ctx);
+        status = pinIndexPage(peer_meta_page_, &buffer_b, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_b for write");
@@ -746,7 +768,7 @@ namespace core {
             return status;
         }
         memcpy(buffer_b, catalog_data.data(), catalog_data.size());
-        buffer_pool->unpinPage(peer_meta_page_, true, ctx);
+        unpinIndexPage(peer_meta_page_, true, ctx);
 
         return Status::OK;
     }

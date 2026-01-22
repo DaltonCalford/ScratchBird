@@ -709,6 +709,15 @@ struct ZoneColumnStats {
 
 ---
 
+## Tablespace + TID/GPID Requirements
+
+- **Extent ownership:** Zone entries must record `tablespace_id` for each extent and never assume primary tablespace.
+- **TID format:** Any tuple references emitted from zone pruning must use `TID` with full `GPID + slot`.
+- **Tablespace routing:** Zone map pages must allocate/pin via `root_gpid` and `tablespace_id`.
+- **Migration:** When a table moves tablespaces, the zone map must update extent metadata and any stored `TID` references.
+
+---
+
 ## Core API
 
 ### Class Definition

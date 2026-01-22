@@ -230,15 +230,63 @@ Require client certificate authentication.
 
 Memory allocation settings.
 
-### shared_buffers
+### buffer_pool_size
 
 ```ini
-shared_buffers = 128MB
+buffer_pool_size = 128MB
 ```
 
-Size of shared buffer pool for caching database pages.
+Size of the buffer pool for caching database pages.
 
 **Recommendation:** 25% of available RAM, up to 8GB.
+
+### buffer_pool_page_size
+
+```ini
+buffer_pool_page_size = 8192
+```
+
+Page size in bytes for the buffer pool.
+
+### buffer_pool_bgwriter_enabled
+
+```ini
+buffer_pool_bgwriter_enabled = true
+```
+
+Enable the background writer.
+
+### buffer_pool_bgwriter_max_pages
+
+```ini
+buffer_pool_bgwriter_max_pages = 1000
+```
+
+Maximum pages written per background writer cycle.
+
+### buffer_pool_dirty_ratio_low
+
+```ini
+buffer_pool_dirty_ratio_low = 0.10
+```
+
+Low dirty ratio threshold.
+
+### buffer_pool_dirty_ratio_high
+
+```ini
+buffer_pool_dirty_ratio_high = 0.30
+```
+
+High dirty ratio threshold.
+
+### buffer_pool_dirty_ratio_checkpoint
+
+```ini
+buffer_pool_dirty_ratio_checkpoint = 0.40
+```
+
+Dirty ratio threshold used during checkpoints.
 
 ### work_mem
 
@@ -259,6 +307,52 @@ maintenance_work_mem = 64MB
 Memory for maintenance operations (sweep/GC, CREATE INDEX).
 
 **Recommendation:** Higher values speed up maintenance.
+
+---
+
+## [pool] Section
+
+Connection pool and cache settings.
+
+### statement_cache
+
+```ini
+statement_cache = true
+```
+
+Enable prepared statement caching.
+
+### statement_cache_size
+
+```ini
+statement_cache_size = 1000
+```
+
+Maximum cached statements per connection.
+
+### result_cache
+
+```ini
+result_cache = true
+```
+
+Enable query result caching.
+
+### result_cache_size
+
+```ini
+result_cache_size = 67108864
+```
+
+Result cache maximum size (bytes).
+
+### result_cache_ttl
+
+```ini
+result_cache_ttl = 300
+```
+
+Result cache TTL (seconds).
 
 ---
 
@@ -441,6 +535,44 @@ Port for Prometheus metrics endpoint. `0` = disabled.
 
 ---
 
+## [storage] Section
+
+Storage and I/O settings.
+
+### copy_allowed_paths
+
+```ini
+copy_allowed_paths =
+```
+
+Comma-separated allowlist of directories for server-side `COPY FROM/TO`. Empty means no server-side file access.
+
+### copy_allow_absolute_paths
+
+```ini
+copy_allow_absolute_paths = false
+```
+
+Allow absolute paths in server-side `COPY` operations.
+
+### copy_allow_relative_paths
+
+```ini
+copy_allow_relative_paths = true
+```
+
+Allow relative paths in server-side `COPY` operations (resolved under `data_dir`).
+
+### copy_require_superuser
+
+```ini
+copy_require_superuser = true
+```
+
+Require superuser role for server-side `COPY FROM/TO` file access.
+
+---
+
 ## Complete Example
 
 ```ini
@@ -477,7 +609,13 @@ key_file = /etc/scratchbird/ssl/server.key
 min_protocol = TLSv1.2
 
 [memory]
-shared_buffers = 128MB
+buffer_pool_size = 128MB
+buffer_pool_page_size = 8192
+buffer_pool_bgwriter_enabled = true
+buffer_pool_bgwriter_max_pages = 1000
+buffer_pool_dirty_ratio_low = 0.10
+buffer_pool_dirty_ratio_high = 0.30
+buffer_pool_dirty_ratio_checkpoint = 0.40
 work_mem = 4MB
 maintenance_work_mem = 64MB
 
@@ -502,6 +640,12 @@ log_disconnections = true
 enabled = true
 export = none
 prometheus_port = 0
+
+[storage]
+copy_allowed_paths =
+copy_allow_absolute_paths = false
+copy_allow_relative_paths = true
+copy_require_superuser = true
 ```
 
 ---
@@ -516,7 +660,13 @@ worker_threads = 0          # Auto-detect
 max_connections = 500
 
 [memory]
-shared_buffers = 4GB        # 25% of 16GB RAM
+buffer_pool_size = 4GB        # 25% of 16GB RAM
+buffer_pool_page_size = 8192
+buffer_pool_bgwriter_enabled = true
+buffer_pool_bgwriter_max_pages = 5000
+buffer_pool_dirty_ratio_low = 0.10
+buffer_pool_dirty_ratio_high = 0.30
+buffer_pool_dirty_ratio_checkpoint = 0.40
 work_mem = 64MB
 maintenance_work_mem = 512MB
 ```

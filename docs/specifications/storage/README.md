@@ -29,6 +29,7 @@ ScratchBird implements a sophisticated storage engine based on Firebird's Multi-
 ### Advanced Features
 
 - **[TABLESPACE_SPECIFICATION.md](TABLESPACE_SPECIFICATION.md)** (1,352 lines) - Tablespace management and configuration
+- **[TABLESPACE_ONLINE_MIGRATION.md](TABLESPACE_ONLINE_MIGRATION.md)** - Online tablespace migration (Beta)
 - **[MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)** (1,024 lines) - Multi-Generational Architecture implementation details
 
 ## Key Concepts

@@ -17,6 +17,8 @@
 #include "scratchbird/core/fulltext_index.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/index_params.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <cstring>
@@ -27,6 +29,67 @@ namespace core
 {
 
 namespace {
+
+void attachBloomFilterIfConfigured(CatalogManager::IndexType index_type,
+                                   void *index_ptr,
+                                   Database *db,
+                                   const CatalogManager::IndexInfo &index_info,
+                                   ErrorContext *ctx)
+{
+    if (!db || !index_ptr || index_info.index_params_oid == 0)
+    {
+        return;
+    }
+
+    std::string params_str;
+    if (db->catalog_manager()->loadStringFromToast(index_info.index_params_oid, 0,
+                                                   params_str, ctx) != Status::OK)
+    {
+        return;
+    }
+
+    IndexParams params;
+    if (!parseIndexParams(params_str, &params))
+    {
+        return;
+    }
+
+    if (!params.has_bloom || !params.bloom.enabled || params.bloom.meta_gpid == 0)
+    {
+        return;
+    }
+
+    Status status = Status::OK;
+    switch (index_type)
+    {
+        case CatalogManager::IndexType::BTREE:
+        {
+            auto *btree = static_cast<BTree *>(index_ptr);
+            status = btree->loadBloomFilter(params.bloom.meta_gpid, params.bloom.target_fpr, ctx);
+            break;
+        }
+        case CatalogManager::IndexType::HASH:
+        {
+            auto *hash = static_cast<HashIndex *>(index_ptr);
+            status = hash->loadBloomFilter(params.bloom.meta_gpid, params.bloom.target_fpr, ctx);
+            break;
+        }
+        case CatalogManager::IndexType::GIN:
+        {
+            auto *gin = static_cast<GinIndex *>(index_ptr);
+            status = gin->loadBloomFilter(params.bloom.meta_gpid, params.bloom.target_fpr, ctx);
+            break;
+        }
+        default:
+            return;
+    }
+
+    if (status != Status::OK)
+    {
+        LOG_WARNING(STORAGE, "Failed to load Bloom filter for index %s: %d",
+                    index_info.index_id.toString().c_str(), static_cast<int>(status));
+    }
+}
 
 /**
  * Helper: Get column data type from catalog
@@ -148,13 +211,12 @@ Status IndexFactory::createIndex(
         {
             // B-Tree uses page-based storage
             // Create new B-Tree index
-            uint32_t root_page = 0;
             Status status = BTree::create(
                 db,
                 index_info.index_id,
                 index_info.table_id,
                 index_info.column_ids,
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -163,7 +225,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created B-Tree
-            auto btree = BTree::open(db, index_info.index_id, root_page, ctx);
+            auto btree = BTree::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!btree)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created B-Tree");
@@ -171,12 +233,19 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = btree.release();  // Transfer ownership to caller
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
         case CatalogManager::IndexType::LSM:
         {
             // LSM-Tree uses file-based storage
+            if (index_info.tablespace_id != PRIMARY_TABLESPACE_ID)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                 "LSM indexes only supported in primary tablespace");
+                return Status::NOT_IMPLEMENTED;
+            }
             std::string index_path = generateIndexPath(db->path(), index_info.index_id, index_type);
 
             // Ensure base indexes directory exists
@@ -221,17 +290,17 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = static_cast<void*>(lsm);
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
         case CatalogManager::IndexType::HASH:
         {
             // Hash index - page-based storage
-            uint32_t meta_page = 0;
             Status status = HashIndex::create(
                 db,
                 index_info.index_id,
-                &meta_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -240,7 +309,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created Hash index
-            auto hash = HashIndex::open(db, index_info.index_id, meta_page, ctx);
+            auto hash = HashIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!hash)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created Hash index");
@@ -248,17 +317,17 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = hash.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
         case CatalogManager::IndexType::GIN:
         {
             // GIN index - page-based storage
-            uint32_t meta_page = 0;
             Status status = GinIndex::create(
                 db,
                 index_info.index_id,
-                &meta_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -267,7 +336,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created GIN index
-            auto gin = GinIndex::open(db, index_info.index_id, meta_page, ctx);
+            auto gin = GinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!gin)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created GIN index");
@@ -275,17 +344,17 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = gin.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
         case CatalogManager::IndexType::BITMAP:
         {
             // Bitmap index - page-based storage
-            uint32_t meta_page = 0;
             Status status = BitmapIndex::create(
                 db,
                 index_info.index_id,
-                &meta_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -294,7 +363,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created Bitmap index
-            auto bitmap = BitmapIndex::open(db, index_info.index_id, meta_page, ctx);
+            auto bitmap = BitmapIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!bitmap)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created Bitmap index");
@@ -302,6 +371,7 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = bitmap.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
@@ -310,7 +380,6 @@ Status IndexFactory::createIndex(
             // R-Tree spatial index - page-based storage
             // Use default max_entries from index_info or standard value
             uint32_t max_entries = index_info.rtree_max_entries; // Already has default of 50
-            uint32_t root_page = 0;
 
             Status status = RTree::create(
                 db,
@@ -318,7 +387,7 @@ Status IndexFactory::createIndex(
                 index_info.table_id,
                 index_info.column_ids,
                 max_entries,
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -327,7 +396,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created R-Tree index
-            auto rtree = RTree::open(db, index_info.index_id, root_page, max_entries, ctx);
+            auto rtree = RTree::open(db, index_info.index_id, index_info.root_gpid, max_entries, ctx);
             if (!rtree)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created R-Tree index");
@@ -335,13 +404,13 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = rtree.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
         case CatalogManager::IndexType::COLUMNSTORE:
         {
             // Columnstore - page-based storage with default segment size and RLE compression
-            uint32_t root_page = 0;
             Status status = ColumnstoreIndex::create(
                 db,
                 index_info.index_id,
@@ -349,7 +418,7 @@ Status IndexFactory::createIndex(
                 index_info.column_ids,
                 1024,  // Default segment_size
                 CompressionType::RLE,  // Default compression
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -358,7 +427,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created Columnstore index
-            auto columnstore = ColumnstoreIndex::open(db, index_info.index_id, root_page, 1024, ctx);
+            auto columnstore = ColumnstoreIndex::open(db, index_info.index_id, index_info.root_gpid, 1024, ctx);
             if (!columnstore)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created Columnstore index");
@@ -366,6 +435,7 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = columnstore.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
@@ -385,7 +455,6 @@ Status IndexFactory::createIndex(
                 return status;
             }
 
-            uint32_t root_page = 0;
             status = HnswIndex::create(
                 db,
                 index_info.index_id,
@@ -396,7 +465,7 @@ Status IndexFactory::createIndex(
                 16,    // Default m (max connections)
                 200,   // Default ef_construction
                 100,   // Default ef_search
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -405,7 +474,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created HNSW index
-            auto hnsw = HnswIndex::open(db, index_info.index_id, root_page, ctx);
+            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!hnsw)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created HNSW index");
@@ -413,6 +482,7 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = hnsw.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
@@ -433,7 +503,6 @@ Status IndexFactory::createIndex(
                 return status;
             }
 
-            uint32_t root_page = 0;
             status = BrinIndex::create(
                 db,
                 index_info.index_id,
@@ -441,7 +510,7 @@ Status IndexFactory::createIndex(
                 index_info.column_ids,
                 static_cast<uint8_t>(value_type),
                 128,  // Default range_size
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -450,7 +519,7 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created BRIN index
-            auto brin = BrinIndex::open(db, index_info.index_id, root_page, ctx);
+            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!brin)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created BRIN index");
@@ -458,6 +527,7 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = brin.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
@@ -479,14 +549,13 @@ Status IndexFactory::createIndex(
                 return Status::NOT_FOUND;
             }
 
-            uint32_t root_page = 0;
             Status status = GiSTIndex::create(
                 db,
                 index_info.index_id,
                 index_info.table_id,
                 index_info.column_ids,
                 opclass,
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -496,7 +565,7 @@ Status IndexFactory::createIndex(
 
             // Open the created GiST index
             auto gist = GiSTIndex::open(db, index_info.index_id, index_info.table_id,
-                                       index_info.column_ids, opclass, root_page, ctx);
+                                       index_info.column_ids, opclass, index_info.root_gpid, ctx);
             if (!gist)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created GiST index");
@@ -504,6 +573,7 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = gist.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
@@ -525,14 +595,13 @@ Status IndexFactory::createIndex(
                 return Status::NOT_FOUND;
             }
 
-            uint32_t root_page = 0;
             Status status = SPGiSTIndex::create(
                 db,
                 index_info.index_id,
                 index_info.table_id,
                 index_info.column_ids,
                 opclass,
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -542,7 +611,7 @@ Status IndexFactory::createIndex(
 
             // Open the created SP-GiST index
             auto spgist = SPGiSTIndex::open(db, index_info.index_id, index_info.table_id,
-                                           index_info.column_ids, opclass, root_page, ctx);
+                                           index_info.column_ids, opclass, index_info.root_gpid, ctx);
             if (!spgist)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created SP-GiST index");
@@ -550,6 +619,7 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = spgist.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
@@ -562,13 +632,12 @@ Status IndexFactory::createIndex(
                 return Status::INVALID_ARGUMENT;
             }
 
-            uint32_t root_page = 0;
             Status status = FullTextIndex::create(
                 db,
                 index_info.index_id,
                 index_info.table_id,
                 index_info.column_ids,
-                &root_page,
+                index_info.root_gpid,
                 ctx);
 
             if (status != Status::OK)
@@ -578,7 +647,7 @@ Status IndexFactory::createIndex(
 
             // Open the created FULLTEXT index
             auto fulltext = FullTextIndex::open(db, index_info.index_id, index_info.table_id,
-                                               index_info.column_ids, root_page, ctx);
+                                               index_info.column_ids, index_info.root_gpid, ctx);
             if (!fulltext)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created FULLTEXT index");
@@ -586,6 +655,7 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = fulltext.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
@@ -618,7 +688,7 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::BTREE:
         {
             // Open existing B-Tree
-            auto btree = BTree::open(db, index_info.index_id, index_info.root_page, ctx);
+            auto btree = BTree::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!btree)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open B-Tree index");
@@ -632,6 +702,12 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::LSM:
         {
             // Open existing LSM-Tree
+            if (index_info.tablespace_id != PRIMARY_TABLESPACE_ID)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                 "LSM indexes only supported in primary tablespace");
+                return Status::NOT_IMPLEMENTED;
+            }
             std::string index_path = generateIndexPath(db->path(), index_info.index_id, index_type);
 
             auto *lsm = new LSMTreeIndex(
@@ -655,7 +731,7 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::HASH:
         {
             // Open existing Hash index
-            auto hash = HashIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            auto hash = HashIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!hash)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open Hash index");
@@ -669,7 +745,7 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::GIN:
         {
             // Open existing GIN index
-            auto gin = GinIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            auto gin = GinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!gin)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open GIN index");
@@ -683,7 +759,7 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::BITMAP:
         {
             // Open existing Bitmap index
-            auto bitmap = BitmapIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            auto bitmap = BitmapIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!bitmap)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open Bitmap index");
@@ -698,7 +774,7 @@ Status IndexFactory::openIndex(
         {
             // Open existing R-Tree index with max_entries from IndexInfo
             uint32_t max_entries = index_info.rtree_max_entries;
-            auto rtree = RTree::open(db, index_info.index_id, index_info.root_page, max_entries, ctx);
+            auto rtree = RTree::open(db, index_info.index_id, index_info.root_gpid, max_entries, ctx);
             if (!rtree)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open R-Tree index");
@@ -712,7 +788,7 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::COLUMNSTORE:
         {
             // Open existing Columnstore index with default segment size
-            auto columnstore = ColumnstoreIndex::open(db, index_info.index_id, index_info.root_page, 1024, ctx);
+            auto columnstore = ColumnstoreIndex::open(db, index_info.index_id, index_info.root_gpid, 1024, ctx);
             if (!columnstore)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open Columnstore index");
@@ -726,7 +802,7 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::HNSW:
         {
             // HNSW open is simple but creation requires dimensions
-            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!hnsw)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open HNSW index");
@@ -740,7 +816,7 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::BRIN:
         {
             // BRIN open is simple but creation requires value_type
-            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!brin)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open BRIN index");
@@ -763,7 +839,7 @@ Status IndexFactory::openIndex(
             }
 
             auto gist = GiSTIndex::open(db, index_info.index_id, index_info.table_id,
-                                       index_info.column_ids, opclass, index_info.root_page, ctx);
+                                       index_info.column_ids, opclass, index_info.root_gpid, ctx);
             if (!gist)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open GiST index");
@@ -786,7 +862,7 @@ Status IndexFactory::openIndex(
             }
 
             auto spgist = SPGiSTIndex::open(db, index_info.index_id, index_info.table_id,
-                                           index_info.column_ids, opclass, index_info.root_page, ctx);
+                                           index_info.column_ids, opclass, index_info.root_gpid, ctx);
             if (!spgist)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open SP-GiST index");
@@ -801,7 +877,7 @@ Status IndexFactory::openIndex(
         {
             // Open existing FULLTEXT index
             auto fulltext = FullTextIndex::open(db, index_info.index_id, index_info.table_id,
-                                               index_info.column_ids, index_info.root_page, ctx);
+                                               index_info.column_ids, index_info.root_gpid, ctx);
             if (!fulltext)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open FULLTEXT index");

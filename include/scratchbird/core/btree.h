@@ -7,6 +7,8 @@
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/bloom_filter.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -139,6 +141,7 @@ namespace scratchbird
             uint32_t idx_flags;
 
             uint64_t idx_root_page;
+            uint16_t idx_tablespace_id = 0;
             uint16_t idx_height;
 
             uint64_t idx_tuple_count;
@@ -164,10 +167,10 @@ namespace scratchbird
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
                                  const UuidV7Bytes &table_uuid,
                                  const std::vector<UuidV7Bytes> &column_uuids,
-                                 uint32_t *root_page_out, ErrorContext *ctx = nullptr);
+                                 GPID root_gpid, ErrorContext *ctx = nullptr);
 
             static std::unique_ptr<BTree> open(Database *db, const UuidV7Bytes &index_uuid,
-                                               uint32_t root_page, ErrorContext *ctx = nullptr);
+                                               GPID root_gpid, ErrorContext *ctx = nullptr);
 
             // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
             // Task 17 MGA Phase 3.1: Added xid parameter for transaction tracking
@@ -239,6 +242,15 @@ namespace scratchbird
                            uint64_t xid,
                            ErrorContext *ctx = nullptr);
 
+            Status attachBloomFilter(const BloomFilterConfig &config,
+                                     uint64_t estimated_keys,
+                                     ErrorContext *ctx = nullptr);
+            Status loadBloomFilter(GPID meta_gpid, double target_fpr,
+                                   ErrorContext *ctx = nullptr);
+            Status detachBloomFilter(ErrorContext *ctx = nullptr);
+            Status rebuildBloomFilter(ErrorContext *ctx = nullptr);
+            BloomFilter *getBloomFilter() const { return bloom_filter_.get(); }
+
             // PHASE 2 TASK 2.2: IndexGCInterface implementation
             // Remove index entries pointing to dead tuples
             // Called by garbage collector after heap sweep identifies dead TIDs
@@ -266,6 +278,10 @@ namespace scratchbird
             Database *db_;
             SBBTreeIndex index_info_;
             CharsetManager charset_manager_; // For collation-aware key comparisons
+
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
+            GPID indexGPID(uint64_t page_num) const;
 
             // Collation-aware key comparison using CharsetManager
             // Returns: -1 if key1 < key2, 0 if equal, 1 if key1 > key2
@@ -343,6 +359,8 @@ namespace scratchbird
             // STOR-L3: Check if parent page is underutilized and merge recursively
             void checkAndMergeParentRecursive(uint64_t page_num, VacuumStats &stats,
                                               ErrorContext *ctx);
+
+            std::unique_ptr<BloomFilter> bloom_filter_;
         };
 
         // B-tree range scan iterator

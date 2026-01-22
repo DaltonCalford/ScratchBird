@@ -21,7 +21,8 @@ QueryCompilerV2::QueryCompilerV2(core::Database* db)
     if (catalog_) {
         core::CatalogManager::SchemaInfo public_schema_info;
         core::ErrorContext ctx;
-        if (catalog_->getSchema("public", public_schema_info, &ctx) == core::Status::OK) {
+        if (catalog_->getSchema("users.public", public_schema_info, &ctx) == core::Status::OK ||
+            catalog_->getSchema("public", public_schema_info, &ctx) == core::Status::OK) {
             current_schema_ = public_schema_info.schema_id;
             default_schema_ = public_schema_info.schema_id;
         }

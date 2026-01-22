@@ -38,6 +38,8 @@ Out of scope:
   schema shape and types.
 - Integer identity columns (pid, processlist ID, attachment id) should use
   `sys.sessions.connection_id`, cast to the target integer size if required.
+- PostgreSQL OID mapping follows `docs/specifications/operations/OID_MAPPING_STRATEGY.md`.
+  If OID mapping is disabled or unavailable, return `NULL`.
 
 ### State Mapping (Common)
 

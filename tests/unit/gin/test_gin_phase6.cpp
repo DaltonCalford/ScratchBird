@@ -4,6 +4,7 @@
 #include "scratchbird/core/gin_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/tid.h"
 #include <iostream>
 #include "gtest/gtest.h"
 #include <vector>
@@ -63,16 +64,16 @@ void testSIMDSetOperations()
     std::cout << "  Got: {";
     for (size_t i = 0; i < intersection_result.size(); i++)
     {
-        std::cout << intersection_result[i];
+        std::cout << tidToString(intersection_result[i]);
         if (i < intersection_result.size() - 1)
             std::cout << ", ";
     }
     std::cout << "}\n";
 
     assert(intersection_result.size() == 3);
-    assert(intersection_result[0] == 1);
-    assert(intersection_result[1] == 5);
-    assert(intersection_result[2] == 9);
+    assert(intersection_result[0] == convertLegacyTID(1));
+    assert(intersection_result[1] == convertLegacyTID(5));
+    assert(intersection_result[2] == convertLegacyTID(9));
 
     // Test union
     std::cout << "\nTesting SIMD union...\n";
@@ -89,7 +90,7 @@ void testSIMDSetOperations()
     // Verify sorted and unique
     for (size_t i = 1; i < union_result.size(); i++)
     {
-        assert(union_result[i] > union_result[i - 1]);
+        assert(union_result[i - 1] < union_result[i]);
     }
 
     std::cout << "✓ SIMD set operations working correctly\n";
@@ -410,7 +411,7 @@ static void testEdgeCases()
     std::vector<std::vector<uint64_t>> single_list = {{42}};
     auto single_result = GinIndex::mergeTidListsSIMD(single_list);
     assert(single_result.size() == 1);
-    assert(single_result[0] == 42);
+    assert(single_result[0] == convertLegacyTID(42));
 
     std::cout << "Testing parallel queries with empty index...\n";
     std::vector<std::vector<uint8_t>> test_keys = {makeKey("nonexistent")};

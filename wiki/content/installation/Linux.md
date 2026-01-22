@@ -334,7 +334,7 @@ enabled = false
 # key_file = /etc/scratchbird/ssl/server.key
 
 [memory]
-shared_buffers = 128MB
+buffer_pool_size = 128MB
 work_mem = 4MB
 
 [logging]

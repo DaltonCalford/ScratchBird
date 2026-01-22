@@ -105,8 +105,8 @@ gdb /usr/bin/sb_server /var/lib/scratchbird/core.12345
 # Check available memory
 free -h
 
-# Reduce shared_buffers if needed
-# Edit sb_server.conf: shared_buffers = 256MB
+# Reduce buffer_pool_size if needed
+# Edit sb_server.conf: buffer_pool_size = 256MB
 ```
 
 ---
@@ -291,7 +291,7 @@ SELECT
     c.relname,
     pg_size_pretty(count(*) * 8192) AS buffered,
     round(100.0 * count(*) / (
-        SELECT setting::integer FROM pg_settings WHERE name = 'shared_buffers'
+        SELECT setting::integer FROM pg_settings WHERE name = 'buffer_pool_size'
     ), 2) AS buffer_percent
 FROM pg_buffercache b
 JOIN pg_class c ON b.relfilenode = c.relfilenode
@@ -304,7 +304,7 @@ LIMIT 20;
 ```ini
 # In sb_server.conf
 [memory]
-shared_buffers = 256MB      # Reduce if needed
+buffer_pool_size = 256MB      # Reduce if needed
 work_mem = 4MB              # Per-operation memory
 maintenance_work_mem = 64MB # For VACUUM, CREATE INDEX
 ```

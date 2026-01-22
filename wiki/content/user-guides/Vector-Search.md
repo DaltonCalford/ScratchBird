@@ -580,8 +580,8 @@ REINDEX INDEX idx_documents_embedding;
 # Increase work_mem for vector operations
 work_mem = 64MB
 
-# Ensure enough shared_buffers for index
-shared_buffers = 2GB
+# Ensure enough buffer_pool_size for index
+buffer_pool_size = 2GB
 ```
 
 ---

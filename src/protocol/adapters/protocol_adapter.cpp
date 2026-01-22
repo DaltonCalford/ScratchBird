@@ -349,37 +349,41 @@ protocol::ProtocolCodec::ColumnValue ProtocolAdapter::toColumnValue(const sblr::
 }
 
 core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
-    if (database_ && connection_ctx_ && executor_) {
+    if ((database_ || shared_database_) && connection_ctx_ && executor_) {
         return core::Status::OK;
     }
 
-    // Default database path under build/database
-    if (database_path_.empty()) {
-        database_path_ = std::filesystem::path("build") / "database" / "protocol_default.sbdb";
-    }
+    core::Database* db = shared_database_;
+    if (!db) {
+        // Default database path under build/database
+        if (database_path_.empty()) {
+            database_path_ = std::filesystem::path("build") / "database" / "protocol_default.sbdb";
+        }
 
-    std::error_code ec;
-    std::filesystem::create_directories(database_path_.parent_path(), ec);
-    if (ec) {
-        SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "Failed to create database directory");
-        return core::Status::IO_ERROR;
-    }
+        std::error_code ec;
+        std::filesystem::create_directories(database_path_.parent_path(), ec);
+        if (ec) {
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "Failed to create database directory");
+            return core::Status::IO_ERROR;
+        }
 
-    if (!std::filesystem::exists(database_path_)) {
-        auto status = core::Database::create(database_path_.string(), 16384, ctx);
+        if (!std::filesystem::exists(database_path_)) {
+            auto status = core::Database::create(database_path_.string(), 16384, ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+        }
+
+        database_ = std::make_unique<core::Database>();
+        auto status = database_->open(database_path_.string(), ctx);
         if (status != core::Status::OK) {
+            database_.reset();
             return status;
         }
+        db = database_.get();
     }
 
-    database_ = std::make_unique<core::Database>();
-    auto status = database_->open(database_path_.string(), ctx);
-    if (status != core::Status::OK) {
-        database_.reset();
-        return status;
-    }
-
-    status = database_->connect(connection_ctx_, ctx);
+    auto status = db->connect(connection_ctx_, ctx);
     if (status != core::Status::OK) {
         database_.reset();
         connection_ctx_.reset();
@@ -411,9 +415,9 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
         connection_ctx_->setProtocolSessionId(protocol_session_id);
     }
 
-    executor_ = std::make_unique<sblr::Executor>(database_.get());
+    executor_ = std::make_unique<sblr::Executor>(db);
     executor_->setConnectionContext(connection_ctx_.get());
-    compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(database_.get());
+    compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(db);
 
     return core::Status::OK;
 }

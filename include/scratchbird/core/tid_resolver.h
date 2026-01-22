@@ -18,7 +18,7 @@ namespace scratchbird::core
 using ID = UuidV7Bytes;
 
 /**
- * BloomFilter - Fast probabilistic set membership test
+ * TIDBloomFilter - Fast probabilistic set membership test
  *
  * Used to quickly determine if a TID has been migrated.
  * False positive rate: ~1% (configurable)
@@ -26,7 +26,7 @@ using ID = UuidV7Bytes;
  *
  * Sprint 4 Task 5.4.2: Dual-Source Visibility
  */
-class BloomFilter
+class TIDBloomFilter
 {
 public:
     /**
@@ -35,12 +35,12 @@ public:
      * @param expected_items Expected number of items to insert
      * @param false_positive_rate Target false positive rate (default 0.01 = 1%)
      */
-    BloomFilter(uint64_t expected_items, float false_positive_rate = 0.01f);
+    TIDBloomFilter(uint64_t expected_items, float false_positive_rate = 0.01f);
 
     /**
      * Destructor
      */
-    ~BloomFilter();
+    ~TIDBloomFilter();
 
     /**
      * Insert an item into the bloom filter
@@ -224,7 +224,7 @@ private:
     struct TableMigrationData
     {
         ID table_id;
-        std::unique_ptr<BloomFilter> bloom;  // Fast "has TID been migrated?" check
+    std::unique_ptr<TIDBloomFilter> bloom;  // Fast "has TID been migrated?" check
         std::unordered_map<uint64_t, uint64_t> tid_mapping;  // Exact source TID → target TID
     };
 

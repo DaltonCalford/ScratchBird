@@ -27,6 +27,7 @@ The core system specifications define the fundamental architecture, internal API
 
 ### System Summaries
 
+- **[ENGINE_CORE_UNIFIED_SPEC.md](ENGINE_CORE_UNIFIED_SPEC.md)** - Unified Alpha core engine specification (consolidated)
 - **[CORE_IMPLEMENTATION_SPECS_SUMMARY.md](CORE_IMPLEMENTATION_SPECS_SUMMARY.md)** - Summary of core implementation specifications
 - **[design_limits.md](design_limits.md)** - System design limits and constraints
 

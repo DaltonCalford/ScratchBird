@@ -16,7 +16,7 @@ This document covers PostgreSQL-compatible database and schema operations in Scr
 The PostgreSQL emulation layer provides compatibility with PostgreSQL 16 syntax for database and schema management. When PostgreSQL clients connect to ScratchBird, they can use native PostgreSQL DDL commands to manage logical databases and schemas.
 
 **Key Points:**
-- Database operations create emulated schema metadata in the `/remote/emulated/postgresql/{server}/{database}/` path
+- Database operations create emulated schema metadata in the `/remote/emulation/postgresql/{server}/{database}/` path
 - No physical database files are created (emulation only)
 - Schema objects are organized hierarchically within databases
 - Full support for ownership, authorization, and cascading drops
@@ -95,7 +95,7 @@ CREATE DATABASE analytics
 ### Notes
 
 - Database names must be unique within the PostgreSQL emulation namespace
-- The database is created in the path: `/remote/emulated/postgresql/{server}/{database_name}/`
+- The database is created in the path: `/remote/emulation/postgresql/{server}/{database_name}/`
 - Most WITH options are parsed for compatibility but not fully enforced at the storage level
 - The database will contain a default `public` schema automatically
 

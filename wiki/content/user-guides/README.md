@@ -221,7 +221,7 @@ AND n_live_tup > 10000;
 **Topics covered:**
 - Query analysis with EXPLAIN
 - Index optimization strategies
-- Configuration tuning (shared_buffers, work_mem)
+- Configuration tuning (buffer_pool_size, work_mem)
 - Connection pooling
 - Monitoring and diagnostics
 

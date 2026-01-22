@@ -41,7 +41,7 @@ MySQL Client (mysql, MySQL Workbench, phpMyAdmin, etc.)
 +---------------------------------------------------------------------+
 ```
 
-**Schema Path:** `/remote/emulated/mysql/{server}/{database}/`
+**Schema Path:** `/remote/emulation/mysql/{server}/{database}/`
 
 ---
 

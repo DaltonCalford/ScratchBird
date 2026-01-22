@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/gpid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -172,6 +173,7 @@ namespace scratchbird
             ID idx_table_uuid;                  // Table UUID
             std::vector<ID> idx_column_uuids;   // Indexed columns (usually 1)
             uint32_t idx_root_page;             // Root page number
+            uint16_t idx_tablespace_id = 0;
             uint16_t idx_range_size;            // Blocks per range (default 128)
             uint64_t idx_total_ranges;          // Total number of ranges
             uint64_t idx_creation_xid;          // Transaction that created index
@@ -197,9 +199,35 @@ namespace scratchbird
                                  const std::vector<UuidV7Bytes> &column_uuids,
                                  uint8_t value_type,            // DataType enum value
                                  uint16_t range_size = 128,     // Blocks per range
-                                 uint32_t *root_page_out = nullptr,
+                                 GPID root_gpid = 0,
                                  ErrorContext *ctx = nullptr);
 
+            static Status create(Database *db,
+                                 const UuidV7Bytes &index_uuid,
+                                 const UuidV7Bytes &table_uuid,
+                                 const std::vector<UuidV7Bytes> &column_uuids,
+                                 uint8_t value_type,
+                                 uint16_t range_size,
+                                 uint16_t tablespace_id,
+                                 uint32_t *root_page_out,
+                                 ErrorContext *ctx = nullptr);
+
+            // Legacy convenience overload (page-number based)
+            static Status create(Database *db,
+                                 const UuidV7Bytes &index_uuid,
+                                 const UuidV7Bytes &table_uuid,
+                                 const std::vector<UuidV7Bytes> &column_uuids,
+                                 uint8_t value_type,
+                                 uint16_t range_size,
+                                 uint32_t *root_page_out,
+                                 ErrorContext *ctx = nullptr);
+
+            static std::unique_ptr<BrinIndex> open(Database *db,
+                                                   const UuidV7Bytes &index_uuid,
+                                                   GPID root_gpid,
+                                                   ErrorContext *ctx = nullptr);
+
+            // Legacy convenience overload (page-number based)
             static std::unique_ptr<BrinIndex> open(Database *db,
                                                    const UuidV7Bytes &index_uuid,
                                                    uint32_t root_page,
@@ -291,6 +319,16 @@ namespace scratchbird
                                      ErrorContext *ctx = nullptr) override;
 
             /**
+             * Update block-range references after table migration.
+             *
+             * Maps range start/end blocks using the provided old->new GPID mapping.
+             */
+            Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                            uint64_t *ranges_updated_out = nullptr,
+                                            uint64_t *pages_modified_out = nullptr,
+                                            ErrorContext *ctx = nullptr);
+
+            /**
              * Get index type name for logging
              */
             const char *indexTypeName() const override
@@ -374,6 +412,10 @@ namespace scratchbird
             bool is_range_visible(const SBBrinRange *range,
                                   uint64_t current_xid,
                                   ErrorContext *ctx) const;
+
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
+            GPID indexGPID(uint64_t page_num) const;
 
             /**
              * Update range summary with new min/max values

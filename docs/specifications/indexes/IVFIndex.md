@@ -1307,6 +1307,15 @@ With MGA metadata, entry size increases:
 
 ---
 
+## Tablespace + TID/GPID Requirements
+
+- **Row identity:** Store row references as `TID` (full `GPID + slot`) rather than legacy 32-bit page IDs.
+- **Tablespace routing:** IVF metadata pages and inverted lists must allocate/pin via `root_gpid` and `tablespace_id`.
+- **Heap fetch:** Result resolution must pin heap pages with `pinPageGlobal` using the `GPID` embedded in `TID`.
+- **Migration:** `updateTIDsAfterMigration` must rewrite row references across all inverted lists (including PQ code paths).
+
+---
+
 ## Core API
 
 ### IVFIndex Class

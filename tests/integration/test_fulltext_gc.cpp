@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/fulltext_index.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/buffer_pool.h"
 #include <filesystem>
@@ -74,15 +75,18 @@ TEST_F(FullTextGCTest, DelegationToGINWorks)
     ID column_uuid = generateUuidV7();
 
     // Create FullText index
-    uint32_t root_page = 0;
-    Status status = FullTextIndex::create(db_.get(), index_uuid, table_uuid,
-                                         {column_uuid}, &root_page, nullptr);
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate FullText root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = FullTextIndex::create(db_.get(), index_uuid, table_uuid,
+                                         {column_uuid}, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to create FullText index";
     ASSERT_GT(root_page, 0);
 
     // Open index
     auto ft_index = FullTextIndex::open(db_.get(), index_uuid, table_uuid,
-                                       {column_uuid}, root_page, nullptr);
+                                       {column_uuid}, root_gpid, nullptr);
     ASSERT_NE(ft_index, nullptr) << "Failed to open FullText index";
 
     // Insert some tsvector data
@@ -135,13 +139,16 @@ TEST_F(FullTextGCTest, EmptyDeadTidsIsNoOp)
     ID column_uuid = generateUuidV7();
 
     // Create FullText index
-    uint32_t root_page = 0;
-    Status status = FullTextIndex::create(db_.get(), index_uuid, table_uuid,
-                                         {column_uuid}, &root_page, nullptr);
+    GPID root_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate FullText root page";
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+    status = FullTextIndex::create(db_.get(), index_uuid, table_uuid,
+                                         {column_uuid}, root_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     auto ft_index = FullTextIndex::open(db_.get(), index_uuid, table_uuid,
-                                       {column_uuid}, root_page, nullptr);
+                                       {column_uuid}, root_gpid, nullptr);
     ASSERT_NE(ft_index, nullptr);
 
     // Insert one tsvector
@@ -179,16 +186,20 @@ TEST_F(FullTextGCTest, GCDelegationSurvivesRestart)
     ID table_uuid = generateUuidV7();
     ID column_uuid = generateUuidV7();
 
+    GPID root_gpid = 0;
     uint32_t root_page = 0;
 
     // Phase 1: Create index and insert data
     {
-        Status status = FullTextIndex::create(db_.get(), index_uuid, table_uuid,
-                                             {column_uuid}, &root_page, nullptr);
+        Status status = db_->page_manager()->allocatePageInTablespace(0, &root_gpid, nullptr);
+        ASSERT_EQ(status, Status::OK) << "Failed to allocate FullText root page";
+        root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+        status = FullTextIndex::create(db_.get(), index_uuid, table_uuid,
+                                             {column_uuid}, root_gpid, nullptr);
         ASSERT_EQ(status, Status::OK);
 
         auto ft_index = FullTextIndex::open(db_.get(), index_uuid, table_uuid,
-                                           {column_uuid}, root_page, nullptr);
+                                           {column_uuid}, root_gpid, nullptr);
         ASSERT_NE(ft_index, nullptr);
 
         // Insert tsvector

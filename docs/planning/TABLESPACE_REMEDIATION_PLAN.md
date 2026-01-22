@@ -131,4 +131,8 @@ Acceptance: test suite covers core tablespace flows and failure modes.
 - Root_gpid change affects on-disk format; bump version and ensure no silent mixing.
 
 ## Recent Progress
-- 2026-01-21: No tablespace-specific phase items completed in this update; validation runs are green with `SCRATCHBIRD_TEST_NETWORK=1`.
+- 2026-01-21: Added sb_tablespace_files catalog page allocation/backfill plus load/persist helpers for tablespace file paths.
+- 2026-01-21: Maintained tablespace table_count/index_count on table/index create/drop and table migration.
+- 2026-01-21: Implemented tablespace-aware heap allocation and GPID-based pin/unpin in StorageEngine DML paths.
+- 2026-01-21: Heap scans now iterate GPID-based pages for custom tablespaces and emit correct TIDs.
+- 2026-01-21: deleteTuple legacy path honors tablespace ID overrides from TIDs.

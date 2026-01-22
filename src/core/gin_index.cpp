@@ -13,6 +13,7 @@
 #include <mutex>
 #include <vector>
 #include <set>
+#include <unordered_set>
 #if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h> // SSE2
 #endif
@@ -166,6 +167,99 @@ namespace scratchbird
             }
         };
 
+        static Status decodeCompressedPostingList(const SBGinPostingListPage *list_page,
+                                                  uint32_t page_size,
+                                                  std::vector<TID> *tids_out,
+                                                  ErrorContext *ctx)
+        {
+            if (!list_page || !tids_out)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Invalid arguments to decodeCompressedPostingList");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint16_t tid_count = list_page->gpl_entry_count;
+            if (tid_count == 0)
+            {
+                return Status::OK;
+            }
+
+            uint32_t max_bytes = page_size - GinSettings::POSTING_PAGE_HEADER;
+            if (list_page->gpl_compressed_bytes == 0 ||
+                list_page->gpl_compressed_bytes > max_bytes)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                                  "Invalid compressed posting list size");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            std::vector<uint64_t> legacy_tids(tid_count);
+            size_t decoded = decompress_posting_list(
+                list_page->getCompressedData(),
+                list_page->gpl_compressed_bytes,
+                legacy_tids.data(),
+                tid_count);
+            if (decoded != tid_count)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                                  "Failed to decompress posting list");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            tids_out->reserve(tids_out->size() + tid_count);
+            for (uint16_t i = 0; i < tid_count; i++)
+            {
+                tids_out->push_back(convertLegacyTID(legacy_tids[i]));
+            }
+
+            return Status::OK;
+        }
+
+        static bool tryCompressPostingList(SBGinPostingListPage *list_page,
+                                           uint32_t page_size,
+                                           const std::vector<TID> &tids)
+        {
+            if (!list_page || tids.empty())
+            {
+                return false;
+            }
+
+            std::vector<uint64_t> legacy_tids;
+            legacy_tids.reserve(tids.size());
+            for (const TID &tid : tids)
+            {
+                uint64_t legacy = convertTIDtoLegacy(tid);
+                if (legacy == 0)
+                {
+                    return false;
+                }
+                legacy_tids.push_back(legacy);
+            }
+
+            if (!should_compress(legacy_tids.data(), static_cast<uint16_t>(legacy_tids.size())))
+            {
+                return false;
+            }
+
+            uint32_t max_bytes = page_size - GinSettings::POSTING_PAGE_HEADER;
+            std::vector<uint8_t> compressed(max_bytes);
+            size_t compressed_bytes = compress_posting_list(
+                legacy_tids.data(),
+                static_cast<uint16_t>(legacy_tids.size()),
+                compressed.data(),
+                max_bytes);
+            if (compressed_bytes == 0)
+            {
+                return false;
+            }
+
+            list_page->gpl_is_compressed = 1;
+            list_page->gpl_compressed_bytes = static_cast<uint16_t>(compressed_bytes);
+            std::memcpy(list_page->getCompressedData(), compressed.data(), compressed_bytes);
+            return true;
+        }
+
         // ========================================================================
         // GinIndex Implementation
         // ========================================================================
@@ -200,11 +294,213 @@ namespace scratchbird
             return (db_->page_size() - 88) / sizeof(GinPostingEntry);
         }
 
+        Status GinIndex::attachBloomFilter(const BloomFilterConfig &config,
+                                           uint64_t estimated_keys,
+                                           ErrorContext *ctx)
+        {
+            if (bloom_filter_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Bloom filter already attached");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            GPID meta_gpid = 0;
+            Status status = BloomFilter::create(db_, index_uuid_, config, estimated_keys,
+                                               tablespace_id_, &meta_gpid, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            bloom_filter_ = BloomFilter::open(db_, meta_gpid, ctx);
+            if (!bloom_filter_)
+            {
+                return Status::IO_ERROR;
+            }
+            bloom_filter_->setTargetFpr(config.target_fpr);
+
+            return rebuildBloomFilter(ctx);
+        }
+
+        Status GinIndex::loadBloomFilter(GPID meta_gpid, double target_fpr, ErrorContext *ctx)
+        {
+            if (bloom_filter_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Bloom filter already attached");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            bloom_filter_ = BloomFilter::open(db_, meta_gpid, ctx);
+            if (!bloom_filter_)
+            {
+                return Status::IO_ERROR;
+            }
+
+            bloom_filter_->setTargetFpr(target_fpr);
+            return Status::OK;
+        }
+
+        Status GinIndex::detachBloomFilter(ErrorContext *ctx)
+        {
+            if (!bloom_filter_)
+            {
+                return Status::OK;
+            }
+
+            Status status = bloom_filter_->drop(ctx);
+            bloom_filter_.reset();
+            return status;
+        }
+
+        Status GinIndex::rebuildBloomFilter(ErrorContext *ctx)
+        {
+            if (!bloom_filter_)
+            {
+                return Status::OK;
+            }
+
+            Status status = bloom_filter_->clear(ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            uint8_t *meta_data = nullptr;
+            status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
+            uint32_t pending_page = meta->gin_pending_list_head;
+            uint32_t root_page = meta->gin_entry_tree_root;
+            unpinIndexPage(meta_page_, false, ctx);
+
+            while (pending_page != 0)
+            {
+                uint8_t *pending_data = nullptr;
+                status = pinIndexPage(pending_page, (void **)&pending_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *pending = reinterpret_cast<SBGinPendingListPage *>(pending_data);
+                uint16_t entry_count = pending->gpp_entry_count;
+                uint32_t next_page = pending->gpp_next_page;
+
+                for (uint16_t i = 0; i < entry_count && i < getMaxPendingEntriesPerPage(); i++)
+                {
+                    const GinPendingEntry &entry = pending->gpp_entries[i];
+                    if (entry.key_len == 0)
+                    {
+                        continue;
+                    }
+                    Status bf_status = bloom_filter_->insert(entry.key_data, entry.key_len, ctx);
+                    if (bf_status != Status::OK)
+                    {
+                        unpinIndexPage(pending_page, false, ctx);
+                        return bf_status;
+                    }
+                }
+
+                unpinIndexPage(pending_page, false, ctx);
+                pending_page = next_page;
+            }
+
+            if (root_page == 0)
+            {
+                return Status::OK;
+            }
+
+            std::function<Status(uint32_t)> traverseTree = [&](uint32_t page_num) -> Status
+            {
+                uint8_t *page_data = nullptr;
+                Status pin_status = pinIndexPage(page_num, (void **)&page_data, ctx);
+                if (pin_status != Status::OK)
+                {
+                    return pin_status;
+                }
+
+                auto *leaf = reinterpret_cast<SBGinEntryTreeLeaf *>(page_data);
+                bool is_leaf = (leaf->get_is_leaf != 0);
+
+                if (is_leaf)
+                {
+                    uint16_t entry_count = leaf->get_entry_count;
+                    for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_LEAF_ENTRIES; i++)
+                    {
+                        uint16_t offset = leaf->get_offsets[i];
+                        if (offset == 0 || offset >= db_->page_size())
+                        {
+                            continue;
+                        }
+
+                        auto *entry = reinterpret_cast<GinEntryTreeLeafEntry *>(page_data + offset);
+                        if (entry->key_len == 0)
+                        {
+                            continue;
+                        }
+
+                        Status bf_status = bloom_filter_->insert(entry->key_data, entry->key_len, ctx);
+                        if (bf_status != Status::OK)
+                        {
+                            unpinIndexPage(page_num, false, ctx);
+                            return bf_status;
+                        }
+                    }
+
+                    unpinIndexPage(page_num, false, ctx);
+                    return Status::OK;
+                }
+
+                auto *internal = reinterpret_cast<SBGinEntryTreeInternal *>(page_data);
+                uint16_t entry_count = internal->get_entry_count;
+                std::vector<uint32_t> children;
+                children.reserve(entry_count + 1);
+
+                for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_INTERNAL_ENTRIES; i++)
+                {
+                    uint16_t offset = internal->get_offsets[i];
+                    if (offset == 0 || offset >= db_->page_size())
+                    {
+                        continue;
+                    }
+                    auto *entry = reinterpret_cast<GinEntryTreeInternalEntry *>(page_data + offset);
+                    if (entry->child_page != 0)
+                    {
+                        children.push_back(entry->child_page);
+                    }
+                }
+
+                if (internal->get_rightmost_child != 0)
+                {
+                    children.push_back(internal->get_rightmost_child);
+                }
+
+                unpinIndexPage(page_num, false, ctx);
+
+                for (uint32_t child : children)
+                {
+                    Status child_status = traverseTree(child);
+                    if (child_status != Status::OK)
+                    {
+                        return child_status;
+                    }
+                }
+
+                return Status::OK;
+            };
+
+            return traverseTree(root_page);
+        }
+
         // Create a new GIN index
         Status GinIndex::create(Database *db, const UuidV7Bytes &index_uuid,
-                                uint32_t *meta_page_out, ErrorContext *ctx)
+                                GPID meta_gpid, ErrorContext *ctx)
         {
-            if (!db || !meta_page_out)
+            if (!db || meta_gpid == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   "Invalid arguments to GinIndex::create");
@@ -218,17 +514,12 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
-            // Step 1: Allocate meta page
-            uint32_t meta_page = 0;
-            Status status = db->page_manager()->allocatePage(meta_page, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
+            uint16_t tablespace_id = getTablespaceID(meta_gpid);
+            uint32_t meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
 
             // Step 2: Pin and initialize meta page
             uint8_t *meta_page_data = nullptr;
-            status = buffer_pool->pinPage(meta_page, (void **)&meta_page_data, ctx);
+            Status status = buffer_pool->pinPageGlobal(meta_gpid, (void **)&meta_page_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -253,15 +544,41 @@ namespace scratchbird
             meta->gin_num_keys = 0;
             meta->gin_num_tuples = 0;
 
-            buffer_pool->unpinPage(meta_page, true, ctx);
-
-            *meta_page_out = meta_page;
+            buffer_pool->unpinPageGlobal(meta_gpid, true, ctx);
             return Status::OK;
+        }
+
+        Status GinIndex::create(Database *db, const UuidV7Bytes &index_uuid,
+                                uint32_t *meta_page_out, ErrorContext *ctx)
+        {
+            if (!db || !meta_page_out)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Invalid arguments to GinIndex::create");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            PageManager *page_mgr = db->page_manager();
+            if (!page_mgr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database has no page manager");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            GPID meta_gpid = 0;
+            Status status = page_mgr->allocatePageInTablespace(0, &meta_gpid, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            *meta_page_out = static_cast<uint32_t>(getPageNumber(meta_gpid));
+            return create(db, index_uuid, meta_gpid, ctx);
         }
 
         // Open an existing GIN index
         std::unique_ptr<GinIndex> GinIndex::open(Database *db, const UuidV7Bytes &index_uuid,
-                                                 uint32_t meta_page, ErrorContext *ctx)
+                                                 GPID meta_gpid, ErrorContext *ctx)
         {
             if (!db)
             {
@@ -270,11 +587,12 @@ namespace scratchbird
             }
 
             auto index = std::make_unique<GinIndex>(db, index_uuid);
-            index->meta_page_ = meta_page;
+            index->meta_page_ = static_cast<uint32_t>(getPageNumber(meta_gpid));
+            index->tablespace_id_ = getTablespaceID(meta_gpid);
 
             // Verify meta page
             uint8_t *meta_data = nullptr;
-            Status status = db->buffer_pool()->pinPage(meta_page, (void **)&meta_data, ctx);
+            Status status = db->buffer_pool()->pinPageGlobal(meta_gpid, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return nullptr;
@@ -283,21 +601,36 @@ namespace scratchbird
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             if (meta->hip_header.page_type != static_cast<uint16_t>(PageType::GIN_INDEX_META))
             {
-                db->buffer_pool()->unpinPage(meta_page, false, ctx);
+                db->buffer_pool()->unpinPageGlobal(meta_gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid GIN index meta page");
                 return nullptr;
             }
 
             if (std::memcmp(meta->gin_index_uuid, index_uuid.bytes.data(), 16) != 0)
             {
-                db->buffer_pool()->unpinPage(meta_page, false, ctx);
+                db->buffer_pool()->unpinPageGlobal(meta_gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "GIN index UUID mismatch");
                 return nullptr;
             }
 
-            db->buffer_pool()->unpinPage(meta_page, false, ctx);
+            db->buffer_pool()->unpinPageGlobal(meta_gpid, false, ctx);
 
             return index;
+        }
+
+        GPID GinIndex::indexGPID(uint64_t page_num) const
+        {
+            return makeGPID(tablespace_id_, page_num);
+        }
+
+        Status GinIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+        {
+            return buffer_pool_->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+        }
+
+        Status GinIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
+        {
+            return buffer_pool_->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
         }
 
         // Insert a composite value
@@ -305,15 +638,6 @@ namespace scratchbird
                                 std::function<std::vector<std::vector<uint8_t>>(const void *, size_t)> key_extractor,
                                 ErrorContext *ctx)
         {
-            // PHASE 1.5: Convert TID to legacy format for storage
-            uint64_t legacy_tid = convertTIDtoLegacy(tid);
-            if (legacy_tid == 0)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
-                                  "TID page number exceeds legacy index encoding");
-                return Status::NOT_SUPPORTED;
-            }
-
             if (!value_data || value_len == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid insert arguments");
@@ -329,19 +653,29 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // Insert each key into the pending list (using legacy format internally)
+            // Insert each key into the pending list
             for (const auto &key : keys)
             {
-                Status status = insertIntoPendingList(key, legacy_tid, ctx);
+                Status status = insertIntoPendingList(key, tid, ctx);
                 if (status != Status::OK)
                 {
                     return status;
+                }
+
+                if (bloom_filter_)
+                {
+                    Status bf_status = bloom_filter_->insert(key.data(), key.size(), ctx);
+                    if (bf_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE, "GIN bloom filter insert failed: %d",
+                                    static_cast<int>(bf_status));
+                    }
                 }
             }
 
             // Check if pending list threshold reached
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -350,7 +684,7 @@ namespace scratchbird
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint64_t pending_count = meta->gin_pending_list_count;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             // Auto-merge if threshold reached
             if (pending_count >= GIN_PENDING_LIST_THRESHOLD)
@@ -368,15 +702,6 @@ namespace scratchbird
                                 uint64_t current_xid,
                                 ErrorContext *ctx)
         {
-            // Convert TID to legacy format
-            uint64_t legacy_tid = convertTIDtoLegacy(tid);
-            if (legacy_tid == 0)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
-                                  "TID page number exceeds legacy index encoding");
-                return Status::NOT_SUPPORTED;
-            }
-
             if (!value_data || value_len == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid remove arguments");
@@ -408,12 +733,12 @@ namespace scratchbird
                 }
 
                 // Remove TID from the posting list/tree at posting_page
-                status = removeFromPostingList(static_cast<uint32_t>(posting_page), legacy_tid, ctx);
+                status = removeFromPostingList(static_cast<uint32_t>(posting_page), tid, ctx);
                 if (status != Status::OK)
                 {
                     // Log warning but continue with other keys
-                    LOG_WARNING(STORAGE, "Failed to remove TID %lu from posting list for key (status=%d)",
-                                legacy_tid, static_cast<int>(status));
+                    LOG_WARNING(STORAGE, "Failed to remove TID %s from posting list for key (status=%d)",
+                                tidToString(tid).c_str(), static_cast<int>(status));
                 }
             }
 
@@ -425,12 +750,12 @@ namespace scratchbird
         }
 
         // Helper: Insert into pending list
-        Status GinIndex::insertIntoPendingList(const std::vector<uint8_t> &key, uint64_t tuple_id,
+        Status GinIndex::insertIntoPendingList(const std::vector<uint8_t> &key, const TID &tuple_id,
                                                ErrorContext *ctx)
         {
             // Pin meta page
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -442,19 +767,21 @@ namespace scratchbird
             if (meta->gin_pending_list_tail == 0)
             {
                 uint32_t pending_page = 0;
-                status = db_->page_manager()->allocatePage(pending_page, ctx);
+                GPID pending_gpid = 0;
+                status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &pending_gpid, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    unpinIndexPage(meta_page_, false, ctx);
                     return status;
                 }
+                pending_page = static_cast<uint32_t>(getPageNumber(pending_gpid));
 
                 // Initialize pending page
                 uint8_t *pending_data = nullptr;
-                status = buffer_pool_->pinPage(pending_page, (void **)&pending_data, ctx);
+                status = pinIndexPage(pending_page, (void **)&pending_data, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    unpinIndexPage(meta_page_, false, ctx);
                     return status;
                 }
 
@@ -469,7 +796,7 @@ namespace scratchbird
                 pending->gpp_next_page = 0;
                 pending->gpp_entry_count = 0;
 
-                buffer_pool_->unpinPage(pending_page, true, ctx);
+                unpinIndexPage(pending_page, true, ctx);
 
                 meta->gin_pending_list_head = pending_page;
                 meta->gin_pending_list_tail = pending_page;
@@ -477,11 +804,11 @@ namespace scratchbird
 
             uint32_t tail_page = meta->gin_pending_list_tail;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             // Pin tail page
             uint8_t *tail_data = nullptr;
-            status = buffer_pool_->pinPage(tail_page, (void **)&tail_data, ctx);
+            status = pinIndexPage(tail_page, (void **)&tail_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -494,19 +821,21 @@ namespace scratchbird
             {
                 // Allocate new pending page
                 uint32_t new_pending_page = 0;
-                status = db_->page_manager()->allocatePage(new_pending_page, ctx);
+                GPID new_pending_gpid = 0;
+                status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_pending_gpid, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(tail_page, false, ctx);
+                    unpinIndexPage(tail_page, false, ctx);
                     return status;
                 }
+                new_pending_page = static_cast<uint32_t>(getPageNumber(new_pending_gpid));
 
                 // Initialize new pending page
                 uint8_t *new_pending_data = nullptr;
-                status = buffer_pool_->pinPage(new_pending_page, (void **)&new_pending_data, ctx);
+                status = pinIndexPage(new_pending_page, (void **)&new_pending_data, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(tail_page, false, ctx);
+                    unpinIndexPage(tail_page, false, ctx);
                     return status;
                 }
 
@@ -523,19 +852,19 @@ namespace scratchbird
 
                 // Link old tail to new page
                 tail->gpp_next_page = new_pending_page;
-                buffer_pool_->unpinPage(tail_page, true, ctx);
+                unpinIndexPage(tail_page, true, ctx);
 
                 // Update meta to point to new tail
-                status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+                status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(new_pending_page, false, ctx);
+                    unpinIndexPage(new_pending_page, false, ctx);
                     return status;
                 }
 
                 meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
                 meta->gin_pending_list_tail = new_pending_page;
-                buffer_pool_->unpinPage(meta_page_, true, ctx);
+                unpinIndexPage(meta_page_, true, ctx);
 
                 // Switch to new tail
                 tail_data = new_pending_data;
@@ -545,7 +874,7 @@ namespace scratchbird
 
             // Add entry to tail page
             GinPendingEntry &entry = tail->gpp_entries[tail->gpp_entry_count];
-            entry.setTID(convertLegacyTID(tuple_id)); // Convert legacy TID to GPID format
+            entry.setTID(tuple_id);
             entry.padding = 0; // Clear padding
             entry.xmin = ConnectionContext::getCurrentTransactionId(); // Record inserting transaction
             // MEDIUM-4 FIX: Use sizeof(entry.key_data) instead of magic number 54 for maintainability
@@ -554,15 +883,15 @@ namespace scratchbird
 
             tail->gpp_entry_count++;
 
-            buffer_pool_->unpinPage(tail_page, true, ctx);
+            unpinIndexPage(tail_page, true, ctx);
 
             // Update meta count
-            status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status == Status::OK)
             {
                 meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
                 meta->gin_pending_list_count++;
-                buffer_pool_->unpinPage(meta_page_, true, ctx);
+                unpinIndexPage(meta_page_, true, ctx);
             }
 
             return Status::OK;
@@ -593,6 +922,11 @@ namespace scratchbird
             std::vector<uint8_t> key(static_cast<const uint8_t *>(key_data),
                                      static_cast<const uint8_t *>(key_data) + key_len);
 
+            if (bloom_filter_ && !bloom_filter_->test(key.data(), key.size(), ctx))
+            {
+                return Status::NOT_FOUND;
+            }
+
             // Search for the key in the keys B-Tree
             uint64_t posting_page = 0;
             Status status = searchKeysTree(key, &posting_page, ctx);
@@ -600,10 +934,9 @@ namespace scratchbird
             // Get TIDs from posting list (if key found in main index)
             if (status == Status::OK && posting_page != 0)
             {
-                // PHASE 1.5: Use legacy format for internal operations, convert to TID for output
-                std::vector<uint64_t> legacy_results;
+                std::vector<TID> posting_results;
                 // FIREBIRD MGA: Pass current_xid for index-level visibility filtering
-                status = getPostingListTids(posting_page, &legacy_results, current_xid, ctx);
+                status = getPostingListTids(posting_page, &posting_results, current_xid, ctx);
                 if (status != Status::OK)
                 {
                     results->clear();
@@ -614,13 +947,8 @@ namespace scratchbird
                 {
                     // Firebird MGA: Filter TIDs from main posting list by heap tuple visibility using TIP
                     // This ensures we only return TIDs for tuples that are visible to current_xid
-                    legacy_results = filterTidsByVisibility(legacy_results, current_xid, ctx);
-
-                    // PHASE 1.5: Convert legacy uint64_t to TID structs
-                    for (uint64_t legacy_tid : legacy_results)
-                    {
-                        results->push_back(convertLegacyTID(legacy_tid));
-                    }
+                    posting_results = filterTidsByVisibility(posting_results, current_xid, ctx);
+                    results->insert(results->end(), posting_results.begin(), posting_results.end());
                 }
             }
 
@@ -629,18 +957,18 @@ namespace scratchbird
 
             // Pin meta page to get pending list head
             uint8_t *meta_data = nullptr;
-            status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status == Status::OK)
             {
                 auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
                 uint32_t pending_page = meta->gin_pending_list_head;
-                buffer_pool_->unpinPage(meta_page_, false, ctx);
+                unpinIndexPage(meta_page_, false, ctx);
 
                 // Scan through all pending list pages
                 while (pending_page != 0)
                 {
                     uint8_t *pending_data = nullptr;
-                    status = buffer_pool_->pinPage(pending_page, (void **)&pending_data, ctx);
+                    status = pinIndexPage(pending_page, (void **)&pending_data, ctx);
                     if (status != Status::OK)
                     {
                         break;
@@ -670,7 +998,7 @@ namespace scratchbird
                         }
                     }
 
-                    buffer_pool_->unpinPage(pending_page, false, ctx);
+                    unpinIndexPage(pending_page, false, ctx);
                     pending_page = next_page;
                 }
             }
@@ -686,7 +1014,7 @@ namespace scratchbird
         {
             // Pin meta page
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -696,18 +1024,18 @@ namespace scratchbird
 
             if (meta->gin_pending_list_count == 0)
             {
-                buffer_pool_->unpinPage(meta_page_, false, ctx);
+                unpinIndexPage(meta_page_, false, ctx);
                 return Status::OK;
             }
 
             uint32_t pending_head = meta->gin_pending_list_head;
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             // Step 1: Collect all entries from pending list
             struct PendingEntryWithKey
             {
                 std::vector<uint8_t> key;
-                uint64_t tid;
+                TID tid;
             };
             std::vector<PendingEntryWithKey> all_entries;
 
@@ -715,7 +1043,7 @@ namespace scratchbird
             while (current_page != 0)
             {
                 uint8_t *pending_data = nullptr;
-                status = buffer_pool_->pinPage(current_page, (void **)&pending_data, ctx);
+                status = pinIndexPage(current_page, (void **)&pending_data, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -727,15 +1055,14 @@ namespace scratchbird
                 for (uint16_t i = 0; i < pending->gpp_entry_count; i++)
                 {
                     PendingEntryWithKey entry;
-                    // Convert GPID format to legacy uint64_t for internal processing
-                    entry.tid = convertTIDtoLegacy(pending->gpp_entries[i].getTID());
+                    entry.tid = pending->gpp_entries[i].getTID();
                     entry.key.assign(pending->gpp_entries[i].key_data,
                                      pending->gpp_entries[i].key_data + pending->gpp_entries[i].key_len);
                     all_entries.push_back(entry);
                 }
 
                 uint32_t next_page = pending->gpp_next_page;
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
                 current_page = next_page;
             }
 
@@ -775,7 +1102,7 @@ namespace scratchbird
             // Step 4: Clear pending list
             // For simplicity, we'll just reset the meta page pointers
             // In a production system, we might want to deallocate the pages
-            status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -786,7 +1113,7 @@ namespace scratchbird
             meta->gin_pending_list_tail = 0;
             meta->gin_pending_list_count = 0;
 
-            buffer_pool_->unpinPage(meta_page_, true, ctx);
+            unpinIndexPage(meta_page_, true, ctx);
 
             return Status::OK;
         }
@@ -808,7 +1135,7 @@ namespace scratchbird
 
             // Pin meta page
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return stats;
@@ -820,7 +1147,7 @@ namespace scratchbird
             stats.num_tuples = meta->gin_num_tuples;
             stats.pending_list_count = meta->gin_pending_list_count;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             // Other stats require scanning the index
             stats.keys_tree_height = 0;
@@ -838,7 +1165,7 @@ namespace scratchbird
         {
             // Pin meta page to get root
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -847,7 +1174,7 @@ namespace scratchbird
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint32_t root_page = meta->gin_keys_btree_root;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             // If no root exists, key doesn't exist
             if (root_page == 0)
@@ -880,13 +1207,13 @@ namespace scratchbird
         }
 
         Status GinIndex::getPostingListTids(uint32_t posting_page,
-                                            std::vector<uint64_t> *tids_out,
+                                            std::vector<TID> *tids_out,
                                             uint64_t current_xid,
                                             ErrorContext *ctx)
         {
             // Pin the posting list page
             uint8_t *list_data = nullptr;
-            Status status = buffer_pool_->pinPage(posting_page, (void **)&list_data, ctx);
+            Status status = pinIndexPage(posting_page, (void **)&list_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -899,7 +1226,7 @@ namespace scratchbird
             {
                 // It's a posting tree
                 uint32_t tree_root = list_page->gpl_data.gpl_tree_root;
-                buffer_pool_->unpinPage(posting_page, false, ctx);
+                unpinIndexPage(posting_page, false, ctx);
                 return getPostingTreeTids(tree_root, tids_out, current_xid, ctx);
             }
 
@@ -909,65 +1236,52 @@ namespace scratchbird
 
             if (list_page->gpl_is_compressed != 0)
             {
-                // Compressed posting list - decompress
-                // NOTE: Compressed format doesn't store xmin/xmax, relies on heap visibility
-                uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
-                const uint8_t *compressed_data = list_page->getCompressedData();
-
-                // Allocate temp buffer for decompressed TIDs
-                std::vector<uint64_t> temp_tids(tid_count);
-
-                size_t decompressed_count = decompress_posting_list(
-                    compressed_data, compressed_bytes,
-                    temp_tids.data(), tid_count);
-
-                if (decompressed_count != tid_count)
+                std::vector<TID> decoded;
+                Status decode_status = decodeCompressedPostingList(
+                    list_page, db_->page_size(), &decoded, ctx);
+                unpinIndexPage(posting_page, false, ctx);
+                if (decode_status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(posting_page, false, ctx);
-                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
-                                      ("Decompression failed: expected " +
-                                          std::to_string(tid_count) + " TIDs, got " +
-                                          std::to_string(decompressed_count)).c_str());
-                    return Status::COMPRESSION_ERROR;
+                    return decode_status;
                 }
 
-                // Append decompressed TIDs to output
-                tids_out->insert(tids_out->end(), temp_tids.begin(), temp_tids.end());
+                for (const TID &tid : decoded)
+                {
+                    tids_out->push_back(tid);
+                }
+                return Status::OK;
             }
-            else
+
+            // FIREBIRD MGA: Uncompressed posting list - check xmin/xmax visibility
+            // Per MGA_RULES.md Rule 3: Use TIP-based visibility, NOT snapshots
+            for (uint16_t i = 0; i < tid_count; i++)
             {
-                // FIREBIRD MGA: Uncompressed posting list - check xmin/xmax visibility
-                // Per MGA_RULES.md Rule 3: Use TIP-based visibility, NOT snapshots
-                for (uint16_t i = 0; i < tid_count; i++)
+                const GinPostingEntry &entry = list_page->getEntries()[i];
+
+                bool is_visible;
+                if (current_xid == 0)
                 {
-                    const GinPostingEntry &entry = list_page->getEntries()[i];
+                    // Special case: when current_xid == 0, bypass visibility checking
+                    // This is used for unit testing GIN index functionality without transactions
+                    is_visible = true;
+                }
+                else
+                {
+                    // Check if entry is visible to current transaction
+                    // Entry is visible if:
+                    // 1. xmin is committed and < current_xid (inserted before us)
+                    // 2. xmax is 0 (not deleted) OR xmax > current_xid (deleted after us started)
+                    is_visible = isTransactionVisible(entry.xmin, current_xid, ctx) &&
+                                 (entry.xmax == 0 || !isTransactionVisible(entry.xmax, current_xid, ctx));
+                }
 
-                    bool is_visible;
-                    if (current_xid == 0)
-                    {
-                        // Special case: when current_xid == 0, bypass visibility checking
-                        // This is used for unit testing GIN index functionality without transactions
-                        is_visible = true;
-                    }
-                    else
-                    {
-                        // Check if entry is visible to current transaction
-                        // Entry is visible if:
-                        // 1. xmin is committed and < current_xid (inserted before us)
-                        // 2. xmax is 0 (not deleted) OR xmax > current_xid (deleted after us started)
-                        is_visible = isTransactionVisible(entry.xmin, current_xid, ctx) &&
-                                          (entry.xmax == 0 || !isTransactionVisible(entry.xmax, current_xid, ctx));
-                    }
-
-                    if (is_visible)
-                    {
-                        // Convert GPID format to legacy uint64_t
-                        tids_out->push_back(convertTIDtoLegacy(entry.getTID()));
-                    }
+                if (is_visible)
+                {
+                    tids_out->push_back(entry.getTID());
                 }
             }
 
-            buffer_pool_->unpinPage(posting_page, false, ctx);
+            unpinIndexPage(posting_page, false, ctx);
             return Status::OK;
         }
 
@@ -987,15 +1301,17 @@ namespace scratchbird
 
             // Key not found, create new posting list
             uint32_t new_posting_page = 0;
-            status = db_->page_manager()->allocatePage(new_posting_page, ctx);
+            GPID new_posting_gpid = 0;
+            status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_posting_gpid, ctx);
             if (status != Status::OK)
             {
                 return status;
             }
+            new_posting_page = static_cast<uint32_t>(getPageNumber(new_posting_gpid));
 
             // Initialize posting list page
             uint8_t *list_data = nullptr;
-            status = buffer_pool_->pinPage(new_posting_page, (void **)&list_data, ctx);
+            status = pinIndexPage(new_posting_page, (void **)&list_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1014,7 +1330,7 @@ namespace scratchbird
             list_page->gpl_is_compressed = 0;
             list_page->gpl_compressed_bytes = 0;
 
-            buffer_pool_->unpinPage(new_posting_page, true, ctx);
+            unpinIndexPage(new_posting_page, true, ctx);
 
             // Insert key into keys B-Tree
             status = insertIntoKeysTree(key, new_posting_page, ctx);
@@ -1027,12 +1343,12 @@ namespace scratchbird
             return Status::OK;
         }
 
-        Status GinIndex::insertIntoPostingList(uint32_t posting_page, uint64_t tuple_id,
+        Status GinIndex::insertIntoPostingList(uint32_t posting_page, const TID &tuple_id,
                                                ErrorContext *ctx)
         {
             // Pin the posting list page
             uint8_t *list_data = nullptr;
-            Status status = buffer_pool_->pinPage(posting_page, (void **)&list_data, ctx);
+            Status status = pinIndexPage(posting_page, (void **)&list_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1043,59 +1359,63 @@ namespace scratchbird
             // Check if already converted to tree
             if (list_page->gpl_is_tree != 0)
             {
-                buffer_pool_->unpinPage(posting_page, false, ctx);
+                unpinIndexPage(posting_page, false, ctx);
                 return insertIntoPostingTree(posting_page, tuple_id, ctx);
             }
 
             uint16_t current_count = list_page->gpl_entry_count;
+            bool was_compressed = (list_page->gpl_is_compressed != 0);
 
             // Step 1: Read existing TIDs (compressed or uncompressed)
-            std::vector<uint64_t> tids;
+            std::vector<TID> tids;
             tids.reserve(current_count + 1);
+            std::vector<GinPostingEntry> entries;
+            entries.reserve(current_count + 1);
 
-            if (list_page->gpl_is_compressed != 0)
+            if (was_compressed)
             {
-                // Decompress existing TIDs
-                uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
-                const uint8_t *compressed_data = list_page->getCompressedData();
-
-                tids.resize(current_count);
-                size_t decompressed_count = decompress_posting_list(
-                    compressed_data, compressed_bytes,
-                    tids.data(), current_count);
-
-                if (decompressed_count != current_count)
+                Status decode_status = decodeCompressedPostingList(
+                    list_page, db_->page_size(), &tids, ctx);
+                if (decode_status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(posting_page, false, ctx);
-                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR, "Decompression failed during insert");
-                    return Status::COMPRESSION_ERROR;
+                    unpinIndexPage(posting_page, false, ctx);
+                    return decode_status;
                 }
             }
             else
             {
-                // Read uncompressed TIDs
                 for (uint16_t i = 0; i < current_count; i++)
                 {
-                    // Convert GPID format to legacy uint64_t
-                    tids.push_back(convertTIDtoLegacy(list_page->getEntries()[i].getTID()));
+                    const GinPostingEntry &entry = list_page->getEntries()[i];
+                    entries.push_back(entry);
+                    tids.push_back(entry.getTID());
                 }
             }
 
             // Step 2: Check for duplicate
             if (std::binary_search(tids.begin(), tids.end(), tuple_id))
             {
-                buffer_pool_->unpinPage(posting_page, false, ctx);
+                unpinIndexPage(posting_page, false, ctx);
                 return Status::OK; // Already exists
             }
 
             // Step 3: Insert new TID (maintaining sorted order)
             auto insert_pos = std::lower_bound(tids.begin(), tids.end(), tuple_id);
+            size_t insert_index = static_cast<size_t>(insert_pos - tids.begin());
             tids.insert(insert_pos, tuple_id);
+            if (!was_compressed)
+            {
+                GinPostingEntry new_entry{};
+                new_entry.setTID(tuple_id);
+                new_entry.xmin = ConnectionContext::getCurrentTransactionId();
+                new_entry.xmax = 0;
+                entries.insert(entries.begin() + static_cast<long>(insert_index), new_entry);
+            }
 
             // Step 4: Check if we need to convert to tree (threshold reached)
             if (tids.size() > GIN_POSTING_LIST_THRESHOLD)
             {
-                buffer_pool_->unpinPage(posting_page, false, ctx);
+                unpinIndexPage(posting_page, false, ctx);
 
                 // Convert to tree
                 status = convertListToTree(posting_page, ctx);
@@ -1109,47 +1429,32 @@ namespace scratchbird
             }
 
             // Step 5: Try to compress the TID list
-            size_t compressed_size = 0;
-            // Use heap allocation for large page sizes to avoid stack overflow
-            std::vector<uint8_t> temp_compressed(db_->page_size() - 80);
-
-            if (should_compress(tids.data(), tids.size()))
+            list_page->gpl_entry_count = static_cast<uint16_t>(tids.size());
+            if (!tryCompressPostingList(list_page, db_->page_size(), tids))
             {
-                compressed_size = compress_posting_list(
-                    tids.data(), tids.size(),
-                    temp_compressed.data(), temp_compressed.size());
-            }
-
-            // Step 6: Store compressed or uncompressed based on what fits
-            if (compressed_size > 0 && compressed_size < temp_compressed.size())
-            {
-                // Store compressed
-                list_page->gpl_is_compressed = 1;
-                list_page->gpl_compressed_bytes = compressed_size;
-                list_page->gpl_entry_count = tids.size();
-                std::memcpy(list_page->getCompressedData(), temp_compressed.data(), compressed_size);
-            }
-            else
-            {
-                // Store uncompressed (or compression didn't save space)
                 list_page->gpl_is_compressed = 0;
                 list_page->gpl_compressed_bytes = 0;
-                list_page->gpl_entry_count = tids.size();
 
-                // FIREBIRD MGA: Get current transaction ID for xmin
-                uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
-
-                for (size_t i = 0; i < tids.size(); i++)
+                if (was_compressed)
                 {
-                    // Convert legacy uint64_t to GPID format
-                    list_page->getEntries()[i].setTID(convertLegacyTID(tids[i]));
-                    // FIREBIRD MGA: Set xmin (transaction that inserted) and xmax (0 = not deleted)
-                    list_page->getEntries()[i].xmin = current_xid;
-                    list_page->getEntries()[i].xmax = 0;
+                    uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+                    for (size_t i = 0; i < tids.size(); i++)
+                    {
+                        list_page->getEntries()[i].setTID(tids[i]);
+                        list_page->getEntries()[i].xmin = (tids[i] == tuple_id) ? current_xid : 0;
+                        list_page->getEntries()[i].xmax = 0;
+                    }
+                }
+                else
+                {
+                    for (size_t i = 0; i < entries.size(); i++)
+                    {
+                        list_page->getEntries()[i] = entries[i];
+                    }
                 }
             }
 
-            buffer_pool_->unpinPage(posting_page, true, ctx);
+            unpinIndexPage(posting_page, true, ctx);
             return Status::OK;
         }
 
@@ -1159,7 +1464,7 @@ namespace scratchbird
         {
             // Pin the posting list page
             uint8_t *list_data = nullptr;
-            Status status = buffer_pool_->pinPage(posting_page, (void **)&list_data, ctx);
+            Status status = pinIndexPage(posting_page, (void **)&list_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1170,32 +1475,23 @@ namespace scratchbird
             // Already a tree?
             if (list_page->gpl_is_tree != 0)
             {
-                buffer_pool_->unpinPage(posting_page, false, ctx);
+                unpinIndexPage(posting_page, false, ctx);
                 return Status::OK;
             }
 
             // Copy TIDs from the list (compressed or uncompressed)
             uint16_t tid_count = list_page->gpl_entry_count;
-            std::vector<uint64_t> tids;
+            std::vector<TID> tids;
             tids.reserve(tid_count);
 
             if (list_page->gpl_is_compressed != 0)
             {
-                // Decompress TIDs
-                uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
-                const uint8_t *compressed_data = list_page->getCompressedData();
-
-                tids.resize(tid_count);
-                size_t decompressed_count = decompress_posting_list(
-                    compressed_data, compressed_bytes,
-                    tids.data(), tid_count);
-
-                if (decompressed_count != tid_count)
+                Status decode_status = decodeCompressedPostingList(
+                    list_page, db_->page_size(), &tids, ctx);
+                if (decode_status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(posting_page, false, ctx);
-                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
-                                      "Decompression failed during tree conversion");
-                    return Status::COMPRESSION_ERROR;
+                    unpinIndexPage(posting_page, false, ctx);
+                    return decode_status;
                 }
             }
             else
@@ -1203,24 +1499,25 @@ namespace scratchbird
                 // Read uncompressed TIDs
                 for (uint16_t i = 0; i < tid_count; i++)
                 {
-                    // Convert GPID format to legacy uint64_t for internal processing
-                    tids.push_back(convertTIDtoLegacy(list_page->getEntries()[i].getTID()));
+                    tids.push_back(list_page->getEntries()[i].getTID());
                 }
             }
 
-            buffer_pool_->unpinPage(posting_page, false, ctx);
+            unpinIndexPage(posting_page, false, ctx);
 
             // Allocate a new leaf page
             uint32_t leaf_page = 0;
-            status = db_->page_manager()->allocatePage(leaf_page, ctx);
+            GPID leaf_gpid = 0;
+            status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &leaf_gpid, ctx);
             if (status != Status::OK)
             {
                 return status;
             }
+            leaf_page = static_cast<uint32_t>(getPageNumber(leaf_gpid));
 
             // Initialize leaf page
             uint8_t *leaf_data = nullptr;
-            status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1241,13 +1538,13 @@ namespace scratchbird
             // Copy TIDs to leaf (convert legacy uint64_t to GPID format)
             for (uint16_t i = 0; i < tid_count; i++)
             {
-                leaf->gpt_tids[i].setTID(convertLegacyTID(tids[i]));
+                leaf->gpt_tids[i].setTID(tids[i]);
             }
 
-            buffer_pool_->unpinPage(leaf_page, true, ctx);
+            unpinIndexPage(leaf_page, true, ctx);
 
             // Convert the posting list page to a tree root pointer
-            status = buffer_pool_->pinPage(posting_page, (void **)&list_data, ctx);
+            status = pinIndexPage(posting_page, (void **)&list_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1258,12 +1555,12 @@ namespace scratchbird
             list_page->gpl_data.gpl_tree_root = leaf_page;
             list_page->gpl_entry_count = tid_count; // Keep count for statistics
 
-            buffer_pool_->unpinPage(posting_page, true, ctx);
+            unpinIndexPage(posting_page, true, ctx);
 
             return Status::OK;
         }
 
-        Status GinIndex::findPostingTreeLeaf(uint32_t tree_root_page, uint64_t tid,
+        Status GinIndex::findPostingTreeLeaf(uint32_t tree_root_page, const TID &tid,
                                              uint32_t *leaf_page_out,
                                              ErrorContext *ctx)
         {
@@ -1272,7 +1569,7 @@ namespace scratchbird
             while (true)
             {
                 uint8_t *page_data = nullptr;
-                Status status = buffer_pool_->pinPage(current_page, (void **)&page_data, ctx);
+                Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -1282,7 +1579,7 @@ namespace scratchbird
                 auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(page_data);
                 if (leaf->gpt_is_leaf == 1)
                 {
-                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    unpinIndexPage(current_page, false, ctx);
                     *leaf_page_out = current_page;
                     return Status::OK;
                 }
@@ -1299,8 +1596,7 @@ namespace scratchbird
                 while (left <= right)
                 {
                     int32_t mid = (left + right) / 2;
-                    // Convert GPID separator to legacy for comparison
-                    uint64_t separator = convertTIDtoLegacy(internal->gpt_entries[mid].getSeparatorTID());
+                    TID separator = internal->gpt_entries[mid].getSeparatorTID();
                     if (tid < separator)
                     {
                         right = mid - 1;
@@ -1320,18 +1616,18 @@ namespace scratchbird
                 }
 
                 next_page = internal->gpt_entries[child_idx].child_page;
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
 
                 current_page = next_page;
             }
         }
 
-        Status GinIndex::insertIntoPostingTree(uint32_t posting_page, uint64_t tid,
+        Status GinIndex::insertIntoPostingTree(uint32_t posting_page, const TID &tid,
                                                ErrorContext *ctx)
         {
             // Pin the posting list page to get the tree root
             uint8_t *list_data = nullptr;
-            Status status = buffer_pool_->pinPage(posting_page, (void **)&list_data, ctx);
+            Status status = pinIndexPage(posting_page, (void **)&list_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1341,14 +1637,14 @@ namespace scratchbird
 
             if (list_page->gpl_is_tree == 0)
             {
-                buffer_pool_->unpinPage(posting_page, false, ctx);
+                unpinIndexPage(posting_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   "Cannot insert into posting tree: page is not a tree");
                 return Status::INVALID_ARGUMENT;
             }
 
             uint32_t tree_root = list_page->gpl_data.gpl_tree_root;
-            buffer_pool_->unpinPage(posting_page, false, ctx);
+            unpinIndexPage(posting_page, false, ctx);
 
             // Find the leaf page for this TID
             uint32_t leaf_page = 0;
@@ -1360,7 +1656,7 @@ namespace scratchbird
 
             // Insert into the leaf (may cause split)
             uint32_t new_sibling = 0;
-            uint64_t separator_tid = 0;
+            TID separator_tid = INVALID_TID;
             status = insertIntoPostingTreeLeaf(leaf_page, tid, &new_sibling, &separator_tid, ctx);
             if (status != Status::OK)
             {
@@ -1372,14 +1668,16 @@ namespace scratchbird
             {
                 // For now, we'll create a new root (simplified - full implementation would update parent)
                 uint32_t new_root = 0;
-                status = db_->page_manager()->allocatePage(new_root, ctx);
+                GPID new_root_gpid = 0;
+                status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_root_gpid, ctx);
                 if (status != Status::OK)
                 {
                     return status;
                 }
+                new_root = static_cast<uint32_t>(getPageNumber(new_root_gpid));
 
                 uint8_t *root_data = nullptr;
-                status = buffer_pool_->pinPage(new_root, (void **)&root_data, ctx);
+                status = pinIndexPage(new_root, (void **)&root_data, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -1396,36 +1694,35 @@ namespace scratchbird
                 root->gpt_is_leaf = 0;
                 root->gpt_entry_count = 2;
 
-                // Convert legacy TID to GPID format for separator
-                root->gpt_entries[0].setSeparatorTID(convertLegacyTID(separator_tid));
+                root->gpt_entries[0].setSeparatorTID(separator_tid);
                 root->gpt_entries[0].child_page = leaf_page;
-                root->gpt_entries[1].setSeparatorTID(convertLegacyTID(UINT64_MAX));
+                root->gpt_entries[1].setSeparatorTID(TID{UINT64_MAX, UINT16_MAX});
                 root->gpt_entries[1].child_page = new_sibling;
 
-                buffer_pool_->unpinPage(new_root, true, ctx);
+                unpinIndexPage(new_root, true, ctx);
 
                 // Update the posting list page to point to the new root
-                status = buffer_pool_->pinPage(posting_page, (void **)&list_data, ctx);
+                status = pinIndexPage(posting_page, (void **)&list_data, ctx);
                 if (status == Status::OK)
                 {
                     list_page = reinterpret_cast<SBGinPostingListPage *>(list_data);
                     list_page->gpl_data.gpl_tree_root = new_root;
-                    buffer_pool_->unpinPage(posting_page, true, ctx);
+                    unpinIndexPage(posting_page, true, ctx);
                 }
             }
 
             return Status::OK;
         }
 
-        Status GinIndex::insertIntoPostingTreeLeaf(uint32_t leaf_page, uint64_t tid,
+        Status GinIndex::insertIntoPostingTreeLeaf(uint32_t leaf_page, const TID &tid,
                                                    uint32_t *new_sibling_out,
-                                                   uint64_t *separator_tid_out,
+                                                   TID *separator_tid_out,
                                                    ErrorContext *ctx)
         {
             *new_sibling_out = 0;
 
             uint8_t *leaf_data = nullptr;
-            Status status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            Status status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1433,15 +1730,12 @@ namespace scratchbird
 
             auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(leaf_data);
 
-            // Convert legacy TID to GPID for comparison/storage
-            TID tid_struct = convertLegacyTID(tid);
-
             // Check for duplicate
             for (uint16_t i = 0; i < leaf->gpt_entry_count; i++)
             {
-                if (leaf->gpt_tids[i].getTID() == tid_struct)
+                if (leaf->gpt_tids[i].getTID() == tid)
                 {
-                    buffer_pool_->unpinPage(leaf_page, false, ctx);
+                    unpinIndexPage(leaf_page, false, ctx);
                     return Status::OK; // Already exists
                 }
             }
@@ -1449,7 +1743,7 @@ namespace scratchbird
             // Check if leaf is full
             if (leaf->gpt_entry_count >= getMaxPostingTreeLeafTids())
             {
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 return splitPostingTreeLeaf(leaf_page, new_sibling_out, separator_tid_out, ctx);
             }
 
@@ -1457,9 +1751,10 @@ namespace scratchbird
             uint16_t insert_pos = 0;
             while (insert_pos < leaf->gpt_entry_count)
             {
-                uint64_t existing_tid = convertTIDtoLegacy(leaf->gpt_tids[insert_pos].getTID());
-                if (existing_tid >= tid)
+                if (!(leaf->gpt_tids[insert_pos].getTID() < tid))
+                {
                     break;
+                }
                 insert_pos++;
             }
 
@@ -1472,23 +1767,23 @@ namespace scratchbird
             }
 
             // FIREBIRD MGA: Set TID and transaction markers
-            leaf->gpt_tids[insert_pos].setTID(tid_struct);
+            leaf->gpt_tids[insert_pos].setTID(tid);
             leaf->gpt_tids[insert_pos].xmin = ConnectionContext::getCurrentTransactionId();
             leaf->gpt_tids[insert_pos].xmax = 0; // Not deleted
             leaf->gpt_entry_count++;
 
-            buffer_pool_->unpinPage(leaf_page, true, ctx);
+            unpinIndexPage(leaf_page, true, ctx);
             return Status::OK;
         }
 
         Status GinIndex::splitPostingTreeLeaf(uint32_t leaf_page,
                                               uint32_t *new_sibling_out,
-                                              uint64_t *separator_tid_out,
+                                              TID *separator_tid_out,
                                               ErrorContext *ctx)
         {
             // Pin original leaf
             uint8_t *leaf_data = nullptr;
-            Status status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            Status status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1498,18 +1793,20 @@ namespace scratchbird
 
             // Allocate new sibling
             uint32_t new_sibling = 0;
-            status = db_->page_manager()->allocatePage(new_sibling, ctx);
+            GPID new_sibling_gpid = 0;
+            status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_sibling_gpid, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 return status;
             }
+            new_sibling = static_cast<uint32_t>(getPageNumber(new_sibling_gpid));
 
             uint8_t *sibling_data = nullptr;
-            status = buffer_pool_->pinPage(new_sibling, (void **)&sibling_data, ctx);
+            status = pinIndexPage(new_sibling, (void **)&sibling_data, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 return status;
             }
 
@@ -1538,17 +1835,17 @@ namespace scratchbird
             sibling->gpt_next_leaf = leaf->gpt_next_leaf;
             leaf->gpt_next_leaf = new_sibling;
 
-            // Separator is the first key of the new sibling (convert GPID to legacy)
-            *separator_tid_out = convertTIDtoLegacy(sibling->gpt_tids[0].getTID());
+            // Separator is the first key of the new sibling
+            *separator_tid_out = sibling->gpt_tids[0].getTID();
             *new_sibling_out = new_sibling;
 
-            buffer_pool_->unpinPage(leaf_page, true, ctx);
-            buffer_pool_->unpinPage(new_sibling, true, ctx);
+            unpinIndexPage(leaf_page, true, ctx);
+            unpinIndexPage(new_sibling, true, ctx);
 
             return Status::OK;
         }
 
-        bool GinIndex::searchPostingTree(uint32_t tree_root_page, uint64_t tid,
+        bool GinIndex::searchPostingTree(uint32_t tree_root_page, const TID &tid,
                                          ErrorContext *ctx)
         {
             uint32_t leaf_page = 0;
@@ -1559,7 +1856,7 @@ namespace scratchbird
             }
 
             uint8_t *leaf_data = nullptr;
-            status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return false;
@@ -1575,8 +1872,7 @@ namespace scratchbird
             while (left <= right)
             {
                 int32_t mid = (left + right) / 2;
-                // Convert GPID to legacy for comparison
-                uint64_t mid_tid = convertTIDtoLegacy(leaf->gpt_tids[mid].getTID());
+                TID mid_tid = leaf->gpt_tids[mid].getTID();
 
                 if (mid_tid == tid)
                 {
@@ -1593,12 +1889,12 @@ namespace scratchbird
                 }
             }
 
-            buffer_pool_->unpinPage(leaf_page, false, ctx);
+            unpinIndexPage(leaf_page, false, ctx);
             return found;
         }
 
         Status GinIndex::getPostingTreeTids(uint32_t tree_root_page,
-                                            std::vector<uint64_t> *tids_out,
+                                            std::vector<TID> *tids_out,
                                             uint64_t current_xid,
                                             ErrorContext *ctx)
         {
@@ -1608,7 +1904,7 @@ namespace scratchbird
             while (true)
             {
                 uint8_t *page_data = nullptr;
-                Status status = buffer_pool_->pinPage(current_page, (void **)&page_data, ctx);
+                Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -1617,14 +1913,14 @@ namespace scratchbird
                 auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(page_data);
                 if (leaf->gpt_is_leaf == 1)
                 {
-                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    unpinIndexPage(current_page, false, ctx);
                     break;
                 }
 
                 // Internal node - go to leftmost child
                 auto *internal = reinterpret_cast<SBGinPostingTreeInternal *>(page_data);
                 uint32_t next_page = internal->gpt_entries[0].child_page;
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
                 current_page = next_page;
             }
 
@@ -1633,7 +1929,7 @@ namespace scratchbird
             while (leaf_page != 0)
             {
                 uint8_t *leaf_data = nullptr;
-                Status status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+                Status status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -1666,12 +1962,12 @@ namespace scratchbird
 
                     if (is_visible)
                     {
-                        tids_out->push_back(convertTIDtoLegacy(entry.getTID()));
+                        tids_out->push_back(entry.getTID());
                     }
                 }
 
                 uint64_t next_leaf = leaf->gpt_next_leaf;
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
 
                 leaf_page = next_leaf;
             }
@@ -1680,16 +1976,16 @@ namespace scratchbird
         }
 
         Status GinIndex::insertIntoPostingTreeInternal(uint32_t internal_page,
-                                                       uint64_t separator_tid,
+                                                       const TID &separator_tid,
                                                        uint32_t child_page,
                                                        uint32_t *new_sibling_out,
-                                                       uint64_t *separator_tid_out,
+                                                       TID *separator_tid_out,
                                                        ErrorContext *ctx)
         {
             *new_sibling_out = 0;
 
             uint8_t *internal_data = nullptr;
-            Status status = buffer_pool_->pinPage(internal_page, (void **)&internal_data, ctx);
+            Status status = pinIndexPage(internal_page, (void **)&internal_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1700,7 +1996,7 @@ namespace scratchbird
             // Check if internal node is full
             if (internal->gpt_entry_count >= getMaxPostingTreeInternalEntries())
             {
-                buffer_pool_->unpinPage(internal_page, false, ctx);
+                unpinIndexPage(internal_page, false, ctx);
                 return splitPostingTreeInternal(internal_page, new_sibling_out, separator_tid_out, ctx);
             }
 
@@ -1708,9 +2004,8 @@ namespace scratchbird
             uint16_t insert_pos = 0;
             while (insert_pos < internal->gpt_entry_count)
             {
-                // Convert GPID separator to legacy for comparison
-                uint64_t current_sep = convertTIDtoLegacy(internal->gpt_entries[insert_pos].getSeparatorTID());
-                if (current_sep >= separator_tid)
+                TID current_sep = internal->gpt_entries[insert_pos].getSeparatorTID();
+                if (!(current_sep < separator_tid))
                     break;
                 insert_pos++;
             }
@@ -1723,23 +2018,22 @@ namespace scratchbird
                              (internal->gpt_entry_count - insert_pos) * sizeof(GinPostingTreeInternalEntry));
             }
 
-            // Convert legacy TID to GPID format for separator
-            internal->gpt_entries[insert_pos].setSeparatorTID(convertLegacyTID(separator_tid));
+            internal->gpt_entries[insert_pos].setSeparatorTID(separator_tid);
             internal->gpt_entries[insert_pos].child_page = child_page;
             internal->gpt_entry_count++;
 
-            buffer_pool_->unpinPage(internal_page, true, ctx);
+            unpinIndexPage(internal_page, true, ctx);
             return Status::OK;
         }
 
         Status GinIndex::splitPostingTreeInternal(uint32_t internal_page,
                                                   uint32_t *new_sibling_out,
-                                                  uint64_t *separator_tid_out,
+                                                  TID *separator_tid_out,
                                                   ErrorContext *ctx)
         {
             // Pin original internal node
             uint8_t *internal_data = nullptr;
-            Status status = buffer_pool_->pinPage(internal_page, (void **)&internal_data, ctx);
+            Status status = pinIndexPage(internal_page, (void **)&internal_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1749,18 +2043,20 @@ namespace scratchbird
 
             // Allocate new sibling
             uint32_t new_sibling = 0;
-            status = db_->page_manager()->allocatePage(new_sibling, ctx);
+            GPID new_sibling_gpid = 0;
+            status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_sibling_gpid, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(internal_page, false, ctx);
+                unpinIndexPage(internal_page, false, ctx);
                 return status;
             }
+            new_sibling = static_cast<uint32_t>(getPageNumber(new_sibling_gpid));
 
             uint8_t *sibling_data = nullptr;
-            status = buffer_pool_->pinPage(new_sibling, (void **)&sibling_data, ctx);
+            status = pinIndexPage(new_sibling, (void **)&sibling_data, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(internal_page, false, ctx);
+                unpinIndexPage(internal_page, false, ctx);
                 return status;
             }
 
@@ -1785,12 +2081,12 @@ namespace scratchbird
             // Update original internal node
             internal->gpt_entry_count = split_point;
 
-            // Separator is the first key of the new sibling (convert GPID to legacy)
-            *separator_tid_out = convertTIDtoLegacy(sibling->gpt_entries[0].getSeparatorTID());
+            // Separator is the first key of the new sibling
+            *separator_tid_out = sibling->gpt_entries[0].getSeparatorTID();
             *new_sibling_out = new_sibling;
 
-            buffer_pool_->unpinPage(internal_page, true, ctx);
-            buffer_pool_->unpinPage(new_sibling, true, ctx);
+            unpinIndexPage(internal_page, true, ctx);
+            unpinIndexPage(new_sibling, true, ctx);
 
             return Status::OK;
         }
@@ -1798,12 +2094,12 @@ namespace scratchbird
         // ===== Posting List/Tree Removal Operations =====
 
         // Remove TID from posting list or tree (dispatcher)
-        Status GinIndex::removeFromPostingList(uint32_t posting_page, uint64_t tid,
+        Status GinIndex::removeFromPostingList(uint32_t posting_page, const TID &tid,
                                                ErrorContext *ctx)
         {
             // Pin the posting list page
             uint8_t *posting_data = nullptr;
-            Status status = buffer_pool_->pinPage(posting_page, (void **)&posting_data, ctx);
+            Status status = pinIndexPage(posting_page, (void **)&posting_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1814,7 +2110,7 @@ namespace scratchbird
             // Check if this is a posting tree or a posting list
             bool is_tree = (posting->gpl_is_tree != 0);
 
-            buffer_pool_->unpinPage(posting_page, false, ctx);
+            unpinIndexPage(posting_page, false, ctx);
 
             if (is_tree)
             {
@@ -1830,12 +2126,12 @@ namespace scratchbird
 
         // Remove TID from posting list (simple array)
         // FIREBIRD MGA: Logical deletion - mark with xmax instead of physical removal
-        Status GinIndex::removeFromPostingListArray(uint32_t posting_page, uint64_t tid,
-                                                     ErrorContext *ctx)
+        Status GinIndex::removeFromPostingListArray(uint32_t posting_page, const TID &tid,
+                                                    ErrorContext *ctx)
         {
             // Pin the posting list page
             uint8_t *posting_data = nullptr;
-            Status status = buffer_pool_->pinPage(posting_page, (void **)&posting_data, ctx);
+            Status status = pinIndexPage(posting_page, (void **)&posting_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1843,8 +2139,30 @@ namespace scratchbird
 
             auto *posting = reinterpret_cast<SBGinPostingListPage *>(posting_data);
 
-            // Convert tid to TID struct for comparison
-            TID target_tid = convertLegacyTID(tid);
+            if (posting->gpl_is_compressed != 0)
+            {
+                std::vector<TID> tids;
+                Status decode_status = decodeCompressedPostingList(
+                    posting, db_->page_size(), &tids, ctx);
+                if (decode_status != Status::OK)
+                {
+                    unpinIndexPage(posting_page, false, ctx);
+                    return decode_status;
+                }
+
+                posting->gpl_is_compressed = 0;
+                posting->gpl_compressed_bytes = 0;
+                posting->gpl_entry_count = static_cast<uint16_t>(tids.size());
+
+                for (size_t i = 0; i < tids.size(); i++)
+                {
+                    posting->getEntries()[i].setTID(tids[i]);
+                    posting->getEntries()[i].xmin = 0;
+                    posting->getEntries()[i].xmax = 0;
+                }
+            }
+
+            TID target_tid = tid;
 
             // Search for the TID in the array
             bool found = false;
@@ -1866,7 +2184,7 @@ namespace scratchbird
             if (!found)
             {
                 // TID not found in posting list - this is OK (might have been removed by vacuum)
-                buffer_pool_->unpinPage(posting_page, false, ctx);
+                unpinIndexPage(posting_page, false, ctx);
                 return Status::OK;
             }
 
@@ -1880,13 +2198,13 @@ namespace scratchbird
             // Vacuum will remove entries where xmax < OIT during garbage collection
 
             // Mark page as dirty
-            buffer_pool_->unpinPage(posting_page, true, ctx);
+            unpinIndexPage(posting_page, true, ctx);
 
             return Status::OK;
         }
 
         // Remove TID from posting tree (B-Tree of TIDs)
-        Status GinIndex::removeFromPostingTree(uint32_t tree_root_page, uint64_t tid,
+        Status GinIndex::removeFromPostingTree(uint32_t tree_root_page, const TID &tid,
                                                ErrorContext *ctx)
         {
             // Find the leaf page containing this TID
@@ -1917,13 +2235,13 @@ namespace scratchbird
 
         // Remove TID from posting tree leaf
         // FIREBIRD MGA: Logical deletion - mark with xmax instead of physical removal
-        Status GinIndex::removeFromPostingTreeLeaf(uint32_t leaf_page, uint64_t tid,
+        Status GinIndex::removeFromPostingTreeLeaf(uint32_t leaf_page, const TID &tid,
                                                    bool *entry_removed_out,
                                                    ErrorContext *ctx)
         {
             // Pin the leaf page
             uint8_t *leaf_data = nullptr;
-            Status status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            Status status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -1931,8 +2249,7 @@ namespace scratchbird
 
             auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(leaf_data);
 
-            // Convert tid to TID struct for comparison
-            TID target_tid = convertLegacyTID(tid);
+            TID target_tid = tid;
 
             // Search for the TID in the leaf (using binary search since it's sorted)
             bool found = false;
@@ -1959,7 +2276,7 @@ namespace scratchbird
                 {
                     *entry_removed_out = false;
                 }
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 return Status::OK;
             }
 
@@ -1978,7 +2295,7 @@ namespace scratchbird
             }
 
             // Mark page as dirty
-            buffer_pool_->unpinPage(leaf_page, true, ctx);
+            unpinIndexPage(leaf_page, true, ctx);
 
             return Status::OK;
         }
@@ -2022,7 +2339,7 @@ namespace scratchbird
         {
             // Pin meta page to get root
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -2035,19 +2352,21 @@ namespace scratchbird
             if (root_page == 0)
             {
                 // Allocate new leaf page
-                status = db_->page_manager()->allocatePage(root_page, ctx);
+                GPID root_gpid = 0;
+                status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &root_gpid, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    unpinIndexPage(meta_page_, false, ctx);
                     return status;
                 }
+                root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
 
                 // Initialize leaf page
                 uint8_t *leaf_data = nullptr;
-                status = buffer_pool_->pinPage(root_page, (void **)&leaf_data, ctx);
+                status = pinIndexPage(root_page, (void **)&leaf_data, ctx);
                 if (status != Status::OK)
                 {
-                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    unpinIndexPage(meta_page_, false, ctx);
                     return status;
                 }
 
@@ -2064,16 +2383,16 @@ namespace scratchbird
                 leaf->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf); // Data area size
                 leaf->get_data_end = db_->page_size();
 
-                buffer_pool_->unpinPage(root_page, true, ctx);
+                unpinIndexPage(root_page, true, ctx);
 
                 // Update meta with new root
                 meta->gin_keys_btree_root = root_page;
                 meta->gin_num_keys++;
-                buffer_pool_->unpinPage(meta_page_, true, ctx);
+                unpinIndexPage(meta_page_, true, ctx);
             }
             else
             {
-                buffer_pool_->unpinPage(meta_page_, false, ctx);
+                unpinIndexPage(meta_page_, false, ctx);
             }
 
             // Find leaf page for this key
@@ -2108,12 +2427,12 @@ namespace scratchbird
                 }
 
                 // Update meta with new root
-                status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+                status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
                 if (status == Status::OK)
                 {
                     meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
                     meta->gin_keys_btree_root = new_root;
-                    buffer_pool_->unpinPage(meta_page_, true, ctx);
+                    unpinIndexPage(meta_page_, true, ctx);
                 }
             }
 
@@ -2129,7 +2448,7 @@ namespace scratchbird
             while (true)
             {
                 uint8_t *page_data = nullptr;
-                Status status = buffer_pool_->pinPage(current_page, (void **)&page_data, ctx);
+                Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -2139,7 +2458,7 @@ namespace scratchbird
                 auto *page_base = reinterpret_cast<SBGinEntryTreeLeaf *>(page_data);
                 if (page_base->get_is_leaf == 1)
                 {
-                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    unpinIndexPage(current_page, false, ctx);
                     *leaf_page_out = current_page;
                     return Status::OK;
                 }
@@ -2163,7 +2482,7 @@ namespace scratchbird
                     }
                 }
 
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                unpinIndexPage(current_page, false, ctx);
                 current_page = next_page;
             }
         }
@@ -2173,7 +2492,7 @@ namespace scratchbird
                                              ErrorContext *ctx)
         {
             uint8_t *leaf_data = nullptr;
-            Status status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            Status status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -2222,7 +2541,7 @@ namespace scratchbird
                 *position_out = result_pos;
             }
 
-            buffer_pool_->unpinPage(leaf_page, false, ctx);
+            unpinIndexPage(leaf_page, false, ctx);
 
             if (result_pos == -1 || result_pos >= leaf->get_entry_count)
             {
@@ -2252,7 +2571,7 @@ namespace scratchbird
             *new_sibling_out = 0;
 
             uint8_t *leaf_data = nullptr;
-            Status status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            Status status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -2266,7 +2585,7 @@ namespace scratchbird
             // Check if we need to split
             if (leaf->get_free_space < space_needed || leaf->get_entry_count >= MAX_ENTRY_TREE_LEAF_ENTRIES)
             {
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 return splitEntryTreeLeaf(leaf_page, new_sibling_out, separator_key_out, ctx);
             }
 
@@ -2308,7 +2627,7 @@ namespace scratchbird
             leaf->get_data_end = new_offset;
             leaf->get_free_space -= space_needed;
 
-            buffer_pool_->unpinPage(leaf_page, true, ctx);
+            unpinIndexPage(leaf_page, true, ctx);
             return Status::OK;
         }
 
@@ -2319,7 +2638,7 @@ namespace scratchbird
         {
             // Pin original leaf
             uint8_t *leaf_data = nullptr;
-            Status status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+            Status status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -2329,18 +2648,20 @@ namespace scratchbird
 
             // Allocate new sibling
             uint32_t new_sibling = 0;
-            status = db_->page_manager()->allocatePage(new_sibling, ctx);
+            GPID new_sibling_gpid = 0;
+            status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_sibling_gpid, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 return status;
             }
+            new_sibling = static_cast<uint32_t>(getPageNumber(new_sibling_gpid));
 
             uint8_t *sibling_data = nullptr;
-            status = buffer_pool_->pinPage(new_sibling, (void **)&sibling_data, ctx);
+            status = pinIndexPage(new_sibling, (void **)&sibling_data, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 return status;
             }
 
@@ -2399,8 +2720,8 @@ namespace scratchbird
 
             *new_sibling_out = new_sibling;
 
-            buffer_pool_->unpinPage(leaf_page, true, ctx);
-            buffer_pool_->unpinPage(new_sibling, true, ctx);
+            unpinIndexPage(leaf_page, true, ctx);
+            unpinIndexPage(new_sibling, true, ctx);
 
             return Status::OK;
         }
@@ -2412,14 +2733,16 @@ namespace scratchbird
         {
             // Allocate new root page
             uint32_t new_root = 0;
-            Status status = db_->page_manager()->allocatePage(new_root, ctx);
+            GPID new_root_gpid = 0;
+            Status status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_root_gpid, ctx);
             if (status != Status::OK)
             {
                 return status;
             }
+            new_root = static_cast<uint32_t>(getPageNumber(new_root_gpid));
 
             uint8_t *root_data = nullptr;
-            status = buffer_pool_->pinPage(new_root, (void **)&root_data, ctx);
+            status = pinIndexPage(new_root, (void **)&root_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -2452,7 +2775,7 @@ namespace scratchbird
             root->get_data_end = new_offset;
             root->get_free_space -= entry_size;
 
-            buffer_pool_->unpinPage(new_root, true, ctx);
+            unpinIndexPage(new_root, true, ctx);
 
             *new_root_out = new_root;
             return Status::OK;
@@ -2475,7 +2798,7 @@ namespace scratchbird
             }
 
             // Collect TID lists for each key
-            std::vector<std::vector<uint64_t>> tid_lists;
+            std::vector<std::vector<TID>> tid_lists;
             tid_lists.reserve(keys.size());
 
             for (const auto &key : keys)
@@ -2490,7 +2813,7 @@ namespace scratchbird
                 }
 
                 // Get TIDs for this key
-                std::vector<uint64_t> tids;
+                std::vector<TID> tids;
                 // FIREBIRD MGA: Pass current_xid for index-level visibility filtering
                 status = getPostingListTids(posting_page, &tids, current_xid, ctx);
                 if (status != Status::OK)
@@ -2511,14 +2834,7 @@ namespace scratchbird
                 tid_lists.push_back(std::move(tids));
             }
 
-            // Compute intersection of all TID lists (uses legacy format)
-            std::vector<uint64_t> legacy_result = mergeTidLists(tid_lists);
-
-            // PHASE 1.5: Convert legacy uint64_t to TID structs
-            for (uint64_t legacy_tid : legacy_result)
-            {
-                result.push_back(convertLegacyTID(legacy_tid));
-            }
+            result = mergeTidLists(tid_lists);
 
             return result;
         }
@@ -2539,7 +2855,7 @@ namespace scratchbird
             }
 
             // Collect TID lists for each key
-            std::vector<std::vector<uint64_t>> tid_lists;
+            std::vector<std::vector<TID>> tid_lists;
             tid_lists.reserve(keys.size());
 
             for (const auto &key : keys)
@@ -2554,7 +2870,7 @@ namespace scratchbird
                 }
 
                 // Get TIDs for this key
-                std::vector<uint64_t> tids;
+                std::vector<TID> tids;
                 // FIREBIRD MGA: Pass current_xid for index-level visibility filtering
                 status = getPostingListTids(posting_page, &tids, current_xid, ctx);
                 if (status != Status::OK)
@@ -2581,23 +2897,16 @@ namespace scratchbird
                 return result;
             }
 
-            // Compute union of all TID lists (uses legacy format)
-            std::vector<uint64_t> legacy_result = unionTidLists(tid_lists);
-
-            // PHASE 1.5: Convert legacy uint64_t to TID structs
-            for (uint64_t legacy_tid : legacy_result)
-            {
-                result.push_back(convertLegacyTID(legacy_tid));
-            }
+            result = unionTidLists(tid_lists);
 
             return result;
         }
 
         // Static helper: Merge sorted TID lists (AND operation - intersection)
-        std::vector<uint64_t> GinIndex::mergeTidLists(
-            const std::vector<std::vector<uint64_t>> &tid_lists)
+        std::vector<TID> GinIndex::mergeTidLists(
+            const std::vector<std::vector<TID>> &tid_lists)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             // Edge cases
             if (tid_lists.empty())
@@ -2616,7 +2925,7 @@ namespace scratchbird
             // Intersect with each subsequent list
             for (size_t i = 1; i < tid_lists.size(); i++)
             {
-                std::vector<uint64_t> intersection;
+                std::vector<TID> intersection;
                 const auto &current_list = tid_lists[i];
 
                 // Two-pointer technique for sorted list intersection
@@ -2654,10 +2963,10 @@ namespace scratchbird
         }
 
         // Static helper: Union sorted TID lists (OR operation)
-        std::vector<uint64_t> GinIndex::unionTidLists(
-            const std::vector<std::vector<uint64_t>> &tid_lists)
+        std::vector<TID> GinIndex::unionTidLists(
+            const std::vector<std::vector<TID>> &tid_lists)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             // Edge cases
             if (tid_lists.empty())
@@ -2677,14 +2986,14 @@ namespace scratchbird
             while (true)
             {
                 // Find the minimum TID across all lists
-                uint64_t min_tid = UINT64_MAX;
+                TID min_tid = INVALID_TID;
                 bool found_any = false;
 
                 for (size_t i = 0; i < tid_lists.size(); i++)
                 {
                     if (indices[i] < tid_lists[i].size())
                     {
-                        if (tid_lists[i][indices[i]] < min_tid)
+                        if (!found_any || tid_lists[i][indices[i]] < min_tid)
                         {
                             min_tid = tid_lists[i][indices[i]];
                         }
@@ -2743,11 +3052,11 @@ namespace scratchbird
         // For each TID, checks if the corresponding heap tuple is visible to current transaction
         // Uses TIP-based visibility (Firebird MGA), NOT snapshots
         // Returns a new vector containing only visible TIDs
-        std::vector<uint64_t> GinIndex::filterTidsByVisibility(const std::vector<uint64_t> &tids,
-                                                                uint64_t current_xid,
-                                                                ErrorContext *ctx)
+        std::vector<TID> GinIndex::filterTidsByVisibility(const std::vector<TID> &tids,
+                                                          uint64_t current_xid,
+                                                          ErrorContext *ctx)
         {
-            std::vector<uint64_t> visible_tids;
+            std::vector<TID> visible_tids;
 
             // Special case: when current_xid == 0, bypass visibility checking
             // This is used for unit testing GIN index functionality without heap tuples
@@ -2766,15 +3075,14 @@ namespace scratchbird
             auto *buffer_pool = db_->buffer_pool();
             auto *txn_manager = db_->transaction_manager();
 
-            for (uint64_t tid : tids)
+            for (const TID &tid : tids)
             {
-                // Extract page_id and item_id from TID
-                uint32_t page_id = static_cast<uint32_t>(tid >> 32);
-                uint16_t item_id = static_cast<uint16_t>((tid >> 16) & 0xFFFF);
+                uint32_t page_id = static_cast<uint32_t>(getPageNumber(tid));
+                uint16_t item_id = tid.slot;
 
                 // Pin the heap page
                 uint8_t *page_data = nullptr;
-                Status status = buffer_pool->pinPage(page_id, (void **)&page_data, ctx);
+                Status status = buffer_pool->pinPageGlobal(tid.gpid, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     // If we can't read the page, skip this TID
@@ -2798,7 +3106,7 @@ namespace scratchbird
                 if (item_id >= item_count)
                 {
                     // Invalid item_id
-                    buffer_pool->unpinPage(page_id, false, ctx);
+                    buffer_pool->unpinPageGlobal(tid.gpid, false, ctx);
                     continue;
                 }
 
@@ -2808,7 +3116,7 @@ namespace scratchbird
                 // Check if item is deleted or unused
                 if (item_ptr->isDeleted() || item_ptr->isUnused())
                 {
-                    buffer_pool->unpinPage(page_id, false, ctx);
+                    buffer_pool->unpinPageGlobal(tid.gpid, false, ctx);
                     continue;
                 }
 
@@ -2837,7 +3145,7 @@ namespace scratchbird
                     visible_tids.push_back(tid);
                 }
 
-                buffer_pool->unpinPage(page_id, false, ctx);
+                buffer_pool->unpinPageGlobal(tid.gpid, false, ctx);
             }
 
             return visible_tids;
@@ -2859,7 +3167,7 @@ namespace scratchbird
 
             // Pin the posting list page
             uint8_t *list_data = nullptr;
-            status = buffer_pool_->pinPage(posting_page, (void **)&list_data, ctx);
+            status = pinIndexPage(posting_page, (void **)&list_data, ctx);
             if (status != Status::OK)
             {
                 return 0;
@@ -2868,7 +3176,7 @@ namespace scratchbird
             auto *list_page = reinterpret_cast<SBGinPostingListPage *>(list_data);
             uint32_t cardinality = list_page->gpl_entry_count;
 
-            buffer_pool_->unpinPage(posting_page, false, ctx);
+            unpinIndexPage(posting_page, false, ctx);
 
             return cardinality;
         }
@@ -3016,7 +3324,7 @@ namespace scratchbird
 
             // Pin meta page to get root
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return result;
@@ -3025,7 +3333,7 @@ namespace scratchbird
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint32_t root_page = meta->gin_keys_btree_root;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             if (root_page == 0)
             {
@@ -3117,7 +3425,7 @@ namespace scratchbird
             std::function<void(uint32_t)> scanLeafForWildcard = [&](uint32_t leaf_page)
             {
                 uint8_t *leaf_data = nullptr;
-                Status scan_status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+                Status scan_status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
                 if (scan_status != Status::OK)
                 {
                     return;
@@ -3145,14 +3453,14 @@ namespace scratchbird
                     }
                 }
 
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
             };
 
             // Helper lambda to traverse entry tree (depth-first)
             std::function<void(uint32_t)> traverseTree = [&](uint32_t page_num)
             {
                 uint8_t *page_data = nullptr;
-                Status scan_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                Status scan_status = pinIndexPage(page_num, (void **)&page_data, ctx);
                 if (scan_status != Status::OK)
                 {
                     return;
@@ -3164,7 +3472,7 @@ namespace scratchbird
 
                 if (is_leaf)
                 {
-                    buffer_pool_->unpinPage(page_num, false, ctx);
+                    unpinIndexPage(page_num, false, ctx);
                     scanLeafForWildcard(page_num);
                 }
                 else
@@ -3194,7 +3502,7 @@ namespace scratchbird
                         children.push_back(internal->get_rightmost_child);
                     }
 
-                    buffer_pool_->unpinPage(page_num, false, ctx);
+                    unpinIndexPage(page_num, false, ctx);
 
                     // Recurse to children
                     for (uint32_t child : children)
@@ -3272,7 +3580,7 @@ namespace scratchbird
 
             // Pin meta page to get root
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return result;
@@ -3281,7 +3589,7 @@ namespace scratchbird
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint32_t root_page = meta->gin_keys_btree_root;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             if (root_page == 0)
             {
@@ -3295,7 +3603,7 @@ namespace scratchbird
             std::function<void(uint32_t)> scanLeafForFuzzy = [&](uint32_t leaf_page)
             {
                 uint8_t *leaf_data = nullptr;
-                Status scan_status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+                Status scan_status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
                 if (scan_status != Status::OK)
                 {
                     return;
@@ -3326,14 +3634,14 @@ namespace scratchbird
                     }
                 }
 
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
             };
 
             // Helper lambda to traverse entry tree (depth-first)
             std::function<void(uint32_t)> traverseTree = [&](uint32_t page_num)
             {
                 uint8_t *page_data = nullptr;
-                Status scan_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                Status scan_status = pinIndexPage(page_num, (void **)&page_data, ctx);
                 if (scan_status != Status::OK)
                 {
                     return;
@@ -3345,7 +3653,7 @@ namespace scratchbird
 
                 if (is_leaf)
                 {
-                    buffer_pool_->unpinPage(page_num, false, ctx);
+                    unpinIndexPage(page_num, false, ctx);
                     scanLeafForFuzzy(page_num);
                 }
                 else
@@ -3375,7 +3683,7 @@ namespace scratchbird
                         children.push_back(internal->get_rightmost_child);
                     }
 
-                    buffer_pool_->unpinPage(page_num, false, ctx);
+                    unpinIndexPage(page_num, false, ctx);
 
                     // Recurse to children
                     for (uint32_t child : children)
@@ -3414,57 +3722,21 @@ namespace scratchbird
         }
 
         // SIMD-optimized intersection of two sorted TID lists
-        std::vector<uint64_t> GinIndex::intersectTwoListsSIMD(
-            const std::vector<uint64_t> &list1,
-            const std::vector<uint64_t> &list2)
+        std::vector<TID> GinIndex::intersectTwoListsSIMD(
+            const std::vector<TID> &list1,
+            const std::vector<TID> &list2)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (list1.empty() || list2.empty())
             {
                 return result;
             }
 
-#if defined(__x86_64__) || defined(_M_X64)
-            // x86-64 SIMD implementation with SSE2
+            // Scalar two-pointer intersection (TID is 80-bit, SIMD not applicable)
             size_t i = 0, j = 0;
             result.reserve(std::min(list1.size(), list2.size()));
 
-            // Process 2 elements at a time with SSE2 (128-bit = 2 x 64-bit)
-            while (i + 1 < list1.size() && j + 1 < list2.size())
-            {
-                // Load 2 elements from each list
-                __m128i v1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&list1[i]));
-                __m128i v2 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&list2[j]));
-
-                // Extract individual values using SSE2-compatible method
-                // Store to temporary array and read back
-                alignas(16) uint64_t a_vals[2];
-                alignas(16) uint64_t b_vals[2];
-                _mm_store_si128(reinterpret_cast<__m128i *>(a_vals), v1);
-                _mm_store_si128(reinterpret_cast<__m128i *>(b_vals), v2);
-
-                uint64_t a0 = a_vals[0];
-                uint64_t b0 = b_vals[0];
-
-                // Two-pointer logic with SIMD-loaded values
-                if (a0 == b0)
-                {
-                    result.push_back(a0);
-                    i++;
-                    j++;
-                }
-                else if (a0 < b0)
-                {
-                    i++;
-                }
-                else
-                {
-                    j++;
-                }
-            }
-
-            // Handle remaining elements
             while (i < list1.size() && j < list2.size())
             {
                 if (list1[i] == list2[j])
@@ -3482,36 +3754,14 @@ namespace scratchbird
                     j++;
                 }
             }
-#else
-            // Fallback to scalar implementation
-            size_t i = 0, j = 0;
-            while (i < list1.size() && j < list2.size())
-            {
-                if (list1[i] == list2[j])
-                {
-                    result.push_back(list1[i]);
-                    i++;
-                    j++;
-                }
-                else if (list1[i] < list2[j])
-                {
-                    i++;
-                }
-                else
-                {
-                    j++;
-                }
-            }
-#endif
-
             return result;
         }
 
         // SIMD-optimized multi-way intersection
-        std::vector<uint64_t> GinIndex::mergeTidListsSIMD(
-            const std::vector<std::vector<uint64_t>> &tid_lists)
+        std::vector<TID> GinIndex::mergeTidListsSIMD(
+            const std::vector<std::vector<TID>> &tid_lists)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (tid_lists.empty())
             {
@@ -3523,47 +3773,63 @@ namespace scratchbird
                 return tid_lists[0];
             }
 
-            if (!hasSIMDSupport())
+            return mergeTidLists(tid_lists);
+        }
+
+        std::vector<TID> GinIndex::mergeTidListsSIMD(
+            const std::vector<std::vector<uint64_t>> &tid_lists)
+        {
+            std::vector<std::vector<TID>> converted;
+            converted.reserve(tid_lists.size());
+            for (const auto &list : tid_lists)
             {
-                // Fallback to scalar implementation
-                return mergeTidLists(tid_lists);
-            }
-
-            // Use SIMD for pairwise intersection
-            result = tid_lists[0];
-
-            for (size_t i = 1; i < tid_lists.size(); i++)
-            {
-                result = intersectTwoListsSIMD(result, tid_lists[i]);
-
-                // Early exit if result becomes empty
-                if (result.empty())
+                std::vector<TID> tids;
+                tids.reserve(list.size());
+                for (uint64_t legacy_tid : list)
                 {
-                    break;
+                    tids.push_back(convertLegacyTID(legacy_tid));
                 }
+                converted.push_back(std::move(tids));
             }
-
-            return result;
+            return mergeTidListsSIMD(converted);
         }
 
         // SIMD-optimized multi-way union
-        std::vector<uint64_t> GinIndex::unionTidListsSIMD(
-            const std::vector<std::vector<uint64_t>> &tid_lists)
+        std::vector<TID> GinIndex::unionTidListsSIMD(
+            const std::vector<std::vector<TID>> &tid_lists)
         {
             // Union doesn't benefit as much from SIMD, use scalar implementation
             // SIMD would require complex merge logic with deduplication
             return unionTidLists(tid_lists);
         }
 
+        std::vector<TID> GinIndex::unionTidListsSIMD(
+            const std::vector<std::vector<uint64_t>> &tid_lists)
+        {
+            std::vector<std::vector<TID>> converted;
+            converted.reserve(tid_lists.size());
+            for (const auto &list : tid_lists)
+            {
+                std::vector<TID> tids;
+                tids.reserve(list.size());
+                for (uint64_t legacy_tid : list)
+                {
+                    tids.push_back(convertLegacyTID(legacy_tid));
+                }
+                converted.push_back(std::move(tids));
+            }
+            return unionTidListsSIMD(converted);
+        }
+
         // Parallel multi-key AND query
         // P0-6: Fixed to accept current_xid for proper MGA visibility
-        std::vector<uint64_t> GinIndex::findAllParallel(
+        std::vector<TID> GinIndex::findAllParallel(
             const std::vector<std::vector<uint8_t>> &keys,
             uint64_t current_xid,
             uint32_t max_threads,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (keys.empty())
             {
@@ -3574,20 +3840,11 @@ namespace scratchbird
             {
                 // Use standard implementation for single thread or single key
                 // P0-6: Pass current_xid for proper MGA visibility
-                std::vector<TID> tid_results = findAll(keys, current_xid, ctx);
-                for (const TID &tid : tid_results)
-                {
-                    uint64_t legacy_tid = convertTIDtoLegacy(tid);
-                    if (legacy_tid != 0)
-                    {
-                        result.push_back(legacy_tid);
-                    }
-                }
-                return result;
+                return findAll(keys, current_xid, ctx);
             }
 
             // Parallel key lookup with thread pool
-            std::vector<std::vector<uint64_t>> tid_lists(keys.size());
+            std::vector<std::vector<TID>> tid_lists(keys.size());
             std::mutex error_mutex;
             bool has_error = false;
 
@@ -3617,7 +3874,7 @@ namespace scratchbird
                             return;
                         }
 
-                        std::vector<uint64_t> tids;
+                        std::vector<TID> tids;
                         // P0-6: Fixed to use current_xid for proper MGA visibility
                         status = getPostingListTids(posting_page, &tids, current_xid, ctx);
 
@@ -3645,20 +3902,18 @@ namespace scratchbird
             }
 
             // Use SIMD-optimized intersection
-            result = mergeTidListsSIMD(tid_lists);
-
-            return result;
+            return mergeTidListsSIMD(tid_lists);
         }
 
         // Parallel multi-key OR query
         // P0-6: Fixed to accept current_xid for proper MGA visibility
-        std::vector<uint64_t> GinIndex::findAnyParallel(
+        std::vector<TID> GinIndex::findAnyParallel(
             const std::vector<std::vector<uint8_t>> &keys,
             uint64_t current_xid,
             uint32_t max_threads,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (keys.empty())
             {
@@ -3668,20 +3923,11 @@ namespace scratchbird
             if (max_threads <= 1 || keys.size() <= 1)
             {
                 // P0-6: Pass current_xid for proper MGA visibility
-                std::vector<TID> tid_results = findAny(keys, current_xid, ctx);
-                for (const TID &tid : tid_results)
-                {
-                    uint64_t legacy_tid = convertTIDtoLegacy(tid);
-                    if (legacy_tid != 0)
-                    {
-                        result.push_back(legacy_tid);
-                    }
-                }
-                return result;
+                return findAny(keys, current_xid, ctx);
             }
 
             // Parallel key lookup
-            std::vector<std::vector<uint64_t>> tid_lists;
+            std::vector<std::vector<TID>> tid_lists;
             std::mutex list_mutex;
 
             uint32_t num_threads = std::min(max_threads, static_cast<uint32_t>(keys.size()));
@@ -3704,7 +3950,7 @@ namespace scratchbird
                             continue; // Skip missing keys
                         }
 
-                        std::vector<uint64_t> tids;
+                        std::vector<TID> tids;
                         // P0-6: Fixed to use current_xid for proper MGA visibility
                         status = getPostingListTids(posting_page, &tids, current_xid, ctx);
 
@@ -3730,17 +3976,15 @@ namespace scratchbird
             }
 
             // Use standard union (SIMD doesn't help much here)
-            result = unionTidLists(tid_lists);
-
-            return result;
+            return unionTidLists(tid_lists);
         }
 
         // Range query implementation
-        std::vector<uint64_t> GinIndex::findInRange(
+        std::vector<TID> GinIndex::findInRange(
             const RangeQuery &range,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             // Scan entry tree for keys in range
             std::vector<std::vector<uint8_t>> matching_keys;
@@ -3757,18 +4001,7 @@ namespace scratchbird
                 return result;
             }
 
-            // Union all matching keys' TID lists
-            // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
-            std::vector<TID> tid_results = findAny(matching_keys, 0, ctx);
-            for (const TID &tid : tid_results)
-            {
-                uint64_t legacy_tid = convertTIDtoLegacy(tid);
-                if (legacy_tid != 0)
-                {
-                    result.push_back(legacy_tid);
-                }
-            }
-            return result;
+            return findAny(matching_keys, 0, ctx);
         }
 
         // Helper: Scan entry tree for keys in range
@@ -3782,7 +4015,7 @@ namespace scratchbird
         {
             // Pin meta page to get root
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -3791,7 +4024,7 @@ namespace scratchbird
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint32_t root_page = meta->gin_keys_btree_root;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             if (root_page == 0)
             {
@@ -3810,7 +4043,7 @@ namespace scratchbird
             while (leaf_page != 0)
             {
                 uint8_t *leaf_data = nullptr;
-                status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+                status = pinIndexPage(leaf_page, (void **)&leaf_data, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -3860,14 +4093,14 @@ namespace scratchbird
                     // If we've exceeded upper bound, stop scanning
                     if (cmp_upper > 0)
                     {
-                        buffer_pool_->unpinPage(leaf_page, false, ctx);
+                        unpinIndexPage(leaf_page, false, ctx);
                         return Status::OK;
                     }
                 }
 
                 // Move to next leaf (B-tree leaves are not linked in current implementation)
                 // For now, we stop here. Full implementation would link leaves or traverse tree
-                buffer_pool_->unpinPage(leaf_page, false, ctx);
+                unpinIndexPage(leaf_page, false, ctx);
                 break;
             }
 
@@ -3944,12 +4177,12 @@ namespace scratchbird
         }
 
         // Optimized wildcard query with prefix scan
-        std::vector<uint64_t> GinIndex::findWithWildcardOptimized(
+        std::vector<TID> GinIndex::findWithWildcardOptimized(
             const void *pattern,
             size_t pattern_len,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (!pattern || pattern_len == 0)
             {
@@ -3966,17 +4199,7 @@ namespace scratchbird
             if (prefix.empty())
             {
                 // No prefix optimization possible - would need full scan
-                // PHASE 1.5: findWithWildcard returns TID, convert to legacy format for internal use
-                std::vector<TID> tid_results = findWithWildcard(pattern, pattern_len, ctx);
-                for (const TID &tid : tid_results)
-                {
-                    uint64_t legacy_tid = convertTIDtoLegacy(tid);
-                    if (legacy_tid != 0)
-                    {
-                        result.push_back(legacy_tid);
-                    }
-                }
-                return result;
+                return findWithWildcard(pattern, pattern_len, ctx);
             }
 
             // Use prefix for range scan
@@ -4014,18 +4237,7 @@ namespace scratchbird
                 }
             }
 
-            // Union all matching keys
-            // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
-            std::vector<TID> tid_results = findAny(matching_keys, 0, ctx);
-            for (const TID &tid : tid_results)
-            {
-                uint64_t legacy_tid = convertTIDtoLegacy(tid);
-                if (legacy_tid != 0)
-                {
-                    result.push_back(legacy_tid);
-                }
-            }
-            return result;
+            return findAny(matching_keys, 0, ctx);
         }
 
         // Helper: Levenshtein distance
@@ -4064,13 +4276,13 @@ namespace scratchbird
         }
 
         // STOR-M3: Optimized fuzzy matching with BK-tree
-        std::vector<uint64_t> GinIndex::findFuzzyOptimized(
+        std::vector<TID> GinIndex::findFuzzyOptimized(
             const void *key_data,
             size_t key_len,
             uint32_t max_edit_distance,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (!key_data || key_len == 0)
             {
@@ -4082,7 +4294,7 @@ namespace scratchbird
 
             // Pin meta page
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 return result;
@@ -4092,7 +4304,7 @@ namespace scratchbird
             uint32_t root_page = meta->gin_keys_btree_root;
             uint64_t num_keys = meta->gin_num_keys;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             if (root_page == 0)
             {
@@ -4110,18 +4322,7 @@ namespace scratchbird
             if (num_keys < BK_TREE_THRESHOLD)
             {
                 // Use existing brute-force implementation for small key sets
-                std::vector<TID> tid_results = findFuzzy(key_data, key_len, max_edit_distance, ctx);
-
-                result.reserve(tid_results.size());
-                for (const TID &tid : tid_results)
-                {
-                    uint64_t legacy = convertTIDtoLegacy(tid);
-                    if (legacy != 0)
-                    {
-                        result.push_back(legacy);
-                    }
-                }
-                return result;
+                return findFuzzy(key_data, key_len, max_edit_distance, ctx);
             }
 
             // Build BK-tree from all keys in the entry tree
@@ -4131,7 +4332,7 @@ namespace scratchbird
             std::function<void(uint32_t)> collectKeys = [&](uint32_t page_num)
             {
                 uint8_t *page_data = nullptr;
-                Status scan_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                Status scan_status = pinIndexPage(page_num, (void **)&page_data, ctx);
                 if (scan_status != Status::OK)
                 {
                     return;
@@ -4196,7 +4397,7 @@ namespace scratchbird
                     }
                 }
 
-                buffer_pool_->unpinPage(page_num, false, ctx);
+                unpinIndexPage(page_num, false, ctx);
             };
 
             // Collect all keys into BK-tree
@@ -4221,7 +4422,7 @@ namespace scratchbird
                 }
 
                 // Get TIDs from posting list
-                std::vector<uint64_t> tids;
+                std::vector<TID> tids;
                 status = getPostingListTids(static_cast<uint32_t>(posting_page),
                                            &tids, current_xid, ctx);
                 if (status != Status::OK)
@@ -4262,16 +4463,7 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // PHASE 1.5: Convert TID structs to legacy format set for lookup
-            std::set<uint64_t> dead_set;
-            for (const TID &tid : dead_tids)
-            {
-                uint64_t legacy = convertTIDtoLegacy(tid);
-                if (legacy != 0)  // Skip custom tablespace TIDs
-                {
-                    dead_set.insert(legacy);
-                }
-            }
+            std::unordered_set<TID> dead_set(dead_tids.begin(), dead_tids.end());
 
             if (dead_set.empty())
             {
@@ -4287,7 +4479,7 @@ namespace scratchbird
             // Format: chain of SBGinPendingListPage with GinPendingEntry arrays
 
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 LOG_WARNING(VACUUM, "GIN GC: Failed to pin meta page %u: %d",
@@ -4299,7 +4491,7 @@ namespace scratchbird
             uint64_t pending_head = meta->gin_pending_list_head;
             uint64_t pending_count_before = meta->gin_pending_list_count;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             // Scan pending list chain
             uint64_t current_page = pending_head;
@@ -4308,7 +4500,7 @@ namespace scratchbird
             while (current_page != 0)
             {
                 uint8_t *page_data = nullptr;
-                status = buffer_pool_->pinPage(static_cast<uint32_t>(current_page), (void **)&page_data, ctx);
+                status = pinIndexPage(static_cast<uint32_t>(current_page), (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     LOG_WARNING(VACUUM, "GIN GC: Failed to pin pending list page %lu: %d",
@@ -4329,11 +4521,10 @@ namespace scratchbird
                 {
                     GinPendingEntry &entry = pending_page->gpp_entries[i];
 
-                    // Convert GPID to legacy format for comparison
-                    uint64_t entry_tid = convertTIDtoLegacy(entry.getTID());
+                    TID entry_tid = entry.getTID();
 
                     // Check if already deleted (tid == 0)
-                    if (entry_tid == 0)
+                    if (!entry_tid.isValid())
                     {
                         continue;
                     }
@@ -4353,7 +4544,7 @@ namespace scratchbird
                     total_pages_modified++;
                 }
 
-                buffer_pool_->unpinPage(static_cast<uint32_t>(current_page), page_modified, ctx);
+                unpinIndexPage(static_cast<uint32_t>(current_page), page_modified, ctx);
 
                 // Move to next page in chain
                 current_page = next_page;
@@ -4364,7 +4555,7 @@ namespace scratchbird
             // Update meta page pending count
             if (pending_entries_removed > 0)
             {
-                status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+                status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
                 if (status == Status::OK)
                 {
                     meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
@@ -4376,7 +4567,7 @@ namespace scratchbird
                     {
                         meta->gin_pending_list_count = 0;
                     }
-                    buffer_pool_->unpinPage(meta_page_, true, ctx);
+                    unpinIndexPage(meta_page_, true, ctx);
                     total_pages_modified++;
                 }
             }
@@ -4388,7 +4579,7 @@ namespace scratchbird
             uint64_t posting_entries_removed = 0;
 
             // Get entry tree root
-            status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 LOG_WARNING(VACUUM, "GIN GC: Failed to pin meta page for entry tree: %d",
@@ -4402,7 +4593,7 @@ namespace scratchbird
 
             meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint64_t keys_tree_root = meta->gin_keys_btree_root;
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             if (keys_tree_root == 0)
             {
@@ -4421,7 +4612,7 @@ namespace scratchbird
             std::function<void(uint32_t)> collectPostingPages = [&](uint32_t page_num)
             {
                 uint8_t *page_data = nullptr;
-                Status pin_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                Status pin_status = pinIndexPage(page_num, (void **)&page_data, ctx);
                 if (pin_status != Status::OK)
                 {
                     LOG_WARNING(VACUUM, "GIN GC: Failed to pin entry tree page %u: %d",
@@ -4480,7 +4671,7 @@ namespace scratchbird
                     }
                 }
 
-                buffer_pool_->unpinPage(page_num, false, ctx);
+                unpinIndexPage(page_num, false, ctx);
             };
 
             // Collect all posting pages
@@ -4492,7 +4683,7 @@ namespace scratchbird
             for (uint64_t posting_page_num : posting_pages)
             {
                 uint8_t *posting_data = nullptr;
-                status = buffer_pool_->pinPage(static_cast<uint32_t>(posting_page_num),
+                status = pinIndexPage(static_cast<uint32_t>(posting_page_num),
                                               (void **)&posting_data, ctx);
                 if (status != Status::OK)
                 {
@@ -4508,12 +4699,12 @@ namespace scratchbird
                 {
                     // Posting tree: recursively process leaf nodes
                     uint64_t tree_root = posting_page->gpl_data.gpl_tree_root;
-                    buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), false, ctx);
+                    unpinIndexPage(static_cast<uint32_t>(posting_page_num), false, ctx);
 
                     std::function<void(uint32_t)> prunePostingTree = [&](uint32_t tree_page_num)
                     {
                         uint8_t *tree_data = nullptr;
-                        Status tree_pin_status = buffer_pool_->pinPage(tree_page_num,
+                        Status tree_pin_status = pinIndexPage(tree_page_num,
                                                                        (void **)&tree_data, ctx);
                         if (tree_pin_status != Status::OK)
                         {
@@ -4535,7 +4726,7 @@ namespace scratchbird
 
                             for (uint16_t i = 0; i < entry_count && i < getMaxPostingTreeLeafTids(); i++)
                             {
-                                uint64_t tid = convertTIDtoLegacy(leaf->gpt_tids[i].getTID());
+                                TID tid = leaf->gpt_tids[i].getTID();
 
                                 if (dead_set.find(tid) == dead_set.end())
                                 {
@@ -4576,7 +4767,7 @@ namespace scratchbird
                             }
                         }
 
-                        buffer_pool_->unpinPage(tree_page_num, tree_page_modified, ctx);
+                        unpinIndexPage(tree_page_num, tree_page_modified, ctx);
                     };
 
                     if (tree_root != 0)
@@ -4591,11 +4782,44 @@ namespace scratchbird
 
                     if (posting_page->gpl_is_compressed)
                     {
-                        // Compressed list: decompress, filter, recompress
-                        // For now, skip compressed lists (alpha limitation)
-                        LOG_INFO(VACUUM, "GIN GC: Skipping compressed posting list at page %lu",
-                                posting_page_num);
-                        buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), false, ctx);
+                        std::vector<TID> tids;
+                        Status decode_status = decodeCompressedPostingList(
+                            posting_page, db_->page_size(), &tids, ctx);
+                        if (decode_status != Status::OK)
+                        {
+                            unpinIndexPage(static_cast<uint32_t>(posting_page_num), false, ctx);
+                            return decode_status;
+                        }
+
+                        std::vector<TID> filtered;
+                        filtered.reserve(tids.size());
+                        for (const TID &tid : tids)
+                        {
+                            if (dead_set.find(tid) == dead_set.end())
+                            {
+                                filtered.push_back(tid);
+                            }
+                            else
+                            {
+                                posting_entries_removed++;
+                            }
+                        }
+
+                        posting_page->gpl_entry_count = static_cast<uint16_t>(filtered.size());
+                        if (!tryCompressPostingList(posting_page, db_->page_size(), filtered))
+                        {
+                            posting_page->gpl_is_compressed = 0;
+                            posting_page->gpl_compressed_bytes = 0;
+                            for (size_t i = 0; i < filtered.size(); i++)
+                            {
+                                posting_page->getEntries()[i].setTID(filtered[i]);
+                                posting_page->getEntries()[i].xmin = 0;
+                                posting_page->getEntries()[i].xmax = 0;
+                            }
+                        }
+
+                        unpinIndexPage(static_cast<uint32_t>(posting_page_num), true, ctx);
+                        total_pages_modified++;
                         continue;
                     }
 
@@ -4606,7 +4830,7 @@ namespace scratchbird
 
                     for (uint16_t i = 0; i < entry_count && i < getMaxPostingEntriesPerPage(); i++)
                     {
-                        uint64_t tid = convertTIDtoLegacy(entries[i].getTID());
+                        TID tid = entries[i].getTID();
 
                         if (dead_set.find(tid) == dead_set.end())
                         {
@@ -4631,7 +4855,7 @@ namespace scratchbird
                         total_pages_modified++;
                     }
 
-                    buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), page_modified, ctx);
+                    unpinIndexPage(static_cast<uint32_t>(posting_page_num), page_modified, ctx);
                 }
             }
 
@@ -4645,6 +4869,16 @@ namespace scratchbird
                 *entries_removed_out = total_entries_removed;
             if (pages_modified_out)
                 *pages_modified_out = total_pages_modified;
+
+            if (bloom_filter_ && total_entries_removed > 0)
+            {
+                Status bf_status = rebuildBloomFilter(ctx);
+                if (bf_status != Status::OK)
+                {
+                    LOG_WARNING(VACUUM, "GIN bloom filter rebuild failed: %d",
+                                static_cast<int>(bf_status));
+                }
+            }
 
             return had_errors ? Status::IO_ERROR : Status::OK;
         }
@@ -4690,7 +4924,7 @@ namespace scratchbird
             // The pending list contains recent insertions not yet merged into main index
 
             uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            Status status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to pin GIN meta page");
@@ -4701,14 +4935,14 @@ namespace scratchbird
             uint64_t pending_head = meta->gin_pending_list_head;
             uint64_t keys_tree_root = meta->gin_keys_btree_root;
 
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
+            unpinIndexPage(meta_page_, false, ctx);
 
             // Scan pending list chain
             uint64_t current_page = pending_head;
             while (current_page != 0)
             {
                 uint8_t *page_data = nullptr;
-                status = buffer_pool_->pinPage(static_cast<uint32_t>(current_page), (void **)&page_data, ctx);
+                status = pinIndexPage(static_cast<uint32_t>(current_page), (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
                     LOG_WARNING(STORAGE, "Failed to pin GIN pending list page %lu during TID update: %d",
@@ -4754,7 +4988,7 @@ namespace scratchbird
                 }
 
                 // Unpin page (mark dirty if modified)
-                buffer_pool_->unpinPage(static_cast<uint32_t>(current_page), page_modified, ctx);
+                unpinIndexPage(static_cast<uint32_t>(current_page), page_modified, ctx);
 
                 if (page_modified)
                 {
@@ -4789,7 +5023,7 @@ namespace scratchbird
             std::function<void(uint32_t)> collectPostingPages = [&](uint32_t page_num)
             {
                 uint8_t *page_data = nullptr;
-                Status pin_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                Status pin_status = pinIndexPage(page_num, (void **)&page_data, ctx);
                 if (pin_status != Status::OK)
                 {
                     LOG_WARNING(STORAGE, "Failed to pin entry tree page %u during TID update: %d",
@@ -4856,7 +5090,7 @@ namespace scratchbird
                     }
                 }
 
-                buffer_pool_->unpinPage(page_num, false, ctx);
+                unpinIndexPage(page_num, false, ctx);
             };
 
             // Collect all posting pages from entry tree
@@ -4868,7 +5102,7 @@ namespace scratchbird
             for (uint64_t posting_page_num : posting_pages)
             {
                 uint8_t *posting_data = nullptr;
-                status = buffer_pool_->pinPage(static_cast<uint32_t>(posting_page_num),
+                status = pinIndexPage(static_cast<uint32_t>(posting_page_num),
                                               (void **)&posting_data, ctx);
                 if (status != Status::OK)
                 {
@@ -4888,13 +5122,13 @@ namespace scratchbird
                     // ===== Posting Tree: Recursively update TIDs in all leaf nodes =====
                     uint64_t tree_root = posting_page->gpl_data.gpl_tree_root;
 
-                    buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), false, ctx);
+                    unpinIndexPage(static_cast<uint32_t>(posting_page_num), false, ctx);
 
                     // Helper: Recursively traverse posting tree and update TIDs in leaves
                     std::function<void(uint32_t)> updatePostingTree = [&](uint32_t tree_page_num)
                     {
                         uint8_t *tree_data = nullptr;
-                        Status tree_pin_status = buffer_pool_->pinPage(tree_page_num,
+                        Status tree_pin_status = pinIndexPage(tree_page_num,
                                                                        (void **)&tree_data, ctx);
                         if (tree_pin_status != Status::OK)
                         {
@@ -4917,20 +5151,20 @@ namespace scratchbird
 
                             for (uint16_t i = 0; i < tid_count && i < getMaxPostingTreeLeafTids(); i++)
                             {
-                                // Convert GPID to legacy for lookup
-                                uint64_t old_tid = convertTIDtoLegacy(leaf->gpt_tids[i].getTID());
-
-                                auto it = tid_mapping.find(old_tid);
+                                GPID old_gpid = leaf->gpt_tids[i].getTID().gpid;
+                                auto it = tid_mapping.find(old_gpid);
                                 if (it != tid_mapping.end())
                                 {
-                                    uint64_t new_tid = it->second;
-                                    leaf->gpt_tids[i].setTID(convertLegacyTID(new_tid));
+                                    GPID new_gpid = it->second;
+                                    TID updated = leaf->gpt_tids[i].getTID();
+                                    updated.gpid = new_gpid;
+                                    leaf->gpt_tids[i].setTID(updated);
 
                                     total_tids_updated++;
                                     tree_page_modified = true;
 
-                                    LOG_DEBUG(STORAGE, "Updated GIN posting tree TID: %lu -> %lu (page %u)",
-                                             old_tid, new_tid, tree_page_num);
+                                    LOG_DEBUG(STORAGE, "Updated GIN posting tree GPID: %lu -> %lu (page %u)",
+                                             old_gpid, new_gpid, tree_page_num);
                                 }
                             }
                         }
@@ -4950,7 +5184,7 @@ namespace scratchbird
                             }
                         }
 
-                        buffer_pool_->unpinPage(tree_page_num, tree_page_modified, ctx);
+                        unpinIndexPage(tree_page_num, tree_page_modified, ctx);
 
                         if (tree_page_modified)
                         {
@@ -4969,12 +5203,45 @@ namespace scratchbird
                     // ===== Simple Posting List =====
                     if (posting_page->gpl_is_compressed)
                     {
-                        // Compressed posting list: would need to decompress, update, recompress
-                        // For now, log warning and skip
-                        LOG_WARNING(STORAGE, "GIN compressed posting list at page %lu - TID update not implemented",
-                                   posting_page_num);
-                        buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), false, ctx);
-                        had_errors = true;
+                        std::vector<TID> tids;
+                        Status decode_status = decodeCompressedPostingList(
+                            posting_page, db_->page_size(), &tids, ctx);
+                        if (decode_status != Status::OK)
+                        {
+                            unpinIndexPage(static_cast<uint32_t>(posting_page_num), false, ctx);
+                            return decode_status;
+                        }
+
+                        bool compressed_modified = false;
+                        for (TID &tid : tids)
+                        {
+                            auto it = tid_mapping.find(tid.gpid);
+                            if (it != tid_mapping.end())
+                            {
+                                tid.gpid = it->second;
+                                total_tids_updated++;
+                                compressed_modified = true;
+                            }
+                        }
+
+                        if (compressed_modified)
+                        {
+                            posting_page->gpl_entry_count = static_cast<uint16_t>(tids.size());
+                            if (!tryCompressPostingList(posting_page, db_->page_size(), tids))
+                            {
+                                posting_page->gpl_is_compressed = 0;
+                                posting_page->gpl_compressed_bytes = 0;
+                                for (size_t i = 0; i < tids.size(); i++)
+                                {
+                                    posting_page->getEntries()[i].setTID(tids[i]);
+                                    posting_page->getEntries()[i].xmin = 0;
+                                    posting_page->getEntries()[i].xmax = 0;
+                                }
+                            }
+                            total_pages_modified++;
+                        }
+
+                        unpinIndexPage(static_cast<uint32_t>(posting_page_num), compressed_modified, ctx);
                         continue;
                     }
 
@@ -4983,24 +5250,24 @@ namespace scratchbird
 
                     for (uint16_t i = 0; i < entry_count && i < getMaxPostingEntriesPerPage(); i++)
                     {
-                        // Convert GPID to legacy for lookup
-                        uint64_t old_tid = convertTIDtoLegacy(posting_page->getEntries()[i].getTID());
-
-                        auto it = tid_mapping.find(old_tid);
+                        GPID old_gpid = posting_page->getEntries()[i].getTID().gpid;
+                        auto it = tid_mapping.find(old_gpid);
                         if (it != tid_mapping.end())
                         {
-                            uint64_t new_tid = it->second;
-                            posting_page->getEntries()[i].setTID(convertLegacyTID(new_tid));
+                            GPID new_gpid = it->second;
+                            TID updated = posting_page->getEntries()[i].getTID();
+                            updated.gpid = new_gpid;
+                            posting_page->getEntries()[i].setTID(updated);
 
                             total_tids_updated++;
                             page_modified = true;
 
-                            LOG_DEBUG(STORAGE, "Updated GIN posting list TID: %lu -> %lu (page %lu)",
-                                     old_tid, new_tid, posting_page_num);
+                            LOG_DEBUG(STORAGE, "Updated GIN posting list GPID: %lu -> %lu (page %lu)",
+                                     old_gpid, new_gpid, posting_page_num);
                         }
                     }
 
-                    buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), page_modified, ctx);
+                    unpinIndexPage(static_cast<uint32_t>(posting_page_num), page_modified, ctx);
 
                     if (page_modified)
                     {

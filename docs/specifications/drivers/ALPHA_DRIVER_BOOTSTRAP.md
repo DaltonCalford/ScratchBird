@@ -16,6 +16,7 @@ MUST be implemented using the native protocol stack.
 - libscratchbird (network-only) usage
 - Connection strings, DSN, TLS, and auth mapping
 - Autocommit semantics
+- Server-side prepare/bind (no client-side SQL substitution)
 
 Out of scope:
 - Emulation drivers (PostgreSQL/MySQL/Firebird clients) wiring
@@ -99,5 +100,6 @@ Drivers must map their autocommit flags to this model.
 
 - docs/specifications/drivers/ODBC_DRIVER_SPECIFICATION.md
 - docs/specifications/drivers/JDBC_DRIVER_SPECIFICATION.md
+- docs/specifications/drivers/NATIVE_DRIVER_CONFORMANCE.md
 - docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md
 - docs/specifications/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md

@@ -507,8 +507,8 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     }
 
     std::string normalized_schema = normalize_path(schema);
-    if (normalized_schema.rfind("emulation.postgresql.", 0) == 0 ||
-        normalized_schema == "emulation.postgresql")
+    if (normalized_schema.rfind("remote.emulation.postgresql.", 0) == 0 ||
+        normalized_schema == "remote.emulation.postgresql")
     {
         schema = normalized_schema;
         return;

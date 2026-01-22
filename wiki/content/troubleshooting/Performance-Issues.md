@@ -304,7 +304,7 @@ FROM pg_stat_database;
 ```ini
 # sb_server.conf - increase buffer pool
 [memory]
-shared_buffers = 4GB  # 25% of system RAM is typical
+buffer_pool_size = 4GB  # 25% of system RAM is typical
 effective_cache_size = 12GB  # 75% of system RAM
 ```
 
@@ -312,12 +312,12 @@ effective_cache_size = 12GB  # 75% of system RAM
 
 **Check if working set fits in memory:**
 ```sql
--- Total database size vs shared_buffers
+-- Total database size vs buffer_pool_size
 SELECT
     pg_size_pretty(pg_database_size(current_database())) as database_size,
-    pg_size_pretty(setting::bigint * 8192) as shared_buffers
+    pg_size_pretty(setting::bigint * 8192) as buffer_pool_size
 FROM pg_settings
-WHERE name = 'shared_buffers';
+WHERE name = 'buffer_pool_size';
 
 -- Size of frequently accessed tables
 SELECT
@@ -413,7 +413,7 @@ BEGIN ISOLATION LEVEL SERIALIZABLE;
 SELECT name, setting, unit, context
 FROM pg_settings
 WHERE name IN (
-    'shared_buffers',
+    'buffer_pool_size',
     'work_mem',
     'maintenance_work_mem',
     'effective_cache_size',
@@ -504,11 +504,11 @@ WHERE temp_files > 0;
 
 ### Solutions
 
-**Increase shared_buffers:**
+**Increase buffer_pool_size:**
 ```ini
 # sb_server.conf
 [memory]
-shared_buffers = 8GB  # Increase to cache more data
+buffer_pool_size = 8GB  # Increase to cache more data
 ```
 
 **Use faster storage:**
@@ -731,7 +731,7 @@ SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
 
 ### Configuration Review
 
-- [ ] shared_buffers = 25% of RAM
+- [ ] buffer_pool_size = 25% of RAM
 - [ ] effective_cache_size = 75% of RAM
 - [ ] work_mem = 64MB-256MB (depends on concurrency)
 - [ ] maintenance_work_mem = 1GB-2GB
@@ -761,7 +761,7 @@ SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
 
 | Setting | Typical Value | Purpose |
 |---------|---------------|---------|
-| shared_buffers | 25% of RAM | Main data cache |
+| buffer_pool_size | 25% of RAM | Main data cache |
 | effective_cache_size | 75% of RAM | Planner hint for OS cache |
 | work_mem | 64MB-256MB | Per-operation sort/hash memory |
 | maintenance_work_mem | 1GB-2GB | VACUUM, CREATE INDEX |

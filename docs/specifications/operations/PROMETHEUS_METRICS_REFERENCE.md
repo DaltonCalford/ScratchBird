@@ -604,6 +604,115 @@ scratchbird_backup_running 0
 
 ---
 
+## 13.1 Migration Metrics (Beta)
+
+### 13.1.1 Tablespace Migration
+
+```prometheus
+# HELP scratchbird_tablespace_migration_rows_copied_total Rows copied during tablespace migration
+# TYPE scratchbird_tablespace_migration_rows_copied_total counter
+scratchbird_tablespace_migration_rows_copied_total{table="orders"} 987654
+
+# HELP scratchbird_tablespace_migration_rows_per_sec Rows copied per second
+# TYPE scratchbird_tablespace_migration_rows_per_sec gauge
+scratchbird_tablespace_migration_rows_per_sec{table="orders"} 12500
+
+# HELP scratchbird_tablespace_migration_eta_seconds Estimated seconds remaining
+# TYPE scratchbird_tablespace_migration_eta_seconds gauge
+scratchbird_tablespace_migration_eta_seconds{table="orders"} 180
+
+# HELP scratchbird_tablespace_migration_lag_ms Catch-up lag in milliseconds
+# TYPE scratchbird_tablespace_migration_lag_ms gauge
+scratchbird_tablespace_migration_lag_ms{table="orders"} 250
+
+# HELP scratchbird_tablespace_migration_throttle_state Current throttle state
+# TYPE scratchbird_tablespace_migration_throttle_state gauge
+scratchbird_tablespace_migration_throttle_state{table="orders",state="none"} 1
+
+# HELP scratchbird_tablespace_migration_state Migration state
+# TYPE scratchbird_tablespace_migration_state gauge
+scratchbird_tablespace_migration_state{table="orders",state="copy"} 1
+```
+
+### 13.1.2 Shard Migration (Cluster)
+
+```prometheus
+# HELP scratchbird_shard_migration_bytes_copied_total Bytes copied during shard migration
+# TYPE scratchbird_shard_migration_bytes_copied_total counter
+scratchbird_shard_migration_bytes_copied_total{shard="shard_01"} 10737418240
+
+# HELP scratchbird_shard_migration_rows_copied_total Rows copied during shard migration
+# TYPE scratchbird_shard_migration_rows_copied_total counter
+scratchbird_shard_migration_rows_copied_total{shard="shard_01"} 1234567
+
+# HELP scratchbird_shard_migration_bytes_per_sec Bytes copied per second
+# TYPE scratchbird_shard_migration_bytes_per_sec gauge
+scratchbird_shard_migration_bytes_per_sec{shard="shard_01"} 104857600
+
+# HELP scratchbird_shard_migration_rows_per_sec Rows copied per second
+# TYPE scratchbird_shard_migration_rows_per_sec gauge
+scratchbird_shard_migration_rows_per_sec{shard="shard_01"} 20000
+
+# HELP scratchbird_shard_migration_eta_seconds Estimated seconds remaining
+# TYPE scratchbird_shard_migration_eta_seconds gauge
+scratchbird_shard_migration_eta_seconds{shard="shard_01"} 240
+
+# HELP scratchbird_shard_migration_lag_ms Catch-up lag in milliseconds
+# TYPE scratchbird_shard_migration_lag_ms gauge
+scratchbird_shard_migration_lag_ms{shard="shard_01"} 500
+
+# HELP scratchbird_shard_migration_throttle_state Current throttle state
+# TYPE scratchbird_shard_migration_throttle_state gauge
+scratchbird_shard_migration_throttle_state{shard="shard_01",state="lag"} 1
+
+# HELP scratchbird_shard_migration_state Migration state
+# TYPE scratchbird_shard_migration_state gauge
+scratchbird_shard_migration_state{shard="shard_01",state="catch_up"} 1
+```
+
+Labels:
+| Label | Values | Description |
+|-------|--------|-------------|
+| `table` | table name or UUID | Tablespace migration target |
+| `shard` | shard name or UUID | Shard migration target |
+| `state` | copy, catch_up, cutover, cleanup, done, failed | Migration state |
+
+---
+
+## 13.2 COPY Metrics (Alpha)
+
+```prometheus
+# HELP scratchbird_copy_rows_total Rows processed by COPY
+# TYPE scratchbird_copy_rows_total counter
+scratchbird_copy_rows_total{direction="from"} 1000000
+scratchbird_copy_rows_total{direction="to"} 500000
+
+# HELP scratchbird_copy_bytes_total Bytes processed by COPY
+# TYPE scratchbird_copy_bytes_total counter
+scratchbird_copy_bytes_total{direction="from"} 104857600
+scratchbird_copy_bytes_total{direction="to"} 52428800
+
+# HELP scratchbird_copy_errors_total COPY errors
+# TYPE scratchbird_copy_errors_total counter
+scratchbird_copy_errors_total 12
+
+# HELP scratchbird_copy_duration_seconds COPY duration
+# TYPE scratchbird_copy_duration_seconds histogram
+scratchbird_copy_duration_seconds_bucket{le="0.1"} 5
+scratchbird_copy_duration_seconds_bucket{le="1"} 15
+scratchbird_copy_duration_seconds_bucket{le="5"} 40
+scratchbird_copy_duration_seconds_bucket{le="+Inf"} 50
+scratchbird_copy_duration_seconds_sum 123.4
+scratchbird_copy_duration_seconds_count 50
+```
+
+Labels:
+| Label | Values | Description |
+|-------|--------|-------------|
+| `direction` | from, to | COPY FROM or COPY TO |
+
+---
+
 ## 14. Server Info Metrics
 
 ```prometheus

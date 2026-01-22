@@ -86,7 +86,7 @@ Update this table as work progresses.
 | Workstream | Status | Owner | Milestone | Notes |
 | --- | --- | --- | --- | --- |
 | WS-1 Catalog bootstrap | Done |  | Alpha Core | Root paths updated; migration/repair pass added |
-| WS-2 Tablespace routing | In Progress |  | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace header v2 write + v1 read support |
+| WS-2 Tablespace routing | In Progress |  | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace header v2 write + v1 read support; tablespace_files catalog wiring added; tablespace table/index counts maintained |
 | WS-3 Index migration safety | TODO |  | Alpha Core |  |
 | WS-4 Scheduler/job system | TODO |  | Alpha Core |  |
 | WS-5 Constraint enforcement | TODO |  | Alpha Core |  |
@@ -103,3 +103,9 @@ Update this table as work progresses.
 ## Recent Progress
 - 2026-01-21: Full `ctest` run (with `SCRATCHBIRD_TEST_NETWORK=1`) completed cleanly after stabilizing TCP integration port selection and rebuilding listener/parser binaries.
 - 2026-01-21: Temporary debug logging removed from listener/parser/native adapter paths after validation.
+- 2026-01-21: Wired sb_tablespace_files catalog page allocation/backfill plus load/persist helpers for tablespace file paths.
+- 2026-01-21: Maintained tablespace table_count/index_count on table/index create/drop and table migration.
+- 2026-01-21: Storage engine now allocates/pins heap pages by tablespace (GPID-aware insert/read/update/delete paths and allocation helpers).
+- 2026-01-21: Heap scans iterate GPID-based pages for non-primary tablespaces and emit TIDs with the correct tablespace.
+- 2026-01-21: Legacy delete-by-TID path now honors tablespace ID overrides when pinning pages.
+- 2026-01-21: B-tree and Hash index storage now use root_gpid tablespace routing for pin/unpin and allocation.

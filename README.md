@@ -2,9 +2,9 @@
 
 **Firebird-style MGA database engine** with multi-dialect wire compatibility and advanced distributed cluster capabilities.
 
-**Current Phase:** Alpha network service layer (listener/pool/parser/server operational; drivers/auth wiring in progress)
+**Current Phase:** Alpha Engine Core Completion (see `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`)
 **Project Age:** ~6 months (July 2025 - present)
-**Status:** Parser remediation complete; listener/pool/parser/server process working; driver integration + auth wiring in progress; see `docs/IMPLEMENTATION_STATUS_DASHBOARD.md`
+**Status:** Catalog bootstrap complete; tablespace routing in progress; 7 workstreams remaining; see `docs/IMPLEMENTATION_STATUS_DASHBOARD.md`
 
 ---
 
@@ -30,28 +30,68 @@ ScratchBird is a next-generation database management system that combines:
 
 ---
 
+## Related Projects
+
+ScratchBird has been split into multiple repositories to enable proper task segmentation and parallel development:
+
+| Repository | Description | Link |
+|------------|-------------|------|
+| **ScratchBird** (this repo) | Core database engine - storage, transactions, SBLR runtime, parsers, network layer | You are here |
+| **ScratchBird-driver** | Language drivers for client connectivity (ODBC, JDBC, Python, Node.js, Go, Rust, etc.) | [GitHub](https://github.com/DaltonCalford/ScratchBird-driver) |
+| **ScratchRobin** | GUI database management and administration tools | [GitHub](https://github.com/DaltonCalford/ScratchRobin) |
+
+### Project Separation Rationale
+
+- **ScratchBird (Core Engine):** Focuses on the database kernel - MGA storage engine, catalog, transactions, SBLR bytecode runtime, SQL parsers (native + emulated dialects), wire protocols, and security subsystem.
+
+- **ScratchBird-driver:** Contains all client-side drivers and connectivity libraries. Supports multiple programming languages (C++, C#/.NET, Java/JDBC, Python, Node.js/TypeScript, Go, Rust, PHP, Ruby, R, Pascal/Delphi) and connectivity standards (ODBC). This separation allows driver development to proceed independently once protocol specifications stabilize.
+
+- **ScratchRobin:** A dedicated GUI tool for database administration, query execution, schema management, and monitoring. Separating the GUI allows for independent UI/UX iteration and cross-platform development without impacting core engine work.
+
+This architecture enables parallel development across teams and ensures that driver updates or GUI improvements don't require full engine rebuilds.
+
+---
+
 ## Current Status
 
-### ✅ Alpha Scope (current)
+### ✅ Alpha Scope - Completed
 
 - Core engine (MGA, storage, SBLR runtime) for embedded, IPC, and network use
 - Parser remediation and dialect bytecode alignment complete
 - Engine-enforced security; parser/listener treated as untrusted
 - Listener/pool/parser/server process operational with socket handoff per dialect
 - Shared SBLR cache with per-connection compile caches
+- **WS-1 Catalog Bootstrap:** Schema roots updated; migration/repair pass added
 
-### 🚧 In Progress
+### 🚧 In Progress - Engine Core Alpha Completion
 
-- Server auth wiring (HBA/SCRAM/TLS/MFA hooks) and protocol handshake hardening
-- Driver integration and client readiness (ODBC/JDBC + tooling; see `docs/planning/`)
-- CLI updates for network modes, listener orchestration, and monitoring
-- Dialect parity + adapter e2e suites per dialect (no cross-dialect fallbacks)
+Active work tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
+
+| Workstream | Status | Description |
+|------------|--------|-------------|
+| WS-1 Catalog Bootstrap | ✅ Done | Root paths updated; migration/repair pass added |
+| WS-2 Tablespace Routing | 🚧 In Progress | GPID wiring, tablespace header v2, file catalog integration |
+| WS-3 Index Migration Safety | 📋 TODO | TID updates for all index types |
+| WS-4 Scheduler/Job System | 📋 TODO | Secure job runner and scheduling model |
+| WS-5 Constraint Enforcement | 📋 TODO | PK/FK/UNIQUE/CHECK/NOT NULL enforcement |
+| WS-6 Security Enforcement | 📋 TODO | View definer checks, RLS SELECT enforcement |
+| WS-7 Monitoring Parity | 📋 TODO | sys.* views and MON$ sources |
+| WS-8 Backup/Restore | 📋 TODO | Multi-tablespace coverage validation |
+| WS-9 Cache/Buffer Plan | 📋 TODO | Cache and buffer remediation |
+
+**Recent Progress (2026-01-21):**
+- Full ctest run completed cleanly after stabilizing TCP integration
+- Tablespace file catalog wiring and allocation helpers added
+- Storage engine now allocates/pins heap pages by tablespace (GPID-aware)
+- B-tree and Hash index storage use root_gpid tablespace routing
 
 ### 📋 Beta (Deferred)
 
 - Cluster manager, multi-node coordination, and distributed scheduling
 - Backup/ETL orchestration and NoSQL extensions beyond Alpha vectors
 - Post-gold protocol expansions (e.g., TDS/MSSQL)
+
+> **Note:** Driver development has moved to [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver) for parallel development. GUI tools are in [ScratchRobin](https://github.com/DaltonCalford/ScratchRobin).
 
 ---
 
@@ -318,7 +358,7 @@ See `PROJECT_STATS.md` for current counts.
 
 ## Roadmap
 
-### Alpha Phase (Current - Network Service)
+### Alpha Phase (Current - Engine Core Completion)
 
 - ✅ Plan 01: Core Storage & GC
 - ✅ Plan 02: UUID Resolution & Rename/Move
@@ -326,15 +366,19 @@ See `PROJECT_STATS.md` for current counts.
 - ✅ Plan 03B: Domain Infrastructure
 - ✅ Plan 04: Domain DDL (all parsers complete)
 - ✅ Listener/pool/parser/server process operational
-- 🚧 Driver adapters (ODBC/JDBC), auth wiring, and dialect e2e parity
+- ✅ WS-1: Catalog Bootstrap complete
+- 🚧 WS-2: Tablespace Routing + GPID Wiring (in progress)
+- 📋 WS-3 through WS-9: Index migration, scheduler, constraints, security, monitoring, backup/restore, cache/buffer
+
+See `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` for detailed workstream tracking.
 
 ### Pre-Beta Phase (Next)
 
-After Alpha network service completion:
+After Alpha engine core completion:
 - Finalize planning and specification phase
 - Audit and verification of Alpha deliverables
 - Prepare infrastructure for Beta cluster implementation
-- Driver adapter delivery milestones (ODBC/JDBC)
+- Driver work proceeds in parallel at [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver)
 
 ### Beta Phase (Planned)
 
@@ -428,12 +472,15 @@ Contributions welcome! Please:
 ## Contact
 
 - **Project:** ScratchBird Database Engine
-- **Phase:** Alpha (completing) → Pre-Beta
-- **Repository:** https://github.com/scratchbird/scratchbird
+- **Phase:** Alpha Engine Core Completion → Pre-Beta
+- **Core Repository:** https://github.com/DaltonCalford/ScratchBird
+- **Driver Repository:** https://github.com/DaltonCalford/ScratchBird-driver
+- **GUI Tools Repository:** https://github.com/DaltonCalford/ScratchRobin
 - **Documentation:** `docs/` directory
 
 ---
 
 **Last Updated:** January 2026
-**Next Milestone:** Complete IP layer (listeners, connection pools, parser agents, CLI network support)
+**Next Milestone:** Complete Engine Core Alpha (WS-2 Tablespace Routing, then WS-3 through WS-9)
 **Next Phase:** Pre-Beta preparation, then Beta cluster implementation
+**Related Projects:** [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver) | [ScratchRobin](https://github.com/DaltonCalford/ScratchRobin)

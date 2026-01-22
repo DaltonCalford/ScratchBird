@@ -907,7 +907,7 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM orders WHERE customer_id = 123;
 # sb_server.conf
 
 [memory]
-shared_buffers = 256MB          # Similar to PostgreSQL
+buffer_pool_size = 256MB          # Similar to PostgreSQL
 work_mem = 4MB                  # Per-operation memory
 maintenance_work_mem = 64MB     # For VACUUM, CREATE INDEX
 

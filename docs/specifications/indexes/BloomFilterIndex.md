@@ -1444,6 +1444,15 @@ TEST(BloomFilterSQLTest, AlterIndexAddBloomFilter) {
 
 ---
 
+## Tablespace + TID/GPID Requirements
+
+- **TID format:** All index entries must store `TID` with full `GPID + slot` (no legacy 32-bit page IDs).
+- **Tablespace routing:** Bloom filter pages must be allocated/pinned via `root_gpid` and `tablespace_id`.
+- **Cross-tablespace visibility:** Heap lookups from Bloom filter hits must pin heap pages via `pinPageGlobal` using the `GPID` in the `TID`.
+- **Migration:** If table pages migrate between tablespaces, the Bloom filter must support `updateTIDsAfterMigration` using `GPID` mapping for any stored TIDs.
+
+---
+
 ## Future Enhancements
 
 ### Phase 2 Improvements (Future Work)

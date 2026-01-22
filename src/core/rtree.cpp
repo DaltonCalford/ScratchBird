@@ -34,6 +34,21 @@ RTree::~RTree()
               "<uuid>");
 }
 
+GPID RTree::indexGPID(uint64_t page_num) const
+{
+    return makeGPID(index_info_.idx_tablespace_id, page_num);
+}
+
+Status RTree::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+{
+    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+}
+
+Status RTree::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
+{
+    return db_->buffer_pool()->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
+}
+
 // ============================================================================
 // Static Factory Methods
 // ============================================================================
@@ -43,7 +58,7 @@ Status RTree::create(Database* db,
                     const UuidV7Bytes& table_uuid,
                     const std::vector<UuidV7Bytes>& column_uuids,
                     uint32_t max_entries,
-                    uint32_t* root_page_out,
+                    GPID root_gpid,
                     ErrorContext* ctx)
 {
     LOG_INFO(BTREE, "Creating R-tree index %s with max_entries=%u",
@@ -59,20 +74,11 @@ Status RTree::create(Database* db,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Allocate root page
-    PageManager* page_mgr = db->page_manager();
-    uint32_t root_page = 0;
-
-    Status status = page_mgr->allocatePage(root_page, ctx);
-    if (status != Status::OK)
-    {
-        LOG_ERROR(BTREE, "Failed to allocate root page for R-tree index");
-        return status;
-    }
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
 
     // Initialize root page
     void* page = nullptr;
-    status = db->buffer_pool()->pinPage(root_page, &page, ctx);
+    Status status = db->buffer_pool()->pinPageGlobal(root_gpid, &page, ctx);
     if (status != Status::OK)
     {
         LOG_ERROR(BTREE, "Failed to pin root page %u", root_page);
@@ -111,9 +117,7 @@ Status RTree::create(Database* db,
     rtree_page->rtree_lsn = 0;
 
     // Mark page as dirty and unpin
-    db->buffer_pool()->unpinPage(root_page, true, nullptr);
-
-    *root_page_out = root_page;
+    db->buffer_pool()->unpinPageGlobal(root_gpid, true, nullptr);
 
     LOG_INFO(BTREE, "R-tree index created successfully, root page: %u", root_page);
     return Status::OK;
@@ -121,19 +125,19 @@ Status RTree::create(Database* db,
 
 std::unique_ptr<RTree> RTree::open(Database* db,
                                    const UuidV7Bytes& index_uuid,
-                                   uint32_t root_page,
+                                   GPID root_gpid,
                                    uint32_t max_entries,
                                    ErrorContext* ctx)
 {
     LOG_DEBUG(BTREE, "Opening R-tree index %s, root page: %u",
-              "<uuid>", root_page);
+              "<uuid>", static_cast<uint32_t>(getPageNumber(root_gpid)));
 
     // Load root page to get metadata
     void* page = nullptr;
-    Status status = db->buffer_pool()->pinPage(root_page, &page, ctx);
+    Status status = db->buffer_pool()->pinPageGlobal(root_gpid, &page, ctx);
     if (status != Status::OK)
     {
-        LOG_ERROR(BTREE, "Failed to pin root page %u", root_page);
+        LOG_ERROR(BTREE, "Failed to pin root page %u", static_cast<uint32_t>(getPageNumber(root_gpid)));
         return nullptr;
     }
 
@@ -143,14 +147,15 @@ std::unique_ptr<RTree> RTree::open(Database* db,
     SBRTreeIndex index_info;
     std::memcpy(&index_info.idx_uuid, &rtree_page->rtree_index_uuid, sizeof(ID));
     std::memcpy(&index_info.idx_table_uuid, &rtree_page->rtree_table_uuid, sizeof(ID));
-    index_info.idx_root_page = root_page;
+    index_info.idx_root_page = getPageNumber(root_gpid);
+    index_info.idx_tablespace_id = getTablespaceID(root_gpid);
     index_info.idx_height = rtree_page->rtree_height;
     index_info.idx_max_entries = max_entries;
     index_info.idx_entry_count = rtree_page->rtree_total_entries;
     index_info.idx_page_count = 1; // Will be updated as we traverse
     index_info.idx_deleted_count = rtree_page->rtree_deleted_entries;
 
-    db->buffer_pool()->unpinPage(root_page, true, nullptr);
+    db->buffer_pool()->unpinPageGlobal(root_gpid, true, nullptr);
 
     auto rtree = std::make_unique<RTree>(db, index_info);
 
@@ -564,14 +569,13 @@ Status RTree::clear(ErrorContext* ctx)
     root_.reset();
 
     // Recreate empty root page
-    uint32_t new_root_page = 0;
+    GPID root_gpid = makeGPID(index_info_.idx_tablespace_id, index_info_.idx_root_page);
     Status status = create(db_, index_info_.idx_uuid, index_info_.idx_table_uuid,
                           index_info_.idx_column_ids, index_info_.idx_max_entries,
-                          &new_root_page, ctx);
+                          root_gpid, ctx);
 
     if (status == Status::OK)
     {
-        index_info_.idx_root_page = new_root_page;
         index_info_.idx_entry_count = 0;
         index_info_.idx_deleted_count = 0;
         index_info_.idx_height = 1;
@@ -629,7 +633,7 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
     uint64_t first_leaf_page = 0;
     {
         void* page = nullptr;
-        Status status = db_->buffer_pool()->pinPage(index_info_.idx_root_page, &page, ctx);
+        Status status = pinIndexPage(index_info_.idx_root_page, &page, ctx);
         if (status != Status::OK)
         {
             LOG_ERROR(BTREE, "Failed to pin root page %lu", index_info_.idx_root_page);
@@ -663,7 +667,7 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
                 if (rtree_page->rtree_count == 0)
                 {
                     // Empty internal node - no leaves to traverse
-                    db_->buffer_pool()->unpinPage(current_page, false, nullptr);
+                    unpinIndexPage(current_page, false, nullptr);
                     LOG_DEBUG(BTREE, "Empty R-tree, no leaves to GC");
                     return Status::OK;
                 }
@@ -672,10 +676,10 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
                 const SBRTreeEntry* first_entry = reinterpret_cast<const SBRTreeEntry*>(entry_data);
                 uint64_t child_page = first_entry->entry_child_page;
 
-                db_->buffer_pool()->unpinPage(current_page, false, nullptr);
+                unpinIndexPage(current_page, false, nullptr);
 
                 // Load child
-                status = db_->buffer_pool()->pinPage(child_page, &page, ctx);
+                status = pinIndexPage(child_page, &page, ctx);
                 if (status != Status::OK)
                 {
                     LOG_ERROR(BTREE, "Failed to load child page %lu during leaf search", child_page);
@@ -687,7 +691,7 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
             }
         }
 
-        db_->buffer_pool()->unpinPage(first_leaf_page, false, nullptr);
+        unpinIndexPage(first_leaf_page, false, nullptr);
     }
 
     if (first_leaf_page == 0)
@@ -702,7 +706,7 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
     while (current_page_id != 0)
     {
         void* page = nullptr;
-        Status status = db_->buffer_pool()->pinPage(current_page_id, &page, ctx);
+        Status status = pinIndexPage(current_page_id, &page, ctx);
         if (status != Status::OK)
         {
             LOG_ERROR(BTREE, "Failed to pin leaf page %lu", current_page_id);
@@ -715,7 +719,7 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
         if (!(rtree_page->rtree_flags & static_cast<uint16_t>(RTreeFlags::LEAF)))
         {
             LOG_WARNING(BTREE, "Page %lu is not a leaf during GC traversal", current_page_id);
-            db_->buffer_pool()->unpinPage(current_page_id, false, nullptr);
+            unpinIndexPage(current_page_id, false, nullptr);
             break;
         }
 
@@ -781,7 +785,7 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
         }
 
         // Unpin page
-        db_->buffer_pool()->unpinPage(current_page_id, page_modified, nullptr);
+        unpinIndexPage(current_page_id, page_modified, nullptr);
 
         // Move to next sibling
         current_page_id = next_sibling;
@@ -807,6 +811,92 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
         *entries_removed_out = removed_count;
     if (pages_modified_out)
         *pages_modified_out = pages_modified;
+
+    return Status::OK;
+}
+
+Status RTree::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                       uint64_t* tids_updated_out,
+                                       uint64_t* pages_modified_out,
+                                       ErrorContext* ctx)
+{
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+
+    if (tids_updated_out)
+    {
+        *tids_updated_out = 0;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = 0;
+    }
+
+    if (index_info_.idx_root_page == 0 || tid_mapping.empty())
+    {
+        return Status::OK;
+    }
+
+    uint64_t tids_updated = 0;
+    uint64_t pages_modified = 0;
+    std::vector<uint64_t> stack;
+    stack.push_back(index_info_.idx_root_page);
+
+    while (!stack.empty())
+    {
+        uint64_t page_num = stack.back();
+        stack.pop_back();
+
+        void* page = nullptr;
+        Status status = pinIndexPage(page_num, &page, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin R-tree page during TID update");
+            return status;
+        }
+
+        auto* rtree_page = reinterpret_cast<SBRTreePage*>(((uint8_t*)page));
+        bool is_leaf = (rtree_page->rtree_flags & static_cast<uint16_t>(RTreeFlags::LEAF)) != 0;
+        bool page_dirty = false;
+
+        uint8_t* entry_data = ((uint8_t*)page) + sizeof(SBRTreePage);
+        for (uint16_t i = 0; i < rtree_page->rtree_count; ++i)
+        {
+            auto* entry = reinterpret_cast<SBRTreeEntry*>(entry_data);
+
+            if (is_leaf)
+            {
+                auto it = tid_mapping.find(entry->entry_row_id.gpid);
+                if (it != tid_mapping.end())
+                {
+                    entry->entry_row_id.gpid = it->second;
+                    page_dirty = true;
+                    ++tids_updated;
+                }
+            }
+            else
+            {
+                stack.push_back(entry->entry_child_page);
+            }
+
+            entry_data += sizeof(SBRTreeEntry);
+        }
+
+        if (page_dirty)
+        {
+            ++pages_modified;
+        }
+
+        unpinIndexPage(page_num, page_dirty, ctx);
+    }
+
+    if (tids_updated_out)
+    {
+        *tids_updated_out = tids_updated;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = pages_modified;
+    }
 
     return Status::OK;
 }
@@ -1080,7 +1170,7 @@ std::unique_ptr<RTreeNode> RTree::loadNode(uint64_t page_number)
     LOG_DEBUG(BTREE, "Loading R-tree node from page %lu", page_number);
 
     void* page = nullptr;
-    Status status = db_->buffer_pool()->pinPage(page_number, &page, nullptr);
+    Status status = pinIndexPage(page_number, &page, nullptr);
     if (status != Status::OK)
     {
         LOG_ERROR(BTREE, "Failed to pin page %lu", page_number);
@@ -1128,7 +1218,7 @@ std::unique_ptr<RTreeNode> RTree::loadNode(uint64_t page_number)
         entry_data += sizeof(SBRTreeEntry);
     }
 
-    db_->buffer_pool()->unpinPage(page_number, true, nullptr);
+    unpinIndexPage(page_number, true, nullptr);
 
     LOG_DEBUG(BTREE, "Loaded node with %zu entries", node->getEntryCount());
     return node;
@@ -1151,7 +1241,7 @@ Status RTree::saveNode(RTreeNode* node, ErrorContext* ctx)
     }
 
     void* page = nullptr;
-    Status status = db_->buffer_pool()->pinPage(page_number, &page, ctx);
+    Status status = pinIndexPage(page_number, &page, ctx);
     if (status != Status::OK)
     {
         LOG_ERROR(BTREE, "Failed to pin page %lu", page_number);
@@ -1202,7 +1292,7 @@ Status RTree::saveNode(RTreeNode* node, ErrorContext* ctx)
         entry_data += sizeof(SBRTreeEntry);
     }
 
-    db_->buffer_pool()->unpinPage(page_number, true, nullptr);
+    unpinIndexPage(page_number, true, nullptr);
 
     LOG_DEBUG(BTREE, "Node saved successfully");
     return Status::OK;
@@ -1211,9 +1301,9 @@ Status RTree::saveNode(RTreeNode* node, ErrorContext* ctx)
 Status RTree::allocatePage(RTreeNode* node, ErrorContext* ctx)
 {
     PageManager* page_mgr = db_->page_manager();
-    uint32_t new_page = 0;
+    GPID new_gpid = 0;
 
-    Status status = page_mgr->allocatePage(new_page, ctx);
+    Status status = page_mgr->allocatePageInTablespace(index_info_.idx_tablespace_id, &new_gpid, ctx);
     if (status != Status::OK)
     {
         LOG_ERROR(BTREE, "Failed to allocate page for R-tree node");
@@ -1221,6 +1311,7 @@ Status RTree::allocatePage(RTreeNode* node, ErrorContext* ctx)
         return status;
     }
 
+    uint32_t new_page = static_cast<uint32_t>(getPageNumber(new_gpid));
     node->setPageNumber(new_page);
     LOG_DEBUG(BTREE, "Allocated page %u for R-tree node", new_page);
 
@@ -1264,7 +1355,7 @@ void RTree::updateStatistics()
         return;
 
     void* page = nullptr;
-    Status status = db_->buffer_pool()->pinPage(index_info_.idx_root_page, &page, nullptr);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page, nullptr);
     if (status != Status::OK)
     {
         LOG_WARNING(BTREE, "Failed to update R-tree statistics");
@@ -1276,7 +1367,7 @@ void RTree::updateStatistics()
     rtree_page->rtree_deleted_entries = index_info_.idx_deleted_count;
     rtree_page->rtree_height = index_info_.idx_height;
 
-    db_->buffer_pool()->unpinPage(index_info_.idx_root_page, true, nullptr);
+    unpinIndexPage(index_info_.idx_root_page, true, nullptr);
 }
 
 } // namespace scratchbird::core

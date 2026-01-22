@@ -633,8 +633,8 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     }
 
     std::string normalized_schema = normalize_path(schema);
-    if (normalized_schema.rfind("emulation.mysql.", 0) == 0 ||
-        normalized_schema == "emulation.mysql")
+    if (normalized_schema.rfind("remote.emulation.mysql.", 0) == 0 ||
+        normalized_schema == "remote.emulation.mysql")
     {
         schema = normalized_schema;
         return;
@@ -5340,7 +5340,7 @@ void Parser::parseUseStmt() {
     // Update default schema to include the database
     std::string server_root = buildEmulatedServerRoot(default_schema_);
     if (server_root.empty()) {
-        server_root = "emulation.mysql.localhost";
+        server_root = "remote.emulation.mysql.localhost";
     }
     default_schema_ = server_root + ".databases." + db;
 

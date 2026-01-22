@@ -4,6 +4,12 @@
 - **Alpha 1 – Engine/Core**  
   - [x] Storage engine (heap), buffer pool, page manager, MGA transactions  
   - [x] Catalog/tables/indexes/sequences; bootstrap parser; basic DDL/DML  
+- **Alpha 1 – Engine/Core (completion sequence)**  
+  - [ ] 1) Catalog bootstrap schema roots (/emulated + /public fix)  
+  - [ ] 2) Tablespace routing + GPID wiring (DDL/DML, multi-file)  
+  - [ ] 3) Index TID updates + migration-safe rebuilds (all index types)  
+  - [ ] 4) Scheduler/job system (maintenance jobs)  
+  - [ ] 5) Constraint enforcement (PK/FK/UNIQUE/CHECK/NOT NULL)  
 - **Alpha 2 – Parser V2 & Dialects**  
   - [x] Context-aware parser v2 (ScratchBird dialect)  
   - [x] Firebird/MySQL/PostgreSQL dialect parsers  

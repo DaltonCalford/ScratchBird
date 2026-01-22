@@ -198,6 +198,8 @@ public:
     void sendError(network::Connection* conn, const std::string& message,
                    const std::string& code = "") override;
 
+    void setSharedDatabase(core::Database* db) { shared_database_ = db; }
+
     /**
      * Send ready for query
      */
@@ -363,6 +365,9 @@ protected:
     core::Status sendBuffer(network::Connection* conn);
 
 protected:
+    core::Database* engineDatabase() { return shared_database_ ? shared_database_ : database_.get(); }
+    const core::Database* engineDatabase() const { return shared_database_ ? shared_database_ : database_.get(); }
+
     ProtocolAdapterConfig config_;
     ProtocolState state_ = ProtocolState::INITIAL;
 
@@ -384,6 +389,7 @@ protected:
     // Engine state
     std::filesystem::path database_path_;
     std::unique_ptr<core::Database> database_;
+    core::Database* shared_database_ = nullptr;
     std::unique_ptr<core::ConnectionContext> connection_ctx_;
     std::unique_ptr<sblr::Executor> executor_;
     std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;

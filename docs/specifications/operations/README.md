@@ -14,6 +14,7 @@ ScratchBird provides comprehensive operational monitoring with Prometheus metric
 - **[LISTENER_POOL_METRICS.md](LISTENER_POOL_METRICS.md)** - Listener and parser pool metrics
 - **[MONITORING_SQL_VIEWS.md](MONITORING_SQL_VIEWS.md)** - SQL-visible monitoring views for sessions/locks/statements/perf
 - **[MONITORING_DIALECT_MAPPINGS.md](MONITORING_DIALECT_MAPPINGS.md)** - Column-level mapping to pg_stat_*/MON$/performance_schema
+- **[OID_MAPPING_STRATEGY.md](OID_MAPPING_STRATEGY.md)** - PostgreSQL OID mapping strategy
 
 ## Key Features
 

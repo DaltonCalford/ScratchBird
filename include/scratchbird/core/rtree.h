@@ -7,10 +7,12 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/gpid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
 #include <shared_mutex>
+#include <unordered_map>
 
 namespace scratchbird::core
 {
@@ -188,6 +190,7 @@ struct SBRTreeIndex
     uint32_t idx_flags;
 
     uint64_t idx_root_page;
+    uint16_t idx_tablespace_id = 0;
     uint16_t idx_height;
     uint32_t idx_max_entries; // M parameter (default: 50)
 
@@ -225,7 +228,7 @@ public:
      * @param table_uuid Table UUID
      * @param column_uuids Column UUIDs to index
      * @param max_entries Maximum entries per node (default: 50)
-     * @param root_page_out Output: root page number
+     * @param root_gpid Root page GPID
      * @param ctx Error context
      * @return Status
      */
@@ -234,7 +237,7 @@ public:
                         const UuidV7Bytes& table_uuid,
                         const std::vector<UuidV7Bytes>& column_uuids,
                         uint32_t max_entries,
-                        uint32_t* root_page_out,
+                        GPID root_gpid,
                         ErrorContext* ctx = nullptr);
 
     /**
@@ -242,14 +245,14 @@ public:
      *
      * @param db Database instance
      * @param index_uuid Index UUID
-     * @param root_page Root page number
+     * @param root_gpid Root page GPID
      * @param max_entries Maximum entries per node
      * @param ctx Error context
      * @return Unique pointer to RTree instance
      */
     static std::unique_ptr<RTree> open(Database* db,
                                        const UuidV7Bytes& index_uuid,
-                                       uint32_t root_page,
+                                       GPID root_gpid,
                                        uint32_t max_entries,
                                        ErrorContext* ctx = nullptr);
 
@@ -334,6 +337,16 @@ public:
                             ErrorContext* ctx = nullptr) override;
 
     /**
+     * Update leaf entry TIDs after table migration.
+     *
+     * Uses the provided old->new GPID mapping to rewrite leaf TIDs.
+     */
+    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                   uint64_t* tids_updated_out = nullptr,
+                                   uint64_t* pages_modified_out = nullptr,
+                                   ErrorContext* ctx = nullptr);
+
+    /**
      * Get index type name for logging
      */
     const char* indexTypeName() const override { return "R-Tree"; }
@@ -370,6 +383,10 @@ private:
 
     // In-memory root node (cached for performance)
     std::unique_ptr<RTreeNode> root_;
+
+    GPID indexGPID(uint64_t page_num) const;
+    Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+    Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
 
     // Thread-safety: shared_mutex allows concurrent reads
     mutable std::shared_mutex mutex_;

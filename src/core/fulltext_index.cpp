@@ -24,10 +24,10 @@ Status FullTextIndex::create(Database* db,
                              const ID& index_uuid,
                              const ID& table_uuid,
                              const std::vector<ID>& column_ids,
-                             uint32_t* root_page_out,
+                             GPID root_gpid,
                              ErrorContext* ctx)
 {
-    if (!db || !root_page_out)
+    if (!db || root_gpid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
             "Invalid arguments to FullTextIndex::create");
@@ -42,7 +42,7 @@ Status FullTextIndex::create(Database* db,
     }
 
     // Create underlying GIN index
-    Status status = GinIndex::create(db, index_uuid, root_page_out, ctx);
+    Status status = GinIndex::create(db, index_uuid, root_gpid, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -55,7 +55,7 @@ std::unique_ptr<FullTextIndex> FullTextIndex::open(Database* db,
                                                    const ID& index_uuid,
                                                    const ID& table_uuid,
                                                    const std::vector<ID>& column_ids,
-                                                   uint32_t root_page,
+                                                   GPID root_gpid,
                                                    ErrorContext* ctx)
 {
     if (!db)
@@ -66,7 +66,7 @@ std::unique_ptr<FullTextIndex> FullTextIndex::open(Database* db,
     }
 
     // Open underlying GIN index
-    auto gin_index = GinIndex::open(db, index_uuid, root_page, ctx);
+    auto gin_index = GinIndex::open(db, index_uuid, root_gpid, ctx);
     if (!gin_index)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,

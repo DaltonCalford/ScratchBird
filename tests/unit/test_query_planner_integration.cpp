@@ -269,7 +269,8 @@ TEST_F(QueryPlannerIntegrationTest, SelectWithoutWhereClause)
     auto bytecode = compileSQL("SELECT id, name FROM users");
     EXPECT_FALSE(bytecode.empty()) << last_compile_errors_;
     EXPECT_TRUE(containsOpcode(bytecode, Opcode::SELECT));
-    EXPECT_FALSE(containsOpcode(bytecode, Opcode::WHERE_CLAUSE));
+    std::string disasm = disassemble(bytecode);
+    EXPECT_EQ(disasm.find("WHERE_CLAUSE"), std::string::npos) << disasm;
 }
 
 // ===== Diagnostic Test =====

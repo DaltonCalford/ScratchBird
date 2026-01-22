@@ -41,7 +41,7 @@ PostgreSQL Client (psql, pgAdmin, DBeaver, etc.)
 +---------------------------------------------------------------------+
 ```
 
-**Schema Path:** `/remote/emulated/postgresql/{server}/{database}/`
+**Schema Path:** `/remote/emulation/postgresql/{server}/{database}/`
 
 ---
 

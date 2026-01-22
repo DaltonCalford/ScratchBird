@@ -16,7 +16,7 @@ namespace scratchbird::core
  * +----------------------+-------------------------+
  * Bits: 63-48             47-0
  *
- * - Tablespace ID: 0 = primary database file, 1-65535 = custom tablespaces
+ * - Tablespace ID: 0 = primary database file, 1 = reserved, 2-65535 = custom tablespaces
  * - Page Number: 0 to 2^48-1 (281,474,976,710,656 pages = 281TB with 16K pages)
  *
  * Design:

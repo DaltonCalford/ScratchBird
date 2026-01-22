@@ -51,6 +51,7 @@ SPGiSTIndex::SPGiSTIndex(Database* db,
     , column_ids_(column_ids)
     , opclass_(opclass)
     , root_page_(0)
+    , tablespace_id_(0)
     , entry_count_(0)
     , deleted_count_(0)
 {
@@ -66,10 +67,10 @@ Status SPGiSTIndex::create(Database* db,
                             const ID& table_uuid,
                             const std::vector<ID>& column_ids,
                             std::shared_ptr<SPGiSTOperatorClass> opclass,
-                            uint32_t* root_page_out,
+                            GPID root_gpid,
                             ErrorContext* ctx)
 {
-    if (!db || !opclass || !root_page_out)
+    if (!db || !opclass || root_gpid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to SPGiSTIndex::create");
         return Status::INVALID_ARGUMENT;
@@ -77,6 +78,8 @@ Status SPGiSTIndex::create(Database* db,
 
     // Create index instance
     SPGiSTIndex index(db, index_uuid, table_uuid, column_ids, opclass);
+    index.tablespace_id_ = getTablespaceID(root_gpid);
+    index.root_page_ = getPageNumber(root_gpid);
 
     // Initialize (allocates root page)
     Status status = index.initialize(ctx);
@@ -84,9 +87,6 @@ Status SPGiSTIndex::create(Database* db,
     {
         return status;
     }
-
-    // Return root page number
-    *root_page_out = static_cast<uint32_t>(index.root_page_);
 
     return Status::OK;
 }
@@ -96,7 +96,7 @@ std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
                                                 const ID& table_uuid,
                                                 const std::vector<ID>& column_ids,
                                                 std::shared_ptr<SPGiSTOperatorClass> opclass,
-                                                uint32_t root_page,
+                                                GPID root_gpid,
                                                 ErrorContext* ctx)
 {
     if (!db || !opclass)
@@ -109,7 +109,8 @@ std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
     auto index = std::make_unique<SPGiSTIndex>(db, index_uuid, table_uuid, column_ids, opclass);
 
     // Set root page (don't call initialize, index already exists)
-    index->root_page_ = root_page;
+    index->root_page_ = getPageNumber(root_gpid);
+    index->tablespace_id_ = getTablespaceID(root_gpid);
 
     // Load index metadata from root page (November 20, 2025)
     // SP-GiST statistics are maintained incrementally during operations
@@ -123,7 +124,7 @@ std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
 
 std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
                                                 const ID& index_uuid,
-                                                uint32_t root_page,
+                                                GPID root_gpid,
                                                 ErrorContext* ctx)
 {
     if (!db)
@@ -157,8 +158,9 @@ std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
         return nullptr;
     }
 
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
     SBSPGiSTPage* root = nullptr;
-    Status pin_status = buffer_pool->pinPage(root_page, reinterpret_cast<void**>(&root), ctx);
+    Status pin_status = buffer_pool->pinPageGlobal(root_gpid, reinterpret_cast<void**>(&root), ctx);
     if (pin_status != Status::OK || !root)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to load SP-GiST root page");
@@ -177,7 +179,22 @@ std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
     }
 
     // Call the full open() method with loaded metadata
-    return open(db, index_uuid, index_info.table_id, index_info.column_ids, opclass, root_page, ctx);
+    return open(db, index_uuid, index_info.table_id, index_info.column_ids, opclass, root_gpid, ctx);
+}
+
+GPID SPGiSTIndex::indexGPID(uint64_t page_num) const
+{
+    return makeGPID(tablespace_id_, page_num);
+}
+
+Status SPGiSTIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext* ctx)
+{
+    return buffer_pool_->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+}
+
+Status SPGiSTIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext* ctx)
+{
+    return buffer_pool_->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
 }
 
 Status SPGiSTIndex::initialize(ErrorContext* ctx)
@@ -188,16 +205,19 @@ Status SPGiSTIndex::initialize(ErrorContext* ctx)
              index_uuid_.toString().c_str(),
              opclass_->getOpClassName().c_str());
 
-    // Allocate root page
-    Status status = allocatePage(&root_page_, ctx);
-    if (status != Status::OK)
+    // Allocate root page if not already assigned
+    if (root_page_ == 0)
     {
-        return status;
+        Status status = allocatePage(&root_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
     }
 
     // Initialize root as empty leaf
     SBSPGiSTPage* root = nullptr;
-    status = loadPage(root_page_, &root, ctx);
+    Status status = loadPage(root_page_, &root, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -1206,7 +1226,7 @@ bool SPGiSTIndex::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_
 Status SPGiSTIndex::loadPage(uint64_t page_num, SBSPGiSTPage** page, ErrorContext* ctx)
 {
     void* page_buffer = nullptr;
-    Status status = buffer_pool_->pinPage(static_cast<uint32_t>(page_num), &page_buffer, ctx);
+    Status status = pinIndexPage(page_num, &page_buffer, ctx);
     if (status != Status::OK)
     {
         if (ctx)
@@ -1229,17 +1249,17 @@ Status SPGiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
         return Status::INVALID_ARGUMENT;
     }
 
-    uint32_t allocated_page = 0;
-    Status status = db_->page_manager()->allocatePage(allocated_page, ctx);
+    GPID new_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_gpid, ctx);
     if (status != Status::OK)
     {
         return status;
     }
 
-    *page_num = allocated_page;
+    *page_num = static_cast<uint64_t>(getPageNumber(new_gpid));
 
     void* page_buffer = nullptr;
-    status = buffer_pool_->pinPage(static_cast<uint32_t>(*page_num), &page_buffer, ctx);
+    status = pinIndexPage(static_cast<uint32_t>(*page_num), &page_buffer, ctx);
     if (status != Status::OK)
     {
         if (ctx)

@@ -233,9 +233,6 @@ core::Status NativeAdapter::processMessage(network::Connection* conn) {
             return handleStatusRequest(conn);
 
         default:
-            std::fprintf(stderr,
-                         "[native_adapter] unknown message type=%d\n",
-                         static_cast<int>(type));
             sendQueryError(conn, static_cast<uint32_t>(core::Status::NOT_SUPPORTED),
                           "HY000", "Unknown message type: " + std::to_string(static_cast<int>(type)));
             return sendBuffer(conn);
@@ -820,7 +817,6 @@ void NativeAdapter::sendStatusResponse(network::Connection* conn) {
 core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     if (client_) {
         if (client_->isConnected()) {
-            std::fprintf(stderr, "[native_adapter] ensureRemoteClient reuse connected client\n");
             return core::Status::OK;
         }
         client_.reset();
@@ -849,29 +845,14 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         client_config_.password.clear();
     }
 
-    std::error_code fs_err;
-    bool socket_exists = std::filesystem::exists(client_config_.socket_path, fs_err);
-    std::fprintf(stderr,
-                 "[native_adapter] ensureRemoteClient socket=%s exists=%d fs_err=%s\n",
-                 client_config_.socket_path.c_str(),
-                 socket_exists ? 1 : 0,
-                 fs_err ? fs_err.message().c_str() : "none");
-
     core::Status status = core::Status::OK;
     std::string last_message;
     for (int attempt = 0; attempt < 5; ++attempt) {
         client_ = std::make_unique<client::Connection>();
         status = client_->connect(client_config_, ctx);
         if (status == core::Status::OK) {
-            std::fprintf(stderr, "[native_adapter] ensureRemoteClient connected attempt=%d\n",
-                         attempt + 1);
             return core::Status::OK;
         }
-        std::fprintf(stderr,
-                     "[native_adapter] ensureRemoteClient failed attempt=%d status=%d msg=%s\n",
-                     attempt + 1,
-                     static_cast<int>(status),
-                     ctx && !ctx->message.empty() ? ctx->message.c_str() : "none");
         if (ctx && !ctx->message.empty()) {
             last_message = ctx->message;
         }
@@ -917,10 +898,6 @@ core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
         }
         result.error_message = err.empty() ? "Query execution failed" : err;
         result.sqlstate = "42000";
-        std::fprintf(stderr,
-                     "[native_adapter] executeRemoteQuery failed status=%d msg=%s\n",
-                     static_cast<int>(status),
-                     result.error_message.c_str());
         return status;
     }
 
@@ -1010,11 +987,6 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
                 native_state_ = NativeProtocolState::READY;
                 return flushWriteBuffer(conn);
             }
-            if (client_ && !client_->isConnected()) {
-                std::fprintf(stderr,
-                             "[native_adapter] engine client disconnected after COPY IN\n");
-            }
-
             auto rows = result.rows_affected;
             sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,
                                                             static_cast<uint64_t>(rows),
@@ -1056,11 +1028,6 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
             native_state_ = NativeProtocolState::READY;
             return flushWriteBuffer(conn);
         }
-        if (client_ && !client_->isConnected()) {
-            std::fprintf(stderr,
-                         "[native_adapter] engine client disconnected after COPY OUT\n");
-        }
-
         sendMessage(conn, ProtocolCodec::buildCopyDone());
         auto rows = result.rows_affected;
         sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,

@@ -18,6 +18,7 @@ ScratchBird provides full compatibility with industry-standard database connecti
 - Windows, Linux, macOS support
 - Unicode support
 - **Market Share:** Universal Windows standard, widely used on Linux/macOS
+- Draft spec: [odbc/SPECIFICATION.md](odbc/SPECIFICATION.md)
 
 ### JDBC (Java Database Connectivity)
 

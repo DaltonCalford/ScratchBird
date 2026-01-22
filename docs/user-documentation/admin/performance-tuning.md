@@ -17,14 +17,14 @@ Optimize ScratchBird for your workload.
 
 ## Memory Configuration
 
-### Shared Buffers
+### Buffer Pool Size
 
 The buffer pool caches database pages in memory.
 
 ```ini
 # sb_server.conf
 [memory]
-shared_buffers = 4GB
+buffer_pool_size = 4GB
 ```
 
 **Guidelines:**
@@ -32,7 +32,7 @@ shared_buffers = 4GB
 - Max ~8GB (diminishing returns above)
 - Leave room for OS cache and work_mem
 
-| System RAM | shared_buffers |
+| System RAM | buffer_pool_size |
 |------------|---------------|
 | 4GB | 1GB |
 | 16GB | 4GB |
@@ -419,7 +419,7 @@ done
 
 ```ini
 [memory]
-shared_buffers = 4GB
+buffer_pool_size = 4GB
 work_mem = 16MB
 
 [server]
@@ -433,7 +433,7 @@ log_slow_queries = 100
 
 ```ini
 [memory]
-shared_buffers = 8GB
+buffer_pool_size = 8GB
 work_mem = 256MB
 maintenance_work_mem = 1GB
 
@@ -448,7 +448,7 @@ log_slow_queries = 5000
 
 ```ini
 [memory]
-shared_buffers = 4GB
+buffer_pool_size = 4GB
 work_mem = 64MB
 
 [server]
@@ -489,7 +489,7 @@ WHERE datname = current_database();
 | Symptom | Likely Cause | Solution |
 |---------|--------------|----------|
 | High CPU | Complex queries | Optimize queries, add indexes |
-| High I/O | Sequential scans | Add indexes, increase shared_buffers |
+| High I/O | Sequential scans | Add indexes, increase buffer_pool_size |
 | High memory | Large work_mem | Reduce work_mem or connections |
 | Lock waits | Contention | Optimize transactions, reduce lock duration |
 

@@ -7,6 +7,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/garbage_collector.h" // Phase 4: TOAST GC
+#include "scratchbird/core/gpid.h"
 #include <chrono>
 #include "scratchbird/core/logger.h"
 #include <cstring>
@@ -278,7 +279,7 @@ namespace scratchbird::core
 
         // Start from the root page (first heap page for this table)
         // We'll scan all pages until we hit an IO_ERROR (page doesn't exist)
-        uint32_t start_page = table_info.root_page;
+        uint32_t start_page = static_cast<uint32_t>(getPageNumber(table_info.root_gpid));
         if (start_page == 0)
         {
             // Empty table
@@ -615,7 +616,7 @@ namespace scratchbird::core
             return status;
         }
 
-        uint32_t start_page = table_info.root_page;
+        uint32_t start_page = static_cast<uint32_t>(getPageNumber(table_info.root_gpid));
         if (start_page == 0)
         {
             // Empty table

@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/gpid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -27,15 +28,15 @@ namespace scratchbird
         {
         public:
             // Constructor
-            ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page);
+            ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, GPID meta_gpid);
 
             // Create a new columnstore index
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
-                                 uint32_t *meta_page_out, ErrorContext *ctx = nullptr);
+                                 GPID meta_gpid, ErrorContext *ctx = nullptr);
 
             // Open an existing columnstore index
             static std::unique_ptr<ColumnstoreIndexSimple> open(Database *db, const UuidV7Bytes &index_uuid,
-                                                          uint32_t meta_page, ErrorContext *ctx = nullptr);
+                                                          GPID meta_gpid, ErrorContext *ctx = nullptr);
 
             // Destructor
             ~ColumnstoreIndexSimple();
@@ -114,6 +115,7 @@ namespace scratchbird
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;         // meta_page_a (primary)
             uint32_t peer_meta_page_;    // meta_page_b (secondary for dual-page persistence)
+            uint16_t tablespace_id_ = 0;
             uint64_t generation_;        // Current generation counter
 
             // In-memory segment catalog (loaded from meta page)
@@ -137,6 +139,10 @@ namespace scratchbird
 
             Status loadSegmentCatalog(ErrorContext* ctx);
             Status saveSegmentCatalog(ErrorContext* ctx);
+
+            GPID indexGPID(uint64_t page_num) const;
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr) const;
+            Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr) const;
             Status flushColumnBuffer(uint16_t column_id, ErrorContext* ctx);
 
             ColumnSegment* findSegment(uint16_t column_id, uint32_t row);

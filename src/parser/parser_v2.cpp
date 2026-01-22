@@ -1360,6 +1360,75 @@ CreateIndexStmt* Parser::parseCreateIndex() {
         stmt->has_tablespace = true;
     }
 
+    // WITH (index options)
+    if (match(TokenType::KW_WITH)) {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
+
+        auto parse_bool = [&]() -> bool {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                bool value = current().value.int_value != 0;
+                advance();
+                return value;
+            }
+            if (isIdentifier()) {
+                auto text = stringPool().get(current().value.string_id);
+                advance();
+                if (caseInsensitiveEquals(text, "TRUE")) {
+                    return true;
+                }
+                if (caseInsensitiveEquals(text, "FALSE")) {
+                    return false;
+                }
+            }
+            error("Expected boolean value for index option");
+            return false;
+        };
+
+        auto parse_double = [&]() -> double {
+            if (check(TokenType::FLOAT_LITERAL)) {
+                double value = current().value.float_value;
+                advance();
+                return value;
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                double value = static_cast<double>(current().value.int_value);
+                advance();
+                return value;
+            }
+            error("Expected numeric value for index option");
+            return 0.0;
+        };
+
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            if (!isIdentifier()) {
+                error("Expected index option name");
+                break;
+            }
+
+            auto opt_name = stringPool().get(current().value.string_id);
+            advance();
+            expect(TokenType::EQUAL, "Expected '=' after index option name");
+
+            if (caseInsensitiveEquals(opt_name, "BLOOM_FILTER")) {
+                stmt->options.bloom_filter_enabled = parse_bool();
+            } else if (caseInsensitiveEquals(opt_name, "BLOOM_FPR")) {
+                stmt->options.bloom_fpr = parse_double();
+                stmt->options.bloom_fpr_set = true;
+            } else {
+                error("Unknown index option");
+                return stmt;
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after index options");
+    }
+
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -1813,6 +1882,7 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
 
         SchemaPath path;
         path.type = PathType::ABSOLUTE;
+        path.components.push_back(stringPool().intern("remote"));
         path.components.push_back(stringPool().intern("emulation"));
         path.components.push_back(stringPool().intern(dialect));
         path.components.push_back(stringPool().intern(server));

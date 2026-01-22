@@ -50,6 +50,11 @@ DML statements operate on table data, including SELECT queries, INSERT, UPDATE, 
   - WHEN MATCHED / WHEN NOT MATCHED
   - Complex merge logic
 
+- **[DML_COPY.md](DML_COPY.md)** - COPY bulk load/export
+  - COPY FROM / TO
+  - CSV/TEXT/BINARY formats
+  - STDIN/STDOUT streaming
+
 ### Advanced DML
 
 - **[DML_XML_JSON_TABLES.md](DML_XML_JSON_TABLES.md)** - XML and JSON table functions

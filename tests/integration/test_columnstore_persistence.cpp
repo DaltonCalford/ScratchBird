@@ -77,13 +77,17 @@ TEST_F(ColumnstorePersistenceTest, CreateAndInsertSegments)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create columnstore index
+    GPID meta_gpid = 0;
     uint32_t meta_page = 0;
-    Status status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, &meta_page, nullptr);
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate columnstore meta page";
+    meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to create columnstore index";
-    EXPECT_GT(meta_page, 0) << "Meta page should be allocated";
+    EXPECT_GT(getPageNumber(meta_gpid), 0) << "Meta page should be allocated";
 
     // Open the index
-    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page, nullptr);
+    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(cs_index, nullptr) << "Failed to open columnstore index";
 
     // Insert some column data
@@ -115,14 +119,18 @@ TEST_F(ColumnstorePersistenceTest, SegmentsPersistAcrossRestart)
     // Generate unique index UUID
     UuidV7Bytes index_uuid = generateUuidV7();
 
+    GPID meta_gpid = 0;
     uint32_t meta_page = 0;
 
     // Phase 1: Create index and insert data
     {
-        Status status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, &meta_page, nullptr);
+        Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+        ASSERT_EQ(status, Status::OK) << "Failed to allocate columnstore meta page";
+        meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+        status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, meta_gpid, nullptr);
         ASSERT_EQ(status, Status::OK);
 
-        auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page, nullptr);
+        auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid, nullptr);
         ASSERT_NE(cs_index, nullptr);
 
         // Insert multiple columns
@@ -150,7 +158,7 @@ TEST_F(ColumnstorePersistenceTest, SegmentsPersistAcrossRestart)
 
     // Phase 3: Open index and verify segments are loaded
     {
-        auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page, nullptr);
+        auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid, nullptr);
         ASSERT_NE(cs_index, nullptr) << "Failed to reopen columnstore index after restart";
 
         // Verify index metadata persisted
@@ -182,13 +190,17 @@ TEST_F(ColumnstorePersistenceTest, GenerationSelectionOneCorrupted)
     // Generate unique index UUID
     UuidV7Bytes index_uuid = generateUuidV7();
 
+    GPID meta_gpid_a = 0;
     uint32_t meta_page_a = 0;
 
     // Create index and insert data
-    Status status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, &meta_page_a, nullptr);
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid_a, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate columnstore meta page";
+    meta_page_a = static_cast<uint32_t>(getPageNumber(meta_gpid_a));
+    status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, meta_gpid_a, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page_a, nullptr);
+    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid_a, nullptr);
     ASSERT_NE(cs_index, nullptr);
 
     // Insert data to create segments
@@ -202,24 +214,24 @@ TEST_F(ColumnstorePersistenceTest, GenerationSelectionOneCorrupted)
 
     // Get peer page ID from meta page header
     void* meta_buffer = nullptr;
-    status = db_->buffer_pool()->pinPage(meta_page_a, &meta_buffer, nullptr);
+    status = db_->buffer_pool()->pinPageGlobal(meta_gpid_a, &meta_buffer, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     // Read peer_page_id from meta page header (offset 16)
     uint32_t peer_page_id = 0;
     memcpy(&peer_page_id, static_cast<uint8_t*>(meta_buffer) + 16, sizeof(uint32_t));
 
-    db_->buffer_pool()->unpinPage(meta_page_a, false, nullptr);
+    db_->buffer_pool()->unpinPageGlobal(meta_gpid_a, false, nullptr);
     EXPECT_GT(peer_page_id, 0) << "Peer page should be allocated";
 
     // Corrupt the peer page (meta_page_b) by zeroing it
     void* peer_buffer = nullptr;
-    status = db_->buffer_pool()->pinPage(peer_page_id, &peer_buffer, nullptr);
+    status = db_->buffer_pool()->pinPageGlobal(makeGPID(0, peer_page_id), &peer_buffer, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     memset(peer_buffer, 0, 16384);  // Zero entire page
 
-    db_->buffer_pool()->unpinPage(peer_page_id, true, nullptr);
+    db_->buffer_pool()->unpinPageGlobal(makeGPID(0, peer_page_id), true, nullptr);
 
     // Flush corruption to disk
     status = db_->buffer_pool()->flushAll(nullptr);
@@ -232,7 +244,7 @@ TEST_F(ColumnstorePersistenceTest, GenerationSelectionOneCorrupted)
     ASSERT_EQ(status, Status::OK);
 
     // Reopen index - should use valid page (meta_page_a)
-    cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page_a, nullptr);
+    cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid_a, nullptr);
     ASSERT_NE(cs_index, nullptr) << "Should load from valid meta page when peer is corrupted";
 
     // Verify data is still accessible
@@ -252,34 +264,38 @@ TEST_F(ColumnstorePersistenceTest, BothMetaPagesCorrupted)
     // Generate unique index UUID
     UuidV7Bytes index_uuid = generateUuidV7();
 
+    GPID meta_gpid_a = 0;
     uint32_t meta_page_a = 0;
 
     // Create index
-    Status status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, &meta_page_a, nullptr);
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid_a, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate columnstore meta page";
+    meta_page_a = static_cast<uint32_t>(getPageNumber(meta_gpid_a));
+    status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, meta_gpid_a, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     // Get peer page ID
     void* meta_buffer = nullptr;
-    status = db_->buffer_pool()->pinPage(meta_page_a, &meta_buffer, nullptr);
+    status = db_->buffer_pool()->pinPageGlobal(meta_gpid_a, &meta_buffer, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     uint32_t peer_page_id = 0;
     memcpy(&peer_page_id, static_cast<uint8_t*>(meta_buffer) + 16, sizeof(uint32_t));
 
-    db_->buffer_pool()->unpinPage(meta_page_a, false, nullptr);
+    db_->buffer_pool()->unpinPageGlobal(meta_gpid_a, false, nullptr);
 
     // Corrupt both meta pages by zeroing them
     void* buffer_a = nullptr;
-    status = db_->buffer_pool()->pinPage(meta_page_a, &buffer_a, nullptr);
+    status = db_->buffer_pool()->pinPageGlobal(meta_gpid_a, &buffer_a, nullptr);
     ASSERT_EQ(status, Status::OK);
     memset(buffer_a, 0, 16384);
-    db_->buffer_pool()->unpinPage(meta_page_a, true, nullptr);
+    db_->buffer_pool()->unpinPageGlobal(meta_gpid_a, true, nullptr);
 
     void* buffer_b = nullptr;
-    status = db_->buffer_pool()->pinPage(peer_page_id, &buffer_b, nullptr);
+    status = db_->buffer_pool()->pinPageGlobal(makeGPID(0, peer_page_id), &buffer_b, nullptr);
     ASSERT_EQ(status, Status::OK);
     memset(buffer_b, 0, 16384);
-    db_->buffer_pool()->unpinPage(peer_page_id, true, nullptr);
+    db_->buffer_pool()->unpinPageGlobal(makeGPID(0, peer_page_id), true, nullptr);
 
     // Flush corruption to disk
     status = db_->buffer_pool()->flushAll(nullptr);
@@ -291,7 +307,7 @@ TEST_F(ColumnstorePersistenceTest, BothMetaPagesCorrupted)
     ASSERT_EQ(status, Status::OK);
 
     // Try to open index - should fail with INDEX_CORRUPTED
-    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page_a, nullptr);
+    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid_a, nullptr);
     EXPECT_EQ(cs_index, nullptr) << "Should fail to open when both meta pages are corrupted";
 }
 
@@ -307,8 +323,11 @@ TEST_F(ColumnstorePersistenceTest, EmptyIndexLoads)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create empty index
-    uint32_t meta_page = 0;
-    Status status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, &meta_page, nullptr);
+    GPID meta_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate columnstore meta page";
+    uint32_t meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     // Flush to disk
@@ -321,7 +340,7 @@ TEST_F(ColumnstorePersistenceTest, EmptyIndexLoads)
     ASSERT_EQ(status, Status::OK);
 
     // Open empty index
-    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page, nullptr);
+    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(cs_index, nullptr) << "Should be able to open empty columnstore index";
 
     // Verify metadata
@@ -340,13 +359,17 @@ TEST_F(ColumnstorePersistenceTest, GenerationIncrementsOnUpdates)
     // Generate unique index UUID
     UuidV7Bytes index_uuid = generateUuidV7();
 
+    GPID meta_gpid = 0;
     uint32_t meta_page = 0;
 
     // Create index
-    Status status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, &meta_page, nullptr);
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate columnstore meta page";
+    meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    status = ColumnstoreIndexSimple::create(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page, nullptr);
+    auto cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(cs_index, nullptr);
 
     // Insert multiple batches to trigger catalog updates
@@ -368,7 +391,7 @@ TEST_F(ColumnstorePersistenceTest, GenerationIncrementsOnUpdates)
     ASSERT_EQ(status, Status::OK);
 
     // Reopen index - should load from highest generation
-    cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_page, nullptr);
+    cs_index = ColumnstoreIndexSimple::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(cs_index, nullptr) << "Failed to reopen after multiple updates";
 
     // Verify all columns are accessible

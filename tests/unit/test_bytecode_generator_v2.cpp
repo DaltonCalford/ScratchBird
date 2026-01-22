@@ -753,7 +753,7 @@ TEST_F(BytecodeGeneratorV2Test, CreateDatabaseEmulatedSimple) {
     ASSERT_TRUE(parseCreateDatabasePayload(result.bytecode(), payload));
 
     EXPECT_EQ(payload.flags & 0x01, 0x01);  // IF NOT EXISTS
-    EXPECT_EQ(payload.database_path, "emulation.mysql.localhost.mydb");
+    EXPECT_EQ(payload.database_path, "remote.emulation.mysql.localhost.mydb");
     EXPECT_EQ(payload.source_spec, "mydb");
     EXPECT_TRUE(payload.options.empty());
     EXPECT_TRUE(payload.aliases.empty());
@@ -769,7 +769,7 @@ TEST_F(BytecodeGeneratorV2Test, CreateDatabaseEmulatedWithOptionsAndAliases) {
     CreateDatabasePayload payload;
     ASSERT_TRUE(parseCreateDatabasePayload(result.bytecode(), payload));
 
-    EXPECT_EQ(payload.database_path, "emulation.firebird.srv.var.db.employee");
+    EXPECT_EQ(payload.database_path, "remote.emulation.firebird.srv.var.db.employee");
     EXPECT_EQ(payload.source_spec, "srv:/var/db/employee.fdb");
     ASSERT_EQ(payload.options.size(), 2u);
     EXPECT_EQ(payload.options[0].first, "user");

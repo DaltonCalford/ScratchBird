@@ -223,7 +223,7 @@ ps aux | grep sb_server
 ```
 
 **Solutions:**
-1. Reduce `shared_buffers`
+1. Reduce `buffer_pool_size`
 2. Reduce `work_mem`
 3. Limit connections
 
@@ -312,7 +312,7 @@ journalctl -k | grep oom
 1. Reduce memory settings:
    ```ini
    [memory]
-   shared_buffers = 1GB
+   buffer_pool_size = 1GB
    work_mem = 4MB
    ```
 

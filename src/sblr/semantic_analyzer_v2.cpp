@@ -1917,7 +1917,8 @@ SemanticAnalyzerV2::SemanticAnalyzerV2(CatalogManager& catalog, StringPool& stri
     {
         // Initialize with default public schema
         CatalogManager::SchemaInfo schema_info;
-        if (catalog_.getSchema("public", schema_info) == Status::OK)
+        if (catalog_.getSchema("users.public", schema_info) == Status::OK ||
+            catalog_.getSchema("public", schema_info) == Status::OK)
         {
             current_schema_ = schema_info.schema_id;
             search_path_.push_back(schema_info.schema_id);
@@ -2446,8 +2447,108 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
         status = catalog_.getTable(schema_id, table_name, table_info);
     }
 
+    auto resolve_view_in_schema = [&](const ID& schema_id, ResolvedTableRef& out) -> bool {
+        CatalogManager::ViewInfo view_info;
+        if (catalog_.getView(schema_id, table_name, view_info) != Status::OK)
+        {
+            return false;
+        }
+
+        out.table_uuid = view_info.view_id;
+        out.schema_uuid = view_info.schema_id;
+        out.name = internString(table_name);
+        out.object_type = view_info.materialized
+            ? ResolvedTableRef::ObjectType::MATERIALIZED_VIEW
+            : ResolvedTableRef::ObjectType::VIEW;
+
+        out.columns.clear();
+        out.columns.reserve(view_info.column_names.size());
+        uint32_t index = 0;
+        for (const auto& col_name : view_info.column_names)
+        {
+            ResolvedTableRef::ColumnInfo col_info;
+            col_info.name = internString(col_name);
+            col_info.data_type = DataType::TEXT;
+            col_info.is_nullable = true;
+            col_info.column_index = index++;
+            out.columns.push_back(col_info);
+        }
+        return true;
+    };
+
     if (status != Status::OK)
     {
+        ResolvedTableRef view_ref;
+        bool view_found = false;
+
+        if (path.type == PathType::UNQUALIFIED)
+        {
+            if (search_path_allowed)
+            {
+                for (const auto& schema_id : search_path_)
+                {
+                    if (resolve_view_in_schema(schema_id, view_ref))
+                    {
+                        view_found = true;
+                        break;
+                    }
+                }
+            }
+            if (!view_found && !isZeroUuidLocal(current_schema_))
+            {
+                view_found = resolve_view_in_schema(current_schema_, view_ref);
+            }
+        }
+        else
+        {
+            CatalogManager::SchemaInfo schema_info;
+            ID schema_id{};
+            bool schema_id_resolved = false;
+            std::string resolved_schema_path = schema_path;
+
+            if (path.type == PathType::CURRENT)
+            {
+                if (schema_path.empty())
+                {
+                    schema_id = current_schema_;
+                    schema_id_resolved = true;
+                }
+                else if (!isZeroUuidLocal(current_schema_))
+                {
+                    std::string current_path;
+                    core::ErrorContext err_ctx;
+                    if (catalog_.getSchemaPath(current_schema_, current_path, &err_ctx) == Status::OK &&
+                        !current_path.empty())
+                    {
+                        resolved_schema_path = current_path + "." + schema_path;
+                    }
+                }
+            }
+
+            if (!schema_id_resolved)
+            {
+                if (catalog_.getSchema(resolved_schema_path, schema_info) != Status::OK)
+                {
+                    if (path.type == PathType::CURRENT && !schema_path.empty())
+                    {
+                        error(span, "Schema not found in search_path: " + resolved_schema_path);
+                    }
+                    else
+                    {
+                        error(span, "Schema not found: " + resolved_schema_path);
+                    }
+                    return std::nullopt;
+                }
+                schema_id = schema_info.schema_id;
+            }
+            view_found = resolve_view_in_schema(schema_id, view_ref);
+        }
+
+        if (view_found)
+        {
+            return view_ref;
+        }
+
         error(span, "Table not found: " + table_name);
         return std::nullopt;
     }
@@ -3898,6 +3999,36 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
 
     if (stmt->has_tablespace) {
         resolved->tablespace_name = internString(schemaPathToString(stmt->tablespace, string_pool_));
+    }
+
+    if (stmt->options.bloom_fpr_set)
+    {
+        resolved->bloom_filter_enabled = true;
+        resolved->bloom_fpr_set = true;
+        resolved->bloom_fpr = stmt->options.bloom_fpr;
+    }
+    else
+    {
+        resolved->bloom_filter_enabled = stmt->options.bloom_filter_enabled;
+        resolved->bloom_fpr_set = false;
+        resolved->bloom_fpr = stmt->options.bloom_fpr;
+    }
+
+    if (resolved->bloom_filter_enabled)
+    {
+        if (resolved->bloom_fpr <= 0.0 || resolved->bloom_fpr >= 1.0)
+        {
+            error(stmt->span, "Bloom filter FPR must be between 0 and 1");
+            return nullptr;
+        }
+
+        if (stmt->index_type != IndexType::BTREE &&
+            stmt->index_type != IndexType::HASH &&
+            stmt->index_type != IndexType::GIN)
+        {
+            error(stmt->span, "Bloom filters are only supported for BTREE, HASH, and GIN indexes");
+            return nullptr;
+        }
     }
 
     // Make the target table available for expression and predicate resolution.

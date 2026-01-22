@@ -145,7 +145,7 @@ fb_port = 3050
 enabled = false
 
 [memory]
-shared_buffers = 512MB
+buffer_pool_size = 512MB
 work_mem = 16MB
 
 [logging]
@@ -465,7 +465,7 @@ key_file = /etc/scratchbird/certs/server.key
 ca_file = /etc/scratchbird/certs/ca.crt
 
 [memory]
-shared_buffers = 2GB
+buffer_pool_size = 2GB
 work_mem = 64MB
 maintenance_work_mem = 512MB
 

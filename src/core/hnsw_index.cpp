@@ -36,7 +36,7 @@ namespace scratchbird::core
 // Priority queue element for search
 struct SearchCandidate
 {
-    uint64_t tuple_id;
+    TID tuple_id;
     double distance;
 
     bool operator<(const SearchCandidate& other) const
@@ -75,10 +75,10 @@ Status HnswIndex::create(Database *db,
                         uint32_t m,
                         uint32_t ef_construction,
                         uint32_t ef_search,
-                        uint32_t *root_page_out,
+                        GPID root_gpid,
                         ErrorContext *ctx)
 {
-    if (!db || !root_page_out)
+    if (!db || root_gpid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments");
         return Status::INVALID_ARGUMENT;
@@ -106,17 +106,11 @@ Status HnswIndex::create(Database *db,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Allocate root page
-    uint32_t root_page = 0;
-    Status status = page_mgr->allocatePage(root_page, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
 
     // Pin and initialize root page
     void *page_buffer = nullptr;
-    status = buffer_pool->pinPage(root_page, &page_buffer, ctx);
+    Status status = buffer_pool->pinPageGlobal(root_gpid, &page_buffer, ctx);
     if (status != Status::OK || !page_buffer)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin HNSW root page");
@@ -145,9 +139,7 @@ Status HnswIndex::create(Database *db,
     root->hnsw_deleted_nodes = 0;
     root->hnsw_distance_metric = static_cast<uint8_t>(distance_metric);
 
-    buffer_pool->unpinPage(root_page, true, ctx); // Mark dirty
-
-    *root_page_out = root_page;
+    buffer_pool->unpinPageGlobal(root_gpid, true, ctx); // Mark dirty
 
     LOG_INFO(GENERAL, "Created HNSW index with root page %u, dimensions %u, M %u",
              root_page, dimensions, m);
@@ -157,7 +149,7 @@ Status HnswIndex::create(Database *db,
 
 std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
                                           const UuidV7Bytes &index_uuid,
-                                          uint32_t root_page,
+                                          GPID root_gpid,
                                           ErrorContext *ctx)
 {
     if (!db)
@@ -166,9 +158,12 @@ std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
         return nullptr;
     }
 
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
+
     SBHnswIndex index_info{};
     std::memcpy(index_info.idx_uuid.bytes.data(), index_uuid.bytes.data(), 16);
     index_info.idx_root_page = root_page;
+    index_info.idx_tablespace_id = getTablespaceID(root_gpid);
     index_info.idx_m = 16;
     index_info.idx_ef_construction = 200;
     index_info.idx_ef_search = 100;
@@ -183,7 +178,7 @@ std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
     }
 
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(root_page, &page_buffer, ctx);
+    Status status = buffer_pool->pinPageGlobal(root_gpid, &page_buffer, ctx);
     if (status != Status::OK || !page_buffer)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Failed to pin HNSW root page");
@@ -194,7 +189,7 @@ std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
     if (std::memcmp(root->hnsw_index_uuid.bytes.data(),
                     index_uuid.bytes.data(), 16) != 0)
     {
-        buffer_pool->unpinPage(root_page, false, ctx);
+        buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "HNSW root page does not match index UUID");
         return nullptr;
     }
@@ -206,18 +201,30 @@ std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
     index_info.idx_creation_xid = root->hnsw_xmin;
     index_info.idx_distance_metric = root->hnsw_distance_metric;
 
-    buffer_pool->unpinPage(root_page, false, ctx);
+    buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
 
     return std::make_unique<HnswIndex>(db, index_info);
+}
+
+GPID HnswIndex::indexGPID(uint64_t page_num) const
+{
+    return makeGPID(index_info_.idx_tablespace_id, page_num);
+}
+
+Status HnswIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx) const
+{
+    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+}
+
+Status HnswIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx) const
+{
+    return db_->buffer_pool()->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
 }
 
 Status HnswIndex::insert(const VectorValue &vector,
                         const TID &tid,
                         ErrorContext *ctx)
 {
-    // Convert TID struct to legacy format for internal neighbor references
-    uint64_t legacy_tid = convertTIDtoLegacy(tid);
-
     BufferPool *buffer_pool = db_->buffer_pool();
     TransactionManager *txn_mgr = db_->transaction_manager();
 
@@ -239,7 +246,7 @@ Status HnswIndex::insert(const VectorValue &vector,
     if (index_info_.idx_total_nodes == 0)
     {
         // Create first node
-        Status status = create_node(vector, legacy_tid, target_layer, {}, current_xid, ctx);
+        Status status = create_node(vector, tid, target_layer, {}, current_xid, ctx);
         if (status == Status::OK)
         {
             index_info_.idx_total_nodes++;
@@ -248,8 +255,8 @@ Status HnswIndex::insert(const VectorValue &vector,
     }
 
     // Find entry point (node with highest layer)
-    uint64_t entry_point = find_entry_point(ctx);
-    if (entry_point == 0)
+    TID entry_point = find_entry_point(ctx);
+    if (!entry_point.isValid())
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No entry point found");
         return Status::NOT_FOUND;
@@ -271,27 +278,27 @@ Status HnswIndex::insert(const VectorValue &vector,
         // Select closest neighbor as entry for next layer
         if (!neighbors.empty())
         {
-            entry_point = convertTIDtoLegacy(neighbors[0].tid);
+            entry_point = neighbors[0].tid;
         }
     }
 
     // 3. Create node with bi-directional links
-    std::vector<uint64_t> neighbor_tids;
+    std::vector<TID> neighbor_tids;
     size_t M = index_info_.idx_m;
     for (size_t i = 0; i < std::min(neighbors.size(), M); i++)
     {
-        neighbor_tids.push_back(convertTIDtoLegacy(neighbors[i].tid));
+        neighbor_tids.push_back(neighbors[i].tid);
     }
 
-    Status create_status = create_node(vector, legacy_tid, target_layer, neighbor_tids, current_xid, ctx);
+    Status create_status = create_node(vector, tid, target_layer, neighbor_tids, current_xid, ctx);
     if (create_status == Status::OK)
     {
         index_info_.idx_total_nodes++;
 
         // Add reverse links from neighbors to new node
-        for (uint64_t neighbor_tid : neighbor_tids)
+        for (const TID &neighbor_tid : neighbor_tids)
         {
-            add_link(neighbor_tid, legacy_tid, 0, ctx);
+            add_link(neighbor_tid, tid, 0, ctx);
         }
     }
 
@@ -301,8 +308,6 @@ Status HnswIndex::insert(const VectorValue &vector,
 Status HnswIndex::remove(const TID &tid,
                         ErrorContext *ctx)
 {
-    // Convert TID to legacy format
-    uint64_t legacy_tid = convertTIDtoLegacy(tid);
     BufferPool *buffer_pool = db_->buffer_pool();
     TransactionManager *txn_mgr = db_->transaction_manager();
 
@@ -315,7 +320,7 @@ Status HnswIndex::remove(const TID &tid,
     // Find node
     SBHnswNode *node = nullptr;
     uint64_t page_num = 0;
-    Status find_status = find_node(legacy_tid, &node, &page_num, ctx);
+    Status find_status = find_node(tid, &node, &page_num, ctx);
     if (find_status != Status::OK)
     {
         return find_status;
@@ -326,9 +331,9 @@ Status HnswIndex::remove(const TID &tid,
     node->node_flags |= static_cast<uint16_t>(HnswNodeFlags::DELETED);
 
     // Mark page dirty
-    buffer_pool->unpinPage(page_num, true, ctx);
+    unpinIndexPage(page_num, true, ctx);
 
-    LOG_DEBUG(GENERAL, "HNSW: Soft deleted node TID %lu", legacy_tid);
+    LOG_DEBUG(GENERAL, "HNSW: Soft deleted node TID %s", tidToString(tid).c_str());
 
     return Status::OK;
 }
@@ -353,8 +358,8 @@ Status HnswIndex::search(const VectorValue &query_vector,
     }
 
     // Find entry point
-    uint64_t entry_point = find_entry_point(ctx);
-    if (entry_point == 0)
+    TID entry_point = find_entry_point(ctx);
+    if (!entry_point.isValid())
     {
         return Status::OK; // No visible nodes
     }
@@ -379,8 +384,8 @@ Status HnswIndex::search(const VectorValue &query_vector,
         // Select closest for next layer
         if (!candidates.empty())
         {
-            entry_point = convertTIDtoLegacy(candidates[0].tid);
-        }
+            entry_point = candidates[0].tid;
+    }
     }
 
     // Return top k results
@@ -420,7 +425,7 @@ Status HnswIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
 
     // Pin root page
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -445,12 +450,12 @@ Status HnswIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
 
         // Calculate node size
         size_t node_size = sizeof(SBHnswNode);
-        node_size += node->node_num_neighbors * sizeof(uint64_t);
+        node_size += node->node_num_neighbors * sizeof(HnswNeighbor);
         node_size += node->node_vector_len;
         offset += node_size;
     }
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
+    unpinIndexPage(index_info_.idx_root_page, false, ctx);
 
     stats_out->nodes_visited = nodes_visited;
     stats_out->nodes_removed = nodes_removed;
@@ -506,7 +511,7 @@ Status HnswIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
     while (current_page_id != 0)
     {
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page_id, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             LOG_WARNING(GENERAL, "HNSW GC: Failed to pin page %u", current_page_id);
@@ -546,7 +551,7 @@ Status HnswIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
 
             // Calculate size of this node and advance offset
             size_t node_size = sizeof(SBHnswNode) +
-                              node->node_num_neighbors * sizeof(uint64_t) +
+                              node->node_num_neighbors * sizeof(HnswNeighbor) +
                               node->node_vector_len;
             offset += node_size;
         }
@@ -567,7 +572,7 @@ Status HnswIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
         uint32_t next_page_id = static_cast<uint32_t>(page->hnsw_right_sibling);
 
         // Unpin page (mark dirty if modified)
-        buffer_pool->unpinPage(current_page_id, page_modified, ctx);
+        unpinIndexPage(current_page_id, page_modified, ctx);
 
         // Move to next page
         current_page_id = next_page_id;
@@ -600,7 +605,7 @@ Status HnswIndex::getStats(HnswStats *stats_out, ErrorContext *ctx)
 
     // Pin root page to scan nodes
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -620,7 +625,7 @@ Status HnswIndex::getStats(HnswStats *stats_out, ErrorContext *ctx)
     while (current_page_num != 0)
     {
         // Pin current page
-        status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        status = pinIndexPage(current_page_num, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -659,7 +664,7 @@ Status HnswIndex::getStats(HnswStats *stats_out, ErrorContext *ctx)
 
         // Move to next page in sibling chain
         uint64_t next_page_num = page->hnsw_right_sibling;
-        buffer_pool->unpinPage(current_page_num, false, ctx);
+        unpinIndexPage(current_page_num, false, ctx);
         current_page_num = next_page_num;
     }
 
@@ -725,18 +730,18 @@ size_t HnswIndex::calculate_node_size(const SBHnswNode *node) const
         return 0;
     }
     return sizeof(SBHnswNode) +
-           node->node_num_neighbors * sizeof(uint64_t) +
+           node->node_num_neighbors * sizeof(HnswNeighbor) +
            node->node_vector_len;
 }
 
 size_t HnswIndex::calculate_node_size(uint16_t num_neighbors, uint16_t vector_len) const
 {
     return sizeof(SBHnswNode) +
-           num_neighbors * sizeof(uint64_t) +
+           num_neighbors * sizeof(HnswNeighbor) +
            vector_len;
 }
 
-Status HnswIndex::get_node_vector(uint64_t tuple_id,
+Status HnswIndex::get_node_vector(const TID &tuple_id,
                                    VectorValue *vector_out,
                                    ErrorContext *ctx)
 {
@@ -757,7 +762,7 @@ Status HnswIndex::get_node_vector(uint64_t tuple_id,
 
     // Extract vector data
     uint8_t *node_data = reinterpret_cast<uint8_t *>(node);
-    uint8_t *vector_data = node_data + sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t);
+    uint8_t *vector_data = node_data + sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(HnswNeighbor);
 
     // Deserialize vector using Vector::decode()
     std::vector<uint8_t> binary_data(vector_data, vector_data + node->node_vector_len);
@@ -768,7 +773,7 @@ Status HnswIndex::get_node_vector(uint64_t tuple_id,
         BufferPool *buffer_pool = db_->buffer_pool();
         if (buffer_pool)
         {
-            buffer_pool->unpinPage(page_num, false, ctx);
+            unpinIndexPage(page_num, false, ctx);
         }
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to decode vector data");
         return Status::INVALID_ARGUMENT;
@@ -780,7 +785,7 @@ Status HnswIndex::get_node_vector(uint64_t tuple_id,
     BufferPool *buffer_pool = db_->buffer_pool();
     if (buffer_pool)
     {
-        buffer_pool->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
     }
 
     return Status::OK;
@@ -788,9 +793,9 @@ Status HnswIndex::get_node_vector(uint64_t tuple_id,
 
 Status HnswIndex::reorganize_page_for_node_update(
     uint64_t page_num,
-    uint64_t target_tid,
+    const TID &target_tid,
     uint16_t new_num_neighbors,
-    const std::vector<uint64_t> &new_neighbors,
+    const std::vector<TID> &new_neighbors,
     ErrorContext *ctx)
 {
     BufferPool *buffer_pool = db_->buffer_pool();
@@ -802,7 +807,7 @@ Status HnswIndex::reorganize_page_for_node_update(
 
     // Pin page
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(page_num, &page_buffer, ctx);
+    Status status = pinIndexPage(page_num, &page_buffer, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -814,13 +819,13 @@ Status HnswIndex::reorganize_page_for_node_update(
     // Collect all nodes in temporary buffer
     struct NodeInfo
     {
-        uint64_t tuple_id;
+        TID tuple_id;
         uint16_t layer;
         uint16_t num_neighbors;
         uint16_t vector_len;
         uint64_t xmin;
         uint64_t xmax;
-        std::vector<uint64_t> neighbors;
+        std::vector<TID> neighbors;
         std::vector<uint8_t> vector_data;
     };
 
@@ -831,8 +836,7 @@ Status HnswIndex::reorganize_page_for_node_update(
     {
         SBHnswNode *node = reinterpret_cast<SBHnswNode *>(page_data + offset);
         NodeInfo info;
-        // Convert GPID to legacy format for internal processing
-        info.tuple_id = convertTIDtoLegacy(node->getTID());
+        info.tuple_id = node->getTID();
         info.layer = node->node_layer;
         info.xmin = node->node_xmin;
         info.xmax = node->node_xmax;
@@ -848,13 +852,17 @@ Status HnswIndex::reorganize_page_for_node_update(
         {
             // Preserve existing neighbors
             info.num_neighbors = node->node_num_neighbors;
-            uint64_t *neighbor_array = reinterpret_cast<uint64_t *>(page_data + offset + sizeof(SBHnswNode));
-            info.neighbors.assign(neighbor_array, neighbor_array + node->node_num_neighbors);
+            auto *neighbor_array = reinterpret_cast<HnswNeighbor *>(page_data + offset + sizeof(SBHnswNode));
+            info.neighbors.reserve(node->node_num_neighbors);
+            for (uint16_t n = 0; n < node->node_num_neighbors; ++n)
+            {
+                info.neighbors.push_back(neighbor_array[n].getTID());
+            }
         }
 
         // Copy vector data
         info.vector_len = node->node_vector_len;
-        uint8_t *vector_start = page_data + offset + sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t);
+        uint8_t *vector_start = page_data + offset + sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(HnswNeighbor);
         info.vector_data.assign(vector_start, vector_start + node->node_vector_len);
 
         nodes.push_back(info);
@@ -873,7 +881,7 @@ Status HnswIndex::reorganize_page_for_node_update(
     // Check if everything fits
     if (total_size > db_->page_size())
     {
-        buffer_pool->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Page too full for node update");
         return Status::PAGE_FULL;
     }
@@ -886,8 +894,7 @@ Status HnswIndex::reorganize_page_for_node_update(
     for (const auto &info : nodes)
     {
         SBHnswNode *node = reinterpret_cast<SBHnswNode *>(page_data + offset);
-        // Convert legacy TID to GPID format for storage
-        node->setTID(convertLegacyTID(info.tuple_id));
+        node->setTID(info.tuple_id);
         node->node_layer = info.layer;
         node->node_num_neighbors = info.num_neighbors;
         node->node_vector_len = info.vector_len;
@@ -895,25 +902,28 @@ Status HnswIndex::reorganize_page_for_node_update(
         node->node_xmax = info.xmax;
 
         // Write neighbors
-        uint64_t *neighbor_array = reinterpret_cast<uint64_t *>(page_data + offset + sizeof(SBHnswNode));
-        std::memcpy(neighbor_array, info.neighbors.data(), info.num_neighbors * sizeof(uint64_t));
+        auto *neighbor_array = reinterpret_cast<HnswNeighbor *>(page_data + offset + sizeof(SBHnswNode));
+        for (size_t i = 0; i < info.num_neighbors; ++i)
+        {
+            neighbor_array[i].setTID(info.neighbors[i]);
+        }
 
         // Write vector data
-        uint8_t *vector_start = page_data + offset + sizeof(SBHnswNode) + info.num_neighbors * sizeof(uint64_t);
+        uint8_t *vector_start = page_data + offset + sizeof(SBHnswNode) + info.num_neighbors * sizeof(HnswNeighbor);
         std::memcpy(vector_start, info.vector_data.data(), info.vector_len);
 
         offset += calculate_node_size(info.num_neighbors, info.vector_len);
     }
 
     // Mark page dirty and unpin
-    buffer_pool->unpinPage(page_num, true, ctx);
+    unpinIndexPage(page_num, true, ctx);
     return Status::OK;
 }
 
 Status HnswIndex::find_nearest(const VectorValue &query,
                               uint32_t ef,
                               uint16_t layer,
-                              uint64_t entry_point,
+                              const TID &entry_point,
                               uint64_t current_xid,
                               std::vector<HnswSearchResult> *results_out,
                               ErrorContext *ctx)
@@ -926,7 +936,7 @@ Status HnswIndex::find_nearest(const VectorValue &query,
     // Max-heap for results (furthest first)
     std::priority_queue<SearchCandidate, std::vector<SearchCandidate>, std::greater<SearchCandidate>> top_k;
 
-    std::set<uint64_t> visited;
+    std::set<TID> visited;
 
     // Load entry point node
     SBHnswNode *entry_node = nullptr;
@@ -940,7 +950,7 @@ Status HnswIndex::find_nearest(const VectorValue &query,
     // Get entry vector
     uint8_t *node_data = reinterpret_cast<uint8_t*>(entry_node);
     const uint8_t *vector_data = node_data + sizeof(SBHnswNode) +
-                                 entry_node->node_num_neighbors * sizeof(uint64_t);
+                                 entry_node->node_num_neighbors * sizeof(HnswNeighbor);
 
     // Deserialize vector and compute distance
     std::vector<uint8_t> binary_data(vector_data, vector_data + entry_node->node_vector_len);
@@ -956,7 +966,7 @@ Status HnswIndex::find_nearest(const VectorValue &query,
     top_k.push(entry_candidate);
     visited.insert(entry_point);
 
-    db_->buffer_pool()->unpinPage(page_num, false, ctx);
+    unpinIndexPage(page_num, false, ctx);
 
     // Greedy search
     while (!candidates.empty() && top_k.size() < ef)
@@ -981,16 +991,16 @@ Status HnswIndex::find_nearest(const VectorValue &query,
         // Check visibility
         if (!is_node_visible(curr_node, current_xid, ctx))
         {
-            db_->buffer_pool()->unpinPage(page_num, false, ctx);
+            unpinIndexPage(page_num, false, ctx);
             continue;
         }
 
         // Get neighbors
-        const uint64_t *neighbors = reinterpret_cast<const uint64_t*>(curr_node + 1);
+        const HnswNeighbor *neighbors = reinterpret_cast<const HnswNeighbor*>(curr_node + 1);
 
         for (uint16_t i = 0; i < curr_node->node_num_neighbors; i++)
         {
-            uint64_t neighbor_tid = neighbors[i];
+            TID neighbor_tid = neighbors[i].getTID();
 
             if (visited.count(neighbor_tid) > 0)
             {
@@ -1010,14 +1020,14 @@ Status HnswIndex::find_nearest(const VectorValue &query,
             // Check visibility
             if (!is_node_visible(neighbor_node, current_xid, ctx))
             {
-                db_->buffer_pool()->unpinPage(neighbor_page, false, ctx);
+                unpinIndexPage(neighbor_page, false, ctx);
                 continue;
             }
 
             // Deserialize neighbor vector and compute distance
             uint8_t *neighbor_data = reinterpret_cast<uint8_t*>(neighbor_node);
             const uint8_t *neighbor_vector_data = neighbor_data + sizeof(SBHnswNode) +
-                                                   neighbor_node->node_num_neighbors * sizeof(uint64_t);
+                                                   neighbor_node->node_num_neighbors * sizeof(HnswNeighbor);
             std::vector<uint8_t> neighbor_binary(neighbor_vector_data,
                                                   neighbor_vector_data + neighbor_node->node_vector_len);
             auto neighbor_decoded = Vector::decode(neighbor_binary);
@@ -1041,10 +1051,10 @@ Status HnswIndex::find_nearest(const VectorValue &query,
                 }
             }
 
-            db_->buffer_pool()->unpinPage(neighbor_page, false, ctx);
+            unpinIndexPage(neighbor_page, false, ctx);
         }
 
-        db_->buffer_pool()->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
     }
 
     // Convert top-k to results
@@ -1054,7 +1064,7 @@ Status HnswIndex::find_nearest(const VectorValue &query,
         top_k.pop();
 
         HnswSearchResult result;
-        result.tid = convertLegacyTID(candidate.tuple_id);
+        result.tid = candidate.tuple_id;
         result.distance = candidate.distance;
         results_out->push_back(result);
     }
@@ -1106,9 +1116,9 @@ bool HnswIndex::is_node_visible(const SBHnswNode *node,
 }
 
 Status HnswIndex::create_node(const VectorValue &vector,
-                              uint64_t tuple_id,
+                              const TID &tuple_id,
                               uint16_t layer,
-                              const std::vector<uint64_t> &neighbors,
+                              const std::vector<TID> &neighbors,
                               uint64_t current_xid,
                               ErrorContext *ctx)
 {
@@ -1121,7 +1131,7 @@ Status HnswIndex::create_node(const VectorValue &vector,
 
     // Pin root page
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -1133,7 +1143,7 @@ Status HnswIndex::create_node(const VectorValue &vector,
 
     // Calculate node size
     size_t vector_size = vector.getDimensions() * sizeof(float);
-    size_t node_size = sizeof(SBHnswNode) + neighbors.size() * sizeof(uint64_t) + vector_size;
+    size_t node_size = sizeof(SBHnswNode) + neighbors.size() * sizeof(HnswNeighbor) + vector_size;
 
     // Check if page is full - if so, allocate new page
     if (page->hnsw_free_space < node_size)
@@ -1141,7 +1151,7 @@ Status HnswIndex::create_node(const VectorValue &vector,
         LOG_DEBUG(STORAGE, "HNSW: Root page full (%u bytes free, need %zu), allocating new page",
                   page->hnsw_free_space, node_size);
 
-        buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
+        unpinIndexPage(index_info_.idx_root_page, false, ctx);
 
         // Allocate new page for this layer
         PageManager *page_mgr = db_->page_manager();
@@ -1151,17 +1161,19 @@ Status HnswIndex::create_node(const VectorValue &vector,
             return Status::INVALID_ARGUMENT;
         }
 
-        uint32_t new_page_num;
-        status = page_mgr->allocatePage(new_page_num, ctx);
+        uint32_t new_page_num = 0;
+        GPID new_page_gpid = 0;
+        status = page_mgr->allocatePageInTablespace(index_info_.idx_tablespace_id, &new_page_gpid, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new HNSW page");
             return status;
         }
+        new_page_num = static_cast<uint32_t>(getPageNumber(new_page_gpid));
 
         // Pin the new page
         void *new_page_buffer = nullptr;
-        status = buffer_pool->pinPage(new_page_num, &new_page_buffer, ctx);
+        status = pinIndexPage(new_page_num, &new_page_buffer, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin new HNSW page");
@@ -1175,10 +1187,10 @@ Status HnswIndex::create_node(const VectorValue &vector,
 
         // Copy header from root page (need to re-pin root to read it)
         void *root_buffer = nullptr;
-        status = buffer_pool->pinPage(index_info_.idx_root_page, &root_buffer, ctx);
+        status = pinIndexPage(index_info_.idx_root_page, &root_buffer, ctx);
         if (status != Status::OK)
         {
-            buffer_pool->unpinPage(new_page_num, false, ctx);
+            unpinIndexPage(new_page_num, false, ctx);
             SET_ERROR_CONTEXT(ctx, status, "Failed to re-pin root page");
             return status;
         }
@@ -1213,17 +1225,17 @@ Status HnswIndex::create_node(const VectorValue &vector,
         if (old_right_sibling != 0)
         {
             void *old_right_buffer = nullptr;
-            Status sibling_status = buffer_pool->pinPage(old_right_sibling, &old_right_buffer, ctx);
+            Status sibling_status = pinIndexPage(old_right_sibling, &old_right_buffer, ctx);
             if (sibling_status == Status::OK)
             {
                 SBHnswPage *old_right_page = reinterpret_cast<SBHnswPage*>(old_right_buffer);
                 old_right_page->hnsw_left_sibling = new_page_num;
-                buffer_pool->unpinPage(old_right_sibling, true, ctx); // Mark dirty
+                unpinIndexPage(old_right_sibling, true, ctx); // Mark dirty
             }
             // If sibling update fails, continue anyway - we can still insert the node
         }
 
-        buffer_pool->unpinPage(index_info_.idx_root_page, true, ctx); // Mark dirty (updated right_sibling)
+        unpinIndexPage(index_info_.idx_root_page, true, ctx); // Mark dirty (updated right_sibling)
 
         // Now use the new page for insertion
         page_buffer = new_page_buffer;
@@ -1240,14 +1252,13 @@ Status HnswIndex::create_node(const VectorValue &vector,
     for (uint16_t i = 0; i < page->hnsw_count; i++)
     {
         SBHnswNode *node = reinterpret_cast<SBHnswNode*>(page_data + offset);
-        size_t size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t) + node->node_vector_len;
+        size_t size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(HnswNeighbor) + node->node_vector_len;
         offset += size;
     }
 
     // Create node
     SBHnswNode *new_node = reinterpret_cast<SBHnswNode*>(page_data + offset);
-    // Convert legacy TID to GPID format
-    new_node->setTID(convertLegacyTID(tuple_id));
+    new_node->setTID(tuple_id);
     new_node->node_flags = 0;
     new_node->node_layer = layer;
     new_node->node_num_neighbors = neighbors.size();
@@ -1256,10 +1267,10 @@ Status HnswIndex::create_node(const VectorValue &vector,
     new_node->node_xmax = 0;
 
     // Copy neighbors
-    uint64_t *neighbor_array = reinterpret_cast<uint64_t*>(new_node + 1);
+    auto *neighbor_array = reinterpret_cast<HnswNeighbor*>(new_node + 1);
     for (size_t i = 0; i < neighbors.size(); i++)
     {
-        neighbor_array[i] = neighbors[i];
+        neighbor_array[i].setTID(neighbors[i]);
     }
 
     // Copy vector data
@@ -1279,15 +1290,15 @@ Status HnswIndex::create_node(const VectorValue &vector,
     page->hnsw_free_space -= node_size;
     page->hnsw_total_nodes++;
 
-    buffer_pool->unpinPage(active_page_num, true, ctx); // Unpin the actual page we used
+    unpinIndexPage(active_page_num, true, ctx); // Unpin the actual page we used
 
-    LOG_DEBUG(GENERAL, "HNSW: Created node TID %lu at layer %u with %zu neighbors on page %lu",
-             tuple_id, layer, neighbors.size(), active_page_num);
+    LOG_DEBUG(GENERAL, "HNSW: Created node TID %s at layer %u with %zu neighbors on page %lu",
+             tidToString(tuple_id).c_str(), layer, neighbors.size(), active_page_num);
 
     return Status::OK;
 }
 
-Status HnswIndex::add_link(uint64_t from_tid, uint64_t to_tid,
+Status HnswIndex::add_link(const TID &from_tid, const TID &to_tid,
                            uint16_t layer, ErrorContext *ctx)
 {
     // Find the source node
@@ -1301,23 +1312,29 @@ Status HnswIndex::add_link(uint64_t from_tid, uint64_t to_tid,
 
     // Extract current neighbors
     uint8_t *node_data = reinterpret_cast<uint8_t *>(from_node);
-    uint64_t *neighbor_array = reinterpret_cast<uint64_t *>(node_data + sizeof(SBHnswNode));
-    std::vector<uint64_t> neighbors(neighbor_array, neighbor_array + from_node->node_num_neighbors);
+    auto *neighbor_array = reinterpret_cast<HnswNeighbor *>(node_data + sizeof(SBHnswNode));
+    std::vector<TID> neighbors;
+    neighbors.reserve(from_node->node_num_neighbors);
+    for (uint16_t i = 0; i < from_node->node_num_neighbors; ++i)
+    {
+        neighbors.push_back(neighbor_array[i].getTID());
+    }
 
     // Unpin page before modification
     BufferPool *buffer_pool = db_->buffer_pool();
     if (buffer_pool)
     {
-        buffer_pool->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
     }
 
     // Check if link already exists (idempotent)
-    for (uint64_t neighbor : neighbors)
+    for (const TID &neighbor : neighbors)
     {
         if (neighbor == to_tid)
         {
             // Link already exists, no-op
-            LOG_DEBUG(GENERAL, "HNSW: add_link %lu -> %lu (layer %u) - already exists", from_tid, to_tid, layer);
+            LOG_DEBUG(GENERAL, "HNSW: add_link %s -> %s (layer %u) - already exists",
+                      tidToString(from_tid).c_str(), tidToString(to_tid).c_str(), layer);
             return Status::OK;
         }
     }
@@ -1329,7 +1346,8 @@ Status HnswIndex::add_link(uint64_t from_tid, uint64_t to_tid,
     uint16_t M = index_info_.idx_m;
     if (neighbors.size() > M)
     {
-        LOG_DEBUG(GENERAL, "HNSW: add_link triggers pruning for node %lu (layer %u)", from_tid, layer);
+        LOG_DEBUG(GENERAL, "HNSW: add_link triggers pruning for node %s (layer %u)",
+                  tidToString(from_tid).c_str(), layer);
         // Prune will be called later if needed
     }
 
@@ -1341,11 +1359,12 @@ Status HnswIndex::add_link(uint64_t from_tid, uint64_t to_tid,
         return status;
     }
 
-    LOG_DEBUG(GENERAL, "HNSW: add_link %lu -> %lu (layer %u) - success", from_tid, to_tid, layer);
+    LOG_DEBUG(GENERAL, "HNSW: add_link %s -> %s (layer %u) - success",
+              tidToString(from_tid).c_str(), tidToString(to_tid).c_str(), layer);
     return Status::OK;
 }
 
-Status HnswIndex::remove_link(uint64_t from_tid, uint64_t to_tid,
+Status HnswIndex::remove_link(const TID &from_tid, const TID &to_tid,
                               uint16_t layer, ErrorContext *ctx)
 {
     // Find the source node
@@ -1359,14 +1378,19 @@ Status HnswIndex::remove_link(uint64_t from_tid, uint64_t to_tid,
 
     // Extract current neighbors
     uint8_t *node_data = reinterpret_cast<uint8_t *>(from_node);
-    uint64_t *neighbor_array = reinterpret_cast<uint64_t *>(node_data + sizeof(SBHnswNode));
-    std::vector<uint64_t> neighbors(neighbor_array, neighbor_array + from_node->node_num_neighbors);
+    auto *neighbor_array = reinterpret_cast<HnswNeighbor *>(node_data + sizeof(SBHnswNode));
+    std::vector<TID> neighbors;
+    neighbors.reserve(from_node->node_num_neighbors);
+    for (uint16_t i = 0; i < from_node->node_num_neighbors; ++i)
+    {
+        neighbors.push_back(neighbor_array[i].getTID());
+    }
 
     // Unpin page before modification
     BufferPool *buffer_pool = db_->buffer_pool();
     if (buffer_pool)
     {
-        buffer_pool->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
     }
 
     // Find and remove the link
@@ -1374,7 +1398,8 @@ Status HnswIndex::remove_link(uint64_t from_tid, uint64_t to_tid,
     if (it == neighbors.end())
     {
         // Link doesn't exist, no-op (idempotent)
-        LOG_DEBUG(GENERAL, "HNSW: remove_link %lu -> %lu (layer %u) - link not found", from_tid, to_tid, layer);
+        LOG_DEBUG(GENERAL, "HNSW: remove_link %s -> %s (layer %u) - link not found",
+                  tidToString(from_tid).c_str(), tidToString(to_tid).c_str(), layer);
         return Status::OK;
     }
 
@@ -1388,11 +1413,12 @@ Status HnswIndex::remove_link(uint64_t from_tid, uint64_t to_tid,
         return status;
     }
 
-    LOG_DEBUG(GENERAL, "HNSW: remove_link %lu -> %lu (layer %u) - success", from_tid, to_tid, layer);
+    LOG_DEBUG(GENERAL, "HNSW: remove_link %s -> %s (layer %u) - success",
+              tidToString(from_tid).c_str(), tidToString(to_tid).c_str(), layer);
     return Status::OK;
 }
 
-Status HnswIndex::find_node(uint64_t tuple_id,
+Status HnswIndex::find_node(const TID &tuple_id,
                             SBHnswNode **node_out,
                             uint64_t *page_num_out,
                             ErrorContext *ctx)
@@ -1411,7 +1437,7 @@ Status HnswIndex::find_node(uint64_t tuple_id,
     {
         // Pin current page
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_num, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -1426,8 +1452,7 @@ Status HnswIndex::find_node(uint64_t tuple_id,
         {
             SBHnswNode *node = reinterpret_cast<SBHnswNode*>(page_data + offset);
 
-            // Convert GPID to legacy for comparison
-            if (convertTIDtoLegacy(node->getTID()) == tuple_id)
+            if (node->getTID() == tuple_id)
             {
                 *node_out = node;
                 *page_num_out = current_page_num;
@@ -1435,13 +1460,13 @@ Status HnswIndex::find_node(uint64_t tuple_id,
                 return Status::OK;
             }
 
-            size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t) + node->node_vector_len;
+            size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(HnswNeighbor) + node->node_vector_len;
             offset += node_size;
         }
 
         // Node not found on this page, move to right sibling
         uint64_t next_page_num = page->hnsw_right_sibling;
-        buffer_pool->unpinPage(current_page_num, false, ctx);
+        unpinIndexPage(current_page_num, false, ctx);
         current_page_num = next_page_num;
     }
 
@@ -1450,7 +1475,7 @@ Status HnswIndex::find_node(uint64_t tuple_id,
     return Status::NOT_FOUND;
 }
 
-Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
+Status HnswIndex::prune_connections(const TID &node_tid, uint16_t layer,
                                    ErrorContext *ctx)
 {
     uint16_t M = index_info_.idx_m;
@@ -1471,10 +1496,10 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
         BufferPool *buffer_pool = db_->buffer_pool();
         if (buffer_pool)
         {
-            buffer_pool->unpinPage(page_num, false, ctx);
+            unpinIndexPage(page_num, false, ctx);
         }
-        LOG_DEBUG(GENERAL, "HNSW: prune_connections node %lu (layer %u) - no pruning needed (%u <= %u)",
-                  node_tid, layer, node->node_num_neighbors, M);
+        LOG_DEBUG(GENERAL, "HNSW: prune_connections node %s (layer %u) - no pruning needed (%u <= %u)",
+                  tidToString(node_tid).c_str(), layer, node->node_num_neighbors, M);
         return Status::OK;
     }
 
@@ -1487,7 +1512,7 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
         BufferPool *buffer_pool = db_->buffer_pool();
         if (buffer_pool)
         {
-            buffer_pool->unpinPage(page_num, false, ctx);
+            unpinIndexPage(page_num, false, ctx);
         }
         return status;
     }
@@ -1501,7 +1526,7 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
     }
 
     void *page_buffer = nullptr;
-    status = buffer_pool->pinPage(page_num, &page_buffer, ctx);
+    status = pinIndexPage(page_num, &page_buffer, ctx);
     if (status != Status::OK || !page_buffer)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to re-pin page after get_node_vector");
@@ -1521,8 +1546,7 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
             break;
 
         SBHnswNode *candidate = reinterpret_cast<SBHnswNode *>(current);
-        // Convert GPID to legacy for comparison
-        if (convertTIDtoLegacy(candidate->getTID()) == node_tid)
+        if (candidate->getTID() == node_tid)
         {
             node = candidate;
             break;
@@ -1534,31 +1558,36 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
 
     if (!node)
     {
-        buffer_pool->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Node not found after re-pin");
         return Status::NOT_FOUND;
     }
 
     // Extract current neighbors
     uint8_t *node_data = reinterpret_cast<uint8_t *>(node);
-    uint64_t *neighbor_array = reinterpret_cast<uint64_t *>(node_data + sizeof(SBHnswNode));
-    std::vector<uint64_t> neighbors(neighbor_array, neighbor_array + node->node_num_neighbors);
+    auto *neighbor_array = reinterpret_cast<HnswNeighbor *>(node_data + sizeof(SBHnswNode));
+    std::vector<TID> neighbors;
+    neighbors.reserve(node->node_num_neighbors);
+    for (uint16_t i = 0; i < node->node_num_neighbors; ++i)
+    {
+        neighbors.push_back(neighbor_array[i].getTID());
+    }
 
     buffer_pool = db_->buffer_pool();
     if (buffer_pool)
     {
-        buffer_pool->unpinPage(page_num, false, ctx);
+        unpinIndexPage(page_num, false, ctx);
     }
 
     // Build candidate list with distances
     struct Candidate
     {
-        uint64_t tid;
+        TID tid;
         double distance;
     };
     std::vector<Candidate> candidates;
 
-    for (uint64_t neighbor_tid : neighbors)
+    for (const TID &neighbor_tid : neighbors)
     {
         VectorValue neighbor_vector(std::vector<float>{}); // Temporary empty vector
         status = get_node_vector(neighbor_tid, &neighbor_vector, ctx);
@@ -1581,7 +1610,7 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
     // Future optimization: diversity-based heuristic from HNSW paper Section 4
     // (select neighbors that maximize coverage while minimizing overlap)
     // Current approach is simpler and works well in practice
-    std::vector<uint64_t> pruned_neighbors;
+    std::vector<TID> pruned_neighbors;
     for (size_t i = 0; i < std::min(static_cast<size_t>(M), candidates.size()); i++)
     {
         pruned_neighbors.push_back(candidates[i].tid);
@@ -1595,25 +1624,25 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
         return status;
     }
 
-    LOG_DEBUG(GENERAL, "HNSW: prune_connections node %lu (layer %u) - pruned from %zu to %zu neighbors",
-              node_tid, layer, neighbors.size(), pruned_neighbors.size());
+    LOG_DEBUG(GENERAL, "HNSW: prune_connections node %s (layer %u) - pruned from %zu to %zu neighbors",
+              tidToString(node_tid).c_str(), layer, neighbors.size(), pruned_neighbors.size());
     return Status::OK;
 }
 
-uint64_t HnswIndex::find_entry_point(ErrorContext *ctx) const
+TID HnswIndex::find_entry_point(ErrorContext *ctx) const
 {
     BufferPool *buffer_pool = db_->buffer_pool();
     if (!buffer_pool)
     {
-        return 0;
+        return INVALID_TID;
     }
 
     // Pin root page
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, ctx);
     if (status != Status::OK)
     {
-        return 0;
+        return INVALID_TID;
     }
 
     uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
@@ -1621,7 +1650,7 @@ uint64_t HnswIndex::find_entry_point(ErrorContext *ctx) const
 
     // Find node with highest layer
     uint16_t max_layer = 0;
-    uint64_t entry_tid = 0;
+    TID entry_tid = INVALID_TID;
 
     size_t offset = sizeof(SBHnswPage);
     for (uint16_t i = 0; i < page->hnsw_count; i++)
@@ -1633,16 +1662,15 @@ uint64_t HnswIndex::find_entry_point(ErrorContext *ctx) const
             if (node->node_layer >= max_layer)
             {
                 max_layer = node->node_layer;
-                // Convert GPID to legacy format
-                entry_tid = convertTIDtoLegacy(node->getTID());
+                entry_tid = node->getTID();
             }
         }
 
-        size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t) + node->node_vector_len;
+        size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(HnswNeighbor) + node->node_vector_len;
         offset += node_size;
     }
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
+    unpinIndexPage(index_info_.idx_root_page, false, ctx);
     return entry_tid;
 }
 
@@ -1656,7 +1684,7 @@ uint16_t HnswIndex::get_max_layer() const
     }
 
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, nullptr);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, nullptr);
     if (status != Status::OK)
     {
         return 0;
@@ -1676,11 +1704,11 @@ uint16_t HnswIndex::get_max_layer() const
             max_layer = node->node_layer;
         }
 
-        size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t) + node->node_vector_len;
+        size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(HnswNeighbor) + node->node_vector_len;
         offset += node_size;
     }
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, false, nullptr);
+    unpinIndexPage(index_info_.idx_root_page, false, nullptr);
     return max_layer;
 }
 
@@ -1729,7 +1757,7 @@ Status HnswIndex::updateTIDsAfterMigration(
 
     // Pin root page
     void *root_buffer = nullptr;
-    Status pin_status = bp->pinPage(root_page, &root_buffer, ctx);
+    Status pin_status = pinIndexPage(root_page, &root_buffer, ctx);
     if (pin_status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, pin_status, "Failed to pin root page");
@@ -1753,12 +1781,12 @@ Status HnswIndex::updateTIDsAfterMigration(
         }
 
         size_t node_size = sizeof(SBHnswNode);
-        node_size += node->node_num_neighbors * sizeof(uint64_t);
+        node_size += node->node_num_neighbors * sizeof(HnswNeighbor);
         node_size += node->node_vector_len;
         offset += node_size;
     }
 
-    bp->unpinPage(root_page, false, ctx);
+    unpinIndexPage(root_page, false, ctx);
 
     LOG_INFO(STORAGE, "HNSW index has %u layers, starting TID update scan", max_layer + 1);
 
@@ -1782,7 +1810,7 @@ Status HnswIndex::updateTIDsAfterMigration(
             visited_pages.insert(page_num);
 
             void *page_buffer = nullptr;
-            Status page_pin_status = bp->pinPage(page_num, &page_buffer, ctx);
+            Status page_pin_status = pinIndexPage(page_num, &page_buffer, ctx);
             if (page_pin_status != Status::OK)
             {
                 LOG_WARNING(STORAGE, "Failed to pin HNSW page %lu during TID update: %d",
@@ -1809,7 +1837,7 @@ Status HnswIndex::updateTIDsAfterMigration(
                 pages_to_scan.push_back(hnsw_page->hnsw_right_sibling);
             }
 
-            bp->unpinPage(page_num, false, ctx);
+            unpinIndexPage(page_num, false, ctx);
         }
 
         LOG_INFO(STORAGE, "Layer %u: found %lu pages to update", layer, layer_pages.size());
@@ -1818,7 +1846,7 @@ Status HnswIndex::updateTIDsAfterMigration(
         for (uint64_t page_num : layer_pages)
         {
             void *page_buffer = nullptr;
-            Status page_pin_status = bp->pinPage(page_num, &page_buffer, ctx);
+            Status page_pin_status = pinIndexPage(page_num, &page_buffer, ctx);
             if (page_pin_status != Status::OK)
             {
                 LOG_WARNING(STORAGE, "Failed to pin HNSW page %lu for TID update: %d",
@@ -1838,28 +1866,28 @@ Status HnswIndex::updateTIDsAfterMigration(
             {
                 auto *node = reinterpret_cast<SBHnswNode *>(page_bytes + node_offset);
 
-                // Convert GPID to legacy for lookup
-                uint64_t old_tid = convertTIDtoLegacy(node->getTID());
-                auto it = tid_mapping.find(old_tid);
+                GPID old_gpid = node->getTID().gpid;
+                auto it = tid_mapping.find(old_gpid);
                 if (it != tid_mapping.end())
                 {
-                    uint64_t new_tid = it->second;
-                    // Convert legacy TID back to GPID for storage
-                    node->setTID(convertLegacyTID(new_tid));
+                    GPID new_gpid = it->second;
+                    TID updated = node->getTID();
+                    updated.gpid = new_gpid;
+                    node->setTID(updated);
                     total_tids_updated++;
                     page_modified = true;
 
-                    LOG_DEBUG(STORAGE, "Updated HNSW node TID: %lu -> %lu (layer %u, page %lu)",
-                             old_tid, new_tid, layer, page_num);
+                    LOG_DEBUG(STORAGE, "Updated HNSW node GPID: %lu -> %lu (layer %u, page %lu)",
+                             old_gpid, new_gpid, layer, page_num);
                 }
 
                 size_t node_size = sizeof(SBHnswNode);
-                node_size += node->node_num_neighbors * sizeof(uint64_t);
+                node_size += node->node_num_neighbors * sizeof(HnswNeighbor);
                 node_size += node->node_vector_len;
                 node_offset += node_size;
             }
 
-            bp->unpinPage(page_num, page_modified, ctx);
+            unpinIndexPage(page_num, page_modified, ctx);
 
             if (page_modified)
             {

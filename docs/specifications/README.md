@@ -27,7 +27,7 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 **For Architects:**
 1. [Security Architecture](Security%20Design%20Specification/00_SECURITY_SPEC_INDEX.md) - Complete security design (19 specs)
-2. [Cluster Architecture](Cluster%20Specification%20Work/SBCLUSTER-SUMMARY.md) - Distributed system design (18 specs)
+2. [Cluster Architecture](Cluster%20Specification%20Work/SBCLUSTER-SUMMARY.md) - Distributed system design (19 specs)
 3. [Transaction System](transaction/TRANSACTION_MAIN.md) - MGA transaction model
 4. [Storage Engine](storage/STORAGE_ENGINE_MAIN.md) - Storage architecture
 
@@ -48,7 +48,7 @@ This directory contains comprehensive technical specifications for the ScratchBi
 | **Root** | Core specifications | BACKUP_AND_RESTORE, MEMORY_MANAGEMENT, PERFORMANCE_BENCHMARKS | ✅ Clean |
 | [**parser/**](parser/) | SQL parsing and grammar | 8 parser specs, BNF grammar, emulated parsers | ✅ Organized |
 | [**ddl/**](ddl/) | Data Definition Language | 19 DDL operation specs | ✅ Organized |
-| [**dml/**](dml/) | Data Manipulation Language | 7 DML operation specs | ✅ Organized |
+| [**dml/**](dml/) | Data Manipulation Language | 8 DML operation specs | ✅ Organized |
 | [**transaction/**](transaction/) | MGA transactions | Transaction, locking, MGA core, distributed | ✅ Organized |
 | [**storage/**](storage/) | Storage layer | Buffer pool, page management, TOAST, heap, tablespace | ✅ Organized |
 | [**indexes/**](indexes/) | Index implementations | 11 index types including HNSW, LSM, columnstore | ✅ Organized |
@@ -72,9 +72,10 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**cluster/**](Cluster%20Specification%20Work/) | Distributed cluster architecture | 18 specs | ✅ Complete |
+| [**cluster/**](Cluster%20Specification%20Work/) | Distributed cluster architecture | 19 specs | ✅ Complete |
 | [Raft Consensus](Cluster%20Specification%20Work/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) | Cluster config management | CCE specification | ✅ Complete |
 | [Sharding](Cluster%20Specification%20Work/SBCLUSTER-05-SHARDING.md) | Data partitioning | Consistent hashing | ✅ Complete |
+| [Shard Migration](Cluster%20Specification%20Work/SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md) | Cross-node data movement | Online migration + rebalancing | ✅ Complete |
 | [Replication](Cluster%20Specification%20Work/SBCLUSTER-07-REPLICATION.md) | Data replication | Async logical stream (optional write-after log) | ✅ Complete |
 
 ### Network & Connectivity
@@ -108,6 +109,7 @@ Key network specs:
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
+| [**alpha_requirements/optional/**](alpha_requirements/optional/) | Optional Alpha engine features | Optional alpha specs | ✅ Draft |
 | [**replication/**](beta_requirements/replication/) | Replication protocols | Replication, shadow protocols, optional write-after log | ✅ Organized |
 | [**compression/**](compression/) | Compression framework | Compression specifications | ✅ Organized |
 | [**udr/**](udr/) | User-Defined Resources | UDR system specification | ✅ Organized |
@@ -207,6 +209,7 @@ Data Manipulation Language specifications:
 - [DML_UPDATE.md](dml/DML_UPDATE.md) - Update operations
 - [DML_DELETE.md](dml/DML_DELETE.md) - Delete operations
 - [DML_MERGE.md](dml/DML_MERGE.md) - Merge/upsert operations
+- [DML_COPY.md](dml/DML_COPY.md) - Bulk copy operations
 - [DML_XML_JSON_TABLES.md](dml/DML_XML_JSON_TABLES.md) - XML/JSON table functions
 
 ### Transaction System
@@ -240,6 +243,7 @@ Storage layer and buffer management:
 
 **Advanced:**
 - [TABLESPACE_SPECIFICATION.md](storage/TABLESPACE_SPECIFICATION.md) (1,352 lines) - Tablespace management
+- [TABLESPACE_ONLINE_MIGRATION.md](storage/TABLESPACE_ONLINE_MIGRATION.md) - Online tablespace migration (Beta)
 - [EXTENDED_PAGE_SIZES.md](storage/EXTENDED_PAGE_SIZES.md) (107 lines) - Configurable page sizes
 - [COMPRESSION_FRAMEWORK.md](compression/COMPRESSION_FRAMEWORK.md) (234 lines) - Compression support
 - [COLUMNSTORE_SPEC.md](indexes/COLUMNSTORE_SPEC.md) (712 lines) - Columnar storage
@@ -337,10 +341,14 @@ Administrative tools and interfaces:
 - [SB_ADMIN_CLI_SPECIFICATION.md](admin/SB_ADMIN_CLI_SPECIFICATION.md) (608 lines) - Admin CLI
 - [SB_SERVER_NETWORK_CLI_SPECIFICATION.md](admin/SB_SERVER_NETWORK_CLI_SPECIFICATION.md) (new) - sb_server network CLI
 - [SB_ISQL_CLI_SPECIFICATION.md](tools/SB_ISQL_CLI_SPECIFICATION.md) (new) - sb_isql network CLI
+- [SB_BACKUP_CLI_SPECIFICATION.md](tools/SB_BACKUP_CLI_SPECIFICATION.md) (new) - sb_backup CLI
+- [SB_VERIFY_CLI_SPECIFICATION.md](tools/SB_VERIFY_CLI_SPECIFICATION.md) (new) - sb_verify CLI
+- [SB_SECURITY_CLI_SPECIFICATION.md](tools/SB_SECURITY_CLI_SPECIFICATION.md) (new) - sb_security CLI
 - [SB_TOOLING_NETWORK_SPEC.md](tools/SB_TOOLING_NETWORK_SPEC.md) (new) - Remote tooling support
 - [FlameRobin_Specification_for_AI.md](drivers/FlameRobin_Specification_for_AI.md) (442 lines) - FlameRobin integration
 - [PROMETHEUS_METRICS_REFERENCE.md](operations/PROMETHEUS_METRICS_REFERENCE.md) (824 lines) - Metrics export
 - [LISTENER_POOL_METRICS.md](operations/LISTENER_POOL_METRICS.md) (new) - Listener/pool metrics
+- [OID_MAPPING_STRATEGY.md](operations/OID_MAPPING_STRATEGY.md) - PostgreSQL OID mapping strategy
 - [PERFORMANCE_BENCHMARKS.md](PERFORMANCE_BENCHMARKS.md) (52 lines) - ⚠️ Needs expansion
 
 ### Deployment
@@ -355,6 +363,7 @@ Deployment and operations:
 Core architecture documents:
 
 - [COMPONENT_MODEL_AND_RESPONSIBILITIES.md](catalog/COMPONENT_MODEL_AND_RESPONSIBILITIES.md) (155 lines) - Component model
+- [SCHEMA_PATH_SECURITY_DEFAULTS.md](catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md) - Schema path security defaults
 - [IMPLEMENTATION_RECOMMENDATIONS.md](core/IMPLEMENTATION_RECOMMENDATIONS.md) (436 lines) - Strategic recommendations
 - [CORE_IMPLEMENTATION_SPECS_SUMMARY.md](core/CORE_IMPLEMENTATION_SPECS_SUMMARY.md) (204 lines) - Implementation summary
 - [CACHE_AND_BUFFER_ARCHITECTURE.md](core/CACHE_AND_BUFFER_ARCHITECTURE.md) - Cache/buffer architecture (current + target)
@@ -408,7 +417,8 @@ Core architecture documents:
 2. [cluster/SBCLUSTER-00-GUIDING-PRINCIPLES.md](Cluster%20Specification%20Work/SBCLUSTER-00-GUIDING-PRINCIPLES.md) - Principles
 3. [cluster/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md](Cluster%20Specification%20Work/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) - CCE & Raft
 4. [cluster/SBCLUSTER-05-SHARDING.md](Cluster%20Specification%20Work/SBCLUSTER-05-SHARDING.md) - Sharding
-5. [cluster/SBCLUSTER-07-REPLICATION.md](Cluster%20Specification%20Work/SBCLUSTER-07-REPLICATION.md) - Replication
+5. [cluster/SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md](Cluster%20Specification%20Work/SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md) - Shard migration
+6. [cluster/SBCLUSTER-07-REPLICATION.md](Cluster%20Specification%20Work/SBCLUSTER-07-REPLICATION.md) - Replication
 6. [PARALLEL_EXECUTION_ARCHITECTURE.md](query/PARALLEL_EXECUTION_ARCHITECTURE.md) - Parallel execution model (Beta)
 
 ---

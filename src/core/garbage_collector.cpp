@@ -17,6 +17,7 @@
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/toast.h" // Phase 4: TOAST GC
 #include "scratchbird/core/plain_value_reader.h"
+#include "scratchbird/core/gpid.h"
 #include <chrono>
 #include <thread>
 #include <algorithm>
@@ -876,7 +877,7 @@ namespace scratchbird::core
                 switch (index_info.index_type)
                 {
                 case CatalogManager::IndexType::BTREE:
-                    btree = BTree::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    btree = BTree::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                     if (btree)
                     {
                         index = btree.get();
@@ -884,7 +885,7 @@ namespace scratchbird::core
                     break;
 
                 case CatalogManager::IndexType::HASH:
-                    hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                     if (hash_index)
                     {
                         index = hash_index.get();
@@ -892,7 +893,7 @@ namespace scratchbird::core
                     break;
 
                 case CatalogManager::IndexType::GIN:
-                    gin_index = GinIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    gin_index = GinIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                     if (gin_index)
                     {
                         index = gin_index.get();
@@ -901,7 +902,7 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::BRIN:
                     // PHASE 4A.1.5: BRIN index support
-                    brin_index = BrinIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    brin_index = BrinIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                     if (brin_index)
                     {
                         index = brin_index.get();
@@ -910,7 +911,7 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::VECTOR:
                     // PHASE 4A.2.6: HNSW (vector similarity) index support
-                    hnsw_index = HnswIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    hnsw_index = HnswIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                     if (hnsw_index)
                     {
                         index = hnsw_index.get();
@@ -1320,7 +1321,8 @@ namespace scratchbird::core
             uint32_t page_id = getPageNumber(tid);
             uint16_t item_id = tid.slot;
 
-            Status delete_status = storage->deleteTuple(toast_table_id, page_id, item_id, ctx);
+            Status delete_status = storage->deleteTuple(toast_table_id, page_id, item_id,
+                                                       UINT16_MAX, ctx);
             if (delete_status == Status::OK)
             {
                 (*chunks_deleted)++;
@@ -1428,7 +1430,8 @@ namespace scratchbird::core
             uint32_t page_id = getPageNumber(tid);
             uint16_t item_id = tid.slot;
 
-            Status delete_status = storage->deleteTuple(toast_table_id, page_id, item_id, ctx);
+            Status delete_status = storage->deleteTuple(toast_table_id, page_id, item_id,
+                                                       UINT16_MAX, ctx);
             if (delete_status == Status::OK)
             {
                 (*chunks_deleted)++;

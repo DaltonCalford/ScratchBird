@@ -11,7 +11,7 @@ namespace scratchbird::core
 // BloomFilter Implementation
 // ============================================================================
 
-BloomFilter::BloomFilter(uint64_t expected_items, float false_positive_rate)
+TIDBloomFilter::TIDBloomFilter(uint64_t expected_items, float false_positive_rate)
 {
     // Calculate optimal bloom filter size
     // m = -(n * ln(p)) / (ln(2)^2)
@@ -37,12 +37,12 @@ BloomFilter::BloomFilter(uint64_t expected_items, float false_positive_rate)
     std::memset(bits_, 0, size_bytes);
 }
 
-BloomFilter::~BloomFilter()
+TIDBloomFilter::~TIDBloomFilter()
 {
     delete[] bits_;
 }
 
-void BloomFilter::insert(uint64_t item)
+void TIDBloomFilter::insert(uint64_t item)
 {
     for (uint32_t i = 0; i < num_hashes_; ++i) {
         uint64_t hash;
@@ -62,7 +62,7 @@ void BloomFilter::insert(uint64_t item)
     }
 }
 
-bool BloomFilter::contains(uint64_t item) const
+bool TIDBloomFilter::contains(uint64_t item) const
 {
     for (uint32_t i = 0; i < num_hashes_; ++i) {
         uint64_t hash;
@@ -86,14 +86,14 @@ bool BloomFilter::contains(uint64_t item) const
     return true; // Might be present (or false positive)
 }
 
-void BloomFilter::clear()
+void TIDBloomFilter::clear()
 {
     uint64_t size_bytes = size_bits_ / 8;
     std::memset(bits_, 0, size_bytes);
 }
 
 // MurmurHash3-style hash functions
-uint64_t BloomFilter::hash1(uint64_t item) const
+uint64_t TIDBloomFilter::hash1(uint64_t item) const
 {
     // MurmurHash3 64-bit finalizer
     item ^= item >> 33;
@@ -104,7 +104,7 @@ uint64_t BloomFilter::hash1(uint64_t item) const
     return item;
 }
 
-uint64_t BloomFilter::hash2(uint64_t item) const
+uint64_t TIDBloomFilter::hash2(uint64_t item) const
 {
     // Different seed/constants
     item ^= item >> 32;
@@ -115,7 +115,7 @@ uint64_t BloomFilter::hash2(uint64_t item) const
     return item;
 }
 
-uint64_t BloomFilter::hash3(uint64_t item) const
+uint64_t TIDBloomFilter::hash3(uint64_t item) const
 {
     // Third variation
     item ^= item >> 31;
@@ -185,7 +185,7 @@ Status TIDResolver::recordMigration(
 
         TableMigrationData data;
         data.table_id = table_id;
-        data.bloom = std::make_unique<BloomFilter>(ESTIMATED_TUPLES, FALSE_POSITIVE_RATE);
+        data.bloom = std::make_unique<TIDBloomFilter>(ESTIMATED_TUPLES, FALSE_POSITIVE_RATE);
 
         table_data_[table_id] = std::move(data);
         it = table_data_.find(table_id);

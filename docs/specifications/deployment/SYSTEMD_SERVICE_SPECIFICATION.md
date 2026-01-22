@@ -441,9 +441,19 @@ result_cache_ttl = 300
 # MEMORY SECTION
 #==============================================================================
 [memory]
-# Shared buffer pool size
+# Buffer pool size (canonical)
 # Format: 128MB, 1GB, etc.
-shared_buffers = 128MB
+buffer_pool_size = 128MB
+
+# Buffer pool page size (bytes)
+buffer_pool_page_size = 8192
+
+# Background writer controls
+buffer_pool_bgwriter_enabled = true
+buffer_pool_bgwriter_max_pages = 1000
+buffer_pool_dirty_ratio_low = 0.10
+buffer_pool_dirty_ratio_high = 0.30
+buffer_pool_dirty_ratio_checkpoint = 0.40
 
 # Work memory per operation (sorts, hash joins)
 work_mem = 4MB
@@ -494,6 +504,19 @@ wal_compression = zstd
 
 # Data file sync method: fsync | fdatasync | open_sync | open_datasync
 wal_sync_method = fdatasync
+
+# COPY file access policy (server-side COPY FROM/TO)
+# Comma-separated allowlist of directories. Empty = no server-side file access.
+copy_allowed_paths =
+
+# Allow COPY ... FROM/TO absolute paths (default false)
+copy_allow_absolute_paths = false
+
+# Allow COPY ... FROM/TO relative paths (resolved under data_dir)
+copy_allow_relative_paths = true
+
+# Require superuser for server-side COPY file access
+copy_require_superuser = true
 
 #==============================================================================
 # AUTHENTICATION SECTION
@@ -1404,8 +1427,8 @@ GET /health
     "max": 100
   },
   "memory": {
-    "shared_buffers_used": "64MB",
-    "shared_buffers_total": "128MB"
+    "buffer_pool_used": "64MB",
+    "buffer_pool_total": "128MB"
   }
 }
 ```
@@ -1912,7 +1935,13 @@ sb_admin show replication
 | pool | min_connections | 5 | Yes | Min pool connections |
 | pool | max_connections | 50 | Yes | Max pool connections |
 | pool | idle_timeout | 300 | Yes | Idle timeout |
-| memory | shared_buffers | 128MB | No | Buffer pool size |
+| memory | buffer_pool_size | 128MB | No | Buffer pool size |
+| memory | buffer_pool_page_size | 8192 | No | Buffer pool page size (bytes) |
+| memory | buffer_pool_bgwriter_enabled | true | Yes | Enable background writer |
+| memory | buffer_pool_bgwriter_max_pages | 1000 | Yes | Max pages per bgwriter cycle |
+| memory | buffer_pool_dirty_ratio_low | 0.10 | Yes | Low dirty ratio threshold |
+| memory | buffer_pool_dirty_ratio_high | 0.30 | Yes | High dirty ratio threshold |
+| memory | buffer_pool_dirty_ratio_checkpoint | 0.40 | Yes | Checkpoint dirty ratio threshold |
 | memory | work_mem | 4MB | Yes | Work memory |
 | logging | level | info | Yes | Log level |
 | logging | destination | file | No | Log destination |
@@ -1933,19 +1962,19 @@ sb_admin show replication
 
 ```ini
 # Bytes
-shared_buffers = 134217728
+buffer_pool_size = 134217728
 
 # Kilobytes
-shared_buffers = 131072KB
-shared_buffers = 131072K
+buffer_pool_size = 131072KB
+buffer_pool_size = 131072K
 
 # Megabytes
-shared_buffers = 128MB
-shared_buffers = 128M
+buffer_pool_size = 128MB
+buffer_pool_size = 128M
 
 # Gigabytes
-shared_buffers = 1GB
-shared_buffers = 1G
+buffer_pool_size = 1GB
+buffer_pool_size = 1G
 ```
 
 ### 15.3 Time Value Format
@@ -2061,7 +2090,13 @@ statement_cache = true
 statement_cache_size = 2000
 
 [memory]
-shared_buffers = 4GB
+buffer_pool_size = 4GB
+buffer_pool_page_size = 8192
+buffer_pool_bgwriter_enabled = true
+buffer_pool_bgwriter_max_pages = 5000
+buffer_pool_dirty_ratio_low = 0.10
+buffer_pool_dirty_ratio_high = 0.30
+buffer_pool_dirty_ratio_checkpoint = 0.40
 work_mem = 64MB
 maintenance_work_mem = 512MB
 

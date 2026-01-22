@@ -14,6 +14,7 @@
 #include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 pipeline for view compilation
 #endif
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/index_params.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/decimal.h"
 #include "scratchbird/core/plain_value_reader.h"
@@ -67,6 +68,7 @@
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"  // For LOG_ERROR macro
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/gpid.h"
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
@@ -110,6 +112,10 @@ namespace scratchbird
             std::vector<std::string> splitSchemaComponents(const std::string& path);
             std::string joinSchemaComponents(const std::vector<std::string>& components,
                                              size_t start_index = 0);
+            inline uint32_t indexRootPage(const core::CatalogManager::IndexInfo &info)
+            {
+                return static_cast<uint32_t>(core::getPageNumber(info.root_gpid));
+            }
             bool isAggregateOpcode(Opcode op);
             void copyErrorContext(core::ErrorContext* dst, const core::ErrorContext& src);
             core::Status buildAbsoluteSchemaPath(core::CatalogManager* catalog,
@@ -3962,10 +3968,10 @@ namespace scratchbird
                 }
                 core::CatalogManager::SchemaInfo schema_info;
                 core::ErrorContext ctx;
-                auto status = catalog->getSchema("public", schema_info, &ctx);
+                auto status = catalog->getSchema("users.public", schema_info, &ctx);
                 if (status != core::Status::OK)
                 {
-                    status = catalog->getSchema("root", schema_info, &ctx);
+                    status = catalog->getSchema("public", schema_info, &ctx);
                     if (status != core::Status::OK)
                     {
                         return false;
@@ -4187,10 +4193,10 @@ namespace scratchbird
             }
 
             core::CatalogManager::SchemaInfo schema_info;
-            auto status = catalog->getSchema("public", schema_info, ctx);
+            auto status = catalog->getSchema("users.public", schema_info, ctx);
             if (status != core::Status::OK)
             {
-                status = catalog->getSchema("root", schema_info, ctx);
+                status = catalog->getSchema("public", schema_info, ctx);
                 if (status != core::Status::OK)
                 {
                     return status;
@@ -6061,6 +6067,14 @@ namespace scratchbird
                 index_type = static_cast<core::CatalogManager::IndexType>(index_type_byte);
             }
 
+            uint32_t options_flags = readInt32();
+            bool bloom_enabled = (options_flags & 0x01) != 0;
+            double bloom_fpr = 0.01;
+            if (bloom_enabled)
+            {
+                bloom_fpr = readDouble();
+            }
+
             // Task 17 Phase 6: Read expression/predicate flags
             bool has_expressions = (readByte() != 0);
             bool has_predicate = (readByte() != 0);
@@ -6151,6 +6165,92 @@ namespace scratchbird
 
             recordObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
 
+            if (bloom_enabled)
+            {
+                core::CatalogManager::IndexType actual_type;
+                void *index_ptr = db_->catalog_manager()->getIndexPtr(index_id, &actual_type);
+                if (!index_ptr)
+                {
+                    LOG_WARNING(EXECUTOR, "Bloom filter requested but index pointer missing");
+                }
+                else if (actual_type != core::CatalogManager::IndexType::BTREE &&
+                         actual_type != core::CatalogManager::IndexType::HASH &&
+                         actual_type != core::CatalogManager::IndexType::GIN)
+                {
+                    LOG_WARNING(EXECUTOR, "Bloom filter not supported for index type %d",
+                                static_cast<int>(actual_type));
+                }
+                else
+                {
+                    core::BloomFilterConfig config;
+                    config.target_fpr = bloom_fpr;
+                    config.bits_per_key = 0;
+                    config.num_hashes = 0;
+                    config.rebuild_threshold = 100000;
+
+                    uint64_t estimated_keys = (table_info.row_count > 0) ? table_info.row_count : 10000;
+                    core::Status bf_status = core::Status::OK;
+
+                    if (actual_type == core::CatalogManager::IndexType::BTREE)
+                    {
+                        auto *btree = static_cast<core::BTree *>(index_ptr);
+                        bf_status = btree->attachBloomFilter(config, estimated_keys, nullptr);
+                    }
+                    else if (actual_type == core::CatalogManager::IndexType::HASH)
+                    {
+                        auto *hash = static_cast<core::HashIndex *>(index_ptr);
+                        bf_status = hash->attachBloomFilter(config, estimated_keys, nullptr);
+                    }
+                    else if (actual_type == core::CatalogManager::IndexType::GIN)
+                    {
+                        auto *gin = static_cast<core::GinIndex *>(index_ptr);
+                        bf_status = gin->attachBloomFilter(config, estimated_keys, nullptr);
+                    }
+
+                    if (bf_status != core::Status::OK)
+                    {
+                        LOG_WARNING(EXECUTOR, "Failed to attach Bloom filter: %d",
+                                    static_cast<int>(bf_status));
+                    }
+                    else
+                    {
+                        core::BloomFilter *filter = nullptr;
+                        if (actual_type == core::CatalogManager::IndexType::BTREE)
+                        {
+                            filter = static_cast<core::BTree *>(index_ptr)->getBloomFilter();
+                        }
+                        else if (actual_type == core::CatalogManager::IndexType::HASH)
+                        {
+                            filter = static_cast<core::HashIndex *>(index_ptr)->getBloomFilter();
+                        }
+                        else if (actual_type == core::CatalogManager::IndexType::GIN)
+                        {
+                            filter = static_cast<core::GinIndex *>(index_ptr)->getBloomFilter();
+                        }
+
+                        if (filter)
+                        {
+                            core::IndexParams params;
+                            params.has_bloom = true;
+                            params.bloom.enabled = true;
+                            params.bloom.target_fpr = bloom_fpr;
+                            params.bloom.meta_gpid = filter->getMetaPage();
+                            params.bloom.bits_per_key = filter->getConfig().bits_per_key;
+                            params.bloom.num_hashes = filter->getConfig().num_hashes;
+
+                            auto params_str = core::serializeIndexParams(params);
+                            auto params_status = db_->catalog_manager()->updateIndexParams(
+                                index_id, params_str, nullptr);
+                            if (params_status != core::Status::OK)
+                            {
+                                LOG_WARNING(EXECUTOR, "Failed to persist index Bloom params: %d",
+                                            static_cast<int>(params_status));
+                            }
+                        }
+                    }
+                }
+            }
+
             // Task 17 Phase 6: Build index immediately if it has expressions or predicate
             if (has_expressions || has_predicate)
             {
@@ -6222,7 +6322,7 @@ namespace scratchbird
             ExpressionEvaluator evaluator(columns, db_, xid);
 
             // 5. Open B-tree for this index
-            auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+            auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_gpid, nullptr);
             if (!btree)
             {
                 error("Failed to open B-tree for index building");
@@ -6589,7 +6689,7 @@ namespace scratchbird
                 serializeIndexKey(key_values, key_bytes);
 
                 // Insert into B-tree
-                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_gpid, nullptr);
                 if (btree)
                 {
                     // Task 17 MGA Phase 3.1: Pass xid for btn_xmin tracking
@@ -6775,7 +6875,7 @@ namespace scratchbird
                 }
 
                 // Open B-tree
-                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_gpid, nullptr);
                 if (!btree)
                 {
                     // Skip this index (cleanup automatic)
@@ -6980,7 +7080,7 @@ namespace scratchbird
                 else
                 {
                     // Fallback to direct B-Tree access for compatibility
-                    auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+                    auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_gpid, nullptr);
                     if (btree)
                     {
                         // Task 17 MGA Phase 3.1: Pass xid for transaction tracking
@@ -10970,7 +11070,7 @@ namespace scratchbird
             {
                 // Delete this tuple
                 status = db_->storage_engine()->deleteTuple(
-                    view_info.materialized_table_id, static_cast<uint32_t>(getPageNumber(tuple.tid)), tuple.tid.slot, &ctx);
+                    view_info.materialized_table_id, tuple.tid, &ctx);
 
                 if (status != core::Status::OK)
                 {
@@ -15941,9 +16041,7 @@ namespace scratchbird
 
                 // Task 17 Phase 7: Update expression/filtered indexes BEFORE deletion
                 // (indexes need row values, and deletion is a soft delete that marks xmax)
-                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
-                uint16_t item_id = core::getSlot(tuple.tid);
-                core::TID tid(page_id, item_id);
+                core::TID tid = tuple.tid;
                 auto* domain_mgr = db_->domain_manager();
                 if (!domain_mgr)
                 {
@@ -15959,7 +16057,7 @@ namespace scratchbird
                 uint64_t xmax = conn_ctx ? conn_ctx->getCurrentTransactionId() : 0;
 
                 auto delete_status = db_->storage_engine()->deleteTuple(
-                    table_id, page_id, item_id, nullptr);
+                    table_id, tuple.tid, nullptr);
 
                 if (delete_status != core::Status::OK)
                 {
@@ -16513,11 +16611,8 @@ namespace scratchbird
                         // If this target row was not matched, delete it
                         if (matched_target_tids.find(target_tuple.tid) == matched_target_tids.end())
                         {
-                            uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(target_tuple.tid));
-                            uint16_t item_id = core::getSlot(target_tuple.tid);
-
                             auto delete_status = db_->storage_engine()->deleteTuple(
-                                target_table_info.table_id, page_id, item_id, nullptr);
+                                target_table_info.table_id, target_tuple.tid, nullptr);
 
                             if (delete_status == core::Status::OK)
                             {
@@ -42431,9 +42526,7 @@ namespace scratchbird
                             uint64_t xmax = db_->storage_engine()->getCurrentXid();
                             for (const auto& tid : matching_tids)
                             {
-                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tid));
-                                uint16_t item_id = core::getSlot(tid);
-                                auto status = db_->storage_engine()->deleteTuple(fk.child_table_id, page_id, item_id, nullptr);
+                                auto status = db_->storage_engine()->deleteTuple(fk.child_table_id, tid, nullptr);
                                 if (status != core::Status::OK)
                                 {
                                     DEBUG_LOG_DB("FK CASCADE DELETE failed for child row");
@@ -45017,7 +45110,7 @@ namespace scratchbird
                 return;
             }
 
-            auto gin = core::GinIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
+            auto gin = core::GinIndex::open(db_, index_uuid, index_info.root_gpid, &err_ctx);
             if (!gin)
             {
                 error("Failed to open GIN index");
@@ -45111,7 +45204,7 @@ namespace scratchbird
                 return;
             }
 
-            auto gin = core::GinIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
+            auto gin = core::GinIndex::open(db_, index_uuid, index_info.root_gpid, &err_ctx);
             if (!gin)
             {
                 error("Failed to open GIN index");
@@ -45218,7 +45311,7 @@ namespace scratchbird
                 return;
             }
 
-            auto hnsw = core::HnswIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
+            auto hnsw = core::HnswIndex::open(db_, index_uuid, index_info.root_gpid, &err_ctx);
             if (!hnsw)
             {
                 error("Failed to open HNSW index");
@@ -45316,7 +45409,7 @@ namespace scratchbird
                 return;
             }
 
-            auto hnsw = core::HnswIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
+            auto hnsw = core::HnswIndex::open(db_, index_uuid, index_info.root_gpid, &err_ctx);
             if (!hnsw)
             {
                 error("Failed to open HNSW index");
@@ -45412,7 +45505,7 @@ namespace scratchbird
                 return;
             }
 
-            auto columnstore = core::ColumnstoreIndexSimple::open(db_, index_uuid, index_info.root_page, &err_ctx);
+            auto columnstore = core::ColumnstoreIndexSimple::open(db_, index_uuid, index_info.root_gpid, &err_ctx);
             if (!columnstore)
             {
                 error("Failed to open Columnstore index");
@@ -45490,7 +45583,7 @@ namespace scratchbird
                 return;
             }
 
-            auto columnstore = core::ColumnstoreIndexSimple::open(db_, index_uuid, index_info.root_page, &err_ctx);
+            auto columnstore = core::ColumnstoreIndexSimple::open(db_, index_uuid, index_info.root_gpid, &err_ctx);
             if (!columnstore)
             {
                 error("Failed to open Columnstore index");
@@ -45530,7 +45623,7 @@ namespace scratchbird
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
                     {
                         return btree->insert(key, tid, xmin, ctx);
@@ -45540,7 +45633,7 @@ namespace scratchbird
 
                 case IndexType::HASH:
                 {
-                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hash_idx)
                     {
                         // HashIndex::insert() expects (void*, size_t, TID, uint64_t, ErrorContext*)
@@ -45551,7 +45644,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
                     {
                         return rtree->insert(key, tid, xmin, ctx);
@@ -45562,7 +45655,7 @@ namespace scratchbird
                 case IndexType::GIST:
                 {
                     // WP-5 EXEC-11: GiST index integration
-                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_gpid, ctx);
                     if (gist)
                     {
                         // Create GiSTPredicate from key bytes
@@ -45575,7 +45668,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (spgist)
                     {
                         return spgist->insert(key, tid, xmin, ctx);
@@ -45585,7 +45678,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (brin)
                     {
                         // BRIN indexes work on block ranges, not individual tuples
@@ -45598,7 +45691,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
                     {
                         // BitmapIndex::insert() expects (void*, size_t, TID, ErrorContext*)
@@ -45609,7 +45702,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, indexRootPage(index_info), ctx);
                     if (lsm)
                     {
                         // Serialize TID to byte vector (page_num + slot_num)
@@ -45626,7 +45719,7 @@ namespace scratchbird
 
                 case IndexType::GIN:
                 {
-                    auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (gin)
                     {
                         // GIN requires a key_extractor function to decompose values into searchable keys
@@ -45647,7 +45740,7 @@ namespace scratchbird
 
                 case IndexType::HNSW:
                 {
-                    auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hnsw)
                     {
                         // Decode vector from key bytes
@@ -45696,7 +45789,7 @@ namespace scratchbird
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
                     {
                         return btree->search(key, current_xid, results_out, ctx);
@@ -45706,7 +45799,7 @@ namespace scratchbird
 
                 case IndexType::HASH:
                 {
-                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hash_idx)
                     {
                         // HashIndex uses find() for point lookups, not search()
@@ -45717,7 +45810,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
                     {
                         return rtree->search(key, current_xid, results_out, ctx);
@@ -45728,7 +45821,7 @@ namespace scratchbird
                 case IndexType::GIST:
                 {
                     // WP-5 EXEC-11: GiST index integration
-                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_gpid, ctx);
                     if (gist)
                     {
                         // GiST search uses raw key bytes and defaults to OVERLAPS strategy
@@ -45739,7 +45832,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (spgist)
                     {
                         return spgist->search(key, current_xid, results_out, ctx);
@@ -45749,7 +45842,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (brin)
                     {
                         // BRIN doesn't have search() - it uses scan() for range queries
@@ -45774,7 +45867,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
                     {
                         // BitmapIndex::scan() expects (void*, size_t, uint64_t, ErrorContext*)
@@ -45803,7 +45896,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, indexRootPage(index_info), ctx);
                     if (lsm)
                     {
                         std::vector<uint8_t> value;
@@ -45868,7 +45961,7 @@ namespace scratchbird
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
                     {
                         // B-Tree has markDeleted() for MGA-compliant soft deletion
@@ -45879,7 +45972,7 @@ namespace scratchbird
 
                 case IndexType::HASH:
                 {
-                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hash_idx)
                     {
                         // HashIndex::remove() expects (void*, size_t, TID, uint64_t, ErrorContext*)
@@ -45890,7 +45983,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
                     {
                         return rtree->remove(key, tid, xmax, ctx);
@@ -45901,7 +45994,7 @@ namespace scratchbird
                 case IndexType::GIST:
                 {
                     // WP-5 EXEC-11: GiST index integration
-                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_gpid, ctx);
                     if (gist)
                     {
                         // Create GiSTPredicate from key bytes
@@ -45913,7 +46006,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (spgist)
                     {
                         return spgist->remove(key, tid, xmax, ctx);
@@ -45923,7 +46016,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (brin)
                     {
                         // BRIN remove is a no-op (returns OK)
@@ -45934,7 +46027,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
                     {
                         // BitmapIndex::remove() only takes TID, not key or xmax
@@ -45946,7 +46039,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, indexRootPage(index_info), ctx);
                     if (lsm)
                     {
                         // LSMTreeIndex remove only needs key and transaction ID
@@ -45957,7 +46050,7 @@ namespace scratchbird
 
                 case IndexType::GIN:
                 {
-                    auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (gin)
                     {
                         // GIN requires a key_extractor function to decompose values into searchable keys
@@ -45978,7 +46071,7 @@ namespace scratchbird
 
                 case IndexType::HNSW:
                 {
-                    auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hnsw)
                     {
                         // HNSW remove() only takes TID (doesn't need key or xmax)
@@ -46023,7 +46116,7 @@ namespace scratchbird
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
                     {
                         // Use B-Tree rangeScan() to get an iterator
@@ -46061,7 +46154,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
                     {
                         // R-Tree spatial scan
@@ -46084,7 +46177,7 @@ namespace scratchbird
                 case IndexType::GIST:
                 {
                     // WP-5 EXEC-11: GiST index integration
-                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_gpid, ctx);
                     if (gist)
                     {
                         // GiST scan uses start_key as the search predicate
@@ -46103,7 +46196,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (spgist)
                     {
                         // SP-GiST scan
@@ -46123,7 +46216,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (brin)
                     {
                         // BRIN block range scan
@@ -46157,7 +46250,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
                     {
                         // Bitmap scan for matching bits
@@ -46196,7 +46289,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, indexRootPage(index_info), ctx);
                     if (lsm)
                     {
                         // LSM-Tree range scan
@@ -46563,19 +46656,24 @@ namespace scratchbird
                     start = 1;
                 }
 
-                if (components.size() <= start + 2)
+                if (components.size() <= start + 3)
                 {
                     return core::Status::OK;
                 }
 
                 if (!scratchbird::core::IdentifierUtils::namesMatch(
-                        components[start], false, "emulated", false))
+                        components[start], false, "remote", false))
+                {
+                    return core::Status::OK;
+                }
+                if (!scratchbird::core::IdentifierUtils::namesMatch(
+                        components[start + 1], false, "emulation", false))
                 {
                     return core::Status::OK;
                 }
 
-                std::string dialect = components[start + 1];
-                std::string alias = components[start + 2];
+                std::string dialect = components[start + 2];
+                std::string alias = components[start + 3];
                 if (alias.empty())
                 {
                     SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
@@ -46583,22 +46681,19 @@ namespace scratchbird
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                std::string alias_schema_path = "emulated." + dialect;
+                std::string alias_schema_path = "remote.emulation." + dialect;
                 core::CatalogManager::SchemaInfo alias_schema;
                 auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
                 if (status != core::Status::OK)
                 {
-                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
-                                      "Emulated alias schema not found");
-                    return status;
+                    return core::Status::OK;
                 }
 
                 core::CatalogManager::SynonymInfo synonym;
                 status = catalog->getSynonymByName(alias_schema.schema_id, alias, synonym, ctx);
                 if (status != core::Status::OK)
                 {
-                    SET_ERROR_CONTEXT(ctx, status, "Emulated database alias not found");
-                    return status;
+                    return core::Status::OK;
                 }
                 if (synonym.target_type != core::CatalogManager::ObjectType::SCHEMA)
                 {
@@ -46610,11 +46705,11 @@ namespace scratchbird
                 std::string target_path = normalizeSchemaPath(synonym.target_path);
                 auto target_components = splitSchemaComponents(target_path);
                 std::vector<std::string> expanded = target_components;
-                if (components.size() > start + 3)
+                if (components.size() > start + 4)
                 {
                     expanded.insert(expanded.end(),
                                     components.begin() +
-                                        static_cast<std::vector<std::string>::difference_type>(start + 3),
+                                        static_cast<std::vector<std::string>::difference_type>(start + 4),
                                     components.end());
                 }
                 path_out = joinSchemaComponents(expanded, 0);
@@ -46646,7 +46741,7 @@ namespace scratchbird
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                std::string alias_schema_path = "emulated." + dialect;
+                std::string alias_schema_path = "remote.emulation." + dialect;
                 core::CatalogManager::SchemaInfo alias_schema;
                 auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
                 if (status != core::Status::OK)
@@ -46683,7 +46778,7 @@ namespace scratchbird
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                std::string alias_schema_path = "emulated." + dialect;
+                std::string alias_schema_path = "remote.emulation." + dialect;
                 core::CatalogManager::SchemaInfo alias_schema;
                 auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
                 if (status != core::Status::OK)
@@ -46830,7 +46925,7 @@ namespace scratchbird
                     return false;
                 }
 
-                std::string expected_prefix = "EMULATION." + dialect;
+                std::string expected_prefix = "REMOTE.EMULATION." + dialect;
                 const auto& paths = conn_ctx->search_path();
                 if (!paths.empty())
                 {

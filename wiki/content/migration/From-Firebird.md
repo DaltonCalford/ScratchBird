@@ -788,7 +788,7 @@ ANALYZE orders;
 
 [memory]
 # Similar to Firebird page buffers
-shared_buffers = 256MB
+buffer_pool_size = 256MB
 
 # Work memory for sorts
 work_mem = 4MB

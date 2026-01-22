@@ -485,15 +485,16 @@ namespace scratchbird::core
         // NOTE: For Phase 1, findFreePage only supports tablespace 0
         // This will need to be updated when multi-tablespace support is added
         uint32_t page_id;
-        status = findFreePage(table_id, tuple_size, &page_id, ctx);
+        status = findFreePage(table_id, tuple_size, &page_id, target_tablespace, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
         // Pin the page
+        GPID gpid = makeGPID(target_tablespace, static_cast<uint64_t>(page_id));
         void *page_buffer;
-        status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+        status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         if (status != Status::OK)
         {
@@ -543,7 +544,7 @@ namespace scratchbird::core
                 if (index_status == Status::OK)
                 {
                     // Create TID for this tuple
-                    TID tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+                    TID tid = TID(makeGPID(target_tablespace, static_cast<uint64_t>(page_id)), item_id);
 
                     // Create IndexKeyExtractor for detoasting
                     IndexKeyExtractor extractor;
@@ -698,7 +699,7 @@ namespace scratchbird::core
         }
 
         // Unpin the page
-        buffer_pool_->unpinPage(page_id, status == Status::OK, ctx);
+        buffer_pool_->unpinPageGlobal(gpid, status == Status::OK, ctx);
 
         return status;
     }
@@ -741,7 +742,7 @@ namespace scratchbird::core
 
             uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid.gpid));
             uint16_t item_id = tuple.tid.slot;
-            Status status = deleteTuple(table_id, page_id, item_id, ctx);
+            Status status = deleteTuple(table_id, page_id, item_id, UINT16_MAX, ctx);
             if (status != Status::OK && status != Status::NOT_FOUND)
             {
                 return status;
@@ -857,10 +858,8 @@ namespace scratchbird::core
         }
 
         // Step 5: Pin the page from the correct tablespace
-        // NOTE: For Phase 1, BufferPool only supports tablespace 0
-        // This will need to be updated in Phase 2 to support multiple tablespaces
         void *page_buffer;
-        status = buffer_pool_->pinPage(static_cast<uint32_t>(page_number), &page_buffer, ctx);
+        status = buffer_pool_->pinPageGlobal(resolved_gpid, &page_buffer, ctx);
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         if (status != Status::OK)
         {
@@ -912,10 +911,10 @@ namespace scratchbird::core
         }
 
         // Unpin the page
-        buffer_pool_->unpinPage(static_cast<uint32_t>(page_number), status == Status::OK, ctx);
+        buffer_pool_->unpinPageGlobal(resolved_gpid, status == Status::OK, ctx);
 
         // Cooperative GC hook - opportunistic cleanup
-        if (db_->garbage_collector() != nullptr)
+        if (db_->garbage_collector() != nullptr && target_tablespace == PRIMARY_TABLESPACE_ID)
         {
             db_->garbage_collector()->processPageCooperative(static_cast<uint32_t>(page_number), ctx);
         }
@@ -924,12 +923,15 @@ namespace scratchbird::core
     }
 
     auto StorageEngine::deleteTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
-                                    ErrorContext *ctx) -> Status
+                                    uint16_t tablespace_id_override, ErrorContext *ctx) -> Status
     {
         // Sprint 4 Task 5.4.3: Check if table is being migrated
         CatalogManager::TableInfo table_info;
         Status migration_check_status = catalog_manager_->getTable(table_id, table_info, ctx);
         bool is_migrating = (migration_check_status == Status::OK && table_info.migration_in_progress);
+        uint16_t tablespace_id = (tablespace_id_override == UINT16_MAX)
+            ? table_info.tablespace_id
+            : tablespace_id_override;
 
         // Get proc_id from ConnectionContext (Phase 2 complete)
         int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
@@ -946,8 +948,9 @@ namespace scratchbird::core
         }
 
         // Pin the page
+        GPID gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_id));
         void *page_buffer;
-        Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+        Status status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         if (status != Status::OK)
         {
@@ -972,7 +975,7 @@ namespace scratchbird::core
             Status get_status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, ctx);
             if (get_status != Status::OK)
             {
-                buffer_pool_->unpinPage(page_id, false, ctx);
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                 return get_status;
             }
 
@@ -981,7 +984,7 @@ namespace scratchbird::core
             ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
             if (isZeroId(session_id) || hdr->session_id != session_id)
             {
-                buffer_pool_->unpinPage(page_id, false, ctx);
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple not visible");
                 return Status::NOT_FOUND;
             }
@@ -1000,7 +1003,10 @@ namespace scratchbird::core
             // Mark page as dirty for GC
             if (db_->garbage_collector() != nullptr)
             {
-                db_->garbage_collector()->markPageDirty(page_id);
+                if (tablespace_id == PRIMARY_TABLESPACE_ID)
+                {
+                    db_->garbage_collector()->markPageDirty(page_id);
+                }
             }
 
             // LSM Integration Phase 4: Remove from all indexes
@@ -1016,7 +1022,7 @@ namespace scratchbird::core
                 if (index_status == Status::OK)
                 {
                     // Create TID for this tuple
-                    TID tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+                    TID tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
 
                     // Get tuple data to extract keys
                     const ItemPointer *items = reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
@@ -1113,7 +1119,7 @@ namespace scratchbird::core
         }
 
         // Unpin the page
-        buffer_pool_->unpinPage(page_id, status == Status::OK, ctx);
+        buffer_pool_->unpinPageGlobal(gpid, status == Status::OK, ctx);
 
         // Future lock release:
         // releaseTupleLock(table_id, page_id, item_id, proc_id, ctx);
@@ -1351,82 +1357,122 @@ namespace scratchbird::core
     }
 
     auto StorageEngine::findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,
-                                     ErrorContext *ctx) -> Status
+                                     uint16_t tablespace_id, ErrorContext *ctx) -> Status
     {
         // For simplicity, we'll scan existing heap pages linearly
         // In a real system, we'd maintain a free space map per table
 
-        uint32_t total_pages = page_manager_->totalPages();
-        // Start scanning after catalog pages
-        uint32_t heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
-        for (uint32_t page_id = heap_start; page_id < total_pages; page_id++)
-        { // Arbitrary limit
-            void *page_buffer;
-            Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
-            auto *page_data = static_cast<uint8_t *>(page_buffer);
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            uint32_t total_pages = page_manager_->totalPages();
+            // Start scanning after catalog pages
+            uint32_t heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
+            for (uint32_t page_id = heap_start; page_id < total_pages; page_id++)
+            { // Arbitrary limit
+                void *page_buffer;
+                Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+                auto *page_data = static_cast<uint8_t *>(page_buffer);
 
-            if (status == Status::IO_ERROR)
-            {
-                // Page doesn't exist, allocate it
-                status = allocateHeapPage(table_id, page_id_out, ctx);
-                return status;
+                if (status == Status::IO_ERROR)
+                {
+                    // Page doesn't exist, allocate it
+                    status = allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+                    return status;
+                }
+
+                if (status != Status::OK)
+                {
+                    continue;
+                }
+
+                // Check if this is a heap page for our table
+                auto *hdr = reinterpret_cast<PageHeader *>(page_data);
+                if (hdr->page_type == PAGE_TYPE_HEAP)
+                {
+                    if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
+                    {
+                        buffer_pool_->unpinPage(page_id, false, ctx);
+                        continue;
+                    }
+                    HeapPage heap_page(page_data, db_->page_size());
+
+                    if (heap_page.hasFreeSpace(tuple_size + sizeof(TupleHeader)))
+                    {
+                        buffer_pool_->unpinPage(page_id, false, ctx);
+                        *page_id_out = page_id;
+                        return Status::OK;
+                    }
+                }
+
+                buffer_pool_->unpinPage(page_id, false, ctx);
             }
 
+            // No existing page has space, allocate a new one
+            return allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+        }
+
+        std::vector<GPID> allocated_pages;
+        Status status = page_manager_->getAllocatedPages(tablespace_id, allocated_pages, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto &gpid : allocated_pages)
+        {
+            uint64_t page_number = getPageNumber(gpid);
+            if (page_number < 2)
+            {
+                continue;
+            }
+
+            void *page_buffer;
+            status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
             if (status != Status::OK)
             {
                 continue;
             }
 
-            // Check if this is a heap page for our table
             auto *hdr = reinterpret_cast<PageHeader *>(page_data);
             if (hdr->page_type == PAGE_TYPE_HEAP)
             {
                 if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
                 {
-                    buffer_pool_->unpinPage(page_id, false, ctx);
+                    buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                     continue;
                 }
                 HeapPage heap_page(page_data, db_->page_size());
-
                 if (heap_page.hasFreeSpace(tuple_size + sizeof(TupleHeader)))
                 {
-                    buffer_pool_->unpinPage(page_id, false, ctx);
-                    *page_id_out = page_id;
+                    buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                    *page_id_out = static_cast<uint32_t>(page_number);
                     return Status::OK;
                 }
             }
 
-            buffer_pool_->unpinPage(page_id, false, ctx);
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
         }
 
-        // No existing page has space, allocate a new one
-        return allocateHeapPage(table_id, page_id_out, ctx);
+        return allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
     }
 
-    auto StorageEngine::allocateHeapPage(const ID &table_id, uint32_t *page_id_out,
-                                         ErrorContext *ctx) -> Status
+    auto StorageEngine::allocateHeapPage(const ID &table_id, uint16_t tablespace_id,
+                                         uint32_t *page_id_out, ErrorContext *ctx) -> Status
     {
         // Allocate a new page
-        uint32_t page_id;
-        Status status = page_manager_->allocatePage(page_id, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-
-        // Pin and initialize the page
+        GPID gpid = INVALID_GPID;
         void *page_buffer;
-        status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+        Status status = buffer_pool_->allocatePageGlobal(tablespace_id, &gpid, &page_buffer, ctx);
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         if (status != Status::OK)
         {
-            // Free the allocated page
-            page_manager_->freePage(page_id, ctx);
             return status;
         }
 
         // Initialize as heap page
         std::memset(page_data, 0, db_->page_size());
+        uint32_t page_id = static_cast<uint32_t>(getPageNumber(gpid));
         HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_id);
         status = heap_page.initialize(page_id, ctx);
 
@@ -1434,15 +1480,15 @@ namespace scratchbird::core
         {
             // Page will be marked dirty on unpin
             *page_id_out = page_id;
-            buffer_pool_->unpinPage(page_id, true, ctx);
+            buffer_pool_->unpinPageGlobal(gpid, true, ctx);
         }
         else
         {
             // HIGH-7 FIX: Initialize failed - clean up allocated page
             // Unpin the page (no dirty flag needed since initialization failed)
-            buffer_pool_->unpinPage(page_id, false, ctx);
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
             // Free the allocated page to prevent leak
-            page_manager_->freePage(page_id, ctx);
+            page_manager_->freePageGlobal(gpid, ctx);
         }
 
         return status;
@@ -1467,13 +1513,21 @@ namespace scratchbird::core
         if (db_ && !isZeroId(table_id_))
         {
             CatalogManager::TableInfo table_info;
-            if (db_->catalog_manager()->getTable(table_id_, table_info, nullptr) == Status::OK &&
-                table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+            if (db_->catalog_manager()->getTable(table_id_, table_info, nullptr) == Status::OK)
             {
-                ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-                session_id_ = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
-                filter_session_ = true;
+                if (table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+                {
+                    ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+                    session_id_ = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+                    filter_session_ = true;
+                }
+                tablespace_id_ = table_info.tablespace_id;
             }
+        }
+
+        if (db_ && db_->page_manager() && tablespace_id_ != PRIMARY_TABLESPACE_ID)
+        {
+            db_->page_manager()->getAllocatedPages(tablespace_id_, allocated_pages_, nullptr);
         }
     }
 
@@ -1481,7 +1535,14 @@ namespace scratchbird::core
     {
         if (page_data_ != nullptr)
         {
-            db_->buffer_pool()->unpinPage(current_page_, false, nullptr);
+            if (tablespace_id_ == PRIMARY_TABLESPACE_ID)
+            {
+                db_->buffer_pool()->unpinPage(current_page_, false, nullptr);
+            }
+            else
+            {
+                db_->buffer_pool()->unpinPageGlobal(current_gpid_, false, nullptr);
+            }
         }
     }
 
@@ -1492,28 +1553,122 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        while (current_page_ <= last_page_)
+        if (tablespace_id_ == PRIMARY_TABLESPACE_ID)
         {
-            // Load current page if needed
+            while (current_page_ <= last_page_)
+            {
+                // Load current page if needed
+                if (page_data_ == nullptr)
+                {
+                    Status status = loadPage(current_page_, ctx);
+                    if (status == Status::IO_ERROR)
+                    {
+                        // Page doesn't exist, we're done
+                        done_ = true;
+                        return Status::NOT_FOUND;
+                    }
+                    if (status != Status::OK)
+                    {
+                        // Try next page
+                        current_page_++;
+                        current_item_ = 0;
+                        continue;
+                    }
+                }
+
+                // Check if this is a heap page
+                auto *hdr = reinterpret_cast<PageHeader *>(page_data_);
+                bool table_match = true;
+                if (!isZeroId(table_id_))
+                {
+                    table_match = pageTableIdMatches(hdr, table_id_);
+                }
+                if (hdr->page_type != PAGE_TYPE_HEAP || !table_match)
+                {
+                    // Not a heap page, try next
+                    db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                    page_data_ = nullptr;
+                    current_page_++;
+                    current_item_ = 0;
+                    continue;
+                }
+
+                // Scan items in current page
+                HeapPage heap_page(page_data_, db_->page_size());
+                ErrorContext validate_ctx;
+                Status validate_status = heap_page.validate(&validate_ctx);
+                if (validate_status != Status::OK)
+                {
+                    db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                    page_data_ = nullptr;
+                    current_page_++;
+                    current_item_ = 0;
+                    continue;
+                }
+
+                while (current_item_ < heap_page.getItemCount())
+                {
+                    const uint8_t *tuple_data;
+                    uint32_t tuple_size;
+
+                    Status status =
+                        heap_page.getTuple(current_item_, &tuple_data, &tuple_size, nullptr);
+                    current_item_++;
+
+                    if (status == Status::OK)
+                    {
+                        if (!isZeroId(table_id_) && db_ && db_->table_stats_manager())
+                        {
+                            db_->table_stats_manager()->recordSeqRowsRead(table_id_, 1);
+                        }
+                        // Check visibility
+                        const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+
+                        if (engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
+                        {
+                            if (filter_session_ && hdr->session_id != session_id_)
+                            {
+                                continue;
+                            }
+                            // Found visible tuple
+                            if (tuple_out != nullptr)
+                            {
+                                tuple_out->data = tuple_data;
+                                tuple_out->data_size = tuple_size;
+                                // PHASE 1.5: Set TID struct
+                                tuple_out->tid = TID(makeGPID(PRIMARY_TABLESPACE_ID,
+                                                              static_cast<uint64_t>(current_page_)),
+                                                     current_item_ - 1);
+                            }
+                            return Status::OK;
+                        }
+                    }
+                }
+
+                // Move to next page
+                db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                page_data_ = nullptr;
+                current_page_++;
+                current_item_ = 0;
+            }
+
+            done_ = true;
+            return Status::NOT_FOUND;
+        }
+
+        while (current_page_index_ < allocated_pages_.size())
+        {
             if (page_data_ == nullptr)
             {
-                Status status = loadPage(current_page_, ctx);
-                if (status == Status::IO_ERROR)
-                {
-                    // Page doesn't exist, we're done
-                    done_ = true;
-                    return Status::NOT_FOUND;
-                }
+                Status status = loadPage(static_cast<uint32_t>(current_page_index_), ctx);
                 if (status != Status::OK)
                 {
-                    // Try next page
-                    current_page_++;
+                    current_page_index_++;
                     current_item_ = 0;
                     continue;
                 }
             }
 
-            // Check if this is a heap page
             auto *hdr = reinterpret_cast<PageHeader *>(page_data_);
             bool table_match = true;
             if (!isZeroId(table_id_))
@@ -1522,23 +1677,21 @@ namespace scratchbird::core
             }
             if (hdr->page_type != PAGE_TYPE_HEAP || !table_match)
             {
-                // Not a heap page, try next
-                db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                db_->buffer_pool()->unpinPageGlobal(current_gpid_, false, ctx);
                 page_data_ = nullptr;
-                current_page_++;
+                current_page_index_++;
                 current_item_ = 0;
                 continue;
             }
 
-            // Scan items in current page
             HeapPage heap_page(page_data_, db_->page_size());
             ErrorContext validate_ctx;
             Status validate_status = heap_page.validate(&validate_ctx);
             if (validate_status != Status::OK)
             {
-                db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                db_->buffer_pool()->unpinPageGlobal(current_gpid_, false, ctx);
                 page_data_ = nullptr;
-                current_page_++;
+                current_page_index_++;
                 current_item_ = 0;
                 continue;
             }
@@ -1558,7 +1711,6 @@ namespace scratchbird::core
                     {
                         db_->table_stats_manager()->recordSeqRowsRead(table_id_, 1);
                     }
-                    // Check visibility
                     const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
 
                     if (engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
@@ -1567,23 +1719,22 @@ namespace scratchbird::core
                         {
                             continue;
                         }
-                        // Found visible tuple
                         if (tuple_out != nullptr)
                         {
+                            uint64_t page_number = getPageNumber(current_gpid_);
                             tuple_out->data = tuple_data;
                             tuple_out->data_size = tuple_size;
-                            // PHASE 1.5: Set TID struct
-                            tuple_out->tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(current_page_)), current_item_ - 1);
+                            tuple_out->tid = TID(makeGPID(tablespace_id_, page_number),
+                                                 current_item_ - 1);
                         }
                         return Status::OK;
                     }
                 }
             }
 
-            // Move to next page
-            db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+            db_->buffer_pool()->unpinPageGlobal(current_gpid_, false, ctx);
             page_data_ = nullptr;
-            current_page_++;
+            current_page_index_++;
             current_item_ = 0;
         }
 
@@ -1594,10 +1745,32 @@ namespace scratchbird::core
     auto HeapScanIterator::loadPage(uint32_t page_id, ErrorContext *ctx) -> Status
     {
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+        if (tablespace_id_ == PRIMARY_TABLESPACE_ID)
+        {
+            Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+            if (status == Status::OK)
+            {
+                page_data_ = static_cast<uint8_t *>(page_buffer);
+            }
+            return status;
+        }
+
+        if (page_id >= allocated_pages_.size())
+        {
+            return Status::NOT_FOUND;
+        }
+
+        GPID gpid = allocated_pages_[page_id];
+        if (getPageNumber(gpid) < 2)
+        {
+            return Status::NOT_FOUND;
+        }
+
+        Status status = db_->buffer_pool()->pinPageGlobal(gpid, &page_buffer, ctx);
         if (status == Status::OK)
         {
             page_data_ = static_cast<uint8_t *>(page_buffer);
+            current_gpid_ = gpid;
         }
         return status;
     }
@@ -1605,12 +1778,17 @@ namespace scratchbird::core
     auto StorageEngine::deleteTuple(const ID &table_id, uint64_t tid, uint64_t xmax,
                                     ErrorContext *ctx) -> Status
     {
-        // Extract page_id and item_id from TID
-        uint32_t page_id = tid >> 16;
-        uint16_t item_id = tid & 0xFFFF;
+        TID decoded = convertLegacyTID(tid);
+        return deleteTuple(table_id, decoded, ctx);
+    }
 
-        // Use existing delete_tuple method
-        return deleteTuple(table_id, page_id, item_id, ctx);
+    auto StorageEngine::deleteTuple(const ID &table_id, const TID &tid,
+                                    ErrorContext *ctx) -> Status
+    {
+        uint32_t page_id = static_cast<uint32_t>(getPageNumber(tid.gpid));
+        uint16_t item_id = tid.slot;
+        uint16_t tablespace_id = getTablespaceID(tid.gpid);
+        return deleteTuple(table_id, page_id, item_id, tablespace_id, ctx);
     }
 
     // MGA Phase 3: Version Chains
@@ -1624,6 +1802,7 @@ namespace scratchbird::core
         CatalogManager::TableInfo table_info;
         Status migration_check_status = catalog_manager_->getTable(table_id, table_info, ctx);
         bool is_migrating = (migration_check_status == Status::OK && table_info.migration_in_progress);
+        uint16_t tablespace_id = (migration_check_status == Status::OK) ? table_info.tablespace_id : 0;
         const uint8_t *tuple_data_ptr = new_tuple_data;
         std::vector<uint8_t> temp_tuple_buffer;
         if (migration_check_status == Status::OK &&
@@ -1667,8 +1846,9 @@ namespace scratchbird::core
         uint64_t new_xmin = xmax; // New version gets same XID as update
 
         // Pin the page
+        GPID gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_id));
         void *page_buffer;
-        Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+        Status status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         if (status != Status::OK)
         {
@@ -1709,7 +1889,7 @@ namespace scratchbird::core
                 if (index_status == Status::OK)
                 {
                     // Create TID for this tuple (stable across update!)
-                    TID tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+                    TID tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
 
                     // Create IndexKeyExtractor for detoasting
                     IndexKeyExtractor extractor;
@@ -1889,7 +2069,7 @@ namespace scratchbird::core
             }
 
             // Mark page as dirty for GC
-            if (db_->garbage_collector() != nullptr)
+            if (db_->garbage_collector() != nullptr && tablespace_id == PRIMARY_TABLESPACE_ID)
             {
                 db_->garbage_collector()->markPageDirty(page_id);
             }
@@ -1900,7 +2080,7 @@ namespace scratchbird::core
             }
 
             // Unpin with dirty flag
-            buffer_pool_->unpinPage(page_id, true, ctx);
+            buffer_pool_->unpinPageGlobal(gpid, true, ctx);
             return Status::OK;
         }
         else if (status == Status::PAGE_FULL)
@@ -1924,7 +2104,7 @@ namespace scratchbird::core
 
             if (item_id >= heap_page.getItemCount())
             {
-                buffer_pool_->unpinPage(page_id, false, ctx);
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
                 return Status::INVALID_ARGUMENT;
             }
@@ -1940,7 +2120,7 @@ namespace scratchbird::core
             }
             catch (const std::bad_alloc &)
             {
-                buffer_pool_->unpinPage(page_id, false, ctx);
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::OOM,
                                   "Failed to allocate buffer for old tuple data");
                 return Status::OOM;
@@ -1954,11 +2134,12 @@ namespace scratchbird::core
             uint64_t old_xmin = old_tuple_hdr->xmin;
 
             // Unpin old page temporarily (will re-pin after creating back version)
-            buffer_pool_->unpinPage(page_id, false, ctx);
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
 
             // Step 2: Allocate page for BACK version (OLD data)
             uint32_t back_version_page_id;
-            status = findFreePage(table_id, old_length, &back_version_page_id, ctx);
+            status = findFreePage(table_id, old_length, &back_version_page_id,
+                                  table_info.tablespace_id, ctx);
             if (status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to find free page for back version");
@@ -1967,7 +2148,9 @@ namespace scratchbird::core
 
             // Pin the back version page
             void *back_page_buffer;
-            status = buffer_pool_->pinPage(back_version_page_id, &back_page_buffer, ctx);
+            GPID back_version_gpid = makeGPID(tablespace_id,
+                                              static_cast<uint64_t>(back_version_page_id));
+            status = buffer_pool_->pinPageGlobal(back_version_gpid, &back_page_buffer, ctx);
             if (status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to pin page for back version");
@@ -1984,26 +2167,29 @@ namespace scratchbird::core
 
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(back_version_page_id, false, ctx);
+                buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to insert back version");
                 return status;
             }
 
             // Build GPID for back version (different page!)
-            GPID back_version_gpid = makeGPID(PRIMARY_TABLESPACE_ID,
-                                             static_cast<uint64_t>(back_version_page_id));
+            back_version_gpid = makeGPID(tablespace_id,
+                                         static_cast<uint64_t>(back_version_page_id));
 
             // Unpin back version page (mark as dirty)
-            buffer_pool_->unpinPage(back_version_page_id, true, ctx);
+            buffer_pool_->unpinPageGlobal(back_version_gpid, true, ctx);
 
             // Mark back version page as dirty for GC
             if (db_->garbage_collector() != nullptr)
             {
-                db_->garbage_collector()->markPageDirty(back_version_page_id);
+                if (tablespace_id == PRIMARY_TABLESPACE_ID)
+                {
+                    db_->garbage_collector()->markPageDirty(back_version_page_id);
+                }
             }
 
             // Step 3: Re-pin PRIMARY page and overwrite IN-PLACE
-            status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+            status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
             if (status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to re-pin primary page");
@@ -2020,7 +2206,7 @@ namespace scratchbird::core
 
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(page_id, false, ctx);
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to overwrite primary tuple");
                 return status;
             }
@@ -2036,11 +2222,14 @@ namespace scratchbird::core
             // Mark primary page as dirty for GC
             if (db_->garbage_collector() != nullptr)
             {
-                db_->garbage_collector()->markPageDirty(page_id);
+                if (tablespace_id == PRIMARY_TABLESPACE_ID)
+                {
+                    db_->garbage_collector()->markPageDirty(page_id);
+                }
             }
 
             // Unpin primary page (mark as dirty)
-            buffer_pool_->unpinPage(page_id, true, ctx);
+            buffer_pool_->unpinPageGlobal(gpid, true, ctx);
 
             // Step 4: Return ORIGINAL TID (STABLE!)
             // This is the key benefit: TID never changes, indexes remain valid!
@@ -2068,7 +2257,7 @@ namespace scratchbird::core
         else
         {
             // Other error
-            buffer_pool_->unpinPage(page_id, false, ctx);
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
             return status;
         }
     }
@@ -2108,7 +2297,8 @@ namespace scratchbird::core
         SBBTreeIndex btree_info;
         btree_info.idx_uuid = index_info.index_id;
         btree_info.idx_table_uuid = index_info.table_id;
-        btree_info.idx_root_page = index_info.root_page;
+        btree_info.idx_root_page = static_cast<uint32_t>(getPageNumber(index_info.root_gpid));
+        btree_info.idx_tablespace_id = getTablespaceID(index_info.root_gpid);
 
         BTree btree(db_, btree_info);
 
@@ -2349,6 +2539,7 @@ namespace scratchbird::core
         // Update each index
         for (const auto &index_info : indexes)
         {
+            uint32_t root_page = static_cast<uint32_t>(getPageNumber(index_info.root_gpid));
             // Build the index key from tuple data
             std::vector<uint8_t> key;
             status =
@@ -2366,7 +2557,7 @@ namespace scratchbird::core
             if (index_info.index_type == CatalogManager::IndexType::BTREE)
             {
                 // Open the BTree index
-                auto btree = BTree::open(db_, index_info.index_id, index_info.root_page, ctx);
+                auto btree = BTree::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                 if (!btree)
                 {
                     LOG_WARNING(STORAGE, "Failed to open BTree index %s for update",
@@ -2403,7 +2594,7 @@ namespace scratchbird::core
             {
                 // Open the Hash index
                 auto hash_index =
-                    HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    HashIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                 if (!hash_index)
                 {
                     LOG_WARNING(STORAGE, "Failed to open Hash index %s for update",

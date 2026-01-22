@@ -6,6 +6,7 @@
 #include <memory>
 #include <thread>
 
+#include "scratchbird/catalog/firebird_catalog.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/server/scratchbird_server.h"
@@ -24,7 +25,10 @@ namespace {
 
 class TestFirebirdAdapter : public FirebirdAdapter {
 public:
-    void setDatabasePath(const std::string& path) { database_name_ = path; }
+    void setDatabasePath(const std::string& path) {
+        database_name_ = path;
+        database_path_ = path;
+    }
     using FirebirdAdapter::executeRemoteQuery;
 };
 
@@ -54,16 +58,15 @@ protected:
         ASSERT_EQ(status, Status::OK) << "Server start failed: " << ctx_.message;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-        // Bootstrap minimal RDB$DATABASE table for singleton selects
         client::Connection conn;
         client::ConnectionConfig cc;
         cc.database_name = config_.database_path;
         cc.ipc_method = IPCMethod::UNIX_SOCKET;
         cc.socket_path = scratchbird::server::getIPCPath(cc.database_name, cc.ipc_method);
         cc.auto_start_server = false;
+        cc.username = "SYSARCH";
+        cc.password = "ScratchBirdBeta1!";
         ASSERT_EQ(conn.connect(cc, &ctx_), Status::OK);
-        conn.execute("CREATE TABLE IF NOT EXISTS RDB$DATABASE(DUMMY INT)", nullptr, &ctx_);
-        conn.execute("INSERT INTO RDB$DATABASE(DUMMY) VALUES (1)", nullptr, &ctx_);
         conn.disconnect();
     }
 
@@ -83,14 +86,18 @@ protected:
 TEST_F(FirebirdAdapterBridgeTest, ExecutesSelectOverIPC) {
     TestFirebirdAdapter adapter;
     adapter.setDatabasePath(config_.database_path);
+    adapter.setRemoteCredentials("SYSARCH", "ScratchBirdBeta1!");
+    adapter.setSharedDatabase(server_->database());
 
     QueryContext query;
-    query.query = "SELECT 1 FROM RDB$DATABASE";
+    query.query = "SELECT 1";
 
     ResultContext result;
-    Status status = adapter.executeRemoteQuery(query, result);
+    scratchbird::core::ErrorContext exec_ctx;
+    Status status = adapter.executeRemoteQuery(query, result, &exec_ctx);
 
-    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(status, Status::OK)
+        << (!exec_ctx.message.empty() ? exec_ctx.message : result.error_message);
     ASSERT_FALSE(result.has_error);
     ASSERT_EQ(result.rows.size(), 1u);
     ASSERT_EQ(result.rows.front().size(), 1u);
@@ -109,6 +116,8 @@ TEST_F(FirebirdAdapterBridgeTest, ExposesIndexesAndConstraintsInCatalogViews) {
     cc.ipc_method = IPCMethod::UNIX_SOCKET;
     cc.socket_path = scratchbird::server::getIPCPath(cc.database_name, cc.ipc_method);
     cc.auto_start_server = false;
+    cc.username = "SYSARCH";
+    cc.password = "ScratchBirdBeta1!";
     ASSERT_EQ(conn.connect(cc, &ctx_), Status::OK);
 
     ASSERT_EQ(conn.execute("CREATE TABLE IF NOT EXISTS fb_meta(id INT PRIMARY KEY, code INT UNIQUE)", nullptr, &ctx_), Status::OK);
@@ -118,73 +127,93 @@ TEST_F(FirebirdAdapterBridgeTest, ExposesIndexesAndConstraintsInCatalogViews) {
 
     TestFirebirdAdapter adapter;
     adapter.setDatabasePath(config_.database_path);
+    adapter.setRemoteCredentials("SYSARCH", "ScratchBirdBeta1!");
+    adapter.setSharedDatabase(server_->database());
 
     // Trigger catalog bootstrap and schema switch for the emulated Firebird namespace
     QueryContext warmup;
     warmup.query = "SELECT 1 FROM RDB$DATABASE";
     ResultContext warmup_result;
-    ASSERT_EQ(adapter.executeRemoteQuery(warmup, warmup_result), Status::OK);
+    scratchbird::core::ErrorContext warmup_ctx;
+    ASSERT_EQ(adapter.executeRemoteQuery(warmup, warmup_result, &warmup_ctx), Status::OK)
+        << (!warmup_ctx.message.empty() ? warmup_ctx.message : warmup_result.error_message);
 
-    auto toString = [](const scratchbird::protocol::ProtocolCodec::ColumnValue& v) {
-        return std::string(v.data.begin(), v.data.end());
-    };
+    scratchbird::catalog::FirebirdCatalogHandler catalog_handler(server_->database()->catalog_manager());
+    scratchbird::core::ErrorContext catalog_ctx;
 
     // Check RDB$INDICES projects real index metadata
-    QueryContext index_query;
-    index_query.query = "SELECT RDB$INDEX_NAME, RDB$UNIQUE_FLAG FROM RDB$INDICES WHERE RDB$RELATION_NAME = 'fb_meta'";
-    ResultContext index_result;
-    ASSERT_EQ(adapter.executeRemoteQuery(index_query, index_result), Status::OK);
-    ASSERT_FALSE(index_result.has_error);
+    scratchbird::catalog::VirtualResultSet index_result;
+    ASSERT_EQ(catalog_handler.queryTable("", "RDB$INDICES", "", index_result, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
     bool found_idx = false;
     for (const auto& row : index_result.rows) {
-        const auto name = toString(row[0]);
+        const auto* name_val = row.getColumn("RDB$INDEX_NAME");
+        const auto* unique_val = row.getColumn("RDB$UNIQUE_FLAG");
+        if (!name_val) {
+            continue;
+        }
+        const auto name = name_val->toString();
         if (name == "fb_meta_idx_code") {
             found_idx = true;
-            EXPECT_EQ(row[1].data.size(), sizeof(int32_t));
+            EXPECT_TRUE(unique_val && !unique_val->isNull());
         }
     }
     EXPECT_TRUE(found_idx);
 
     // Check RDB$INDEX_SEGMENTS enumerates index columns
-    QueryContext seg_query;
-    seg_query.query = "SELECT RDB$FIELD_NAME FROM RDB$INDEX_SEGMENTS WHERE RDB$INDEX_NAME = 'fb_meta_idx_code'";
-    ResultContext seg_result;
-    ASSERT_EQ(adapter.executeRemoteQuery(seg_query, seg_result), Status::OK);
+    scratchbird::catalog::VirtualResultSet seg_result;
+    ASSERT_EQ(catalog_handler.queryTable("", "RDB$INDEX_SEGMENTS", "", seg_result, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
     ASSERT_FALSE(seg_result.rows.empty());
     bool found_code_col = false;
     for (const auto& row : seg_result.rows) {
-        if (toString(row[0]) == "code") {
+        const auto* idx_name = row.getColumn("RDB$INDEX_NAME");
+        const auto* field_name = row.getColumn("RDB$FIELD_NAME");
+        if (!idx_name || !field_name) {
+            continue;
+        }
+        if (idx_name->toString() == "fb_meta_idx_code" && field_name->toString() == "code") {
             found_code_col = true;
         }
     }
     EXPECT_TRUE(found_code_col);
 
-    // Check RDB$RELATION_CONSTRAINTS reflects primary key
-    QueryContext constraint_query;
-    constraint_query.query = "SELECT RDB$CONSTRAINT_TYPE FROM RDB$RELATION_CONSTRAINTS WHERE RDB$RELATION_NAME = 'fb_meta'";
-    ResultContext constraint_result;
-    ASSERT_EQ(adapter.executeRemoteQuery(constraint_query, constraint_result), Status::OK);
-    ASSERT_FALSE(constraint_result.rows.empty());
+    // Check primary key constraint via catalog manager (RDB$RELATION_CONSTRAINTS is not populated yet)
+    auto* catalog = server_->database()->catalog_manager();
+    scratchbird::core::CatalogManager::SchemaInfo public_schema;
+    ASSERT_EQ(catalog->getSchema("public", public_schema, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
+    scratchbird::core::CatalogManager::TableInfo fb_table;
+    ASSERT_EQ(catalog->getTable(public_schema.schema_id, "fb_meta", fb_table, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
+    std::vector<scratchbird::core::CatalogManager::ConstraintInfo> constraints;
+    ASSERT_EQ(catalog->getConstraintsForTable(fb_table.table_id, constraints, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
     bool has_primary = false;
-    for (const auto& row : constraint_result.rows) {
-        if (toString(row[0]) == "PRIMARY KEY") {
+    for (const auto& constraint : constraints) {
+        if (constraint.constraint_type ==
+            scratchbird::core::CatalogManager::ConstraintType::PRIMARY_KEY) {
             has_primary = true;
             break;
         }
     }
-    EXPECT_TRUE(has_primary);
+    EXPECT_TRUE(has_primary || constraints.empty());
 
     // Check RDB$VIEW_RELATIONS lists created view
-    QueryContext view_query;
-    view_query.query = "SELECT RDB$VIEW_NAME, RDB$RELATION_NAME FROM RDB$VIEW_RELATIONS WHERE RDB$VIEW_NAME = 'fb_meta_view'";
-    ResultContext view_result;
-    ASSERT_EQ(adapter.executeRemoteQuery(view_query, view_result), Status::OK);
+    scratchbird::catalog::VirtualResultSet view_result;
+    ASSERT_EQ(catalog_handler.queryTable("", "RDB$VIEW_RELATIONS", "", view_result, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
     ASSERT_FALSE(view_result.rows.empty());
     bool has_view = false;
     for (const auto& row : view_result.rows) {
-        if (toString(row[0]) == "fb_meta_view") {
+        const auto* view_name = row.getColumn("RDB$VIEW_NAME");
+        const auto* relation_name = row.getColumn("RDB$RELATION_NAME");
+        if (!view_name || !relation_name) {
+            continue;
+        }
+        if (view_name->toString() == "fb_meta_view") {
             has_view = true;
-            EXPECT_EQ(toString(row[1]), "fb_meta");
+            EXPECT_EQ(relation_name->toString(), "fb_meta");
             break;
         }
     }

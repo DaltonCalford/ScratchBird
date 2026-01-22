@@ -16,45 +16,39 @@
 namespace scratchbird {
 namespace core {
 
-    RTreeIndex::RTreeIndex(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page)
-        : db_(db), index_uuid_(index_uuid), meta_page_(meta_page), root_page_(0), rtree_(nullptr)
+    RTreeIndex::RTreeIndex(Database *db, const UuidV7Bytes &index_uuid, GPID meta_gpid)
+        : db_(db), index_uuid_(index_uuid), meta_gpid_(meta_gpid), root_page_(0), rtree_(nullptr)
     {
     }
 
     RTreeIndex::~RTreeIndex() = default;
 
     Status RTreeIndex::create(Database *db, const UuidV7Bytes &index_uuid,
-                              uint32_t *meta_page_out, ErrorContext *ctx)
+                              GPID meta_gpid, ErrorContext *ctx)
     {
         // Generate dummy UUIDs for table and columns (wrapper doesn't track these)
         UuidV7Bytes table_uuid = generateUuidV7();
         std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
         // Delegate to low-level RTree::create with default max_entries
-        uint32_t root_page = 0;
         Status status = RTree::create(db, index_uuid, table_uuid, column_uuids,
-                                     MAX_ENTRIES, &root_page, ctx);
+                                     MAX_ENTRIES, meta_gpid, ctx);
         if (status != Status::OK)
         {
             return status;
-        }
-
-        if (meta_page_out)
-        {
-            *meta_page_out = root_page;
         }
 
         return Status::OK;
     }
 
     std::unique_ptr<RTreeIndex> RTreeIndex::open(Database *db, const UuidV7Bytes &index_uuid,
-                                                  uint32_t meta_page, ErrorContext *ctx)
+                                                  GPID meta_gpid, ErrorContext *ctx)
     {
-        auto index = std::make_unique<RTreeIndex>(db, index_uuid, meta_page);
+        auto index = std::make_unique<RTreeIndex>(db, index_uuid, meta_gpid);
 
         // Delegate to low-level RTree::open
-        index->root_page_ = meta_page; // Root page is the meta page
-        index->rtree_ = RTree::open(db, index_uuid, meta_page, MAX_ENTRIES, ctx);
+        index->root_page_ = static_cast<uint32_t>(getPageNumber(meta_gpid)); // Root page is the meta page
+        index->rtree_ = RTree::open(db, index_uuid, meta_gpid, MAX_ENTRIES, ctx);
         if (!index->rtree_)
         {
             return nullptr;

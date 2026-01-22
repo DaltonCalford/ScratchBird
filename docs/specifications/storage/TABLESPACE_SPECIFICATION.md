@@ -763,7 +763,41 @@ public:
 - Requires additional space (shadow table)
 - Triggers add overhead during migration
 
+**Detailed MGA design:** See `docs/specifications/storage/TABLESPACE_ONLINE_MIGRATION.md`.
+
 **Implementation Priority**: **Alpha** (offline migration included; online migration post-alpha)
+
+### 6.3 Online Migration Catalog Placeholders (Planned)
+
+Add catalog structures to track online migration state and progress.
+
+**Planned system tables:**
+- `pg_tablespace_migrations` (authoritative state)
+- `pg_tablespace_migration_deltas` (internal delta log metadata)
+
+**Proposed fields (`pg_tablespace_migrations`):**
+- `table_uuid` (UUID)
+- `source_tablespace_id` (uint16)
+- `target_tablespace_id` (uint16)
+- `shadow_table_uuid` (UUID)
+- `delta_log_uuid` (UUID)
+- `state` (PREPARE|COPY|CATCH_UP|CUTOVER|CLEANUP|DONE|FAILED|CANCELED)
+- `migration_start_xid` (uint64)
+- `cutover_xid` (uint64)
+- `rows_copied` (uint64)
+- `rows_total_est` (uint64)
+- `rows_per_sec` (double)
+- `eta_seconds` (uint64)
+- `last_lag_ms` (uint64)
+- `last_lag_sample_at` (timestamp)
+- `throttle_state` (text)
+- `throttle_sleep_ms` (uint32)
+- `last_progress_at` (timestamp)
+- `last_error_code` (int32)
+- `created_at` (timestamp)
+- `updated_at` (timestamp)
+
+These tables back the monitoring views described in the online migration spec.
 
 ---
 

@@ -31,10 +31,10 @@ Checklist
 - [ ] JDBC driver
   - [x] Driver + URL parsing (skeleton)
   - [x] Connection/Statement/ResultSet (skeleton)
-  - [ ] TLS/auth + config
-  - [ ] Types + batching
+  - [x] TLS/auth + config
+  - [x] Types + batching
   - [x] Packaging (Gradle build + wrapper + jar)
-  - [ ] Tests: unit + integration
+  - [x] Tests: unit + integration
 
 - [ ] Python driver
   - [x] PEP 249 API (query execution + cursor wiring)
@@ -44,69 +44,68 @@ Checklist
   - [x] Tests: unit + integration
 
 - [ ] Node.js/TypeScript driver
-  - [ ] Async API + pooling
-  - [ ] TLS/auth + config
-  - [ ] Types + streaming
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] Async API + pooling
+  - [x] TLS/auth + config
+  - [x] Types + streaming
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] .NET driver
-  - [ ] Provider skeleton
-  - [ ] TLS/auth + config
-  - [ ] Params + types
-  - [ ] Async + cancellation
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] Provider skeleton
+  - [x] TLS/auth + config
+  - [x] Params + types
+  - [x] Async + cancellation
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] Go driver
-  - [ ] database/sql interfaces
-  - [ ] TLS/auth + config
-  - [ ] Types + scanning
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] database/sql interfaces
+  - [x] TLS/auth + config
+  - [x] Types + scanning
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] PHP driver
-  - [ ] PDO driver
-  - [ ] TLS/auth + config
-  - [ ] Types + streaming
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] PDO driver
+  - [x] TLS/auth + config
+  - [x] Types + streaming
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] Pascal/Delphi driver
-  - [ ] Core library
-  - [ ] FireDAC/IBX/Zeos/SQLdb adapters
-  - [ ] Types + metadata
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] Core library
+  - [x] FireDAC/IBX/Zeos/SQLdb adapters
+  - [x] Types + metadata
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] C/C++ driver
-  - [ ] C API
-  - [ ] C++ wrapper
-  - [ ] Types + streaming
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] C API
+  - [x] C++ wrapper
+  - [x] Types + streaming
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] Ruby driver
-  - [ ] Driver API + adapters
-  - [ ] TLS/auth + config
-  - [ ] Types + streaming
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] Driver API + adapters
+  - [x] TLS/auth + config
+  - [x] Types + streaming
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] Rust driver
-  - [ ] Crate structure
-  - [ ] TLS/auth + config
-  - [ ] Types + streaming
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] Crate structure
+  - [x] TLS/auth + config
+  - [x] Types + streaming
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 - [ ] R driver
-  - [ ] DBI API
-  - [ ] TLS/auth + config
-  - [ ] Types + data frames
-  - [ ] Packaging
-  - [ ] Tests: unit + integration
+  - [x] DBI API
+  - [x] TLS/auth + config
+  - [x] Types + data frames
+  - [x] Packaging
+  - [x] Tests: unit + integration
 
 Next up
-- JDBC driver: TLS/auth + config, types/batching, tests
-- Python driver: PEP 249 core (transport + basic queries)
+- Driver work complete

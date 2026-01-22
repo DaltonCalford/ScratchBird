@@ -16,6 +16,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/gin_index.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
@@ -107,13 +108,16 @@ TEST_F(GinGCTest, BasicPendingListGC)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create GIN index
-    uint32_t meta_page = 0;
-    Status status = GinIndex::create(db_.get(), index_uuid, &meta_page, nullptr);
+    GPID meta_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate GIN meta page";
+    uint32_t meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    status = GinIndex::create(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to create GIN index";
     ASSERT_GT(meta_page, 0);
 
     // Open index
-    auto gin = GinIndex::open(db_.get(), index_uuid, meta_page, nullptr);
+    auto gin = GinIndex::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(gin, nullptr) << "Failed to open GIN index";
 
     // Insert some documents with different TIDs
@@ -153,12 +157,15 @@ TEST_F(GinGCTest, EmptyIndexGC)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create GIN index
-    uint32_t meta_page = 0;
-    Status status = GinIndex::create(db_.get(), index_uuid, &meta_page, nullptr);
+    GPID meta_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate GIN meta page";
+    uint32_t meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    status = GinIndex::create(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     // Open index
-    auto gin = GinIndex::open(db_.get(), index_uuid, meta_page, nullptr);
+    auto gin = GinIndex::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(gin, nullptr);
 
     // Run GC on empty index
@@ -183,12 +190,15 @@ TEST_F(GinGCTest, AllEntriesDeadGC)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create GIN index
-    uint32_t meta_page = 0;
-    Status status = GinIndex::create(db_.get(), index_uuid, &meta_page, nullptr);
+    GPID meta_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate GIN meta page";
+    uint32_t meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    status = GinIndex::create(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     // Open index
-    auto gin = GinIndex::open(db_.get(), index_uuid, meta_page, nullptr);
+    auto gin = GinIndex::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(gin, nullptr);
 
     // Insert 5 documents
@@ -225,12 +235,15 @@ TEST_F(GinGCTest, NoMatchingDeadEntriesGC)
     UuidV7Bytes index_uuid = generateUuidV7();
 
     // Create GIN index
-    uint32_t meta_page = 0;
-    Status status = GinIndex::create(db_.get(), index_uuid, &meta_page, nullptr);
+    GPID meta_gpid = 0;
+    Status status = db_->page_manager()->allocatePageInTablespace(0, &meta_gpid, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to allocate GIN meta page";
+    uint32_t meta_page = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    status = GinIndex::create(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_EQ(status, Status::OK);
 
     // Open index
-    auto gin = GinIndex::open(db_.get(), index_uuid, meta_page, nullptr);
+    auto gin = GinIndex::open(db_.get(), index_uuid, meta_gpid, nullptr);
     ASSERT_NE(gin, nullptr);
 
     // Insert 5 documents

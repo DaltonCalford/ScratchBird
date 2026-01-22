@@ -46,10 +46,10 @@ Status BrinIndex::create(Database *db,
                         const std::vector<UuidV7Bytes> &column_uuids,
                         uint8_t value_type,
                         uint16_t range_size,
-                        uint32_t *root_page_out,
+                        GPID root_gpid,
                         ErrorContext *ctx)
 {
-    if (!db || !root_page_out)
+    if (!db || root_gpid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments");
         return Status::INVALID_ARGUMENT;
@@ -65,17 +65,11 @@ Status BrinIndex::create(Database *db,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Allocate root page
-    uint32_t root_page = 0;
-    Status status = page_mgr->allocatePage(root_page, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
 
     // Pin and initialize root page
     void *page_buffer = nullptr;
-    status = buffer_pool->pinPage(root_page, &page_buffer, ctx);
+    Status status = buffer_pool->pinPageGlobal(root_gpid, &page_buffer, ctx);
     if (status != Status::OK || !page_buffer)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN root page");
@@ -100,9 +94,7 @@ Status BrinIndex::create(Database *db,
     root->brin_ranges_total = 0;
     root->brin_ranges_deleted = 0;
 
-    buffer_pool->unpinPage(root_page, true, ctx); // Mark dirty
-
-    *root_page_out = root_page;
+    buffer_pool->unpinPageGlobal(root_gpid, true, ctx); // Mark dirty
 
     LOG_INFO(GENERAL, "Created BRIN index with root page %u, range size %u",
              root_page, range_size);
@@ -110,9 +102,56 @@ Status BrinIndex::create(Database *db,
     return Status::OK;
 }
 
+Status BrinIndex::create(Database *db,
+                        const UuidV7Bytes &index_uuid,
+                        const UuidV7Bytes &table_uuid,
+                        const std::vector<UuidV7Bytes> &column_uuids,
+                        uint8_t value_type,
+                        uint16_t range_size,
+                        uint16_t tablespace_id,
+                        uint32_t *root_page_out,
+                        ErrorContext *ctx)
+{
+    if (!db || !root_page_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    PageManager *page_mgr = db->page_manager();
+    if (!page_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing page manager");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    GPID root_gpid = 0;
+    Status status = page_mgr->allocatePageInTablespace(tablespace_id, &root_gpid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    *root_page_out = static_cast<uint32_t>(getPageNumber(root_gpid));
+    return create(db, index_uuid, table_uuid, column_uuids, value_type, range_size, root_gpid, ctx);
+}
+
+Status BrinIndex::create(Database *db,
+                        const UuidV7Bytes &index_uuid,
+                        const UuidV7Bytes &table_uuid,
+                        const std::vector<UuidV7Bytes> &column_uuids,
+                        uint8_t value_type,
+                        uint16_t range_size,
+                        uint32_t *root_page_out,
+                        ErrorContext *ctx)
+{
+    return create(db, index_uuid, table_uuid, column_uuids, value_type,
+                  range_size, PRIMARY_TABLESPACE_ID, root_page_out, ctx);
+}
+
 std::unique_ptr<BrinIndex> BrinIndex::open(Database *db,
                                           const UuidV7Bytes &index_uuid,
-                                          uint32_t root_page,
+                                          GPID root_gpid,
                                           ErrorContext *ctx)
 {
     if (!db)
@@ -121,9 +160,11 @@ std::unique_ptr<BrinIndex> BrinIndex::open(Database *db,
         return nullptr;
     }
 
+    uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
     SBBrinIndex index_info;
     std::memcpy(index_info.idx_uuid.bytes.data(), index_uuid.bytes.data(), 16);
     index_info.idx_root_page = root_page;
+    index_info.idx_tablespace_id = getTablespaceID(root_gpid);
     index_info.idx_range_size = 128;
 
     auto index = std::make_unique<BrinIndex>(db, index_info);
@@ -137,6 +178,30 @@ std::unique_ptr<BrinIndex> BrinIndex::open(Database *db,
     }
 
     return index;
+}
+
+std::unique_ptr<BrinIndex> BrinIndex::open(Database *db,
+                                           const UuidV7Bytes &index_uuid,
+                                           uint32_t root_page,
+                                           ErrorContext *ctx)
+{
+    GPID root_gpid = makeGPID(PRIMARY_TABLESPACE_ID, root_page);
+    return open(db, index_uuid, root_gpid, ctx);
+}
+
+GPID BrinIndex::indexGPID(uint64_t page_num) const
+{
+    return makeGPID(index_info_.idx_tablespace_id, page_num);
+}
+
+Status BrinIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+{
+    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+}
+
+Status BrinIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
+{
+    return db_->buffer_pool()->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
 }
 
 Status BrinIndex::insert(const std::vector<uint8_t> &value,
@@ -171,7 +236,7 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
     if (current_page_num != 0)
     {
         // Revmap hit - pin the page directly
-        status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        status = pinIndexPage(current_page_num, &page_buffer, ctx);
         if (status != Status::OK || !page_buffer)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page from revmap");
@@ -186,7 +251,7 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
         // Traverse pages to find the right one
         while (current_page_num != 0)
         {
-            status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+            status = pinIndexPage(current_page_num, &page_buffer, ctx);
             if (status != Status::OK || !page_buffer)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
@@ -206,12 +271,12 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
 
             // Check if we need to go to the next page
             uint64_t next_page = temp_page->brin_right_sibling;
-            buffer_pool->unpinPage(current_page_num, false, ctx);
+            unpinIndexPage(current_page_num, false, ctx);
 
             if (next_page == 0)
             {
                 // No more pages - use the last page
-                status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+                status = pinIndexPage(current_page_num, &page_buffer, ctx);
                 break;
             }
 
@@ -275,7 +340,7 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
         if (page->brin_free_space < new_range_size)
         {
             // Page is full - split it
-            buffer_pool->unpinPage(current_page_num, false, ctx);
+            unpinIndexPage(current_page_num, false, ctx);
 
             LOG_DEBUG(GENERAL, "BRIN: Page %u full, splitting before insert", current_page_num);
             status = split_page(current_page_num, ctx);
@@ -318,7 +383,7 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
                  range_start, range_end, current_page_num);
     }
 
-    buffer_pool->unpinPage(current_page_num, updated, ctx);
+    unpinIndexPage(current_page_num, updated, ctx);
 
     return Status::OK;
 }
@@ -353,7 +418,7 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
     while (current_page_num != 0)
     {
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_num, &page_buffer, ctx);
         if (status != Status::OK || !page_buffer)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
@@ -409,7 +474,7 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
 
         // Move to next page
         uint64_t next_page = page->brin_right_sibling;
-        buffer_pool->unpinPage(current_page_num, false, ctx);
+        unpinIndexPage(current_page_num, false, ctx);
 
         if (next_page == 0)
             break;
@@ -462,7 +527,7 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
 
     // Pin root page
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, ctx);
     if (status != Status::OK || !page_buffer)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
@@ -546,7 +611,7 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
                  dead_ranges.size() > 0 ? (db_->page_size() - used_space) - page->brin_free_space : 0);
     }
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, ranges_removed > 0, ctx);
+    unpinIndexPage(index_info_.idx_root_page, ranges_removed > 0, ctx);
 
     if (stats_out)
     {
@@ -624,7 +689,7 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
     while (current_page_id != 0)
     {
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page_id, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             LOG_WARNING(GENERAL, "BRIN GC: Failed to pin page %u", current_page_id);
@@ -676,7 +741,7 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
         {
             pages_modified++;
         }
-        buffer_pool->unpinPage(current_page_id, page_modified, ctx);
+        unpinIndexPage(current_page_id, page_modified, ctx);
 
         // Move to next page
         current_page_id = next_page_id;
@@ -688,6 +753,99 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
 
     LOG_DEBUG(GENERAL, "BRIN GC: Marked %lu ranges deleted across %lu pages (conservative approach without heap rescan)",
              ranges_removed, pages_modified);
+
+    return Status::OK;
+}
+
+Status BrinIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                           uint64_t *ranges_updated_out,
+                                           uint64_t *pages_modified_out,
+                                           ErrorContext *ctx)
+{
+    if (ranges_updated_out)
+    {
+        *ranges_updated_out = 0;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = 0;
+    }
+
+    if (tid_mapping.empty() || index_info_.idx_root_page == 0)
+    {
+        return Status::OK;
+    }
+
+    uint16_t source_tablespace_id = getTablespaceID(tid_mapping.begin()->first);
+    uint64_t ranges_updated = 0;
+    uint64_t pages_modified = 0;
+
+    uint32_t current_page_id = index_info_.idx_root_page;
+    while (current_page_id != 0)
+    {
+        void *page_buffer = nullptr;
+        Status status = pinIndexPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK || !page_buffer)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page during TID update");
+            return Status::IO_ERROR;
+        }
+
+        auto *page = static_cast<SBBrinPage*>(page_buffer);
+        uint8_t *page_data = reinterpret_cast<uint8_t*>(page_buffer) + sizeof(SBBrinPage);
+        uint32_t offset = 0;
+        bool page_dirty = false;
+
+        for (uint16_t i = 0; i < page->brin_count; i++)
+        {
+            auto *range = reinterpret_cast<SBBrinRange*>(page_data + offset);
+
+            bool range_dirty = false;
+            GPID old_start_gpid = makeGPID(source_tablespace_id, range->brn_start_block);
+            GPID old_end_gpid = makeGPID(source_tablespace_id, range->brn_end_block);
+
+            auto start_it = tid_mapping.find(old_start_gpid);
+            if (start_it != tid_mapping.end())
+            {
+                range->brn_start_block = static_cast<uint32_t>(getPageNumber(start_it->second));
+                range_dirty = true;
+            }
+
+            auto end_it = tid_mapping.find(old_end_gpid);
+            if (end_it != tid_mapping.end())
+            {
+                range->brn_end_block = static_cast<uint32_t>(getPageNumber(end_it->second));
+                range_dirty = true;
+            }
+
+            if (range_dirty)
+            {
+                ++ranges_updated;
+                page_dirty = true;
+            }
+
+            size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+            offset += range_size;
+        }
+
+        uint32_t next_page_id = static_cast<uint32_t>(page->brin_right_sibling);
+        if (page_dirty)
+        {
+            ++pages_modified;
+        }
+        unpinIndexPage(current_page_id, page_dirty, ctx);
+
+        current_page_id = next_page_id;
+    }
+
+    if (ranges_updated_out)
+    {
+        *ranges_updated_out = ranges_updated;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = pages_modified;
+    }
 
     return Status::OK;
 }
@@ -719,7 +877,7 @@ Status BrinIndex::getStats(BrinStats *stats_out, ErrorContext *ctx)
     while (current_page_num != 0)
     {
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_num, &page_buffer, ctx);
         if (status != Status::OK || !page_buffer)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
@@ -754,7 +912,7 @@ Status BrinIndex::getStats(BrinStats *stats_out, ErrorContext *ctx)
 
         // Move to next page
         uint64_t next_page = page->brin_right_sibling;
-        buffer_pool->unpinPage(current_page_num, false, ctx);
+        unpinIndexPage(current_page_num, false, ctx);
 
         if (next_page == 0)
             break;
@@ -843,7 +1001,7 @@ Status BrinIndex::build_revmap(ErrorContext *ctx)
     while (current_page_num != 0)
     {
         void *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_num, &page_buffer, ctx);
         if (status != Status::OK || !page_buffer)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
@@ -867,7 +1025,7 @@ Status BrinIndex::build_revmap(ErrorContext *ctx)
 
         // Move to next page
         uint64_t next_page = page->brin_right_sibling;
-        buffer_pool->unpinPage(current_page_num, false, ctx);
+        unpinIndexPage(current_page_num, false, ctx);
 
         if (next_page == 0)
             break;
@@ -929,7 +1087,7 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
 
     // Pin the page to split
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(static_cast<uint32_t>(page_num), &page_buffer, ctx);
+    Status status = pinIndexPage(static_cast<uint32_t>(page_num), &page_buffer, ctx);
     if (status != Status::OK || !page_buffer)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page for split");
@@ -941,20 +1099,22 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
 
     // Allocate new sibling page
     uint32_t new_page_num = 0;
-    status = page_mgr->allocatePage(new_page_num, ctx);
+    GPID new_page_gpid = 0;
+    status = page_mgr->allocatePageInTablespace(index_info_.idx_tablespace_id, &new_page_gpid, ctx);
     if (status != Status::OK)
     {
-        buffer_pool->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to allocate new BRIN page");
         return Status::IO_ERROR;
     }
+    new_page_num = static_cast<uint32_t>(getPageNumber(new_page_gpid));
 
     // Pin new page
     void *new_page_buffer = nullptr;
-    status = buffer_pool->pinPage(new_page_num, &new_page_buffer, ctx);
+    status = pinIndexPage(new_page_num, &new_page_buffer, ctx);
     if (status != Status::OK || !new_page_buffer)
     {
-        buffer_pool->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        unpinIndexPage(static_cast<uint32_t>(page_num), false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin new BRIN page");
         return Status::IO_ERROR;
     }
@@ -1072,16 +1232,16 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
     if (new_page->brin_right_sibling != 0)
     {
         void *right_buffer = nullptr;
-        if (buffer_pool->pinPage(static_cast<uint32_t>(new_page->brin_right_sibling), &right_buffer, ctx) == Status::OK)
+        if (pinIndexPage(static_cast<uint32_t>(new_page->brin_right_sibling), &right_buffer, ctx) == Status::OK)
         {
             SBBrinPage *right_page = reinterpret_cast<SBBrinPage*>(right_buffer);
             right_page->brin_left_sibling = new_page_num;
-            buffer_pool->unpinPage(static_cast<uint32_t>(new_page->brin_right_sibling), true, ctx);
+            unpinIndexPage(static_cast<uint32_t>(new_page->brin_right_sibling), true, ctx);
         }
     }
 
-    buffer_pool->unpinPage(new_page_num, true, ctx);
-    buffer_pool->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+    unpinIndexPage(new_page_num, true, ctx);
+    unpinIndexPage(static_cast<uint32_t>(page_num), true, ctx);
 
     LOG_INFO(GENERAL, "BRIN: Split page %lu into %lu (ranges: %u / %u)",
              page_num, static_cast<uint64_t>(new_page_num), split_point, new_page->brin_count);

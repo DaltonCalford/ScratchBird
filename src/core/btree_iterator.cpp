@@ -67,7 +67,7 @@ namespace scratchbird::core
         // Check if current position has valid data
         void *page_buffer;
         ErrorContext ctx;
-        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, &ctx);
+        Status status = btree_->pinIndexPage(current_page_, &page_buffer, &ctx);
         if (status != Status::OK)
         {
             exhausted_ = true;
@@ -77,7 +77,7 @@ namespace scratchbird::core
         auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
         bool has_data = (current_slot_ < page->btr_count);
 
-        db_->buffer_pool()->unpinPage(current_page_, false, &ctx);
+        btree_->unpinIndexPage(current_page_, false, &ctx);
 
         if (!has_data)
         {
@@ -110,7 +110,7 @@ namespace scratchbird::core
 
         // Pin current page
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
+        Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
             exhausted_ = true;
@@ -129,7 +129,7 @@ namespace scratchbird::core
         std::vector<uint64_t> tuple_ids;
         status = BTreePage::get_node(page_data, db_->page_size(), current_slot_, key, tuple_ids);
 
-        db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+        btree_->unpinIndexPage(current_page_, false, ctx);
 
         if (status != Status::OK)
         {
@@ -204,7 +204,7 @@ namespace scratchbird::core
 
         // Pin current page
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
+        Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -216,7 +216,7 @@ namespace scratchbird::core
         std::vector<uint64_t> tuple_ids;
         status = BTreePage::get_node(page_data, db_->page_size(), current_slot_, key, tuple_ids);
 
-        db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+        btree_->unpinIndexPage(current_page_, false, ctx);
 
         if (status == Status::OK && key_out)
         {
@@ -247,7 +247,7 @@ namespace scratchbird::core
 
                 // Navigate to leftmost leaf
                 void *page_buffer;
-                status = db_->buffer_pool()->pinPage(leaf_page, &page_buffer, ctx);
+                status = btree_->pinIndexPage(leaf_page, &page_buffer, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -269,7 +269,7 @@ namespace scratchbird::core
                                              ? child_pages[0]
                                              : page->btr_left_sibling;
 
-                    db_->buffer_pool()->unpinPage(leaf_page, false, ctx);
+                    btree_->unpinIndexPage(leaf_page, false, ctx);
 
                     if (next_page == 0)
                     {
@@ -278,7 +278,7 @@ namespace scratchbird::core
                     }
 
                     leaf_page = next_page;
-                    status = db_->buffer_pool()->pinPage(leaf_page, &page_buffer, ctx);
+                    status = btree_->pinIndexPage(leaf_page, &page_buffer, ctx);
                     if (status != Status::OK)
                     {
                         return status;
@@ -286,7 +286,7 @@ namespace scratchbird::core
                     page = reinterpret_cast<SBBTreePage *>(page_buffer);
                 }
 
-                db_->buffer_pool()->unpinPage(leaf_page, false, ctx);
+                btree_->unpinIndexPage(leaf_page, false, ctx);
             }
 
             current_page_ = leaf_page;
@@ -297,7 +297,7 @@ namespace scratchbird::core
             current_page_ = btree_->index_info_.idx_root_page;
 
             void *page_buffer;
-            Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
+            Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -315,7 +315,7 @@ namespace scratchbird::core
                                     first_key, child_pages);
 
                 uint64_t next_page = (!child_pages.empty()) ? child_pages[0] : 0;
-                db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                btree_->unpinIndexPage(current_page_, false, ctx);
 
                 if (next_page == 0)
                 {
@@ -324,7 +324,7 @@ namespace scratchbird::core
                 }
 
                 current_page_ = next_page;
-                status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
+                status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -332,7 +332,7 @@ namespace scratchbird::core
                 page = reinterpret_cast<SBBTreePage *>(page_buffer);
             }
 
-            db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+            btree_->unpinIndexPage(current_page_, false, ctx);
         }
 
         current_slot_ = 0;
@@ -347,7 +347,7 @@ namespace scratchbird::core
             while (!found_start)
             {
                 void *page_buffer;
-                Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
+                Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -358,7 +358,7 @@ namespace scratchbird::core
                 if (current_slot_ >= page->btr_count)
                 {
                     // Move to next page
-                    db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                    btree_->unpinIndexPage(current_page_, false, ctx);
                     status = moveToNextPage(ctx);
                     if (status != Status::OK)
                     {
@@ -373,7 +373,7 @@ namespace scratchbird::core
                 status = BTreePage::get_node(static_cast<uint8_t *>(page_buffer), db_->page_size(),
                                              current_slot_, key, tuple_ids);
 
-                db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                btree_->unpinIndexPage(current_page_, false, ctx);
 
                 if (status != Status::OK)
                 {
@@ -408,7 +408,7 @@ namespace scratchbird::core
 
         // Check if we need to move to next page
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
+        Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -417,7 +417,7 @@ namespace scratchbird::core
         auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
         bool need_next_page = (current_slot_ >= page->btr_count);
 
-        db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+        btree_->unpinIndexPage(current_page_, false, ctx);
 
         if (need_next_page)
         {
@@ -431,7 +431,7 @@ namespace scratchbird::core
     {
         // Pin current page to get sibling
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
+        Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -440,7 +440,7 @@ namespace scratchbird::core
         auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
         uint64_t next_page = page->btr_right_sibling;
 
-        db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+        btree_->unpinIndexPage(current_page_, false, ctx);
 
         if (next_page == 0)
         {

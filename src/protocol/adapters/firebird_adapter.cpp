@@ -115,7 +115,7 @@ std::string deriveFirebirdDatabaseName(std::string_view file_path) {
 std::string buildEmulatedFirebirdSchemaPath(const std::string& server,
                                             const std::vector<std::string>& path_components,
                                             const std::string& db_name) {
-    std::string schema = "emulation.firebird." + server;
+    std::string schema = "remote.emulation.firebird." + server;
     for (const auto& comp : path_components) {
         if (!comp.empty()) {
             schema.push_back('.');
@@ -388,6 +388,12 @@ FirebirdAdapter::FirebirdAdapter(const ProtocolAdapterConfig& config)
 
 FirebirdAdapter::~FirebirdAdapter() = default;
 
+void FirebirdAdapter::setRemoteCredentials(const std::string& username,
+                                           const std::string& password) {
+    username_ = username;
+    remote_password_ = password;
+}
+
 // ============================================================================
 // ProtocolAdapter Implementation
 // ============================================================================
@@ -635,12 +641,12 @@ core::Status FirebirdAdapter::sendProtocolError(network::Connection* conn,
 }
 
 core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx) {
-    if (!database_) {
+    if (!engineDatabase()) {
         SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Database not initialized");
         return core::Status::INVALID_ARGUMENT;
     }
 
-    auto* catalog = database_->catalog_manager();
+    auto* catalog = engineDatabase()->catalog_manager();
     if (!catalog) {
         SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Catalog manager not available");
         return core::Status::INVALID_ARGUMENT;
@@ -700,7 +706,9 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         }
     }
 
-    auto ensure_view = [&](const std::string& name, const std::string& definition) -> core::Status {
+    auto ensure_view = [&](const std::string& name,
+                           const std::string& definition,
+                           const std::vector<std::string>& column_names = {}) -> core::Status {
         core::CatalogManager::ViewInfo view_info;
         auto s = catalog->getView(fb_schema.schema_id, name, view_info, ctx);
         if (s == core::Status::OK) {
@@ -710,7 +718,7 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
             return s;
         }
         return catalog->createView(fb_schema.schema_id, name, definition, false,
-                                   false, false, {}, core::ID{}, ctx);
+                                   false, false, column_names, core::ID{}, ctx);
     };
 
     auto escape_literal = [](const std::string& in) {
@@ -987,9 +995,13 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
     ensure_view("RDB$FORMATS", "SELECT NULL AS RDB$FORMAT, NULL AS RDB$RELATION_ID WHERE 1 = 0");
     ensure_view("RDB$TYPES", "SELECT NULL AS RDB$TYPE, NULL AS RDB$FIELD_NAME WHERE 1 = 0");
     ensure_view("RDB$RELATION_FIELDS", rel_fields_sql);
-    ensure_view("RDB$INDICES", indices_sql);
-    ensure_view("RDB$INDEX_SEGMENTS", index_segments_sql);
-    ensure_view("RDB$RELATION_CONSTRAINTS", relation_constraints_sql);
+    ensure_view("RDB$INDICES", indices_sql,
+                {"RDB$INDEX_NAME", "RDB$RELATION_NAME", "RDB$UNIQUE_FLAG", "RDB$INDEX_TYPE"});
+    ensure_view("RDB$INDEX_SEGMENTS", index_segments_sql,
+                {"RDB$INDEX_NAME", "RDB$FIELD_NAME", "RDB$FIELD_POSITION"});
+    ensure_view("RDB$RELATION_CONSTRAINTS", relation_constraints_sql,
+                {"RDB$CONSTRAINT_NAME", "RDB$CONSTRAINT_TYPE", "RDB$RELATION_NAME",
+                 "RDB$INDEX_NAME", "RDB$DEFERRABLE", "RDB$INITIALLY_DEFERRED"});
     ensure_view("RDB$CHECK_CONSTRAINTS", check_constraints_sql);
     ensure_view("RDB$REF_CONSTRAINTS", ref_constraints_sql);
 
@@ -1220,7 +1232,21 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
             view_relations_sql = vr.str();
         }
     }
-    ensure_view("RDB$VIEW_RELATIONS", view_relations_sql);
+    ensure_view("RDB$VIEW_RELATIONS", view_relations_sql,
+                {"RDB$VIEW_NAME", "RDB$RELATION_NAME"});
+
+    if (connection_ctx_) {
+        core::ErrorContext commit_ctx;
+        auto commit_status = connection_ctx_->commit(&commit_ctx);
+        if (commit_status != core::Status::OK &&
+            commit_status != core::Status::NO_ACTIVE_TRANSACTION) {
+            if (ctx && !commit_ctx.message.empty()) {
+                ctx->set(commit_status, commit_ctx.message.c_str(),
+                         __FILE__, __LINE__, __func__);
+            }
+            return commit_status;
+        }
+    }
 
     return core::Status::OK;
 }
@@ -1241,7 +1267,7 @@ core::Status FirebirdAdapter::compileQuery(const std::string& sql,
         return status;
     }
 
-    sblr::FirebirdQueryCompiler compiler(database_.get());
+    sblr::FirebirdQueryCompiler compiler(engineDatabase());
     if (firebird_schema_id_ != core::ID{}) {
         compiler.setCurrentSchema(firebird_schema_id_);
     }
@@ -1275,8 +1301,10 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.auto_start_server = false;
     if (!username_.empty()) {
         client_config_.username = username_;
+        client_config_.password = remote_password_;
     } else {
         client_config_.username = "BOOTSTRAP";
+        client_config_.password.clear();
     }
 
     client_ = std::make_unique<client::Connection>();

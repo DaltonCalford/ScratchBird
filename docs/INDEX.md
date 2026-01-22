@@ -42,6 +42,7 @@ Current implementation status and completion reports:
 Implementation plans and gap analysis:
 
 - **[Consolidated Findings Remediation Plan](planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md)** - Canonical remediation plan
+- **[Cache and Buffer Remediation Plan](planning/CACHE_AND_BUFFER_REMEDIATION_PLAN.md)** - Cache/buffer Alpha remediation plan
 - **[Planning Archive (2026-01-09)](archive/2026-01-09/planning/)** - Plans moved from `docs/planning/`
 - **[Legacy Planning Archives](Alpha_Phase_1_Archive/planning_archive/)** - Alpha Phase 1 planning history
 
@@ -85,6 +86,8 @@ Detailed technical specs for all features:
 - **[Scheduler and Job Runner](specifications/scheduler/SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md)** - Canonical scheduler spec
 - **[Parallel Execution Architecture](specifications/query/PARALLEL_EXECUTION_ARCHITECTURE.md)** - Parallel query execution model (Beta)
 - **[Cache and Buffer Architecture](specifications/core/CACHE_AND_BUFFER_ARCHITECTURE.md)** - Cache/buffer architecture (current + target)
+- **[Tablespace Online Migration](specifications/storage/TABLESPACE_ONLINE_MIGRATION.md)** - Online tablespace migration (Beta)
+- **[Shard Migration and Rebalancing](specifications/Cluster%20Specification%20Work/SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md)** - Cross-node shard movement (Beta)
 
 **Note:** Completed index specifications (BITMAP, BRIN, GIST, HNSW, SPGIST) and low-level specs have been archived to `specifications/archive/index_completion_specs_2025/`
 
