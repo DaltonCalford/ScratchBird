@@ -7,3 +7,8 @@
 
 ## Language versions
 - See README or package metadata; minimum supported versions must be documented.
+
+## Wrapper Types
+- JSONB: `sb_jsonb`
+- RANGE: `sb_range`
+- GEOMETRY: `sb_geometry`

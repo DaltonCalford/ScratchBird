@@ -1,5 +1,11 @@
 # API Reference (R DBI)
 
+## Wrapper Types
+- JSONB: `sb_jsonb`
+- RANGE: `sb_range`
+- GEOMETRY: `sb_geometry`
+
+
 ## Usage examples
 ```r
 con <- dbConnect(Scratchbird(), host=..., port=..., user=..., password=..., dbname=...)

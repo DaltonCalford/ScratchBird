@@ -1,5 +1,11 @@
 # API Reference (ADO.NET)
 
+## Wrapper Types
+- JSONB: `ScratchBirdJsonb`
+- RANGE: `ScratchBirdRange<T>`
+- GEOMETRY: `ScratchBirdGeometry`
+
+
 ## Provider factory
 - DbProviderFactory.CreateConnection()
 - DbProviderFactory.CreateCommand()

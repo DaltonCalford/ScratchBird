@@ -80,11 +80,14 @@ dbListFields(con, name)  # optional
 | DATE | Date | |
 | TIME/TIMESTAMP | POSIXct | |
 | UUID | character | |
-| JSON/XML | list or character | |
-| ARRAY/RANGE | list | |
+| JSON | list or character | |
+| JSONB | sb_jsonb | S3 class |
+| XML | character | |
+| ARRAY | list | |
+| RANGE | sb_range | S3 class |
 | VECTOR | numeric vector | |
 | INET/CIDR | character | or iptools |
-| Spatial | sf objects | optional |
+| GEOMETRY | sb_geometry | S3 class |
 
 ## Type mapping (full target)
 | ScratchBird type | R type | Notes |
@@ -108,7 +111,8 @@ dbListFields(con, name)  # optional
 | CHAR | character | fixed length |
 | VARCHAR | character | |
 | TEXT | character | |
-| JSON/JSONB | list/character | jsonlite optional |
+| JSON | list/character | jsonlite optional |
+| JSONB | sb_jsonb | S3 class |
 | XML | character | or xml2 |
 | BINARY | raw | fixed length |
 | VARBINARY | raw | |
@@ -119,7 +123,7 @@ dbListFields(con, name)  # optional
 | INTERVAL | difftime | |
 | UUID | character | |
 | ARRAY | list | element type preserved |
-| RANGE | list | custom |
+| RANGE | sb_range | S3 class |
 | COMPOSITE/ROW | list/data.frame | |
 | VARIANT | list | includes type tag |
 | VECTOR | numeric vector | |
@@ -127,7 +131,7 @@ dbListFields(con, name)  # optional
 | INET | character | |
 | CIDR | character | |
 | MACADDR/MACADDR8 | character | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | sfc/character | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | sb_geometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -164,3 +168,14 @@ dbListFields(con, name)  # optional
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: external pool (DBI/pool); driver does not pool by default.
+- Logging: disabled by default; integrate with base R logging facilities.
+

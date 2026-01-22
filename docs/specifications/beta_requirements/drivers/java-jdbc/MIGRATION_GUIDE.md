@@ -3,6 +3,8 @@
 ## Scope
 This driver speaks **ScratchBird native protocol only** (port 3092). For PostgreSQL/MySQL/Firebird compatibility, use those ecosystems' native drivers against the ScratchBird protocol listeners.
 
+Wrapper types: JSONB uses `SBJsonb`, RANGE uses `SBRange<T>`, GEOMETRY uses `SBGeometry`. Use these wrappers when binding parameters or reading results.
+
 ## Migration steps
 1. Update connection string to use `scratchbird://` and port 3092.
 2. Switch placeholder style to `$1` or `:name` (rewrite `?` if present).

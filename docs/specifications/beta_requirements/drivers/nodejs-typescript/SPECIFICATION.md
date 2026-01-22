@@ -107,11 +107,13 @@ export class Pool {
 | BINARY | Buffer/Uint8Array | |
 | DATE/TIME/TIMESTAMP | Date or string | prefer string for DATE/TIME |
 | UUID | string | canonical form |
-| JSON/XML | object/string | |
-| ARRAY/RANGE | any[]/object | |
+| JSON | object/string | |
+| JSONB | ScratchbirdJsonb | |
+| ARRAY | any[] | |
+| RANGE | ScratchbirdRange<T> | |
 | VECTOR | Float32Array | |
 | INET/CIDR/MACADDR | string | |
-| Spatial | GeoJSON | optional |
+| GEOMETRY | ScratchbirdGeometry | GeoJSON or WKB/WKT |
 
 ## Type mapping (full target)
 | ScratchBird type | JS/TS type | Notes |
@@ -135,7 +137,8 @@ export class Pool {
 | CHAR | string | space padded |
 | VARCHAR | string | |
 | TEXT | string | |
-| JSON/JSONB | object/string | configurable decoder |
+| JSON | object/string | configurable decoder |
+| JSONB | ScratchbirdJsonb | wrapper type |
 | XML | string | |
 | BINARY | Buffer/Uint8Array | fixed length |
 | VARBINARY | Buffer/Uint8Array | |
@@ -146,7 +149,7 @@ export class Pool {
 | INTERVAL | string/object | custom parser |
 | UUID | string | canonical |
 | ARRAY | any[] | element type preserved |
-| RANGE | { lower, upper, inclusive } | custom |
+| RANGE | ScratchbirdRange<T> | wrapper type |
 | COMPOSITE/ROW | object/any[] | |
 | VARIANT | any | includes type tag |
 | VECTOR | Float32Array/number[] | |
@@ -154,7 +157,7 @@ export class Pool {
 | INET | string | |
 | CIDR | string | |
 | MACADDR/MACADDR8 | string | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | object/string | GeoJSON or WKB/WKT |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | ScratchbirdGeometry | GeoJSON or WKB/WKT |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -191,3 +194,14 @@ export class Pool {
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: optional Pool class; off unless explicitly used.
+- Logging: disabled by default; integrate with standard Node.js loggers.
+

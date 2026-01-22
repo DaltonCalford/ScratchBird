@@ -1,7 +1,6 @@
-# Java JDBC Driver Specification (PLACEHOLDER)
-
+# Java JDBC Driver Specification
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** ~30% of developers worldwide, enterprise applications
 **Use Cases:** Enterprise applications, Android development, big data (Spark, Hadoop), BI tools
 
@@ -15,6 +14,11 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
+
+## Wrapper Types
+- JSONB: `SBJsonb`
+- RANGE: `SBRange<T>`
+- GEOMETRY: `SBGeometry`
 
 ## Overview
 
@@ -670,5 +674,5 @@ implementation 'org.scratchbird:spring-boot-starter-scratchbird:1.0.0'
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD

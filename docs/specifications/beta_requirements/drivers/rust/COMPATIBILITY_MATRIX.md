@@ -7,3 +7,8 @@
 
 ## Language versions
 - See README or package metadata; minimum supported versions must be documented.
+
+## Wrapper Types
+- JSONB: `scratchbird::types::Jsonb`
+- RANGE: `scratchbird::types::Range<T>`
+- GEOMETRY: `scratchbird::types::Geometry`

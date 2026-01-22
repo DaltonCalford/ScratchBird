@@ -1,7 +1,6 @@
-# Node.js/TypeScript Driver Specification (PLACEHOLDER)
-
+# Node.js/TypeScript Driver Specification
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** JavaScript - Most-used programming language worldwide
 **Use Cases:** Web applications, APIs, serverless, full-stack development, microservices
 
@@ -15,6 +14,11 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
+
+## Wrapper Types
+- JSONB: `ScratchbirdJsonb`
+- RANGE: `ScratchbirdRange<T>`
+- GEOMETRY: `ScratchbirdGeometry`
 
 ## Overview
 
@@ -680,5 +684,5 @@ npm test
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD

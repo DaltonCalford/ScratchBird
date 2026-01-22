@@ -1,5 +1,11 @@
 # API Reference (Ruby)
 
+## Wrapper Types
+- JSONB: `Scratchbird::JSONB`
+- RANGE: `Scratchbird::RangeValue`
+- GEOMETRY: `Scratchbird::Geometry`
+
+
 ```ruby
 module Scratchbird
   def self.connect(uri_or_opts) -> Connection; end

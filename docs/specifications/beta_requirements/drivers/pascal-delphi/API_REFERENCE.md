@@ -1,5 +1,11 @@
 # API Reference (Pascal)
 
+## Wrapper Types
+- JSONB: `TScratchBirdJsonb`
+- RANGE: `TScratchBirdRange`
+- GEOMETRY: `TScratchBirdGeometry`
+
+
 ## FireDAC
 - TFDConnection: Open, Close, StartTransaction, Commit, Rollback, ExecSQL, Connected
 - TFDQuery/TFDCommand: SQL.Text, Prepare, ParamByName, ExecSQL, Open, Next, Eof,

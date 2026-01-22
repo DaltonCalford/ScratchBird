@@ -1,5 +1,11 @@
 # API Reference (C++)
 
+## Wrapper Types
+- JSONB: `scratchbird::Jsonb`
+- RANGE: `scratchbird::Range<T>`
+- GEOMETRY: `scratchbird::Geometry`
+
+
 ## C++ classes
 ```cpp
 namespace scratchbird {
@@ -47,7 +53,7 @@ public:
 - sb_connect / sb_disconnect
 - sb_prepare / sb_bind_index / sb_bind_name
 - sb_execute / sb_query
-- sb_fetch / sb_column_meta / sb_value_get
+- sb_fetch / sb_get_column_meta / sb_value_get
 - sb_tx_begin / sb_tx_commit / sb_tx_rollback
 
 ## Usage examples

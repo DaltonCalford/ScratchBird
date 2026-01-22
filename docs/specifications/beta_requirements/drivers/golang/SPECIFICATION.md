@@ -92,11 +92,13 @@ Unsupported features should return driver.ErrSkip or a descriptive error.
 | BINARY | []byte | |
 | DATE/TIME/TIMESTAMP | time.Time | local/date wrappers |
 | UUID | uuid.UUID | github.com/google/uuid |
-| JSON/XML | json.RawMessage/string | |
-| ARRAY/RANGE | []any/struct | |
+| JSON | json.RawMessage | |
+| JSONB | scratchbird.JSONB | |
+| ARRAY | []any/[]T | |
+| RANGE | scratchbird.Range[T] | |
 | VECTOR | []float32 | |
 | INET/CIDR | net.IP/net.IPNet | |
-| Spatial | custom geometry | |
+| GEOMETRY | scratchbird.Geometry | WKB/WKT recommended |
 
 ## Type mapping (full target)
 | ScratchBird type | Go type | Notes |
@@ -120,7 +122,8 @@ Unsupported features should return driver.ErrSkip or a descriptive error.
 | CHAR | string | space padded |
 | VARCHAR | string | |
 | TEXT | string | |
-| JSON/JSONB | json.RawMessage/map[string]any | configurable decode |
+| JSON | json.RawMessage | configurable decode |
+| JSONB | scratchbird.JSONB | wrapper type |
 | XML | string | |
 | BINARY | []byte | fixed length |
 | VARBINARY | []byte | |
@@ -131,7 +134,7 @@ Unsupported features should return driver.ErrSkip or a descriptive error.
 | INTERVAL | time.Duration | custom for months/years |
 | UUID | uuid.UUID | github.com/google/uuid |
 | ARRAY | []T | element type preserved |
-| RANGE | Range[T] | custom struct |
+| RANGE | scratchbird.Range[T] | custom struct |
 | COMPOSITE/ROW | struct/[]any | |
 | VARIANT | any | includes type tag |
 | VECTOR | []float32 | |
@@ -139,7 +142,7 @@ Unsupported features should return driver.ErrSkip or a descriptive error.
 | INET | net.IP | |
 | CIDR | net.IPNet | |
 | MACADDR/MACADDR8 | net.HardwareAddr/string | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | []byte/string | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | scratchbird.Geometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -176,3 +179,14 @@ Unsupported features should return driver.ErrSkip or a descriptive error.
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: use database/sql pool defaults (sql.DB settings).
+- Logging: disabled by default; integrate with log/slog.
+

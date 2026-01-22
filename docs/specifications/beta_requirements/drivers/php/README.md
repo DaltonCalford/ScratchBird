@@ -1,7 +1,6 @@
-# PHP Driver Specification (PLACEHOLDER)
-
+# PHP Driver Specification
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** ~18% of developers, 80% of websites, WordPress ecosystem
 **Use Cases:** WordPress, WooCommerce, Laravel, Symfony, web applications, CMSes
 
@@ -15,6 +14,11 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
+
+## Wrapper Types
+- JSONB: `ScratchBird\PDO\Jsonb`
+- RANGE: `ScratchBird\PDO\Range`
+- GEOMETRY: `ScratchBird\PDO\Geometry`
 
 ## Overview
 
@@ -622,5 +626,5 @@ echo "extension=pdo_scratchbird.so" | sudo tee -a /etc/php/8.2/cli/php.ini
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD

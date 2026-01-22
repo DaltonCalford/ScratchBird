@@ -103,11 +103,14 @@ pub mod blocking {
 | BINARY | Vec<u8> | |
 | DATE/TIME/TIMESTAMP | chrono::NaiveDate/NaiveTime/DateTime<FixedOffset> | |
 | UUID | uuid::Uuid | |
-| JSON/XML | serde_json::Value/String | |
-| ARRAY/RANGE | Vec<T>/Range<T> | custom structs |
+| JSON | serde_json::Value | |
+| JSONB | scratchbird::types::Jsonb | |
+| XML | String | |
+| ARRAY | Vec<T> | |
+| RANGE | scratchbird::types::Range<T> | custom struct |
 | VECTOR | Vec<f32> | |
 | INET/CIDR | std::net::IpAddr/IpNet | |
-| Spatial | custom geometry | |
+| GEOMETRY | scratchbird::types::Geometry | WKB/WKT recommended |
 
 ## Type mapping (full target)
 | ScratchBird type | Rust type | Notes |
@@ -131,7 +134,8 @@ pub mod blocking {
 | CHAR | char/String | fixed length |
 | VARCHAR | String | |
 | TEXT | String | |
-| JSON/JSONB | serde_json::Value | |
+| JSON | serde_json::Value | |
+| JSONB | scratchbird::types::Jsonb | wrapper type |
 | XML | String | |
 | BINARY | Vec<u8> | fixed length |
 | VARBINARY | Vec<u8> | |
@@ -142,7 +146,7 @@ pub mod blocking {
 | INTERVAL | chrono::Duration | custom for months/years |
 | UUID | uuid::Uuid | |
 | ARRAY | Vec<T> | element type preserved |
-| RANGE | Range<T> | custom struct |
+| RANGE | scratchbird::types::Range<T> | custom struct |
 | COMPOSITE/ROW | struct/tuple | |
 | VARIANT | enum Value | includes type tag |
 | VECTOR | Vec<f32> | |
@@ -150,7 +154,7 @@ pub mod blocking {
 | INET | std::net::IpAddr | |
 | CIDR | ipnet::IpNet | |
 | MACADDR/MACADDR8 | [u8;6]/[u8;8] | or macaddr crate |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | Vec<u8>/String | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | scratchbird::types::Geometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -187,3 +191,14 @@ pub mod blocking {
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: external pool (deadpool/bb8); driver does not pool by default.
+- Logging: disabled by default; integrate with the log crate.
+

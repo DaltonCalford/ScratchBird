@@ -115,11 +115,14 @@ class AsyncCursor:
 | BINARY | bytes/memoryview | |
 | DATE/TIME/TIMESTAMP | datetime.date/time/datetime | tz-aware |
 | UUID | uuid.UUID | |
-| JSON/XML | dict/list/str | |
-| ARRAY/RANGE | list/tuple | |
+| JSON | dict/list/str | |
+| JSONB | scratchbird.types.Jsonb | |
+| XML | str | |
+| ARRAY | list/tuple | |
+| RANGE | scratchbird.types.Range | |
 | VECTOR | list[float]/numpy.ndarray | optional |
 | INET/CIDR | ipaddress objects | |
-| Spatial | shapely | optional |
+| GEOMETRY | scratchbird.types.Geometry | optional shapely |
 
 ## Type mapping (full target)
 | ScratchBird type | Python type | Notes |
@@ -133,7 +136,8 @@ class AsyncCursor:
 | MONEY | decimal.Decimal | scale 4 by default |
 | FLOAT32/FLOAT64 | float | |
 | CHAR/VARCHAR/TEXT | str | UTF-8 |
-| JSON/JSONB | dict/list/str | configurable json decoder |
+| JSON | dict/list/str | configurable json decoder |
+| JSONB | scratchbird.types.Jsonb | wrapper type |
 | XML | str | optional ElementTree parsing |
 | BINARY/VARBINARY | bytes/memoryview | |
 | BLOB/BYTEA | bytes/memoryview | |
@@ -143,7 +147,7 @@ class AsyncCursor:
 | INTERVAL | datetime.timedelta | or dateutil.relativedelta |
 | UUID | uuid.UUID | |
 | ARRAY | list/tuple | element type preserved |
-| RANGE | tuple | or Range wrapper |
+| RANGE | scratchbird.types.Range | wrapper type |
 | COMPOSITE/ROW | tuple | or dataclass mapping |
 | VARIANT | object | includes type tag |
 | VECTOR | list[float]/numpy.ndarray | optional |
@@ -151,7 +155,7 @@ class AsyncCursor:
 | INET | ipaddress.IPv4Address/IPv6Address | |
 | CIDR | ipaddress.IPv4Network/IPv6Network | |
 | MACADDR/MACADDR8 | bytes/str | optional netaddr.EUI |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | bytes/str | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | scratchbird.types.Geometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -188,3 +192,14 @@ class AsyncCursor:
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: external pool (SQLAlchemy/pool); driver does not pool by default.
+- Logging: disabled by default; integrate with Python logging.
+

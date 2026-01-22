@@ -117,11 +117,14 @@ Unsupported features must throw NotSupportedException.
 | TIME | TimeOnly | |
 | TIMESTAMP | DateTime/DateTimeOffset | |
 | UUID | Guid | |
-| JSON/XML | string/JsonDocument | |
-| ARRAY/RANGE | List<T>/Range<T> | custom |
+| JSON | string/JsonDocument | |
+| JSONB | ScratchBirdJsonb | |
+| XML | string/XmlDocument | |
+| ARRAY | List<T> | |
+| RANGE | ScratchBirdRange<T> | custom |
 | VECTOR | float[] | |
 | INET/CIDR | IPAddress | custom netmask |
-| Spatial | NetTopologySuite | optional |
+| GEOMETRY | ScratchBirdGeometry | optional NetTopologySuite |
 
 ## Type mapping (full target)
 | ScratchBird type | C# type | Notes |
@@ -145,7 +148,8 @@ Unsupported features must throw NotSupportedException.
 | CHAR | char/string | fixed length |
 | VARCHAR | string | |
 | TEXT | string | |
-| JSON/JSONB | string/JsonDocument | optional System.Text.Json |
+| JSON | string/JsonDocument | optional System.Text.Json |
+| JSONB | ScratchBirdJsonb | wrapper type |
 | XML | string/XDocument | |
 | BINARY | byte[] | fixed length |
 | VARBINARY | byte[] | |
@@ -156,7 +160,7 @@ Unsupported features must throw NotSupportedException.
 | INTERVAL | TimeSpan | custom for months/years |
 | UUID | Guid | |
 | ARRAY | T[]/List<T> | |
-| RANGE | Range<T> | custom struct |
+| RANGE | ScratchBirdRange<T> | wrapper type |
 | COMPOSITE/ROW | object[]/record/class | |
 | VARIANT | object | includes type tag |
 | VECTOR | float[] | |
@@ -164,7 +168,7 @@ Unsupported features must throw NotSupportedException.
 | INET | IPAddress | |
 | CIDR | IPNetwork/custom | |
 | MACADDR/MACADDR8 | byte[]/string | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | byte[]/NetTopologySuite | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | ScratchBirdGeometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -201,3 +205,14 @@ Unsupported features must throw NotSupportedException.
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: ADO.NET provider pooling (enabled by default; configurable in connection string).
+- Logging: disabled by default; integrate with Microsoft.Extensions.Logging.
+

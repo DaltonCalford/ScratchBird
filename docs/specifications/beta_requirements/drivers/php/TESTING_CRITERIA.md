@@ -9,7 +9,7 @@
 ## Type round-trip tests
 - Core scalars: bool, ints, floats, decimal, money.
 - Temporal: date, time, timestamp, interval.
-- UUID, JSON/XML, binary, arrays, ranges, vector, network, spatial.
+- UUID, JSON/XML, JSONB (`ScratchBird\PDO\Jsonb`), RANGE (`ScratchBird\PDO\Range`), GEOMETRY (`ScratchBird\PDO\Geometry`), binary, arrays, vector, network, spatial.
 
 ## API compliance tests
 - Conformance to the language standard API (JDBC/ADO.NET/DB-API/database/sql/etc).

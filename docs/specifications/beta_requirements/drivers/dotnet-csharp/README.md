@@ -1,7 +1,6 @@
-# C# / .NET Driver Specification (PLACEHOLDER)
-
+# C# / .NET Driver Specification
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** ~28% of developers worldwide, Microsoft ecosystem, enterprise Windows
 **Use Cases:** Enterprise applications, Windows services, ASP.NET web apps, Azure cloud, desktop applications
 
@@ -17,6 +16,11 @@
 
 **Scope Note:** SQL Server migration references are informational; MSSQL/TDS emulation is post-gold.
 
+
+## Wrapper Types
+- JSONB: `ScratchBirdJsonb`
+- RANGE: `ScratchBirdRange<T>`
+- GEOMETRY: `ScratchBirdGeometry`
 
 ## Overview
 
@@ -706,5 +710,5 @@ Benchmark against Npgsql (PostgreSQL .NET provider):
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD

@@ -1,7 +1,6 @@
-# Pascal/Delphi/FreePascal Driver Specification (PLACEHOLDER)
-
+# Pascal/Delphi/FreePascal Driver Specification
 **Priority:** P0 (Critical - Beta Required - Firebird Migration Strategy)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** Firebird developer base, Delphi/Lazarus developers, legacy enterprise applications
 **Use Cases:** Firebird migration, Delphi desktop applications, Lazarus cross-platform apps, enterprise LOB apps
 
@@ -15,6 +14,11 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
+
+## Wrapper Types
+- JSONB: `TScratchBirdJsonb`
+- RANGE: `TScratchBirdRange`
+- GEOMETRY: `TScratchBirdGeometry`
 
 ## Overview
 
@@ -688,6 +692,6 @@ fpc -Fu/path/to/scratchbird-pascal/src yourapp.pas
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD
 **Strategic Priority:** CRITICAL for Firebird user migration

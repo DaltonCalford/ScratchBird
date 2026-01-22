@@ -1,7 +1,6 @@
-# Python Driver Specification (PLACEHOLDER)
-
+# Python Driver Specification
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** >50% of developers worldwide
 **Use Cases:** Data science, ML/AI, web applications, scripting
 
@@ -15,6 +14,11 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
+
+## Wrapper Types
+- JSONB: `scratchbird.types.Jsonb`
+- RANGE: `scratchbird.types.Range`
+- GEOMETRY: `scratchbird.types.Geometry`
 
 ## Overview
 
@@ -419,5 +423,5 @@ pip install -e ".[dev]"
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD

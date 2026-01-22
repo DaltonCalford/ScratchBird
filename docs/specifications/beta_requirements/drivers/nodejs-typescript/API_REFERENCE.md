@@ -1,5 +1,11 @@
 # API Reference (Node.js / TypeScript)
 
+## Wrapper Types
+- JSONB: `ScratchbirdJsonb`
+- RANGE: `ScratchbirdRange<T>`
+- GEOMETRY: `ScratchbirdGeometry`
+
+
 ```ts
 export interface ClientConfig {
   host?: string;

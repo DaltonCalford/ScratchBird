@@ -91,11 +91,14 @@ public function setFetchMode(int $mode, mixed ...$args): bool;
 | BINARY | string | binary-safe |
 | DATE/TIME/TIMESTAMP | DateTimeImmutable | |
 | UUID | string | canonical |
-| JSON/XML | string/array | |
-| ARRAY/RANGE | array | |
+| JSON | string/array | |
+| JSONB | ScratchBird\\PDO\\Jsonb | |
+| XML | string | |
+| ARRAY | array | |
+| RANGE | ScratchBird\\PDO\\Range | |
 | VECTOR | array of float | |
 | INET/CIDR/MACADDR | string | |
-| Spatial | WKT/GeoJSON | optional |
+| GEOMETRY | ScratchBird\\PDO\\Geometry | WKB/WKT or GeoJSON |
 
 ## Type mapping (full target)
 | ScratchBird type | PHP type | Notes |
@@ -111,7 +114,8 @@ public function setFetchMode(int $mode, mixed ...$args): bool;
 | MONEY | string | scale 4 by default |
 | FLOAT32/FLOAT64 | float | |
 | CHAR/VARCHAR/TEXT | string | UTF-8 |
-| JSON/JSONB | array/object/string | configurable decode |
+| JSON | array/object/string | configurable decode |
+| JSONB | ScratchBird\\PDO\\Jsonb | wrapper type |
 | XML | string | optional SimpleXML |
 | BINARY/VARBINARY | string | binary-safe |
 | BLOB/BYTEA | string/resource | stream for large values |
@@ -121,7 +125,7 @@ public function setFetchMode(int $mode, mixed ...$args): bool;
 | INTERVAL | DateInterval | |
 | UUID | string | canonical |
 | ARRAY | array | element type preserved |
-| RANGE | array/object | custom Range wrapper |
+| RANGE | ScratchBird\\PDO\\Range | wrapper type |
 | COMPOSITE/ROW | array | or DTO mapping |
 | VARIANT | mixed | includes type tag |
 | VECTOR | array of float | |
@@ -129,7 +133,7 @@ public function setFetchMode(int $mode, mixed ...$args): bool;
 | INET | string | |
 | CIDR | string | |
 | MACADDR/MACADDR8 | string | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | string | WKB/WKT or GeoJSON |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | ScratchBird\\PDO\\Geometry | WKB/WKT or GeoJSON |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -166,3 +170,14 @@ public function setFetchMode(int $mode, mixed ...$args): bool;
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: no built-in pool; use persistent connections when enabled by runtime.
+- Logging: disabled by default; integrate with PSR-3 logger.
+

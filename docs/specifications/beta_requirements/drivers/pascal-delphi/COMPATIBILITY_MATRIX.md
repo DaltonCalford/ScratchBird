@@ -7,3 +7,8 @@
 
 ## Language versions
 - See README or package metadata; minimum supported versions must be documented.
+
+## Wrapper Types
+- JSONB: `TScratchBirdJsonb`
+- RANGE: `TScratchBirdRange`
+- GEOMETRY: `TScratchBirdGeometry`

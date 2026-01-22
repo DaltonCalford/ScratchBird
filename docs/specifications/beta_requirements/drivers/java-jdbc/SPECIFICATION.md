@@ -118,11 +118,14 @@ features must throw SQLFeatureNotSupportedException.
 | TIME | LocalTime | |
 | TIMESTAMP | OffsetDateTime/Instant | |
 | UUID | java.util.UUID | |
-| JSON/XML | String | optional JSON lib |
-| ARRAY/RANGE | List/Object[] | custom wrappers |
+| JSON | String | optional JSON lib |
+| JSONB | SBJsonb | |
+| XML | String | |
+| ARRAY | List/Object[] | |
+| RANGE | SBRange<T> | custom wrapper |
 | VECTOR | float[] | |
 | INET/CIDR | InetAddress/IpPrefix | custom |
-| Spatial | custom geometry | |
+| GEOMETRY | SBGeometry | WKB/WKT recommended |
 
 ## Type mapping (full target)
 | ScratchBird type | JDBC Types | Java type | Notes |
@@ -146,7 +149,8 @@ features must throw SQLFeatureNotSupportedException.
 | CHAR | CHAR | String | space padded |
 | VARCHAR | VARCHAR | String | |
 | TEXT | LONGVARCHAR | String | |
-| JSON/JSONB | LONGVARCHAR/OTHER | String | optional JSON library |
+| JSON | LONGVARCHAR | String | optional JSON library |
+| JSONB | OTHER | SBJsonb | wrapper type |
 | XML | SQLXML/LONGVARCHAR | SQLXML/String | |
 | BINARY | BINARY | byte[] | zero padded |
 | VARBINARY | VARBINARY | byte[] | |
@@ -157,7 +161,7 @@ features must throw SQLFeatureNotSupportedException.
 | INTERVAL | OTHER | Duration/Period | custom wrapper if needed |
 | UUID | OTHER | java.util.UUID | |
 | ARRAY | ARRAY | java.sql.Array | element type required |
-| RANGE | OTHER | Range<T> | custom type |
+| RANGE | OTHER | SBRange<T> | custom type |
 | COMPOSITE/ROW | STRUCT | java.sql.Struct | |
 | VARIANT | OTHER | Object | includes type tag |
 | VECTOR | OTHER | float[] | optional custom vector |
@@ -165,7 +169,7 @@ features must throw SQLFeatureNotSupportedException.
 | INET | OTHER | InetAddress | |
 | CIDR | OTHER | IpPrefix | custom |
 | MACADDR/MACADDR8 | OTHER | byte[]/String | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | OTHER | custom geometry | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | OTHER | SBGeometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -202,3 +206,14 @@ features must throw SQLFeatureNotSupportedException.
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: DataSource + external pool (HikariCP or app server pools).
+- Logging: disabled by default; integrate with java.util.logging or SLF4J.
+

@@ -68,7 +68,7 @@ public:
 - sb_connect / sb_disconnect
 - sb_prepare / sb_bind_index / sb_bind_name
 - sb_execute / sb_query
-- sb_fetch / sb_column_meta / sb_value_get
+- sb_fetch / sb_get_column_meta / sb_value_get
 - sb_tx_begin / sb_tx_commit / sb_tx_rollback
 
 ## Connection string
@@ -108,10 +108,14 @@ public:
 | BINARY/VARBINARY/BLOB/BYTEA | std::vector<uint8_t> | |
 | DATE/TIME/TIMESTAMP | std::chrono types | custom if needed |
 | UUID | std::array<uint8_t,16> | or uuid lib |
-| JSON/XML | std::string | optional json library |
-| ARRAY/RANGE/VECTOR | std::vector/struct | custom |
+| JSON | std::string | optional json library |
+| JSONB | scratchbird::Jsonb | |
+| XML | std::string | |
+| ARRAY | std::vector<T> | |
+| RANGE | scratchbird::Range<T> | custom struct |
+| VECTOR | std::vector<float> | |
 | INET/CIDR/MACADDR | custom struct | |
-| Spatial | custom geometry | |
+| GEOMETRY | scratchbird::Geometry | WKB/WKT recommended |
 
 ## Type mapping (full target)
 | ScratchBird type | C++ type | Notes |
@@ -135,7 +139,8 @@ public:
 | CHAR | char/std::string | fixed length |
 | VARCHAR | std::string | |
 | TEXT | std::string | |
-| JSON/JSONB | std::string/json | configurable decode |
+| JSON | std::string | configurable decode |
+| JSONB | scratchbird::Jsonb | wrapper type |
 | XML | std::string | |
 | BINARY | std::vector<uint8_t> | fixed length |
 | VARBINARY | std::vector<uint8_t> | |
@@ -146,7 +151,7 @@ public:
 | INTERVAL | std::chrono::duration | custom for months/years |
 | UUID | std::array<uint8_t,16> | or uuid library |
 | ARRAY | std::vector<T> | element type preserved |
-| RANGE | Range<T> | custom struct |
+| RANGE | scratchbird::Range<T> | custom struct |
 | COMPOSITE/ROW | struct/tuple | |
 | VARIANT | std::variant/std::any | includes type tag |
 | VECTOR | std::vector<float> | |
@@ -154,7 +159,7 @@ public:
 | INET | IpAddress | custom or asio |
 | CIDR | IpNetwork | custom |
 | MACADDR/MACADDR8 | std::array<uint8_t,6/8> | or string |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | std::string/bytes | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | scratchbird::Geometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -191,3 +196,14 @@ public:
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: no built-in pool; external pool recommended for apps needing reuse.
+- Logging: disabled by default; integrate with the application logger.
+

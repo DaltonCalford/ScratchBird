@@ -1,5 +1,11 @@
 # API Reference (JDBC)
 
+## Wrapper Types
+- JSONB: `SBJsonb`
+- RANGE: `SBRange<T>`
+- GEOMETRY: `SBGeometry`
+
+
 ## Driver and DataSource
 - Driver.connect(url, props)
 - Driver.acceptsURL(url)

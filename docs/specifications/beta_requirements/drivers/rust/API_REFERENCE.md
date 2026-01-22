@@ -1,5 +1,11 @@
 # API Reference (Rust)
 
+## Wrapper Types
+- JSONB: `scratchbird::types::Jsonb`
+- RANGE: `scratchbird::types::Range<T>`
+- GEOMETRY: `scratchbird::types::Geometry`
+
+
 ## Async client
 ```rust
 pub struct Client;

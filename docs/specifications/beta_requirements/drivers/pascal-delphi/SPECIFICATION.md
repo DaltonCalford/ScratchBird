@@ -79,11 +79,14 @@ adapter should provide equivalent operations for connect, execute, and read.
 | BINARY | TBytes | |
 | DATE/TIME/TIMESTAMP | TDate/TTime/TDateTime | |
 | UUID | TGUID | |
-| JSON/XML | string | |
-| ARRAY/RANGE | dynamic array/record | |
+| JSON | string | |
+| JSONB | TScratchBirdJsonb | |
+| XML | string | |
+| ARRAY | dynamic array | |
+| RANGE | TScratchBirdRange | |
 | VECTOR | array of Single | |
 | INET/CIDR/MACADDR | string/record | |
-| Spatial | WKT string | |
+| GEOMETRY | TScratchBirdGeometry | WKB/WKT recommended |
 
 ## Type mapping (full target)
 | ScratchBird type | Pascal type | Notes |
@@ -107,7 +110,8 @@ adapter should provide equivalent operations for connect, execute, and read.
 | CHAR | Char/WideChar | fixed length |
 | VARCHAR | UnicodeString | |
 | TEXT | UnicodeString | |
-| JSON/JSONB | string/TJSONObject | optional JSON library |
+| JSON | string/TJSONObject | optional JSON library |
+| JSONB | TScratchBirdJsonb | wrapper type |
 | XML | string/IXMLDocument | |
 | BINARY | TBytes | fixed length |
 | VARBINARY | TBytes | |
@@ -118,7 +122,7 @@ adapter should provide equivalent operations for connect, execute, and read.
 | INTERVAL | TTimeSpan/custom record | |
 | UUID | TGUID | |
 | ARRAY | dynamic array | element type preserved |
-| RANGE | custom record | |
+| RANGE | TScratchBirdRange | wrapper type |
 | COMPOSITE/ROW | record | |
 | VARIANT | Variant | includes type tag |
 | VECTOR | array of Single | |
@@ -126,7 +130,7 @@ adapter should provide equivalent operations for connect, execute, and read.
 | INET | string | |
 | CIDR | string | |
 | MACADDR/MACADDR8 | string | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | string | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | TScratchBirdGeometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -163,3 +167,14 @@ adapter should provide equivalent operations for connect, execute, and read.
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: optional external pool component; driver does not pool by default.
+- Logging: disabled by default; integrate with application logging.
+

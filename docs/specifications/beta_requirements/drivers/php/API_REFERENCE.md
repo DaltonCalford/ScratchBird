@@ -1,5 +1,11 @@
 # API Reference (PDO)
 
+## Wrapper Types
+- JSONB: `ScratchBird\PDO\Jsonb`
+- RANGE: `ScratchBird\PDO\Range`
+- GEOMETRY: `ScratchBird\PDO\Geometry`
+
+
 ## PDO
 ```php
 public function __construct(string $dsn, ?string $username = null, ?string $password = null, array $options = []);

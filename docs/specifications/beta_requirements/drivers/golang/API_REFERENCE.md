@@ -1,5 +1,11 @@
 # API Reference (Go database/sql)
 
+## Wrapper Types
+- JSONB: `scratchbird.JSONB`
+- RANGE: `scratchbird.Range[T]`
+- GEOMETRY: `scratchbird.Geometry`
+
+
 ## Driver and connector
 - driver.Driver.Open(name string) (driver.Conn, error)
 - driver.DriverContext.OpenConnector(name string) (driver.Connector, error)

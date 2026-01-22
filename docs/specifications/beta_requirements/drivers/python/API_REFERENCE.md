@@ -1,5 +1,11 @@
 # API Reference (Python DB-API)
 
+## Wrapper Types
+- JSONB: `scratchbird.types.Jsonb`
+- RANGE: `scratchbird.types.Range`
+- GEOMETRY: `scratchbird.types.Geometry`
+
+
 ## Module attributes
 - apilevel = "2.0"
 - threadsafety = 2

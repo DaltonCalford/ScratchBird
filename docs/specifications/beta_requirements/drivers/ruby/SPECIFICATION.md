@@ -88,11 +88,14 @@ end
 | BINARY | String (BINARY) | |
 | DATE/TIME/TIMESTAMP | Date/Time/DateTime | timezone-aware |
 | UUID | String | canonical 8-4-4-4-12 |
-| JSON/XML | Hash/Array/String | |
-| ARRAY/RANGE | Array/Range | |
+| JSON | Hash/Array/String | |
+| JSONB | Scratchbird::JSONB | |
+| XML | String | |
+| ARRAY | Array | |
+| RANGE | Scratchbird::RangeValue | |
 | VECTOR | Array | |
 | INET/CIDR | IPAddr | |
-| Spatial | RGeo objects | optional |
+| GEOMETRY | Scratchbird::Geometry | optional RGeo |
 
 ## Type mapping (full target)
 | ScratchBird type | Ruby type | Notes |
@@ -116,7 +119,8 @@ end
 | CHAR | String | fixed length |
 | VARCHAR | String | |
 | TEXT | String | |
-| JSON/JSONB | Hash/Array/String | configurable decoder |
+| JSON | Hash/Array/String | configurable decoder |
+| JSONB | Scratchbird::JSONB | wrapper type |
 | XML | String | |
 | BINARY | String (BINARY) | fixed length |
 | VARBINARY | String (BINARY) | |
@@ -127,7 +131,7 @@ end
 | INTERVAL | ActiveSupport::Duration | or custom |
 | UUID | String | canonical |
 | ARRAY | Array | element type preserved |
-| RANGE | Range | |
+| RANGE | Scratchbird::RangeValue | wrapper type |
 | COMPOSITE/ROW | Array/Struct | |
 | VARIANT | Object | includes type tag |
 | VECTOR | Array | |
@@ -135,7 +139,7 @@ end
 | INET | IPAddr | |
 | CIDR | IPAddr | |
 | MACADDR/MACADDR8 | String | |
-| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | String/RGeo | WKB/WKT recommended |
+| GEOMETRY/POINT/LINESTRING/POLYGON/MULTI*/GEOMETRYCOLLECTION | Scratchbird::Geometry | WKB/WKT recommended |
 
 ## Prepared statements
 - Support server-side prepare and bind using SBWP PARSE/BIND/EXECUTE.
@@ -172,3 +176,14 @@ end
 - Default to binary format for result data.
 - Optional compression negotiation (zstd).
 - Optional SBLR execution for repeated queries if supported.
+
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: external pool (connection_pool/ActiveRecord); driver does not pool by default.
+- Logging: disabled by default; integrate with Ruby Logger.
+

@@ -51,6 +51,17 @@ Status: Draft (Target). This document defines the shared requirements for all of
 - Provide statement cache and batch execution where the driver API allows it.
 - Support streaming for large result sets.
 
+## Canonical defaults
+- LOB streaming: BLOB/TEXT/JSONB/GEOMETRY stream by default over binary protocol.
+- Inline threshold: 8 MiB; chunk size: 128 KiB; backpressure via STREAM_CONTROL and native stream primitives.
+- COPY/bulk: explicit CopyIn/CopyOut API only; binary default; text only when requested.
+- Notifications: dedicated connection required for listen/notify APIs.
+- Cancel: send CANCEL; if no response within 5000 ms, close the connection.
+- Statement cache: per-connection LRU, default 64 entries; auto-prepare after 5 uses; invalidate on prepare/schema errors.
+- Pooling: prefer language-standard pools; drivers without standard pools ship optional pooling disabled by default.
+- Logging: disabled by default; integrate with language-standard logging.
+- Packaging: idiomatic naming per ecosystem; wrapper types live in the primary namespace.
+
 ## References
 - `wire_protocols/scratchbird_native_wire_protocol.md`
 - `DATA_TYPE_PERSISTENCE_AND_CASTS.md`

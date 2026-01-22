@@ -1,7 +1,6 @@
-# Go (Golang) Driver Specification (PLACEHOLDER)
-
+# Go (Golang) Driver Specification
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Specification Pending
+**Status:** Draft
 **Target Market:** Growing adoption in cloud-native, microservices, DevOps tools, infrastructure
 **Use Cases:** Microservices, Cloud-native apps, CLI tools, Kubernetes operators, high-performance services
 
@@ -15,6 +14,11 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
+
+## Wrapper Types
+- JSONB: `scratchbird.JSONB`
+- RANGE: `scratchbird.Range[T]`
+- GEOMETRY: `scratchbird.Geometry`
 
 ## Overview
 
@@ -703,5 +707,5 @@ require (
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** PLACEHOLDER - Awaiting detailed specification
+**Status:** Draft
 **Assigned To:** TBD
