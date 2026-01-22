@@ -1056,6 +1056,8 @@ struct ResolvedAlterTableStmt : public ResolvedStatement {
 struct ResolvedAlterIndexStmt : public ResolvedStatement {
     SchemaPath index_path;
     bool active = true;
+    AlterIndexAction action = AlterIndexAction::ACTIVE;
+    IndexOptions options;
 };
 
 /**

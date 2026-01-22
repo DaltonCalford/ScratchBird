@@ -983,7 +983,7 @@ namespace scratchbird
             EXT_FUNC_CURRENT_TIME = 0x0314,  // CURRENT_TIME()
             EXT_EXPR_FUNCTION_CALL = 0x0315,  // Expression-level stored/UDR function call
             EXT_ALTER_ELEMENT = 0x0316,  // ALTER_ELEMENT(element IN value TO new_value)
-            EXT_ALTER_INDEX = 0x0317,  // ALTER INDEX index_name {ACTIVE|INACTIVE}
+            EXT_ALTER_INDEX = 0x0317,  // ALTER INDEX index_name {ACTIVE|INACTIVE|SET (...) }
             EXT_CREATE_EXCEPTION_STMT = 0x0318,  // CREATE EXCEPTION exception_name 'message'
             EXT_TABLE_OPTIONS = 0x0319,  // CREATE TABLE table options payload (MySQL emulation)
             EXT_DROP_EXCEPTION_STMT = 0x031A,  // DROP EXCEPTION [IF EXISTS] exception_name

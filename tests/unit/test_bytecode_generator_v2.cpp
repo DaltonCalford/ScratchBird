@@ -205,6 +205,16 @@ protected:
         return true;
     }
 
+    bool readDoubleAt(const std::vector<uint8_t>& bytecode, size_t* offset, double* out) {
+        if (*offset + 8 > bytecode.size()) {
+            return false;
+        }
+        uint64_t bits = sblr::readInt64(&bytecode[*offset]);
+        std::memcpy(out, &bits, sizeof(double));
+        *offset += 8;
+        return true;
+    }
+
     struct StartTransactionPayload {
         uint16_t flags = 0;
         uint8_t conflict_action = 0;
@@ -1136,6 +1146,53 @@ TEST_F(BytecodeGeneratorV2Test, AlterTableAddConstraint) {
     std::string col_name;
     ASSERT_TRUE(readStringVarint(result.bytecode(), &offset, &col_name));
     EXPECT_EQ(col_name, "id");
+}
+
+TEST_F(BytecodeGeneratorV2Test, AlterIndexSetBloomFilterOptions) {
+    auto result = generateBytecode(
+        "ALTER INDEX idx_users SET (bloom_filter = true, bloom_fpr = 0.05)");
+    ASSERT_TRUE(result.success()) << formatDiagnostics(result);
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_ALTER_INDEX,
+                                   payload_offset));
+
+    std::string index_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &index_name));
+    ASSERT_LT(payload_offset, result.bytecode().size());
+    uint8_t action = result.bytecode()[payload_offset++];
+    EXPECT_EQ(action, 2);
+    EXPECT_EQ(index_name, "idx_users");
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t options_flags = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    EXPECT_EQ(options_flags, 0x07u);
+
+    double fpr = 0.0;
+    ASSERT_TRUE(readDoubleAt(result.bytecode(), &payload_offset, &fpr));
+    EXPECT_NEAR(fpr, 0.05, 1e-9);
+}
+
+TEST_F(BytecodeGeneratorV2Test, AlterIndexDisableBloomFilter) {
+    auto result = generateBytecode(
+        "ALTER INDEX idx_users SET (bloom_filter = false)");
+    ASSERT_TRUE(result.success()) << formatDiagnostics(result);
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_ALTER_INDEX,
+                                   payload_offset));
+
+    std::string index_name;
+    ASSERT_TRUE(readStringVarint(result.bytecode(), &payload_offset, &index_name));
+    ASSERT_LT(payload_offset, result.bytecode().size());
+    uint8_t action = result.bytecode()[payload_offset++];
+    EXPECT_EQ(action, 2);
+    EXPECT_EQ(index_name, "idx_users");
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t options_flags = sblr::readInt32(&result.bytecode()[payload_offset]);
+    EXPECT_EQ(options_flags, 0x01u);
 }
 
 // =============================================================================

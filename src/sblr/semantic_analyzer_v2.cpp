@@ -5519,7 +5519,37 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterIndex(AlterIndexStmt* stmt) {
     auto* resolved = arena_.create<ResolvedAlterIndexStmt>();
     resolved->span = stmt->span;
     resolved->index_path = stmt->index_path;
+    resolved->action = stmt->action;
     resolved->active = (stmt->action == AlterIndexAction::ACTIVE);
+    resolved->options = stmt->options;
+
+    if (stmt->action == AlterIndexAction::SET_OPTIONS)
+    {
+        if (!stmt->options.bloom_filter_set && !stmt->options.bloom_fpr_set)
+        {
+            error(stmt->span, "ALTER INDEX SET requires at least one option");
+            return nullptr;
+        }
+
+        if (stmt->options.bloom_fpr_set)
+        {
+            resolved->options.bloom_filter_enabled = true;
+            resolved->options.bloom_filter_set = true;
+            if (stmt->options.bloom_fpr <= 0.0 || stmt->options.bloom_fpr >= 1.0)
+            {
+                error(stmt->span, "Bloom filter FPR must be between 0 and 1");
+                return nullptr;
+            }
+        }
+
+        if (stmt->options.bloom_filter_set &&
+            !stmt->options.bloom_filter_enabled &&
+            stmt->options.bloom_fpr_set)
+        {
+            error(stmt->span, "Bloom filter FPR requires bloom_filter = true");
+            return nullptr;
+        }
+    }
 
     return resolved;
 }

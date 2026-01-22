@@ -2496,8 +2496,85 @@ Statement* Parser::parseAlterIndexImpl() {
         stmt->action = ast::AlterIndexAction::ACTIVE;
     } else if (matchKeyword(TokenType::KW_INACTIVE)) {
         stmt->action = ast::AlterIndexAction::INACTIVE;
+    } else if (matchKeyword(TokenType::KW_SET)) {
+        stmt->action = ast::AlterIndexAction::SET_OPTIONS;
+        consume(TokenType::LEFT_PAREN, "Expected '(' after SET in ALTER INDEX");
+
+        auto equals_ignore = [](std::string_view lhs, std::string_view rhs) {
+            if (lhs.size() != rhs.size()) {
+                return false;
+            }
+            for (size_t i = 0; i < lhs.size(); ++i) {
+                char a = static_cast<char>(std::tolower(static_cast<unsigned char>(lhs[i])));
+                char b = static_cast<char>(std::tolower(static_cast<unsigned char>(rhs[i])));
+                if (a != b) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        auto parse_bool = [&]() -> bool {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                bool value = current_token_.value.int_value != 0;
+                advance();
+                return value;
+            }
+            if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+                auto id = parseIdentifier();
+                auto text = string_pool_.get(id);
+                if (equals_ignore(text, "TRUE")) {
+                    return true;
+                }
+                if (equals_ignore(text, "FALSE")) {
+                    return false;
+                }
+            }
+            error("Expected boolean value for index option");
+            return false;
+        };
+
+        auto parse_double = [&]() -> double {
+            if (check(TokenType::FLOAT_LITERAL)) {
+                double value = current_token_.value.float_value;
+                advance();
+                return value;
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                double value = static_cast<double>(current_token_.value.int_value);
+                advance();
+                return value;
+            }
+            error("Expected numeric value for index option");
+            return 0.0;
+        };
+
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            auto name_id = parseIdentifier();
+            auto name_text = string_pool_.get(name_id);
+            consume(TokenType::EQUAL, "Expected '=' after index option name");
+
+            if (equals_ignore(name_text, "BLOOM_FILTER")) {
+                stmt->options.bloom_filter_enabled = parse_bool();
+                stmt->options.bloom_filter_set = true;
+            } else if (equals_ignore(name_text, "BLOOM_FPR")) {
+                stmt->options.bloom_fpr = parse_double();
+                stmt->options.bloom_fpr_set = true;
+            } else {
+                error("Unknown index option");
+                break;
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after index options");
     } else {
-        error("Expected ACTIVE or INACTIVE after ALTER INDEX");
+        error("Expected ACTIVE, INACTIVE, or SET after ALTER INDEX");
     }
 
     return stmt;

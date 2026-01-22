@@ -2501,7 +2501,38 @@ void BytecodeGeneratorV2::generateAlterIndex(ResolvedAlterIndexStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_INDEX));
     current_result_->writeString(schemaPathToString(stmt->index_path, string_pool_));
-    current_result_->writeByte(stmt->active ? 1 : 0);
+    uint8_t action = 0;
+    if (stmt->action == AlterIndexAction::INACTIVE)
+    {
+        action = 1;
+    }
+    else if (stmt->action == AlterIndexAction::SET_OPTIONS)
+    {
+        action = 2;
+    }
+    current_result_->writeByte(action);
+
+    if (stmt->action == AlterIndexAction::SET_OPTIONS)
+    {
+        uint32_t options_flags = 0;
+        if (stmt->options.bloom_filter_set)
+        {
+            options_flags |= 0x01;
+        }
+        if (stmt->options.bloom_filter_enabled)
+        {
+            options_flags |= 0x02;
+        }
+        if (stmt->options.bloom_fpr_set)
+        {
+            options_flags |= 0x04;
+        }
+        current_result_->writeInt32(options_flags);
+        if (stmt->options.bloom_fpr_set)
+        {
+            current_result_->writeDouble(stmt->options.bloom_fpr);
+        }
+    }
 }
 
 void BytecodeGeneratorV2::generateRenameObject(ResolvedRenameObjectStmt* stmt) {

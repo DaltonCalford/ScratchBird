@@ -31,7 +31,7 @@ This checklist tracks spec-driven gaps for index implementations, with a focus o
 - [ ] **Bloom Filter Index:** implement standalone index per spec (`docs/specifications/indexes/BloomFilterIndex.md`).
   - [x] Core Bloom filter pages + BTree/Hash/GIN attach, query gating, and GC rebuild hooks.
   - [x] Persist Bloom filter meta pointer/config in index params + SQL options (CREATE INDEX).
-  - [ ] ALTER INDEX SET bloom_filter options.
+  - [x] ALTER INDEX SET bloom_filter options.
 - [ ] **Inverted Index:** implement full inverted index (positions, compression, BM25) per spec (`docs/specifications/indexes/InvertedIndex.md`).
 - [ ] **IVF Index:** implement IVF (training, PQ, inverted lists, query path) per spec (`docs/specifications/indexes/IVFIndex.md`).
 - [ ] **Zone Maps Index:** implement zone map index per spec (`docs/specifications/indexes/ZoneMapsIndex.md`).

@@ -554,6 +554,7 @@ struct IndexColumn {
  * Index options
  */
 struct IndexOptions {
+    bool bloom_filter_set = false;
     bool bloom_filter_enabled = false;
     bool bloom_fpr_set = false;
     double bloom_fpr = 0.01;
@@ -1063,6 +1064,7 @@ public:
 enum class AlterIndexAction : uint8_t {
     ACTIVE,
     INACTIVE,
+    SET_OPTIONS,
 };
 
 /**
@@ -1075,6 +1077,7 @@ public:
 
     SchemaPath index_path;
     AlterIndexAction action = AlterIndexAction::ACTIVE;
+    IndexOptions options;
 };
 
 /**

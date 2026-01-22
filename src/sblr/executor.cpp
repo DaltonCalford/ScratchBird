@@ -15,6 +15,7 @@
 #endif
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/index_params.h"
+#include "scratchbird/core/index_factory.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/decimal.h"
 #include "scratchbird/core/plain_value_reader.h"
@@ -7438,10 +7439,10 @@ namespace scratchbird
 
         void Executor::executeAlterIndex()
         {
-            // ALTER INDEX name {ACTIVE|INACTIVE}
+            // ALTER INDEX name {ACTIVE|INACTIVE|SET (...)}
 
             std::string index_name = readString();
-            uint8_t active_flag = readByte();
+            uint8_t action = readByte();
 
             ErrorContext ctx;
             core::ID index_id;
@@ -7459,13 +7460,226 @@ namespace scratchbird
                 throw std::runtime_error(err_msg);
             }
 
-            auto new_state = active_flag
-                ? core::CatalogManager::IndexState::ACTIVE
-                : core::CatalogManager::IndexState::INACTIVE;
-            status = db_->catalog_manager()->alterIndexState(index_id, new_state, &ctx);
-            if (status != Status::OK)
+            if (action == 0 || action == 1)
             {
-                throw std::runtime_error("Failed to alter index: " + ctx.message);
+                auto new_state = (action == 0)
+                    ? core::CatalogManager::IndexState::ACTIVE
+                    : core::CatalogManager::IndexState::INACTIVE;
+                status = db_->catalog_manager()->alterIndexState(index_id, new_state, &ctx);
+                if (status != Status::OK)
+                {
+                    throw std::runtime_error("Failed to alter index: " + ctx.message);
+                }
+            }
+            else if (action == 2)
+            {
+                uint32_t options_flags = readInt32();
+                bool bloom_set = (options_flags & 0x01) != 0;
+                bool bloom_enabled = (options_flags & 0x02) != 0;
+                bool bloom_fpr_set = (options_flags & 0x04) != 0;
+                double bloom_fpr = 0.01;
+                if (bloom_fpr_set)
+                {
+                    bloom_fpr = readDouble();
+                }
+
+                if (!bloom_set && bloom_fpr_set)
+                {
+                    bloom_set = true;
+                    bloom_enabled = true;
+                }
+
+                core::CatalogManager::IndexInfo index_info;
+                status = db_->catalog_manager()->getIndex(index_id, index_info, &ctx);
+                if (status != core::Status::OK)
+                {
+                    throw std::runtime_error("Failed to load index info: " + ctx.message);
+                }
+
+                core::IndexParams existing_params;
+                if (index_info.index_params_oid != 0)
+                {
+                    std::string params_str;
+                    if (db_->catalog_manager()->loadStringFromToast(
+                            index_info.index_params_oid, 0, params_str, &ctx) == core::Status::OK)
+                    {
+                        core::parseIndexParams(params_str, &existing_params);
+                    }
+                }
+
+                core::CatalogManager::IndexType actual_type = index_info.index_type;
+                void *index_ptr = db_->catalog_manager()->getIndexPtr(index_id, &actual_type);
+                std::unique_ptr<void, std::function<void(void*)>> temp_index(
+                    nullptr, [&](void *ptr) {
+                        if (ptr)
+                        {
+                            core::IndexFactory::closeIndex(actual_type, ptr, nullptr);
+                        }
+                    });
+
+                if (!index_ptr)
+                {
+                    void *opened_ptr = nullptr;
+                    core::Status open_status = core::IndexFactory::openIndex(
+                        actual_type, db_, index_info, &opened_ptr, nullptr);
+                    if (open_status != core::Status::OK)
+                    {
+                        throw std::runtime_error("Failed to open index for ALTER INDEX");
+                    }
+                    temp_index.reset(opened_ptr);
+                    index_ptr = opened_ptr;
+                }
+
+                if (bloom_set)
+                {
+                    if (actual_type != core::CatalogManager::IndexType::BTREE &&
+                        actual_type != core::CatalogManager::IndexType::HASH &&
+                        actual_type != core::CatalogManager::IndexType::GIN)
+                    {
+                        throw std::runtime_error("Bloom filters only supported for BTREE, HASH, GIN indexes");
+                    }
+
+                    core::BloomFilter *existing_filter = nullptr;
+                    if (actual_type == core::CatalogManager::IndexType::BTREE)
+                    {
+                        existing_filter = static_cast<core::BTree *>(index_ptr)->getBloomFilter();
+                    }
+                    else if (actual_type == core::CatalogManager::IndexType::HASH)
+                    {
+                        existing_filter = static_cast<core::HashIndex *>(index_ptr)->getBloomFilter();
+                    }
+                    else if (actual_type == core::CatalogManager::IndexType::GIN)
+                    {
+                        existing_filter = static_cast<core::GinIndex *>(index_ptr)->getBloomFilter();
+                    }
+
+                    if (!bloom_enabled)
+                    {
+                        if (existing_filter)
+                        {
+                            if (actual_type == core::CatalogManager::IndexType::BTREE)
+                            {
+                                static_cast<core::BTree *>(index_ptr)->detachBloomFilter(nullptr);
+                            }
+                            else if (actual_type == core::CatalogManager::IndexType::HASH)
+                            {
+                                static_cast<core::HashIndex *>(index_ptr)->detachBloomFilter(nullptr);
+                            }
+                            else if (actual_type == core::CatalogManager::IndexType::GIN)
+                            {
+                                static_cast<core::GinIndex *>(index_ptr)->detachBloomFilter(nullptr);
+                            }
+                        }
+
+                        core::IndexParams params = existing_params;
+                        params.has_bloom = true;
+                        params.bloom.enabled = false;
+                        params.bloom.meta_gpid = 0;
+                        if (bloom_fpr_set)
+                        {
+                            params.bloom.target_fpr = bloom_fpr;
+                        }
+                        auto params_str = core::serializeIndexParams(params);
+                        status = db_->catalog_manager()->updateIndexParams(index_id, params_str, nullptr);
+                        if (status != core::Status::OK)
+                        {
+                            throw std::runtime_error("Failed to persist index options");
+                        }
+                    }
+                    else
+                    {
+                        core::BloomFilterConfig config;
+                        config.target_fpr = bloom_fpr_set ? bloom_fpr : existing_params.bloom.target_fpr;
+                        config.bits_per_key = 0;
+                        config.num_hashes = 0;
+                        config.rebuild_threshold = 100000;
+
+                        core::CatalogManager::TableInfo table_info;
+                        status = db_->catalog_manager()->getTable(index_info.table_id, table_info, nullptr);
+                        if (status != core::Status::OK)
+                        {
+                            throw std::runtime_error("Failed to load table info");
+                        }
+                        uint64_t estimated_keys = (table_info.row_count > 0) ? table_info.row_count : 10000;
+
+                        if (existing_filter && bloom_fpr_set)
+                        {
+                            if (actual_type == core::CatalogManager::IndexType::BTREE)
+                            {
+                                static_cast<core::BTree *>(index_ptr)->detachBloomFilter(nullptr);
+                            }
+                            else if (actual_type == core::CatalogManager::IndexType::HASH)
+                            {
+                                static_cast<core::HashIndex *>(index_ptr)->detachBloomFilter(nullptr);
+                            }
+                            else if (actual_type == core::CatalogManager::IndexType::GIN)
+                            {
+                                static_cast<core::GinIndex *>(index_ptr)->detachBloomFilter(nullptr);
+                            }
+                            existing_filter = nullptr;
+                        }
+
+                        if (!existing_filter)
+                        {
+                            if (actual_type == core::CatalogManager::IndexType::BTREE)
+                            {
+                                status = static_cast<core::BTree *>(index_ptr)->attachBloomFilter(
+                                    config, estimated_keys, nullptr);
+                            }
+                            else if (actual_type == core::CatalogManager::IndexType::HASH)
+                            {
+                                status = static_cast<core::HashIndex *>(index_ptr)->attachBloomFilter(
+                                    config, estimated_keys, nullptr);
+                            }
+                            else if (actual_type == core::CatalogManager::IndexType::GIN)
+                            {
+                                status = static_cast<core::GinIndex *>(index_ptr)->attachBloomFilter(
+                                    config, estimated_keys, nullptr);
+                            }
+
+                            if (status != core::Status::OK)
+                            {
+                                throw std::runtime_error("Failed to attach Bloom filter");
+                            }
+                        }
+
+                        core::BloomFilter *filter = nullptr;
+                        if (actual_type == core::CatalogManager::IndexType::BTREE)
+                        {
+                            filter = static_cast<core::BTree *>(index_ptr)->getBloomFilter();
+                        }
+                        else if (actual_type == core::CatalogManager::IndexType::HASH)
+                        {
+                            filter = static_cast<core::HashIndex *>(index_ptr)->getBloomFilter();
+                        }
+                        else if (actual_type == core::CatalogManager::IndexType::GIN)
+                        {
+                            filter = static_cast<core::GinIndex *>(index_ptr)->getBloomFilter();
+                        }
+
+                        if (filter)
+                        {
+                            core::IndexParams params;
+                            params.has_bloom = true;
+                            params.bloom.enabled = true;
+                            params.bloom.target_fpr = config.target_fpr;
+                            params.bloom.meta_gpid = filter->getMetaPage();
+                            params.bloom.bits_per_key = filter->getConfig().bits_per_key;
+                            params.bloom.num_hashes = filter->getConfig().num_hashes;
+
+                            auto params_str = core::serializeIndexParams(params);
+                            status = db_->catalog_manager()->updateIndexParams(index_id, params_str, nullptr);
+                            if (status != core::Status::OK)
+                            {
+                                throw std::runtime_error("Failed to persist index options");
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                throw std::runtime_error("Unsupported ALTER INDEX action");
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);

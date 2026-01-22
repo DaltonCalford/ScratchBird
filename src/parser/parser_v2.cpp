@@ -1413,6 +1413,7 @@ CreateIndexStmt* Parser::parseCreateIndex() {
 
             if (caseInsensitiveEquals(opt_name, "BLOOM_FILTER")) {
                 stmt->options.bloom_filter_enabled = parse_bool();
+                stmt->options.bloom_filter_set = true;
             } else if (caseInsensitiveEquals(opt_name, "BLOOM_FPR")) {
                 stmt->options.bloom_fpr = parse_double();
                 stmt->options.bloom_fpr_set = true;
@@ -2404,7 +2405,119 @@ Statement* Parser::parseAlter() {
     };
 
     if (matchContextual("VIEW")) return parse_rename_move(DdlObjectType::VIEW);
-    if (matchContextual("INDEX")) return parse_rename_move(DdlObjectType::INDEX);
+    if (matchContextual("INDEX")) {
+        SourceLocation start = currentLocation();
+        bool if_exists = false;
+        if (match(TokenType::KW_IF)) {
+            expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+
+        SchemaPath index_path = parseSchemaPath(state_);
+        if (index_path.isEmpty()) {
+            error("Expected index name");
+            return nullptr;
+        }
+
+        if (matchContextual("RENAME")) {
+            expectContextual("TO", "Expected TO after RENAME");
+            auto* stmt = arena_.create<RenameObjectStmt>();
+            stmt->object_type = DdlObjectType::INDEX;
+            stmt->if_exists = if_exists;
+            stmt->object_path = index_path;
+            stmt->new_name = expectIdentifier("Expected new name");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (match(TokenType::KW_SET)) {
+            if (matchContextual("SCHEMA")) {
+                auto* stmt = arena_.create<MoveObjectStmt>();
+                stmt->object_type = DdlObjectType::INDEX;
+                stmt->if_exists = if_exists;
+                stmt->object_path = index_path;
+                stmt->target_schema = parseSchemaPath(state_);
+                stmt->span = makeSpan(start);
+                return stmt;
+            }
+
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->index_path = index_path;
+            stmt->action = AlterIndexAction::SET_OPTIONS;
+
+            expect(TokenType::LEFT_PAREN, "Expected '(' after SET in ALTER INDEX");
+
+            auto parse_bool = [&]() -> bool {
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    bool value = current().value.int_value != 0;
+                    advance();
+                    return value;
+                }
+                if (isIdentifier()) {
+                    auto text = stringPool().get(current().value.string_id);
+                    advance();
+                    if (caseInsensitiveEquals(text, "TRUE")) {
+                        return true;
+                    }
+                    if (caseInsensitiveEquals(text, "FALSE")) {
+                        return false;
+                    }
+                }
+                error("Expected boolean value for index option");
+                return false;
+            };
+
+            auto parse_double = [&]() -> double {
+                if (check(TokenType::FLOAT_LITERAL)) {
+                    double value = current().value.float_value;
+                    advance();
+                    return value;
+                }
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    double value = static_cast<double>(current().value.int_value);
+                    advance();
+                    return value;
+                }
+                error("Expected numeric value for index option");
+                return 0.0;
+            };
+
+            while (!check(TokenType::RIGHT_PAREN) &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                if (!isIdentifier()) {
+                    error("Expected index option name");
+                    break;
+                }
+
+                auto opt_name = stringPool().get(current().value.string_id);
+                advance();
+                expect(TokenType::EQUAL, "Expected '=' after index option name");
+
+                if (caseInsensitiveEquals(opt_name, "BLOOM_FILTER")) {
+                    stmt->options.bloom_filter_enabled = parse_bool();
+                    stmt->options.bloom_filter_set = true;
+                } else if (caseInsensitiveEquals(opt_name, "BLOOM_FPR")) {
+                    stmt->options.bloom_fpr = parse_double();
+                    stmt->options.bloom_fpr_set = true;
+                } else {
+                    error("Unknown index option");
+                    return stmt;
+                }
+
+                if (!match(TokenType::COMMA)) {
+                    break;
+                }
+            }
+
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after index options");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        error("Expected RENAME TO or SET after index name");
+        return nullptr;
+    }
     if (matchContextual("SEQUENCE")) return parse_rename_move(DdlObjectType::SEQUENCE);
     if (matchContextual("DOMAIN")) return parse_rename_move(DdlObjectType::DOMAIN);
     if (matchContextual("TRIGGER")) return parse_rename_move(DdlObjectType::TRIGGER);
