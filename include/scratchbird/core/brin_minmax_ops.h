@@ -23,6 +23,35 @@ public:
      */
     static int compare(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
     {
+        if (a.size() == b.size())
+        {
+            if (a.size() == sizeof(int32_t))
+            {
+                int32_t a_val = 0;
+                int32_t b_val = 0;
+                std::memcpy(&a_val, a.data(), sizeof(int32_t));
+                std::memcpy(&b_val, b.data(), sizeof(int32_t));
+                if (a_val < b_val)
+                    return -1;
+                if (a_val > b_val)
+                    return 1;
+                return 0;
+            }
+
+            if (a.size() == sizeof(int64_t))
+            {
+                int64_t a_val = 0;
+                int64_t b_val = 0;
+                std::memcpy(&a_val, a.data(), sizeof(int64_t));
+                std::memcpy(&b_val, b.data(), sizeof(int64_t));
+                if (a_val < b_val)
+                    return -1;
+                if (a_val > b_val)
+                    return 1;
+                return 0;
+            }
+        }
+
         // Lexicographic byte comparison
         size_t min_len = std::min(a.size(), b.size());
 

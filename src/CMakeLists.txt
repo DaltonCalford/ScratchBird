@@ -146,6 +146,7 @@ set_target_properties(scratchbird_sblr PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+
 # Compiler library: scratchbird_compiler (parsers + semantic + bytecode)
 if(SCRATCHBIRD_WITH_COMPILER)
     add_library(scratchbird_compiler STATIC
@@ -168,6 +169,25 @@ if(SCRATCHBIRD_WITH_COMPILER)
         POSITION_INDEPENDENT_CODE ON
     )
 endif()
+
+add_library(scratchbird_link_group INTERFACE)
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(scratchbird_link_group INTERFACE
+        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_compiler,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_optimizer_compiler,scratchbird_security>
+    )
+else()
+    target_link_libraries(scratchbird_link_group INTERFACE
+        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_security>
+    )
+endif()
+target_link_options(scratchbird_link_group INTERFACE -Wl,--no-as-needed)
+if(PROJ_FOUND)
+    target_link_libraries(scratchbird_link_group INTERFACE ${PROJ_LIBRARIES})
+endif()
+if(GEOS_FOUND)
+    target_link_libraries(scratchbird_link_group INTERFACE ${GEOS_LIBRARIES})
+endif()
+
 
 # Optimizer runtime library: scratchbird_optimizer_runtime
 set(SCRATCHBIRD_OPTIMIZER_RUNTIME_SOURCES
@@ -230,9 +250,6 @@ if(SCRATCHBIRD_WITH_COMPILER)
     )
 endif()
 
-if(TARGET scratchbird_compiler AND TARGET scratchbird_optimizer_compiler)
-    target_link_libraries(scratchbird_compiler PUBLIC scratchbird_optimizer_compiler)
-endif()
 
 # Add optimizer runtime dependency to core (after optimizer is defined)
 target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer_runtime nlohmann_json::nlohmann_json)
@@ -767,7 +784,7 @@ message(STATUS "Parser agent executables: sb_parser_native/pg/mysql/fb")
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
-target_link_libraries(scratchbird PRIVATE scratchbird_sblr scratchbird_core)
+target_link_libraries(scratchbird PRIVATE scratchbird_link_group)
 
 set_target_properties(scratchbird PROPERTIES
     CXX_STANDARD 17
@@ -778,7 +795,7 @@ set_target_properties(scratchbird PROPERTIES
 # Data loader tools
 add_executable(sb_charset_loader ${PROJECT_SOURCE_DIR}/tools/sb_charset_loader.cpp)
 
-target_link_libraries(sb_charset_loader PRIVATE scratchbird_core)
+target_link_libraries(sb_charset_loader PRIVATE scratchbird_link_group)
 
 set_target_properties(sb_charset_loader PROPERTIES
     CXX_STANDARD 17
@@ -797,12 +814,8 @@ target_link_libraries(sb_isql PRIVATE
     scratchbird_client
     scratchbird_protocol
     scratchbird_server
-    scratchbird_sblr
-    scratchbird_core
+    scratchbird_link_group
 )
-if(SCRATCHBIRD_WITH_COMPILER)
-    target_link_libraries(sb_isql PRIVATE scratchbird_compiler)
-endif()
 
 set_target_properties(sb_isql PROPERTIES
     CXX_STANDARD 17
@@ -816,12 +829,8 @@ message(STATUS "CLI tool: sb_isql (interactive SQL shell)")
 add_executable(sb_verify cli/sb_verify.cpp)
 
 target_link_libraries(sb_verify PRIVATE
-    scratchbird_core
-    scratchbird_sblr
+    scratchbird_link_group
 )
-if(SCRATCHBIRD_WITH_COMPILER)
-    target_link_libraries(sb_verify PRIVATE scratchbird_compiler)
-endif()
 
 set_target_properties(sb_verify PROPERTIES
     CXX_STANDARD 17
@@ -835,12 +844,8 @@ message(STATUS "CLI tool: sb_verify (database verification)")
 add_executable(sb_backup cli/sb_backup.cpp)
 
 target_link_libraries(sb_backup PRIVATE
-    scratchbird_core
-    scratchbird_sblr
+    scratchbird_link_group
 )
-if(SCRATCHBIRD_WITH_COMPILER)
-    target_link_libraries(sb_backup PRIVATE scratchbird_compiler)
-endif()
 
 set_target_properties(sb_backup PROPERTIES
     CXX_STANDARD 17
@@ -857,12 +862,8 @@ target_link_libraries(sb_security PRIVATE
     scratchbird_client
     scratchbird_protocol
     scratchbird_server
-    scratchbird_sblr
-    scratchbird_core
+    scratchbird_link_group
 )
-if(SCRATCHBIRD_WITH_COMPILER)
-    target_link_libraries(sb_security PRIVATE scratchbird_compiler)
-endif()
 
 set_target_properties(sb_security PROPERTIES
     CXX_STANDARD 17
@@ -876,12 +877,8 @@ message(STATUS "CLI tool: sb_security (security administration)")
 add_executable(sb_fb_isql cli/sb_fb_isql.cpp)
 
 target_link_libraries(sb_fb_isql PRIVATE
-    scratchbird_sblr
-    scratchbird_core
+    scratchbird_link_group
 )
-if(SCRATCHBIRD_WITH_COMPILER)
-    target_link_libraries(sb_fb_isql PRIVATE scratchbird_compiler)
-endif()
 
 set_target_properties(sb_fb_isql PROPERTIES
     CXX_STANDARD 17
@@ -896,7 +893,7 @@ add_executable(sb_pg_isql cli/sb_pg_isql.cpp)
 
 target_link_libraries(sb_pg_isql PRIVATE
     scratchbird_fdw
-    scratchbird_core
+    scratchbird_link_group
 )
 
 set_target_properties(sb_pg_isql PROPERTIES
@@ -912,7 +909,7 @@ add_executable(sb_my_isql cli/sb_my_isql.cpp)
 
 target_link_libraries(sb_my_isql PRIVATE
     scratchbird_fdw
-    scratchbird_core
+    scratchbird_link_group
 )
 
 set_target_properties(sb_my_isql PROPERTIES

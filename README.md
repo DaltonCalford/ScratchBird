@@ -20,13 +20,13 @@ ScratchBird is a next-generation database management system that combines:
 
 ### Key References
 
-| Area | Link |
-|------|------|
-| **Project Metrics** | `PROJECT_STATS.md` |
-| **Documentation Index** | `docs/INDEX.md` |
-| **Specifications Index** | `docs/specifications/README.md` |
-| **Findings & Plans** | `docs/findings/` and `docs/planning/` |
-| **Audit Outputs** | `docs/audit/` |
+| Area                     | Link                                  |
+| ------------------------ | ------------------------------------- |
+| **Project Metrics**      | `PROJECT_STATS.md`                    |
+| **Documentation Index**  | `docs/INDEX.md`                       |
+| **Specifications Index** | `docs/specifications/README.md`       |
+| **Findings & Plans**     | `docs/findings/` and `docs/planning/` |
+| **Audit Outputs**        | `docs/audit/`                         |
 
 ---
 
@@ -34,11 +34,11 @@ ScratchBird is a next-generation database management system that combines:
 
 ScratchBird has been split into multiple repositories to enable proper task segmentation and parallel development:
 
-| Repository | Description | Link |
-|------------|-------------|------|
-| **ScratchBird** (this repo) | Core database engine - storage, transactions, SBLR runtime, parsers, network layer | You are here |
-| **ScratchBird-driver** | Language drivers for client connectivity (ODBC, JDBC, Python, Node.js, Go, Rust, etc.) | [GitHub](https://github.com/DaltonCalford/ScratchBird-driver) |
-| **ScratchRobin** | GUI database management and administration tools | [GitHub](https://github.com/DaltonCalford/ScratchRobin) |
+| Repository                  | Description                                                                            | Link                                                          |
+| --------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **ScratchBird** (this repo) | Core database engine - storage, transactions, SBLR runtime, parsers, network layer     | You are here                                                  |
+| **ScratchBird-driver**      | Language drivers for client connectivity (ODBC, JDBC, Python, Node.js, Go, Rust, etc.) | [GitHub](https://github.com/DaltonCalford/ScratchBird-driver) |
+| **ScratchRobin**            | GUI database management and administration tools                                       | [GitHub](https://github.com/DaltonCalford/ScratchRobin)       |
 
 ### Project Separation Rationale
 
@@ -61,29 +61,23 @@ This architecture enables parallel development across teams and ensures that dri
 - Engine-enforced security; parser/listener treated as untrusted
 - Listener/pool/parser/server process operational with socket handoff per dialect
 - Shared SBLR cache with per-connection compile caches
-- **WS-1 Catalog Bootstrap:** Schema roots updated; migration/repair pass added
+- **WS-5 Constraint Enforcement** All tests pass
 
 ### 🚧 In Progress - Engine Core Alpha Completion
 
 Active work tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
 
-| Workstream | Status | Description |
-|------------|--------|-------------|
-| WS-1 Catalog Bootstrap | ✅ Done | Root paths updated; migration/repair pass added |
-| WS-2 Tablespace Routing | 🚧 In Progress | GPID wiring, tablespace header v2, file catalog integration |
-| WS-3 Index Migration Safety | 📋 TODO | TID updates for all index types |
-| WS-4 Scheduler/Job System | 📋 TODO | Secure job runner and scheduling model |
-| WS-5 Constraint Enforcement | 📋 TODO | PK/FK/UNIQUE/CHECK/NOT NULL enforcement |
-| WS-6 Security Enforcement | 📋 TODO | View definer checks, RLS SELECT enforcement |
-| WS-7 Monitoring Parity | 📋 TODO | sys.* views and MON$ sources |
-| WS-8 Backup/Restore | 📋 TODO | Multi-tablespace coverage validation |
-| WS-9 Cache/Buffer Plan | 📋 TODO | Cache and buffer remediation |
-
-**Recent Progress (2026-01-21):**
-- Full ctest run completed cleanly after stabilizing TCP integration
-- Tablespace file catalog wiring and allocation helpers added
-- Storage engine now allocates/pins heap pages by tablespace (GPID-aware)
-- B-tree and Hash index storage use root_gpid tablespace routing
+| Workstream                  | Status         | Description                                                 |
+| --------------------------- | -------------- | ----------------------------------------------------------- |
+| WS-1 Catalog Bootstrap      | ✅ Done         | Root paths updated; migration/repair pass added             |
+| WS-2 Tablespace Routing     | ✅ Done         | GPID wiring, tablespace header v2, file catalog integration |
+| WS-3 Index Migration Safety | ✅ Done         | TID updates for all index types                             |
+| WS-4 Scheduler/Job System   | ✅ Done         | Secure job runner and scheduling model                      |
+| WS-5 Constraint Enforcement | 🚧 In Progress | PK/FK/UNIQUE/CHECK/NOT NULL enforcement                     |
+| WS-6 Security Enforcement   | 📋 TODO        | View definer checks, RLS SELECT enforcement                 |
+| WS-7 Monitoring Parity      | 📋 TODO        | sys.* views and MON$ sources                                |
+| WS-8 Backup/Restore         | 📋 TODO        | Multi-tablespace coverage validation                        |
+| WS-9 Cache/Buffer Plan      | 📋 TODO        | Cache and buffer remediation                                |
 
 ### 📋 Beta (Deferred)
 
@@ -160,13 +154,13 @@ See `PROJECT_STATS.md` for current file and LOC counts.
 
 ### Essential Documents
 
-| Document | Description |
-|----------|-------------|
-| **MGA_RULES.md** | Firebird MGA architecture rules (CRITICAL - must follow) |
-| **OFFICIAL_ROADMAP.md** | Project roadmap and milestones |
-| **PROJECT_CONTEXT.md** | Current work context and status |
-| **IMPLEMENTATION_STANDARDS.md** | Implementation requirements and standards |
-| **PROJECT_STATS.md** | Detailed project statistics (auto-generated) |
+| Document                        | Description                                              |
+| ------------------------------- | -------------------------------------------------------- |
+| **MGA_RULES.md**                | Firebird MGA architecture rules (CRITICAL - must follow) |
+| **OFFICIAL_ROADMAP.md**         | Project roadmap and milestones                           |
+| **PROJECT_CONTEXT.md**          | Current work context and status                          |
+| **IMPLEMENTATION_STANDARDS.md** | Implementation requirements and standards                |
+| **PROJECT_STATS.md**            | Detailed project statistics (auto-generated)             |
 
 ### Detailed Statistics
 
@@ -206,13 +200,13 @@ ctest --test-dir build -R compat      # Compatibility tests
 
 ### Test Statistics
 
-| Category | Count | Notes |
-|----------|-------|-------|
-| **Unit Test Suites** | 73 | File count (`PROJECT_STATS.md`) |
-| **Integration Test Suites** | 67 | File count (`PROJECT_STATS.md`) |
-| **Benchmark Suites** | 2 | File count (`PROJECT_STATS.md`) |
-| **Total Test Suites** | 142 | File count (`PROJECT_STATS.md`) |
-| **Test Files (all)** | 334 | Includes helpers/fixtures |
+| Category                    | Count | Notes                           |
+| --------------------------- | ----- | ------------------------------- |
+| **Unit Test Suites**        | 73    | File count (`PROJECT_STATS.md`) |
+| **Integration Test Suites** | 67    | File count (`PROJECT_STATS.md`) |
+| **Benchmark Suites**        | 2     | File count (`PROJECT_STATS.md`) |
+| **Total Test Suites**       | 142   | File count (`PROJECT_STATS.md`) |
+| **Test Files (all)**        | 334   | Includes helpers/fixtures       |
 
 Compatibility suites exist for PostgreSQL, MySQL, and Firebird; see `tests/compatibility/` for coverage scope.
 
@@ -375,6 +369,7 @@ See `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` for detailed workstream
 ### Pre-Beta Phase (Next)
 
 After Alpha engine core completion:
+
 - Finalize planning and specification phase
 - Audit and verification of Alpha deliverables
 - Prepare infrastructure for Beta cluster implementation
@@ -385,6 +380,7 @@ After Alpha engine core completion:
 **Specifications:** ✅ Complete (see `docs/specifications/Cluster Specification Work/`)
 
 **Implementation:** 8-11 months estimated
+
 - Distributed cluster with Raft consensus
 - mTLS authentication and PKI
 - Sharding and distributed query
@@ -414,6 +410,7 @@ After Alpha engine core completion:
 ### Benchmarking
 
 Benchmark tests included in test suite:
+
 ```bash
 ctest --test-dir build -R benchmark
 ```
@@ -431,6 +428,7 @@ ctest --test-dir build -R benchmark
 ### Contributing
 
 Contributions welcome! Please:
+
 1. Review **MGA_RULES.md** and **IMPLEMENTATION_STANDARDS.md**
 2. Ensure all tests pass
 3. Add tests for new features
@@ -454,11 +452,13 @@ Contributions welcome! Please:
 ```
 
 **Generated reports:**
+
 - `PROJECT_STATS.md` - Comprehensive project metrics
 - `docs/DOCUMENTATION_COVERAGE.md` - Documentation coverage analysis
 - `docs/specifications/beta_requirements/COMPLETION_STATUS.md` - Beta requirements tracker
 
 **Quick Stats (snapshot; re-generate for current numbers):**
+
 - 582 C++ source files
 - 335 test files (142 test targets)
 - 1,830 documentation files

@@ -87,6 +87,11 @@ void logJobRunAudit(Database* db,
 
 }  // namespace
 
+JobScheduler::JobScheduler(Database* db)
+    : JobScheduler(db, Config{})
+{
+}
+
 JobScheduler::JobScheduler(Database* db, const Config& config)
     : db_(db)
     , config_(config)
@@ -290,10 +295,10 @@ void JobScheduler::processDueJobs() {
                         std::vector<CatalogManager::ProcedureInfo> procedures;
                         if (db_->catalog_manager()->listProcedures(procedures, &ctx) == Status::OK) {
                             for (const auto& proc : procedures) {
-                                if (proc.procedure_id == job.procedure_uuid) {
-                                    sql = "CALL " + proc.procedure_name + "()";
-                                    break;
-                                }
+                            if (proc.procedure_id == job.procedure_uuid) {
+                                sql = "CALL " + proc.name + "()";
+                                break;
+                            }
                             }
                         }
                     }

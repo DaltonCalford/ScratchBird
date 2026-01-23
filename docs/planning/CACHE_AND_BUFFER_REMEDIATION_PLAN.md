@@ -104,4 +104,4 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - See `ScratchBird/docs/findings/CACHE_AND_BUFFER_IMPLEMENTATION_REVIEW.md` for code-truth references.
 
 ## Recent Progress
-- 2026-01-21: No cache/buffer phase items completed in this update; full `ctest` run remains green.
+- 2026-01-25: Buffer pool flush now skips pinned pages and guards writes with content mutex; catalog heap updates lock page content to clear TSAN race.

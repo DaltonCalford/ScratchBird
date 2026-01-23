@@ -733,7 +733,8 @@ namespace scratchbird::core
         uint64_t effective_xmin = xmin;
         if (effective_xmin == 0)
         {
-            effective_xmin = storage->getCurrentXid();
+            static constexpr uint64_t kFrozenXid = 2;
+            effective_xmin = kFrozenXid;
         }
 
         // Split data into chunks

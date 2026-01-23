@@ -259,7 +259,7 @@ namespace scratchbird::core
         }
 
         // Initialize ProcArray if not already done
-        if (header_ && !header_->proc_array_initialized)
+        if (header_)
         {
             uint32_t max_backends = header_->max_backends;
             if (max_backends == 0)
@@ -1786,8 +1786,8 @@ namespace scratchbird::core
 
         if (header_->proc_array_initialized)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray already initialized");
-            return Status::INVALID_ARGUMENT;
+            uint32_t requested_max = header_->max_backends ? header_->max_backends : max_backends;
+            return ProcArrayManager::initialize(this, requested_max, ctx);
         }
 
         // Initialize ProcArray

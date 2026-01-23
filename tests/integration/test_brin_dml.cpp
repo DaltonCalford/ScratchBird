@@ -31,16 +31,38 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/tid.h"
 #include <filesystem>
+#include <memory>
 #include <vector>
 #include <string>
 #include <cstring>
 
 using namespace scratchbird::core;
+
+namespace {
+class ConnectionContextGuard
+{
+public:
+    explicit ConnectionContextGuard(ConnectionContext* ctx)
+        : prev_(ConnectionContext::getCurrent())
+    {
+        ConnectionContext::setCurrent(ctx);
+    }
+
+    ~ConnectionContextGuard()
+    {
+        ConnectionContext::setCurrent(prev_);
+    }
+
+private:
+    ConnectionContext* prev_;
+};
+} // namespace
 
 // Helper: Encode int32_t value as bytes (little-endian for consistency)
 static std::vector<uint8_t> encodeInt32(int32_t value)
@@ -129,8 +151,10 @@ TEST_F(BrinDMLTest, BlockNumberExtraction)
 TEST_F(BrinDMLTest, BrinInsert)
 {
     ErrorContext ctx;
-    TransactionManager *txn_mgr = db_->transaction_manager();
-    uint64_t xid = txn_mgr->getCurrentXid();
+    std::unique_ptr<ConnectionContext> conn;
+    Status status = db_->connect(conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
+    ConnectionContextGuard conn_guard(conn.get());
 
     // Create BRIN index
     UuidV7Bytes index_uuid = generateUuidV7();
@@ -138,7 +162,7 @@ TEST_F(BrinDMLTest, BrinInsert)
     std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
     uint32_t root_page = 0;
-    Status status = BrinIndex::create(db_, index_uuid, table_uuid, column_uuids,
+    status = BrinIndex::create(db_, index_uuid, table_uuid, column_uuids,
                               static_cast<uint8_t>(DataType::INT32),  // INT32 type
                               128,  // 128 blocks per range
                               &root_page, &ctx);
@@ -168,6 +192,7 @@ TEST_F(BrinDMLTest, BrinInsert)
     std::vector<uint8_t> min_val = encodeInt32(150);
     std::vector<uint8_t> max_val = encodeInt32(250);
     std::vector<uint32_t> block_numbers;
+    uint64_t xid = conn->getCurrentXid();
 
     status = brin->scan(&min_val, &max_val, xid, &block_numbers, &ctx);
     ASSERT_EQ(status, Status::OK) << "Scan failed: " << ctx.message;
@@ -191,8 +216,10 @@ TEST_F(BrinDMLTest, BrinInsert)
 TEST_F(BrinDMLTest, BrinRemove)
 {
     ErrorContext ctx;
-    TransactionManager *txn_mgr = db_->transaction_manager();
-    uint64_t xid = txn_mgr->getCurrentXid();
+    std::unique_ptr<ConnectionContext> conn;
+    Status status = db_->connect(conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
+    ConnectionContextGuard conn_guard(conn.get());
 
     // Create BRIN index
     UuidV7Bytes index_uuid = generateUuidV7();
@@ -200,7 +227,7 @@ TEST_F(BrinDMLTest, BrinRemove)
     std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
     uint32_t root_page = 0;
-    Status status = BrinIndex::create(db_, index_uuid, table_uuid, column_uuids,
+    status = BrinIndex::create(db_, index_uuid, table_uuid, column_uuids,
                               static_cast<uint8_t>(DataType::INT32),
                               128, &root_page, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create BRIN index: " << ctx.message;

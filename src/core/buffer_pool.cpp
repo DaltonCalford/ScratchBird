@@ -369,6 +369,19 @@ namespace scratchbird::core
             return Status::OK;
         }
 
+        // Avoid flushing a page that is currently pinned (may be actively modified)
+        if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) > 0)
+        {
+            return Status::OK;
+        }
+
+        std::unique_lock<std::mutex> content_lock(*frames_[frame_index].content_mutex,
+                                                  std::try_to_lock);
+        if (!content_lock.owns_lock())
+        {
+            return Status::OK;
+        }
+
         // Write to disk
         Status status = writePageToDisk(gpid, frames_[frame_index].data.get(), ctx);
         if (status == Status::OK)
@@ -392,6 +405,17 @@ namespace scratchbird::core
             // PHASE 1, TASK 1.2.3: Changed page_id to gpid
             if (frames_[i].gpid != INVALID_GPID && frames_[i].is_dirty)
             {
+                if (frames_[i].pin_count.load(std::memory_order_relaxed) > 0)
+                {
+                    continue;
+                }
+                std::unique_lock<std::mutex> content_lock(*frames_[i].content_mutex,
+                                                          std::try_to_lock);
+                if (!content_lock.owns_lock())
+                {
+                    continue;
+                }
+
                 Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
                 if (status != Status::OK)
                 {

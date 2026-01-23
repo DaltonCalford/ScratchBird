@@ -90,41 +90,44 @@ TEST_F(ClockSweepTest, ClockSweepEviction)
     // Default buffer pool size is 128, so we need 150+ pages
     const int NUM_PAGES = 150;
 
+    std::vector<uint32_t> page_ids;
+    page_ids.reserve(NUM_PAGES);
+
     // Create pages in the database first
     for (int i = 0; i < NUM_PAGES; i++)
     {
         uint32_t page_id = 0;
         Status s = db_->page_manager()->allocatePage(page_id, &err_ctx);
         ASSERT_EQ(s, Status::OK) << "Failed to allocate page: " << err_ctx.message;
+        page_ids.push_back(page_id);
     }
 
     // Pin all pages to overflow the buffer pool
-    // Pages 0-2 are system pages (header, catalog, FSM), so we start at 3
-    for (int i = 3; i < NUM_PAGES + 3; i++)
+    for (uint32_t page_id : page_ids)
     {
         void *buf = nullptr;
-        Status s = pool_->pinPage(i, &buf, &err_ctx);
+        Status s = pool_->pinPage(page_id, &buf, &err_ctx);
         if (s != Status::OK)
         {
             // This is expected when pages don't exist
             break;
         }
         // Write something to the page so it exists
-        memset(buf, i % 256, 100);
-        pool_->unpinPage(i, true, &err_ctx);  // Mark as dirty to force flush
+        memset(buf, static_cast<int>(page_id % 256), 100);
+        pool_->unpinPage(page_id, true, &err_ctx);  // Mark as dirty to force flush
     }
 
     // Now flush all pages
     pool_->flushAll(&err_ctx);
 
     // Now pin them again in a different order to trigger clock sweep
-    for (int i = 3; i < NUM_PAGES + 3; i++)
+    for (uint32_t page_id : page_ids)
     {
         void *buf = nullptr;
-        Status s = pool_->pinPage(i, &buf, &err_ctx);
+        Status s = pool_->pinPage(page_id, &buf, &err_ctx);
         if (s == Status::OK)
         {
-            pool_->unpinPage(i, false, &err_ctx);
+            pool_->unpinPage(page_id, false, &err_ctx);
         }
     }
 
@@ -142,36 +145,40 @@ TEST_F(ClockSweepTest, CleanPagePreference)
 {
     ErrorContext err_ctx;
 
+    std::vector<uint32_t> page_ids;
+    page_ids.reserve(40);
+
     // Create and pin pages
     for (int i = 0; i < 40; i++)
     {
         uint32_t page_id = 0;
         Status s = db_->page_manager()->allocatePage(page_id, &err_ctx);
         ASSERT_EQ(s, Status::OK);
+        page_ids.push_back(page_id);
     }
 
     // Pin/unpin pages to populate buffer pool
-    for (int i = 3; i < 41; i++)
+    for (uint32_t page_id : page_ids)
     {
         void *buf = nullptr;
-        Status s = pool_->pinPage(i, &buf, &err_ctx);
+        Status s = pool_->pinPage(page_id, &buf, &err_ctx);
         if (s == Status::OK)
         {
-            memset(buf, i, 100);
-            pool_->unpinPage(i, false, &err_ctx);  // Mark as clean
+            memset(buf, static_cast<int>(page_id), 100);
+            pool_->unpinPage(page_id, false, &err_ctx);  // Mark as clean
         }
     }
 
     pool_->flushAll(&err_ctx);
 
     // Trigger evictions
-    for (int i = 3; i < 41; i++)
+    for (uint32_t page_id : page_ids)
     {
         void *buf = nullptr;
-        Status s = pool_->pinPage(i, &buf, &err_ctx);
+        Status s = pool_->pinPage(page_id, &buf, &err_ctx);
         if (s == Status::OK)
         {
-            pool_->unpinPage(i, false, &err_ctx);
+            pool_->unpinPage(page_id, false, &err_ctx);
         }
     }
 

@@ -22,7 +22,8 @@ public:
         uint32_t pre_execute_delay_ms = 0;
     };
 
-    explicit JobScheduler(Database* db, const Config& config = Config{});
+    explicit JobScheduler(Database* db);
+    explicit JobScheduler(Database* db, const Config& config);
     ~JobScheduler();
 
     JobScheduler(const JobScheduler&) = delete;

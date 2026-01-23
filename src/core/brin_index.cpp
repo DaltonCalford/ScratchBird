@@ -13,6 +13,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/logger.h"
 #include <cstring>
@@ -89,7 +90,12 @@ Status BrinIndex::create(Database *db,
     root->brin_range_size = range_size;
     root->brin_first_block = 0;
     root->brin_last_block = 0;
-    root->brin_xmin = txn_mgr->getCurrentXid();
+    uint64_t create_xid = ConnectionContext::getCurrentTransactionId();
+    if (create_xid == 0)
+    {
+        create_xid = txn_mgr->getCurrentXid();
+    }
+    root->brin_xmin = create_xid;
     root->brin_xmax = 0;
     root->brin_ranges_total = 0;
     root->brin_ranges_deleted = 0;
@@ -220,6 +226,17 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
     if (!buffer_pool || !txn_mgr)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing components");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+    if (current_xid == 0)
+    {
+        current_xid = txn_mgr->getCurrentXid();
+    }
+    if (current_xid == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction");
         return Status::INVALID_ARGUMENT;
     }
 
@@ -361,7 +378,7 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
         new_range->brn_flags = 0;
         new_range->brn_min_len = value_len;
         new_range->brn_max_len = value_len;
-        new_range->brn_xmin = txn_mgr->getCurrentXid();
+        new_range->brn_xmin = current_xid;
         new_range->brn_xmax = 0;
 
         // Copy min and max (initially same)

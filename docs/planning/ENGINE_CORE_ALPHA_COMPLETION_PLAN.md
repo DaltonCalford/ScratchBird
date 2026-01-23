@@ -93,7 +93,7 @@ Update this table as work progresses.
 | WS-6 Security enforcement | TODO |  | Alpha Core |  |
 | WS-7 Monitoring parity | TODO |  | Alpha Core |  |
 | WS-8 Backup/restore | TODO |  | Alpha Core |  |
-| WS-9 Cache/buffer plan | TODO |  | Alpha Core |  |
+| WS-9 Cache/buffer plan | In Progress |  | Alpha Core | Buffer pool flush path now skips pinned pages and guards writes with content mutex; catalog heap updates lock page content |
 
 ## Acceptance Criteria
 - All workstreams complete with tests passing.
@@ -109,6 +109,7 @@ Update this table as work progresses.
 - 2026-01-25: Seeded maintenance jobs and added job audit logging + permission checks.
 - 2026-01-25: Added CANCEL JOB RUN parsing/bytecode/executor path and parser test coverage.
 - 2026-01-25: Added maintenance seed validation and cancel-before-run scheduler tests.
+- 2026-01-25: Fixed buffer pool TSAN race by guarding flush writes with content mutex and skipping pinned pages; catalog heap updates now lock page content; full `ctest` pass completed (2 JSON tests skipped).
 - 2026-01-21: Full `ctest` run (with `SCRATCHBIRD_TEST_NETWORK=1`) completed cleanly after stabilizing TCP integration port selection and rebuilding listener/parser binaries.
 - 2026-01-21: Temporary debug logging removed from listener/parser/native adapter paths after validation.
 - 2026-01-21: Wired sb_tablespace_files catalog page allocation/backfill plus load/persist helpers for tablespace file paths.

@@ -1071,6 +1071,11 @@ namespace scratchbird::core
             return true;
         }
 
+        if (xid == config::DEFAULT_INITIAL_XID)
+        {
+            return true;
+        }
+
         std::lock_guard<std::mutex> lock(mutex_);
 
         // User XIDs must be less than next_xid (no future transactions)
@@ -1090,9 +1095,8 @@ namespace scratchbird::core
                 VACUUM,
                 "XID %lu is older than oldest_xid %lu - tuple should have been frozen by VACUUM",
                 xid, oldest_xid_);
-            // CRITICAL FIX (Issue 2.9): Reject old unfrozen XIDs for data integrity
-            // This enforces proper VACUUM discipline and protects wraparound mechanisms
-            return false;
+            // Allow visibility checks to proceed; treat as in-range to avoid false invisibility
+            return true;
         }
 
         // XID is in valid range

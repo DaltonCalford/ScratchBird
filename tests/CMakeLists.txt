@@ -11,6 +11,7 @@ FetchContent_MakeAvailable(googletest)
 
 # Allow test sources to include test_helpers.h across all test targets.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+link_libraries(scratchbird_link_group)
 set(SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_parser)
 if(SCRATCHBIRD_WITH_COMPILER)
     list(APPEND SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_compiler)

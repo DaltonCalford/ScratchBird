@@ -8107,6 +8107,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
+        status = bp->lockPage(page_id, ctx);
+        if (status != Status::OK)
+        {
+            bp->unpinPage(page_id, false, ctx);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to lock catalog heap page");
+            return status;
+        }
+
         auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
         uint32_t offset = sizeof(CatalogHeapPage);
         bool found = false;
@@ -8128,6 +8136,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 heap->header.generation++;
 
                 // Unpin and return success
+                bp->unlockPage(page_id, ctx);
                 return bp->unpinPage(page_id, true, ctx);
             }
 
@@ -8140,6 +8149,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // Check if we have space for new record
             if (heap->free_offset + sizeof(RecordType) > db_->page_size())
             {
+                bp->unlockPage(page_id, ctx);
                 bp->unpinPage(page_id, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Catalog heap page full");
                 return Status::PAGE_FULL;
@@ -8157,10 +8167,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             heap->header.free_space -= sizeof(RecordType);
             heap->header.generation++;
 
+            bp->unlockPage(page_id, ctx);
             return bp->unpinPage(page_id, true, ctx);
         }
 
         // Should never reach here
+        bp->unlockPage(page_id, ctx);
         bp->unpinPage(page_id, false, ctx);
         return Status::OK;
     }
@@ -25656,7 +25668,7 @@ auto CatalogManager::getJobByName(const std::string& job_name, JobInfo& job_out,
         return rec.is_valid && job_name == rec.job_name;
     };
     auto result = findRecordInHeapPage<JobRecord>(jobs_table_page_, predicate, ctx);
-    if (!result.found)
+    if (result.status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Job not found");
         return Status::NOT_FOUND;
@@ -25698,7 +25710,7 @@ auto CatalogManager::getJob(const ID& job_id, JobInfo& job_out,
         return rec.is_valid && rec.job_id == job_id;
     };
     auto result = findRecordInHeapPage<JobRecord>(jobs_table_page_, predicate, ctx);
-    if (!result.found)
+    if (result.status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Job not found");
         return Status::NOT_FOUND;
@@ -25739,7 +25751,7 @@ auto CatalogManager::updateJob(const JobInfo& job_in, ErrorContext* ctx) -> Stat
         return rec.is_valid && rec.job_id == job_in.job_id;
     };
     auto found = findRecordInHeapPage<JobRecord>(jobs_table_page_, predicate, ctx);
-    if (!found.found)
+    if (found.status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Job not found");
         return Status::NOT_FOUND;
@@ -25771,7 +25783,7 @@ auto CatalogManager::updateJob(const JobInfo& job_in, ErrorContext* ctx) -> Stat
     updated.created_at = job_in.created_at;
     updated.state = static_cast<uint8_t>(job_in.state);
 
-    return updateRecordInHeapPage<JobRecord>(jobs_table_page_, updated, predicate, ctx);
+    return updateRecordInHeapPage<JobRecord>(jobs_table_page_, predicate, updated, ctx);
 }
 
 auto CatalogManager::deleteJob(const ID& job_id, bool keep_history,
@@ -25881,7 +25893,7 @@ auto CatalogManager::updateJobRun(const JobRunInfo& run_in, ErrorContext* ctx) -
         return rec.is_valid && rec.job_run_id == run_in.job_run_id;
     };
     auto found = findRecordInHeapPage<JobRunRecord>(job_runs_table_page_, predicate, ctx);
-    if (!found.found)
+    if (found.status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Job run not found");
         return Status::NOT_FOUND;
@@ -25896,7 +25908,7 @@ auto CatalogManager::updateJobRun(const JobRunInfo& run_in, ErrorContext* ctx) -
     updated.error_code = run_in.error_code;
     copyStringField(updated.result_message, run_in.result_message);
 
-    return updateRecordInHeapPage<JobRunRecord>(job_runs_table_page_, updated, predicate, ctx);
+    return updateRecordInHeapPage<JobRunRecord>(job_runs_table_page_, predicate, updated, ctx);
 }
 
 auto CatalogManager::getJobRun(const ID& run_id, JobRunInfo& run_out,
@@ -25907,7 +25919,7 @@ auto CatalogManager::getJobRun(const ID& run_id, JobRunInfo& run_out,
         return rec.is_valid && rec.job_run_id == run_id;
     };
     auto found = findRecordInHeapPage<JobRunRecord>(job_runs_table_page_, predicate, ctx);
-    if (!found.found)
+    if (found.status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Job run not found");
         return Status::NOT_FOUND;

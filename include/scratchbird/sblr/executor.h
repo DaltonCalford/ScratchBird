@@ -267,6 +267,7 @@ namespace scratchbird
             // Connection context for security and transaction state (Phase 2 - Security System)
             // NOTE: This is a non-owning pointer that must be set before executing security-related operations
             core::ConnectionContext *conn_ctx_ = nullptr;
+            std::unique_ptr<core::ConnectionContext> owned_conn_ctx_;
             std::istream* copy_input_stream_ = nullptr;
             std::ostream* copy_output_stream_ = nullptr;
 

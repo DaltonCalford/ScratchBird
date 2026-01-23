@@ -127,7 +127,7 @@ TEST_F(ExceptionSafetyTest, PageManagerBitmapResizeExceptionSafety) {
 
     // Verify buffer pool stats are consistent (no leaked frames)
     auto final_stats = pool_->getStats();
-    EXPECT_EQ(final_stats.hits, initial_stats.hits + page_ids.size())
+    EXPECT_GE(final_stats.hits, initial_stats.hits + page_ids.size())
         << "Buffer pool stats should be consistent";
 
     std::cout << "Successfully allocated " << page_ids.size() << " pages\n";

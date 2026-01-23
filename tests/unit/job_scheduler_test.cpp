@@ -3,7 +3,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
-#include "scratchbird/testing/test_helpers.h"
+#include "test_helpers.h"
 
 #include "gtest/gtest.h"
 
@@ -129,14 +129,17 @@ TEST(JobSchedulerCancellation, CancelledRunSkippedBeforeExecution) {
 
     CatalogManager::JobRunInfo run;
     bool found = false;
-    for (int i = 0; i < 200; ++i) {
+    auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(config.polling_interval_seconds * 1000 +
+                                  config.pre_execute_delay_ms + 1000);
+    while (std::chrono::steady_clock::now() < deadline) {
         std::vector<CatalogManager::JobRunInfo> runs;
         if (catalog->listJobRuns(job_id, runs, &ctx) == Status::OK && !runs.empty()) {
             run = runs.front();
             found = true;
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     ASSERT_TRUE(found);

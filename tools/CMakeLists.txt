@@ -3,9 +3,7 @@
 # sb_timezone_loader - Timezone data loader
 add_executable(sb_timezone_loader sb_timezone_loader.cpp)
 
-target_link_libraries(sb_timezone_loader PRIVATE
-    scratchbird_core
-)
+target_link_libraries(sb_timezone_loader PRIVATE scratchbird_link_group)
 
 target_include_directories(sb_timezone_loader PRIVATE
     ${CMAKE_SOURCE_DIR}/include

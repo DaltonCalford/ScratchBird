@@ -110,6 +110,15 @@ namespace scratchbird
     {
         namespace {
             bool isZeroUuid(const core::ID& id);
+            bool hasJobAdminPrivilege(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx);
+            bool parseUuidText(const std::string& text, core::ID& out);
+            void logJobAudit(core::Database* db,
+                             core::ConnectionContext* conn_ctx,
+                             core::AuditEventType type,
+                             const core::CatalogManager::JobInfo& job,
+                             const core::ID* run_id,
+                             bool success,
+                             const std::string& message);
             std::string normalizeSchemaPath(const std::string& path);
             std::vector<std::string> splitSchemaComponents(const std::string& path);
             std::string joinSchemaComponents(const std::vector<std::string>& components,
@@ -1532,6 +1541,28 @@ namespace scratchbird
                     }
                 }
             };
+
+            if (!conn_ctx_)
+            {
+                core::ErrorContext conn_ctx_err;
+                std::unique_ptr<core::ConnectionContext> temp_ctx;
+                auto status = db_->connect(temp_ctx, &conn_ctx_err);
+                if (status != core::Status::OK || !temp_ctx)
+                {
+                    std::string err_msg = "Failed to create connection context";
+                    if (!conn_ctx_err.message.empty())
+                    {
+                        err_msg += ": " + conn_ctx_err.message;
+                    }
+                    return ExecutionResult(err_msg);
+                }
+                if (current_schema_set_)
+                {
+                    temp_ctx->setCurrentSchemaId(current_schema_id_);
+                }
+                conn_ctx_ = temp_ctx.get();
+                owned_conn_ctx_ = std::move(temp_ctx);
+            }
 
             ConnectionContextGuard ctx_guard(conn_ctx_);
             core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
