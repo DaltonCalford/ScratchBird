@@ -83,6 +83,7 @@ Thumbs.db
 # Tests
 Testing/
 ctest-
+tests/compatibility/firebird/results/ctest/
 
 # Gradle caches/build output
 .gradle/
