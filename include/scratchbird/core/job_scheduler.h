@@ -19,6 +19,7 @@ public:
         uint32_t polling_interval_seconds = 10;
         uint32_t max_jobs_per_tick = 16;
         uint32_t cron_fallback_seconds = 60;
+        uint32_t pre_execute_delay_ms = 0;
     };
 
     explicit JobScheduler(Database* db, const Config& config = Config{});

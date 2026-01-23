@@ -52,6 +52,7 @@ namespace scratchbird
             ALTER_JOB = 0xB5,                 // Alter job (WS-4 Scheduler)
             DROP_JOB = 0xB6,                  // Drop job (WS-4 Scheduler)
             EXECUTE_JOB = 0xB7,               // Execute job (WS-4 Scheduler)
+            CANCEL_JOB_RUN = 0xB8,            // Cancel job run (WS-4 Scheduler)
 
             // Data types
             TYPE_INTEGER = 0x20,   // 32-bit integer (INT32)

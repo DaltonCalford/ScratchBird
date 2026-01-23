@@ -1766,6 +1766,11 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::CANCEL_JOB_RUN:
+                        executeCancelJobRun();
+                        result = ExecutionResult();
+                        break;
+
                     case Opcode::DROP_TABLESPACE:
                         executeDropTablespace();
                         result = ExecutionResult();
@@ -35316,6 +35321,11 @@ namespace scratchbird
                 deps.push_back(readString());
             }
 
+            if (conn_ctx_ && !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_))
+            {
+                error("Permission denied: CREATE JOB requires DB_OWNER or superuser");
+            }
+
             auto now_ms = []() -> uint64_t {
                 auto now = std::chrono::system_clock::now().time_since_epoch();
                 return static_cast<uint64_t>(
@@ -35383,6 +35393,11 @@ namespace scratchbird
                 }
             }
 
+            if (job.job_type == core::CatalogManager::JobType::EXTERNAL &&
+                conn_ctx_ && !conn_ctx_->isSuperuser()) {
+                error("Permission denied: EXECUTE EXTERNAL JOB requires superuser");
+            }
+
             uint64_t now = now_ms();
             if (job.schedule_kind == core::CatalogManager::ScheduleKind::AT) {
                 uint64_t at_ms = parse_timestamp_ms(at_timestamp);
@@ -35420,6 +35435,10 @@ namespace scratchbird
             if (status != core::Status::OK) {
                 error("CREATE JOB failed: " + err_ctx.message);
             }
+
+            job.job_id = job_id;
+            logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_CREATED,
+                        job, nullptr, true, "");
 
             if (!deps.empty()) {
                 std::vector<core::ID> dep_ids;
@@ -35466,6 +35485,14 @@ namespace scratchbird
             auto status = db_->catalog_manager()->getJobByName(job_name, job, &err_ctx);
             if (status != core::Status::OK) {
                 error("Job not found: " + job_name);
+            }
+
+            bool is_owner = conn_ctx_ &&
+                !isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                job.created_by_user_uuid == conn_ctx_->getCurrentUserId();
+            if (conn_ctx_ && !is_owner &&
+                !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) {
+                error("Permission denied: ALTER JOB requires job owner, DB_OWNER, or superuser");
             }
 
             auto now_ms = []() -> uint64_t {
@@ -35546,6 +35573,9 @@ namespace scratchbird
             if (status != core::Status::OK) {
                 error("ALTER JOB failed: " + err_ctx.message);
             }
+
+            logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_MODIFIED,
+                        job, nullptr, true, "");
         }
 
         void Executor::executeDropJob()
@@ -35561,10 +35591,21 @@ namespace scratchbird
                 error("Job not found: " + job_name);
             }
 
+            bool is_owner = conn_ctx_ &&
+                !isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                job.created_by_user_uuid == conn_ctx_->getCurrentUserId();
+            if (conn_ctx_ && !is_owner &&
+                !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) {
+                error("Permission denied: DROP JOB requires job owner, DB_OWNER, or superuser");
+            }
+
             status = db_->catalog_manager()->deleteJob(job.job_id, keep_history, &err_ctx);
             if (status != core::Status::OK) {
                 error("DROP JOB failed: " + err_ctx.message);
             }
+
+            logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_DELETED,
+                        job, nullptr, true, "");
         }
 
         void Executor::executeExecuteJob()
@@ -35576,6 +35617,14 @@ namespace scratchbird
             auto status = db_->catalog_manager()->getJobByName(job_name, job, &err_ctx);
             if (status != core::Status::OK) {
                 error("Job not found: " + job_name);
+            }
+
+            bool is_owner = conn_ctx_ &&
+                !isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                job.created_by_user_uuid == conn_ctx_->getCurrentUserId();
+            if (conn_ctx_ && !is_owner &&
+                !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) {
+                error("Permission denied: EXECUTE JOB requires job owner, DB_OWNER, or superuser");
             }
 
             auto now = []() -> uint64_t {
@@ -35605,6 +35654,63 @@ namespace scratchbird
             if (status != core::Status::OK) {
                 error("Failed to update job run");
             }
+
+            logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_EXECUTED,
+                        job, &run.job_run_id, true, run.result_message);
+        }
+
+        void Executor::executeCancelJobRun()
+        {
+            std::string job_run_uuid = readString();
+
+            core::ID run_id{};
+            if (!parseUuidText(job_run_uuid, run_id)) {
+                error("Invalid job run UUID");
+            }
+
+            core::CatalogManager::JobRunInfo run;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getJobRun(run_id, run, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Job run not found");
+            }
+
+            core::CatalogManager::JobInfo job;
+            status = db_->catalog_manager()->getJob(run.job_id, job, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Job not found for run");
+            }
+
+            bool is_owner = conn_ctx_ &&
+                !isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                job.created_by_user_uuid == conn_ctx_->getCurrentUserId();
+            if (conn_ctx_ && !is_owner &&
+                !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) {
+                error("Permission denied: CANCEL JOB RUN requires job owner, DB_OWNER, or superuser");
+            }
+
+            if (run.state == core::CatalogManager::JobRunState::COMPLETED ||
+                run.state == core::CatalogManager::JobRunState::FAILED ||
+                run.state == core::CatalogManager::JobRunState::CANCELLED) {
+                error("Job run is not cancellable");
+            }
+
+            auto now = []() -> uint64_t {
+                auto tp = std::chrono::system_clock::now().time_since_epoch();
+                return static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(tp).count());
+            };
+
+            run.state = core::CatalogManager::JobRunState::CANCELLED;
+            run.completed_at = now();
+            run.result_message = "Cancelled by user";
+            status = db_->catalog_manager()->updateJobRun(run, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Failed to cancel job run");
+            }
+
+            logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_CANCELLED,
+                        job, &run.job_run_id, true, run.result_message);
         }
 
         void Executor::executeCreateGroup()
@@ -47320,6 +47426,158 @@ namespace scratchbird
                     }
                 }
                 return true;
+            }
+
+            bool isDbOwnerRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx)
+            {
+                if (!catalog || !conn_ctx) {
+                    return false;
+                }
+                core::CatalogManager::RoleInfo role_info;
+                core::ErrorContext role_ctx;
+                if (catalog->getRoleByName("DB_OWNER", role_info, &role_ctx) != core::Status::OK) {
+                    return false;
+                }
+                if (!isZeroUuid(conn_ctx->getActiveRoleId()) &&
+                    conn_ctx->getActiveRoleId() == role_info.role_id) {
+                    return true;
+                }
+                if (isZeroUuid(conn_ctx->getCurrentUserId())) {
+                    return false;
+                }
+                std::vector<core::CatalogManager::RoleMembershipInfo> roles;
+                if (catalog->getUserRoles(conn_ctx->getCurrentUserId(), roles, &role_ctx) != core::Status::OK) {
+                    return false;
+                }
+                for (const auto& membership : roles) {
+                    if (membership.role_id == role_info.role_id) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            bool hasJobAdminPrivilege(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx)
+            {
+                if (!conn_ctx) {
+                    return false;
+                }
+                if (conn_ctx->isSuperuser()) {
+                    return true;
+                }
+                return isDbOwnerRole(catalog, conn_ctx);
+            }
+
+            std::string trimAsciiLocal(const std::string& value)
+            {
+                size_t start = 0;
+                while (start < value.size() &&
+                       std::isspace(static_cast<unsigned char>(value[start])) != 0) {
+                    ++start;
+                }
+                size_t end = value.size();
+                while (end > start &&
+                       std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+                    --end;
+                }
+                return value.substr(start, end - start);
+            }
+
+            bool parseUuidText(const std::string& text, core::ID& out)
+            {
+                std::string trimmed = trimAsciiLocal(text);
+                if (trimmed.empty()) {
+                    return false;
+                }
+
+                if (trimmed.rfind("urn:uuid:", 0) == 0 || trimmed.rfind("URN:UUID:", 0) == 0) {
+                    trimmed = trimmed.substr(9);
+                }
+
+                std::string hex;
+                hex.reserve(trimmed.size());
+                for (char ch : trimmed) {
+                    if (ch == '{' || ch == '}' || ch == '-') {
+                        continue;
+                    }
+                    hex.push_back(ch);
+                }
+
+                if (hex.size() != 32) {
+                    return false;
+                }
+
+                auto hexValue = [](char ch) -> int {
+                    if (ch >= '0' && ch <= '9') return ch - '0';
+                    if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
+                    if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
+                    return -1;
+                };
+
+                for (size_t i = 0; i < 16; ++i) {
+                    int high = hexValue(hex[i * 2]);
+                    int low = hexValue(hex[i * 2 + 1]);
+                    if (high < 0 || low < 0) {
+                        return false;
+                    }
+                    out.bytes[i] = static_cast<uint8_t>((high << 4) | low);
+                }
+
+                return true;
+            }
+
+            void logJobAudit(core::Database* db,
+                             core::ConnectionContext* conn_ctx,
+                             core::AuditEventType type,
+                             const core::CatalogManager::JobInfo& job,
+                             const core::ID* run_id,
+                             bool success,
+                             const std::string& message)
+            {
+                if (!db) {
+                    return;
+                }
+                auto* audit_logger = db->audit_logger();
+                if (!audit_logger) {
+                    return;
+                }
+
+                core::AuditEvent event;
+                event.event_type = type;
+                event.success = success;
+                event.object_type = "JOB";
+                event.object_name = job.job_name;
+                event.object_id = job.job_id;
+
+                if (conn_ctx) {
+                    event.user_id = conn_ctx->getCurrentUserId();
+                    event.role_id = conn_ctx->getActiveRoleId();
+                    event.session_id = conn_ctx->sessionId();
+                    event.authkey_id = conn_ctx->authKeyId();
+                } else {
+                    event.user_id = job.created_by_user_uuid;
+                }
+
+                if (!isZeroUuid(event.user_id)) {
+                    core::CatalogManager::UserInfo user_info;
+                    core::ErrorContext user_ctx;
+                    if (db->catalog_manager() &&
+                        db->catalog_manager()->getUser(event.user_id, user_info, &user_ctx) == core::Status::OK) {
+                        event.username = user_info.username;
+                    }
+                }
+
+                json details;
+                if (run_id) {
+                    details["job_run_uuid"] = run_id->toString();
+                }
+                if (!message.empty()) {
+                    details["message"] = message;
+                }
+                event.details = details.dump();
+
+                core::ErrorContext audit_ctx;
+                audit_logger->logEvent(event, &audit_ctx);
             }
 
             core::ID resolveDefaultSchema(core::CatalogManager* catalog)

@@ -918,6 +918,17 @@ TEST_F(ParserV2DDLTest, Truncate_Cascade) {
     EXPECT_TRUE(stmt->cascade);
 }
 
+TEST_F(ParserV2DDLTest, CancelJobRun_Basic) {
+    Parser parser("CANCEL JOB RUN '01234567-89ab-cdef-0123-456789abcdef'");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<CancelJobRunStmt*>(result.statement());
+
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(getString(parser, stmt->job_run_uuid), "01234567-89ab-cdef-0123-456789abcdef");
+}
+
 // =============================================================================
 // Error Handling Tests
 // =============================================================================

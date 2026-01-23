@@ -533,6 +533,14 @@ std::string AuditLogger::getEventTypeName(AuditEventType type)
         case AuditEventType::AUDIT_LOG_MODIFIED:      return "AUDIT_LOG_MODIFIED";
         case AuditEventType::ENCRYPTION_KEY_CHANGED:  return "ENCRYPTION_KEY_CHANGED";
 
+        // Job Scheduler
+        case AuditEventType::JOB_CREATED:         return "JOB_CREATED";
+        case AuditEventType::JOB_MODIFIED:        return "JOB_MODIFIED";
+        case AuditEventType::JOB_DELETED:         return "JOB_DELETED";
+        case AuditEventType::JOB_EXECUTED:        return "JOB_EXECUTED";
+        case AuditEventType::JOB_FAILED:          return "JOB_FAILED";
+        case AuditEventType::JOB_CANCELLED:       return "JOB_CANCELLED";
+
         default:                                   return "UNKNOWN";
     }
 }

@@ -2521,6 +2521,9 @@ public:
 
         auto updateJobRun(const JobRunInfo& run_in, ErrorContext* ctx = nullptr) -> Status;
 
+        auto getJobRun(const ID& run_id, JobRunInfo& run_out,
+                      ErrorContext* ctx = nullptr) -> Status;
+
         auto listJobRuns(const ID& job_id, std::vector<JobRunInfo>& runs_out,
                         ErrorContext* ctx = nullptr) -> Status;
 

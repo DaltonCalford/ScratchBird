@@ -858,6 +858,7 @@ namespace scratchbird
             void executeAlterJob();          // Execute ALTER JOB
             void executeDropJob();           // Execute DROP JOB
             void executeExecuteJob();        // Execute EXECUTE JOB
+            void executeCancelJobRun();      // Execute CANCEL JOB RUN
             void executeCreateGroup();       // Execute CREATE GROUP
             void executeDropGroup();         // Execute DROP GROUP
             void executeGrantPrivilege();    // Execute GRANT privilege

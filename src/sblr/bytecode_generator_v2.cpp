@@ -614,6 +614,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateExplain(explain);
     } else if (auto* exec_job = dynamic_cast<ResolvedExecuteJobStmt*>(stmt)) {
         generateExecuteJob(exec_job);
+    } else if (auto* cancel_run = dynamic_cast<ResolvedCancelJobRunStmt*>(stmt)) {
+        generateCancelJobRun(cancel_run);
     } else {
         current_result_->addError("Unknown statement type for bytecode generation");
     }
@@ -2756,6 +2758,11 @@ void BytecodeGeneratorV2::generateDropJob(ResolvedDropJobStmt* stmt) {
 void BytecodeGeneratorV2::generateExecuteJob(ResolvedExecuteJobStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::EXECUTE_JOB);
     writeStringId(stmt->job_name);
+}
+
+void BytecodeGeneratorV2::generateCancelJobRun(ResolvedCancelJobRunStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::CANCEL_JOB_RUN);
+    writeStringId(stmt->job_run_uuid);
 }
 
 // =============================================================================

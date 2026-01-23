@@ -3568,6 +3568,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeAlterJob(static_cast<AlterJobStmt*>(stmt));
         case ASTKind::ExecuteJobStmt:
             return analyzeExecuteJob(static_cast<ExecuteJobStmt*>(stmt));
+        case ASTKind::CancelJobRunStmt:
+            return analyzeCancelJobRun(static_cast<CancelJobRunStmt*>(stmt));
         case ASTKind::TruncateTableStmt:
             return analyzeTruncateTable(static_cast<TruncateTableStmt*>(stmt));
 
@@ -5819,6 +5821,17 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeExecuteJob(ExecuteJobStmt* stmt) {
     auto* resolved = arena_.create<ResolvedExecuteJobStmt>();
     resolved->span = stmt->span;
     resolved->job_name = stmt->job_name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCancelJobRun(CancelJobRunStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCancelJobRunStmt>();
+    resolved->span = stmt->span;
+    resolved->job_run_uuid = stmt->job_run_uuid;
     return resolved;
 }
 

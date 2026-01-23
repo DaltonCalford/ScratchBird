@@ -190,6 +190,13 @@ Statement* Parser::parseStatementInternal() {
     // Utility statements
     if (match(TokenType::KW_EXPLAIN))   return parseExplain();
     if (matchContextual("SWEEP"))       return parseSweep();
+    if (matchContextual("CANCEL")) {
+        if (matchContextual("JOB")) {
+            return parseCancelJobRun();
+        }
+        error("Expected JOB after CANCEL");
+        return nullptr;
+    }
     if (check(TokenType::KW_EXECUTE)) {
         match(TokenType::KW_EXECUTE);
         if (matchContextual("JOB")) {
@@ -7535,6 +7542,33 @@ ExecuteJobStmt* Parser::parseExecuteJob() {
 
     auto* stmt = arena_.create<ExecuteJobStmt>();
     stmt->job_name = expectIdentifier("Expected job name");
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
+// CANCEL JOB RUN
+// =============================================================================
+
+CancelJobRunStmt* Parser::parseCancelJobRun() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CancelJobRunStmt>();
+    if (!matchContextual("RUN")) {
+        error("Expected RUN after CANCEL JOB");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (check(TokenType::STRING_LITERAL)) {
+        stmt->job_run_uuid = current().value.string_id;
+        advance();
+    } else if (isIdentifier()) {
+        stmt->job_run_uuid = expectIdentifier("Expected job run UUID");
+    } else {
+        error("Expected job run UUID");
+    }
+
     stmt->span = makeSpan(start);
     return stmt;
 }

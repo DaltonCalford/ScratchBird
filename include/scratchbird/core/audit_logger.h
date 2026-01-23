@@ -82,6 +82,14 @@ enum class AuditEventType {
     AUDIT_LOG_ACCESSED = 801,
     AUDIT_LOG_MODIFIED = 802,  // Critical - should never happen
     ENCRYPTION_KEY_CHANGED = 803,
+
+    // Job Scheduler (900-999)
+    JOB_CREATED = 900,
+    JOB_MODIFIED = 901,
+    JOB_DELETED = 902,
+    JOB_EXECUTED = 903,
+    JOB_FAILED = 904,
+    JOB_CANCELLED = 905,
 };
 
 /**

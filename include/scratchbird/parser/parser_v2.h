@@ -234,6 +234,7 @@ private:
     ExplainStmt* parseExplain();
     SweepDatabaseStmt* parseSweep();
     ExecuteJobStmt* parseExecuteJob();
+    CancelJobRunStmt* parseCancelJobRun();
 
     // ==========================================================================
     // DCL Statements (Data Control Language)

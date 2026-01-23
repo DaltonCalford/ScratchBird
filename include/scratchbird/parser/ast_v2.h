@@ -116,6 +116,7 @@ enum class ASTKind : uint16_t {
     SweepDatabaseStmt,
     AlterJobStmt,
     ExecuteJobStmt,
+    CancelJobRunStmt,
 
     // Statements - DCL (Data Control Language)
     GrantStmt,
@@ -926,6 +927,17 @@ public:
     void accept(ASTVisitor& visitor) override;
 
     StringPool::StringId job_name = StringPool::INVALID_ID;
+};
+
+/**
+ * CANCEL JOB RUN statement
+ */
+class CancelJobRunStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CancelJobRunStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId job_run_uuid = StringPool::INVALID_ID;
 };
 
 /**
@@ -3092,6 +3104,7 @@ public:
     virtual void visit(TruncateTableStmt* stmt) = 0;
     virtual void visit(AlterJobStmt* stmt) = 0;
     virtual void visit(ExecuteJobStmt* stmt) = 0;
+    virtual void visit(CancelJobRunStmt* stmt) = 0;
 
     // DML statements
     virtual void visit(SelectStmt* stmt) = 0;

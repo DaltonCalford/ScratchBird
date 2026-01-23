@@ -974,6 +974,13 @@ struct ResolvedExecuteJobStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved CANCEL JOB RUN statement
+ */
+struct ResolvedCancelJobRunStmt : public ResolvedStatement {
+    StringPool::StringId job_run_uuid = StringPool::INVALID_ID;
+};
+
+/**
  * Resolved CREATE EXCEPTION statement
  */
 struct ResolvedCreateExceptionStmt : public ResolvedStatement {

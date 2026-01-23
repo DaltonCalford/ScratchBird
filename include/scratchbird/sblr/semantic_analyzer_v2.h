@@ -340,6 +340,7 @@ private:
     ResolvedStatement* analyzeDropException(DropExceptionStmt* stmt);
     ResolvedStatement* analyzeAlterJob(AlterJobStmt* stmt);
     ResolvedStatement* analyzeExecuteJob(ExecuteJobStmt* stmt);
+    ResolvedStatement* analyzeCancelJobRun(CancelJobRunStmt* stmt);
     ResolvedStatement* analyzeTruncateTable(TruncateTableStmt* stmt);
 
     // DML

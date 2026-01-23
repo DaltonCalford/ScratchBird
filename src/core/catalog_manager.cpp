@@ -2253,6 +2253,57 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         DEBUG_LOG_DB("Security system bootstrap complete");
 
+        // ========================================================================
+        // WS-4: Seed built-in maintenance jobs (sweep/GC, stats, index rebuild)
+        // ========================================================================
+        auto now_ms = []() -> uint64_t {
+            auto now = std::chrono::system_clock::now().time_since_epoch();
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+        };
+
+        auto seed_job = [&](const std::string& name,
+                            const std::string& description,
+                            const std::string& cron_expression,
+                            const std::string& job_sql,
+                            CatalogManager::JobState state) -> Status {
+            CatalogManager::JobInfo job;
+            job.job_name = name;
+            job.description = description;
+            job.job_type = CatalogManager::JobType::SQL;
+            job.job_sql = job_sql;
+            job.schedule_kind = CatalogManager::ScheduleKind::CRON;
+            job.cron_expression = cron_expression;
+            job.created_by_user_uuid = system_user_id_;
+            job.created_at = now_ms();
+            job.state = state;
+            job.next_run_time = 0;
+
+            ID job_id;
+            return createJob(job, job_id, ctx);
+        };
+
+        status = seed_job("daily_sweep",
+                          "Daily sweep/GC maintenance",
+                          "0 2 * * *",
+                          "SWEEP DATABASE",
+                          CatalogManager::JobState::ENABLED);
+        if (status != Status::OK) return status;
+
+        status = seed_job("update_stats",
+                          "Hourly statistics refresh",
+                          "0 * * * *",
+                          "ANALYZE",
+                          CatalogManager::JobState::ENABLED);
+        if (status != Status::OK) return status;
+
+        status = seed_job("rebuild_indexes",
+                          "Weekly index rebuild (enable after REINDEX is implemented)",
+                          "0 3 * * 0",
+                          "REINDEX DATABASE",
+                          CatalogManager::JobState::DISABLED);
+        if (status != Status::OK) return status;
+
         // Note: TOAST initialization is done separately via initializePolicyToast()
         // to avoid mutex deadlock (TOAST manager calls getTable which needs mutex)
 
@@ -25848,8 +25899,37 @@ auto CatalogManager::updateJobRun(const JobRunInfo& run_in, ErrorContext* ctx) -
     return updateRecordInHeapPage<JobRunRecord>(job_runs_table_page_, updated, predicate, ctx);
 }
 
+auto CatalogManager::getJobRun(const ID& run_id, JobRunInfo& run_out,
+                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&run_id](const JobRunRecord& rec) {
+        return rec.is_valid && rec.job_run_id == run_id;
+    };
+    auto found = findRecordInHeapPage<JobRunRecord>(job_runs_table_page_, predicate, ctx);
+    if (!found.found)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Job run not found");
+        return Status::NOT_FOUND;
+    }
+
+    run_out.job_run_id = found.record.job_run_id;
+    run_out.job_id = found.record.job_id;
+    run_out.assigned_node_uuid = found.record.assigned_node_uuid;
+    run_out.shard_uuid = found.record.shard_uuid;
+    run_out.scheduled_time = found.record.scheduled_time;
+    run_out.started_at = found.record.started_at;
+    run_out.completed_at = found.record.completed_at;
+    run_out.state = static_cast<JobRunState>(found.record.state);
+    run_out.retry_count = found.record.retry_count;
+    run_out.result_message = found.record.result_message;
+    run_out.rows_affected = found.record.rows_affected;
+    run_out.error_code = found.record.error_code;
+    return Status::OK;
+}
+
 auto CatalogManager::listJobRuns(const ID& job_id, std::vector<JobRunInfo>& runs_out,
-                                ErrorContext* ctx) -> Status
+                               ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
     auto filter = [&job_id](const JobRunRecord& rec) {

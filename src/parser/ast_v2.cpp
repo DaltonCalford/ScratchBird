@@ -55,6 +55,7 @@ void DropJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void TruncateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ExecuteJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CancelJobRunStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // DML statements
 void SelectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }

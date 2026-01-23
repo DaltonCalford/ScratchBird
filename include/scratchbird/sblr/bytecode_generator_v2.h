@@ -201,6 +201,7 @@ private:
     void generateDrop(ResolvedDropStmt* stmt);
     void generateDropJob(ResolvedDropJobStmt* stmt);
     void generateExecuteJob(ResolvedExecuteJobStmt* stmt);
+    void generateCancelJobRun(ResolvedCancelJobRunStmt* stmt);
 
     // Transaction/Session
     void generateStartTransaction(ResolvedStartTransactionStmt* stmt);
