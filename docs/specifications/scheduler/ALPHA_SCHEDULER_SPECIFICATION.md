@@ -82,7 +82,7 @@ Alpha parser accepts Beta syntax but ignores cluster-specific features.
 CREATE JOB daily_sweep
   CLASS = LOCAL_SAFE              -- Accepted, ignored (Alpha has no classes)
   PARTITION BY ALL_SHARDS         -- Accepted, ignored (Alpha has no shards)
-  SCHEDULE = '0 2 * * *'
+  SCHEDULE = CRON '0 2 * * *'
   AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 
 -- Result: Job created, executes on single Alpha node, no errors
@@ -149,7 +149,7 @@ Alpha scheduler DOES use:
 ```sql
 -- Alpha: Create job
 CREATE JOB hourly_report
-  SCHEDULE = '0 * * * *'
+  SCHEDULE = CRON '0 * * * *'
   AS 'CALL generate_hourly_sales_report()';
 
 -- Beta: Same job definition works unchanged
@@ -239,16 +239,24 @@ struct Job {
     UUID procedure_uuid;                 // Procedure to call (for PROCEDURE jobs)
     string external_command;             // Command to run (for EXTERNAL jobs)
 
-    JobScheduleType schedule_type;       // ONE_TIME | RECURRING
-    string cron_expression;              // Cron expression (for RECURRING)
+    ScheduleKind schedule_kind;          // CRON | AT | EVERY
+    string cron_expression;              // For CRON
+    int64 interval_seconds;              // For EVERY
+    timestamp_t starts_at;               // Optional start time (ms)
+    timestamp_t ends_at;                 // Optional end time (ms)
+    string schedule_tz;                  // Time zone name (optional, default UTC)
     timestamp_t next_run_time;           // Next scheduled execution
+
+    OnCompletion on_completion;          // PRESERVE | DROP (AT jobs)
 
     PartitionRule partition_rule;        // Alpha: Accepted, ignored (no shards)
 
     uint32_t max_retries;                // Max retry attempts (default: 3)
     duration_t retry_backoff;            // Backoff between retries (default: 60s)
+    duration_t timeout_seconds;          // Timeout (default: 3600s)
 
     UUID created_by_user_uuid;           // Job creator (for privilege enforcement)
+    UUID run_as_role_uuid;               // Optional role override
     timestamp_t created_at;
     JobState state;                      // ENABLED | DISABLED | PAUSED
 };
@@ -274,7 +282,7 @@ struct JobRun {
     timestamp_t started_at;              // When execution started
     timestamp_t completed_at;            // When execution completed
 
-    JobRunState state;                   // PENDING | RUNNING | COMPLETED | FAILED
+    JobRunState state;                   // PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
     uint32_t retry_count;                // Number of retries so far
 
     string result_message;               // Success/error message
@@ -313,13 +321,20 @@ void SchedulerThread::schedulingLoop() {
                 JobRun run = createJobRun(job);
                 execution_queue_.push(run);  // Add to execution queue
 
-                // Update next run time (for recurring jobs)
-                if (job.schedule_type == JobScheduleType::RECURRING) {
+                // Update next run time (CRON/EVERY) or finalize AT jobs
+                if (job.schedule_kind == ScheduleKind::CRON) {
                     timestamp_t next_run = calculateNextRunTime(job.cron_expression, now);
                     catalog_->updateJob(job.job_uuid, {{"next_run_time", next_run}});
+                } else if (job.schedule_kind == ScheduleKind::EVERY) {
+                    timestamp_t next_run = now + seconds(job.interval_seconds);
+                    catalog_->updateJob(job.job_uuid, {{"next_run_time", next_run}});
                 } else {
-                    // One-time job: Disable after scheduling
-                    catalog_->updateJob(job.job_uuid, {{"state", JobState::DISABLED}});
+                    // AT job: disable or drop after scheduling
+                    if (job.on_completion == OnCompletion::DROP) {
+                        catalog_->deleteJob(job.job_uuid);
+                    } else {
+                        catalog_->updateJob(job.job_uuid, {{"state", JobState::DISABLED}});
+                    }
                 }
             }
 
@@ -462,11 +477,15 @@ void SchedulerThread::executeSqlJob(const Job& job, JobRun& run) {
 CREATE JOB job_name
   [CLASS = job_class]              -- Optional, ignored in Alpha
   [PARTITION BY partition_rule]    -- Optional, ignored in Alpha
-  SCHEDULE = 'cron_expression' | AT timestamp
+  SCHEDULE = CRON 'cron_expression' | AT 'timestamp' | EVERY interval [STARTS 'timestamp'] [ENDS 'timestamp']
   [DEPENDS ON job_name [, ...]]    -- Optional, job dependencies
   [MAX_RETRIES = n]                -- Optional, default: 3
   [RETRY_BACKOFF = duration]       -- Optional, default: 60s
+  [TIMEOUT = duration]             -- Optional
+  [ON COMPLETION PRESERVE | DROP]  -- Optional (AT jobs)
+  [RUN AS role_name]               -- Optional
   [DESCRIPTION = 'description']    -- Optional
+  [ENABLED | DISABLED]             -- Optional
   AS 'sql_statement' | CALL procedure_name() | EXEC 'external_command';
 ```
 
@@ -477,13 +496,13 @@ CREATE JOB job_name
 CREATE JOB daily_sweep
   CLASS = LOCAL_SAFE              -- Accepted, ignored in Alpha
   PARTITION BY ALL_SHARDS         -- Accepted, ignored in Alpha
-  SCHEDULE = '0 2 * * *'
+  SCHEDULE = CRON '0 2 * * *'
   DESCRIPTION = 'Daily sweep/GC + analyze'
   AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 
 -- Hourly report (Alpha-only syntax)
 CREATE JOB hourly_sales_report
-  SCHEDULE = '0 * * * *'
+  SCHEDULE = CRON '0 * * * *'
   AS 'CALL generate_hourly_sales_report()';
 
 -- One-time job (run at specific time)
@@ -495,17 +514,17 @@ CREATE JOB migrate_customer_data
 
 -- ETL pipeline with dependencies
 CREATE JOB etl_extract
-  SCHEDULE = '0 1 * * *'
+  SCHEDULE = CRON '0 1 * * *'
   AS 'CALL extract_source_data()';
 
 CREATE JOB etl_transform
   DEPENDS ON etl_extract
-  SCHEDULE = '0 2 * * *'
+  SCHEDULE = CRON '0 2 * * *'
   AS 'CALL transform_extracted_data()';
 
 CREATE JOB etl_load
   DEPENDS ON etl_transform
-  SCHEDULE = '0 3 * * *'
+  SCHEDULE = CRON '0 3 * * *'
   AS 'CALL load_transformed_data()';
 ```
 
@@ -522,7 +541,7 @@ ALTER JOB job_name SET STATE = ENABLED;
 ALTER JOB job_name SET STATE = DISABLED;
 
 -- Change schedule
-ALTER JOB job_name SET SCHEDULE = '0 */2 * * *';  -- Every 2 hours
+ALTER JOB job_name SET SCHEDULE = CRON '0 */2 * * *';  -- Every 2 hours
 
 -- Change retry policy
 ALTER JOB job_name SET MAX_RETRIES = 5;
@@ -542,7 +561,7 @@ DROP JOB job_name KEEP HISTORY;
 
 ```sql
 -- List all jobs
-SELECT job_uuid, job_name, schedule_type, cron_expression, next_run_time, state
+SELECT job_uuid, job_name, schedule_kind, cron_expression, next_run_time, state
 FROM sys.jobs
 ORDER BY next_run_time;
 
@@ -581,9 +600,15 @@ CREATE TABLE sys.jobs (
     procedure_uuid UUID,                    -- Procedure to call (for PROCEDURE jobs)
     external_command TEXT,                  -- Command to run (for EXTERNAL jobs)
 
-    schedule_type VARCHAR(20) NOT NULL,     -- 'ONE_TIME' | 'RECURRING'
-    cron_expression VARCHAR(100),           -- Cron expression (for RECURRING)
-    next_run_time BIGINT,                   -- Next scheduled execution (milliseconds)
+    schedule_kind VARCHAR(20) NOT NULL,     -- CRON | AT | EVERY
+    cron_expression VARCHAR(100),           -- For CRON
+    interval_seconds BIGINT,                -- For EVERY
+    starts_at BIGINT,                       -- Optional start time (ms)
+    ends_at BIGINT,                         -- Optional end time (ms)
+    schedule_tz VARCHAR(64),                -- Time zone name (optional, default UTC)
+    next_run_time BIGINT,                   -- Next scheduled execution (ms)
+
+    on_completion VARCHAR(20) DEFAULT 'PRESERVE', -- PRESERVE | DROP (AT jobs)
 
     partition_strategy VARCHAR(20),         -- Alpha: Stored, not used
     partition_shard_uuid UUID,              -- Alpha: Always null
@@ -591,10 +616,12 @@ CREATE TABLE sys.jobs (
 
     max_retries INTEGER DEFAULT 3,
     retry_backoff_seconds INTEGER DEFAULT 60,
+    timeout_seconds INTEGER DEFAULT 3600,
 
     created_by_user_uuid UUID NOT NULL,
+    run_as_role_uuid UUID,
     created_at BIGINT NOT NULL,
-    state VARCHAR(20) NOT NULL DEFAULT 'ENABLED',  -- 'ENABLED' | 'DISABLED' | 'PAUSED'
+    state VARCHAR(20) NOT NULL DEFAULT 'ENABLED',  -- ENABLED | DISABLED | PAUSED
 
     FOREIGN KEY (created_by_user_uuid) REFERENCES sys.users(user_uuid)
 );
@@ -619,7 +646,7 @@ CREATE TABLE sys.job_runs (
     started_at BIGINT,
     completed_at BIGINT,
 
-    state VARCHAR(20) NOT NULL,             -- 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+    state VARCHAR(20) NOT NULL,             -- PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
     retry_count INTEGER DEFAULT 0,
 
     result_message TEXT,
@@ -853,7 +880,7 @@ CREATE INDEX idx_job_deps_job_uuid ON sys.job_dependencies(job_uuid);
 1. **Alpha job definition**:
 ```sql
 CREATE JOB hourly_report
-  SCHEDULE = '0 * * * *'
+  SCHEDULE = CRON '0 * * * *'
   AS 'CALL generate_hourly_sales_report()';
 ```
 
@@ -879,7 +906,7 @@ CREATE JOB hourly_report
 ```sql
 -- Alpha job (still works in Beta)
 CREATE JOB daily_sweep
-  SCHEDULE = '0 2 * * *'
+  SCHEDULE = CRON '0 2 * * *'
   AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 
 -- Beta enhancement: Add job class and partition rule
@@ -1130,7 +1157,7 @@ audit_chain_->logEvent(AuditEventType::JOB_EXECUTED, {
 
 ```sql
 CREATE JOB daily_sweep
-  SCHEDULE = '0 2 * * *'
+  SCHEDULE = CRON '0 2 * * *'
   DESCRIPTION = 'Daily sweep/GC + analyze'
   AS 'SWEEP ANALYZE';             -- Native sweep/GC command (VACUUM alias available)
 ```
@@ -1139,7 +1166,7 @@ CREATE JOB daily_sweep
 
 ```sql
 CREATE JOB hourly_sales_report
-  SCHEDULE = '0 * * * *'
+  SCHEDULE = CRON '0 * * * *'
   DESCRIPTION = 'Generate hourly sales report'
   AS 'CALL generate_hourly_sales_report()';
 ```
@@ -1148,17 +1175,17 @@ CREATE JOB hourly_sales_report
 
 ```sql
 CREATE JOB etl_extract
-  SCHEDULE = '0 1 * * *'
+  SCHEDULE = CRON '0 1 * * *'
   AS 'CALL extract_source_data()';
 
 CREATE JOB etl_transform
   DEPENDS ON etl_extract
-  SCHEDULE = '0 2 * * *'
+  SCHEDULE = CRON '0 2 * * *'
   AS 'CALL transform_extracted_data()';
 
 CREATE JOB etl_load
   DEPENDS ON etl_transform
-  SCHEDULE = '0 3 * * *'
+  SCHEDULE = CRON '0 3 * * *'
   AS 'CALL load_transformed_data()';
 ```
 

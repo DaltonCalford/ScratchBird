@@ -4,9 +4,9 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/sweep_manager.h"
 
-
-
+#include "scratchbird/parser/parser_v2.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/semantic_analyzer_v2.h"
 #include "scratchbird/sblr/executor.h"
 #include "test_helpers.h"
 
@@ -89,25 +89,50 @@ protected:
 // Test parsing of SWEEP DATABASE statement
 TEST_F(SweepMechanismTest, ParseSweepDatabase)
 {
-    GTEST_SKIP() << "Parser V2 does not support SWEEP DATABASE yet";
+    scratchbird::parser::v2::Parser parser("SWEEP DATABASE");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Parse failed";
+
+    auto* stmt = dynamic_cast<scratchbird::parser::v2::SweepDatabaseStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
 }
 
 // Test parsing of SWEEP DATABASE with case variations
 TEST_F(SweepMechanismTest, ParseSweepDatabaseCaseInsensitive)
 {
-    GTEST_SKIP() << "Parser V2 does not support SWEEP DATABASE yet";
+    scratchbird::parser::v2::Parser parser("sWeEp dAtAbAsE");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Parse failed";
+
+    auto* stmt = dynamic_cast<scratchbird::parser::v2::SweepDatabaseStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
 }
 
 // Test parsing failure when DATABASE keyword is missing
 TEST_F(SweepMechanismTest, ParseSweepWithoutDatabase)
 {
-    GTEST_SKIP() << "Parser V2 does not support SWEEP DATABASE yet";
+    scratchbird::parser::v2::Parser parser("SWEEP");
+    auto result = parser.parseStatement();
+    EXPECT_FALSE(result.success());
+    EXPECT_FALSE(result.errors().empty());
 }
 
 // Test semantic analysis of SWEEP DATABASE (should always succeed)
 TEST_F(SweepMechanismTest, SemanticAnalysisSweepDatabase)
 {
-    GTEST_SKIP() << "Parser V2 does not support SWEEP DATABASE yet";
+    scratchbird::parser::v2::Parser parser("SWEEP DATABASE");
+    auto parse_result = parser.parseStatement();
+    ASSERT_TRUE(parse_result.success()) << "Parse failed";
+
+    scratchbird::parser::v2::SemanticAnalyzerV2 analyzer(
+        *db_.catalog_manager(), parser.stringPool());
+    analyzer.setCurrentSchema(schema_id_);
+    auto sem_result = analyzer.analyze(parse_result.statement());
+    ASSERT_TRUE(sem_result.success()) << "Semantic analysis failed";
+
+    auto* resolved =
+        dynamic_cast<scratchbird::parser::v2::ResolvedSweepDatabaseStmt*>(sem_result.statement());
+    ASSERT_NE(resolved, nullptr);
 }
 
 // ===== Bytecode Generation Tests =====

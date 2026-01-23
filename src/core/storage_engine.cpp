@@ -24,6 +24,8 @@
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/bitmap_index.h"  // TASK-DML-8: Bitmap Index DML Integration
 #include "scratchbird/core/columnstore.h"  // TASK-DML-7: Columnstore Index DML Integration
+#include "scratchbird/core/inverted_index.h"
+#include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -173,6 +175,36 @@ namespace scratchbird::core
                     return hnsw->insert(*decoded, tid, ctx);
                 }
 
+                case CatalogManager::IndexType::FULLTEXT:
+                {
+                    auto *inverted = static_cast<InvertedIndex*>(index_ptr);
+                    std::string text;
+                    size_t offset = 0;
+                    while (offset < key.size())
+                    {
+                        uint32_t len = 0;
+                        if (!readUint32LE(key.data(), key.size(), offset, len))
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length prefix invalid");
+                            return Status::DATA_CORRUPTED;
+                        }
+                        if (offset + len > key.size())
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length exceeds payload");
+                            return Status::DATA_CORRUPTED;
+                        }
+                        if (!text.empty())
+                        {
+                            text.push_back(' ');
+                        }
+                        text.append(reinterpret_cast<const char*>(key.data() + offset), len);
+                        offset += len;
+                    }
+                    return inverted->insert(text.data(), text.size(), tid, ctx);
+                }
+
                 default:
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown index type");
                     return Status::INVALID_ARGUMENT;
@@ -275,6 +307,36 @@ namespace scratchbird::core
                 {
                     auto *hnsw = static_cast<HnswIndex*>(index_ptr);
                     return hnsw->remove(tid, ctx);
+                }
+
+                case CatalogManager::IndexType::FULLTEXT:
+                {
+                    auto *inverted = static_cast<InvertedIndex*>(index_ptr);
+                    std::string text;
+                    size_t offset = 0;
+                    while (offset < key.size())
+                    {
+                        uint32_t len = 0;
+                        if (!readUint32LE(key.data(), key.size(), offset, len))
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length prefix invalid");
+                            return Status::DATA_CORRUPTED;
+                        }
+                        if (offset + len > key.size())
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length exceeds payload");
+                            return Status::DATA_CORRUPTED;
+                        }
+                        if (!text.empty())
+                        {
+                            text.push_back(' ');
+                        }
+                        text.append(reinterpret_cast<const char*>(key.data() + offset), len);
+                        offset += len;
+                    }
+                    return inverted->remove(text.data(), text.size(), tid, xid, ctx);
                 }
 
                 default:

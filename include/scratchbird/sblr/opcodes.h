@@ -48,6 +48,10 @@ namespace scratchbird
             ALTER_TABLE_SET_TABLESPACE = 0x1C, // Alter table set tablespace (Phase 4 Task 4.1.6)
             ATTACH_TABLESPACE = 0x1D,         // Attach tablespace (Phase 6 Task 6.1)
             DETACH_TABLESPACE = 0x1E,         // Detach tablespace (Phase 6 Task 6.2)
+            CREATE_JOB = 0xB4,                // Create job (WS-4 Scheduler)
+            ALTER_JOB = 0xB5,                 // Alter job (WS-4 Scheduler)
+            DROP_JOB = 0xB6,                  // Drop job (WS-4 Scheduler)
+            EXECUTE_JOB = 0xB7,               // Execute job (WS-4 Scheduler)
 
             // Data types
             TYPE_INTEGER = 0x20,   // 32-bit integer (INT32)
@@ -1424,15 +1428,16 @@ namespace scratchbird
         {
             BTREE = 0x00,          // B-Tree index - General purpose, sorted data
             HASH = 0x01,           // Hash index - Equality searches only
-            GIN = 0x02,            // GIN index - Multi-value columns (arrays, JSONB, text search)
-            GIST = 0x03,           // GiST index - Extensible, spatial data, custom types
-            SPGIST = 0x04,         // SP-GiST index - Space-partitioned, non-balanced trees
-            BRIN = 0x05,           // BRIN index - Block range index, large tables
-            RTREE = 0x06,          // R-Tree index - Spatial data, bounding boxes
-            HNSW = 0x07,           // HNSW index - Vector similarity search (ANN)
-            BITMAP = 0x08,         // Bitmap index - Low cardinality columns
-            COLUMNSTORE = 0x09,    // Columnstore index - Column-oriented storage
-            LSM = 0x0A,            // LSM-Tree index - Write-optimized, append-heavy workloads
+            HNSW = 0x02,           // HNSW index - Vector similarity search (ANN)
+            FULLTEXT = 0x03,       // Full-text search index
+            GIN = 0x04,            // GIN index - Multi-value columns (arrays, JSONB, text search)
+            GIST = 0x05,           // GiST index - Extensible, spatial data, custom types
+            BRIN = 0x06,           // BRIN index - Block range index, large tables
+            RTREE = 0x07,          // R-Tree index - Spatial data, bounding boxes
+            SPGIST = 0x08,         // SP-GiST index - Space-partitioned, non-balanced trees
+            BITMAP = 0x09,         // Bitmap index - Low cardinality columns
+            COLUMNSTORE = 0x0A,    // Columnstore index - Column-oriented storage
+            LSM = 0x0B,            // LSM-Tree index - Write-optimized, append-heavy workloads
         };
 
         /**

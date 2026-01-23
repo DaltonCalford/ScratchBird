@@ -42,21 +42,22 @@ TEST(BytecodeOpcodesTest, AllIndexOpcodesAreDefined)
 }
 
 /**
- * Test IndexType enum has all 11 index types
+ * Test IndexType enum has all 12 index types
  */
 TEST(BytecodeOpcodesTest, AllIndexTypesAreDefined)
 {
     EXPECT_EQ(static_cast<uint8_t>(IndexType::BTREE), 0x00);
     EXPECT_EQ(static_cast<uint8_t>(IndexType::HASH), 0x01);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::GIN), 0x02);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::GIST), 0x03);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::SPGIST), 0x04);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::BRIN), 0x05);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::RTREE), 0x06);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::HNSW), 0x07);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::BITMAP), 0x08);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::COLUMNSTORE), 0x09);
-    EXPECT_EQ(static_cast<uint8_t>(IndexType::LSM), 0x0A);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::HNSW), 0x02);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::FULLTEXT), 0x03);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::GIN), 0x04);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::GIST), 0x05);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::BRIN), 0x06);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::RTREE), 0x07);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::SPGIST), 0x08);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::BITMAP), 0x09);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::COLUMNSTORE), 0x0A);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::LSM), 0x0B);
 }
 
 /**

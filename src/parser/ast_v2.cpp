@@ -31,6 +31,7 @@ void CreatePackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateUserStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -50,7 +51,10 @@ void DropTriggerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropPackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void TruncateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExecuteJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // DML statements
 void SelectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -75,6 +79,7 @@ void SetStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ResetStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ShowStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ExplainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void SweepDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // DCL statements
 void GrantStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }

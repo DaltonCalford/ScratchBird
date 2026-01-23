@@ -8,6 +8,7 @@
 #include "scratchbird/sblr/opcodes.h"
 
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -32,6 +33,20 @@ void appendUint32(std::vector<uint8_t>& bytecode, uint32_t value)
     scratchbird::sblr::writeInt32(&bytecode[offset], value);
 }
 
+void appendUint64(std::vector<uint8_t>& bytecode, uint64_t value)
+{
+    size_t offset = bytecode.size();
+    bytecode.resize(offset + 8);
+    scratchbird::sblr::writeInt64(&bytecode[offset], value);
+}
+
+void appendDouble(std::vector<uint8_t>& bytecode, double value)
+{
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(double));
+    appendUint64(bytecode, bits);
+}
+
 void appendString(std::vector<uint8_t>& bytecode, const std::string& value)
 {
     appendUVarint(bytecode, static_cast<uint64_t>(value.size()));
@@ -53,7 +68,9 @@ std::vector<uint8_t> buildCreateIndexBytecode(
     const std::vector<std::string>& column_names,
     bool is_unique = false,
     scratchbird::core::CatalogManager::IndexType index_type =
-        scratchbird::core::CatalogManager::IndexType::BTREE)
+        scratchbird::core::CatalogManager::IndexType::BTREE,
+    bool bloom_filter_enabled = false,
+    double bloom_fpr = 0.01)
 {
     auto bytecode = startBytecode(scratchbird::sblr::Opcode::CREATE_INDEX);
     appendString(bytecode, index_name);
@@ -67,6 +84,14 @@ std::vector<uint8_t> buildCreateIndexBytecode(
     appendUint32(bytecode, 0);  // Include column count
     appendString(bytecode, "");  // Tablespace name
     bytecode.push_back(static_cast<uint8_t>(index_type));
+    uint32_t options_flags = 0;
+    if (bloom_filter_enabled) {
+        options_flags |= 0x01;
+    }
+    appendUint32(bytecode, options_flags);
+    if (bloom_filter_enabled) {
+        appendDouble(bytecode, bloom_fpr);
+    }
     bytecode.push_back(0);  // has expressions
     bytecode.push_back(0);  // has predicate
     return bytecode;

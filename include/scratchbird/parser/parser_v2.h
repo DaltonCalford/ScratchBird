@@ -142,12 +142,14 @@ private:
     CreateTriggerStmt* parseCreateTrigger(bool or_replace = false);
     CreateUserStmt* parseCreateUser();
     CreateRoleStmt* parseCreateRole();
+    CreateJobStmt* parseCreateJob();
 
     // ALTER statements
     AlterTableStmt* parseAlterTable();
     AlterSchemaStmt* parseAlterSchema();
     AlterDatabaseStmt* parseAlterDatabase();
     AlterDomainStmt* parseAlterDomain();
+    AlterJobStmt* parseAlterJob();
 
     // DROP statements
     DropTableStmt* parseDropTable();
@@ -162,6 +164,7 @@ private:
     DropPackageStmt* parseDropPackage();
     DropRoleStmt* parseDropRole();
     DropExceptionStmt* parseDropException();
+    DropJobStmt* parseDropJob();
 
     // TRUNCATE statement
     TruncateTableStmt* parseTruncateTable();
@@ -229,6 +232,8 @@ private:
     ResetStmt* parseReset();
     ShowStmt* parseShow();
     ExplainStmt* parseExplain();
+    SweepDatabaseStmt* parseSweep();
+    ExecuteJobStmt* parseExecuteJob();
 
     // ==========================================================================
     // DCL Statements (Data Control Language)

@@ -556,6 +556,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateUser(create_user);
     } else if (auto* create_role = dynamic_cast<ResolvedCreateRoleStmt*>(stmt)) {
         generateCreateRole(create_role);
+    } else if (auto* create_job = dynamic_cast<ResolvedCreateJobStmt*>(stmt)) {
+        generateCreateJob(create_job);
     } else if (auto* create_exception = dynamic_cast<ResolvedCreateExceptionStmt*>(stmt)) {
         generateCreateException(create_exception);
     } else if (auto* create_domain = dynamic_cast<ResolvedCreateDomainStmt*>(stmt)) {
@@ -572,12 +574,16 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateAlterTable(alter_table);
     } else if (auto* alter_index = dynamic_cast<ResolvedAlterIndexStmt*>(stmt)) {
         generateAlterIndex(alter_index);
+    } else if (auto* alter_job = dynamic_cast<ResolvedAlterJobStmt*>(stmt)) {
+        generateAlterJob(alter_job);
     } else if (auto* rename_obj = dynamic_cast<ResolvedRenameObjectStmt*>(stmt)) {
         generateRenameObject(rename_obj);
     } else if (auto* move_obj = dynamic_cast<ResolvedMoveObjectStmt*>(stmt)) {
         generateMoveObject(move_obj);
     } else if (auto* drop = dynamic_cast<ResolvedDropStmt*>(stmt)) {
         generateDrop(drop);
+    } else if (auto* drop_job = dynamic_cast<ResolvedDropJobStmt*>(stmt)) {
+        generateDropJob(drop_job);
     } else if (auto* start_tx = dynamic_cast<ResolvedStartTransactionStmt*>(stmt)) {
         generateStartTransaction(start_tx);
     } else if (auto* prepare_tx = dynamic_cast<ResolvedPrepareTransactionStmt*>(stmt)) {
@@ -596,6 +602,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateSet(set);
     } else if (auto* show = dynamic_cast<ResolvedShowStmt*>(stmt)) {
         generateShow(show);
+    } else if (auto* sweep = dynamic_cast<ResolvedSweepDatabaseStmt*>(stmt)) {
+        generateSweepDatabase(sweep);
     } else if (auto* grant = dynamic_cast<ResolvedGrantStmt*>(stmt)) {
         generateGrant(grant);
     } else if (auto* revoke = dynamic_cast<ResolvedRevokeStmt*>(stmt)) {
@@ -604,6 +612,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateTruncateTable(truncate);
     } else if (auto* explain = dynamic_cast<ResolvedExplainStmt*>(stmt)) {
         generateExplain(explain);
+    } else if (auto* exec_job = dynamic_cast<ResolvedExecuteJobStmt*>(stmt)) {
+        generateExecuteJob(exec_job);
     } else {
         current_result_->addError("Unknown statement type for bytecode generation");
     }
@@ -1969,6 +1979,52 @@ void BytecodeGeneratorV2::generateCreateRole(ResolvedCreateRoleStmt* stmt) {
     writeStringId(stmt->role_name);
 }
 
+void BytecodeGeneratorV2::generateCreateJob(ResolvedCreateJobStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::CREATE_JOB);
+
+    writeStringId(stmt->job_name);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->job_type));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->schedule_kind));
+
+    writeStringId(stmt->job_sql);
+    writeStringId(stmt->procedure_name);
+    writeStringId(stmt->external_command);
+
+    writeStringId(stmt->cron_expression);
+    writeStringId(stmt->at_timestamp);
+    current_result_->writeInt64(static_cast<uint64_t>(stmt->interval_seconds));
+    writeStringId(stmt->starts_at);
+    writeStringId(stmt->ends_at);
+
+    uint16_t flags = 0;
+    if (stmt->has_max_retries) flags |= 0x01;
+    if (stmt->has_retry_backoff) flags |= 0x02;
+    if (stmt->has_timeout) flags |= 0x04;
+    if (stmt->has_on_completion) flags |= 0x08;
+    if (stmt->has_state) flags |= 0x10;
+    if (stmt->has_run_as) flags |= 0x20;
+    if (stmt->has_description) flags |= 0x40;
+    current_result_->writeInt16(flags);
+
+    current_result_->writeInt32(stmt->max_retries);
+    current_result_->writeInt32(stmt->retry_backoff_seconds);
+    current_result_->writeInt32(stmt->timeout_seconds);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->on_completion));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->state));
+
+    writeStringId(stmt->run_as_role);
+    writeStringId(stmt->description);
+    writeStringId(stmt->job_class);
+    writeStringId(stmt->partition_strategy);
+    writeStringId(stmt->partition_expression);
+    writeStringId(stmt->partition_shard);
+
+    current_result_->writeListCount(stmt->depends_on.size());
+    for (auto dep : stmt->depends_on) {
+        writeStringId(dep);
+    }
+}
+
 void BytecodeGeneratorV2::generateCreateException(ResolvedCreateExceptionStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_EXCEPTION_STMT));
@@ -2535,6 +2591,36 @@ void BytecodeGeneratorV2::generateAlterIndex(ResolvedAlterIndexStmt* stmt) {
     }
 }
 
+void BytecodeGeneratorV2::generateAlterJob(ResolvedAlterJobStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::ALTER_JOB);
+
+    writeStringId(stmt->job_name);
+
+    uint16_t flags = 0;
+    if (stmt->has_schedule) flags |= 0x01;
+    if (stmt->has_state) flags |= 0x02;
+    if (stmt->has_max_retries) flags |= 0x04;
+    if (stmt->has_retry_backoff) flags |= 0x08;
+    if (stmt->has_timeout) flags |= 0x10;
+    if (stmt->has_run_as) flags |= 0x20;
+    if (stmt->has_description) flags |= 0x40;
+    current_result_->writeInt16(flags);
+
+    current_result_->writeByte(static_cast<uint8_t>(stmt->schedule_kind));
+    writeStringId(stmt->cron_expression);
+    writeStringId(stmt->at_timestamp);
+    current_result_->writeInt64(static_cast<uint64_t>(stmt->interval_seconds));
+    writeStringId(stmt->starts_at);
+    writeStringId(stmt->ends_at);
+
+    current_result_->writeByte(static_cast<uint8_t>(stmt->state));
+    current_result_->writeInt32(stmt->max_retries);
+    current_result_->writeInt32(stmt->retry_backoff_seconds);
+    current_result_->writeInt32(stmt->timeout_seconds);
+    writeStringId(stmt->run_as_role);
+    writeStringId(stmt->description);
+}
+
 void BytecodeGeneratorV2::generateRenameObject(ResolvedRenameObjectStmt* stmt) {
     current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RENAME_OBJECT);
 
@@ -2657,6 +2743,19 @@ void BytecodeGeneratorV2::generateDrop(ResolvedDropStmt* stmt) {
             }
         }
     }
+}
+
+void BytecodeGeneratorV2::generateDropJob(ResolvedDropJobStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::DROP_JOB);
+    writeStringId(stmt->job_name);
+    uint8_t flags = 0;
+    if (stmt->keep_history) flags |= 0x01;
+    current_result_->writeByte(flags);
+}
+
+void BytecodeGeneratorV2::generateExecuteJob(ResolvedExecuteJobStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXECUTE_JOB);
+    writeStringId(stmt->job_name);
 }
 
 // =============================================================================
@@ -3128,6 +3227,11 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
             current_result_->addError("Unsupported SHOW type");
             break;
     }
+}
+
+void BytecodeGeneratorV2::generateSweepDatabase(ResolvedSweepDatabaseStmt* stmt) {
+    (void)stmt;
+    current_result_->writeOpcode(sblr::Opcode::SWEEP);
 }
 
 void BytecodeGeneratorV2::generateGrant(ResolvedGrantStmt* stmt) {

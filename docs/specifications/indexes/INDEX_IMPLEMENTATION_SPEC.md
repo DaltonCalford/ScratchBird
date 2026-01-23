@@ -3,44 +3,72 @@
 
 ---
 
-## IMPLEMENTATION STATUS: 🟢 PARTIALLY COMPLETE (4/12 types)
+## IMPLEMENTATION STATUS: 🟡 MOSTLY COMPLETE (11/12 core; 0/15 optional)
 
-**Last Updated:** November 3, 2025
+**Last Updated:** January 22, 2026
 
-**Completed Index Types (4/12 = 33%):**
-- ✅ **B-Tree Index** - Production ready with prefix compression
-  - Location: `src/core/btree.cpp`, `src/core/btree_*.cpp`
-  - All core algorithms implemented (insert, search, remove, split, sweep/GC)
-  - Lock coupling for concurrency, page compaction and merging
-  - **Status:** Production-ready, 100% complete
-
-- ✅ **Hash Index** - Extendible hashing
-  - Location: `src/core/hash_index.cpp`, `src/core/hash_functions.cpp`
-  - Full extendible hashing with directory expansion
-  - MurmurHash3_x64, bucket splitting, overflow handling
-  - **Status:** Production-ready, 100% complete
-
-- ✅ **Bitmap Index** - Roaring compression for low-cardinality columns
-  - Location: `src/core/bitmap_index.cpp`
-  - Roaring bitmap compression
-  - **Status:** Production-ready, 100% complete
-
+**Completed Core Index Types (11/12 core = 92%):**
+- ✅ **B-Tree Index** - Production ready with prefix compression and GC
+  - Location: `src/core/btree.cpp`
+- ✅ **Hash Index** - Extendible hashing with GC
+  - Location: `src/core/hash_index.cpp`
+- ✅ **GIN Index** - Posting lists, GC, and DML integration
+  - Location: `src/core/gin_index.cpp`
+- ✅ **GiST Index** - Operator-class based search tree
+  - Location: `src/core/gist_index.cpp`
+- ✅ **SP-GiST Index** - Space-partitioned trees
+  - Location: `src/core/spgist_index.cpp`
+- ✅ **BRIN Index** - Block range summaries
+  - Location: `src/core/brin_index.cpp`
 - ✅ **R-Tree Index** - Spatial indexing
-  - Location: `src/core/rtree_index.cpp`
-  - Spatial data support
-  - **Status:** Production-ready, 100% complete
+  - Location: `src/core/rtree_index.cpp`, `src/core/rtree.cpp`
+- ✅ **Bitmap Index** - Versioned roaring bitmap
+  - Location: `src/core/bitmap_index.cpp`
+- ✅ **HNSW Index** - Vector similarity search
+  - Location: `src/core/hnsw_index.cpp`
+- ✅ **Columnstore Index** - Row-buffered columnar storage
+  - Location: `src/core/columnstore_index.cpp`
+- ✅ **LSM-Tree Index** - File-based LSM with compaction
+  - Location: `src/core/lsm_tree_index.cpp`
 
-**Partial/Stub Implementation (3/12):**
-- ⚠️ **GIN (Generalized Inverted Index)** - 3,946 lines, Phase 1-3 complete, Phase 4-6 not tested
-- ⚠️ **HNSW** - Stub (vector search)
-- ⚠️ **BRIN** - Stub (block range indexes)
+**Partial Implementation (1/12 core):**
+- ⚠️ **FULLTEXT (Inverted) Index** - DML and search implemented; GC stub
+  - Location: `src/core/inverted_index.cpp`
+  - Gap: `InvertedIndex::removeDeadEntries` returns NOT_IMPLEMENTED
 
-**Not Implemented (5/12):**
-- ❌ **GiST** (Generalized Search Tree) - CRITICAL PRIORITY
-- ❌ **SP-GiST** (Space-Partitioned GiST) - HIGH PRIORITY
-- ❌ **Full-Text Search Index** - HIGH PRIORITY
-- ❌ **Columnstore Index** - HIGH PRIORITY
-- ❌ **LSM-Tree Index** - MEDIUM PRIORITY
+**Integration Gaps (core):**
+- ❌ **Index GC wiring** in `src/core/garbage_collector.cpp` is limited to BTREE/HASH/GIN/BRIN/HNSW.
+- ⚠️ **GiST cache cleanup** in `src/sblr/index_cache.cpp` skips deletion due to incomplete type cleanup.
+- ⚠️ **FULLTEXT vs GIN wrapper split**: `FullTextIndex` (GIN-based) exists but `IndexFactory` uses `InvertedIndex` for FULLTEXT.
+
+### Remediation Items (Doc-Level)
+
+1. **Implement FULLTEXT GC**
+   - File: `src/core/inverted_index.cpp:3795`
+   - Task: Implement `InvertedIndex::removeDeadEntries` to purge obsolete postings and update doc stats.
+
+2. **Expand Index GC Coverage**
+   - File: `src/core/garbage_collector.cpp:870-946`
+   - Task: Add GC hooks for GIST, SPGIST, RTREE, BITMAP, COLUMNSTORE, FULLTEXT, LSM.
+
+**Optional/Advanced Index Types (15/15 not implemented):**
+- ❌ **IVF** - Vector similarity
+- ❌ **ZONEMAP** - Min/max pruning
+- ❌ **ZORDER** - Morton curve
+- ❌ **GEOHASH** - Geo cell indexing
+- ❌ **S2** - S2 cell indexing
+- ❌ **QUADTREE** - 2D spatial partitioning
+- ❌ **OCTREE** - 3D spatial partitioning
+- ❌ **FST** - Prefix/autocomplete dictionary
+- ❌ **SUFFIX_ARRAY** - Substring search
+- ❌ **SUFFIX_TREE** - Substring search (tree mode)
+- ❌ **COUNT_MIN_SKETCH** - Frequency estimation
+- ❌ **HYPERLOGLOG** - Approx distinct counts
+- ❌ **ART** - Adaptive radix tree
+- ❌ **LEARNED** - RMI learned index
+- ❌ **LSM_TTL** - Time-series retention
+
+**Optional Specs:** See `docs/specifications/indexes/` for detailed implementation documents.
 
 **Audit Report:** `/docs/status/ALPHA_003_AUDIT_FINDINGS.md`
 **Progress Tracker:** `/docs/status/ALPHA_003_PROGRESS.md`
@@ -49,9 +77,19 @@
 
 ---
 
-**This specification describes the planned implementation. B-Tree and Hash are complete. See progress tracker for remaining work.**
+**This specification reflects current implementation. Remaining work is FULLTEXT GC completion and GC wiring for non-covered index types.**
 
 ---
+
+## Canonical Index Type Names (Parser/Catalog)
+
+**Core (Alpha scope):** BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN, BITMAP, RTREE, HNSW, COLUMNSTORE, LSM
+
+**Optional/Advanced (Beta scope):** IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL
+
+**DDL Note:** SQL uses lowercase keywords in `USING` clauses (e.g., `USING zorder`). Bloom filters are index options (`WITH (bloom_filter = true)`), not a standalone index type.
+
+**Total Index Types:** 27 (12 core + 15 optional)
 
 ## Overview
 
@@ -478,6 +516,23 @@ typedef struct sb_gin_index {
     uint32_t        idx_pending_count;  // Number of pending entries
 } SBGINIndex;
 ```
+
+### 3.4 Optional Advanced Index Types (Beta)
+
+These index types are fully specified and ready for implementation, but are optional/beta scope in the index roadmap:
+
+- **IVF** (vector similarity) - `docs/specifications/indexes/IVFIndex.md`
+- **ZONEMAP** (min/max pruning) - `docs/specifications/indexes/ZoneMapsIndex.md`
+- **ZORDER** (Morton) - `docs/specifications/indexes/ZOrderIndex.md`
+- **GEOHASH**, **S2** - `docs/specifications/indexes/GeohashS2Index.md`
+- **QUADTREE**, **OCTREE** - `docs/specifications/indexes/QuadtreeOctreeIndex.md`
+- **FST** - `docs/specifications/indexes/FSTIndex.md`
+- **SUFFIX_ARRAY**, **SUFFIX_TREE** - `docs/specifications/indexes/SuffixIndex.md`
+- **COUNT_MIN_SKETCH** - `docs/specifications/indexes/CountMinSketchIndex.md`
+- **HYPERLOGLOG** - `docs/specifications/indexes/HyperLogLogIndex.md`
+- **ART** - `docs/specifications/indexes/AdaptiveRadixTreeIndex.md`
+- **LEARNED** - `docs/specifications/indexes/LearnedIndex.md`
+- **LSM_TTL** - `docs/specifications/indexes/LSMTimeSeriesIndex.md`
 
 ## 4. Index Scan Implementation
 

@@ -403,24 +403,6 @@ pid_t readPIDFile(const std::string& pid_path) {
     return pid;
 }
 
-bool isProcessRunning(pid_t pid) {
-    if (pid <= 0) {
-        return false;
-    }
-
-#ifdef _WIN32
-    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
-    if (process) {
-        CloseHandle(process);
-        return true;
-    }
-    return false;
-#else
-    // Use kill with signal 0 to check if process exists
-    return kill(pid, 0) == 0;
-#endif
-}
-
 // ============================================================================
 // Server State Utilities
 // ============================================================================

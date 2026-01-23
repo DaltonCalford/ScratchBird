@@ -2515,6 +2515,8 @@ Statement* Parser::parseAlterIndexImpl() {
         };
 
         auto parse_bool = [&]() -> bool {
+            if (matchKeyword(TokenType::KW_TRUE)) return true;
+            if (matchKeyword(TokenType::KW_FALSE)) return false;
             if (check(TokenType::INTEGER_LITERAL)) {
                 bool value = current_token_.value.int_value != 0;
                 advance();

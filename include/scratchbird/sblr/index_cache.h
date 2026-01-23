@@ -33,7 +33,7 @@ namespace core {
     class BTree;
     class HashIndex;
     class GinIndex;
-    class GistIndex;
+    class GiSTIndex;
     class SPGiSTIndex;  // Note: SP-GiST uses all-caps naming
     class BrinIndex;
     class RTreeIndex;

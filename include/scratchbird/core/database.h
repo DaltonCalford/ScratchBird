@@ -52,6 +52,7 @@ namespace scratchbird
         class TIDResolver; // Sprint 4 Task 5.4.2
         class PermissionCache; // Security Phase 3.2.3
         class TableStatsManager;
+        class JobScheduler;
 
     } // namespace core
 
@@ -552,6 +553,7 @@ namespace scratchbird
             std::unique_ptr<GarbageCollector> garbage_collector_;     // Garbage collector (owned)
             std::unique_ptr<LongTransactionMonitor>
                 long_transaction_monitor_;                     // Long transaction monitor (owned)
+            std::unique_ptr<JobScheduler> job_scheduler_;     // Scheduler job runner (owned)
 
             // Optimizer runtime components (Phase 1, Task 1.3)
             std::unique_ptr<optimizer::StatisticsManager> statistics_manager_; // Statistics manager (owned)

@@ -316,6 +316,7 @@ private:
     ResolvedStatement* analyzeCreatePackage(CreatePackageStmt* stmt);
     ResolvedStatement* analyzeCreateUser(CreateUserStmt* stmt);
     ResolvedStatement* analyzeCreateRole(CreateRoleStmt* stmt);
+    ResolvedStatement* analyzeCreateJob(CreateJobStmt* stmt);
     ResolvedStatement* analyzeCreateException(CreateExceptionStmt* stmt);
     ResolvedStatement* analyzeCreateDomain(CreateDomainStmt* stmt);
     ResolvedStatement* analyzeDropDatabase(DropDatabaseStmt* stmt);
@@ -335,7 +336,10 @@ private:
     ResolvedStatement* analyzeDropTrigger(DropTriggerStmt* stmt);
     ResolvedStatement* analyzeDropPackage(DropPackageStmt* stmt);
     ResolvedStatement* analyzeDropRole(DropRoleStmt* stmt);
+    ResolvedStatement* analyzeDropJob(DropJobStmt* stmt);
     ResolvedStatement* analyzeDropException(DropExceptionStmt* stmt);
+    ResolvedStatement* analyzeAlterJob(AlterJobStmt* stmt);
+    ResolvedStatement* analyzeExecuteJob(ExecuteJobStmt* stmt);
     ResolvedStatement* analyzeTruncateTable(TruncateTableStmt* stmt);
 
     // DML
@@ -357,6 +361,7 @@ private:
     ResolvedStatement* analyzeSet(SetStmt* stmt);
     ResolvedStatement* analyzeShow(ShowStmt* stmt);
     ResolvedStatement* analyzeExplain(ExplainStmt* stmt);
+    ResolvedStatement* analyzeSweepDatabase(SweepDatabaseStmt* stmt);
 
     // DCL
     ResolvedStatement* analyzeGrant(GrantStmt* stmt);

@@ -186,6 +186,7 @@ private:
     void generateCreatePackage(ResolvedCreatePackageStmt* stmt);
     void generateCreateUser(ResolvedCreateUserStmt* stmt);
     void generateCreateRole(ResolvedCreateRoleStmt* stmt);
+    void generateCreateJob(ResolvedCreateJobStmt* stmt);
     void generateCreateException(ResolvedCreateExceptionStmt* stmt);
     void generateCreateDomain(ResolvedCreateDomainStmt* stmt);
     void generateDropDatabase(ResolvedDropDatabaseStmt* stmt);
@@ -194,9 +195,12 @@ private:
     void generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt);
     void generateAlterTable(ResolvedAlterTableStmt* stmt);
     void generateAlterIndex(ResolvedAlterIndexStmt* stmt);
+    void generateAlterJob(ResolvedAlterJobStmt* stmt);
     void generateRenameObject(ResolvedRenameObjectStmt* stmt);
     void generateMoveObject(ResolvedMoveObjectStmt* stmt);
     void generateDrop(ResolvedDropStmt* stmt);
+    void generateDropJob(ResolvedDropJobStmt* stmt);
+    void generateExecuteJob(ResolvedExecuteJobStmt* stmt);
 
     // Transaction/Session
     void generateStartTransaction(ResolvedStartTransactionStmt* stmt);
@@ -208,6 +212,7 @@ private:
     void generateDisconnect(ResolvedDisconnectStmt* stmt);
     void generateSet(ResolvedSetStmt* stmt);
     void generateShow(ResolvedShowStmt* stmt);
+    void generateSweepDatabase(ResolvedSweepDatabaseStmt* stmt);
     void generateGrant(ResolvedGrantStmt* stmt);
     void generateRevoke(ResolvedRevokeStmt* stmt);
     void generateTruncateTable(ResolvedTruncateTableStmt* stmt);

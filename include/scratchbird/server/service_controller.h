@@ -514,10 +514,17 @@ private:
     struct DatabaseInstance {
         std::string name;
         std::string path;
-        std::unique_ptr<core::Database> database;
+        std::unique_ptr<core::Database> owned_database;
+        core::Database* database = nullptr;
     };
     std::vector<DatabaseInstance> databases_;
     mutable std::mutex databases_mutex_;
+
+    struct EngineInstance {
+        std::string name;
+        std::unique_ptr<ScratchBirdServer> server;
+    };
+    std::vector<EngineInstance> engine_servers_;
 
     // Statistics
     mutable ServiceStats stats_;

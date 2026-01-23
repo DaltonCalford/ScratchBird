@@ -74,7 +74,7 @@ case "${1:-all}" in
         echo "  ci          - CI suite: smoke + unit + integration (~25min)" >&2
         echo "  all         - Everything except quarantine (~1.5hrs)" >&2
         echo "" >&2
-        echo "Note: socket-based integration tests require SCRATCHBIRD_TEST_NETWORK=1." >&2
+        echo "Note: socket-based integration tests now default to enabled; set SCRATCHBIRD_TEST_NETWORK=0 to disable." >&2
         exit 1
         ;;
  esac

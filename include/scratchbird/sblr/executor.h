@@ -854,6 +854,10 @@ namespace scratchbird
             void executeDropUser();          // Execute DROP USER
             void executeCreateRole();        // Execute CREATE ROLE
             void executeDropRole();          // Execute DROP ROLE
+            void executeCreateJob();         // Execute CREATE JOB
+            void executeAlterJob();          // Execute ALTER JOB
+            void executeDropJob();           // Execute DROP JOB
+            void executeExecuteJob();        // Execute EXECUTE JOB
             void executeCreateGroup();       // Execute CREATE GROUP
             void executeDropGroup();         // Execute DROP GROUP
             void executeGrantPrivilege();    // Execute GRANT privilege
@@ -1029,6 +1033,23 @@ namespace scratchbird
             bool findIndexForColumns(const core::ID& table_id,
                                     const std::vector<core::ID>& column_ids,
                                     core::CatalogManager::IndexInfo& index_out);
+
+            // Fulltext helper: find FULLTEXT index for a single column
+            bool findFullTextIndexForColumn(const core::ID& table_id,
+                                           const core::ID& column_id,
+                                           core::CatalogManager::IndexInfo& index_out);
+
+            // Fulltext helper: extract simple "column @@ query" predicate from bytecode
+            bool extractFullTextPredicate(size_t expr_start,
+                                         size_t expr_end,
+                                         std::string& column_name_out,
+                                         size_t& query_start_out,
+                                         size_t& query_end_out);
+
+            // Fulltext helper: build FULLTEXT search key from query expression
+            bool buildFullTextQueryKey(size_t query_start,
+                                      size_t query_end,
+                                      std::vector<uint8_t>& key_out);
 
             // Search an index for matching values (returns TIDs of matching rows)
             // Returns Status::OK if search succeeded, error otherwise

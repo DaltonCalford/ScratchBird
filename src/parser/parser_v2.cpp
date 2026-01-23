@@ -189,7 +189,14 @@ Statement* Parser::parseStatementInternal() {
 
     // Utility statements
     if (match(TokenType::KW_EXPLAIN))   return parseExplain();
-    if (match(TokenType::KW_EXECUTE))   return parseExecuteStatement();
+    if (matchContextual("SWEEP"))       return parseSweep();
+    if (check(TokenType::KW_EXECUTE)) {
+        match(TokenType::KW_EXECUTE);
+        if (matchContextual("JOB")) {
+            return parseExecuteJob();
+        }
+        return parseExecuteStatement();
+    }
 
     // DCL statements
     if (match(TokenType::KW_GRANT))     return parseGrant();
@@ -316,6 +323,7 @@ Statement* Parser::parseCreate() {
     if (matchContextual("TRIGGER"))    return parseCreateTrigger(or_replace);
     if (matchContextual("USER"))       return parseCreateUser();
     if (matchContextual("ROLE"))       return parseCreateRole();
+    if (matchContextual("JOB"))        return parseCreateJob();
 
     error("Expected object type after CREATE (TABLE, INDEX, VIEW, SEQUENCE, ROLE, USER, ...)");
     return nullptr;
@@ -364,6 +372,222 @@ CreateRoleStmt* Parser::parseCreateRole() {
 
     auto* stmt = arena_.create<CreateRoleStmt>();
     stmt->role_name = expectIdentifier("Expected role name");
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
+// CREATE JOB
+// =============================================================================
+
+CreateJobStmt* Parser::parseCreateJob() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateJobStmt>();
+    stmt->job_name = expectIdentifier("Expected job name");
+
+    auto parse_duration_seconds = [&](const char* context) -> uint32_t {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            error(std::string("Expected duration seconds for ") + context);
+            return 0;
+        }
+        int64_t value = current().value.int_value;
+        advance();
+        if (value < 0) {
+            error(std::string("Duration must be non-negative for ") + context);
+            return 0;
+        }
+
+        uint64_t multiplier = 1;
+        if (isIdentifier()) {
+            std::string unit = std::string(stringPool().get(current().value.string_id));
+            advance();
+            if (caseInsensitiveEquals(unit, "S") || caseInsensitiveEquals(unit, "SEC") ||
+                caseInsensitiveEquals(unit, "SECOND") || caseInsensitiveEquals(unit, "SECONDS")) {
+                multiplier = 1;
+            } else if (caseInsensitiveEquals(unit, "M") || caseInsensitiveEquals(unit, "MIN") ||
+                       caseInsensitiveEquals(unit, "MINUTE") || caseInsensitiveEquals(unit, "MINUTES")) {
+                multiplier = 60;
+            } else if (caseInsensitiveEquals(unit, "H") || caseInsensitiveEquals(unit, "HOUR") ||
+                       caseInsensitiveEquals(unit, "HOURS")) {
+                multiplier = 3600;
+            } else if (caseInsensitiveEquals(unit, "D") || caseInsensitiveEquals(unit, "DAY") ||
+                       caseInsensitiveEquals(unit, "DAYS")) {
+                multiplier = 86400;
+            } else {
+                error(std::string("Unknown duration unit for ") + context);
+                return static_cast<uint32_t>(value);
+            }
+        }
+
+        uint64_t seconds = static_cast<uint64_t>(value) * multiplier;
+        if (seconds > std::numeric_limits<uint32_t>::max()) {
+            error(std::string("Duration too large for ") + context);
+            return std::numeric_limits<uint32_t>::max();
+        }
+        return static_cast<uint32_t>(seconds);
+    };
+
+    auto parse_timestamp_literal = [&](const char* context) -> StringPool::StringId {
+        if (!check(TokenType::STRING_LITERAL)) {
+            error(std::string("Expected timestamp string for ") + context);
+            return StringPool::INVALID_ID;
+        }
+        auto id = current().value.string_id;
+        advance();
+        return id;
+    };
+
+    auto parse_schedule = [&]() {
+        expectContextual("SCHEDULE", "Expected SCHEDULE");
+        expect(TokenType::EQUAL, "Expected '=' after SCHEDULE");
+
+        if (matchContextual("CRON")) {
+            stmt->schedule_kind = JobScheduleKind::CRON;
+            stmt->cron_expression = parse_timestamp_literal("CRON");
+            return;
+        }
+        if (matchContextual("AT")) {
+            stmt->schedule_kind = JobScheduleKind::AT;
+            stmt->at_timestamp = parse_timestamp_literal("AT");
+            return;
+        }
+        if (matchContextual("EVERY")) {
+            stmt->schedule_kind = JobScheduleKind::EVERY;
+            stmt->interval_seconds = parse_duration_seconds("EVERY");
+            if (matchContextual("STARTS")) {
+                stmt->starts_at = parse_timestamp_literal("STARTS");
+            }
+            if (matchContextual("ENDS")) {
+                stmt->ends_at = parse_timestamp_literal("ENDS");
+            }
+            return;
+        }
+
+        error("Expected CRON, AT, or EVERY after SCHEDULE");
+    };
+
+    bool has_schedule = false;
+
+    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+        if (checkContextual("AS") || checkContextual("CALL") || checkContextual("EXEC")) {
+            break;
+        }
+
+        if (checkContextual("SCHEDULE")) {
+            parse_schedule();
+            has_schedule = true;
+        } else if (matchContextual("DEPENDS")) {
+            expectContextual("ON", "Expected ON after DEPENDS");
+            do {
+                stmt->depends_on.push_back(expectIdentifier("Expected dependency job name"));
+            } while (match(TokenType::COMMA));
+        } else if (matchContextual("CLASS")) {
+            expect(TokenType::EQUAL, "Expected '=' after CLASS");
+            stmt->job_class = expectIdentifier("Expected job class");
+        } else if (matchContextual("PARTITION")) {
+            expectContextual("BY", "Expected BY after PARTITION");
+            if (matchContextual("ALL_SHARDS")) {
+                stmt->partition_strategy = stringPool().intern("ALL_SHARDS");
+            } else if (matchContextual("SINGLE_SHARD")) {
+                stmt->partition_strategy = stringPool().intern("SINGLE_SHARD");
+                stmt->partition_shard = parse_timestamp_literal("SINGLE_SHARD");
+            } else if (matchContextual("SHARD_SET")) {
+                stmt->partition_strategy = stringPool().intern("SHARD_SET");
+                stmt->partition_expression = parse_timestamp_literal("SHARD_SET");
+            } else if (matchContextual("DYNAMIC")) {
+                stmt->partition_strategy = stringPool().intern("DYNAMIC");
+                stmt->partition_expression = parse_timestamp_literal("DYNAMIC");
+            } else {
+                error("Expected partition strategy after PARTITION BY");
+            }
+        } else if (matchContextual("MAX_RETRIES")) {
+            expect(TokenType::EQUAL, "Expected '=' after MAX_RETRIES");
+            if (!check(TokenType::INTEGER_LITERAL)) {
+                error("Expected integer value for MAX_RETRIES");
+            } else {
+                stmt->has_max_retries = true;
+                stmt->max_retries = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            }
+        } else if (matchContextual("RETRY_BACKOFF")) {
+            expect(TokenType::EQUAL, "Expected '=' after RETRY_BACKOFF");
+            stmt->has_retry_backoff = true;
+            stmt->retry_backoff_seconds = parse_duration_seconds("RETRY_BACKOFF");
+        } else if (matchContextual("TIMEOUT")) {
+            expect(TokenType::EQUAL, "Expected '=' after TIMEOUT");
+            stmt->has_timeout = true;
+            stmt->timeout_seconds = parse_duration_seconds("TIMEOUT");
+        } else if (matchContextual("ON")) {
+            expectContextual("COMPLETION", "Expected COMPLETION after ON");
+            stmt->has_on_completion = true;
+            if (matchContextual("PRESERVE")) {
+                stmt->on_completion = JobOnCompletion::PRESERVE;
+            } else if (matchContextual("DROP")) {
+                stmt->on_completion = JobOnCompletion::DROP;
+            } else {
+                error("Expected PRESERVE or DROP after ON COMPLETION");
+            }
+        } else if (matchContextual("RUN")) {
+            expectContextual("AS", "Expected AS after RUN");
+            stmt->has_run_as = true;
+            stmt->run_as_role = expectIdentifier("Expected role name after RUN AS");
+        } else if (matchContextual("DESCRIPTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after DESCRIPTION");
+            stmt->has_description = true;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal for DESCRIPTION");
+            } else {
+                stmt->description = current().value.string_id;
+                advance();
+            }
+        } else if (matchContextual("ENABLED")) {
+            stmt->has_state = true;
+            stmt->state = JobState::ENABLED;
+        } else if (matchContextual("DISABLED")) {
+            stmt->has_state = true;
+            stmt->state = JobState::DISABLED;
+        } else {
+            break;
+        }
+    }
+
+    if (!has_schedule) {
+        error("CREATE JOB requires SCHEDULE");
+    }
+
+    if (matchContextual("AS")) {
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected SQL string after AS");
+        } else {
+            stmt->job_type = JobType::SQL;
+            stmt->job_sql = current().value.string_id;
+            advance();
+        }
+    } else if (matchContextual("CALL")) {
+        stmt->job_type = JobType::PROCEDURE;
+        SchemaPath proc_path = parseSchemaPath(state_);
+        if (proc_path.isEmpty()) {
+            error("Expected procedure name after CALL");
+        } else {
+            std::string proc_name = schemaPathToString(proc_path, stringPool());
+            stmt->procedure_name = stringPool().intern(proc_name);
+        }
+        if (match(TokenType::LEFT_PAREN)) {
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after CALL procedure");
+        }
+    } else if (matchContextual("EXEC")) {
+        stmt->job_type = JobType::EXTERNAL;
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected command string after EXEC");
+        } else {
+            stmt->external_command = current().value.string_id;
+            advance();
+        }
+    } else {
+        error("Expected AS, CALL, or EXEC for job definition");
+    }
+
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -1365,6 +1589,8 @@ CreateIndexStmt* Parser::parseCreateIndex() {
         expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
 
         auto parse_bool = [&]() -> bool {
+            if (match(TokenType::KW_TRUE)) return true;
+            if (match(TokenType::KW_FALSE)) return false;
             if (check(TokenType::INTEGER_LITERAL)) {
                 bool value = current().value.int_value != 0;
                 advance();
@@ -2365,6 +2591,7 @@ Statement* Parser::parseAlter() {
     if (matchContextual("SCHEMA")) return parseAlterSchema();
     if (matchContextual("DATABASE")) return parseAlterDatabase();
     if (matchContextual("DOMAIN")) return parseAlterDomain();
+    if (matchContextual("JOB")) return parseAlterJob();
 
     auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
         SourceLocation start = currentLocation();
@@ -2448,6 +2675,8 @@ Statement* Parser::parseAlter() {
             expect(TokenType::LEFT_PAREN, "Expected '(' after SET in ALTER INDEX");
 
             auto parse_bool = [&]() -> bool {
+                if (match(TokenType::KW_TRUE)) return true;
+                if (match(TokenType::KW_FALSE)) return false;
                 if (check(TokenType::INTEGER_LITERAL)) {
                     bool value = current().value.int_value != 0;
                     advance();
@@ -2656,6 +2885,161 @@ AlterDomainStmt* Parser::parseAlterDomain() {
     return stmt;
 }
 
+AlterJobStmt* Parser::parseAlterJob() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterJobStmt>();
+    stmt->job_name = expectIdentifier("Expected job name");
+
+    auto parse_duration_seconds = [&](const char* context) -> uint32_t {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            error(std::string("Expected duration seconds for ") + context);
+            return 0;
+        }
+        int64_t value = current().value.int_value;
+        advance();
+        if (value < 0) {
+            error(std::string("Duration must be non-negative for ") + context);
+            return 0;
+        }
+
+        uint64_t multiplier = 1;
+        if (isIdentifier()) {
+            std::string unit = std::string(stringPool().get(current().value.string_id));
+            advance();
+            if (caseInsensitiveEquals(unit, "S") || caseInsensitiveEquals(unit, "SEC") ||
+                caseInsensitiveEquals(unit, "SECOND") || caseInsensitiveEquals(unit, "SECONDS")) {
+                multiplier = 1;
+            } else if (caseInsensitiveEquals(unit, "M") || caseInsensitiveEquals(unit, "MIN") ||
+                       caseInsensitiveEquals(unit, "MINUTE") || caseInsensitiveEquals(unit, "MINUTES")) {
+                multiplier = 60;
+            } else if (caseInsensitiveEquals(unit, "H") || caseInsensitiveEquals(unit, "HOUR") ||
+                       caseInsensitiveEquals(unit, "HOURS")) {
+                multiplier = 3600;
+            } else if (caseInsensitiveEquals(unit, "D") || caseInsensitiveEquals(unit, "DAY") ||
+                       caseInsensitiveEquals(unit, "DAYS")) {
+                multiplier = 86400;
+            } else {
+                error(std::string("Unknown duration unit for ") + context);
+                return static_cast<uint32_t>(value);
+            }
+        }
+
+        uint64_t seconds = static_cast<uint64_t>(value) * multiplier;
+        if (seconds > std::numeric_limits<uint32_t>::max()) {
+            error(std::string("Duration too large for ") + context);
+            return std::numeric_limits<uint32_t>::max();
+        }
+        return static_cast<uint32_t>(seconds);
+    };
+
+    auto parse_timestamp_literal = [&](const char* context) -> StringPool::StringId {
+        if (!check(TokenType::STRING_LITERAL)) {
+            error(std::string("Expected timestamp string for ") + context);
+            return StringPool::INVALID_ID;
+        }
+        auto id = current().value.string_id;
+        advance();
+        return id;
+    };
+
+    auto parse_schedule = [&]() {
+        if (matchContextual("SCHEDULE")) {
+            expect(TokenType::EQUAL, "Expected '=' after SCHEDULE");
+        }
+
+        if (matchContextual("CRON")) {
+            stmt->schedule_kind = JobScheduleKind::CRON;
+            stmt->cron_expression = parse_timestamp_literal("CRON");
+            stmt->has_schedule = true;
+            return true;
+        }
+        if (matchContextual("AT")) {
+            stmt->schedule_kind = JobScheduleKind::AT;
+            stmt->at_timestamp = parse_timestamp_literal("AT");
+            stmt->has_schedule = true;
+            return true;
+        }
+        if (matchContextual("EVERY")) {
+            stmt->schedule_kind = JobScheduleKind::EVERY;
+            stmt->interval_seconds = parse_duration_seconds("EVERY");
+            if (matchContextual("STARTS")) {
+                stmt->starts_at = parse_timestamp_literal("STARTS");
+            }
+            if (matchContextual("ENDS")) {
+                stmt->ends_at = parse_timestamp_literal("ENDS");
+            }
+            stmt->has_schedule = true;
+            return true;
+        }
+
+        return false;
+    };
+
+    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+        bool saw_set = match(TokenType::KW_SET);
+
+        if (parse_schedule()) {
+            // handled
+        } else if (matchContextual("STATE")) {
+            expect(TokenType::EQUAL, "Expected '=' after STATE");
+            stmt->has_state = true;
+            if (matchContextual("ENABLED")) {
+                stmt->state = JobState::ENABLED;
+            } else if (matchContextual("DISABLED")) {
+                stmt->state = JobState::DISABLED;
+            } else if (matchContextual("PAUSED")) {
+                stmt->state = JobState::PAUSED;
+            } else {
+                error("Expected ENABLED, DISABLED, or PAUSED after STATE");
+            }
+        } else if (matchContextual("MAX_RETRIES")) {
+            expect(TokenType::EQUAL, "Expected '=' after MAX_RETRIES");
+            if (!check(TokenType::INTEGER_LITERAL)) {
+                error("Expected integer value for MAX_RETRIES");
+            } else {
+                stmt->has_max_retries = true;
+                stmt->max_retries = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            }
+        } else if (matchContextual("RETRY_BACKOFF")) {
+            expect(TokenType::EQUAL, "Expected '=' after RETRY_BACKOFF");
+            stmt->has_retry_backoff = true;
+            stmt->retry_backoff_seconds = parse_duration_seconds("RETRY_BACKOFF");
+        } else if (matchContextual("TIMEOUT")) {
+            expect(TokenType::EQUAL, "Expected '=' after TIMEOUT");
+            stmt->has_timeout = true;
+            stmt->timeout_seconds = parse_duration_seconds("TIMEOUT");
+        } else if (matchContextual("RUN")) {
+            expectContextual("AS", "Expected AS after RUN");
+            stmt->has_run_as = true;
+            stmt->run_as_role = expectIdentifier("Expected role name after RUN AS");
+        } else if (matchContextual("DESCRIPTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after DESCRIPTION");
+            stmt->has_description = true;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal for DESCRIPTION");
+            } else {
+                stmt->description = current().value.string_id;
+                advance();
+            }
+        } else {
+            if (saw_set) {
+                error("Expected SCHEDULE, STATE, MAX_RETRIES, RETRY_BACKOFF, TIMEOUT, RUN AS, or DESCRIPTION after SET");
+            }
+            break;
+        }
+
+        if (!match(TokenType::COMMA)) {
+            // Continue if next clause is another SET without comma
+            continue;
+        }
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 AlterTableStmt* Parser::parseAlterTable() {
     SourceLocation start = currentLocation();
 
@@ -2772,6 +3156,7 @@ Statement* Parser::parseDrop() {
     if (matchContextual("TABLE")) return parseDropTable();
     if (matchContextual("INDEX")) return parseDropIndex();
     if (matchContextual("VIEW")) return parseDropView();
+    if (matchContextual("JOB")) return parseDropJob();
     if (matchContextual("DOMAIN")) return parseDropDomain();
     if (matchContextual("FUNCTION")) return parseDropFunction();
     if (matchContextual("PROCEDURE")) return parseDropProcedure();
@@ -2866,6 +3251,25 @@ DropDomainStmt* Parser::parseDropDomain() {
         error("DROP DOMAIN does not support CASCADE");
     } else if (matchContextual("RESTRICT")) {
         stmt->restrict = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
+// DROP JOB
+// =============================================================================
+
+DropJobStmt* Parser::parseDropJob() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropJobStmt>();
+    stmt->job_name = expectIdentifier("Expected job name");
+
+    if (matchContextual("KEEP")) {
+        expectContextual("HISTORY", "Expected HISTORY after KEEP");
+        stmt->keep_history = true;
     }
 
     stmt->span = makeSpan(start);
@@ -6305,6 +6709,23 @@ ExplainStmt* Parser::parseExplain() {
 }
 
 // =============================================================================
+// SWEEP DATABASE Statement
+// =============================================================================
+
+SweepDatabaseStmt* Parser::parseSweep() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<SweepDatabaseStmt>();
+
+    if (!expectContextual("DATABASE", "Expected DATABASE after SWEEP")) {
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
 // DCL Statement Parsing (GRANT/REVOKE)
 // =============================================================================
 
@@ -7102,6 +7523,19 @@ Statement* Parser::parseDeclareVariable() {
         stmt->default_value = parseExpression();
     }
 
+    return stmt;
+}
+
+// =============================================================================
+// EXECUTE JOB
+// =============================================================================
+
+ExecuteJobStmt* Parser::parseExecuteJob() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<ExecuteJobStmt>();
+    stmt->job_name = expectIdentifier("Expected job name");
+    stmt->span = makeSpan(start);
     return stmt;
 }
 

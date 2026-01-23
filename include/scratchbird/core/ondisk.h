@@ -36,7 +36,12 @@ namespace scratchbird::core
         PAGE_TYPE_BRIN = 24,        // BRIN (Block Range Index) page
         PAGE_TYPE_COLUMNSTORE = 25, // Columnstore index page
         PAGE_TYPE_BLOOM_FILTER_META = 26, // Bloom filter meta page
-        PAGE_TYPE_BLOOM_FILTER_DATA = 27  // Bloom filter data page
+        PAGE_TYPE_BLOOM_FILTER_DATA = 27,  // Bloom filter data page
+        PAGE_TYPE_INVERTED_META = 28,      // Inverted index meta page
+        PAGE_TYPE_INVERTED_SEGMENT_META = 29, // Inverted index segment meta page
+        PAGE_TYPE_INVERTED_DICT = 30,      // Inverted index term dictionary page
+        PAGE_TYPE_INVERTED_POSTING = 31,   // Inverted index posting list page
+        PAGE_TYPE_INVERTED_DOCSTATS = 32   // Inverted index document stats page
     };
 
     // Page flags (bitwise OR)

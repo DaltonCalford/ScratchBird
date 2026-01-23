@@ -15,6 +15,7 @@
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/fulltext_index.h"
+#include "scratchbird/core/inverted_index.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/gpid.h"
@@ -625,19 +626,21 @@ Status IndexFactory::createIndex(
 
         case CatalogManager::IndexType::FULLTEXT:
         {
-            // FULLTEXT index - GIN-based full-text search with tsvector/tsquery
+            // FULLTEXT index - standalone inverted index
             if (index_info.column_ids.empty())
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "FULLTEXT index requires at least one column");
                 return Status::INVALID_ARGUMENT;
             }
 
-            Status status = FullTextIndex::create(
+            InvertedIndexConfig config;
+            Status status = InvertedIndex::create(
                 db,
                 index_info.index_id,
                 index_info.table_id,
-                index_info.column_ids,
+                index_info.column_ids.front(),
                 index_info.root_gpid,
+                config,
                 ctx);
 
             if (status != Status::OK)
@@ -646,15 +649,15 @@ Status IndexFactory::createIndex(
             }
 
             // Open the created FULLTEXT index
-            auto fulltext = FullTextIndex::open(db, index_info.index_id, index_info.table_id,
-                                               index_info.column_ids, index_info.root_gpid, ctx);
-            if (!fulltext)
+            auto inverted = InvertedIndex::open(db, index_info.index_id, index_info.table_id,
+                                               index_info.column_ids.front(), index_info.root_gpid, ctx);
+            if (!inverted)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created FULLTEXT index");
                 return Status::IO_ERROR;
             }
 
-            *index_out = fulltext.release();
+            *index_out = inverted.release();
             attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
@@ -876,15 +879,20 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::FULLTEXT:
         {
             // Open existing FULLTEXT index
-            auto fulltext = FullTextIndex::open(db, index_info.index_id, index_info.table_id,
-                                               index_info.column_ids, index_info.root_gpid, ctx);
-            if (!fulltext)
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "FULLTEXT index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+            auto inverted = InvertedIndex::open(db, index_info.index_id, index_info.table_id,
+                                               index_info.column_ids.front(), index_info.root_gpid, ctx);
+            if (!inverted)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open FULLTEXT index");
                 return Status::IO_ERROR;
             }
 
-            *index_out = fulltext.release();
+            *index_out = inverted.release();
             return Status::OK;
         }
 
@@ -989,8 +997,8 @@ Status IndexFactory::closeIndex(
 
         case CatalogManager::IndexType::FULLTEXT:
         {
-            auto *fulltext = static_cast<FullTextIndex*>(index_ptr);
-            delete fulltext;
+            auto *inverted = static_cast<InvertedIndex*>(index_ptr);
+            delete inverted;
             return Status::OK;
         }
 

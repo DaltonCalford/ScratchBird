@@ -889,6 +889,91 @@ struct ResolvedCreateRoleStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved CREATE JOB statement
+ */
+struct ResolvedCreateJobStmt : public ResolvedStatement {
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+    JobType job_type = JobType::SQL;
+    StringPool::StringId job_sql = StringPool::INVALID_ID;
+    StringPool::StringId procedure_name = StringPool::INVALID_ID;
+    StringPool::StringId external_command = StringPool::INVALID_ID;
+
+    JobScheduleKind schedule_kind = JobScheduleKind::CRON;
+    StringPool::StringId cron_expression = StringPool::INVALID_ID;
+    StringPool::StringId at_timestamp = StringPool::INVALID_ID;
+    int64_t interval_seconds = 0;
+    StringPool::StringId starts_at = StringPool::INVALID_ID;
+    StringPool::StringId ends_at = StringPool::INVALID_ID;
+
+    bool has_max_retries = false;
+    uint32_t max_retries = 0;
+    bool has_retry_backoff = false;
+    uint32_t retry_backoff_seconds = 0;
+    bool has_timeout = false;
+    uint32_t timeout_seconds = 0;
+
+    bool has_on_completion = false;
+    JobOnCompletion on_completion = JobOnCompletion::PRESERVE;
+
+    bool has_run_as = false;
+    StringPool::StringId run_as_role = StringPool::INVALID_ID;
+    bool has_description = false;
+    StringPool::StringId description = StringPool::INVALID_ID;
+    bool has_state = false;
+    JobState state = JobState::ENABLED;
+
+    StringPool::StringId job_class = StringPool::INVALID_ID;
+    StringPool::StringId partition_strategy = StringPool::INVALID_ID;
+    StringPool::StringId partition_expression = StringPool::INVALID_ID;
+    StringPool::StringId partition_shard = StringPool::INVALID_ID;
+
+    std::vector<StringPool::StringId> depends_on;
+};
+
+/**
+ * Resolved ALTER JOB statement
+ */
+struct ResolvedAlterJobStmt : public ResolvedStatement {
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+
+    bool has_schedule = false;
+    JobScheduleKind schedule_kind = JobScheduleKind::CRON;
+    StringPool::StringId cron_expression = StringPool::INVALID_ID;
+    StringPool::StringId at_timestamp = StringPool::INVALID_ID;
+    int64_t interval_seconds = 0;
+    StringPool::StringId starts_at = StringPool::INVALID_ID;
+    StringPool::StringId ends_at = StringPool::INVALID_ID;
+
+    bool has_state = false;
+    JobState state = JobState::ENABLED;
+    bool has_max_retries = false;
+    uint32_t max_retries = 0;
+    bool has_retry_backoff = false;
+    uint32_t retry_backoff_seconds = 0;
+    bool has_timeout = false;
+    uint32_t timeout_seconds = 0;
+    bool has_run_as = false;
+    StringPool::StringId run_as_role = StringPool::INVALID_ID;
+    bool has_description = false;
+    StringPool::StringId description = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved DROP JOB statement
+ */
+struct ResolvedDropJobStmt : public ResolvedStatement {
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+    bool keep_history = false;
+};
+
+/**
+ * Resolved EXECUTE JOB statement
+ */
+struct ResolvedExecuteJobStmt : public ResolvedStatement {
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+};
+
+/**
  * Resolved CREATE EXCEPTION statement
  */
 struct ResolvedCreateExceptionStmt : public ResolvedStatement {
@@ -1137,6 +1222,12 @@ struct ResolvedExplainStmt : public ResolvedStatement {
     bool format_json = false;             // JSON output format
     bool format_xml = false;              // XML output format
     bool format_yaml = false;             // YAML output format
+};
+
+/**
+ * Resolved SWEEP DATABASE statement
+ */
+struct ResolvedSweepDatabaseStmt : public ResolvedStatement {
 };
 
 // =============================================================================

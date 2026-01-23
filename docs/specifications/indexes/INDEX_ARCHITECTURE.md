@@ -19,7 +19,7 @@
 
 ## Overview
 
-ScratchBird implements **11 production-ready index types** designed for diverse workloads ranging from OLTP to OLAP. All indexes follow **Firebird Multi-Generational Architecture (MGA)** principles with TIP-based visibility and stable TIDs.
+ScratchBird implements **12 core index types** plus **15 optional/advanced index types** (27 total) designed for diverse workloads ranging from OLTP to OLAP. All indexes follow **Firebird Multi-Generational Architecture (MGA)** principles with TIP-based visibility and stable TIDs.
 
 ### Design Principles
 
@@ -51,9 +51,13 @@ ScratchBird implements **11 production-ready index types** designed for diverse 
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│ Index Implementations (11 types)                    │
-│  - B-Tree, Hash, GIN, HNSW, GiST, SP-GiST, BRIN    │
-│  - Bitmap, LSM-Tree, R-Tree, Columnstore           │
+│ Index Implementations (27 types: 12 core + 15 opt) │
+│  - Core: B-Tree, Hash, GIN, Fulltext, HNSW, GiST   │
+│  - Core: SP-GiST, BRIN, Bitmap, LSM, R-Tree        │
+│  - Core: Columnstore                              │
+│  - Opt: IVF, ZoneMap, Z-Order, Geohash, S2         │
+│  - Opt: Quadtree, Octree, FST, Suffix, CMS, HLL    │
+│  - Opt: ART, Learned, LSM-TTL                      │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
@@ -67,6 +71,24 @@ ScratchBird implements **11 production-ready index types** designed for diverse 
 ---
 
 ## Index Type Reference
+
+### Canonical Index Type Names (Parser/Catalog)
+
+**Core (Alpha scope):**
+- BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN
+- BITMAP, RTREE, HNSW, COLUMNSTORE, LSM
+
+**Optional/Advanced (Beta scope):**
+- IVF, ZONEMAP
+- ZORDER, GEOHASH, S2
+- QUADTREE, OCTREE
+- FST, SUFFIX_ARRAY, SUFFIX_TREE
+- COUNT_MIN_SKETCH, HYPERLOGLOG
+- ART, LEARNED, LSM_TTL
+
+**DDL Note:** SQL uses lowercase keywords in `USING` clauses (e.g., `USING zorder`). Bloom filters are an index option (`WITH (bloom_filter = true)`), not a standalone index type.
+
+**Total Index Types:** 27 (12 core + 15 optional)
 
 ### 1. B-Tree Index
 
@@ -598,6 +620,48 @@ status = columnstore->scanColumn(column_id, start_row, end_row, &data, &ctx);
 
 ---
 
+### 12. Fulltext (Inverted) Index
+
+**Purpose:** Full-text search and token-based retrieval
+
+**Use Cases:**
+- Full-text search (match terms, phrases, proximity)
+- Tokenized text columns
+- Fuzzy/prefix dictionary integration via FST (optional)
+
+**Data Structure:**
+- Term dictionary + posting lists
+- Segment-based immutable postings
+- Compression for doc IDs and positions
+
+**Spec:** `docs/specifications/indexes/InvertedIndex.md`
+
+**Key Features:**
+- ✅ Core inverted index structures and scoring
+- ✅ DML integration via storage engine (FULLTEXT index type)
+- ❌ Index GC pending (`InvertedIndex::removeDeadEntries`)
+
+---
+
+### Optional Advanced Index Types (Beta)
+
+These index types are defined and ready for implementation, but are optional/beta scope:
+
+- **IVF** (vector similarity) - `docs/specifications/indexes/IVFIndex.md`
+- **ZONEMAP** (min/max pruning) - `docs/specifications/indexes/ZoneMapsIndex.md`
+- **ZORDER** (Morton) - `docs/specifications/indexes/ZOrderIndex.md`
+- **GEOHASH**, **S2** - `docs/specifications/indexes/GeohashS2Index.md`
+- **QUADTREE**, **OCTREE** - `docs/specifications/indexes/QuadtreeOctreeIndex.md`
+- **FST** - `docs/specifications/indexes/FSTIndex.md`
+- **SUFFIX_ARRAY**, **SUFFIX_TREE** - `docs/specifications/indexes/SuffixIndex.md`
+- **COUNT_MIN_SKETCH** - `docs/specifications/indexes/CountMinSketchIndex.md`
+- **HYPERLOGLOG** - `docs/specifications/indexes/HyperLogLogIndex.md`
+- **ART** - `docs/specifications/indexes/AdaptiveRadixTreeIndex.md`
+- **LEARNED** - `docs/specifications/indexes/LearnedIndex.md`
+- **LSM_TTL** - `docs/specifications/indexes/LSMTimeSeriesIndex.md`
+
+---
+
 ## MGA Compliance Patterns
 
 All ScratchBird indexes follow Firebird MGA principles. Here are the required patterns:
@@ -719,50 +783,39 @@ Indexes must be maintained during INSERT, UPDATE, and DELETE operations.
 
 ### DML Hook Locations
 
-All DML hooks are in `src/core/storage_engine.cpp`:
+All DML hooks are in `src/core/storage_engine.cpp` and use `IndexKeyExtractor`
+plus centralized dispatch helpers (`insertIntoIndex`, `removeFromIndex`).
+Columnstore is handled via a row-buffered insert path.
 
 ```cpp
-// INSERT hook (lines 52-85)
+// INSERT hook (storage_engine.cpp)
 Status StorageEngine::insertTuple(...) {
     // ... insert into heap ...
 
-    // Maintain indexes
-    for (auto& idx : table->indexes) {
-        switch (idx->type) {
-            case IndexType::BTREE:
-                btree->insert(key, tid, xid, &ctx);
-                break;
-            case IndexType::HASH:
-                hash->insert(key, tid, xid, &ctx);
-                break;
-            case IndexType::GIN:
-                return Status::NOT_IMPLEMENTED;  // ❌ TODO
-            // ... other index types ...
-        }
+    // Build column layout + extract index key (with detoast)
+    IndexKeyExtractor extractor;
+    extractor.extractKey(..., &key, ...);
+
+    // Columnstore special-case (row buffering)
+    if (index_type == IndexType::COLUMNSTORE) {
+        columnstore->insert(column_id, tid.gpid, value, value_len, is_null, ctx);
+        continue;
     }
+
+    // Key-based indexes (BTREE/HASH/GIN/GIST/SPGIST/BRIN/RTREE/HNSW/BITMAP/LSM/FULLTEXT)
+    insertIntoIndex(index_type, index_ptr, key, tid, xid, ctx);
 }
 
-// UPDATE hook (lines 110-135)
+// UPDATE hook
 Status StorageEngine::updateTuple(...) {
-    // ... update heap tuple ...
-
-    // Maintain indexes (only if indexed columns changed)
-    if (indexedColumnsChanged) {
-        // Remove old index entries
-        idx->remove(old_key, tid, xid, &ctx);
-        // Insert new index entries
-        idx->insert(new_key, tid, xid, &ctx);
-    }
+    // Only update indexes when indexed columns change
+    removeFromIndex(index_type, index_ptr, old_key, tid, xid, ctx);
+    insertIntoIndex(index_type, index_ptr, new_key, tid, xid, ctx);
 }
 
-// DELETE hook (lines 140-165)
+// DELETE hook
 Status StorageEngine::deleteTuple(...) {
-    // ... mark heap tuple as deleted ...
-
-    // Logical delete in indexes
-    for (auto& idx : table->indexes) {
-        idx->remove(key, tid, xid, &ctx);  // Sets xmax
-    }
+    removeFromIndex(index_type, index_ptr, key, tid, xid, ctx);
 }
 ```
 
@@ -773,16 +826,17 @@ Status StorageEngine::deleteTuple(...) {
 | B-Tree      | ✅     | ✅     | ✅     | Active |
 | Hash        | ✅     | ✅     | ✅     | Active |
 | LSM-Tree    | ✅     | ✅     | ✅     | Active |
-| GIN         | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
-| HNSW        | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
-| GiST        | ✅     | ✅     | ✅     | COMPLETE (Nov 2025) |
-| SP-GiST     | ✅     | ✅     | ✅     | COMPLETE (Nov 2025) |
-| BRIN        | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
-| Bitmap      | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
-| R-Tree      | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
-| Columnstore | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
+| GIN         | ✅     | ✅     | ✅     | Active |
+| HNSW        | ✅     | ✅     | ✅     | Active |
+| GiST        | ✅     | ✅     | ✅     | Active |
+| SP-GiST     | ✅     | ✅     | ✅     | Active |
+| BRIN        | ✅     | ✅     | ✅     | Active |
+| Bitmap      | ✅     | ✅     | ✅     | Active |
+| R-Tree      | ✅     | ✅     | ✅     | Active |
+| Columnstore | ✅     | ✅     | ✅     | Active (row-buffered) |
+| Fulltext    | ✅     | ✅     | ✅     | Active (InvertedIndex) |
 
-**Remediation:** See `docs/audit/INDEX_SYSTEM_REMEDIATION_PLAN.md` for DML integration tasks.
+**Note:** FULLTEXT uses length-prefixed column payloads (see `InvertedIndex`), and Columnstore is row-buffered on OLTP inserts.
 
 ---
 
@@ -918,17 +972,18 @@ SELECT SUM(revenue), AVG(price) FROM sales;
 
 | Index Type | Core Ops | MGA | DML | Bytecode | Grade |
 |-----------|---------|-----|-----|----------|-------|
-| B-Tree | ✅ 100% | ✅ | ✅ | ⧗ | A+ |
-| Hash | ✅ 100% | ✅ | ✅ | ⧗ | A+ |
-| LSM-Tree | ✅ 100% | ✅ | ✅ | ⧗ | A+ |
-| HNSW | ✅ 100% | ✅ | ❌ | ⧗ | A- |
-| GiST | ✅ 100% | ✅ | ❌ | ⧗ | A- |
-| SP-GiST | ✅ 100% | ✅ | ❌ | ⧗ | A- |
-| BRIN | ✅ 100% | ✅ | ❌ | ⧗ | A- |
-| Columnstore | ✅ 100% | ✅ | ❌ | ⧗ | A- |
-| R-Tree | ✅ 90% | ⧗ | ❌ | ⧗ | B+ |
-| GIN | ✅ 100% | ⚠️ | ❌ | ⧗ | B- |
-| Bitmap | ⧗ 30% | ⚠️ | ❌ | ⧗ | C |
+| B-Tree | ✅ | ✅ | ✅ | ✅ | A+ |
+| Hash | ✅ | ✅ | ✅ | ✅ | A+ |
+| LSM-Tree | ✅ | ✅ | ✅ | ✅ | A |
+| HNSW | ✅ | ✅ | ✅ | ✅ | A |
+| GiST | ✅ | ✅ | ✅ | ✅ | A- |
+| SP-GiST | ✅ | ✅ | ✅ | ✅ | A- |
+| BRIN | ✅ | ✅ | ✅ | ✅ | A |
+| Columnstore | ✅ | ✅ | ✅ | ✅ | A |
+| R-Tree | ✅ | ✅ | ✅ | ✅ | A- |
+| GIN | ✅ | ✅ | ✅ | ✅ | A- |
+| Bitmap | ✅ | ✅ | ✅ | ✅ | A- |
+| Fulltext (Inverted) | ⧗ | ✅ | ✅ | ✅ | B+ |
 
 **Legend:**
 - ✅ Complete
@@ -938,31 +993,26 @@ SELECT SUM(revenue), AVG(price) FROM sales;
 
 ### Critical Issues
 
-1. **GIN Index MGA Violation** (Priority: P0)
-   - File: `src/core/gin_index.cpp:241`
-   - Issue: Physical removal instead of xmax marking
-   - Remediation: TASK-CRITICAL-1
+1. **FULLTEXT GC Stub** (Priority: P1)
+   - File: `src/core/inverted_index.cpp:3795`
+   - Issue: `InvertedIndex::removeDeadEntries` returns NOT_IMPLEMENTED
+   - Impact: GC cannot purge dead inverted entries; index bloat risk
 
-2. **Bitmap Index Incomplete** (Priority: P0)
-   - File: `src/core/bitmap_index.cpp`
-   - Issue: Insert/remove stubbed, no xmin/xmax
-   - Remediation: TASK-CRITICAL-2
+2. **Index GC Wiring Incomplete** (Priority: P1)
+   - File: `src/core/garbage_collector.cpp:870-946`
+   - Issue: GC only opens BTREE/HASH/GIN/BRIN/HNSW; other indexes not swept
+   - Impact: Dead entries in GiST/SPGiST/RTREE/BITMAP/COLUMNSTORE/FULLTEXT/LSM not reclaimed
 
-3. **DML Integration Missing** (Priority: P1)
-   - File: `src/core/storage_engine.cpp:74-85`
-   - Issue: 8 of 11 indexes return NOT_IMPLEMENTED
-   - Remediation: TASK-DML-1 through TASK-DML-8
-
-4. **No Bytecode Support** (Priority: P2)
-   - Files: `src/sblr/opcodes.h`, `bytecode_generator_v2.cpp`, `executor.cpp`
-   - Issue: Indexes not accessible from SQL/bytecode layer
-   - Remediation: TASK-BYTECODE-1 through TASK-BYTECODE-4
+3. **GiST Cache Cleanup Leak** (Priority: P2)
+   - File: `src/sblr/index_cache.cpp:270-290`
+   - Issue: GiST deletion skipped due to incomplete type cleanup
+   - Impact: Memory leak when evicting GiST indexes from cache
 
 ### Roadmap to 100% Completion
 
 See `docs/audit/INDEX_SYSTEM_REMEDIATION_PLAN.md` for detailed roadmap.
 
-**Estimated Effort:** 120-160 hours (3-4 weeks with 1 developer)
+**Estimated Effort:** 30-50 hours (GC wiring + FULLTEXT GC + cache cleanup)
 
 ---
 
@@ -978,6 +1028,6 @@ See `docs/audit/INDEX_SYSTEM_REMEDIATION_PLAN.md` for detailed roadmap.
 ---
 
 **Document Version:** 1.0
-**Last Updated:** November 20, 2025
+**Last Updated:** January 22, 2026
 **Status:** Production Documentation
-**Next Review:** December 18, 2025 (post-remediation)
+**Next Review:** February 15, 2026 (post-remediation)

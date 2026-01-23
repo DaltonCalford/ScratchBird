@@ -7,6 +7,8 @@
 **Target:** ScratchBird Alpha - Phase 2
 **Features:** Page-size agnostic (supports 8K, 16K, 32K, 64K, 128K pages)
 
+**Naming Note:** Catalog/SBLR use `IndexType::FULLTEXT`. This spec uses `USING inverted(...)` as the DDL alias; V2 parser does not yet expose FULLTEXT/INVERTED.
+
 ---
 
 ## Table of Contents

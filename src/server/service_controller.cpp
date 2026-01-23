@@ -8,6 +8,7 @@
 #include "scratchbird/version.h"
 #include "scratchbird/core/permission_cache.h"
 #include "scratchbird/server/ipc_server.h"
+#include "scratchbird/server/scratchbird_server.h"
 
 #include <iostream>
 #include <fstream>
@@ -671,7 +672,7 @@ core::Database* ServiceController::getDatabase(const std::string& name) {
     std::lock_guard<std::mutex> lock(databases_mutex_);
     for (auto& db : databases_) {
         if (db.name == name) {
-            return db.database.get();
+            return db.database;
         }
     }
     return nullptr;
@@ -698,7 +699,35 @@ core::Status ServiceController::openDatabase(const std::string& name, const std:
         }
     }
 
-    // Open database
+    bool needs_engine_server = (config_.mode == ServiceConfig::Mode::SINGLE_DATABASE);
+    if (config_.mode == ServiceConfig::Mode::MULTI_DATABASE && name == "main") {
+        needs_engine_server = true;
+    }
+
+    if (needs_engine_server) {
+        ServerConfig server_config;
+        server_config.database_path = path;
+        server_config.auto_create_db = create;
+        server_config.max_connections = config_.max_connections;
+        server_config.verbose = (config_.log_level == ServiceConfig::LogLevel::DEBUG);
+
+        auto server = std::make_unique<ScratchBirdServer>(server_config);
+        core::Status status = server->startAsync(ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        DatabaseInstance instance;
+        instance.name = name;
+        instance.path = path;
+        instance.database = server->database();
+        databases_.push_back(std::move(instance));
+        engine_servers_.push_back({name, std::move(server)});
+        stats_.active_databases = static_cast<uint32_t>(databases_.size());
+        return core::Status::OK;
+    }
+
+    // Open database directly (no IPC server needed)
     auto database = std::make_unique<core::Database>();
     core::Status status;
 
@@ -720,7 +749,12 @@ core::Status ServiceController::openDatabase(const std::string& name, const std:
     }
     database->setRoleSwitchPolicy(config_.role_switch_policy);
 
-    databases_.push_back({name, path, std::move(database)});
+    DatabaseInstance instance;
+    instance.name = name;
+    instance.path = path;
+    instance.database = database.get();
+    instance.owned_database = std::move(database);
+    databases_.push_back(std::move(instance));
     stats_.active_databases = static_cast<uint32_t>(databases_.size());
 
     return core::Status::OK;
@@ -736,7 +770,18 @@ core::Status ServiceController::closeDatabase(const std::string& name, core::Err
         return core::Status::NOT_FOUND;
     }
 
-    it->database->close();
+    for (auto engine_it = engine_servers_.begin(); engine_it != engine_servers_.end(); ++engine_it) {
+        if (engine_it->name == name) {
+            engine_it->server->shutdown();
+            engine_it->server->waitForShutdown(config_.shutdown_timeout_sec * 1000);
+            engine_servers_.erase(engine_it);
+            break;
+        }
+    }
+
+    if (it->database && it->owned_database) {
+        it->database->close();
+    }
     databases_.erase(it);
     stats_.active_databases = static_cast<uint32_t>(databases_.size());
 
@@ -1127,11 +1172,20 @@ void ServiceController::doShutdown() {
     // Stop listeners
     stopListeners(nullptr);
 
+    // Stop engine servers
+    for (auto& engine : engine_servers_) {
+        engine.server->shutdown();
+    }
+    for (auto& engine : engine_servers_) {
+        engine.server->waitForShutdown(config_.shutdown_timeout_sec * 1000);
+    }
+    engine_servers_.clear();
+
     // Close databases
     {
         std::lock_guard<std::mutex> lock(databases_mutex_);
         for (auto& db : databases_) {
-            if (db.database) {
+            if (db.database && db.owned_database) {
                 db.database->close();
             }
         }

@@ -3398,7 +3398,7 @@ namespace scratchbird::core
         }
 
         TransactionManager *txn_mgr = db_->transaction_manager();
-        uint64_t oit = txn_mgr ? txn_mgr->getOldestInterestingTransaction() : 0;
+        uint64_t oit = txn_mgr ? txn_mgr->getOldestXid() : 0;
         auto iter = rangeScan(nullptr, nullptr, oit, true, true, ctx);
         if (!iter)
         {

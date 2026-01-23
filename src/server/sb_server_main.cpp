@@ -21,6 +21,25 @@ std::vector<std::string> normalizeArgs(int argc, char* argv[]) {
     normalized.reserve(static_cast<size_t>(argc) + 2);
     normalized.push_back(argv[0]);
 
+    auto needs_value = [](const std::string& opt) -> bool {
+        return opt == "-c" || opt == "--config" ||
+               opt == "-D" || opt == "--data-dir" ||
+               opt == "-d" || opt == "--database" ||
+               opt == "-h" || opt == "--host" ||
+               opt == "-p" || opt == "--port" ||
+               opt == "--pg-port" || opt == "--mysql-port" || opt == "--fb-port" ||
+               opt == "--control-socket-dir" ||
+               opt == "--native-bind" || opt == "--postgres-bind" ||
+               opt == "--mysql-bind" || opt == "--firebird-bind" ||
+               opt == "--native-pool-min" || opt == "--native-pool-max" ||
+               opt == "--postgres-pool-min" || opt == "--postgres-pool-max" ||
+               opt == "--mysql-pool-min" || opt == "--mysql-pool-max" ||
+               opt == "--firebird-pool-min" || opt == "--firebird-pool-max" ||
+               opt == "-k" || opt == "--unix-socket" ||
+               opt == "-N" || opt == "--max-connections" ||
+               opt == "-B" || opt == "--shared-buffers";
+    };
+
     bool has_database_flag = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -30,8 +49,29 @@ std::vector<std::string> normalizeArgs(int argc, char* argv[]) {
     }
 
     bool inserted_db = false;
+    bool skip_next_value = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        if (skip_next_value) {
+            normalized.push_back(arg);
+            skip_next_value = false;
+            continue;
+        }
+
+        if (arg.rfind("--", 0) == 0) {
+            auto eq = arg.find('=');
+            std::string opt = (eq == std::string::npos) ? arg : arg.substr(0, eq);
+            if (eq == std::string::npos && needs_value(opt)) {
+                normalized.push_back(arg);
+                skip_next_value = true;
+                continue;
+            }
+        } else if (arg.size() == 2 && arg[0] == '-' && needs_value(arg)) {
+            normalized.push_back(arg);
+            skip_next_value = true;
+            continue;
+        }
+
         if (!has_database_flag && !inserted_db && !arg.empty() && arg[0] != '-') {
             normalized.push_back("-d");
             normalized.push_back(arg);

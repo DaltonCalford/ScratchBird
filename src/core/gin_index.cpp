@@ -374,7 +374,7 @@ namespace scratchbird
 
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint32_t pending_page = meta->gin_pending_list_head;
-            uint32_t root_page = meta->gin_entry_tree_root;
+            uint32_t root_page = meta->gin_keys_btree_root;
             unpinIndexPage(meta_page_, false, ctx);
 
             while (pending_page != 0)

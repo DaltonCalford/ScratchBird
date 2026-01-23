@@ -66,6 +66,7 @@
 #include "scratchbird/core/bitmap_index.h"
 #include "scratchbird/core/columnstore_index.h"
 #include "scratchbird/core/lsm_tree_index.h"
+#include "scratchbird/core/inverted_index.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"  // For LOG_ERROR macro
 #include "scratchbird/core/audit_logger.h"
@@ -1742,6 +1743,26 @@ namespace scratchbird
 
                     case Opcode::REFRESH_MATERIALIZED_VIEW:  // ALPHA Phase 1 - Materialized Views
                         executeRefreshMaterializedView();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::CREATE_JOB:
+                        executeCreateJob();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::ALTER_JOB:
+                        executeAlterJob();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::DROP_JOB:
+                        executeDropJob();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::EXECUTE_JOB:
+                        executeExecuteJob();
                         result = ExecutionResult();
                         break;
 
@@ -21181,22 +21202,71 @@ namespace scratchbird
                     projections.push_back(std::move(proj));
                 }
 
+                bool use_fulltext_index = false;
+                bool skip_where_eval = false;
+                std::vector<core::TID> fulltext_tids;
+
+                if (has_where)
+                {
+                    std::string ft_column;
+                    size_t query_start = 0;
+                    size_t query_end = 0;
+                    if (extractFullTextPredicate(where_start_pc, where_end_pc,
+                                                 ft_column, query_start, query_end))
+                    {
+                        std::string ft_column_upper = normalize_name(ft_column);
+                        auto col_it = std::find_if(all_columns.begin(), all_columns.end(),
+                                                   [&](const auto& col)
+                                                   {
+                                                       return normalize_name(col.column_name) == ft_column_upper;
+                                                   });
+                        if (col_it != all_columns.end())
+                        {
+                            core::CatalogManager::IndexInfo ft_index;
+                            if (findFullTextIndexForColumn(table_info.table_id, col_it->column_id, ft_index))
+                            {
+                                std::vector<uint8_t> key_bytes;
+                                if (buildFullTextQueryKey(query_start, query_end, key_bytes))
+                                {
+                                    core::ErrorContext ft_ctx;
+                                    uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+                                    auto status = routeIndexSearch(IndexType::FULLTEXT,
+                                                                   ft_index.index_id,
+                                                                   key_bytes,
+                                                                   current_xid,
+                                                                   &fulltext_tids,
+                                                                   &ft_ctx);
+                                    if (status == core::Status::OK)
+                                    {
+                                        use_fulltext_index = true;
+                                        skip_where_eval = true;
+                                    }
+                                    else
+                                    {
+                                        DEBUG_LOG_DB("FULLTEXT index search failed for index "
+                                                     << ft_index.index_name << ": " << ft_ctx.message);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
-                if (!scan_iter)
+                if (!scan_iter && !use_fulltext_index)
                 {
                     error("Failed to create table scan iterator");
                 }
 
                 core::Tuple tuple;
-                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
-                {
+                auto emit_row = [&](const core::Tuple& tuple_in) {
                     std::vector<Value> row_values;
-                    if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                    if (!deserializeTuple(tuple_in.data, tuple_in.data_size, all_columns, row_values))
                     {
-                        continue;
+                        return;
                     }
 
-                    if (has_where)
+                    if (has_where && !skip_where_eval)
                     {
                         size_t saved_pc = pc_;
                         pc_ = where_start_pc;
@@ -21211,7 +21281,7 @@ namespace scratchbird
 
                         if (!where_result.toBoolean())
                         {
-                            continue;
+                            return;
                         }
                     }
 
@@ -21241,6 +21311,27 @@ namespace scratchbird
                     }
 
                     current_result_set_->addRow(std::move(result_row));
+                };
+
+                if (use_fulltext_index)
+                {
+                    core::ErrorContext tuple_ctx;
+                    for (const auto& tid : fulltext_tids)
+                    {
+                        if (db_->storage_engine()->getTuple(table_info.table_id, tid, &tuple, &tuple_ctx)
+                            != core::Status::OK)
+                        {
+                            continue;
+                        }
+                        emit_row(tuple);
+                    }
+                }
+                else
+                {
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                    {
+                        emit_row(tuple);
+                    }
                 }
             }
             else
@@ -35187,6 +35278,335 @@ namespace scratchbird
             db_->permission_cache()->invalidateAll();
         }
 
+        void Executor::executeCreateJob()
+        {
+            std::string job_name = readString();
+            uint8_t job_type_raw = readByte();
+            uint8_t schedule_kind_raw = readByte();
+
+            std::string job_sql = readString();
+            std::string procedure_name = readString();
+            std::string external_command = readString();
+
+            std::string cron_expression = readString();
+            std::string at_timestamp = readString();
+            int64_t interval_seconds = static_cast<int64_t>(readInt64());
+            std::string starts_at = readString();
+            std::string ends_at = readString();
+
+            uint16_t flags = readInt16();
+            uint32_t max_retries = readInt32();
+            uint32_t retry_backoff_seconds = readInt32();
+            uint32_t timeout_seconds = readInt32();
+            uint8_t on_completion_raw = readByte();
+            uint8_t state_raw = readByte();
+
+            std::string run_as_role = readString();
+            std::string description = readString();
+            readString();  // job_class (ignored in Alpha)
+            std::string partition_strategy = readString();
+            std::string partition_expression = readString();
+            readString();  // partition_shard (ignored in Alpha)
+
+            uint64_t dep_count = readUVarint();
+            std::vector<std::string> deps;
+            deps.reserve(dep_count);
+            for (uint64_t i = 0; i < dep_count; ++i)
+            {
+                deps.push_back(readString());
+            }
+
+            auto now_ms = []() -> uint64_t {
+                auto now = std::chrono::system_clock::now().time_since_epoch();
+                return static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+            };
+
+            auto parse_timestamp_ms = [&](const std::string& value) -> uint64_t {
+                if (value.empty()) {
+                    return 0;
+                }
+                core::TimezoneManager tz;
+                core::ErrorContext ts_ctx;
+                auto parsed = tz.parseTimestamp(value, tz.getDefaultTimezone(), &ts_ctx);
+                if (!parsed) {
+                    error("Invalid timestamp: " + value);
+                }
+                int64_t micros = *parsed;
+                if (micros < 0) {
+                    error("Timestamp must be non-negative: " + value);
+                }
+                return static_cast<uint64_t>(micros / 1000);
+            };
+
+            core::CatalogManager::JobInfo job;
+            job.job_name = job_name;
+            job.job_type = static_cast<core::CatalogManager::JobType>(job_type_raw);
+            job.job_sql = job_sql;
+            job.external_command = external_command;
+            job.schedule_kind = static_cast<core::CatalogManager::ScheduleKind>(schedule_kind_raw);
+            job.cron_expression = cron_expression;
+            job.interval_seconds = interval_seconds;
+            job.partition_strategy = partition_strategy;
+            job.partition_expression = partition_expression;
+
+            if (flags & 0x01) job.max_retries = max_retries;
+            if (flags & 0x02) job.retry_backoff_seconds = retry_backoff_seconds;
+            if (flags & 0x04) job.timeout_seconds = timeout_seconds;
+            if (flags & 0x08) job.on_completion =
+                static_cast<core::CatalogManager::JobOnCompletion>(on_completion_raw);
+            if (flags & 0x10) job.state =
+                static_cast<core::CatalogManager::JobState>(state_raw);
+            if (flags & 0x20 && !run_as_role.empty()) {
+                core::CatalogManager::RoleInfo role_info;
+                core::ErrorContext role_ctx;
+                auto role_status = db_->catalog_manager()->getRoleByName(
+                    run_as_role, role_info, &role_ctx);
+                if (role_status != core::Status::OK) {
+                    error("RUN AS role not found: " + run_as_role);
+                }
+                job.run_as_role_uuid = role_info.role_id;
+            }
+            if (flags & 0x40) job.description = description;
+
+            if (!procedure_name.empty()) {
+                core::CatalogManager::ProcedureInfo proc_info;
+                core::ErrorContext proc_ctx;
+                auto proc_status = db_->catalog_manager()->getProcedure(
+                    procedure_name, proc_info, &proc_ctx);
+                if (proc_status != core::Status::OK) {
+                    error("Procedure not found: " + procedure_name);
+                }
+                job.procedure_uuid = proc_info.procedure_id;
+                if (job.job_type == core::CatalogManager::JobType::PROCEDURE && job.job_sql.empty()) {
+                    job.job_sql = "CALL " + procedure_name + "()";
+                }
+            }
+
+            uint64_t now = now_ms();
+            if (job.schedule_kind == core::CatalogManager::ScheduleKind::AT) {
+                uint64_t at_ms = parse_timestamp_ms(at_timestamp);
+                job.starts_at = at_ms;
+                job.next_run_time = at_ms;
+            } else if (job.schedule_kind == core::CatalogManager::ScheduleKind::EVERY) {
+                if (job.interval_seconds <= 0) {
+                    error("EVERY requires a positive interval");
+                }
+                uint64_t start_ms = parse_timestamp_ms(starts_at);
+                if (start_ms != 0) {
+                    job.starts_at = start_ms;
+                    job.next_run_time = start_ms;
+                } else {
+                    job.next_run_time = now;
+                }
+                uint64_t end_ms = parse_timestamp_ms(ends_at);
+                if (end_ms != 0) {
+                    job.ends_at = end_ms;
+                }
+                if (job.next_run_time < now) {
+                    job.next_run_time = now + static_cast<uint64_t>(job.interval_seconds) * 1000;
+                }
+            } else {
+                job.next_run_time = now;
+            }
+
+            if (conn_ctx_) {
+                job.created_by_user_uuid = conn_ctx_->getCurrentUserId();
+            }
+
+            core::ID job_id;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->createJob(job, job_id, &err_ctx);
+            if (status != core::Status::OK) {
+                error("CREATE JOB failed: " + err_ctx.message);
+            }
+
+            if (!deps.empty()) {
+                std::vector<core::ID> dep_ids;
+                dep_ids.reserve(deps.size());
+                for (const auto& dep_name : deps) {
+                    core::CatalogManager::JobInfo dep_job;
+                    core::ErrorContext dep_ctx;
+                    auto dep_status = db_->catalog_manager()->getJobByName(
+                        dep_name, dep_job, &dep_ctx);
+                    if (dep_status != core::Status::OK) {
+                        error("Dependency job not found: " + dep_name);
+                    }
+                    dep_ids.push_back(dep_job.job_id);
+                }
+                auto dep_status = db_->catalog_manager()->addJobDependencies(
+                    job_id, dep_ids, &err_ctx);
+                if (dep_status != core::Status::OK) {
+                    error("Failed to add job dependencies");
+                }
+            }
+        }
+
+        void Executor::executeAlterJob()
+        {
+            std::string job_name = readString();
+            uint16_t flags = readInt16();
+
+            uint8_t schedule_kind_raw = readByte();
+            std::string cron_expression = readString();
+            std::string at_timestamp = readString();
+            int64_t interval_seconds = static_cast<int64_t>(readInt64());
+            std::string starts_at = readString();
+            std::string ends_at = readString();
+
+            uint8_t state_raw = readByte();
+            uint32_t max_retries = readInt32();
+            uint32_t retry_backoff_seconds = readInt32();
+            uint32_t timeout_seconds = readInt32();
+            std::string run_as_role = readString();
+            std::string description = readString();
+
+            core::CatalogManager::JobInfo job;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getJobByName(job_name, job, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Job not found: " + job_name);
+            }
+
+            auto now_ms = []() -> uint64_t {
+                auto now = std::chrono::system_clock::now().time_since_epoch();
+                return static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+            };
+
+            auto parse_timestamp_ms = [&](const std::string& value) -> uint64_t {
+                if (value.empty()) {
+                    return 0;
+                }
+                core::TimezoneManager tz;
+                core::ErrorContext ts_ctx;
+                auto parsed = tz.parseTimestamp(value, tz.getDefaultTimezone(), &ts_ctx);
+                if (!parsed) {
+                    error("Invalid timestamp: " + value);
+                }
+                int64_t micros = *parsed;
+                if (micros < 0) {
+                    error("Timestamp must be non-negative: " + value);
+                }
+                return static_cast<uint64_t>(micros / 1000);
+            };
+
+            if (flags & 0x01) {
+                job.schedule_kind = static_cast<core::CatalogManager::ScheduleKind>(schedule_kind_raw);
+                job.cron_expression = cron_expression;
+                job.interval_seconds = interval_seconds;
+
+                uint64_t now = now_ms();
+                if (job.schedule_kind == core::CatalogManager::ScheduleKind::AT) {
+                    uint64_t at_ms = parse_timestamp_ms(at_timestamp);
+                    job.starts_at = at_ms;
+                    job.next_run_time = at_ms;
+                } else if (job.schedule_kind == core::CatalogManager::ScheduleKind::EVERY) {
+                    if (job.interval_seconds <= 0) {
+                        error("EVERY requires a positive interval");
+                    }
+                    uint64_t start_ms = parse_timestamp_ms(starts_at);
+                    if (start_ms != 0) {
+                        job.starts_at = start_ms;
+                        job.next_run_time = start_ms;
+                    } else if (job.next_run_time == 0 || job.next_run_time < now) {
+                        job.next_run_time = now;
+                    }
+                    uint64_t end_ms = parse_timestamp_ms(ends_at);
+                    if (end_ms != 0) {
+                        job.ends_at = end_ms;
+                    }
+                    if (job.next_run_time < now) {
+                        job.next_run_time = now + static_cast<uint64_t>(job.interval_seconds) * 1000;
+                    }
+                } else {
+                    job.next_run_time = now;
+                }
+            }
+
+            if (flags & 0x02) {
+                job.state = static_cast<core::CatalogManager::JobState>(state_raw);
+            }
+            if (flags & 0x04) job.max_retries = max_retries;
+            if (flags & 0x08) job.retry_backoff_seconds = retry_backoff_seconds;
+            if (flags & 0x10) job.timeout_seconds = timeout_seconds;
+            if (flags & 0x20 && !run_as_role.empty()) {
+                core::CatalogManager::RoleInfo role_info;
+                core::ErrorContext role_ctx;
+                auto role_status = db_->catalog_manager()->getRoleByName(
+                    run_as_role, role_info, &role_ctx);
+                if (role_status != core::Status::OK) {
+                    error("RUN AS role not found: " + run_as_role);
+                }
+                job.run_as_role_uuid = role_info.role_id;
+            }
+            if (flags & 0x40) job.description = description;
+
+            status = db_->catalog_manager()->updateJob(job, &err_ctx);
+            if (status != core::Status::OK) {
+                error("ALTER JOB failed: " + err_ctx.message);
+            }
+        }
+
+        void Executor::executeDropJob()
+        {
+            std::string job_name = readString();
+            uint8_t flags = readByte();
+            bool keep_history = flags & 0x01;
+
+            core::CatalogManager::JobInfo job;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getJobByName(job_name, job, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Job not found: " + job_name);
+            }
+
+            status = db_->catalog_manager()->deleteJob(job.job_id, keep_history, &err_ctx);
+            if (status != core::Status::OK) {
+                error("DROP JOB failed: " + err_ctx.message);
+            }
+        }
+
+        void Executor::executeExecuteJob()
+        {
+            std::string job_name = readString();
+
+            core::CatalogManager::JobInfo job;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getJobByName(job_name, job, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Job not found: " + job_name);
+            }
+
+            auto now = []() -> uint64_t {
+                auto tp = std::chrono::system_clock::now().time_since_epoch();
+                return static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(tp).count());
+            };
+
+            uint64_t now_ms = now();
+            core::CatalogManager::JobRunInfo run;
+            run.job_id = job.job_id;
+            run.scheduled_time = now_ms;
+            run.started_at = now_ms;
+            run.state = core::CatalogManager::JobRunState::RUNNING;
+
+            core::ID run_id;
+            status = db_->catalog_manager()->createJobRun(run, run_id, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Failed to create job run");
+            }
+
+            run.job_run_id = run_id;
+            run.completed_at = now_ms;
+            run.state = core::CatalogManager::JobRunState::COMPLETED;
+            run.result_message = "EXECUTE JOB (no-op)";
+            status = db_->catalog_manager()->updateJobRun(run, &err_ctx);
+            if (status != core::Status::OK) {
+                error("Failed to update job run");
+            }
+        }
+
         void Executor::executeCreateGroup()
         {
             // Decode bytecode
@@ -42093,6 +42513,229 @@ namespace scratchbird
             return false; // No suitable index found
         }
 
+        bool Executor::findFullTextIndexForColumn(const core::ID& table_id,
+                                                  const core::ID& column_id,
+                                                  core::CatalogManager::IndexInfo& index_out)
+        {
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            auto status = db_->catalog_manager()->listIndexesForTable(table_id, indexes, nullptr, false);
+            if (status != core::Status::OK)
+            {
+                return false;
+            }
+
+            for (const auto& index_info : indexes)
+            {
+                if (index_info.index_type != core::CatalogManager::IndexType::FULLTEXT)
+                {
+                    continue;
+                }
+                if (!index_info.column_ids.empty() &&
+                    index_info.column_ids[0] == column_id)
+                {
+                    index_out = index_info;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool Executor::extractFullTextPredicate(size_t expr_start,
+                                                size_t expr_end,
+                                                std::string& column_name_out,
+                                                size_t& query_start_out,
+                                                size_t& query_end_out)
+        {
+            struct ExprNode
+            {
+                enum class Kind
+                {
+                    ColumnRef,
+                    Constant,
+                    TsMatch
+                };
+                Kind kind = Kind::Constant;
+                bool has_column = false;
+                bool right_has_column = false;
+                std::string column_name;
+                size_t start = 0;
+                size_t end = 0;
+                size_t query_start = 0;
+                size_t query_end = 0;
+            };
+
+            size_t saved_pc = pc_;
+            pc_ = expr_start;
+
+            std::vector<ExprNode> stack;
+            auto push_constant = [&](size_t start, size_t end) {
+                ExprNode node;
+                node.kind = ExprNode::Kind::Constant;
+                node.has_column = false;
+                node.start = start;
+                node.end = end;
+                stack.push_back(std::move(node));
+            };
+
+            while (pc_ < expr_end)
+            {
+                size_t token_start = pc_;
+                Opcode op = static_cast<Opcode>(readByte());
+                switch (op)
+                {
+                    case Opcode::COLUMN_REF:
+                    {
+                        std::string name = readString();
+                        ExprNode node;
+                        node.kind = ExprNode::Kind::ColumnRef;
+                        node.has_column = true;
+                        node.column_name = std::move(name);
+                        node.start = token_start;
+                        node.end = pc_;
+                        stack.push_back(std::move(node));
+                        break;
+                    }
+                    case Opcode::LITERAL_NULL:
+                        push_constant(token_start, pc_);
+                        break;
+                    case Opcode::LITERAL_INT32:
+                        readInt32();
+                        push_constant(token_start, pc_);
+                        break;
+                    case Opcode::LITERAL_INT64:
+                        readInt64();
+                        push_constant(token_start, pc_);
+                        break;
+                    case Opcode::LITERAL_DOUBLE:
+                        readDouble();
+                        push_constant(token_start, pc_);
+                        break;
+                    case Opcode::LITERAL_STRING:
+                        readString();
+                        push_constant(token_start, pc_);
+                        break;
+                    case Opcode::LITERAL_CHARSET:
+                        readInt16();
+                        push_constant(token_start, pc_);
+                        break;
+                    case Opcode::LITERAL_COLLATION:
+                        readInt32();
+                        push_constant(token_start, pc_);
+                        break;
+                    case Opcode::EXTENDED_OPCODE:
+                    {
+                        uint16_t ext = readExtendedOpcode();
+                        if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_TSMATCH))
+                        {
+                            if (stack.size() < 2)
+                            {
+                                pc_ = saved_pc;
+                                return false;
+                            }
+                            ExprNode right = std::move(stack.back());
+                            stack.pop_back();
+                            ExprNode left = std::move(stack.back());
+                            stack.pop_back();
+
+                            ExprNode node;
+                            node.kind = ExprNode::Kind::TsMatch;
+                            node.has_column = left.has_column || right.has_column;
+                            node.right_has_column = right.has_column;
+                            if (left.kind == ExprNode::Kind::ColumnRef)
+                            {
+                                node.column_name = left.column_name;
+                            }
+                            node.start = left.start;
+                            node.end = pc_;
+                            node.query_start = right.start;
+                            node.query_end = right.end;
+                            stack.push_back(std::move(node));
+                        }
+                        else if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_PLACEHOLDER))
+                        {
+                            readInt16();
+                            readInt16();
+                            push_constant(token_start, pc_);
+                        }
+                        else
+                        {
+                            pc_ = saved_pc;
+                            return false;
+                        }
+                        break;
+                    }
+                    default:
+                        pc_ = saved_pc;
+                        return false;
+                }
+            }
+
+            bool matched = false;
+            if (pc_ == expr_end && stack.size() == 1)
+            {
+                const ExprNode& root = stack.front();
+                if (root.kind == ExprNode::Kind::TsMatch &&
+                    !root.column_name.empty() &&
+                    !root.right_has_column)
+                {
+                    column_name_out = root.column_name;
+                    query_start_out = root.query_start;
+                    query_end_out = root.query_end;
+                    matched = true;
+                }
+            }
+
+            pc_ = saved_pc;
+            return matched;
+        }
+
+        bool Executor::buildFullTextQueryKey(size_t query_start,
+                                             size_t query_end,
+                                             std::vector<uint8_t>& key_out)
+        {
+            size_t saved_pc = pc_;
+            pc_ = query_start;
+            current_row_values_ = nullptr;
+            current_row_columns_ = nullptr;
+
+            Value query_val = evaluateExpressionRange(query_end);
+
+            current_row_values_ = nullptr;
+            current_row_columns_ = nullptr;
+            pc_ = saved_pc;
+
+            if (query_val.isNull())
+            {
+                return false;
+            }
+
+            std::string query;
+            if (query_val.type() == core::DataType::TSQUERY)
+            {
+                query = query_val.getTSQuery().toString();
+            }
+            else if (core::TypeSystem::isString(query_val.type()))
+            {
+                query = query_val.toString();
+            }
+            else
+            {
+                return false;
+            }
+
+            uint32_t len = static_cast<uint32_t>(query.size());
+            key_out.clear();
+            key_out.reserve(sizeof(uint32_t) + query.size());
+            key_out.push_back(static_cast<uint8_t>(len & 0xFF));
+            key_out.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+            key_out.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
+            key_out.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
+            key_out.insert(key_out.end(), query.begin(), query.end());
+
+            return true;
+        }
+
         // ALPHA Phase A+: Search an index for matching values (Nov 19, 2025)
         // Returns TIDs of rows that match the specified values
         core::Status Executor::searchIndexForValues(const core::CatalogManager::IndexInfo& index_info,
@@ -46130,6 +46773,46 @@ namespace scratchbird
                     return core::Status::INTERNAL_ERROR;
                 }
 
+                case IndexType::FULLTEXT:
+                {
+                    void* index_ptr = nullptr;
+                    core::Status open_status = core::IndexFactory::openIndex(
+                        core::CatalogManager::IndexType::FULLTEXT, db_, index_info, &index_ptr, ctx);
+                    if (open_status != core::Status::OK || !index_ptr)
+                    {
+                        return open_status != core::Status::OK ? open_status : core::Status::INTERNAL_ERROR;
+                    }
+                    std::unique_ptr<core::InvertedIndex> inverted(
+                        static_cast<core::InvertedIndex*>(index_ptr));
+
+                    std::string query;
+                    size_t offset = 0;
+                    while (offset < key.size())
+                    {
+                        uint32_t len = 0;
+                        if (!core::readUint32LE(key.data(), key.size(), offset, len))
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length prefix invalid");
+                            return core::Status::DATA_CORRUPTED;
+                        }
+                        if (offset + len > key.size())
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length exceeds payload");
+                            return core::Status::DATA_CORRUPTED;
+                        }
+                        if (!query.empty())
+                        {
+                            query.push_back(' ');
+                        }
+                        query.append(reinterpret_cast<const char*>(key.data() + offset), len);
+                        offset += len;
+                    }
+
+                    return inverted->search(query, current_xid, results_out, ctx);
+                }
+
                 case IndexType::GIN:
                     // GIN (Generalized Inverted Index) requires specialized query operators
                     // Generic key search doesn't apply to inverted indexes
@@ -46532,6 +47215,15 @@ namespace scratchbird
                         return core::Status::OK;
                     }
                     return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::FULLTEXT:
+                {
+                    if (ctx) {
+                        ctx->set(core::Status::NOT_SUPPORTED, "FULLTEXT indexes require @@ search operator",
+                                __FILE__, __LINE__, __func__);
+                    }
+                    return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::HASH:

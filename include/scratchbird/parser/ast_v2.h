@@ -68,6 +68,7 @@ enum class ASTKind : uint16_t {
     CreateUserStmt,
     CreateRoleStmt,
     CreateExceptionStmt,
+    CreateJobStmt,
     CreateTypeStmt,
     CreateDomainStmt,
     AlterDomainStmt,
@@ -86,6 +87,7 @@ enum class ASTKind : uint16_t {
     DropPackageStmt,
     DropRoleStmt,
     DropExceptionStmt,
+    DropJobStmt,
     TruncateTableStmt,
 
     // Statements - DML
@@ -111,6 +113,9 @@ enum class ASTKind : uint16_t {
     ResetStmt,
     ShowStmt,
     ExplainStmt,
+    SweepDatabaseStmt,
+    AlterJobStmt,
+    ExecuteJobStmt,
 
     // Statements - DCL (Data Control Language)
     GrantStmt,
@@ -795,6 +800,134 @@ public:
     StringPool::StringId message = StringPool::INVALID_ID;
 };
 
+// =============================================================================
+// Scheduler Job Statements
+// =============================================================================
+
+enum class JobType : uint8_t {
+    SQL = 0,
+    PROCEDURE = 1,
+    EXTERNAL = 2
+};
+
+enum class JobScheduleKind : uint8_t {
+    CRON = 0,
+    AT = 1,
+    EVERY = 2
+};
+
+enum class JobState : uint8_t {
+    ENABLED = 0,
+    DISABLED = 1,
+    PAUSED = 2
+};
+
+enum class JobOnCompletion : uint8_t {
+    PRESERVE = 0,
+    DROP = 1
+};
+
+/**
+ * CREATE JOB statement
+ */
+class CreateJobStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateJobStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+    JobType job_type = JobType::SQL;
+    StringPool::StringId job_sql = StringPool::INVALID_ID;
+    StringPool::StringId procedure_name = StringPool::INVALID_ID;
+    StringPool::StringId external_command = StringPool::INVALID_ID;
+
+    JobScheduleKind schedule_kind = JobScheduleKind::CRON;
+    StringPool::StringId cron_expression = StringPool::INVALID_ID;
+    StringPool::StringId at_timestamp = StringPool::INVALID_ID;
+    int64_t interval_seconds = 0;
+    StringPool::StringId starts_at = StringPool::INVALID_ID;
+    StringPool::StringId ends_at = StringPool::INVALID_ID;
+
+    bool has_max_retries = false;
+    uint32_t max_retries = 0;
+    bool has_retry_backoff = false;
+    uint32_t retry_backoff_seconds = 0;
+    bool has_timeout = false;
+    uint32_t timeout_seconds = 0;
+
+    bool has_on_completion = false;
+    JobOnCompletion on_completion = JobOnCompletion::PRESERVE;
+
+    bool has_run_as = false;
+    StringPool::StringId run_as_role = StringPool::INVALID_ID;
+    bool has_description = false;
+    StringPool::StringId description = StringPool::INVALID_ID;
+    bool has_state = false;
+    JobState state = JobState::ENABLED;
+
+    StringPool::StringId job_class = StringPool::INVALID_ID;
+    StringPool::StringId partition_strategy = StringPool::INVALID_ID;
+    StringPool::StringId partition_expression = StringPool::INVALID_ID;
+    StringPool::StringId partition_shard = StringPool::INVALID_ID;
+
+    std::vector<StringPool::StringId> depends_on;
+};
+
+/**
+ * ALTER JOB statement
+ */
+class AlterJobStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterJobStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+
+    bool has_schedule = false;
+    JobScheduleKind schedule_kind = JobScheduleKind::CRON;
+    StringPool::StringId cron_expression = StringPool::INVALID_ID;
+    StringPool::StringId at_timestamp = StringPool::INVALID_ID;
+    int64_t interval_seconds = 0;
+    StringPool::StringId starts_at = StringPool::INVALID_ID;
+    StringPool::StringId ends_at = StringPool::INVALID_ID;
+
+    bool has_state = false;
+    JobState state = JobState::ENABLED;
+    bool has_max_retries = false;
+    uint32_t max_retries = 0;
+    bool has_retry_backoff = false;
+    uint32_t retry_backoff_seconds = 0;
+    bool has_timeout = false;
+    uint32_t timeout_seconds = 0;
+    bool has_run_as = false;
+    StringPool::StringId run_as_role = StringPool::INVALID_ID;
+    bool has_description = false;
+    StringPool::StringId description = StringPool::INVALID_ID;
+};
+
+/**
+ * DROP JOB statement
+ */
+class DropJobStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropJobStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+    bool keep_history = false;
+};
+
+/**
+ * EXECUTE JOB statement
+ */
+class ExecuteJobStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::ExecuteJobStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId job_name = StringPool::INVALID_ID;
+};
+
 /**
  * CREATE SCHEMA statement
  */
@@ -1276,6 +1409,17 @@ public:
     bool format_json = false;    // JSON output format
     bool format_xml = false;     // XML output format
     bool format_yaml = false;    // YAML output format
+};
+
+/**
+ * SWEEP DATABASE statement
+ *
+ * Triggers a manual database sweep/garbage collection.
+ */
+class SweepDatabaseStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::SweepDatabaseStmt; }
+    void accept(ASTVisitor& visitor) override;
 };
 
 // =============================================================================
@@ -2924,6 +3068,7 @@ public:
     virtual void visit(CreateUserStmt* stmt) = 0;
     virtual void visit(CreateRoleStmt* stmt) = 0;
     virtual void visit(CreateExceptionStmt* stmt) = 0;
+    virtual void visit(CreateJobStmt* stmt) = 0;
     virtual void visit(CreateDomainStmt* stmt) = 0;
     virtual void visit(AlterDomainStmt* stmt) = 0;
     virtual void visit(DropDomainStmt* stmt) = 0;
@@ -2943,7 +3088,10 @@ public:
     virtual void visit(DropPackageStmt* stmt) = 0;
     virtual void visit(DropRoleStmt* stmt) = 0;
     virtual void visit(DropExceptionStmt* stmt) = 0;
+    virtual void visit(DropJobStmt* stmt) = 0;
     virtual void visit(TruncateTableStmt* stmt) = 0;
+    virtual void visit(AlterJobStmt* stmt) = 0;
+    virtual void visit(ExecuteJobStmt* stmt) = 0;
 
     // DML statements
     virtual void visit(SelectStmt* stmt) = 0;
@@ -2968,6 +3116,7 @@ public:
     virtual void visit(ResetStmt* stmt) = 0;
     virtual void visit(ShowStmt* stmt) = 0;
     virtual void visit(ExplainStmt* stmt) = 0;
+    virtual void visit(SweepDatabaseStmt* stmt) = 0;
 
     // DCL statements
     virtual void visit(GrantStmt* stmt) = 0;

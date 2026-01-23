@@ -88,23 +88,35 @@ CREATE TABLE sys.jobs (
     job_uuid UUID PRIMARY KEY,
     job_name VARCHAR(255) NOT NULL UNIQUE,
     description TEXT,
-    job_class VARCHAR(20),              -- Alpha: stored but unused
-    job_type VARCHAR(20) NOT NULL,      -- SQL | PROCEDURE | EXTERNAL
-    job_sql TEXT,
-    schedule_kind VARCHAR(20) NOT NULL, -- CRON | AT | EVERY
-    cron_expression VARCHAR(100),
-    interval_seconds BIGINT,
-    starts_at BIGINT,
-    ends_at BIGINT,
-    schedule_tz VARCHAR(64),
-    next_run_time BIGINT,
-    partition_strategy VARCHAR(20),     -- Alpha: stored but unused
+
+    job_class VARCHAR(20),                  -- LOCAL_SAFE | LEADER_ONLY | QUORUM_REQUIRED
+    job_type VARCHAR(20) NOT NULL,          -- SQL | PROCEDURE | EXTERNAL
+    job_sql TEXT,                           -- SQL to execute (SQL jobs)
+    procedure_uuid UUID,                    -- Procedure to call (PROCEDURE jobs)
+    external_command TEXT,                  -- Command to run (EXTERNAL jobs)
+
+    schedule_kind VARCHAR(20) NOT NULL,     -- CRON | AT | EVERY
+    cron_expression VARCHAR(100),           -- For CRON
+    interval_seconds BIGINT,                -- For EVERY
+    starts_at BIGINT,                       -- Optional start time (ms)
+    ends_at BIGINT,                         -- Optional end time (ms)
+    schedule_tz VARCHAR(64),                -- Time zone name (optional, default UTC)
+    next_run_time BIGINT,                   -- Next scheduled execution (ms)
+
+    on_completion VARCHAR(20) DEFAULT 'PRESERVE', -- PRESERVE | DROP (AT jobs)
+
+    partition_strategy VARCHAR(20),         -- ALL_SHARDS | SINGLE_SHARD | SHARD_SET | DYNAMIC
+    partition_shard_uuid UUID,              -- For SINGLE_SHARD
+    partition_expression TEXT,              -- For DYNAMIC
+
     max_retries INTEGER DEFAULT 3,
     retry_backoff_seconds INTEGER DEFAULT 60,
     timeout_seconds INTEGER DEFAULT 3600,
+
     created_by_user_uuid UUID NOT NULL,
     run_as_role_uuid UUID,
-    state VARCHAR(20) NOT NULL DEFAULT 'ENABLED'
+    created_at BIGINT NOT NULL,
+    state VARCHAR(20) NOT NULL DEFAULT 'ENABLED' -- ENABLED | DISABLED | PAUSED
 );
 
 -- Job execution history
@@ -139,21 +151,31 @@ CREATE TABLE sys.job_dependencies (
 ```sql
 CREATE JOB job_name
   [CLASS = LOCAL_SAFE | LEADER_ONLY | QUORUM_REQUIRED]
-  [PARTITION BY ALL_SHARDS | SINGLE_SHARD | SHARD_SET | DYNAMIC]
+  [PARTITION BY ALL_SHARDS | SINGLE_SHARD 'shard_uuid' | SHARD_SET (...) | DYNAMIC expr]
   SCHEDULE = CRON 'cron_expression'
            | AT 'timestamp'
            | EVERY interval [STARTS 'timestamp'] [ENDS 'timestamp']
+  [DEPENDS ON job_name [, ...]]
   [MAX_RETRIES = n]
-  [RETRY_BACKOFF = n]
-  AS 'sql_statement';
+  [RETRY_BACKOFF = duration]
+  [TIMEOUT = duration]
+  [ON COMPLETION PRESERVE | DROP]
+  [RUN AS role_name]
+  [DESCRIPTION = 'description']
+  [ENABLED | DISABLED]
+  AS 'sql_statement' | CALL procedure_name() | EXEC 'external_command';
 ```
 
 ### ALTER JOB
 ```sql
 ALTER JOB job_name
-  [SET SCHEDULE = 'cron_expression']
+  [SET SCHEDULE = CRON '...' | AT '...' | EVERY interval ...]
   [SET STATE = ENABLED | DISABLED | PAUSED]
-  [SET MAX_RETRIES = n];
+  [SET MAX_RETRIES = n]
+  [SET RETRY_BACKOFF = duration]
+  [SET TIMEOUT = duration]
+  [SET RUN AS role_name]
+  [SET DESCRIPTION = '...'];
 ```
 
 ### DROP JOB

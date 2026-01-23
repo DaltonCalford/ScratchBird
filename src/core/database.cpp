@@ -12,6 +12,7 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/long_transaction_monitor.h"
+#include "scratchbird/core/job_scheduler.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/audit_logger.h"
@@ -155,6 +156,12 @@ namespace scratchbird::core
             long_transaction_monitor_->stopMonitoring(&ctx);
         }
         long_transaction_monitor_.reset();
+
+        if (job_scheduler_)
+        {
+            job_scheduler_->stop();
+        }
+        job_scheduler_.reset();
 
         {
             std::lock_guard<std::mutex> lock(dormant_mutex_);
@@ -1291,6 +1298,31 @@ namespace scratchbird::core
             close();
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate PermissionCache");
             return Status::OOM;
+        }
+
+        // Initialize job scheduler (WS-4 Scheduler)
+        try
+        {
+            JobScheduler::Config sched_config;
+            sched_config.polling_interval_seconds =
+                Config::getInstance().getUInt("scheduler", "polling_interval_seconds", 10);
+            sched_config.max_jobs_per_tick =
+                Config::getInstance().getUInt("scheduler", "max_jobs_per_tick", 16);
+            sched_config.cron_fallback_seconds =
+                Config::getInstance().getUInt("scheduler", "cron_fallback_seconds", 60);
+            job_scheduler_ = std::make_unique<JobScheduler>(this, sched_config);
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate JobScheduler");
+            return Status::OOM;
+        }
+        status = job_scheduler_->start(ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
         }
 
         // Initialize virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).

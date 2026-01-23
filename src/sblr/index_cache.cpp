@@ -284,9 +284,7 @@ namespace sblr {
                 break;
 
             case IndexType::GIST:
-                // GiST index has incomplete type issues - not fully integrated yet
-                // Phase 3 Enhancement: Complete GiST index integration and enable proper cleanup
-                // For now, leak the memory to avoid incomplete type errors (temporary memory leak)
+                delete static_cast<core::GiSTIndex*>(ptr);
                 break;
 
             case IndexType::SPGIST:

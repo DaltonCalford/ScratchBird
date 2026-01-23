@@ -942,6 +942,95 @@ public:
             uint64_t last_modified_time = 0;
         };
 
+        // Scheduler job types (WS-4 Scheduler)
+        enum class JobType : uint8_t
+        {
+            SQL = 0,
+            PROCEDURE = 1,
+            EXTERNAL = 2
+        };
+
+        enum class ScheduleKind : uint8_t
+        {
+            CRON = 0,
+            AT = 1,
+            EVERY = 2
+        };
+
+        enum class JobState : uint8_t
+        {
+            ENABLED = 0,
+            DISABLED = 1,
+            PAUSED = 2
+        };
+
+        enum class JobRunState : uint8_t
+        {
+            PENDING = 0,
+            RUNNING = 1,
+            COMPLETED = 2,
+            FAILED = 3,
+            CANCELLED = 4
+        };
+
+        enum class JobOnCompletion : uint8_t
+        {
+            PRESERVE = 0,
+            DROP = 1
+        };
+
+        struct JobInfo
+        {
+            ID job_id;
+            std::string job_name;
+            std::string description;
+            JobType job_type = JobType::SQL;
+            std::string job_sql;
+            ID procedure_uuid;
+            std::string external_command;
+            ScheduleKind schedule_kind = ScheduleKind::CRON;
+            std::string cron_expression;
+            int64_t interval_seconds = 0;
+            uint64_t starts_at = 0;
+            uint64_t ends_at = 0;
+            std::string schedule_tz;
+            uint64_t next_run_time = 0;
+            JobOnCompletion on_completion = JobOnCompletion::PRESERVE;
+            std::string partition_strategy;
+            ID partition_shard_uuid;
+            std::string partition_expression;
+            uint32_t max_retries = 3;
+            uint32_t retry_backoff_seconds = 60;
+            uint32_t timeout_seconds = 3600;
+            ID created_by_user_uuid;
+            ID run_as_role_uuid;
+            uint64_t created_at = 0;
+            JobState state = JobState::ENABLED;
+        };
+
+        struct JobRunInfo
+        {
+            ID job_run_id;
+            ID job_id;
+            ID assigned_node_uuid;
+            ID shard_uuid;
+            uint64_t scheduled_time = 0;
+            uint64_t started_at = 0;
+            uint64_t completed_at = 0;
+            JobRunState state = JobRunState::PENDING;
+            uint32_t retry_count = 0;
+            std::string result_message;
+            int64_t rows_affected = 0;
+            int32_t error_code = 0;
+        };
+
+        struct JobDependencyInfo
+        {
+            ID job_id;
+            ID depends_on_job_id;
+            uint64_t created_time = 0;
+        };
+
         // Role membership information (Phase 2 - Security Tables)
         struct RoleMembershipInfo
         {
@@ -2405,6 +2494,43 @@ public:
         auto getReferencingConstraints(const ID& table_id,
                                       std::vector<ConstraintInfo>& constraints_out,
                                       ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Scheduler Job Operations (WS-4 Scheduler)
+        // ========================================================================
+
+        auto createJob(const JobInfo& job_in, ID& job_id_out,
+                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto getJobByName(const std::string& job_name, JobInfo& job_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto getJob(const ID& job_id, JobInfo& job_out,
+                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateJob(const JobInfo& job_in, ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteJob(const ID& job_id, bool keep_history,
+                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto listDueJobs(uint64_t now_ms, std::vector<JobInfo>& jobs_out,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto createJobRun(const JobRunInfo& run_in, ID& run_id_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateJobRun(const JobRunInfo& run_in, ErrorContext* ctx = nullptr) -> Status;
+
+        auto listJobRuns(const ID& job_id, std::vector<JobRunInfo>& runs_out,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto addJobDependencies(const ID& job_id,
+                               const std::vector<ID>& depends_on,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto listJobDependencies(const ID& job_id,
+                                std::vector<JobDependencyInfo>& deps_out,
+                                ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // Security Operations (Phase 1.3 - Users, Roles, Groups)
@@ -4086,6 +4212,9 @@ public:
         uint32_t dependencies_table_page_ = 0;      // Dependencies tracking (Phase 1.4)
         uint32_t comments_table_page_ = 0;          // Object comments (Phase 1.5)
         uint32_t object_definitions_table_page_ = 0; // Object DDL definitions (SQL + bytecode)
+        uint32_t jobs_table_page_ = 0;              // Jobs (WS-4 Scheduler)
+        uint32_t job_runs_table_page_ = 0;          // Job runs (WS-4 Scheduler)
+        uint32_t job_dependencies_table_page_ = 0;  // Job dependencies (WS-4 Scheduler)
         uint32_t users_table_page_ = 0;             // Users (Phase 2)
         uint32_t roles_table_page_ = 0;             // Roles (Phase 2)
         uint32_t groups_table_page_ = 0;            // Groups (Phase 2)

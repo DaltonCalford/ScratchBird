@@ -383,6 +383,7 @@ if(SCRATCHBIRD_INTEGRATION_FILTER)
         PROPERTIES
             TIMEOUT 120
             LABELS "integration"
+            ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
         TEST_FILTER "${SCRATCHBIRD_INTEGRATION_FILTER}"
     )
 endif()
@@ -411,6 +412,7 @@ add_test(NAME IPC_ServerTests COMMAND test_ipc_server)
 set_tests_properties(IPC_ServerTests PROPERTIES
     LABELS "integration;server;ipc"
     TIMEOUT 60
+    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
 # ==============================================================================
@@ -428,6 +430,7 @@ add_test(NAME WireProtocolTests COMMAND test_wire_protocol)
 set_tests_properties(WireProtocolTests PROPERTIES
     LABELS "integration;server;protocol;wire"
     TIMEOUT 60
+    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
 # Client Library Tests (Local Server Architecture - Phase 4)
@@ -445,6 +448,7 @@ add_test(NAME ClientConnectionTests COMMAND test_client_connection)
 set_tests_properties(ClientConnectionTests PROPERTIES
     LABELS "integration;client;connection;pool"
     TIMEOUT 120
+    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
 # C API Client Tests
@@ -461,6 +465,7 @@ add_test(NAME ClientCApiTests COMMAND test_client_c_api)
 set_tests_properties(ClientCApiTests PROPERTIES
     LABELS "integration;client;c_api"
     TIMEOUT 120
+    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
 # Client-Server Integration Tests (Local Server Architecture - Phase 4/5)
@@ -479,6 +484,7 @@ add_test(NAME ClientServerIntegrationTests COMMAND test_client_server_integratio
 set_tests_properties(ClientServerIntegrationTests PROPERTIES
     LABELS "integration;client;server"
     TIMEOUT 120
+    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
 # ThreadSanitizer (TSAN) Tests for Critical Race Conditions

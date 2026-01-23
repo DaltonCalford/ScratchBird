@@ -6,6 +6,7 @@
 #include <memory>
 #include <thread>
 
+#include "test_helpers.h"
 #include "scratchbird/catalog/firebird_catalog.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
@@ -35,9 +36,8 @@ public:
 class FirebirdAdapterBridgeTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        const char* network_env = std::getenv("SCRATCHBIRD_TEST_NETWORK");
-        if (!network_env || network_env[0] == '\0') {
-            GTEST_SKIP() << "SCRATCHBIRD_TEST_NETWORK not set; skipping network listener tests";
+        if (!scratchbird::testing::networkTestsEnabled()) {
+            GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
         }
 
         std::filesystem::create_directories("build/database");

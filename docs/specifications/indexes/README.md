@@ -2,7 +2,7 @@
 
 **[← Back to Specifications Index](../README.md)**
 
-This directory contains index implementation specifications for ScratchBird's comprehensive index system, supporting 11+ index types.
+This directory contains index implementation specifications for ScratchBird's comprehensive index system, supporting 27 index types (12 core + 15 optional).
 
 ## Overview
 
@@ -23,14 +23,27 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 
 ### Specialized Indexes
 
+#### Spatial & Multi-Dimensional
+- **[ZOrderIndex.md](ZOrderIndex.md)** - Z-order (Morton) index for multi-dimensional keys
+- **[GeohashS2Index.md](GeohashS2Index.md)** - Geohash and S2 cell index
+- **[QuadtreeOctreeIndex.md](QuadtreeOctreeIndex.md)** - Quadtree/Octree spatial index
+
 #### Full-Text & Text Search
 - **[InvertedIndex.md](InvertedIndex.md)** (2,333 lines) - Inverted index for full-text search
+- **[FSTIndex.md](FSTIndex.md)** - Finite State Transducer (prefix/autocomplete)
+- **[SuffixIndex.md](SuffixIndex.md)** - Suffix array/tree for substring search
 
 #### Vector & Similarity Search
 - **[IVFIndex.md](IVFIndex.md)** (2,243 lines) - IVF (Inverted File) index for vector similarity search
 
 #### Filtering & Membership
 - **[BloomFilterIndex.md](BloomFilterIndex.md)** (1,529 lines) - Bloom filter index for set membership tests
+- **[CountMinSketchIndex.md](CountMinSketchIndex.md)** - Count-Min Sketch for frequency estimation
+- **[HyperLogLogIndex.md](HyperLogLogIndex.md)** - HyperLogLog for approximate distinct counts
+
+#### Modern In-Memory & Learned Indexes
+- **[AdaptiveRadixTreeIndex.md](AdaptiveRadixTreeIndex.md)** - Adaptive Radix Tree (ART)
+- **[LearnedIndex.md](LearnedIndex.md)** - Learned index (RMI)
 
 #### Analytics & Column Stores
 - **[COLUMNSTORE_SPEC.md](COLUMNSTORE_SPEC.md)** (712 lines) - Columnar storage for OLAP workloads
@@ -39,6 +52,7 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 #### Write-Optimized Storage
 - **[LSM_TREE_SPEC.md](LSM_TREE_SPEC.md)** (1,596 lines) - LSM tree specification for write-heavy workloads
 - **[LSM_TREE_ARCHITECTURE.md](LSM_TREE_ARCHITECTURE.md)** (493 lines) - LSM tree architecture details
+- **[LSMTimeSeriesIndex.md](LSMTimeSeriesIndex.md)** - LSM with TTL for time-series workloads
 
 ## Index Types Summary
 
@@ -50,11 +64,27 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 | **GIN** | Inverted index (full-text, arrays) | ✅ Specified |
 | **BRIN** | Block range index (large tables) | ✅ Specified |
 | **Bloom Filter** | Set membership tests | ✅ Specified |
-| **Inverted** | Full-text search | ✅ Specified |
+| **Fulltext (Inverted)** | Full-text search | ✅ Specified |
 | **IVF** | Vector similarity search | ✅ Specified |
 | **Zone Maps** | Min/max pruning (analytics) | ✅ Specified |
 | **LSM Tree** | Write-optimized storage | ✅ Specified |
 | **Columnstore** | OLAP workloads | ✅ Specified |
+| **Z-Order (Morton)** | Multi-dimensional range pruning | ✅ Specified (Optional) |
+| **Geohash / S2** | Geo cell indexing | ✅ Specified (Optional) |
+| **Quadtree / Octree** | Spatial partitioning | ✅ Specified (Optional) |
+| **FST** | Prefix search, autocomplete | ✅ Specified (Optional) |
+| **Suffix Array / Tree** | Substring search | ✅ Specified (Optional) |
+| **Count-Min Sketch** | Frequency estimation | ✅ Specified (Optional) |
+| **HyperLogLog** | Approx distinct counts | ✅ Specified (Optional) |
+| **ART** | In-memory key lookup | ✅ Specified (Optional) |
+| **Learned Index** | Model-based lookup | ✅ Specified (Optional) |
+| **LSM TTL** | Time-series retention | ✅ Specified (Optional) |
+
+## Canonical Index Type Names (Parser/Catalog)
+
+**Core (Alpha scope):** BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN, BITMAP, RTREE, HNSW, COLUMNSTORE, LSM
+
+**Optional/Advanced (Beta scope):** IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL
 
 ## Key Concepts
 
@@ -82,7 +112,7 @@ See [INDEX_GC_PROTOCOL.md](INDEX_GC_PROTOCOL.md) for:
 | Hash | O(1) | O(1) | N/A | 0.8x | Equality only |
 | LSM Tree | O(1)* | O(log n) | O(n) | 0.6x | Write-heavy |
 | Bloom Filter | O(1) | O(1) | N/A | 0.1x | Membership tests |
-| Inverted | O(k) | O(k) | O(m) | 2.0x | Full-text search |
+| Fulltext (Inverted) | O(k) | O(k) | O(m) | 2.0x | Full-text search |
 | IVF | O(1) | O(k) | N/A | 1.5x | Vector search |
 | Zone Maps | O(1) | O(b) | O(n) | 0.05x | Analytics pruning |
 

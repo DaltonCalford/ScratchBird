@@ -3520,6 +3520,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateUser(static_cast<CreateUserStmt*>(stmt));
         case ASTKind::CreateRoleStmt:
             return analyzeCreateRole(static_cast<CreateRoleStmt*>(stmt));
+        case ASTKind::CreateJobStmt:
+            return analyzeCreateJob(static_cast<CreateJobStmt*>(stmt));
         case ASTKind::CreateExceptionStmt:
             return analyzeCreateException(static_cast<CreateExceptionStmt*>(stmt));
         case ASTKind::CreateDomainStmt:
@@ -3558,8 +3560,14 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeDropPackage(static_cast<DropPackageStmt*>(stmt));
         case ASTKind::DropRoleStmt:
             return analyzeDropRole(static_cast<DropRoleStmt*>(stmt));
+        case ASTKind::DropJobStmt:
+            return analyzeDropJob(static_cast<DropJobStmt*>(stmt));
         case ASTKind::DropExceptionStmt:
             return analyzeDropException(static_cast<DropExceptionStmt*>(stmt));
+        case ASTKind::AlterJobStmt:
+            return analyzeAlterJob(static_cast<AlterJobStmt*>(stmt));
+        case ASTKind::ExecuteJobStmt:
+            return analyzeExecuteJob(static_cast<ExecuteJobStmt*>(stmt));
         case ASTKind::TruncateTableStmt:
             return analyzeTruncateTable(static_cast<TruncateTableStmt*>(stmt));
 
@@ -3600,6 +3608,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeShow(static_cast<ShowStmt*>(stmt));
         case ASTKind::ExplainStmt:
             return analyzeExplain(static_cast<ExplainStmt*>(stmt));
+        case ASTKind::SweepDatabaseStmt:
+            return analyzeSweepDatabase(static_cast<SweepDatabaseStmt*>(stmt));
 
         // DCL
         case ASTKind::GrantStmt:
@@ -3901,6 +3911,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeExplain(ExplainStmt* stmt) {
         return nullptr;
     }
 
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeSweepDatabase(SweepDatabaseStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedSweepDatabaseStmt>();
+    resolved->span = stmt->span;
     return resolved;
 }
 
@@ -4491,6 +4511,53 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateRole(CreateRoleStmt* stmt) {
     auto* resolved = arena_.create<ResolvedCreateRoleStmt>();
     resolved->span = stmt->span;
     resolved->role_name = stmt->role_name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateJob(CreateJobStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateJobStmt>();
+    resolved->span = stmt->span;
+
+    resolved->job_name = stmt->job_name;
+    resolved->job_type = stmt->job_type;
+    resolved->job_sql = stmt->job_sql;
+    resolved->procedure_name = stmt->procedure_name;
+    resolved->external_command = stmt->external_command;
+
+    resolved->schedule_kind = stmt->schedule_kind;
+    resolved->cron_expression = stmt->cron_expression;
+    resolved->at_timestamp = stmt->at_timestamp;
+    resolved->interval_seconds = stmt->interval_seconds;
+    resolved->starts_at = stmt->starts_at;
+    resolved->ends_at = stmt->ends_at;
+
+    resolved->has_max_retries = stmt->has_max_retries;
+    resolved->max_retries = stmt->max_retries;
+    resolved->has_retry_backoff = stmt->has_retry_backoff;
+    resolved->retry_backoff_seconds = stmt->retry_backoff_seconds;
+    resolved->has_timeout = stmt->has_timeout;
+    resolved->timeout_seconds = stmt->timeout_seconds;
+
+    resolved->has_on_completion = stmt->has_on_completion;
+    resolved->on_completion = stmt->on_completion;
+
+    resolved->has_run_as = stmt->has_run_as;
+    resolved->run_as_role = stmt->run_as_role;
+    resolved->has_description = stmt->has_description;
+    resolved->description = stmt->description;
+    resolved->has_state = stmt->has_state;
+    resolved->state = stmt->state;
+
+    resolved->job_class = stmt->job_class;
+    resolved->partition_strategy = stmt->partition_strategy;
+    resolved->partition_expression = stmt->partition_expression;
+    resolved->partition_shard = stmt->partition_shard;
+    resolved->depends_on = stmt->depends_on;
+
     return resolved;
 }
 
@@ -5696,6 +5763,62 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropRole(DropRoleStmt* stmt) {
     resolved->cascade = stmt->cascade;
     resolved->object_paths = stmt->roles;
 
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropJob(DropJobStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropJobStmt>();
+    resolved->span = stmt->span;
+    resolved->job_name = stmt->job_name;
+    resolved->keep_history = stmt->keep_history;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterJob(AlterJobStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterJobStmt>();
+    resolved->span = stmt->span;
+    resolved->job_name = stmt->job_name;
+
+    resolved->has_schedule = stmt->has_schedule;
+    resolved->schedule_kind = stmt->schedule_kind;
+    resolved->cron_expression = stmt->cron_expression;
+    resolved->at_timestamp = stmt->at_timestamp;
+    resolved->interval_seconds = stmt->interval_seconds;
+    resolved->starts_at = stmt->starts_at;
+    resolved->ends_at = stmt->ends_at;
+
+    resolved->has_state = stmt->has_state;
+    resolved->state = stmt->state;
+    resolved->has_max_retries = stmt->has_max_retries;
+    resolved->max_retries = stmt->max_retries;
+    resolved->has_retry_backoff = stmt->has_retry_backoff;
+    resolved->retry_backoff_seconds = stmt->retry_backoff_seconds;
+    resolved->has_timeout = stmt->has_timeout;
+    resolved->timeout_seconds = stmt->timeout_seconds;
+    resolved->has_run_as = stmt->has_run_as;
+    resolved->run_as_role = stmt->run_as_role;
+    resolved->has_description = stmt->has_description;
+    resolved->description = stmt->description;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeExecuteJob(ExecuteJobStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedExecuteJobStmt>();
+    resolved->span = stmt->span;
+    resolved->job_name = stmt->job_name;
     return resolved;
 }
 

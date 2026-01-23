@@ -87,8 +87,8 @@ Update this table as work progresses.
 | --- | --- | --- | --- | --- |
 | WS-1 Catalog bootstrap | Done |  | Alpha Core | Root paths updated; migration/repair pass added |
 | WS-2 Tablespace routing | In Progress |  | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace header v2 write + v1 read support; tablespace_files catalog wiring added; tablespace table/index counts maintained |
-| WS-3 Index migration safety | TODO |  | Alpha Core |  |
-| WS-4 Scheduler/job system | TODO |  | Alpha Core |  |
+| WS-3 Index migration safety | Done |  | Alpha Core | Index migration TID updates + GiST cache cleanup verified |
+| WS-4 Scheduler/job system | In Progress |  | Alpha Core | Job DDL parsing/bytecode/executor + scheduler thread in progress |
 | WS-5 Constraint enforcement | TODO |  | Alpha Core |  |
 | WS-6 Security enforcement | TODO |  | Alpha Core |  |
 | WS-7 Monitoring parity | TODO |  | Alpha Core |  |
@@ -101,6 +101,10 @@ Update this table as work progresses.
 - Gap list in `ENGINE_CORE_IMPLEMENTATION_AUDIT.md` is fully resolved.
 
 ## Recent Progress
+- 2026-01-23: Closed INDEX_IMPLEMENTATION_GAPS findings; index migration + GC/regression tests pass.
+- 2026-01-23: Enabled GiST index cache deletion now that GiST type is integrated.
+- 2026-01-23: Added Parser V2 SWEEP DATABASE support (AST/semantic/bytecode) and enabled sweep parser tests.
+- 2026-01-24: Started WS-4 scheduler core: job DDL plumbing (parser/semantic/bytecode/executor) and minimal scheduler thread.
 - 2026-01-21: Full `ctest` run (with `SCRATCHBIRD_TEST_NETWORK=1`) completed cleanly after stabilizing TCP integration port selection and rebuilding listener/parser binaries.
 - 2026-01-21: Temporary debug logging removed from listener/parser/native adapter paths after validation.
 - 2026-01-21: Wired sb_tablespace_files catalog page allocation/backfill plus load/persist helpers for tablespace file paths.

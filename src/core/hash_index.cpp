@@ -1489,7 +1489,7 @@ namespace scratchbird
             }
 
             TransactionManager *txn_mgr = db_->transaction_manager();
-            uint64_t oit = txn_mgr ? txn_mgr->getOldestInterestingTransaction() : 0;
+            uint64_t oit = txn_mgr ? txn_mgr->getOldestXid() : 0;
 
             for (uint64_t bucket_page_num : bucket_pages)
             {
