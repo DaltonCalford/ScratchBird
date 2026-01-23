@@ -88,7 +88,7 @@ Update this table as work progresses.
 | WS-1 Catalog bootstrap | Done |  | Alpha Core | Root paths updated; migration/repair pass added |
 | WS-2 Tablespace routing | In Progress |  | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace header v2 write + v1 read support; tablespace_files catalog wiring added; tablespace table/index counts maintained |
 | WS-3 Index migration safety | Done |  | Alpha Core | Index migration TID updates + GiST cache cleanup verified |
-| WS-4 Scheduler/job system | In Progress |  | Alpha Core | Job DDL parsing/bytecode/executor + scheduler thread in progress; cron/dependency unit tests added; maintenance jobs + audit/permission hooks added; CANCEL JOB RUN support added; maintenance/cancel tests added |
+| WS-4 Scheduler/job system | In Progress |  | Alpha Core | Job DDL parsing/bytecode/executor + scheduler thread in progress; cron/dependency unit tests added; maintenance jobs + audit/permission hooks added; CANCEL JOB RUN support added; maintenance/cancel tests added; scheduler.enabled + pre_execute_delay_ms config wiring added |
 | WS-5 Constraint enforcement | TODO |  | Alpha Core |  |
 | WS-6 Security enforcement | TODO |  | Alpha Core |  |
 | WS-7 Monitoring parity | TODO |  | Alpha Core |  |
@@ -109,6 +109,7 @@ Update this table as work progresses.
 - 2026-01-25: Seeded maintenance jobs and added job audit logging + permission checks.
 - 2026-01-25: Added CANCEL JOB RUN parsing/bytecode/executor path and parser test coverage.
 - 2026-01-25: Added maintenance seed validation and cancel-before-run scheduler tests.
+- 2026-01-25: Added scheduler.enabled and pre_execute_delay_ms config wiring; documented scheduler config keys in sb_server.conf.
 - 2026-01-25: Fixed buffer pool TSAN race by guarding flush writes with content mutex and skipping pinned pages; catalog heap updates now lock page content; full `ctest` pass completed (2 JSON tests skipped).
 - 2026-01-21: Full `ctest` run (with `SCRATCHBIRD_TEST_NETWORK=1`) completed cleanly after stabilizing TCP integration port selection and rebuilding listener/parser binaries.
 - 2026-01-21: Temporary debug logging removed from listener/parser/native adapter paths after validation.

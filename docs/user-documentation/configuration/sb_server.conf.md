@@ -132,6 +132,52 @@ Maximum query execution time in milliseconds. `0` = unlimited.
 
 ---
 
+## [scheduler] Section
+
+Job scheduler settings.
+
+### enabled
+
+```ini
+enabled = true
+```
+
+Enable the job scheduler background thread.
+
+### polling_interval_seconds
+
+```ini
+polling_interval_seconds = 10
+```
+
+Seconds between scheduler polling ticks.
+
+### max_jobs_per_tick
+
+```ini
+max_jobs_per_tick = 16
+```
+
+Maximum number of due jobs to launch per polling tick.
+
+### cron_fallback_seconds
+
+```ini
+cron_fallback_seconds = 60
+```
+
+Fallback interval when cron parsing yields no upcoming schedule.
+
+### pre_execute_delay_ms
+
+```ini
+pre_execute_delay_ms = 0
+```
+
+Optional delay before executing each job (used primarily for testing).
+
+---
+
 ## [network] Section
 
 Network and protocol settings.

@@ -1301,28 +1301,35 @@ namespace scratchbird::core
         }
 
         // Initialize job scheduler (WS-4 Scheduler)
-        try
+        bool scheduler_enabled =
+            Config::getInstance().getBool("scheduler", "enabled", true);
+        if (scheduler_enabled)
         {
-            JobScheduler::Config sched_config;
-            sched_config.polling_interval_seconds =
-                Config::getInstance().getUInt("scheduler", "polling_interval_seconds", 10);
-            sched_config.max_jobs_per_tick =
-                Config::getInstance().getUInt("scheduler", "max_jobs_per_tick", 16);
-            sched_config.cron_fallback_seconds =
-                Config::getInstance().getUInt("scheduler", "cron_fallback_seconds", 60);
-            job_scheduler_ = std::make_unique<JobScheduler>(this, sched_config);
-        }
-        catch (const std::bad_alloc &)
-        {
-            close();
-            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate JobScheduler");
-            return Status::OOM;
-        }
-        status = job_scheduler_->start(ctx);
-        if (status != Status::OK)
-        {
-            close();
-            return status;
+            try
+            {
+                JobScheduler::Config sched_config;
+                sched_config.polling_interval_seconds =
+                    Config::getInstance().getUInt("scheduler", "polling_interval_seconds", 10);
+                sched_config.max_jobs_per_tick =
+                    Config::getInstance().getUInt("scheduler", "max_jobs_per_tick", 16);
+                sched_config.cron_fallback_seconds =
+                    Config::getInstance().getUInt("scheduler", "cron_fallback_seconds", 60);
+                sched_config.pre_execute_delay_ms =
+                    Config::getInstance().getUInt("scheduler", "pre_execute_delay_ms", 0);
+                job_scheduler_ = std::make_unique<JobScheduler>(this, sched_config);
+            }
+            catch (const std::bad_alloc &)
+            {
+                close();
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate JobScheduler");
+                return Status::OOM;
+            }
+            status = job_scheduler_->start(ctx);
+            if (status != Status::OK)
+            {
+                close();
+                return status;
+            }
         }
 
         // Initialize virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).
