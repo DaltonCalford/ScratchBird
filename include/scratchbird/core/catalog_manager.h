@@ -722,6 +722,7 @@ public:
             CLUSTER = 37,           // Phase B: Distributed MVCC cluster
             SYNONYM = 38,           // Phase B: Cross-schema pointer/alias
             POLICY = 39,            // Row-level security policy
+            JOB = 40,               // Scheduler job
             UNKNOWN = 255           // Sentinel for resolver filters/unknown type
         };
 
@@ -950,6 +951,14 @@ public:
             EXTERNAL = 2
         };
 
+        enum class JobClass : uint8_t
+        {
+            UNSPECIFIED = 0,
+            LOCAL_SAFE = 1,
+            LEADER_ONLY = 2,
+            QUORUM_REQUIRED = 3
+        };
+
         enum class ScheduleKind : uint8_t
         {
             CRON = 0,
@@ -984,6 +993,7 @@ public:
             ID job_id;
             std::string job_name;
             std::string description;
+            JobClass job_class = JobClass::UNSPECIFIED;
             JobType job_type = JobType::SQL;
             std::string job_sql;
             ID procedure_uuid;
@@ -1020,6 +1030,7 @@ public:
             JobRunState state = JobRunState::PENDING;
             uint32_t retry_count = 0;
             std::string result_message;
+            std::vector<uint8_t> result_data;
             int64_t rows_affected = 0;
             int32_t error_code = 0;
         };
@@ -1028,6 +1039,14 @@ public:
         {
             ID job_id;
             ID depends_on_job_id;
+            uint64_t created_time = 0;
+        };
+
+        struct JobSecretInfo
+        {
+            ID job_id;
+            std::string secret_key;
+            std::string secret_value;
             uint64_t created_time = 0;
         };
 
@@ -1067,6 +1086,9 @@ public:
             CONNECT   = 0x00001000,  // Connect to database
             TEMPORARY = 0x00002000,  // Create temp tables
             COPY_FILE = 0x00004000,  // Server-side COPY to/from files
+            CREATE_JOB = 0x00008000, // Create jobs
+            VIEW_JOB_HISTORY = 0x00010000, // View job history across users
+            EXECUTE_EXTERNAL_JOB = 0x00020000, // Execute external jobs
 
             // Special privileges
             ALL       = 0xFFFFFFFF   // All privileges
@@ -1082,7 +1104,8 @@ public:
             PROCEDURE = 4,
             FUNCTION = 5,
             DOMAIN = 6,
-            DATABASE = 7
+            DATABASE = 7,
+            JOB = 8
         };
 
         // Grantee types for permissions (Phase 1.4 - Security System)
@@ -2515,6 +2538,8 @@ public:
 
         auto listDueJobs(uint64_t now_ms, std::vector<JobInfo>& jobs_out,
                         ErrorContext* ctx = nullptr) -> Status;
+        auto listJobs(std::vector<JobInfo>& jobs_out,
+                     ErrorContext* ctx = nullptr) -> Status;
 
         auto createJobRun(const JobRunInfo& run_in, ID& run_id_out,
                          ErrorContext* ctx = nullptr) -> Status;
@@ -2526,14 +2551,30 @@ public:
 
         auto listJobRuns(const ID& job_id, std::vector<JobRunInfo>& runs_out,
                         ErrorContext* ctx = nullptr) -> Status;
+        auto listJobRuns(std::vector<JobRunInfo>& runs_out,
+                        ErrorContext* ctx = nullptr) -> Status;
 
         auto addJobDependencies(const ID& job_id,
                                const std::vector<ID>& depends_on,
+                               ErrorContext* ctx = nullptr) -> Status;
+        auto clearJobDependencies(const ID& job_id,
                                ErrorContext* ctx = nullptr) -> Status;
 
         auto listJobDependencies(const ID& job_id,
                                 std::vector<JobDependencyInfo>& deps_out,
                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto storeJobSecret(const ID& job_id,
+                            const std::string& secret_key,
+                            const std::string& secret_value,
+                            ErrorContext* ctx = nullptr) -> Status;
+        auto getJobSecret(const ID& job_id,
+                          const std::string& secret_key,
+                          std::string& secret_value_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteJobSecret(const ID& job_id,
+                             const std::string& secret_key,
+                             ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // Security Operations (Phase 1.3 - Users, Roles, Groups)
@@ -3946,6 +3987,15 @@ public:
         auto getTriggerInternal(const ID& trigger_id, TriggerInfo& info, ErrorContext* ctx) -> Status;
         auto dropTriggerInternal(const std::string& trigger_name, ErrorContext* ctx) -> Status;
 
+        // Scheduler job cache helpers (assume mutex_ already held)
+        auto ensureJobCacheLoaded(ErrorContext* ctx) -> Status;
+        auto ensureJobRunsCacheLoaded(ErrorContext* ctx) -> Status;
+        void indexJobUnlocked(const JobInfo& job);
+        void unindexJobUnlocked(const JobInfo& job);
+        void indexJobRunUnlocked(const JobRunInfo& run);
+        void unindexJobRunUnlocked(const JobRunInfo& run);
+        static std::string normalizeJobName(const std::string& name);
+
         // Internal FK/constraint helpers (assume appropriate mutexes already held)
         auto deleteDependencyInternal(const ID& dependency_id, ErrorContext* ctx) -> Status;
         auto dropForeignKeyInternal(const ID& fk_id, ErrorContext* ctx) -> Status;
@@ -4011,6 +4061,15 @@ public:
         // Object definition cache (DDL source + bytecode)
         std::unordered_map<ID, ObjectDefinitionInfo> object_definition_cache_;
         std::mutex object_definition_cache_mutex_;
+
+        // Scheduler job cache/indexes (WS-4)
+        bool job_cache_loaded_ = false;
+        std::unordered_map<ID, JobInfo, IDHash> job_cache_;
+        std::unordered_map<std::string, ID> job_name_index_;
+        std::multimap<uint64_t, ID> job_due_index_;
+        bool job_runs_cache_loaded_ = false;
+        std::unordered_map<ID, JobRunInfo, IDHash> job_runs_cache_;
+        std::unordered_multimap<ID, ID, IDHash> job_runs_by_job_;
 
         // Session cache (Phase 1.4 - Security System)
         std::unordered_map<ID, SessionInfo> session_cache_;  // session_id -> SessionInfo
@@ -4218,6 +4277,7 @@ public:
         uint32_t jobs_table_page_ = 0;              // Jobs (WS-4 Scheduler)
         uint32_t job_runs_table_page_ = 0;          // Job runs (WS-4 Scheduler)
         uint32_t job_dependencies_table_page_ = 0;  // Job dependencies (WS-4 Scheduler)
+        uint32_t job_secrets_table_page_ = 0;       // Job secrets (WS-4 Scheduler)
         uint32_t users_table_page_ = 0;             // Users (Phase 2)
         uint32_t roles_table_page_ = 0;             // Roles (Phase 2)
         uint32_t groups_table_page_ = 0;            // Groups (Phase 2)

@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -189,6 +190,12 @@ namespace scratchbird::core
         void set_search_path(const std::vector<std::string>& paths) { search_path_ = paths; }
         const std::string& dialect_tag() const { return dialect_tag_; }
         void set_dialect_tag(const std::string& tag) { dialect_tag_ = tag; }
+
+        // Session variables (user-visible via SHOW)
+        void setSessionVariable(const std::string& name, const std::string& value);
+        bool getSessionVariable(const std::string& name, std::string& out) const;
+        void clearSessionVariable(const std::string& name);
+        void clearSessionVariables();
 
         // Security context types (Phase 3.1 - SQL Object Permissions)
         enum class RoleSwitchPolicy : uint8_t
@@ -417,6 +424,8 @@ namespace scratchbird::core
         std::string current_schema_name_ = "public";  // Current schema name
         std::vector<std::string> search_path_ = {"public", "sys"};  // Schema search path
         std::string dialect_tag_ = "scratchbird";
+        mutable std::mutex session_vars_mutex_;
+        std::unordered_map<std::string, std::string> session_variables_;
 
         // Security context stack (Phase 3.1 - SQL Object Permissions)
         // SecurityMode and SecurityContext types defined in public section above

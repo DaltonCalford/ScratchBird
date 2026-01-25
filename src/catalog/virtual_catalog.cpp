@@ -12,6 +12,7 @@
 
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/catalog/information_schema.h"
+#include "scratchbird/catalog/sys_catalog.h"
 #include "scratchbird/catalog/pg_catalog.h"
 #include "scratchbird/catalog/mysql_catalog.h"
 #include "scratchbird/catalog/firebird_catalog.h"
@@ -40,6 +41,9 @@ void initializeVirtualCatalogs(CatalogManager* catalog) {
     // Register information_schema (SQL standard - all protocols)
     router.registerHandler(ProtocolType::SCRATCHBIRD,
         std::make_unique<InformationSchemaHandler>(catalog));
+    // Register sys.* (ScratchBird native system catalog)
+    router.registerHandler(ProtocolType::SCRATCHBIRD,
+        std::make_unique<SysCatalogHandler>(catalog));
 
     // Register pg_catalog (PostgreSQL wire protocol)
     router.registerHandler(ProtocolType::POSTGRESQL,

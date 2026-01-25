@@ -149,6 +149,9 @@ namespace scratchbird
             // Close the database
             void close();
 
+            // Apply runtime scheduler configuration from Config
+            Status applySchedulerConfig(ErrorContext *ctx = nullptr);
+
             // Create a new connection context
             // This registers a backend in ProcArray and creates a ConnectionContext
             // The caller is responsible for managing the ConnectionContext lifetime
@@ -310,6 +313,18 @@ namespace scratchbird
             const PermissionCache *permission_cache() const
             {
                 return permission_cache_.get();
+            }
+
+            // Get job scheduler
+            JobScheduler *job_scheduler()
+            {
+                std::lock_guard<std::mutex> lock(scheduler_mutex_);
+                return job_scheduler_.get();
+            }
+            const JobScheduler *job_scheduler() const
+            {
+                std::lock_guard<std::mutex> lock(scheduler_mutex_);
+                return job_scheduler_.get();
             }
 
             void registerConnectionContext(ConnectionContext* ctx);
@@ -554,6 +569,7 @@ namespace scratchbird
             std::unique_ptr<LongTransactionMonitor>
                 long_transaction_monitor_;                     // Long transaction monitor (owned)
             std::unique_ptr<JobScheduler> job_scheduler_;     // Scheduler job runner (owned)
+            mutable std::mutex scheduler_mutex_;
 
             // Optimizer runtime components (Phase 1, Task 1.3)
             std::unique_ptr<optimizer::StatisticsManager> statistics_manager_; // Statistics manager (owned)

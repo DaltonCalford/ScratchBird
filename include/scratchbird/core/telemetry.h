@@ -259,6 +259,12 @@ public:
     Counter* toast_reads_total;             // TOAST value reads
     Counter* toast_writes_total;            // TOAST value writes
 
+    // Scheduler metrics
+    Gauge* scheduler_queue_depth;          // Due jobs waiting
+    Gauge* scheduler_jobs_running;         // Active job runs
+    Counter* scheduler_jobs_failed_total;  // Failed job runs
+    Histogram* scheduler_job_run_latency_seconds; // Job run duration
+
 private:
     ScratchBirdMetrics() = default;
     bool initialized_ = false;

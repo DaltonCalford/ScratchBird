@@ -110,6 +110,7 @@ enum class ASTKind : uint16_t {
 
     // Statements - Session
     SetStmt,
+    AlterSystemStmt,
     ResetStmt,
     ShowStmt,
     ExplainStmt,
@@ -836,6 +837,9 @@ public:
     ASTKind kind() const override { return ASTKind::CreateJobStmt; }
     void accept(ASTVisitor& visitor) override;
 
+    bool or_alter = false;
+    bool recreate = false;
+
     StringPool::StringId job_name = StringPool::INVALID_ID;
     JobType job_type = JobType::SQL;
     StringPool::StringId job_sql = StringPool::INVALID_ID;
@@ -892,6 +896,12 @@ public:
     StringPool::StringId starts_at = StringPool::INVALID_ID;
     StringPool::StringId ends_at = StringPool::INVALID_ID;
 
+    bool has_job_body = false;
+    JobType job_type = JobType::SQL;
+    StringPool::StringId job_sql = StringPool::INVALID_ID;
+    StringPool::StringId procedure_name = StringPool::INVALID_ID;
+    StringPool::StringId external_command = StringPool::INVALID_ID;
+
     bool has_state = false;
     JobState state = JobState::ENABLED;
     bool has_max_retries = false;
@@ -900,10 +910,28 @@ public:
     uint32_t retry_backoff_seconds = 0;
     bool has_timeout = false;
     uint32_t timeout_seconds = 0;
+    bool has_on_completion = false;
+    JobOnCompletion on_completion = JobOnCompletion::PRESERVE;
     bool has_run_as = false;
     StringPool::StringId run_as_role = StringPool::INVALID_ID;
     bool has_description = false;
     StringPool::StringId description = StringPool::INVALID_ID;
+
+    bool has_job_class = false;
+    StringPool::StringId job_class = StringPool::INVALID_ID;
+    bool has_partition = false;
+    StringPool::StringId partition_strategy = StringPool::INVALID_ID;
+    StringPool::StringId partition_expression = StringPool::INVALID_ID;
+    StringPool::StringId partition_shard = StringPool::INVALID_ID;
+
+    bool has_depends_on = false;
+    bool clear_depends_on = false;
+    std::vector<StringPool::StringId> depends_on;
+
+    bool has_secret = false;
+    bool drop_secret = false;
+    StringPool::StringId secret_key = StringPool::INVALID_ID;
+    StringPool::StringId secret_value = StringPool::INVALID_ID;
 };
 
 /**
@@ -1452,6 +1480,9 @@ enum class PrivilegeType : uint8_t {
     EXECUTE,
     USAGE,
     COPY,
+    CREATE_JOB,
+    VIEW_JOB_HISTORY,
+    EXECUTE_EXTERNAL_JOB,
     ALL
 };
 
@@ -1464,6 +1495,7 @@ enum class PrivilegeObjectType : uint8_t {
     SEQUENCE,
     FUNCTION,
     PROCEDURE,
+    JOB,
     SCHEMA,
     DATABASE,
     ALL_TABLES_IN_SCHEMA,
@@ -2824,6 +2856,21 @@ public:
 };
 
 /**
+ * ALTER SYSTEM SET statement
+ *
+ * Supports:
+ * - ALTER SYSTEM SET section.key = value
+ */
+class AlterSystemStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterSystemStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId name = StringPool::INVALID_ID;
+    Expression* value = nullptr;
+};
+
+/**
  * RESET statement
  *
  * Supports:
@@ -2862,12 +2909,16 @@ public:
  * - SHOW SCHEMA [name]
  * - SHOW ROLE name
  * - SHOW GRANTS [FOR name]
+ * - SHOW JOBS [LIKE 'pattern']
+ * - SHOW JOB name
+ * - SHOW JOB RUNS [FOR] job_name
  * - SHOW CHECKS table
  * - SHOW COLLATIONS [LIKE 'pattern']
  * - SHOW SQL DIALECT
  * - SHOW VERSION
  * - SHOW DATABASE
  * - SHOW SYSTEM
+ * - SHOW METRICS
  */
 class ShowStmt : public Statement {
 public:
@@ -2899,6 +2950,9 @@ public:
         SCHEMA,             // SHOW SCHEMA [name]
         ROLE,               // SHOW ROLE name
         GRANTS,             // SHOW GRANTS [FOR name]
+        JOBS,               // SHOW JOBS [LIKE pattern]
+        JOB,                // SHOW JOB name
+        JOB_RUNS,           // SHOW JOB RUNS [FOR] job_name
         CHECKS,             // SHOW CHECKS table
         COLLATIONS,         // SHOW COLLATIONS [LIKE pattern]
         COMMENTS,           // SHOW COMMENTS [object_name]
@@ -2908,6 +2962,7 @@ public:
         VERSION,            // SHOW VERSION
         DATABASE,           // SHOW DATABASE (current database info)
         SYSTEM,             // SHOW SYSTEM (system tables/info)
+        METRICS,            // SHOW METRICS (metrics export)
     };
     ShowType show_type = ShowType::VARIABLE;
 
@@ -3126,6 +3181,7 @@ public:
 
     // Session statements
     virtual void visit(SetStmt* stmt) = 0;
+    virtual void visit(AlterSystemStmt* stmt) = 0;
     virtual void visit(ResetStmt* stmt) = 0;
     virtual void visit(ShowStmt* stmt) = 0;
     virtual void visit(ExplainStmt* stmt) = 0;

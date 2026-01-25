@@ -55,6 +55,13 @@ namespace scratchbird::core
                           std::vector<uint8_t> &plaintext_key_out,
                           ErrorContext *ctx = nullptr);
 
+        Status encryptWithMasterKey(const std::vector<uint8_t> &plaintext,
+                                    std::vector<uint8_t> &encrypted_out,
+                                    ErrorContext *ctx = nullptr);
+        Status decryptWithMasterKey(const std::vector<uint8_t> &encrypted,
+                                    std::vector<uint8_t> &plaintext_out,
+                                    ErrorContext *ctx = nullptr);
+
         Status setMasterKey(const std::vector<uint8_t> &master_key,
                             ErrorContext *ctx = nullptr);
         Status initializeMasterKey(ErrorContext *ctx = nullptr);

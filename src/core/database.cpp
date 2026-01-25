@@ -157,11 +157,14 @@ namespace scratchbird::core
         }
         long_transaction_monitor_.reset();
 
-        if (job_scheduler_)
         {
-            job_scheduler_->stop();
+            std::lock_guard<std::mutex> lock(scheduler_mutex_);
+            if (job_scheduler_)
+            {
+                job_scheduler_->stop();
+            }
+            job_scheduler_.reset();
         }
-        job_scheduler_.reset();
 
         {
             std::lock_guard<std::mutex> lock(dormant_mutex_);
@@ -247,6 +250,122 @@ namespace scratchbird::core
             ::close(fd_);
             fd_ = -1;
         }
+    }
+
+    Status Database::applySchedulerConfig(ErrorContext *ctx)
+    {
+        std::lock_guard<std::mutex> lock(scheduler_mutex_);
+        bool scheduler_enabled =
+            Config::getInstance().getBool("scheduler", "enabled", true);
+        if (!scheduler_enabled)
+        {
+            if (job_scheduler_)
+            {
+                job_scheduler_->stop();
+            }
+            job_scheduler_.reset();
+            return Status::OK;
+        }
+
+        JobScheduler::Config sched_config;
+        sched_config.polling_interval_seconds =
+            Config::getInstance().getUInt("scheduler", "polling_interval_seconds", 10);
+        sched_config.max_jobs_per_tick =
+            Config::getInstance().getUInt("scheduler", "max_jobs_per_tick", 16);
+        sched_config.max_concurrent_jobs =
+            Config::getInstance().getUInt("scheduler", "max_concurrent_jobs", 10);
+        sched_config.job_timeout_seconds =
+            Config::getInstance().getUInt("scheduler", "job_timeout_seconds", 3600);
+        sched_config.cron_fallback_seconds =
+            Config::getInstance().getUInt("scheduler", "cron_fallback_seconds", 60);
+        sched_config.pre_execute_delay_ms =
+            Config::getInstance().getUInt("scheduler", "pre_execute_delay_ms", 0);
+        {
+            std::string catch_up = Config::getInstance().getString("scheduler", "catch_up", "last");
+            std::string normalized;
+            normalized.reserve(catch_up.size());
+            for (unsigned char c : catch_up)
+            {
+                normalized.push_back(static_cast<char>(std::tolower(c)));
+            }
+            if (normalized == "none")
+            {
+                sched_config.catch_up_policy = JobScheduler::CatchUpPolicy::NONE;
+            }
+            else if (normalized == "all")
+            {
+                sched_config.catch_up_policy = JobScheduler::CatchUpPolicy::ALL;
+            }
+            else
+            {
+                sched_config.catch_up_policy = JobScheduler::CatchUpPolicy::LAST;
+            }
+        }
+        auto parseList = [](const std::string& value) {
+            std::vector<std::string> items;
+            std::string current;
+            for (char ch : value) {
+                if (ch == ',' || ch == ';') {
+                    if (!current.empty()) {
+                        items.push_back(current);
+                        current.clear();
+                    }
+                    continue;
+                }
+                if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
+                    continue;
+                }
+                current.push_back(ch);
+            }
+            if (!current.empty()) {
+                items.push_back(current);
+            }
+            return items;
+        };
+
+        sched_config.external_jobs_enabled =
+            Config::getInstance().getBool("scheduler", "external_jobs_enabled", false);
+        sched_config.external_working_dir =
+            Config::getInstance().getString("scheduler", "external_working_dir", "");
+        sched_config.external_allowed_commands = parseList(
+            Config::getInstance().getString("scheduler", "external_allowed_commands", ""));
+        sched_config.external_allowed_dirs = parseList(
+            Config::getInstance().getString("scheduler", "external_allowed_dirs", ""));
+        sched_config.external_env_allowlist = parseList(
+            Config::getInstance().getString("scheduler", "external_env_allowlist", ""));
+        sched_config.external_output_max_bytes =
+            Config::getInstance().getUInt("scheduler", "external_output_max_bytes", 1024 * 1024);
+        sched_config.external_kill_grace_ms =
+            Config::getInstance().getUInt("scheduler", "external_kill_grace_ms", 2000);
+        sched_config.external_cpu_time_limit_seconds =
+            Config::getInstance().getUInt("scheduler", "external_cpu_time_limit_seconds", 0);
+        sched_config.external_memory_max_bytes =
+            Config::getInstance().getUInt("scheduler", "external_memory_max_bytes", 0);
+
+        if (!job_scheduler_)
+        {
+            try
+            {
+                job_scheduler_ = std::make_unique<JobScheduler>(this, sched_config);
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate JobScheduler");
+                return Status::OOM;
+            }
+            auto status = job_scheduler_->start(ctx);
+            if (status != Status::OK)
+            {
+                job_scheduler_.reset();
+                return status;
+            }
+        }
+        else
+        {
+            job_scheduler_->updateConfig(sched_config);
+        }
+
+        return Status::OK;
     }
 
     auto Database::connect(std::unique_ptr<ConnectionContext> &connection_out, ErrorContext *ctx)
@@ -1301,35 +1420,11 @@ namespace scratchbird::core
         }
 
         // Initialize job scheduler (WS-4 Scheduler)
-        bool scheduler_enabled =
-            Config::getInstance().getBool("scheduler", "enabled", true);
-        if (scheduler_enabled)
+        status = applySchedulerConfig(ctx);
+        if (status != Status::OK)
         {
-            try
-            {
-                JobScheduler::Config sched_config;
-                sched_config.polling_interval_seconds =
-                    Config::getInstance().getUInt("scheduler", "polling_interval_seconds", 10);
-                sched_config.max_jobs_per_tick =
-                    Config::getInstance().getUInt("scheduler", "max_jobs_per_tick", 16);
-                sched_config.cron_fallback_seconds =
-                    Config::getInstance().getUInt("scheduler", "cron_fallback_seconds", 60);
-                sched_config.pre_execute_delay_ms =
-                    Config::getInstance().getUInt("scheduler", "pre_execute_delay_ms", 0);
-                job_scheduler_ = std::make_unique<JobScheduler>(this, sched_config);
-            }
-            catch (const std::bad_alloc &)
-            {
-                close();
-                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate JobScheduler");
-                return Status::OOM;
-            }
-            status = job_scheduler_->start(ctx);
-            if (status != Status::OK)
-            {
-                close();
-                return status;
-            }
+            close();
+            return status;
         }
 
         // Initialize virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).

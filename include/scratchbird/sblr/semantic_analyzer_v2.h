@@ -360,6 +360,7 @@ private:
     ResolvedStatement* analyzeConnect(ConnectStmt* stmt);
     ResolvedStatement* analyzeDisconnect(DisconnectStmt* stmt);
     ResolvedStatement* analyzeSet(SetStmt* stmt);
+    ResolvedStatement* analyzeAlterSystem(AlterSystemStmt* stmt);
     ResolvedStatement* analyzeShow(ShowStmt* stmt);
     ResolvedStatement* analyzeExplain(ExplainStmt* stmt);
     ResolvedStatement* analyzeSweepDatabase(SweepDatabaseStmt* stmt);

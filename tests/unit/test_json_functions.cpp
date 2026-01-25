@@ -115,10 +115,10 @@ TEST(JSONFunctionTest, JSONWithAggregates)
 
 TEST(JSONFunctionTest, JSON_OBJECT_OddArgs)
 {
-    GTEST_SKIP() << "Parser V2 does not validate JSON function argument counts yet";
+    EXPECT_FALSE(parseOk("SELECT JSON_OBJECT('name', 'John', 'age') FROM users"));
 }
 
 TEST(JSONFunctionTest, JSON_EXTRACT_WrongArgCount)
 {
-    GTEST_SKIP() << "Parser V2 does not validate JSON function argument counts yet";
+    EXPECT_FALSE(parseOk("SELECT JSON_EXTRACT(data) FROM users"));
 }

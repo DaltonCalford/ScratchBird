@@ -1,4 +1,5 @@
 #include "scratchbird/core/encryption_key_manager.h"
+#include "scratchbird/core/data_encryption.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
@@ -42,6 +43,14 @@ namespace scratchbird::core
             out.append(buf, 4);
         }
 
+        void appendUint16(std::string &out, uint16_t value)
+        {
+            char buf[2];
+            buf[0] = static_cast<char>(value & 0xFF);
+            buf[1] = static_cast<char>((value >> 8) & 0xFF);
+            out.append(buf, 2);
+        }
+
         bool readUint8(const std::string &blob, size_t &offset, uint8_t &value)
         {
             if (offset + 1 > blob.size())
@@ -66,6 +75,82 @@ namespace scratchbird::core
                     (static_cast<uint32_t>(data[3]) << 24);
             offset += 4;
             return true;
+        }
+
+        bool readUint16(const std::string &blob, size_t &offset, uint16_t &value)
+        {
+            if (offset + 2 > blob.size())
+            {
+                return false;
+            }
+            const uint8_t *data = reinterpret_cast<const uint8_t *>(blob.data() + offset);
+            value = static_cast<uint16_t>(data[0]) |
+                    (static_cast<uint16_t>(data[1]) << 8);
+            offset += 2;
+            return true;
+        }
+
+        Status serializeEncryptedValue(const EncryptedValue &encrypted,
+                                       std::vector<uint8_t> &out,
+                                       ErrorContext *ctx)
+        {
+            if (encrypted.iv.size() > std::numeric_limits<uint16_t>::max() ||
+                encrypted.auth_tag.size() > std::numeric_limits<uint16_t>::max() ||
+                encrypted.ciphertext.size() > std::numeric_limits<uint32_t>::max())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Encrypted payload too large");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::string blob;
+            appendUint8(blob, static_cast<uint8_t>(encrypted.algorithm));
+            appendUint16(blob, static_cast<uint16_t>(encrypted.iv.size()));
+            appendUint16(blob, static_cast<uint16_t>(encrypted.auth_tag.size()));
+            appendUint32(blob, static_cast<uint32_t>(encrypted.ciphertext.size()));
+            blob.append(reinterpret_cast<const char*>(encrypted.iv.data()),
+                        encrypted.iv.size());
+            blob.append(reinterpret_cast<const char*>(encrypted.auth_tag.data()),
+                        encrypted.auth_tag.size());
+            blob.append(reinterpret_cast<const char*>(encrypted.ciphertext.data()),
+                        encrypted.ciphertext.size());
+
+            out.assign(blob.begin(), blob.end());
+            return Status::OK;
+        }
+
+        Status parseEncryptedValue(const std::vector<uint8_t> &blob,
+                                   EncryptedValue &encrypted,
+                                   ErrorContext *ctx)
+        {
+            std::string view(reinterpret_cast<const char*>(blob.data()), blob.size());
+            size_t offset = 0;
+            uint8_t algo = 0;
+            uint16_t iv_len = 0;
+            uint16_t tag_len = 0;
+            uint32_t cipher_len = 0;
+
+            if (!readUint8(view, offset, algo) ||
+                !readUint16(view, offset, iv_len) ||
+                !readUint16(view, offset, tag_len) ||
+                !readUint32(view, offset, cipher_len))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid encrypted blob");
+                return Status::DATA_CORRUPTED;
+            }
+
+            if (offset + iv_len + tag_len + cipher_len > view.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid encrypted blob length");
+                return Status::DATA_CORRUPTED;
+            }
+
+            encrypted.algorithm = static_cast<EncryptionAlgorithm>(algo);
+            encrypted.iv.assign(blob.begin() + offset, blob.begin() + offset + iv_len);
+            offset += iv_len;
+            encrypted.auth_tag.assign(blob.begin() + offset, blob.begin() + offset + tag_len);
+            offset += tag_len;
+            encrypted.ciphertext.assign(blob.begin() + offset, blob.begin() + offset + cipher_len);
+            return Status::OK;
         }
 
         Status generateRandomBytes(std::vector<uint8_t> &out, size_t len, ErrorContext *ctx)
@@ -631,6 +716,52 @@ namespace scratchbird::core
         }
 
         return decryptAesGcm(wrapping_key, iv, tag, ciphertext, plaintext_key_out, ctx);
+    }
+
+    Status EncryptionKeyManager::encryptWithMasterKey(const std::vector<uint8_t> &plaintext,
+                                                     std::vector<uint8_t> &encrypted_out,
+                                                     ErrorContext *ctx)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        Status status = ensureMasterKeyLoaded(true, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        EncryptedValue encrypted;
+        status = DataEncryption::encrypt(plaintext, master_key_,
+                                         EncryptionAlgorithm::AES256_GCM,
+                                         encrypted, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return serializeEncryptedValue(encrypted, encrypted_out, ctx);
+    }
+
+    Status EncryptionKeyManager::decryptWithMasterKey(const std::vector<uint8_t> &encrypted,
+                                                     std::vector<uint8_t> &plaintext_out,
+                                                     ErrorContext *ctx)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        Status status = ensureMasterKeyLoaded(false, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        EncryptedValue parsed;
+        status = parseEncryptedValue(encrypted, parsed, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return DataEncryption::decrypt(parsed, master_key_, plaintext_out, ctx);
     }
 
     Status EncryptionKeyManager::setMasterKey(const std::vector<uint8_t> &master_key,

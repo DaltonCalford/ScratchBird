@@ -255,6 +255,12 @@ CREATE JOB job_name
   [DESCRIPTION = 'description']
   [ENABLED | DISABLED]
   AS 'sql_statement' | CALL procedure_name() | EXEC 'external_command';
+
+CREATE OR ALTER JOB job_name
+  ...same clause set as CREATE JOB...
+
+RECREATE JOB job_name
+  ...same clause set as CREATE JOB...
 ```
 
 ### 7.2 ALTER JOB
@@ -267,7 +273,12 @@ ALTER JOB job_name
   [SET RETRY_BACKOFF = duration]
   [SET TIMEOUT = duration]
   [SET RUN AS role_name]
-  [SET DESCRIPTION = '...'];
+  [SET DESCRIPTION = '...']
+  [SET ON COMPLETION PRESERVE | DROP]
+  [SET DEPENDS ON job_name [, ...] | NONE]
+  [SET CLASS = class_name]
+  [SET PARTITION BY ALL_SHARDS | SINGLE_SHARD 'shard_uuid' | SHARD_SET (...) | DYNAMIC expr]
+  [SET AS 'sql_statement' | CALL procedure_name() | EXEC 'external_command'];
 ```
 
 ### 7.3 DROP JOB

@@ -41,6 +41,20 @@ SELECT * FROM pg_stat_user_indexes;
 SELECT * FROM pg_stat_bgwriter;
 ```
 
+### SHOW METRICS
+
+The server can emit core metrics directly:
+
+```sql
+SHOW METRICS;
+```
+
+Or via the CLI:
+
+```bash
+sb_admin mydb metrics -U SYSARCH -P changeme
+```
+
 ### Key Metrics
 
 **Connection Metrics:**
@@ -1003,4 +1017,3 @@ curl http://localhost:9090/health
 - [Security Administration](security.md)
 - [Performance Tuning](../user-guides/Performance-Tuning.md)
 - [Troubleshooting](troubleshooting.md)
-

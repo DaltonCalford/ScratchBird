@@ -892,6 +892,9 @@ struct ResolvedCreateRoleStmt : public ResolvedStatement {
  * Resolved CREATE JOB statement
  */
 struct ResolvedCreateJobStmt : public ResolvedStatement {
+    bool or_alter = false;
+    bool recreate = false;
+
     StringPool::StringId job_name = StringPool::INVALID_ID;
     JobType job_type = JobType::SQL;
     StringPool::StringId job_sql = StringPool::INVALID_ID;
@@ -944,6 +947,12 @@ struct ResolvedAlterJobStmt : public ResolvedStatement {
     StringPool::StringId starts_at = StringPool::INVALID_ID;
     StringPool::StringId ends_at = StringPool::INVALID_ID;
 
+    bool has_job_body = false;
+    JobType job_type = JobType::SQL;
+    StringPool::StringId job_sql = StringPool::INVALID_ID;
+    StringPool::StringId procedure_name = StringPool::INVALID_ID;
+    StringPool::StringId external_command = StringPool::INVALID_ID;
+
     bool has_state = false;
     JobState state = JobState::ENABLED;
     bool has_max_retries = false;
@@ -952,10 +961,28 @@ struct ResolvedAlterJobStmt : public ResolvedStatement {
     uint32_t retry_backoff_seconds = 0;
     bool has_timeout = false;
     uint32_t timeout_seconds = 0;
+    bool has_on_completion = false;
+    JobOnCompletion on_completion = JobOnCompletion::PRESERVE;
     bool has_run_as = false;
     StringPool::StringId run_as_role = StringPool::INVALID_ID;
     bool has_description = false;
     StringPool::StringId description = StringPool::INVALID_ID;
+
+    bool has_job_class = false;
+    StringPool::StringId job_class = StringPool::INVALID_ID;
+    bool has_partition = false;
+    StringPool::StringId partition_strategy = StringPool::INVALID_ID;
+    StringPool::StringId partition_expression = StringPool::INVALID_ID;
+    StringPool::StringId partition_shard = StringPool::INVALID_ID;
+
+    bool has_depends_on = false;
+    bool clear_depends_on = false;
+    std::vector<StringPool::StringId> depends_on;
+
+    bool has_secret = false;
+    bool drop_secret = false;
+    StringPool::StringId secret_key = StringPool::INVALID_ID;
+    StringPool::StringId secret_value = StringPool::INVALID_ID;
 };
 
 /**
@@ -1367,6 +1394,14 @@ struct ResolvedSetStmt : public ResolvedStatement {
 
     // For SET LOCAL_TIMEOUT
     uint32_t local_timeout_seconds = 0;
+};
+
+/**
+ * Resolved ALTER SYSTEM SET statement
+ */
+struct ResolvedAlterSystemStmt : public ResolvedStatement {
+    StringPool::StringId variable_name = StringPool::INVALID_ID;
+    ResolvedExpression* value = nullptr;
 };
 
 /**

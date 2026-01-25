@@ -1,5 +1,6 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
+#include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/lock_manager.h"
@@ -378,6 +379,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t jobs_page;           // Page containing jobs table
         uint32_t job_runs_page;       // Page containing job runs table
         uint32_t job_dependencies_page; // Page containing job dependencies table
+        uint32_t job_secrets_page;    // Page containing job secrets table
 
         // Phase 2: Security tables (Catalog Corrections)
         uint32_t users_page;          // Page containing users table
@@ -435,7 +437,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         ID policy_toast_table_id;     // UUID for policy expression TOAST storage
 
-        uint8_t reserved[3792];       // Padding for 4KB page (304 bytes used)
+        uint8_t reserved[3788];       // Padding for 4KB page (308 bytes used)
     };
 
     // Schema record on disk
@@ -982,6 +984,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t retry_count;
         int64_t rows_affected;
         int32_t error_code;
+        uint32_t result_data_oid;
         char result_message[1024];
         uint32_t is_valid;
         uint32_t padding;
@@ -992,6 +995,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         ID job_id;
         ID depends_on_job_id;
+        uint64_t created_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Job secrets record on disk (WS-4 Scheduler)
+    struct JobSecretRecord
+    {
+        ID job_id;
+        char secret_key[128];
+        uint32_t secret_value_oid;
         uint64_t created_time;
         uint32_t is_valid;
         uint32_t padding;
@@ -1871,6 +1885,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         if (status != Status::OK) return status;
         heap->header.page_id = job_dependencies_table_page_;
         status = db_->write_page(job_dependencies_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Job secrets table (WS-4 Scheduler)
+        status = pm->allocatePage(job_secrets_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = job_secrets_table_page_;
+        status = db_->write_page(job_secrets_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
         // Users table (Phase 2)
@@ -4200,6 +4221,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::DATA_CORRUPTED;
         }
 
+        std::vector<JobInfo> jobs;
+        if (listJobs(jobs, ctx) != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list jobs");
+            return Status::DATA_CORRUPTED;
+        }
+
         std::unordered_map<ID, SchemaInfo, IDHash> schema_by_id;
         schema_by_id.reserve(schemas.size());
         for (const auto& schema : schemas)
@@ -4658,6 +4686,23 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
+        for (const auto& job : jobs)
+        {
+            ResolvedObject obj;
+            obj.object_id = job.job_id;
+            obj.object_type = ObjectType::JOB;
+            obj.schema_id = ID{};
+            obj.parent_object_id = ID{};
+            obj.object_name = job.job_name;
+            obj.schema_path.clear();
+            obj.full_path = job.job_name;
+            Status st = add_resolved(obj, ID{}, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
         for (const auto& ts : tablespaces)
         {
             ResolvedObject obj;
@@ -5044,6 +5089,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     break;
                 case ObjectType::DOMAIN:
                     perm_type = PermissionObjectType::DOMAIN;
+                    break;
+                case ObjectType::JOB:
+                    perm_type = PermissionObjectType::JOB;
                     break;
                 case ObjectType::DATABASE:
                     perm_type = PermissionObjectType::DATABASE;
@@ -7743,6 +7791,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->jobs_page = jobs_table_page_;
         root->job_runs_page = job_runs_table_page_;
         root->job_dependencies_page = job_dependencies_table_page_;
+        root->job_secrets_page = job_secrets_table_page_;
         root->users_page = users_table_page_;
         root->roles_page = roles_table_page_;
         root->groups_page = groups_table_page_;
@@ -7844,6 +7893,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         jobs_table_page_ = root->jobs_page;
         job_runs_table_page_ = root->job_runs_page;
         job_dependencies_table_page_ = root->job_dependencies_page;
+        job_secrets_table_page_ = root->job_secrets_page;
         users_table_page_ = root->users_page;
         roles_table_page_ = root->roles_page;
         groups_table_page_ = root->groups_page;
@@ -25616,6 +25666,174 @@ namespace {
     }
 }
 
+auto CatalogManager::normalizeJobName(const std::string& name) -> std::string
+{
+    return IdentifierUtils::toUpper(name);
+}
+
+void CatalogManager::indexJobUnlocked(const JobInfo& job)
+{
+    job_name_index_[normalizeJobName(job.job_name)] = job.job_id;
+    if (job.state == JobState::ENABLED)
+    {
+        job_due_index_.insert({job.next_run_time, job.job_id});
+    }
+}
+
+void CatalogManager::unindexJobUnlocked(const JobInfo& job)
+{
+    auto name_key = normalizeJobName(job.job_name);
+    auto name_it = job_name_index_.find(name_key);
+    if (name_it != job_name_index_.end() && name_it->second == job.job_id)
+    {
+        job_name_index_.erase(name_it);
+    }
+    if (job.state == JobState::ENABLED)
+    {
+        auto range = job_due_index_.equal_range(job.next_run_time);
+        for (auto it = range.first; it != range.second; ++it)
+        {
+            if (it->second == job.job_id)
+            {
+                job_due_index_.erase(it);
+                break;
+            }
+        }
+    }
+}
+
+void CatalogManager::indexJobRunUnlocked(const JobRunInfo& run)
+{
+    job_runs_cache_[run.job_run_id] = run;
+    job_runs_by_job_.insert({run.job_id, run.job_run_id});
+}
+
+void CatalogManager::unindexJobRunUnlocked(const JobRunInfo& run)
+{
+    job_runs_cache_.erase(run.job_run_id);
+    auto range = job_runs_by_job_.equal_range(run.job_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        if (it->second == run.job_run_id)
+        {
+            job_runs_by_job_.erase(it);
+            break;
+        }
+    }
+}
+
+auto CatalogManager::ensureJobCacheLoaded(ErrorContext* ctx) -> Status
+{
+    if (job_cache_loaded_)
+    {
+        return Status::OK;
+    }
+
+    std::vector<JobInfo> jobs;
+    auto filter = [](const JobRecord& rec) {
+        return rec.is_valid;
+    };
+    auto converter = [](const JobRecord& rec, JobInfo& info) {
+        info.job_id = rec.job_id;
+        info.job_name = rec.job_name;
+        info.description = rec.description;
+        info.job_class = static_cast<JobClass>(rec.job_class);
+        info.job_type = static_cast<JobType>(rec.job_type);
+        info.job_sql = rec.job_sql;
+        info.procedure_uuid = rec.procedure_uuid;
+        info.external_command = rec.external_command;
+        info.schedule_kind = static_cast<ScheduleKind>(rec.schedule_kind);
+        info.cron_expression = rec.cron_expression;
+        info.interval_seconds = rec.interval_seconds;
+        info.starts_at = rec.starts_at;
+        info.ends_at = rec.ends_at;
+        info.schedule_tz = rec.schedule_tz;
+        info.next_run_time = rec.next_run_time;
+        info.on_completion = static_cast<JobOnCompletion>(rec.on_completion);
+        info.partition_strategy = rec.partition_strategy;
+        info.partition_shard_uuid = rec.partition_shard_uuid;
+        info.partition_expression = rec.partition_expression;
+        info.max_retries = rec.max_retries;
+        info.retry_backoff_seconds = rec.retry_backoff_seconds;
+        info.timeout_seconds = rec.timeout_seconds;
+        info.created_by_user_uuid = rec.created_by_user_uuid;
+        info.run_as_role_uuid = rec.run_as_role_uuid;
+        info.created_at = rec.created_at;
+        info.state = static_cast<JobState>(rec.state);
+    };
+
+    Status status = readRecordsToVector<JobRecord, JobInfo>(jobs_table_page_, jobs,
+                                                           filter, converter, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+
+    job_cache_.clear();
+    job_name_index_.clear();
+    job_due_index_.clear();
+    for (const auto& job : jobs)
+    {
+        job_cache_[job.job_id] = job;
+        indexJobUnlocked(job);
+    }
+
+    job_cache_loaded_ = true;
+    return Status::OK;
+}
+
+auto CatalogManager::ensureJobRunsCacheLoaded(ErrorContext* ctx) -> Status
+{
+    if (job_runs_cache_loaded_)
+    {
+        return Status::OK;
+    }
+
+    std::vector<JobRunInfo> runs;
+    auto filter = [](const JobRunRecord& rec) {
+        return rec.is_valid;
+    };
+    uint64_t xmin = 0;
+    auto converter = [this, xmin, ctx](const JobRunRecord& rec, JobRunInfo& info) {
+        info.job_run_id = rec.job_run_id;
+        info.job_id = rec.job_id;
+        info.assigned_node_uuid = rec.assigned_node_uuid;
+        info.shard_uuid = rec.shard_uuid;
+        info.scheduled_time = rec.scheduled_time;
+        info.started_at = rec.started_at;
+        info.completed_at = rec.completed_at;
+        info.state = static_cast<JobRunState>(rec.state);
+        info.retry_count = rec.retry_count;
+        info.result_message = rec.result_message;
+        info.result_data.clear();
+        if (rec.result_data_oid != 0) {
+            std::string result_blob;
+            if (loadStringFromToast(rec.result_data_oid, xmin, result_blob, ctx) == Status::OK) {
+                info.result_data.assign(result_blob.begin(), result_blob.end());
+            }
+        }
+        info.rows_affected = rec.rows_affected;
+        info.error_code = rec.error_code;
+    };
+
+    Status status = readRecordsToVector<JobRunRecord, JobRunInfo>(job_runs_table_page_, runs,
+                                                                 filter, converter, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+
+    job_runs_cache_.clear();
+    job_runs_by_job_.clear();
+    for (const auto& run : runs)
+    {
+        indexJobRunUnlocked(run);
+    }
+
+    job_runs_cache_loaded_ = true;
+    return Status::OK;
+}
+
 auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
                               ErrorContext* ctx) -> Status
 {
@@ -25625,7 +25843,7 @@ auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
     record.job_id = generateUuidV7();
     copyStringField(record.job_name, job_in.job_name);
     copyStringField(record.description, job_in.description);
-    record.job_class = 0;
+    record.job_class = static_cast<uint8_t>(job_in.job_class);
     record.job_type = static_cast<uint8_t>(job_in.job_type);
     record.schedule_kind = static_cast<uint8_t>(job_in.schedule_kind);
     record.on_completion = static_cast<uint8_t>(job_in.on_completion);
@@ -25657,6 +25875,15 @@ auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
     }
 
     job_id_out = record.job_id;
+    if (job_cache_loaded_)
+    {
+        JobInfo cached = job_in;
+        cached.job_id = record.job_id;
+        cached.next_run_time = record.next_run_time;
+        cached.created_at = record.created_at;
+        job_cache_[cached.job_id] = cached;
+        indexJobUnlocked(cached);
+    }
     return Status::OK;
 }
 
@@ -25664,6 +25891,23 @@ auto CatalogManager::getJobByName(const std::string& job_name, JobInfo& job_out,
                                  ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
+    Status cache_status = ensureJobCacheLoaded(ctx);
+    if (cache_status != Status::OK)
+    {
+        return cache_status;
+    }
+    auto name_key = normalizeJobName(job_name);
+    auto it = job_name_index_.find(name_key);
+    if (it != job_name_index_.end())
+    {
+        auto job_it = job_cache_.find(it->second);
+        if (job_it != job_cache_.end())
+        {
+            job_out = job_it->second;
+            return Status::OK;
+        }
+    }
+
     auto predicate = [&job_name](const JobRecord& rec) {
         return rec.is_valid && job_name == rec.job_name;
     };
@@ -25677,6 +25921,7 @@ auto CatalogManager::getJobByName(const std::string& job_name, JobInfo& job_out,
     job_out.job_id = result.record.job_id;
     job_out.job_name = result.record.job_name;
     job_out.description = result.record.description;
+    job_out.job_class = static_cast<JobClass>(result.record.job_class);
     job_out.job_type = static_cast<JobType>(result.record.job_type);
     job_out.job_sql = result.record.job_sql;
     job_out.procedure_uuid = result.record.procedure_uuid;
@@ -25706,6 +25951,18 @@ auto CatalogManager::getJob(const ID& job_id, JobInfo& job_out,
                            ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
+    Status cache_status = ensureJobCacheLoaded(ctx);
+    if (cache_status != Status::OK)
+    {
+        return cache_status;
+    }
+    auto it = job_cache_.find(job_id);
+    if (it != job_cache_.end())
+    {
+        job_out = it->second;
+        return Status::OK;
+    }
+
     auto predicate = [&job_id](const JobRecord& rec) {
         return rec.is_valid && rec.job_id == job_id;
     };
@@ -25719,6 +25976,7 @@ auto CatalogManager::getJob(const ID& job_id, JobInfo& job_out,
     job_out.job_id = result.record.job_id;
     job_out.job_name = result.record.job_name;
     job_out.description = result.record.description;
+    job_out.job_class = static_cast<JobClass>(result.record.job_class);
     job_out.job_type = static_cast<JobType>(result.record.job_type);
     job_out.job_sql = result.record.job_sql;
     job_out.procedure_uuid = result.record.procedure_uuid;
@@ -25760,6 +26018,7 @@ auto CatalogManager::updateJob(const JobInfo& job_in, ErrorContext* ctx) -> Stat
     JobRecord updated = found.record;
     copyStringField(updated.job_name, job_in.job_name);
     copyStringField(updated.description, job_in.description);
+    updated.job_class = static_cast<uint8_t>(job_in.job_class);
     updated.job_type = static_cast<uint8_t>(job_in.job_type);
     copyStringField(updated.job_sql, job_in.job_sql);
     updated.procedure_uuid = job_in.procedure_uuid;
@@ -25783,7 +26042,19 @@ auto CatalogManager::updateJob(const JobInfo& job_in, ErrorContext* ctx) -> Stat
     updated.created_at = job_in.created_at;
     updated.state = static_cast<uint8_t>(job_in.state);
 
-    return updateRecordInHeapPage<JobRecord>(jobs_table_page_, predicate, updated, ctx);
+    Status status = updateRecordInHeapPage<JobRecord>(jobs_table_page_, predicate, updated, ctx);
+    if (status == Status::OK && job_cache_loaded_)
+    {
+        auto it = job_cache_.find(job_in.job_id);
+        if (it != job_cache_.end())
+        {
+            unindexJobUnlocked(it->second);
+        }
+        job_cache_[job_in.job_id] = job_in;
+        indexJobUnlocked(job_in);
+    }
+
+    return status;
 }
 
 auto CatalogManager::deleteJob(const ID& job_id, bool keep_history,
@@ -25804,12 +26075,36 @@ auto CatalogManager::deleteJob(const ID& job_id, bool keep_history,
     };
     deleteRecordFromHeapPage<JobDependencyRecord>(job_dependencies_table_page_, dep_pred, ctx);
 
+    auto secret_pred = [&job_id](const JobSecretRecord& rec) {
+        return rec.is_valid && rec.job_id == job_id;
+    };
+    deleteRecordFromHeapPage<JobSecretRecord>(job_secrets_table_page_, secret_pred, ctx);
+
     if (!keep_history)
     {
         auto run_pred = [&job_id](const JobRunRecord& rec) {
             return rec.is_valid && rec.job_id == job_id;
         };
         deleteRecordFromHeapPage<JobRunRecord>(job_runs_table_page_, run_pred, ctx);
+    }
+
+    if (job_cache_loaded_)
+    {
+        auto it = job_cache_.find(job_id);
+        if (it != job_cache_.end())
+        {
+            unindexJobUnlocked(it->second);
+            job_cache_.erase(it);
+        }
+    }
+    if (job_runs_cache_loaded_ && !keep_history)
+    {
+        auto range = job_runs_by_job_.equal_range(job_id);
+        for (auto it = range.first; it != range.second; )
+        {
+            job_runs_cache_.erase(it->second);
+            it = job_runs_by_job_.erase(it);
+        }
     }
 
     return Status::OK;
@@ -25819,41 +26114,44 @@ auto CatalogManager::listDueJobs(uint64_t now_ms, std::vector<JobInfo>& jobs_out
                                 ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
-    auto filter = [now_ms](const JobRecord& rec) {
-        return rec.is_valid &&
-               rec.state == static_cast<uint8_t>(JobState::ENABLED) &&
-               rec.next_run_time <= now_ms;
-    };
-    auto converter = [](const JobRecord& rec, JobInfo& info) {
-        info.job_id = rec.job_id;
-        info.job_name = rec.job_name;
-        info.description = rec.description;
-        info.job_type = static_cast<JobType>(rec.job_type);
-        info.job_sql = rec.job_sql;
-        info.procedure_uuid = rec.procedure_uuid;
-        info.external_command = rec.external_command;
-        info.schedule_kind = static_cast<ScheduleKind>(rec.schedule_kind);
-        info.cron_expression = rec.cron_expression;
-        info.interval_seconds = rec.interval_seconds;
-        info.starts_at = rec.starts_at;
-        info.ends_at = rec.ends_at;
-        info.schedule_tz = rec.schedule_tz;
-        info.next_run_time = rec.next_run_time;
-        info.on_completion = static_cast<JobOnCompletion>(rec.on_completion);
-        info.partition_strategy = rec.partition_strategy;
-        info.partition_shard_uuid = rec.partition_shard_uuid;
-        info.partition_expression = rec.partition_expression;
-        info.max_retries = rec.max_retries;
-        info.retry_backoff_seconds = rec.retry_backoff_seconds;
-        info.timeout_seconds = rec.timeout_seconds;
-        info.created_by_user_uuid = rec.created_by_user_uuid;
-        info.run_as_role_uuid = rec.run_as_role_uuid;
-        info.created_at = rec.created_at;
-        info.state = static_cast<JobState>(rec.state);
-    };
+    Status status = ensureJobCacheLoaded(ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
 
-    return readRecordsToVector<JobRecord, JobInfo>(jobs_table_page_, jobs_out,
-                                                   filter, converter, ctx);
+    jobs_out.clear();
+    auto end_it = job_due_index_.upper_bound(now_ms);
+    for (auto it = job_due_index_.begin(); it != end_it; ++it)
+    {
+        auto job_it = job_cache_.find(it->second);
+        if (job_it != job_cache_.end())
+        {
+            jobs_out.push_back(job_it->second);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::listJobs(std::vector<JobInfo>& jobs_out,
+                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    Status status = ensureJobCacheLoaded(ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    jobs_out.clear();
+    jobs_out.reserve(job_cache_.size());
+    for (const auto& entry : job_cache_)
+    {
+        jobs_out.push_back(entry.second);
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::createJobRun(const JobRunInfo& run_in, ID& run_id_out,
@@ -25873,6 +26171,17 @@ auto CatalogManager::createJobRun(const JobRunInfo& run_in, ID& run_id_out,
     record.retry_count = run_in.retry_count;
     record.rows_affected = run_in.rows_affected;
     record.error_code = run_in.error_code;
+    record.result_data_oid = 0;
+    if (!run_in.result_data.empty())
+    {
+        std::string result_blob(run_in.result_data.begin(), run_in.result_data.end());
+        uint64_t xmin = 0;
+        Status toast_status = storeStringInToast(result_blob, xmin, record.result_data_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            return toast_status;
+        }
+    }
     copyStringField(record.result_message, run_in.result_message);
     record.is_valid = 1;
 
@@ -25883,6 +26192,13 @@ auto CatalogManager::createJobRun(const JobRunInfo& run_in, ID& run_id_out,
     }
 
     run_id_out = record.job_run_id;
+    if (job_runs_cache_loaded_)
+    {
+        JobRunInfo cached = run_in;
+        cached.job_run_id = record.job_run_id;
+        job_runs_cache_[cached.job_run_id] = cached;
+        job_runs_by_job_.insert({cached.job_id, cached.job_run_id});
+    }
     return Status::OK;
 }
 
@@ -25906,15 +26222,51 @@ auto CatalogManager::updateJobRun(const JobRunInfo& run_in, ErrorContext* ctx) -
     updated.retry_count = run_in.retry_count;
     updated.rows_affected = run_in.rows_affected;
     updated.error_code = run_in.error_code;
+    if (!run_in.result_data.empty())
+    {
+        std::string result_blob(run_in.result_data.begin(), run_in.result_data.end());
+        uint64_t xmin = 0;
+        Status toast_status = storeStringInToast(result_blob, xmin, updated.result_data_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            return toast_status;
+        }
+    }
     copyStringField(updated.result_message, run_in.result_message);
 
-    return updateRecordInHeapPage<JobRunRecord>(job_runs_table_page_, predicate, updated, ctx);
+    Status status = updateRecordInHeapPage<JobRunRecord>(job_runs_table_page_, predicate, updated, ctx);
+    if (status == Status::OK && job_runs_cache_loaded_)
+    {
+        auto it = job_runs_cache_.find(run_in.job_run_id);
+        if (it != job_runs_cache_.end())
+        {
+            JobRunInfo cached = run_in;
+            if (cached.result_data.empty())
+            {
+                cached.result_data = it->second.result_data;
+            }
+            it->second = std::move(cached);
+        }
+    }
+    return status;
 }
 
 auto CatalogManager::getJobRun(const ID& run_id, JobRunInfo& run_out,
                               ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
+    Status status = ensureJobRunsCacheLoaded(ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    auto it = job_runs_cache_.find(run_id);
+    if (it != job_runs_cache_.end())
+    {
+        run_out = it->second;
+        return Status::OK;
+    }
+
     auto predicate = [&run_id](const JobRunRecord& rec) {
         return rec.is_valid && rec.job_run_id == run_id;
     };
@@ -25935,6 +26287,16 @@ auto CatalogManager::getJobRun(const ID& run_id, JobRunInfo& run_out,
     run_out.state = static_cast<JobRunState>(found.record.state);
     run_out.retry_count = found.record.retry_count;
     run_out.result_message = found.record.result_message;
+    run_out.result_data.clear();
+    if (found.record.result_data_oid != 0)
+    {
+        std::string result_blob;
+        uint64_t xmin = 0;
+        if (loadStringFromToast(found.record.result_data_oid, xmin, result_blob, ctx) == Status::OK)
+        {
+            run_out.result_data.assign(result_blob.begin(), result_blob.end());
+        }
+    }
     run_out.rows_affected = found.record.rows_affected;
     run_out.error_code = found.record.error_code;
     return Status::OK;
@@ -25944,26 +26306,44 @@ auto CatalogManager::listJobRuns(const ID& job_id, std::vector<JobRunInfo>& runs
                                ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
-    auto filter = [&job_id](const JobRunRecord& rec) {
-        return rec.is_valid && rec.job_id == job_id;
-    };
-    auto converter = [](const JobRunRecord& rec, JobRunInfo& info) {
-        info.job_run_id = rec.job_run_id;
-        info.job_id = rec.job_id;
-        info.assigned_node_uuid = rec.assigned_node_uuid;
-        info.shard_uuid = rec.shard_uuid;
-        info.scheduled_time = rec.scheduled_time;
-        info.started_at = rec.started_at;
-        info.completed_at = rec.completed_at;
-        info.state = static_cast<JobRunState>(rec.state);
-        info.retry_count = rec.retry_count;
-        info.result_message = rec.result_message;
-        info.rows_affected = rec.rows_affected;
-        info.error_code = rec.error_code;
-    };
+    Status status = ensureJobRunsCacheLoaded(ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
 
-    return readRecordsToVector<JobRunRecord, JobRunInfo>(job_runs_table_page_, runs_out,
-                                                         filter, converter, ctx);
+    runs_out.clear();
+    auto range = job_runs_by_job_.equal_range(job_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        auto run_it = job_runs_cache_.find(it->second);
+        if (run_it != job_runs_cache_.end())
+        {
+            runs_out.push_back(run_it->second);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::listJobRuns(std::vector<JobRunInfo>& runs_out,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    Status status = ensureJobRunsCacheLoaded(ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    runs_out.clear();
+    runs_out.reserve(job_runs_cache_.size());
+    for (const auto& entry : job_runs_cache_)
+    {
+        runs_out.push_back(entry.second);
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::addJobDependencies(const ID& job_id,
@@ -25987,6 +26367,27 @@ auto CatalogManager::addJobDependencies(const ID& job_id,
     return Status::OK;
 }
 
+auto CatalogManager::clearJobDependencies(const ID& job_id,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&job_id](const JobDependencyRecord& rec) {
+        return rec.is_valid && rec.job_id == job_id;
+    };
+
+    Status status = Status::OK;
+    while (true) {
+        status = deleteRecordFromHeapPage<JobDependencyRecord>(
+            job_dependencies_table_page_, predicate, ctx);
+        if (status == Status::NOT_FOUND) {
+            return Status::OK;
+        }
+        if (status != Status::OK) {
+            return status;
+        }
+    }
+}
+
 auto CatalogManager::listJobDependencies(const ID& job_id,
                                         std::vector<JobDependencyInfo>& deps_out,
                                         ErrorContext* ctx) -> Status
@@ -26002,6 +26403,118 @@ auto CatalogManager::listJobDependencies(const ID& job_id,
     };
     return readRecordsToVector<JobDependencyRecord, JobDependencyInfo>(
         job_dependencies_table_page_, deps_out, filter, converter, ctx);
+}
+
+auto CatalogManager::storeJobSecret(const ID& job_id,
+                                    const std::string& secret_key,
+                                    const std::string& secret_value,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (secret_key.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Secret key cannot be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    EncryptionKeyManager* key_mgr = db_ ? db_->encryption_key_manager() : nullptr;
+    if (!key_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Encryption key manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<uint8_t> plaintext(secret_value.begin(), secret_value.end());
+    std::vector<uint8_t> encrypted_blob;
+    Status enc_status = key_mgr->encryptWithMasterKey(plaintext, encrypted_blob, ctx);
+    if (enc_status != Status::OK)
+    {
+        return enc_status;
+    }
+
+    std::string encoded(reinterpret_cast<const char*>(encrypted_blob.data()), encrypted_blob.size());
+    uint64_t xmin = 0;
+    uint32_t new_oid = 0;
+    Status toast_status = storeStringInToast(encoded, xmin, new_oid, ctx);
+    if (toast_status != Status::OK)
+    {
+        return toast_status;
+    }
+
+    auto predicate = [&](const JobSecretRecord& rec) {
+        return rec.is_valid && rec.job_id == job_id && secret_key == rec.secret_key;
+    };
+    auto found = findRecordInHeapPage<JobSecretRecord>(job_secrets_table_page_, predicate, ctx);
+    if (found.status == Status::OK)
+    {
+        JobSecretRecord updated = found.record;
+        updated.secret_value_oid = new_oid;
+        updated.created_time = currentTimeMs();
+        return updateRecordInHeapPage<JobSecretRecord>(job_secrets_table_page_, predicate, updated, ctx);
+    }
+
+    JobSecretRecord record{};
+    record.job_id = job_id;
+    copyStringField(record.secret_key, secret_key);
+    record.secret_value_oid = new_oid;
+    record.created_time = currentTimeMs();
+    record.is_valid = 1;
+    return writeRecordToHeapPage(job_secrets_table_page_, record, ctx);
+}
+
+auto CatalogManager::getJobSecret(const ID& job_id,
+                                  const std::string& secret_key,
+                                  std::string& secret_value_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&](const JobSecretRecord& rec) {
+        return rec.is_valid && rec.job_id == job_id && secret_key == rec.secret_key;
+    };
+    auto found = findRecordInHeapPage<JobSecretRecord>(job_secrets_table_page_, predicate, ctx);
+    if (found.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Job secret not found");
+        return Status::NOT_FOUND;
+    }
+
+    std::string encoded;
+    uint64_t xmin = 0;
+    Status load_status = loadStringFromToast(found.record.secret_value_oid, xmin, encoded, ctx);
+    if (load_status != Status::OK)
+    {
+        return load_status;
+    }
+
+    EncryptionKeyManager* key_mgr = db_ ? db_->encryption_key_manager() : nullptr;
+    if (!key_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Encryption key manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<uint8_t> encrypted_blob(encoded.begin(), encoded.end());
+    std::vector<uint8_t> plaintext;
+    Status dec_status = key_mgr->decryptWithMasterKey(encrypted_blob, plaintext, ctx);
+    if (dec_status != Status::OK)
+    {
+        return dec_status;
+    }
+
+    secret_value_out.assign(reinterpret_cast<const char*>(plaintext.data()), plaintext.size());
+    return Status::OK;
+}
+
+auto CatalogManager::deleteJobSecret(const ID& job_id,
+                                     const std::string& secret_key,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&](const JobSecretRecord& rec) {
+        return rec.is_valid && rec.job_id == job_id && secret_key == rec.secret_key;
+    };
+    return deleteRecordFromHeapPage<JobSecretRecord>(job_secrets_table_page_, predicate, ctx);
 }
 
 // ============================================================================

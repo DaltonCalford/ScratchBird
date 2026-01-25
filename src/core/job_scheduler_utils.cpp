@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
+
+#include "scratchbird/core/timezone.h"
 
 namespace scratchbird::core::detail {
 
@@ -189,6 +192,114 @@ bool dependencySatisfied(const std::vector<CatalogManager::JobRunInfo>& runs) {
         }
     }
     return latest && latest->state == CatalogManager::JobRunState::COMPLETED;
+}
+
+uint64_t computeNextCronRunMsWithTimezone(const std::string& expr,
+                                          uint64_t after_ms,
+                                          const std::string& timezone_name) {
+    CronExpression parsed{};
+    if (!parseCronExpression(expr, parsed)) {
+        return 0;
+    }
+
+    TimezoneManager tz;
+    uint16_t tz_id = TimezoneManager::TZ_UTC;
+    if (!timezone_name.empty()) {
+        uint16_t by_name = tz.getTimezoneByName(timezone_name);
+        uint16_t by_abbr = tz.getTimezoneByAbbreviation(timezone_name);
+        if (by_name != 0) {
+            tz_id = by_name;
+        } else if (by_abbr != 0) {
+            tz_id = by_abbr;
+        }
+    }
+
+    constexpr int64_t kMaxMinutes = 60 * 24 * 366;
+    int64_t after_seconds = static_cast<int64_t>(after_ms / 1000);
+    int64_t candidate_seconds = after_seconds - (after_seconds % 60) + 60;
+
+    for (int64_t minute = 0; minute < kMaxMinutes; ++minute) {
+        time_t candidate = static_cast<time_t>(candidate_seconds + minute * 60);
+        int64_t gmt_micro = static_cast<int64_t>(candidate) * 1000000;
+        auto local_micro = tz.fromGMT(gmt_micro, tz_id, nullptr);
+        if (!local_micro) {
+            continue;
+        }
+        time_t local_seconds = static_cast<time_t>(*local_micro / 1000000);
+        std::tm tm{};
+        gmtime_r(&local_seconds, &tm);
+        if (cronMatches(parsed, tm)) {
+            return static_cast<uint64_t>(candidate) * 1000;
+        }
+    }
+
+    return 0;
+}
+
+uint64_t computePreviousCronRunMsWithTimezone(const std::string& expr,
+                                              uint64_t before_ms,
+                                              const std::string& timezone_name) {
+    CronExpression parsed{};
+    if (!parseCronExpression(expr, parsed)) {
+        return 0;
+    }
+
+    TimezoneManager tz;
+    uint16_t tz_id = TimezoneManager::TZ_UTC;
+    if (!timezone_name.empty()) {
+        uint16_t by_name = tz.getTimezoneByName(timezone_name);
+        uint16_t by_abbr = tz.getTimezoneByAbbreviation(timezone_name);
+        if (by_name != 0) {
+            tz_id = by_name;
+        } else if (by_abbr != 0) {
+            tz_id = by_abbr;
+        }
+    }
+
+    constexpr int64_t kMaxMinutes = 60 * 24 * 366;
+    int64_t before_seconds = static_cast<int64_t>(before_ms / 1000);
+    int64_t candidate_seconds = before_seconds - (before_seconds % 60) - 60;
+
+    for (int64_t minute = 0; minute < kMaxMinutes; ++minute) {
+        time_t candidate = static_cast<time_t>(candidate_seconds - minute * 60);
+        int64_t gmt_micro = static_cast<int64_t>(candidate) * 1000000;
+        auto local_micro = tz.fromGMT(gmt_micro, tz_id, nullptr);
+        if (!local_micro) {
+            continue;
+        }
+        time_t local_seconds = static_cast<time_t>(*local_micro / 1000000);
+        std::tm tm{};
+        gmtime_r(&local_seconds, &tm);
+        if (cronMatches(parsed, tm)) {
+            return static_cast<uint64_t>(candidate) * 1000;
+        }
+    }
+
+    return 0;
+}
+
+bool dependencySatisfiedForWindow(const std::vector<CatalogManager::JobRunInfo>& runs,
+                                  uint64_t window_start_ms,
+                                  uint64_t window_end_ms) {
+    if (runs.empty()) {
+        return false;
+    }
+    const CatalogManager::JobRunInfo* latest = nullptr;
+    for (const auto& run : runs) {
+        if (!latest || run.completed_at > latest->completed_at) {
+            latest = &run;
+        }
+    }
+    if (!latest) {
+        return false;
+    }
+    if (latest->state != CatalogManager::JobRunState::COMPLETED) {
+        return false;
+    }
+    if (latest->completed_at < window_start_ms || latest->completed_at > window_end_ms) {
+        return false;
+    }
+    return true;
 }
 
 }  // namespace scratchbird::core::detail

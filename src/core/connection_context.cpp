@@ -34,6 +34,17 @@ namespace scratchbird::core
             return hash;
         }
 
+        std::string normalizeSessionVar(const std::string& name)
+        {
+            std::string out;
+            out.reserve(name.size());
+            for (unsigned char c : name)
+            {
+                out.push_back(static_cast<char>(std::toupper(c)));
+            }
+            return out;
+        }
+
         std::string digestHex(uint64_t value)
         {
             char buf[17];
@@ -2129,6 +2140,36 @@ namespace scratchbird::core
             return protocol_session_id_;
         }
         return attachment_id_;
+    }
+
+    void ConnectionContext::setSessionVariable(const std::string& name, const std::string& value)
+    {
+        std::lock_guard<std::mutex> lock(session_vars_mutex_);
+        session_variables_[normalizeSessionVar(name)] = value;
+    }
+
+    bool ConnectionContext::getSessionVariable(const std::string& name, std::string& out) const
+    {
+        std::lock_guard<std::mutex> lock(session_vars_mutex_);
+        auto it = session_variables_.find(normalizeSessionVar(name));
+        if (it == session_variables_.end())
+        {
+            return false;
+        }
+        out = it->second;
+        return true;
+    }
+
+    void ConnectionContext::clearSessionVariable(const std::string& name)
+    {
+        std::lock_guard<std::mutex> lock(session_vars_mutex_);
+        session_variables_.erase(normalizeSessionVar(name));
+    }
+
+    void ConnectionContext::clearSessionVariables()
+    {
+        std::lock_guard<std::mutex> lock(session_vars_mutex_);
+        session_variables_.clear();
     }
 
     void ConnectionContext::setCurrentUser(const ID& user_id, bool is_superuser)

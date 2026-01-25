@@ -1,10 +1,13 @@
 #include "scratchbird/sblr/executor.h"
 #include <unordered_set>
 #include <unordered_map>
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <functional>
 #include <optional>
 #include <iostream>
+#include <sstream>
 #include "scratchbird/parser/shared_types.h"
 #include "scratchbird/sblr/resolved_ast_v2.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
@@ -31,6 +34,7 @@
 #include "scratchbird/core/array.h"  // For ARRAY extraction
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/password_policy.h"  // P0-1: Password policy enforcement
 #include "scratchbird/core/permission_cache.h"  // Security Phase 3.2.3: Global cache
@@ -71,6 +75,7 @@
 #include "scratchbird/core/logger.h"  // For LOG_ERROR macro
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/job_scheduler.h"
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
@@ -153,6 +158,13 @@ namespace scratchbird
                                                   const std::string& dialect,
                                                   const std::string& alias,
                                                   core::ErrorContext* ctx);
+            bool userHasRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx,
+                             const core::ID& role_id);
+            core::Status checkJobDependencyCycle(core::CatalogManager* catalog,
+                                                 const core::ID& job_id,
+                                                 const std::vector<core::ID>& dependencies,
+                                                 bool& has_cycle,
+                                                 core::ErrorContext& err_ctx);
             std::string stripRootPrefixForDisplay(const std::string& schema_path);
             core::Status buildObjectPathFromName(const std::string& qualified_name,
                                                  core::ObjectPath& path,
@@ -2561,6 +2573,11 @@ namespace scratchbird
                             executeSetVariable();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_SYSTEM))
+                        {
+                            executeAlterSystem();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CONNECT))
                         {
                             executeConnect();
@@ -2785,6 +2802,21 @@ namespace scratchbird
                             executeShowGrants();
                             result = ExecutionResult(std::move(current_result_set_));
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_JOBS))
+                        {
+                            executeShowJobs();
+                            result = ExecutionResult(std::move(current_result_set_));
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_JOB))
+                        {
+                            executeShowJob();
+                            result = ExecutionResult(std::move(current_result_set_));
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_JOB_RUNS))
+                        {
+                            executeShowJobRuns();
+                            result = ExecutionResult(std::move(current_result_set_));
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_CHECKS))
                         {
                             executeShowChecks();
@@ -2813,6 +2845,11 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SYSTEM))
                         {
                             executeShowSystem();
+                            result = ExecutionResult(std::move(current_result_set_));
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_METRICS))
+                        {
+                            executeShowMetrics();
                             result = ExecutionResult(std::move(current_result_set_));
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SQL_DIALECT))
@@ -6044,6 +6081,9 @@ namespace scratchbird
                     fk_name += "_ref";
                 }
 
+                validateForeignKeyDefinition(table_id, fk.child_columns,
+                                             parent_table.table_id, fk.parent_columns, fk_name);
+
                 // Create FK constraint (Phase C: use child_columns vector)
                 core::ID fk_id;
                 status = db_->catalog_manager()->createForeignKey(
@@ -8094,6 +8134,9 @@ namespace scratchbird
                                 constraint_name = generate_unique_name(constraint_name);
                             }
                         }
+
+                        validateForeignKeyDefinition(table_info.table_id, child_columns,
+                                                     parent_table_id, parent_columns, constraint_name);
 
                         core::ID fk_id;
                         core::ErrorContext fk_ctx;
@@ -13204,7 +13247,7 @@ namespace scratchbird
                             for (const auto& assign : on_conflict.update_assignments)
                             {
                                 const auto& col = all_columns[assign.column_index];
-                                if (col.check_expr_oid != 0)
+                                if (!col.check_expr.empty() || col.check_expr_oid != 0)
                                 {
                                     if (!evaluateCheckConstraint(col, conflict_row, all_columns))
                                     {
@@ -13690,7 +13733,7 @@ namespace scratchbird
                 for (size_t i = 0; i < all_columns.size(); i++)
                 {
                     const auto& col = all_columns[i];
-                    if (col.check_expr_oid != 0)
+                    if (!col.check_expr.empty() || col.check_expr_oid != 0)
                     {
                         if (!evaluateCheckConstraint(col, row_values, all_columns))
                         {
@@ -13803,6 +13846,8 @@ namespace scratchbird
                         }
                     }
                 }
+
+                enforceUniqueIndexes(table_id, row_values, all_columns, table_constraints, nullptr);
 
                 std::vector<core::CatalogManager::ForeignKeyInfo> fks;
                 auto fk_status = db_->catalog_manager()->getForeignKeysForTable(table_id, fks, nullptr);
@@ -15131,7 +15176,7 @@ namespace scratchbird
                 for (const auto& assign : assignments)
                 {
                     const auto& col = all_columns[assign.column_index];
-                    if (col.check_expr_oid != 0)
+                    if (!col.check_expr.empty() || col.check_expr_oid != 0)
                     {
                         // Column has a CHECK constraint - evaluate it
                         if (!evaluateCheckConstraint(col, row_values, all_columns))
@@ -15280,6 +15325,8 @@ namespace scratchbird
                         }
                     }
                 }
+
+                enforceUniqueIndexes(table_id, row_values, all_columns, table_constraints, &tuple.tid);
 
                 // ALPHA Phase A: Enforce FOREIGN KEY constraints on updated columns
                 // Get all FKs for this table (where this table is the child)
@@ -16443,6 +16490,10 @@ namespace scratchbird
                 return;
             }
 
+            std::vector<core::CatalogManager::ConstraintInfo> target_constraints;
+            db_->catalog_manager()->getConstraintsForTable(
+                target_table_info.table_id, target_constraints, nullptr);
+
             // Read EXT_MERGE_SOURCE opcode
             uint8_t opcode = readByte();
             if (opcode != static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
@@ -16746,6 +16797,38 @@ namespace scratchbird
                                 }
 
                                 // Serialize and update tuple
+                                for (size_t i = 0; i < target_columns.size(); ++i)
+                                {
+                                    const auto& col = target_columns[i];
+                                    if (!col.nullable && updated_row[i].isNull())
+                                    {
+                                        error("NOT NULL constraint violation: NULL value in column '" +
+                                              col.column_name + "'");
+                                    }
+                                    if (!col.check_expr.empty() || col.check_expr_oid != 0)
+                                    {
+                                        if (!evaluateCheckConstraint(col, updated_row, target_columns))
+                                        {
+                                            error("CHECK constraint violation on column '" + col.column_name + "'");
+                                        }
+                                    }
+                                }
+
+                                for (const auto& constraint : target_constraints)
+                                {
+                                    if (constraint.constraint_type != core::CatalogManager::ConstraintType::CHECK)
+                                    {
+                                        continue;
+                                    }
+                                    if (!evaluateTableCheckConstraint(constraint, updated_row, target_columns))
+                                    {
+                                        std::string label = constraint.constraint_name.empty()
+                                            ? "CHECK constraint"
+                                            : constraint.constraint_name;
+                                        error("CHECK constraint violation: " + label);
+                                    }
+                                }
+
                                 std::vector<uint8_t> new_tuple_data;
                                 core::ErrorContext serialize_ctx;
                                 if (!serializeTupleFromValues(updated_row, target_columns, new_tuple_data,
@@ -16833,6 +16916,38 @@ namespace scratchbird
                             }
 
                             // Serialize and insert
+                            for (size_t i = 0; i < target_columns.size(); ++i)
+                            {
+                                const auto& col = target_columns[i];
+                                if (!col.nullable && full_row[i].isNull())
+                                {
+                                    error("NOT NULL constraint violation: NULL value in column '" +
+                                          col.column_name + "'");
+                                }
+                                if (!col.check_expr.empty() || col.check_expr_oid != 0)
+                                {
+                                    if (!evaluateCheckConstraint(col, full_row, target_columns))
+                                    {
+                                        error("CHECK constraint violation on column '" + col.column_name + "'");
+                                    }
+                                }
+                            }
+
+                            for (const auto& constraint : target_constraints)
+                            {
+                                if (constraint.constraint_type != core::CatalogManager::ConstraintType::CHECK)
+                                {
+                                    continue;
+                                }
+                                if (!evaluateTableCheckConstraint(constraint, full_row, target_columns))
+                                {
+                                    std::string label = constraint.constraint_name.empty()
+                                        ? "CHECK constraint"
+                                        : constraint.constraint_name;
+                                    error("CHECK constraint violation: " + label);
+                                }
+                            }
+
                             std::vector<uint8_t> tuple_data;
                             core::ErrorContext serialize_ctx;
                             if (!serializeTupleFromValues(full_row, target_columns, tuple_data,
@@ -35337,12 +35452,18 @@ namespace scratchbird
             uint8_t on_completion_raw = readByte();
             uint8_t state_raw = readByte();
 
+            bool or_alter = (flags & 0x0100) != 0;
+            bool recreate = (flags & 0x0200) != 0;
+            if (or_alter && recreate) {
+                error("CREATE JOB cannot use both OR ALTER and RECREATE");
+            }
+
             std::string run_as_role = readString();
             std::string description = readString();
-            readString();  // job_class (ignored in Alpha)
+            std::string job_class = readString();
             std::string partition_strategy = readString();
             std::string partition_expression = readString();
-            readString();  // partition_shard (ignored in Alpha)
+            std::string partition_shard = readString();
 
             uint64_t dep_count = readUVarint();
             std::vector<std::string> deps;
@@ -35352,9 +35473,31 @@ namespace scratchbird
                 deps.push_back(readString());
             }
 
-            if (conn_ctx_ && !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_))
+            core::CatalogManager::JobInfo existing_job;
+            core::ErrorContext err_ctx;
+            auto existing_status = db_->catalog_manager()->getJobByName(job_name, existing_job, &err_ctx);
+            bool has_existing = (existing_status == core::Status::OK);
+
+            if (has_existing && !or_alter && !recreate) {
+                error("Job already exists: " + job_name);
+            }
+
+            bool can_create = !conn_ctx_ ||
+                conn_ctx_->isSuperuser() ||
+                hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_) ||
+                checkPermission(db_->uuid(),
+                                core::CatalogManager::PermissionObjectType::DATABASE,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE_JOB));
+            if (conn_ctx_ && !can_create && (!has_existing || recreate))
             {
-                error("Permission denied: CREATE JOB requires DB_OWNER or superuser");
+                error("Permission denied: CREATE JOB requires CREATE JOB privilege");
+            }
+            if (conn_ctx_ && has_existing && (or_alter || recreate)) {
+                bool is_owner = !isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                    existing_job.created_by_user_uuid == conn_ctx_->getCurrentUserId();
+                if (!is_owner && !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) {
+                    error("Permission denied: CREATE OR ALTER/RECREATE requires job owner, DB_OWNER, or superuser");
+                }
             }
 
             auto now_ms = []() -> uint64_t {
@@ -35390,6 +35533,30 @@ namespace scratchbird
             job.interval_seconds = interval_seconds;
             job.partition_strategy = partition_strategy;
             job.partition_expression = partition_expression;
+            if (!job_class.empty()) {
+                std::string normalized;
+                normalized.reserve(job_class.size());
+                for (unsigned char c : job_class) {
+                    normalized.push_back(static_cast<char>(std::toupper(c)));
+                }
+                if (normalized == "LOCAL_SAFE") {
+                    job.job_class = core::CatalogManager::JobClass::LOCAL_SAFE;
+                } else if (normalized == "LEADER_ONLY") {
+                    job.job_class = core::CatalogManager::JobClass::LEADER_ONLY;
+                } else if (normalized == "QUORUM_REQUIRED") {
+                    job.job_class = core::CatalogManager::JobClass::QUORUM_REQUIRED;
+                } else {
+                    error("Invalid job class: " + job_class);
+                }
+            }
+            if (partition_strategy == "SINGLE_SHARD") {
+                if (partition_shard.empty()) {
+                    error("SINGLE_SHARD requires a shard UUID");
+                }
+                if (!parseUuidText(partition_shard, job.partition_shard_uuid)) {
+                    error("Invalid shard UUID: " + partition_shard);
+                }
+            }
 
             if (flags & 0x01) job.max_retries = max_retries;
             if (flags & 0x02) job.retry_backoff_seconds = retry_backoff_seconds;
@@ -35405,6 +35572,9 @@ namespace scratchbird
                     run_as_role, role_info, &role_ctx);
                 if (role_status != core::Status::OK) {
                     error("RUN AS role not found: " + run_as_role);
+                }
+                if (conn_ctx_ && !userHasRole(db_->catalog_manager(), conn_ctx_, role_info.role_id)) {
+                    error("Permission denied: RUN AS role not granted to current user");
                 }
                 job.run_as_role_uuid = role_info.role_id;
             }
@@ -35426,7 +35596,13 @@ namespace scratchbird
 
             if (job.job_type == core::CatalogManager::JobType::EXTERNAL &&
                 conn_ctx_ && !conn_ctx_->isSuperuser()) {
-                error("Permission denied: EXECUTE EXTERNAL JOB requires superuser");
+                bool can_execute_external = hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_) ||
+                    checkPermission(db_->uuid(),
+                                    core::CatalogManager::PermissionObjectType::DATABASE,
+                                    static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE_EXTERNAL_JOB));
+                if (!can_execute_external) {
+                    error("Permission denied: EXECUTE EXTERNAL JOB privilege required");
+                }
             }
 
             uint64_t now = now_ms();
@@ -35461,15 +35637,41 @@ namespace scratchbird
             }
 
             core::ID job_id;
-            core::ErrorContext err_ctx;
-            auto status = db_->catalog_manager()->createJob(job, job_id, &err_ctx);
-            if (status != core::Status::OK) {
-                error("CREATE JOB failed: " + err_ctx.message);
+            auto status = core::Status::OK;
+            if (recreate && has_existing) {
+                status = db_->catalog_manager()->deleteJob(existing_job.job_id, false, &err_ctx);
+                if (status != core::Status::OK) {
+                    error("RECREATE JOB failed to drop existing job: " + err_ctx.message);
+                }
+                logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_DELETED,
+                            existing_job, nullptr, true, "");
+                has_existing = false;
             }
 
-            job.job_id = job_id;
-            logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_CREATED,
-                        job, nullptr, true, "");
+            if (or_alter && has_existing) {
+                job.job_id = existing_job.job_id;
+                job.created_by_user_uuid = existing_job.created_by_user_uuid;
+                job.created_at = existing_job.created_at;
+                status = db_->catalog_manager()->updateJob(job, &err_ctx);
+                if (status != core::Status::OK) {
+                    error("CREATE OR ALTER JOB failed: " + err_ctx.message);
+                }
+                logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_MODIFIED,
+                            job, nullptr, true, "");
+
+                auto clear_status = db_->catalog_manager()->clearJobDependencies(job.job_id, &err_ctx);
+                if (clear_status != core::Status::OK && clear_status != core::Status::NOT_FOUND) {
+                    error("Failed to clear job dependencies");
+                }
+            } else {
+                status = db_->catalog_manager()->createJob(job, job_id, &err_ctx);
+                if (status != core::Status::OK) {
+                    error("CREATE JOB failed: " + err_ctx.message);
+                }
+                job.job_id = job_id;
+                logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_CREATED,
+                            job, nullptr, true, "");
+            }
 
             if (!deps.empty()) {
                 std::vector<core::ID> dep_ids;
@@ -35484,8 +35686,20 @@ namespace scratchbird
                     }
                     dep_ids.push_back(dep_job.job_id);
                 }
+                bool has_cycle = false;
+                auto cycle_status = checkJobDependencyCycle(db_->catalog_manager(),
+                                                            job.job_id,
+                                                            dep_ids,
+                                                            has_cycle,
+                                                            err_ctx);
+                if (cycle_status != core::Status::OK) {
+                    error("Failed to validate job dependencies");
+                }
+                if (has_cycle) {
+                    error("Dependency cycle detected for job: " + job_name);
+                }
                 auto dep_status = db_->catalog_manager()->addJobDependencies(
-                    job_id, dep_ids, &err_ctx);
+                    job.job_id, dep_ids, &err_ctx);
                 if (dep_status != core::Status::OK) {
                     error("Failed to add job dependencies");
                 }
@@ -35510,6 +35724,27 @@ namespace scratchbird
             uint32_t timeout_seconds = readInt32();
             std::string run_as_role = readString();
             std::string description = readString();
+            uint8_t on_completion_raw = readByte();
+            uint8_t job_type_raw = readByte();
+            std::string job_sql = readString();
+            std::string procedure_name = readString();
+            std::string external_command = readString();
+            std::string job_class = readString();
+            std::string partition_strategy = readString();
+            std::string partition_expression = readString();
+            std::string partition_shard = readString();
+            uint64_t dep_count = readUVarint();
+            std::vector<std::string> deps;
+            deps.reserve(dep_count);
+            for (uint64_t i = 0; i < dep_count; ++i) {
+                deps.push_back(readString());
+            }
+            std::string secret_key;
+            std::string secret_value;
+            if (flags & 0x2000) {
+                secret_key = readString();
+                secret_value = readString();
+            }
 
             core::CatalogManager::JobInfo job;
             core::ErrorContext err_ctx;
@@ -35596,9 +35831,80 @@ namespace scratchbird
                 if (role_status != core::Status::OK) {
                     error("RUN AS role not found: " + run_as_role);
                 }
+                if (conn_ctx_ && !userHasRole(db_->catalog_manager(), conn_ctx_, role_info.role_id)) {
+                    error("Permission denied: RUN AS role not granted to current user");
+                }
                 job.run_as_role_uuid = role_info.role_id;
             }
             if (flags & 0x40) job.description = description;
+            if (flags & 0x80) {
+                job.on_completion = static_cast<core::CatalogManager::JobOnCompletion>(on_completion_raw);
+            }
+            if (flags & 0x0400) {
+                job.partition_strategy = partition_strategy;
+                job.partition_expression = partition_expression;
+                job.partition_shard_uuid = core::ID{};
+                if (partition_strategy == "SINGLE_SHARD") {
+                    if (partition_shard.empty()) {
+                        error("SINGLE_SHARD requires a shard UUID");
+                    }
+                    if (!parseUuidText(partition_shard, job.partition_shard_uuid)) {
+                        error("Invalid shard UUID: " + partition_shard);
+                    }
+                }
+            }
+            if (flags & 0x0800) {
+                std::string normalized;
+                normalized.reserve(job_class.size());
+                for (unsigned char c : job_class) {
+                    normalized.push_back(static_cast<char>(std::toupper(c)));
+                }
+                if (normalized == "LOCAL_SAFE") {
+                    job.job_class = core::CatalogManager::JobClass::LOCAL_SAFE;
+                } else if (normalized == "LEADER_ONLY") {
+                    job.job_class = core::CatalogManager::JobClass::LEADER_ONLY;
+                } else if (normalized == "QUORUM_REQUIRED") {
+                    job.job_class = core::CatalogManager::JobClass::QUORUM_REQUIRED;
+                } else if (!normalized.empty()) {
+                    error("Invalid job class: " + job_class);
+                } else {
+                    job.job_class = core::CatalogManager::JobClass::UNSPECIFIED;
+                }
+            }
+
+            if (flags & 0x1000) {
+                job.job_type = static_cast<core::CatalogManager::JobType>(job_type_raw);
+                job.job_sql.clear();
+                job.procedure_uuid = core::ID{};
+                job.external_command.clear();
+
+                if (job.job_type == core::CatalogManager::JobType::SQL) {
+                    job.job_sql = job_sql;
+                } else if (job.job_type == core::CatalogManager::JobType::PROCEDURE) {
+                    core::CatalogManager::ProcedureInfo proc_info;
+                    core::ErrorContext proc_ctx;
+                    auto proc_status = db_->catalog_manager()->getProcedure(
+                        procedure_name, proc_info, &proc_ctx);
+                    if (proc_status != core::Status::OK) {
+                        error("Procedure not found: " + procedure_name);
+                    }
+                    job.procedure_uuid = proc_info.procedure_id;
+                    if (job.job_sql.empty()) {
+                        job.job_sql = "CALL " + procedure_name + "()";
+                    }
+                } else if (job.job_type == core::CatalogManager::JobType::EXTERNAL) {
+                    job.external_command = external_command;
+                    if (conn_ctx_ && !conn_ctx_->isSuperuser()) {
+                        bool can_execute_external = hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_) ||
+                            checkPermission(db_->uuid(),
+                                            core::CatalogManager::PermissionObjectType::DATABASE,
+                                            static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE_EXTERNAL_JOB));
+                        if (!can_execute_external) {
+                            error("Permission denied: EXECUTE EXTERNAL JOB privilege required");
+                        }
+                    }
+                }
+            }
 
             status = db_->catalog_manager()->updateJob(job, &err_ctx);
             if (status != core::Status::OK) {
@@ -35607,6 +35913,66 @@ namespace scratchbird
 
             logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_MODIFIED,
                         job, nullptr, true, "");
+
+            if (flags & 0x2000) {
+                if (secret_key.empty()) {
+                    error("Secret key cannot be empty");
+                }
+                if (flags & 0x4000) {
+                    auto del_status = db_->catalog_manager()->deleteJobSecret(
+                        job.job_id, secret_key, &err_ctx);
+                    if (del_status != core::Status::OK && del_status != core::Status::NOT_FOUND) {
+                        error("Failed to delete job secret");
+                    }
+                } else {
+                    if (secret_value.empty()) {
+                        error("Secret value cannot be empty");
+                    }
+                    auto store_status = db_->catalog_manager()->storeJobSecret(
+                        job.job_id, secret_key, secret_value, &err_ctx);
+                    if (store_status != core::Status::OK) {
+                        error("Failed to store job secret");
+                    }
+                }
+            }
+
+            if (flags & 0x0200 || flags & 0x0100) {
+                auto clear_status = db_->catalog_manager()->clearJobDependencies(job.job_id, &err_ctx);
+                if (clear_status != core::Status::OK && clear_status != core::Status::NOT_FOUND) {
+                    error("Failed to clear job dependencies");
+                }
+            }
+            if ((flags & 0x0100) && !deps.empty()) {
+                std::vector<core::ID> dep_ids;
+                dep_ids.reserve(deps.size());
+                for (const auto& dep_name : deps) {
+                    core::CatalogManager::JobInfo dep_job;
+                    core::ErrorContext dep_ctx;
+                    auto dep_status = db_->catalog_manager()->getJobByName(
+                        dep_name, dep_job, &dep_ctx);
+                    if (dep_status != core::Status::OK) {
+                        error("Dependency job not found: " + dep_name);
+                    }
+                    dep_ids.push_back(dep_job.job_id);
+                }
+                bool has_cycle = false;
+                auto cycle_status = checkJobDependencyCycle(db_->catalog_manager(),
+                                                            job.job_id,
+                                                            dep_ids,
+                                                            has_cycle,
+                                                            err_ctx);
+                if (cycle_status != core::Status::OK) {
+                    error("Failed to validate job dependencies");
+                }
+                if (has_cycle) {
+                    error("Dependency cycle detected for job: " + job_name);
+                }
+                auto dep_status = db_->catalog_manager()->addJobDependencies(
+                    job.job_id, dep_ids, &err_ctx);
+                if (dep_status != core::Status::OK) {
+                    error("Failed to add job dependencies");
+                }
+            }
         }
 
         void Executor::executeDropJob()
@@ -35653,41 +36019,30 @@ namespace scratchbird
             bool is_owner = conn_ctx_ &&
                 !isZeroUuid(conn_ctx_->getCurrentUserId()) &&
                 job.created_by_user_uuid == conn_ctx_->getCurrentUserId();
-            if (conn_ctx_ && !is_owner &&
-                !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) {
-                error("Permission denied: EXECUTE JOB requires job owner, DB_OWNER, or superuser");
+            bool can_execute = is_owner ||
+                (conn_ctx_ && hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) ||
+                checkPermission(job.job_id,
+                                core::CatalogManager::PermissionObjectType::JOB,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE));
+            if (conn_ctx_ && !can_execute) {
+                error("Permission denied: EXECUTE JOB requires job owner or EXECUTE privilege");
             }
-
-            auto now = []() -> uint64_t {
-                auto tp = std::chrono::system_clock::now().time_since_epoch();
-                return static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(tp).count());
-            };
-
-            uint64_t now_ms = now();
-            core::CatalogManager::JobRunInfo run;
-            run.job_id = job.job_id;
-            run.scheduled_time = now_ms;
-            run.started_at = now_ms;
-            run.state = core::CatalogManager::JobRunState::RUNNING;
 
             core::ID run_id;
-            status = db_->catalog_manager()->createJobRun(run, run_id, &err_ctx);
-            if (status != core::Status::OK) {
-                error("Failed to create job run");
+            auto* scheduler = db_->job_scheduler();
+            if (!scheduler) {
+                error("Scheduler not available");
             }
-
-            run.job_run_id = run_id;
-            run.completed_at = now_ms;
-            run.state = core::CatalogManager::JobRunState::COMPLETED;
-            run.result_message = "EXECUTE JOB (no-op)";
-            status = db_->catalog_manager()->updateJobRun(run, &err_ctx);
+            status = scheduler->executeJobNow(job, run_id, &err_ctx);
             if (status != core::Status::OK) {
-                error("Failed to update job run");
+                std::string msg = err_ctx.message.empty()
+                    ? "Failed to execute job"
+                    : err_ctx.message;
+                error(msg);
             }
 
             logJobAudit(db_, conn_ctx_, core::AuditEventType::JOB_EXECUTED,
-                        job, &run.job_run_id, true, run.result_message);
+                        job, &run_id, true, "Manual execution requested");
         }
 
         void Executor::executeCancelJobRun()
@@ -35715,15 +36070,23 @@ namespace scratchbird
             bool is_owner = conn_ctx_ &&
                 !isZeroUuid(conn_ctx_->getCurrentUserId()) &&
                 job.created_by_user_uuid == conn_ctx_->getCurrentUserId();
-            if (conn_ctx_ && !is_owner &&
-                !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) {
-                error("Permission denied: CANCEL JOB RUN requires job owner, DB_OWNER, or superuser");
+            bool can_cancel = is_owner ||
+                (conn_ctx_ && hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_)) ||
+                checkPermission(job.job_id,
+                                core::CatalogManager::PermissionObjectType::JOB,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE));
+            if (conn_ctx_ && !can_cancel) {
+                error("Permission denied: CANCEL JOB RUN requires job owner or EXECUTE privilege");
             }
 
             if (run.state == core::CatalogManager::JobRunState::COMPLETED ||
                 run.state == core::CatalogManager::JobRunState::FAILED ||
                 run.state == core::CatalogManager::JobRunState::CANCELLED) {
                 error("Job run is not cancellable");
+            }
+
+            if (auto* scheduler = db_->job_scheduler()) {
+                scheduler->requestCancelRun(run_id, &err_ctx);
             }
 
             auto now = []() -> uint64_t {
@@ -35735,6 +36098,7 @@ namespace scratchbird
             run.state = core::CatalogManager::JobRunState::CANCELLED;
             run.completed_at = now();
             run.result_message = "Cancelled by user";
+            run.error_code = static_cast<int32_t>(core::Status::QUERY_CANCELED);
             status = db_->catalog_manager()->updateJobRun(run, &err_ctx);
             if (status != core::Status::OK) {
                 error("Failed to cancel job run");
@@ -35972,6 +36336,28 @@ namespace scratchbird
                     error(err_msg);
                 }
                 object_id = procedure_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::JOB)
+            {
+                core::CatalogManager::JobInfo job_info;
+                auto job_status = db_->catalog_manager()->getJobByName(
+                    object_name, job_info, &err_ctx);
+                if (job_status != core::Status::OK)
+                {
+                    error("Job '" + object_name + "' not found");
+                }
+                object_id = job_info.job_id;
+
+                if (conn_ctx_ && !conn_ctx_->isSuperuser())
+                {
+                    bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                                  &job_info.created_by_user_uuid,
+                                                  sizeof(core::ID)) == 0);
+                    if (!is_owner && !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_))
+                    {
+                        error("Permission denied: only job owners or admins can grant job privileges");
+                    }
+                }
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::VIEW)
             {
@@ -36252,6 +36638,28 @@ namespace scratchbird
                     error(err_msg);
                 }
                 object_id = procedure_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::JOB)
+            {
+                core::CatalogManager::JobInfo job_info;
+                auto job_status = db_->catalog_manager()->getJobByName(
+                    object_name, job_info, &err_ctx);
+                if (job_status != core::Status::OK)
+                {
+                    error("Job '" + object_name + "' not found");
+                }
+                object_id = job_info.job_id;
+
+                if (conn_ctx_ && !conn_ctx_->isSuperuser())
+                {
+                    bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                                  &job_info.created_by_user_uuid,
+                                                  sizeof(core::ID)) == 0);
+                    if (!is_owner && !hasJobAdminPrivilege(db_->catalog_manager(), conn_ctx_))
+                    {
+                        error("Permission denied: only job owners or admins can revoke job privileges");
+                    }
+                }
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::VIEW)
             {
@@ -37080,6 +37488,75 @@ namespace scratchbird
             }
 
             conn_ctx_->set_search_path(new_paths);
+        }
+
+        void Executor::executeAlterSystem()
+        {
+            if (!conn_ctx_ || !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: ALTER SYSTEM (superuser only)");
+            }
+            if (!db_)
+            {
+                error("Database not available");
+            }
+
+            std::string var_name = readString();
+            if (pc_ >= bytecode_size_)
+            {
+                error("Missing ALTER SYSTEM payload");
+            }
+
+            uint8_t marker = readByte();
+            if (marker == 0)
+            {
+                error("ALTER SYSTEM requires a value");
+            }
+
+            evaluateExpression();
+            Value v = pop();
+            if (v.isNull())
+            {
+                error("ALTER SYSTEM value cannot be NULL");
+            }
+
+            std::string value = v.toString();
+            auto dot = var_name.find('.');
+
+            auto to_lower = [](const std::string& input) -> std::string {
+                std::string out = input;
+                std::transform(out.begin(), out.end(), out.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                return out;
+            };
+
+            std::string section;
+            std::string key;
+            if (dot == std::string::npos)
+            {
+                section = "system";
+                key = to_lower(var_name);
+            }
+            else
+            {
+                section = to_lower(var_name.substr(0, dot));
+                key = to_lower(var_name.substr(dot + 1));
+            }
+            if (section.empty() || key.empty())
+            {
+                error("ALTER SYSTEM expects section.key");
+            }
+
+            core::Config::getInstance().set(section, key, value);
+            if (section == "scheduler")
+            {
+                core::ErrorContext err_ctx;
+                core::Status status = db_->applySchedulerConfig(&err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Failed to apply scheduler config: " + err_ctx.message);
+                }
+            }
         }
 
         void Executor::executeConnect()
@@ -39634,7 +40111,10 @@ namespace scratchbird
                     {core::CatalogManager::Privilege::EXECUTE, "EXECUTE"},
                     {core::CatalogManager::Privilege::CONNECT, "CONNECT"},
                     {core::CatalogManager::Privilege::TEMPORARY, "TEMPORARY"},
-                    {core::CatalogManager::Privilege::COPY_FILE, "COPY"}
+                    {core::CatalogManager::Privilege::COPY_FILE, "COPY"},
+                    {core::CatalogManager::Privilege::CREATE_JOB, "CREATE JOB"},
+                    {core::CatalogManager::Privilege::VIEW_JOB_HISTORY, "VIEW JOB HISTORY"},
+                    {core::CatalogManager::Privilege::EXECUTE_EXTERNAL_JOB, "EXECUTE EXTERNAL JOB"}
                 };
 
                 bool any = false;
@@ -39705,7 +40185,16 @@ namespace scratchbird
                     object_id, resolved_type, nullptr, &err_ctx);
                 if (status != core::Status::OK)
                 {
-                    error("Object '" + object_name + "' not found");
+                    core::CatalogManager::JobInfo job_info;
+                    if (catalog->getJobByName(object_name, job_info, &err_ctx) == core::Status::OK)
+                    {
+                        object_id = job_info.job_id;
+                        resolved_type = core::CatalogManager::ObjectType::JOB;
+                    }
+                    else
+                    {
+                        error("Object '" + object_name + "' not found");
+                    }
                 }
 
                 core::CatalogManager::PermissionObjectType perm_type;
@@ -39731,6 +40220,9 @@ namespace scratchbird
                         break;
                     case core::CatalogManager::ObjectType::DOMAIN:
                         perm_type = core::CatalogManager::PermissionObjectType::DOMAIN;
+                        break;
+                    case core::CatalogManager::ObjectType::JOB:
+                        perm_type = core::CatalogManager::PermissionObjectType::JOB;
                         break;
                     case core::CatalogManager::ObjectType::DATABASE:
                         perm_type = core::CatalogManager::PermissionObjectType::DATABASE;
@@ -39900,6 +40392,335 @@ namespace scratchbird
                                            perm.grant_option, perm.privileges);
                     }
                 }
+            }
+        }
+
+        void Executor::executeShowJobs()
+        {
+            std::string like_pattern = readString();
+
+            auto* catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                error("Catalog manager not available");
+            }
+
+            std::vector<core::CatalogManager::JobInfo> jobs;
+            core::ErrorContext err_ctx;
+            if (catalog->listJobs(jobs, &err_ctx) != core::Status::OK)
+            {
+                error("Failed to list jobs");
+            }
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Job Name", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Job Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Schedule", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Next Run", core::DataType::TIMESTAMP);
+            current_result_set_->addColumn("State", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Owner", core::DataType::VARCHAR);
+
+            auto scheduleToString = [](core::CatalogManager::ScheduleKind kind) -> std::string {
+                switch (kind)
+                {
+                    case core::CatalogManager::ScheduleKind::CRON: return "CRON";
+                    case core::CatalogManager::ScheduleKind::AT: return "AT";
+                    case core::CatalogManager::ScheduleKind::EVERY: return "EVERY";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            auto typeToString = [](core::CatalogManager::JobType type) -> std::string {
+                switch (type)
+                {
+                    case core::CatalogManager::JobType::SQL: return "SQL";
+                    case core::CatalogManager::JobType::PROCEDURE: return "PROCEDURE";
+                    case core::CatalogManager::JobType::EXTERNAL: return "EXTERNAL";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            auto stateToString = [](core::CatalogManager::JobState state) -> std::string {
+                switch (state)
+                {
+                    case core::CatalogManager::JobState::ENABLED: return "ENABLED";
+                    case core::CatalogManager::JobState::DISABLED: return "DISABLED";
+                    case core::CatalogManager::JobState::PAUSED: return "PAUSED";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            auto can_view_history = [&]() -> bool {
+                if (!conn_ctx_)
+                {
+                    return true;
+                }
+                if (conn_ctx_->isSuperuser() || hasJobAdminPrivilege(catalog, conn_ctx_))
+                {
+                    return true;
+                }
+                return checkPermission(
+                    db_->uuid(),
+                    core::CatalogManager::PermissionObjectType::DATABASE,
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::VIEW_JOB_HISTORY));
+            };
+
+            bool view_history = can_view_history();
+
+            auto can_access = [&](const core::CatalogManager::JobInfo& job) -> bool {
+                if (view_history)
+                {
+                    return true;
+                }
+                if (!conn_ctx_)
+                {
+                    return true;
+                }
+                if (!isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                    job.created_by_user_uuid == conn_ctx_->getCurrentUserId())
+                {
+                    return true;
+                }
+                return checkPermission(
+                    job.job_id,
+                    core::CatalogManager::PermissionObjectType::JOB,
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE));
+            };
+
+            for (const auto& job : jobs)
+            {
+                if (!like_pattern.empty() && !matchSqlLike(job.job_name, like_pattern))
+                {
+                    continue;
+                }
+                if (!can_access(job))
+                {
+                    continue;
+                }
+
+                std::string owner = job.created_by_user_uuid.toString();
+                if (!isZeroUuid(job.created_by_user_uuid))
+                {
+                    core::CatalogManager::UserInfo owner_info;
+                    if (catalog->getUser(job.created_by_user_uuid, owner_info, &err_ctx) == core::Status::OK)
+                    {
+                        owner = owner_info.username;
+                    }
+                }
+
+                Value next_run = Value::makeNull(core::DataType::TIMESTAMP);
+                if (job.next_run_time > 0)
+                {
+                    next_run = Value::makeTimestamp(static_cast<int64_t>(job.next_run_time) * 1000);
+                }
+
+                current_result_set_->addRow({
+                    Value::makeVarchar(job.job_name),
+                    Value::makeVarchar(typeToString(job.job_type)),
+                    Value::makeVarchar(scheduleToString(job.schedule_kind)),
+                    next_run,
+                    Value::makeVarchar(stateToString(job.state)),
+                    Value::makeVarchar(owner)
+                });
+            }
+        }
+
+        void Executor::executeShowJob()
+        {
+            std::string job_name = readString();
+            if (job_name.empty())
+            {
+                error("SHOW JOB requires a job name");
+            }
+
+            auto* catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                error("Catalog manager not available");
+            }
+
+            core::CatalogManager::JobInfo job;
+            core::ErrorContext err_ctx;
+            if (catalog->getJobByName(job_name, job, &err_ctx) != core::Status::OK)
+            {
+                error("Job not found: " + job_name);
+            }
+
+            bool can_view_history = !conn_ctx_ ||
+                conn_ctx_->isSuperuser() ||
+                hasJobAdminPrivilege(catalog, conn_ctx_) ||
+                checkPermission(db_->uuid(),
+                                core::CatalogManager::PermissionObjectType::DATABASE,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::VIEW_JOB_HISTORY));
+
+            if (conn_ctx_ && !can_view_history &&
+                !(job.created_by_user_uuid == conn_ctx_->getCurrentUserId()) &&
+                !checkPermission(job.job_id,
+                                 core::CatalogManager::PermissionObjectType::JOB,
+                                 static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE)))
+            {
+                error("Permission denied: SHOW JOB requires job owner or VIEW JOB HISTORY privilege");
+            }
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Job Name", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Job Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Schedule", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Cron", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Interval Seconds", core::DataType::INT64);
+            current_result_set_->addColumn("Starts At", core::DataType::TIMESTAMP);
+            current_result_set_->addColumn("Ends At", core::DataType::TIMESTAMP);
+            current_result_set_->addColumn("Next Run", core::DataType::TIMESTAMP);
+            current_result_set_->addColumn("State", core::DataType::VARCHAR);
+
+            Value starts_at = job.starts_at ? Value::makeTimestamp(static_cast<int64_t>(job.starts_at) * 1000)
+                                            : Value::makeNull(core::DataType::TIMESTAMP);
+            Value ends_at = job.ends_at ? Value::makeTimestamp(static_cast<int64_t>(job.ends_at) * 1000)
+                                        : Value::makeNull(core::DataType::TIMESTAMP);
+            Value next_run = job.next_run_time ? Value::makeTimestamp(static_cast<int64_t>(job.next_run_time) * 1000)
+                                               : Value::makeNull(core::DataType::TIMESTAMP);
+
+            auto scheduleToString = [](core::CatalogManager::ScheduleKind kind) -> std::string {
+                switch (kind)
+                {
+                    case core::CatalogManager::ScheduleKind::CRON: return "CRON";
+                    case core::CatalogManager::ScheduleKind::AT: return "AT";
+                    case core::CatalogManager::ScheduleKind::EVERY: return "EVERY";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            auto typeToString = [](core::CatalogManager::JobType type) -> std::string {
+                switch (type)
+                {
+                    case core::CatalogManager::JobType::SQL: return "SQL";
+                    case core::CatalogManager::JobType::PROCEDURE: return "PROCEDURE";
+                    case core::CatalogManager::JobType::EXTERNAL: return "EXTERNAL";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            auto stateToString = [](core::CatalogManager::JobState state) -> std::string {
+                switch (state)
+                {
+                    case core::CatalogManager::JobState::ENABLED: return "ENABLED";
+                    case core::CatalogManager::JobState::DISABLED: return "DISABLED";
+                    case core::CatalogManager::JobState::PAUSED: return "PAUSED";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            current_result_set_->addRow({
+                Value::makeVarchar(job.job_name),
+                Value::makeVarchar(typeToString(job.job_type)),
+                Value::makeVarchar(scheduleToString(job.schedule_kind)),
+                Value::makeVarchar(job.cron_expression),
+                Value::makeInt64(job.interval_seconds),
+                starts_at,
+                ends_at,
+                next_run,
+                Value::makeVarchar(stateToString(job.state))
+            });
+        }
+
+        void Executor::executeShowJobRuns()
+        {
+            std::string job_name = readString();
+            if (job_name.empty())
+            {
+                error("SHOW JOB RUNS requires a job name");
+            }
+
+            auto* catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                error("Catalog manager not available");
+            }
+
+            core::CatalogManager::JobInfo job;
+            core::ErrorContext err_ctx;
+            if (catalog->getJobByName(job_name, job, &err_ctx) != core::Status::OK)
+            {
+                error("Job not found: " + job_name);
+            }
+
+            bool can_view_history = !conn_ctx_ ||
+                conn_ctx_->isSuperuser() ||
+                hasJobAdminPrivilege(catalog, conn_ctx_) ||
+                checkPermission(db_->uuid(),
+                                core::CatalogManager::PermissionObjectType::DATABASE,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::VIEW_JOB_HISTORY));
+
+            if (conn_ctx_ && !can_view_history &&
+                !(job.created_by_user_uuid == conn_ctx_->getCurrentUserId()) &&
+                !checkPermission(job.job_id,
+                                 core::CatalogManager::PermissionObjectType::JOB,
+                                 static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE)))
+            {
+                error("Permission denied: SHOW JOB RUNS requires job owner or VIEW JOB HISTORY privilege");
+            }
+
+            std::vector<core::CatalogManager::JobRunInfo> runs;
+            if (catalog->listJobRuns(job.job_id, runs, &err_ctx) != core::Status::OK)
+            {
+                error("Failed to list job runs");
+            }
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Job Run ID", core::DataType::VARCHAR);
+            current_result_set_->addColumn("State", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Scheduled At", core::DataType::TIMESTAMP);
+            current_result_set_->addColumn("Started At", core::DataType::TIMESTAMP);
+            current_result_set_->addColumn("Completed At", core::DataType::TIMESTAMP);
+            current_result_set_->addColumn("Retry Count", core::DataType::INT32);
+            current_result_set_->addColumn("Rows Affected", core::DataType::INT64);
+            current_result_set_->addColumn("Error Code", core::DataType::INT32);
+            current_result_set_->addColumn("Message", core::DataType::VARCHAR);
+
+            auto stateToString = [](core::CatalogManager::JobRunState state) -> std::string {
+                switch (state)
+                {
+                    case core::CatalogManager::JobRunState::PENDING: return "PENDING";
+                    case core::CatalogManager::JobRunState::RUNNING: return "RUNNING";
+                    case core::CatalogManager::JobRunState::COMPLETED: return "COMPLETED";
+                    case core::CatalogManager::JobRunState::FAILED: return "FAILED";
+                    case core::CatalogManager::JobRunState::CANCELLED: return "CANCELLED";
+                    default: return "UNKNOWN";
+                }
+            };
+
+            for (const auto& run : runs)
+            {
+                Value scheduled = run.scheduled_time ? Value::makeTimestamp(static_cast<int64_t>(run.scheduled_time) * 1000)
+                                                    : Value::makeNull(core::DataType::TIMESTAMP);
+                Value started = run.started_at ? Value::makeTimestamp(static_cast<int64_t>(run.started_at) * 1000)
+                                              : Value::makeNull(core::DataType::TIMESTAMP);
+                Value completed = run.completed_at ? Value::makeTimestamp(static_cast<int64_t>(run.completed_at) * 1000)
+                                                  : Value::makeNull(core::DataType::TIMESTAMP);
+
+                current_result_set_->addRow({
+                    Value::makeVarchar(run.job_run_id.toString()),
+                    Value::makeVarchar(stateToString(run.state)),
+                    scheduled,
+                    started,
+                    completed,
+                    Value::makeInt32(static_cast<int32_t>(run.retry_count)),
+                    Value::makeInt64(run.rows_affected),
+                    Value::makeInt32(run.error_code),
+                    Value::makeVarchar(run.result_message)
+                });
             }
         }
 
@@ -40681,6 +41502,31 @@ namespace scratchbird
             current_result_set_->addRow({Value::makeVarchar("Architecture"), Value::makeVarchar("Firebird MGA")});
         }
 
+        void Executor::executeShowMetrics()
+        {
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Metric", core::DataType::VARCHAR);
+
+            auto& metrics = core::ScratchBirdMetrics::getInstance();
+            metrics.initialize();
+            std::string payload = core::MetricsRegistry::getInstance().exportPrometheus();
+
+            std::istringstream stream(payload);
+            std::string line;
+            while (std::getline(stream, line))
+            {
+                if (line.empty())
+                {
+                    continue;
+                }
+                current_result_set_->addRow({Value::makeVarchar(line)});
+            }
+        }
+
         void Executor::executeShowSqlDialect()
         {
             // Show current SQL dialect (Firebird compatibility)
@@ -40884,7 +41730,14 @@ namespace scratchbird
             }
             else
             {
-                error("Unknown SHOW variable: " + var_name);
+                if (conn_ctx_ && conn_ctx_->getSessionVariable(normalized, value))
+                {
+                    // Use injected session variable value.
+                }
+                else
+                {
+                    error("Unknown SHOW variable: " + var_name);
+                }
             }
 
             if (!current_result_set_)
@@ -42410,24 +43263,8 @@ namespace scratchbird
 
             try
             {
-                // Evaluate the expression
-                evaluateExpression();
-
-                // Get result from stack
-                if (stack_.empty())
-                {
-                    // No result - expression invalid
-                    // Restore state
-                    bytecode_ = saved_bytecode;
-                    bytecode_size_ = saved_bytecode_size;
-                    pc_ = saved_pc;
-                    current_row_values_ = nullptr;
-                    current_row_columns_ = nullptr;
-                    return false;
-                }
-
-                Value result = stack_.top();
-                stack_.pop();
+                // Evaluate the expression bytecode range
+                Value result = evaluateExpressionRange(bytecode_size_);
 
                 // Restore execution state
                 bytecode_ = saved_bytecode;
@@ -42961,8 +43798,38 @@ namespace scratchbird
                 return false;
             }
 
-            // Evaluate expression with row context using existing RLS infrastructure
+            size_t col_index = 0;
+            bool found = false;
+            for (size_t i = 0; i < columns.size(); ++i)
+            {
+                if (columns[i].column_id == column.column_id)
+                {
+                    col_index = i;
+                    found = true;
+                    break;
+                }
+            }
+            auto saved_alias_map = current_row_alias_map_;
+            current_row_alias_map_.clear();
+            if (found)
+            {
+                current_row_alias_map_.emplace("VALUE", col_index);
+            }
+
+            struct RowCaseGuard
+            {
+                Executor* exec;
+                bool prev;
+                ~RowCaseGuard()
+                {
+                    exec->current_row_case_insensitive_ = prev;
+                }
+            } row_case_guard{this, current_row_case_insensitive_};
+            current_row_case_insensitive_ = true;
+
+            // Evaluate expression with row context so column references resolve naturally.
             bool result = evaluatePolicyExpression(expr_bytecode, row_values, columns);
+            current_row_alias_map_ = std::move(saved_alias_map);
 
             DEBUG_LOG_DB("CHECK constraint on column " << column.column_name
                        << " evaluated to " << (result ? "TRUE" : "FALSE"));
@@ -43015,6 +43882,17 @@ namespace scratchbird
                            << constraint.constraint_name << " - denying row");
                 return false;
             }
+
+            struct RowCaseGuard
+            {
+                Executor* exec;
+                bool prev;
+                ~RowCaseGuard()
+                {
+                    exec->current_row_case_insensitive_ = prev;
+                }
+            } row_case_guard{this, current_row_case_insensitive_};
+            current_row_case_insensitive_ = true;
 
             return evaluatePolicyExpression(expr_bytecode, row_values, columns);
         }
@@ -43219,6 +44097,296 @@ namespace scratchbird
             return false;
         }
 
+        void Executor::enforceUniqueIndexes(
+            const core::ID& table_id,
+            const std::vector<Value>& row_values,
+            const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+            const std::vector<core::CatalogManager::ConstraintInfo>& table_constraints,
+            const core::TID* exclude_tid)
+        {
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            if (db_->catalog_manager()->listIndexesForTable(table_id, indexes, nullptr, false) != core::Status::OK)
+            {
+                return;
+            }
+
+            std::vector<std::vector<core::ID>> constraint_keys;
+            constraint_keys.reserve(table_constraints.size() + all_columns.size());
+
+            auto add_key = [&](std::vector<core::ID> ids) {
+                if (ids.empty())
+                {
+                    return;
+                }
+                std::sort(ids.begin(), ids.end());
+                constraint_keys.push_back(std::move(ids));
+            };
+
+            for (const auto& col : all_columns)
+            {
+                if (col.is_primary_key || col.is_unique)
+                {
+                    add_key({col.column_id});
+                }
+            }
+
+            for (const auto& constraint : table_constraints)
+            {
+                if (constraint.constraint_type != core::CatalogManager::ConstraintType::PRIMARY_KEY &&
+                    constraint.constraint_type != core::CatalogManager::ConstraintType::UNIQUE)
+                {
+                    continue;
+                }
+                if (constraint.column_names.empty())
+                {
+                    continue;
+                }
+
+                std::vector<core::ID> ids;
+                ids.reserve(constraint.column_names.size());
+                for (const auto& name : constraint.column_names)
+                {
+                    auto it = std::find_if(all_columns.begin(), all_columns.end(),
+                                           [&](const auto& c) { return c.column_name == name; });
+                    if (it == all_columns.end())
+                    {
+                        ids.clear();
+                        break;
+                    }
+                    ids.push_back(it->column_id);
+                }
+                if (!ids.empty())
+                {
+                    add_key(std::move(ids));
+                }
+            }
+
+            uint64_t xid = db_->storage_engine()->getCurrentXid();
+            ExpressionEvaluator evaluator(all_columns, db_, xid);
+
+            for (const auto& index_info : indexes)
+            {
+                if (!index_info.is_unique)
+                {
+                    continue;
+                }
+
+                if (!index_info.is_expression_index && !index_info.is_partial_index)
+                {
+                    std::vector<core::ID> key_ids = index_info.column_ids;
+                    if (key_ids.empty())
+                    {
+                        continue;
+                    }
+                    std::sort(key_ids.begin(), key_ids.end());
+                    bool covered = false;
+                    for (const auto& key : constraint_keys)
+                    {
+                        if (key == key_ids)
+                        {
+                            covered = true;
+                            break;
+                        }
+                    }
+                    if (covered)
+                    {
+                        continue;
+                    }
+                }
+
+                auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
+                auto predicate_unique = std::unique_ptr<core::Expression>();
+                bool predicate_is_sblr = false;
+                std::vector<core::Expression*> expressions;
+                core::Expression* predicate = nullptr;
+
+                if (index_info.is_expression_index)
+                {
+                    try
+                    {
+                        expressions_unique = core::ExpressionSerializer::deserializeList(
+                            index_info.expression_data.data(),
+                            index_info.expression_data.size());
+                        for (auto& expr : expressions_unique)
+                        {
+                            expressions.push_back(expr.get());
+                        }
+                    }
+                    catch (...)
+                    {
+                        continue;
+                    }
+                }
+
+                if (index_info.is_partial_index)
+                {
+                    try
+                    {
+                        predicate_unique = core::ExpressionSerializer::deserialize(
+                            index_info.predicate_data.data(),
+                            index_info.predicate_data.size());
+                        predicate = predicate_unique.get();
+                    }
+                    catch (...)
+                    {
+                        predicate_is_sblr = true;
+                    }
+                }
+
+                auto build_key = [&](const std::vector<Value>& values,
+                                     std::vector<Value>& key_out,
+                                     bool& matches_predicate) -> bool {
+                    matches_predicate = true;
+                    if (index_info.is_partial_index)
+                    {
+                        bool matches = true;
+                        if (predicate_is_sblr)
+                        {
+                            matches = evaluatePolicyExpression(index_info.predicate_data, values, all_columns);
+                        }
+                        else if (predicate)
+                        {
+                            try
+                            {
+                                matches = evaluator.evaluatePredicate(predicate, values);
+                            }
+                            catch (...)
+                            {
+                                matches = false;
+                            }
+                        }
+                        if (!matches)
+                        {
+                            matches_predicate = false;
+                            return true;
+                        }
+                    }
+
+                    key_out.clear();
+                    if (index_info.is_expression_index)
+                    {
+                        for (auto* expr : expressions)
+                        {
+                            try
+                            {
+                                key_out.push_back(evaluator.evaluate(expr, values));
+                            }
+                            catch (...)
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const auto& col_id : index_info.column_ids)
+                        {
+                            auto it = std::find_if(all_columns.begin(), all_columns.end(),
+                                                   [&](const auto& c) { return c.column_id == col_id; });
+                            if (it == all_columns.end())
+                            {
+                                return false;
+                            }
+                            size_t idx = static_cast<size_t>(std::distance(all_columns.begin(), it));
+                            key_out.push_back(values[idx]);
+                        }
+                    }
+                    return true;
+                };
+
+                std::vector<Value> key_values;
+                bool matches_predicate = true;
+                if (!build_key(row_values, key_values, matches_predicate))
+                {
+                    continue;
+                }
+                if (!matches_predicate || key_values.empty())
+                {
+                    continue;
+                }
+
+                bool has_null = false;
+                for (const auto& val : key_values)
+                {
+                    if (val.isNull())
+                    {
+                        has_null = true;
+                        break;
+                    }
+                }
+                if (has_null)
+                {
+                    continue;
+                }
+
+                std::vector<core::TID> matching_tids;
+                auto status = searchIndexForValues(index_info, key_values, xid, matching_tids);
+                if (status == core::Status::OK)
+                {
+                    bool duplicate = false;
+                    for (const auto& tid : matching_tids)
+                    {
+                        if (!exclude_tid || tid != *exclude_tid)
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (duplicate)
+                    {
+                        error("UNIQUE index violation: duplicate key '" + index_info.index_name + "'");
+                    }
+                    continue;
+                }
+
+                auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+                if (!scan_iter)
+                {
+                    error("UNIQUE index violation check failed for index '" + index_info.index_name + "'");
+                }
+
+                core::Tuple tuple;
+                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                {
+                    if (exclude_tid && tuple.tid == *exclude_tid)
+                    {
+                        continue;
+                    }
+
+                    std::vector<Value> existing_values;
+                    if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, existing_values))
+                    {
+                        continue;
+                    }
+
+                    std::vector<Value> existing_key;
+                    bool existing_matches = true;
+                    if (!build_key(existing_values, existing_key, existing_matches))
+                    {
+                        continue;
+                    }
+                    if (!existing_matches || existing_key.size() != key_values.size())
+                    {
+                        continue;
+                    }
+
+                    bool match = true;
+                    for (size_t i = 0; i < key_values.size(); ++i)
+                    {
+                        if (!valuesEqual(key_values[i], existing_key[i]))
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match)
+                    {
+                        error("UNIQUE index violation: duplicate key '" + index_info.index_name + "'");
+                    }
+                }
+            }
+        }
+
         // ALPHA Phase A: Compare two values for equality (for UNIQUE constraint checking)
         bool Executor::valuesEqual(const Value& a, const Value& b)
         {
@@ -43366,6 +44534,181 @@ namespace scratchbird
             }
 
             return false; // No matching row found - FK violation
+        }
+
+        void Executor::validateForeignKeyDefinition(
+            const core::ID& child_table_id,
+            const std::vector<std::string>& child_columns,
+            const core::ID& parent_table_id,
+            const std::vector<std::string>& parent_columns,
+            const std::string& fk_name)
+        {
+            if (child_columns.empty())
+            {
+                error("FOREIGN KEY constraint '" + fk_name + "' requires at least one column");
+            }
+
+            std::vector<std::string> resolved_parent_columns = parent_columns;
+            if (resolved_parent_columns.empty())
+            {
+                resolved_parent_columns = child_columns;
+            }
+
+            if (child_columns.size() != resolved_parent_columns.size())
+            {
+                error("Foreign key column count does not match referenced columns for FK '" + fk_name + "'");
+            }
+
+            std::vector<core::CatalogManager::ColumnInfo> child_cols;
+            std::vector<core::CatalogManager::ColumnInfo> parent_cols;
+            core::ErrorContext cols_ctx;
+            if (db_->catalog_manager()->getColumns(child_table_id, child_cols, &cols_ctx) != core::Status::OK)
+            {
+                error("Failed to read child columns for FK '" + fk_name + "': " + cols_ctx.message);
+            }
+            if (db_->catalog_manager()->getColumns(parent_table_id, parent_cols, &cols_ctx) != core::Status::OK)
+            {
+                error("Failed to read parent columns for FK '" + fk_name + "': " + cols_ctx.message);
+            }
+
+            auto resolve_column = [](const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                     const std::string& name) -> const core::CatalogManager::ColumnInfo* {
+                for (const auto& col : columns)
+                {
+                    if (core::IdentifierUtils::namesMatch(name, false, col.column_name, col.name_is_delimited))
+                    {
+                        return &col;
+                    }
+                }
+                return nullptr;
+            };
+
+            auto types_compatible = [](const core::CatalogManager::ColumnInfo& child,
+                                       const core::CatalogManager::ColumnInfo& parent) -> bool {
+                return child.data_type == parent.data_type &&
+                       child.type_precision == parent.type_precision &&
+                       child.type_scale == parent.type_scale &&
+                       child.is_array == parent.is_array &&
+                       child.with_timezone == parent.with_timezone;
+            };
+
+            std::vector<core::ID> parent_column_ids;
+            parent_column_ids.reserve(resolved_parent_columns.size());
+            for (size_t i = 0; i < child_columns.size(); ++i)
+            {
+                const auto* child_col = resolve_column(child_cols, child_columns[i]);
+                if (!child_col)
+                {
+                    error("Foreign key column '" + child_columns[i] + "' not found for FK '" + fk_name + "'");
+                }
+
+                const auto* parent_col = resolve_column(parent_cols, resolved_parent_columns[i]);
+                if (!parent_col)
+                {
+                    error("Referenced column '" + resolved_parent_columns[i] + "' not found for FK '" + fk_name + "'");
+                }
+
+                if (!types_compatible(*child_col, *parent_col))
+                {
+                    error("Foreign key column type mismatch for FK '" + fk_name + "'");
+                }
+
+                parent_column_ids.push_back(parent_col->column_id);
+            }
+
+            std::vector<core::ID> sorted_parent_ids = parent_column_ids;
+            std::sort(sorted_parent_ids.begin(), sorted_parent_ids.end());
+
+            bool key_ok = false;
+            if (parent_column_ids.size() == 1)
+            {
+                const auto* parent_col = resolve_column(parent_cols, resolved_parent_columns.front());
+                if (parent_col && (parent_col->is_primary_key || parent_col->is_unique))
+                {
+                    key_ok = true;
+                }
+            }
+
+            if (!key_ok)
+            {
+                std::vector<core::CatalogManager::ConstraintInfo> constraints;
+                if (db_->catalog_manager()->getConstraintsForTable(parent_table_id, constraints, nullptr) == core::Status::OK)
+                {
+                    for (const auto& constraint : constraints)
+                    {
+                        if (!constraint.is_enabled)
+                        {
+                            continue;
+                        }
+                        if (constraint.constraint_type != core::CatalogManager::ConstraintType::PRIMARY_KEY &&
+                            constraint.constraint_type != core::CatalogManager::ConstraintType::UNIQUE)
+                        {
+                            continue;
+                        }
+
+                        if (constraint.column_names.empty() ||
+                            constraint.column_names.size() != resolved_parent_columns.size())
+                        {
+                            continue;
+                        }
+
+                        std::vector<core::ID> constraint_ids;
+                        constraint_ids.reserve(constraint.column_names.size());
+                        bool valid = true;
+                        for (const auto& name : constraint.column_names)
+                        {
+                            const auto* col = resolve_column(parent_cols, name);
+                            if (!col)
+                            {
+                                valid = false;
+                                break;
+                            }
+                            constraint_ids.push_back(col->column_id);
+                        }
+                        if (!valid)
+                        {
+                            continue;
+                        }
+                        std::sort(constraint_ids.begin(), constraint_ids.end());
+                        if (constraint_ids == sorted_parent_ids)
+                        {
+                            key_ok = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!key_ok)
+            {
+                std::vector<core::CatalogManager::IndexInfo> indexes;
+                if (db_->catalog_manager()->listIndexesForTable(parent_table_id, indexes, nullptr, false) == core::Status::OK)
+                {
+                    for (const auto& index : indexes)
+                    {
+                        if (!index.is_unique || index.is_expression_index || index.is_partial_index)
+                        {
+                            continue;
+                        }
+                        if (index.column_ids.size() != resolved_parent_columns.size())
+                        {
+                            continue;
+                        }
+                        std::vector<core::ID> index_ids = index.column_ids;
+                        std::sort(index_ids.begin(), index_ids.end());
+                        if (index_ids == sorted_parent_ids)
+                        {
+                            key_ok = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!key_ok)
+            {
+                error("Foreign key '" + fk_name + "' references columns that are not PRIMARY KEY or UNIQUE in parent table");
+            }
         }
 
         // ALPHA Phase A: Apply FK referential action on DELETE
@@ -43536,6 +44879,15 @@ namespace scratchbird
                                        std::to_string(matching_tids.size()) + " child rows in table " +
                                        std::string(child_table.table_name));
 
+                            for (size_t idx : fk_col_indices)
+                            {
+                                if (!child_columns[idx].nullable)
+                                {
+                                    error("FK SET NULL violates NOT NULL constraint on column '" +
+                                          child_columns[idx].column_name + "' (FK: " + fk.fk_name + ")");
+                                }
+                            }
+
                             // Create NULL values for all FK columns
                             std::vector<Value> null_values(fk_col_indices.size(), Value::makeNull());
 
@@ -43601,6 +44953,11 @@ namespace scratchbird
 
                                 // Use evaluateDefaultValue which handles both bytecode and literal defaults
                                 Value default_val = evaluateDefaultValue(col_info);
+                                if (!col_info.nullable && default_val.isNull())
+                                {
+                                    error("FK SET DEFAULT violates NOT NULL constraint on column '" +
+                                          col_info.column_name + "' (FK: " + fk.fk_name + ")");
+                                }
                                 default_values.push_back(default_val);
                             }
 
@@ -43872,6 +45229,15 @@ namespace scratchbird
                                        std::to_string(matching_tids.size()) + " child rows in table " +
                                        std::string(child_table.table_name));
 
+                            for (size_t idx : fk_col_indices)
+                            {
+                                if (!child_columns[idx].nullable)
+                                {
+                                    error("FK SET NULL violates NOT NULL constraint on column '" +
+                                          child_columns[idx].column_name + "' (FK: " + fk.fk_name + ")");
+                                }
+                            }
+
                             // Create NULL values for all FK columns
                             std::vector<Value> null_values(fk_col_indices.size(), Value::makeNull());
 
@@ -43937,6 +45303,11 @@ namespace scratchbird
 
                                 // Use evaluateDefaultValue which handles both bytecode and literal defaults
                                 Value default_val = evaluateDefaultValue(col_info);
+                                if (!col_info.nullable && default_val.isNull())
+                                {
+                                    error("FK SET DEFAULT violates NOT NULL constraint on column '" +
+                                          col_info.column_name + "' (FK: " + fk.fk_name + ")");
+                                }
                                 default_values.push_back(default_val);
                             }
 
@@ -47499,6 +48870,82 @@ namespace scratchbird
                 return isDbOwnerRole(catalog, conn_ctx);
             }
 
+            bool userHasRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx,
+                             const core::ID& role_id)
+            {
+                if (!conn_ctx || !catalog) {
+                    return false;
+                }
+                if (conn_ctx->isSuperuser() || hasJobAdminPrivilege(catalog, conn_ctx)) {
+                    return true;
+                }
+                const core::ID& current_user = conn_ctx->getCurrentUserId();
+                if (isZeroUuid(current_user)) {
+                    return false;
+                }
+                std::vector<core::CatalogManager::RoleMembershipInfo> roles;
+                core::ErrorContext err_ctx;
+                if (catalog->getUserRoles(current_user, roles, &err_ctx) != core::Status::OK) {
+                    return false;
+                }
+                for (const auto& membership : roles) {
+                    if (membership.role_id == role_id) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            core::Status checkJobDependencyCycle(core::CatalogManager* catalog,
+                                                 const core::ID& job_id,
+                                                 const std::vector<core::ID>& deps,
+                                                 bool& has_cycle,
+                                                 core::ErrorContext& err_ctx)
+            {
+                has_cycle = false;
+                if (!catalog) {
+                    return core::Status::INVALID_ARGUMENT;
+                }
+                for (const auto& dep_id : deps)
+                {
+                    if (dep_id == job_id)
+                    {
+                        has_cycle = true;
+                        return core::Status::OK;
+                    }
+                    std::vector<core::ID> stack;
+                    std::unordered_set<core::ID, core::IDHash> visited;
+                    stack.push_back(dep_id);
+                    while (!stack.empty())
+                    {
+                        core::ID current = stack.back();
+                        stack.pop_back();
+                        if (current == job_id)
+                        {
+                            has_cycle = true;
+                            return core::Status::OK;
+                        }
+                        if (visited.find(current) != visited.end())
+                        {
+                            continue;
+                        }
+                        visited.insert(current);
+
+                        std::vector<core::CatalogManager::JobDependencyInfo> child_deps;
+                        auto status = catalog->listJobDependencies(current, child_deps, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return status;
+                        }
+                        for (const auto& child : child_deps)
+                        {
+                            stack.push_back(child.depends_on_job_id);
+                        }
+                    }
+                }
+                return core::Status::OK;
+            }
+
             std::string trimAsciiLocal(const std::string& value)
             {
                 size_t start = 0;
@@ -50792,7 +52239,7 @@ namespace scratchbird
                     for (size_t i = 0; i < all_columns.size(); i++)
                     {
                         const auto& col = all_columns[i];
-                        if (col.check_expr_oid != 0)
+                        if (!col.check_expr.empty() || col.check_expr_oid != 0)
                         {
                             if (!evaluateCheckConstraint(col, row_values, all_columns))
                             {
@@ -50814,6 +52261,164 @@ namespace scratchbird
                             }
                         }
                     }
+
+                    auto find_conflict_row = [&](const std::vector<size_t>& key_indices,
+                                                 const std::vector<Value>& values,
+                                                 core::TID& conflict_tid,
+                                                 std::vector<Value>& conflict_row,
+                                                 const core::TID* exclude_tid = nullptr) -> bool {
+                        for (size_t idx : key_indices)
+                        {
+                            if (values[idx].isNull())
+                            {
+                                return false;
+                            }
+                        }
+
+                        auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
+                        if (!scan_iter)
+                        {
+                            return false;
+                        }
+
+                        core::Tuple tuple;
+                        while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                        {
+                            if (exclude_tid && tuple.tid == *exclude_tid)
+                            {
+                                continue;
+                            }
+
+                            std::vector<Value> existing_values;
+                            if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, existing_values))
+                            {
+                                continue;
+                            }
+
+                            bool match = true;
+                            for (size_t idx : key_indices)
+                            {
+                                if (!valuesEqual(values[idx], existing_values[idx]))
+                                {
+                                    match = false;
+                                    break;
+                                }
+                            }
+
+                            if (match)
+                            {
+                                conflict_tid = tuple.tid;
+                                conflict_row = std::move(existing_values);
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    };
+
+                    std::vector<core::CatalogManager::ConstraintInfo> table_constraints;
+                    if (db_->catalog_manager()->getConstraintsForTable(
+                            table_info.table_id, table_constraints, nullptr) == core::Status::OK)
+                    {
+                        auto resolve_column_index = [&](const std::string& name) -> size_t {
+                            auto it = std::find_if(all_columns.begin(), all_columns.end(),
+                                                   [&](const auto& c) { return c.column_name == name; });
+                            if (it == all_columns.end())
+                            {
+                                error("Column not found: " + name);
+                            }
+                            return static_cast<size_t>(std::distance(all_columns.begin(), it));
+                        };
+
+                        for (const auto& constraint : table_constraints)
+                        {
+                            if (constraint.constraint_type != core::CatalogManager::ConstraintType::CHECK)
+                            {
+                                continue;
+                            }
+                            if (!evaluateTableCheckConstraint(constraint, row_values, all_columns))
+                            {
+                                std::string label = constraint.constraint_name.empty()
+                                    ? "CHECK constraint"
+                                    : constraint.constraint_name;
+                                error("CHECK constraint violation: " + label);
+                            }
+                        }
+
+                        for (const auto& constraint : table_constraints)
+                        {
+                            if (constraint.constraint_type != core::CatalogManager::ConstraintType::PRIMARY_KEY &&
+                                constraint.constraint_type != core::CatalogManager::ConstraintType::UNIQUE)
+                            {
+                                continue;
+                            }
+                            if (constraint.column_names.empty())
+                            {
+                                continue;
+                            }
+
+                            if (constraint.column_names.size() == 1)
+                            {
+                                size_t idx = resolve_column_index(constraint.column_names[0]);
+                                const auto& col = all_columns[idx];
+                                if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY &&
+                                    col.is_primary_key)
+                                {
+                                    continue;
+                                }
+                                if (constraint.constraint_type == core::CatalogManager::ConstraintType::UNIQUE &&
+                                    col.is_unique)
+                                {
+                                    continue;
+                                }
+                            }
+
+                            std::vector<size_t> indices;
+                            indices.reserve(constraint.column_names.size());
+                            bool has_null = false;
+                            for (const auto& name : constraint.column_names)
+                            {
+                                size_t idx = resolve_column_index(name);
+                                indices.push_back(idx);
+                                if (row_values[idx].isNull())
+                                {
+                                    has_null = true;
+                                }
+                            }
+
+                            if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY)
+                            {
+                                if (has_null)
+                                {
+                                    error("PRIMARY KEY constraint violation: NULL value in composite key '" +
+                                          constraint.constraint_name + "'");
+                                }
+                            }
+                            else if (has_null)
+                            {
+                                continue;
+                            }
+
+                            core::TID conflict_tid;
+                            std::vector<Value> conflict_row;
+                            if (find_conflict_row(indices, row_values, conflict_tid, conflict_row, nullptr))
+                            {
+                                std::string label = constraint.constraint_name.empty()
+                                    ? "composite key"
+                                    : constraint.constraint_name;
+                                if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY)
+                                {
+                                    error("PRIMARY KEY constraint violation: duplicate key '" + label + "'");
+                                }
+                                else
+                                {
+                                    error("UNIQUE constraint violation: duplicate key '" + label + "'");
+                                }
+                            }
+                        }
+                    }
+
+                    enforceUniqueIndexes(table_info.table_id, row_values, all_columns, table_constraints, nullptr);
 
                     std::vector<core::CatalogManager::ForeignKeyInfo> fks;
                     auto fk_status = db_->catalog_manager()->getForeignKeysForTable(table_info.table_id, fks, nullptr);

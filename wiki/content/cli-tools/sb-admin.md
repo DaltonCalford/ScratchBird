@@ -1,8 +1,8 @@
 # sb_admin
 
-Server administration utility.
+Server administration utility for scheduler and metrics queries.
 
-**Status:** Planned/placeholder (no standalone binary in current tree).
+**Status:** Available (built as `sb_admin`).
 
 [Back to CLI Tools](README.md) | [Back to Home](../Home.md)
 
@@ -11,45 +11,33 @@ Server administration utility.
 ## Synopsis
 
 ```
-sb_admin <command> [OPTIONS] [ARGS]
+sb_admin <database> job list [--like <pattern>] [OPTIONS]
+sb_admin <database> job runs <job_name> [OPTIONS]
+sb_admin <database> metrics [OPTIONS]
 ```
 
 ---
 
 ## Description
 
-`sb_admin` provides administrative commands for managing the ScratchBird server, including server control, session management, and monitoring.
+`sb_admin` connects to the local TCP listener and issues scheduler/metrics queries using admin credentials.
 
 ---
 
 ## Commands
 
-### Server Control
+### Scheduler
 
 | Command | Description |
 |---------|-------------|
-| `shutdown` | Graceful server shutdown |
-| `restart` | Restart server |
-| `reload` | Reload configuration |
-| `status` | Show server status |
+| `job list` | List jobs (optional LIKE filter) |
+| `job runs <job_name>` | Show runs for a named job |
 
-### Session Management
+### Metrics
 
 | Command | Description |
 |---------|-------------|
-| `show connections` | List active connections |
-| `show sessions` | Show session details |
-| `kill <pid>` | Terminate session |
-| `kill-all` | Terminate all sessions |
-
-### Monitoring
-
-| Command | Description |
-|---------|-------------|
-| `show stats` | Server statistics |
-| `show pool` | Connection pool status |
-| `show locks` | Active locks |
-| `show queries` | Running queries |
+| `metrics` | Emit `SHOW METRICS` output |
 
 ---
 
@@ -57,167 +45,38 @@ sb_admin <command> [OPTIONS] [ARGS]
 
 | Option | Description |
 |--------|-------------|
-| `-H, --host HOST` | Server hostname |
-| `-P, --port PORT` | Server port |
 | `-U, --user USER` | Admin username |
-| `-p, --password` | Prompt for password |
+| `-P, --password PASS` | Admin password |
+| `-p, --port PORT` | TCP port (default: 3092) |
+| `--database NAME` | Database name (if not supplied positionally) |
+| `-q, --quiet` | Only show errors |
 
 ---
 
-## Server Control
-
-### Shutdown
+## Scheduler Examples
 
 ```bash
-# Graceful shutdown (wait for queries)
-sb_admin shutdown
+# List jobs
+sb_admin mydb job list -U SYSARCH -P changeme
 
-# Immediate shutdown
-sb_admin shutdown --immediate
+# Filter jobs by name
+sb_admin mydb job list --like "daily%" -U SYSARCH -P changeme
 
-# With timeout
-sb_admin shutdown --timeout 60
+# Show runs for a job
+sb_admin mydb job runs daily_sweep -U SYSARCH -P changeme
 ```
 
-### Restart
+## Metrics Example
 
 ```bash
-# Graceful restart
-sb_admin restart
-
-# Immediate restart
-sb_admin restart --immediate
-```
-
-### Reload Configuration
-
-```bash
-# Reload config without restart
-sb_admin reload
+sb_admin mydb metrics -U SYSARCH -P changeme
 ```
 
 Output:
 ```
-Configuration reloaded successfully.
-Changes applied:
-  - max_connections: 100 -> 200
-  - log_level: info -> debug
+scratchbird_scheduler_job_run_latency_seconds 0.35
+scratchbird_scheduler_jobs_pending 2
 ```
-
-### Server Status
-
-```bash
-sb_admin status
-```
-
-Output:
-```
-ScratchBird Server Status
-  Version: 0.9.0
-  Uptime: 5 days, 3:24:15
-  PID: 12345
-  Mode: multi-database
-
-Connections:
-  Active: 45
-  Idle: 12
-  Maximum: 200
-
-Memory:
-  Shared buffers: 4 GB (78% used)
-  Work memory: 256 MB
-
-Databases:
-  mydb: 3.2 GB, 25 connections
-  analytics: 15 GB, 8 connections
-  test: 45 MB, 2 connections
-```
-
----
-
-## Session Management
-
-### Show Connections
-
-```bash
-sb_admin show connections
-```
-
-Output:
-```
-PID    User      Database   Client IP        State    Duration
------  --------  ---------  ---------------  -------  ---------
-1001   admin     mydb       192.168.1.100    active   00:05:23
-1002   appuser   mydb       192.168.1.101    idle     00:12:45
-1003   analyst   analytics  10.0.0.50        active   01:23:45
-```
-
-### Show Sessions (Detailed)
-
-```bash
-sb_admin show sessions
-```
-
-Output:
-```
-Session 1001:
-  User: admin
-  Database: mydb
-  Client: 192.168.1.100:54321
-  Connected: 2024-01-15 10:30:00
-  State: active
-  Query: SELECT * FROM orders WHERE...
-  Query start: 2024-01-15 10:35:23
-  Transactions: 145
-
-Session 1002:
-  User: appuser
-  ...
-```
-
-### Kill Session
-
-```bash
-# Kill single session
-sb_admin kill 1001
-
-# Kill with message
-sb_admin kill 1001 --message "Maintenance required"
-
-# Force kill (SIGKILL)
-sb_admin kill 1001 --force
-```
-
-### Kill All Sessions
-
-```bash
-# Kill all (except admin)
-sb_admin kill-all
-
-# Kill all for specific database
-sb_admin kill-all --database mydb
-
-# Kill all for specific user
-sb_admin kill-all --user appuser
-```
-
----
-
-## Monitoring Commands
-
-### Server Statistics
-
-```bash
-sb_admin show stats
-```
-
-Output:
-```
-Server Statistics (since startup):
-  Connections total: 15,234
-  Connections active: 45
-  Queries executed: 1,234,567
-  Transactions committed: 234,567
   Transactions rolled back: 1,234
 
 Cache Statistics:

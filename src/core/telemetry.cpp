@@ -372,8 +372,8 @@ void HistogramTimer::cancel() {
 // ============================================================================
 
 MetricsRegistry& MetricsRegistry::getInstance() {
-    static MetricsRegistry instance;
-    return instance;
+    static MetricsRegistry* instance = new MetricsRegistry();
+    return *instance;
 }
 
 Counter* MetricsRegistry::registerCounter(const std::string& name, const std::string& help,
@@ -605,6 +605,24 @@ void ScratchBirdMetrics::initialize() {
     toast_writes_total = reg.registerCounter(
         "scratchbird_toast_writes_total",
         "Total TOAST value writes");
+
+    // Scheduler metrics
+    scheduler_queue_depth = reg.registerGauge(
+        "scratchbird_scheduler_queue_depth",
+        "Number of due jobs waiting to run");
+
+    scheduler_jobs_running = reg.registerGauge(
+        "scratchbird_scheduler_jobs_running",
+        "Number of active job runs");
+
+    scheduler_jobs_failed_total = reg.registerCounter(
+        "scratchbird_scheduler_jobs_failed_total",
+        "Total number of failed job runs");
+
+    scheduler_job_run_latency_seconds = reg.registerHistogram(
+        "scratchbird_scheduler_job_run_latency_seconds",
+        "Job run duration in seconds",
+        Histogram::DEFAULT_LATENCY_BUCKETS);
 
     initialized_ = true;
 }

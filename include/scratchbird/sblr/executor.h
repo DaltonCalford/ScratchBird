@@ -870,6 +870,7 @@ namespace scratchbird
             void executeSetSessionAuth();    // Execute SET/RESET SESSION AUTHORIZATION
             void executeSetConstraints();    // P2-7: Execute SET CONSTRAINTS
             void executeSetVariable();       // Execute SET variable (EXT_SET_VARIABLE)
+            void executeAlterSystem();       // Execute ALTER SYSTEM SET (EXT_ALTER_SYSTEM)
             void executeConnect();           // Execute CONNECT
             void executeDisconnect();        // Execute DISCONNECT
             void executeCreatePolicy();      // Execute CREATE POLICY (Security Phase 3.4.4)
@@ -896,12 +897,16 @@ namespace scratchbird
             void executeShowSchema();        // Execute SHOW SCHEMA [object_name]
             void executeShowRole();          // Execute SHOW ROLE object_name
             void executeShowGrants();        // Execute SHOW GRANTS [FOR object_name]
+            void executeShowJobs();          // Execute SHOW JOBS
+            void executeShowJob();           // Execute SHOW JOB job_name
+            void executeShowJobRuns();       // Execute SHOW JOB RUNS job_name
             void executeShowChecks();        // Execute SHOW CHECKS object_name
             void executeShowCollations();    // Execute SHOW COLLATIONS [LIKE pattern]
             void executeShowComments();      // Execute SHOW COMMENTS object_name
             void executeShowDependencies();  // Execute SHOW DEPENDENCIES object_name
             void executeShowPackage();       // Execute SHOW PACKAGE object_name
             void executeShowSystem();        // Execute SHOW SYSTEM
+            void executeShowMetrics();       // Execute SHOW METRICS
             void executeShowSqlDialect();    // Execute SHOW SQL DIALECT
             void executeShowVersion();       // Execute SHOW VERSION
             void executeShowDatabase();      // Execute SHOW DATABASE
@@ -1025,6 +1030,18 @@ namespace scratchbird
                                               const Value& value,
                                               const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
                                               const core::TID& exclude_tid);
+
+            void enforceUniqueIndexes(const core::ID& table_id,
+                                     const std::vector<Value>& row_values,
+                                     const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                     const std::vector<core::CatalogManager::ConstraintInfo>& table_constraints,
+                                     const core::TID* exclude_tid);
+
+            void validateForeignKeyDefinition(const core::ID& child_table_id,
+                                             const std::vector<std::string>& child_columns,
+                                             const core::ID& parent_table_id,
+                                             const std::vector<std::string>& parent_columns,
+                                             const std::string& fk_name);
 
             // ALPHA Phase A: Compare two values for equality (for UNIQUE constraint checking)
             bool valuesEqual(const Value& a, const Value& b);

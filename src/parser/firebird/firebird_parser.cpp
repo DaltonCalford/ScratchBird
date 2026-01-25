@@ -4011,6 +4011,10 @@ Statement* Parser::parseShowStatement() {
         stmt->show_type = ast::ShowStmt::ShowType::SYSTEM;
         return stmt;
     }
+    if (matchIdentifierText("METRICS")) {
+        stmt->show_type = ast::ShowStmt::ShowType::METRICS;
+        return stmt;
+    }
 
     stmt->show_type = ast::ShowStmt::ShowType::VARIABLE;
     if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {

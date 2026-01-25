@@ -142,7 +142,7 @@ private:
     CreateTriggerStmt* parseCreateTrigger(bool or_replace = false);
     CreateUserStmt* parseCreateUser();
     CreateRoleStmt* parseCreateRole();
-    CreateJobStmt* parseCreateJob();
+    CreateJobStmt* parseCreateJob(bool or_alter = false, bool recreate = false);
 
     // ALTER statements
     AlterTableStmt* parseAlterTable();
@@ -150,6 +150,7 @@ private:
     AlterDatabaseStmt* parseAlterDatabase();
     AlterDomainStmt* parseAlterDomain();
     AlterJobStmt* parseAlterJob();
+    AlterSystemStmt* parseAlterSystem();
 
     // DROP statements
     DropTableStmt* parseDropTable();

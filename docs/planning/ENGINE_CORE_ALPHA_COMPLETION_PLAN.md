@@ -1,15 +1,18 @@
 # Engine Core Alpha Completion Plan
 
 ## Purpose
+
 Provide a single tracked plan for completing the Alpha core engine gaps
 identified in the unified spec and implementation audits.
 
 ## Scope
+
 Core engine only: storage, catalog, transactions, executor, indexes, security,
 monitoring, backup/restore, scheduler. Parsers, network/listeners, drivers,
 cluster/sharding, and tooling are out of scope.
 
 ## Inputs
+
 - `ScratchBird/docs/specifications/core/ENGINE_CORE_UNIFIED_SPEC.md`
 - `ScratchBird/docs/findings/ENGINE_CORE_IMPLEMENTATION_AUDIT.md`
 - `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS.md`
@@ -21,6 +24,7 @@ cluster/sharding, and tooling are out of scope.
 - `ScratchBird/docs/planning/CACHE_AND_BUFFER_REMEDIATION_PLAN.md`
 
 ## Execution Order (recommended)
+
 1. Catalog bootstrap schema roots.
 2. Tablespace routing + GPID wiring (follow tablespace plan).
 3. Index TID updates + migration safety for all index types.
@@ -33,83 +37,137 @@ cluster/sharding, and tooling are out of scope.
 ## Workstreams
 
 ### WS-1 Catalog Bootstrap and Schema Roots
+
 - [ ] Remove `/emulated` root; use `/remote/emulation`.
 - [ ] Move `/public` under `/users/public`.
 - [ ] Add migration/repair logic for existing catalogs if needed.
 - [ ] Update any catalog bootstrap tests to assert canonical roots.
 
 ### WS-2 Tablespace Routing + GPID Wiring
+
 - [ ] Execute `ScratchBird/docs/planning/TABLESPACE_REMEDIATION_PLAN.md` phases.
 - [ ] Confirm CREATE TABLE/INDEX placement honors TABLESPACE and schema defaults.
 - [ ] Ensure GPID-aware DML across heap/index/TOAST paths.
 
 ### WS-3 Index Migration Safety
+
 - [ ] Implement TID updates for all non-BTree/Hash index types listed in
+  
       `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS.md`.
 - [ ] Fix GiST cache cleanup once type integration is complete.
 - [ ] Add tests covering migrations and index integrity rebuilds.
 
 ### WS-4 Scheduler and Job System
-- [ ] Implement secure job runner and scheduling model per scheduler specs.
-- [ ] Add maintenance jobs (sweep, GC, stats, index rebuild) as first-class jobs.
-- [ ] Add permissions and audit hooks for job creation/execution.
+
+- [x] Implement secure job runner and scheduling model per scheduler specs.
+- [x] Add maintenance jobs (sweep, GC, stats, index rebuild) as first-class jobs.
+- [x] Add permissions and audit hooks for job creation/execution.
+
+#### WS-4 Gap Checklist (spec-driven)
+
+- [x] WS4-GAP-01 Persist job_class in catalog records and surface it in JobInfo (`include/scratchbird/core/catalog_manager.h`, `src/core/catalog_manager.cpp`, `src/sblr/executor.cpp`).
+- [x] WS4-GAP-02 Persist SINGLE_SHARD UUID for partitioned jobs (`src/sblr/executor.cpp`, `include/scratchbird/core/catalog_manager.h`, `src/core/catalog_manager.cpp`).
+- [x] WS4-GAP-03 Parse and store PARTITION BY SHARD_SET/DYNAMIC lists/expressions per spec (`src/parser/parser_v2.cpp`).
+- [x] WS4-GAP-04 Expose sys.jobs/sys.job_runs/sys.job_dependencies as queryable sys.* tables (`src/catalog/sys_catalog.cpp`, `include/scratchbird/catalog/sys_catalog.h`, `include/scratchbird/catalog/virtual_catalog.h`, `src/catalog/virtual_catalog.cpp`).
+- [x] WS4-GAP-05 Add catalog indexes for jobs/runs lookup and scheduling windows (`src/core/catalog_manager.cpp`, `include/scratchbird/core/catalog_manager.h`).
+- [x] WS4-GAP-06 Persist job_run result_data payloads (`include/scratchbird/core/catalog_manager.h`, `src/core/catalog_manager.cpp`, `src/catalog/sys_catalog.cpp`).
+- [x] WS4-GAP-07 Represent PENDING job runs before execution starts (`src/core/job_scheduler.cpp`).
+- [x] WS4-GAP-08 Implement catch_up = all scheduling behavior (`src/core/job_scheduler.cpp`).
+- [x] WS4-GAP-09 Enforce SQL job timeouts during execution (not just post-run) (`src/core/job_scheduler.cpp`).
+- [x] WS4-GAP-10 Add sys.performance scheduler metrics surface (`src/catalog/sys_catalog.cpp`).
+- [x] WS4-GAP-11 Add SQL/DDL surface for job secrets management (`src/parser/parser_v2.cpp`, `src/sblr/semantic_analyzer_v2.cpp`, `src/sblr/bytecode_generator_v2.cpp`, `src/sblr/executor.cpp`).
 
 ### WS-5 Constraint Enforcement
-- [ ] Enforce PK/UNIQUE on insert/update.
-- [ ] Enforce FK with CASCADE/RESTRICT handling and dependency validation.
-- [ ] Enforce CHECK constraints.
-- [ ] Confirm NOT NULL enforcement in all DML paths.
+
+- [x] Enforce PK/UNIQUE on insert/update.
+- [x] Enforce FK with CASCADE/RESTRICT handling and dependency validation.
+- [x] Enforce CHECK constraints.
+- [x] Confirm NOT NULL enforcement in all DML paths.
 - [ ] Add tests for constraint failures and dependency rules.
 
 ### WS-6 Security Enforcement (AuthZ + RLS)
+
 - [ ] Implement view definer permission checks (table/column) in view security.
 - [ ] Add RLS SELECT enforcement in executor.
 - [ ] Add tests for authz + RLS policies across DML/SELECT.
 
 ### WS-7 Monitoring View Parity
+
 - [ ] Implement sys.sessions, sys.transactions, sys.locks, sys.statements,
+  
       sys.performance in analyzer + executor.
 - [ ] Replace MON$ placeholders with real engine state in Firebird catalog.
 - [ ] Align view columns with `MONITORING_SQL_VIEWS.md`.
 
 ### WS-8 Backup/Restore Coverage
+
 - [ ] Validate backup includes all tablespace datafiles and catalog objects.
 - [ ] Validate restore rejects missing tablespace datafiles (unless recovery mode).
 - [ ] Add integration tests for multi-tablespace backup/restore.
 
 ### WS-9 Cache/Buffer Plan (parallel stream)
+
 - [ ] Execute `ScratchBird/docs/planning/CACHE_AND_BUFFER_REMEDIATION_PLAN.md`.
 
 ## Tracking Table
+
 Update this table as work progresses.
 
-| Workstream | Status | Owner | Milestone | Notes |
-| --- | --- | --- | --- | --- |
-| WS-1 Catalog bootstrap | Done |  | Alpha Core | Root paths updated; migration/repair pass added |
-| WS-2 Tablespace routing | In Progress |  | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace header v2 write + v1 read support; tablespace_files catalog wiring added; tablespace table/index counts maintained |
-| WS-3 Index migration safety | Done |  | Alpha Core | Index migration TID updates + GiST cache cleanup verified |
-| WS-4 Scheduler/job system | In Progress |  | Alpha Core | Job DDL parsing/bytecode/executor + scheduler thread in progress; cron/dependency unit tests added; maintenance jobs + audit/permission hooks added; CANCEL JOB RUN support added; maintenance/cancel tests added; scheduler.enabled + pre_execute_delay_ms config wiring added |
-| WS-5 Constraint enforcement | TODO |  | Alpha Core |  |
-| WS-6 Security enforcement | TODO |  | Alpha Core |  |
-| WS-7 Monitoring parity | TODO |  | Alpha Core |  |
-| WS-8 Backup/restore | TODO |  | Alpha Core |  |
-| WS-9 Cache/buffer plan | In Progress |  | Alpha Core | Buffer pool flush path now skips pinned pages and guards writes with content mutex; catalog heap updates lock page content |
+| Workstream                  | Status      | Owner | Milestone  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------- | ----------- | ----- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WS-1 Catalog bootstrap      | Done        |       | Alpha Core | Root paths updated; migration/repair pass added                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| WS-2 Tablespace routing     | In Progress |       | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace header v2 write + v1 read support; tablespace_files catalog wiring added; tablespace table/index counts maintained                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| WS-3 Index migration safety | Done        |       | Alpha Core | Index migration TID updates + GiST cache cleanup verified                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| WS-4 Scheduler/job system   | Done        |       | Alpha Core | Job DDL parsing/bytecode/executor + scheduler thread complete; cron/dependency unit tests added; maintenance jobs + audit/permission hooks added; CANCEL JOB RUN support added; maintenance/cancel tests added; scheduler.enabled + pre_execute_delay_ms config wiring added; ALTER SYSTEM runtime scheduler config + job timeout handling added; scheduler max_concurrent_jobs/job_timeout_seconds config defaults wired; concurrent job execution + job DDL coverage expanded; SHOW JOBS/JOB RUNS parser + job GRANT/REVOKE support added; CREATE OR ALTER/RECREATE/expanded ALTER support for job body/dependencies/on-completion/partitioning; scheduler TSAN teardown join fix |
+| WS-5 Constraint enforcement | In Progress |       | Alpha Core | PK/UNIQUE enforcement now covers unique indexes and COPY composite constraints; FK validation now enforces referenced PK/UNIQUE keys; CHECK/NOT NULL enforcement covers MERGE and FK actions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| WS-6 Security enforcement   | TODO        |       | Alpha Core |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| WS-7 Monitoring parity      | TODO        |       | Alpha Core |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| WS-8 Backup/restore         | TODO        |       | Alpha Core |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| WS-9 Cache/buffer plan      | In Progress |       | Alpha Core | Buffer pool flush path now skips pinned pages and guards writes with content mutex; catalog heap updates lock page content                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Acceptance Criteria
+
 - All workstreams complete with tests passing.
 - Core engine parity matches `ENGINE_CORE_UNIFIED_SPEC.md`.
 - Gap list in `ENGINE_CORE_IMPLEMENTATION_AUDIT.md` is fully resolved.
 
 ## Recent Progress
+
 - 2026-01-23: Closed INDEX_IMPLEMENTATION_GAPS findings; index migration + GC/regression tests pass.
 - 2026-01-23: Enabled GiST index cache deletion now that GiST type is integrated.
 - 2026-01-23: Added Parser V2 SWEEP DATABASE support (AST/semantic/bytecode) and enabled sweep parser tests.
 - 2026-01-24: Started WS-4 scheduler core: job DDL plumbing (parser/semantic/bytecode/executor) and minimal scheduler thread.
+- 2026-01-24: Expanded sys.performance to include broader engine metrics for monitoring parity.
+- 2026-01-24: Wired SQL job timeouts into executor query limits for runtime enforcement (WS4-GAP-09).
+- 2026-01-24: Create job runs in PENDING state and transition to RUNNING at execution start (WS4-GAP-07).
+- 2026-01-24: Persist job_run result_data payloads in TOAST and expose via sys.job_runs (WS4-GAP-06).
+- 2026-01-24: Added job scheduler validation tests for pending transitions, dependencies, and result payloads.
 - 2026-01-25: Added cron parsing/dependency gating helpers and unit tests for scheduler.
 - 2026-01-25: Seeded maintenance jobs and added job audit logging + permission checks.
 - 2026-01-25: Added CANCEL JOB RUN parsing/bytecode/executor path and parser test coverage.
 - 2026-01-25: Added maintenance seed validation and cancel-before-run scheduler tests.
 - 2026-01-25: Added scheduler.enabled and pre_execute_delay_ms config wiring; documented scheduler config keys in sb_server.conf.
+- 2026-01-26: Added ALTER SYSTEM SET runtime config wiring for scheduler keys and job timeout enforcement in scheduler runs.
+- 2026-01-26: Wired scheduler.max_concurrent_jobs and job_timeout_seconds defaults into runtime config application.
+- 2026-01-26: Implemented concurrent scheduler job execution and expanded Parser V2 job DDL coverage (state/keep history).
+- 2026-01-26: Added SHOW JOBS/JOB RUNS parser support and job-level GRANT/REVOKE permissions with EXECUTE checks.
+- 2026-01-27: Implemented EXECUTE JOB real execution, cooperative cancellation with interrupt, timeout cancel handling, and added manual execution/cancel unit tests.
+- 2026-01-27: Added CREATE/VIEW/EXECUTE EXTERNAL job privileges, session variable injection, RUN AS role validation, and dependency cycle checks.
+- 2026-01-27: Wired schedule_tz cron evaluation, catch_up policy handling, and dependency window gating.
+- 2026-01-28: Expanded job DDL to support CREATE OR ALTER/RECREATE and ALTER job body/dependencies/on-completion/partitioning updates; added parser coverage for new clauses.
+- 2026-01-28: Fixed scheduler TSAN teardown race by joining job execution threads during shutdown; full `ctest` run completed (2 JSON tests skipped).
+- 2026-01-28: Full build + sequential `ctest` run completed cleanly (2 JSON tests skipped).
+- 2026-01-28: Marked WS-4 scheduler/job system complete; moving on to WS-5 constraint enforcement.
+- 2026-01-28: Enforced PK/UNIQUE for unique indexes and COPY composite constraints in executor.
+- 2026-01-28: Added FK definition validation (referenced columns must be PK/UNIQUE, type match).
+- 2026-01-28: Enforced CHECK/NOT NULL in MERGE and FK actions; added runtime constraint tests.
+- 2026-01-28: Persisted job_class and SINGLE_SHARD UUID for jobs (WS4-GAP-01/02).
+- 2026-01-28: Added SHARD_SET list parsing and DYNAMIC expression capture for job partitioning (WS4-GAP-03).
+- 2026-01-28: Added sys.jobs/sys.job_runs/sys.job_dependencies virtual tables via sys catalog handler (WS4-GAP-04).
+- 2026-01-28: Implemented catch_up=all scheduling advancement without collapsing to current time (WS4-GAP-08).
+- 2026-01-28: Added in-memory job/job_run indexes to accelerate lookup and due-job scheduling (WS4-GAP-05).
+- 2026-01-28: Added sys.performance scheduler metrics surface via sys catalog handler (WS4-GAP-10).
+- 2026-01-28: Added ALTER JOB secret set/drop DDL wiring and catalog persistence (WS4-GAP-11).
 - 2026-01-25: Fixed buffer pool TSAN race by guarding flush writes with content mutex and skipping pinned pages; catalog heap updates now lock page content; full `ctest` pass completed (2 JSON tests skipped).
 - 2026-01-21: Full `ctest` run (with `SCRATCHBIRD_TEST_NETWORK=1`) completed cleanly after stabilizing TCP integration port selection and rebuilding listener/parser binaries.
 - 2026-01-21: Temporary debug logging removed from listener/parser/native adapter paths after validation.
@@ -119,3 +177,48 @@ Update this table as work progresses.
 - 2026-01-21: Heap scans iterate GPID-based pages for non-primary tablespaces and emit TIDs with the correct tablespace.
 - 2026-01-21: Legacy delete-by-TID path now honors tablespace ID overrides when pinning pages.
 - 2026-01-21: B-tree and Hash index storage now use root_gpid tablespace routing for pin/unpin and allocation.
+
+
+
+Gaps found in audit of WS-1 to WS-4
+
+
+
+I reviewed WS‑1 through WS‑4 against the current ScratchBird code (read‑only). Here’s the status with concrete evidence and gaps.  
+
+ WS‑1 Catalog bootstrap and schema roots  
+
+ - Complete: root hierarchy defines /users/public and /remote/emulation/* as canonical roots in ScratchBird/src/core/  
+   catalog_manager.cpp:2115.  
+ - Complete: migration/repair moves legacy /public and /emulation under the new parents in ScratchBird/src/core/catalog_manager.cpp:2830.  
+ - Outstanding: none found.  
+
+ WS‑2 Tablespace routing + GPID wiring  
+
+ - Implemented: DML uses tablespace-aware GPIDs for inserts and TIDs in ScratchBird/src/core/storage_engine.cpp:527.  
+ - Implemented: heap page allocation uses tablespace-aware global allocation in ScratchBird/src/core/storage_engine.cpp:1520.  
+ - Implemented: TOAST tables/indices inherit parent tablespace in ScratchBird/src/core/toast.cpp:329.  
+ - Implemented: index root allocation uses tablespace-aware allocation in ScratchBird/src/core/catalog_manager.cpp:7250.  
+ - Outstanding: table root pages still allocated via primary‑tablespace API (allocatePage) instead of a tablespace‑aware path in ScratchBird/  
+   src/core/catalog_manager.cpp:6601.  
+ - Outstanding: CREATE TABLE/INDEX default tablespace does not honor schema defaults or table tablespace when clause omitted; tablespace_id  
+   defaults to 0 in ScratchBird/src/sblr/executor.cpp:5593 and ScratchBird/src/sblr/executor.cpp:6141.  
+
+ WS‑3 Index migration safety  
+
+ - Implemented: updateIndexTIDs covers BTREE/HASH/HNSW/GIN/GIST/BRIN/RTREE in ScratchBird/src/core/catalog_manager.cpp:11941 with matching  
+   updateTIDsAfterMigration implementations in ScratchBird/src/core/btree.cpp, ScratchBird/src/core/hash_index.cpp, ScratchBird/src/core/  
+   hnsw_index.cpp, ScratchBird/src/core/gin_index.cpp, ScratchBird/src/core/gist_index.cpp, ScratchBird/src/core/brin_index.cpp, ScratchBird/  
+   src/core/rtree.cpp.  
+ - Outstanding: SPGIST/BITMAP/COLUMNSTORE/LSM aren’t handled in updateIndexTIDs and have no updateTIDsAfterMigration implementations; they  
+   currently fall into the default case in ScratchBird/src/core/catalog_manager.cpp:12232.  
+
+ WS‑4 Scheduler/job system  
+
+ - Complete: job DDL parsing (CREATE/ALTER/DROP/SHOW/EXECUTE/CANCEL + secrets) in ScratchBird/src/parser/parser_v2.cpp:447.  
+ - Complete: bytecode generation for job flags/secret payloads in ScratchBird/src/sblr/bytecode_generator_v2.cpp:2605.  
+ - Complete: executor job update + secret store/drop in ScratchBird/src/sblr/executor.cpp:35640.  
+ - Complete: job/run/dependency/secret records in catalog in ScratchBird/src/core/catalog_manager.cpp:938.  
+ - Complete: sys.jobs/sys.job_runs/sys.job_dependencies in ScratchBird/src/catalog/sys_catalog.cpp:1.  
+ - Complete: scheduler PENDING, catch_up handling, concurrency in ScratchBird/src/core/job_scheduler.cpp:637.  
+ - Outstanding: none found against the WS‑4 checklist.

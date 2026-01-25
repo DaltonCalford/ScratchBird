@@ -600,6 +600,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateDisconnect(disconnect);
     } else if (auto* set = dynamic_cast<ResolvedSetStmt*>(stmt)) {
         generateSet(set);
+    } else if (auto* alter_system = dynamic_cast<ResolvedAlterSystemStmt*>(stmt)) {
+        generateAlterSystem(alter_system);
     } else if (auto* show = dynamic_cast<ResolvedShowStmt*>(stmt)) {
         generateShow(show);
     } else if (auto* sweep = dynamic_cast<ResolvedSweepDatabaseStmt*>(stmt)) {
@@ -2006,6 +2008,8 @@ void BytecodeGeneratorV2::generateCreateJob(ResolvedCreateJobStmt* stmt) {
     if (stmt->has_state) flags |= 0x10;
     if (stmt->has_run_as) flags |= 0x20;
     if (stmt->has_description) flags |= 0x40;
+    if (stmt->or_alter) flags |= 0x0100;
+    if (stmt->recreate) flags |= 0x0200;
     current_result_->writeInt16(flags);
 
     current_result_->writeInt32(stmt->max_retries);
@@ -2606,6 +2610,14 @@ void BytecodeGeneratorV2::generateAlterJob(ResolvedAlterJobStmt* stmt) {
     if (stmt->has_timeout) flags |= 0x10;
     if (stmt->has_run_as) flags |= 0x20;
     if (stmt->has_description) flags |= 0x40;
+    if (stmt->has_on_completion) flags |= 0x80;
+    if (stmt->has_depends_on) flags |= 0x0100;
+    if (stmt->clear_depends_on) flags |= 0x0200;
+    if (stmt->has_partition) flags |= 0x0400;
+    if (stmt->has_job_class) flags |= 0x0800;
+    if (stmt->has_job_body) flags |= 0x1000;
+    if (stmt->has_secret) flags |= 0x2000;
+    if (stmt->drop_secret) flags |= 0x4000;
     current_result_->writeInt16(flags);
 
     current_result_->writeByte(static_cast<uint8_t>(stmt->schedule_kind));
@@ -2621,6 +2633,23 @@ void BytecodeGeneratorV2::generateAlterJob(ResolvedAlterJobStmt* stmt) {
     current_result_->writeInt32(stmt->timeout_seconds);
     writeStringId(stmt->run_as_role);
     writeStringId(stmt->description);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->on_completion));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->job_type));
+    writeStringId(stmt->job_sql);
+    writeStringId(stmt->procedure_name);
+    writeStringId(stmt->external_command);
+    writeStringId(stmt->job_class);
+    writeStringId(stmt->partition_strategy);
+    writeStringId(stmt->partition_expression);
+    writeStringId(stmt->partition_shard);
+    current_result_->writeListCount(stmt->depends_on.size());
+    for (auto dep : stmt->depends_on) {
+        writeStringId(dep);
+    }
+    if (stmt->has_secret) {
+        writeStringId(stmt->secret_key);
+        writeStringId(stmt->secret_value);
+    }
 }
 
 void BytecodeGeneratorV2::generateRenameObject(ResolvedRenameObjectStmt* stmt) {
@@ -3061,6 +3090,17 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
     }
 }
 
+void BytecodeGeneratorV2::generateAlterSystem(ResolvedAlterSystemStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ALTER_SYSTEM);
+    writeStringId(stmt->variable_name);
+    if (!stmt->value) {
+        current_result_->writeByte(0);
+        return;
+    }
+    current_result_->writeByte(1);
+    generateExpression(stmt->value);
+}
+
 void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
     switch (stmt->show_type) {
         // Session variable commands
@@ -3180,6 +3220,24 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
             writeStringId(stmt->variable_name);  // Optional FOR object_name
             break;
 
+        case ShowStmt::ShowType::JOBS:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SHOW_JOBS);
+            writeStringId(stmt->like_pattern);   // Optional LIKE pattern
+            break;
+
+        case ShowStmt::ShowType::JOB:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SHOW_JOB);
+            writeStringId(stmt->variable_name);  // Job name
+            break;
+
+        case ShowStmt::ShowType::JOB_RUNS:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SHOW_JOB_RUNS);
+            writeStringId(stmt->variable_name);  // Job name
+            break;
+
         case ShowStmt::ShowType::CHECKS:
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_SHOW_CHECKS);
@@ -3230,6 +3288,11 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
                 sblr::ExtendedOpcode::EXT_SHOW_SYSTEM);
             break;
 
+        case ShowStmt::ShowType::METRICS:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SHOW_METRICS);
+            break;
+
         default:
             current_result_->addError("Unsupported SHOW type");
             break;
@@ -3254,6 +3317,8 @@ void BytecodeGeneratorV2::generateGrant(ResolvedGrantStmt* stmt) {
                 return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::FUNCTION);
             case PrivilegeObjectType::PROCEDURE:
                 return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::PROCEDURE);
+            case PrivilegeObjectType::JOB:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::JOB);
             case PrivilegeObjectType::SCHEMA:
                 return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SCHEMA);
             case PrivilegeObjectType::DATABASE:
@@ -3319,6 +3384,8 @@ void BytecodeGeneratorV2::generateRevoke(ResolvedRevokeStmt* stmt) {
                 return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::FUNCTION);
             case PrivilegeObjectType::PROCEDURE:
                 return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::PROCEDURE);
+            case PrivilegeObjectType::JOB:
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::JOB);
             case PrivilegeObjectType::SCHEMA:
                 return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SCHEMA);
             case PrivilegeObjectType::DATABASE:

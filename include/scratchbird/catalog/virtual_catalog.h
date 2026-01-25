@@ -270,7 +270,9 @@ public:
         catalog_manager_ = catalog;
         // Update all registered handlers
         for (auto& pair : handlers_) {
-            pair.second->setCatalogManager(catalog);
+            for (auto& handler : pair.second) {
+                handler->setCatalogManager(catalog);
+            }
         }
     }
 
@@ -285,7 +287,7 @@ public:
         if (catalog_manager_) {
             handler->setCatalogManager(catalog_manager_);
         }
-        handlers_[protocol] = std::move(handler);
+        handlers_[protocol].push_back(std::move(handler));
     }
 
     /**
@@ -296,7 +298,10 @@ public:
      */
     VirtualCatalogHandler* getHandler(ProtocolType protocol) {
         auto it = handlers_.find(protocol);
-        return (it != handlers_.end()) ? it->second.get() : nullptr;
+        if (it == handlers_.end() || it->second.empty()) {
+            return nullptr;
+        }
+        return it->second.front().get();
     }
 
     /**
@@ -307,8 +312,10 @@ public:
      */
     bool isVirtualSchema(const std::string& schema_name) const {
         for (const auto& pair : handlers_) {
-            if (pair.second->ownsSchema(schema_name)) {
-                return true;
+            for (const auto& handler : pair.second) {
+                if (handler->ownsSchema(schema_name)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -322,8 +329,10 @@ public:
      */
     VirtualCatalogHandler* findSchemaHandler(const std::string& schema_name) {
         for (auto& pair : handlers_) {
-            if (pair.second->ownsSchema(schema_name)) {
-                return pair.second.get();
+            for (auto& handler : pair.second) {
+                if (handler->ownsSchema(schema_name)) {
+                    return handler.get();
+                }
             }
         }
         return nullptr;
@@ -347,13 +356,17 @@ public:
                       VirtualResultSet& results,
                       ErrorContext* ctx = nullptr) {
         // First try protocol-specific handler
-        auto* handler = getHandler(protocol);
-        if (handler && handler->ownsTable(schema_name, table_name)) {
-            return handler->queryTable(schema_name, table_name, where_clause, results, ctx);
+        auto it = handlers_.find(protocol);
+        if (it != handlers_.end()) {
+            for (auto& handler : it->second) {
+                if (handler->ownsTable(schema_name, table_name)) {
+                    return handler->queryTable(schema_name, table_name, where_clause, results, ctx);
+                }
+            }
         }
 
         // Fall back to any handler that owns the schema
-        handler = findSchemaHandler(schema_name);
+        auto* handler = findSchemaHandler(schema_name);
         if (handler && handler->ownsTable(schema_name, table_name)) {
             return handler->queryTable(schema_name, table_name, where_clause, results, ctx);
         }
@@ -378,6 +391,15 @@ public:
                                   const std::string& table_name,
                                   std::vector<CatalogManager::ColumnInfo>& columns,
                                   ErrorContext* ctx = nullptr) {
+        auto it = handlers_.find(protocol);
+        if (it != handlers_.end()) {
+            for (auto& handler : it->second) {
+                if (handler->ownsTable(schema_name, table_name)) {
+                    return handler->getTableColumns(schema_name, table_name, columns, ctx);
+                }
+            }
+        }
+
         auto* handler = findSchemaHandler(schema_name);
         if (handler && handler->ownsTable(schema_name, table_name)) {
             return handler->getTableColumns(schema_name, table_name, columns, ctx);
@@ -407,7 +429,7 @@ public:
 private:
     VirtualCatalogRouter() = default;
 
-    std::unordered_map<ProtocolType, std::unique_ptr<VirtualCatalogHandler>> handlers_;
+    std::unordered_map<ProtocolType, std::vector<std::unique_ptr<VirtualCatalogHandler>>> handlers_;
     CatalogManager* catalog_manager_ = nullptr;
 };
 

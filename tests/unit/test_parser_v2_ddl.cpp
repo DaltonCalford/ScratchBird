@@ -50,7 +50,8 @@ TEST_F(ParserV2DDLTest, CreateTable_SchemaQualified) {
     Parser parser("CREATE TABLE public.orders (id INT)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_EQ(stmt->table_path.type, PathType::ABSOLUTE);
@@ -61,7 +62,8 @@ TEST_F(ParserV2DDLTest, CreateTable_CurrentSchema) {
     Parser parser("CREATE TABLE .orders (id INT)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_EQ(stmt->table_path.type, PathType::CURRENT);
@@ -72,7 +74,8 @@ TEST_F(ParserV2DDLTest, CreateTable_IfNotExists) {
     Parser parser("CREATE TABLE IF NOT EXISTS users (id INT)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_TRUE(stmt->if_not_exists);
@@ -82,7 +85,8 @@ TEST_F(ParserV2DDLTest, CreateTable_Temporary) {
     Parser parser("CREATE TEMPORARY TABLE temp_data (id INT)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_EQ(stmt->temp_type, TempTableType::SESSION);
@@ -96,7 +100,8 @@ TEST_F(ParserV2DDLTest, CreateTable_NumericTypes) {
     Parser parser("CREATE TABLE t (a SMALLINT, b INTEGER, c BIGINT, d DECIMAL(10,2), e FLOAT)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_EQ(stmt->columns.size(), 5);
@@ -109,7 +114,8 @@ TEST_F(ParserV2DDLTest, CreateTable_StringTypes) {
     Parser parser("CREATE TABLE t (a CHAR(10), b VARCHAR(255), c TEXT)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_EQ(stmt->columns.size(), 3);
@@ -121,7 +127,8 @@ TEST_F(ParserV2DDLTest, CreateTable_ArrayType) {
     Parser parser("CREATE TABLE t (tags VARCHAR[])");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_TRUE(stmt->columns[0]->type.is_array);
@@ -131,7 +138,8 @@ TEST_F(ParserV2DDLTest, CreateTable_TimestampWithTimeZone) {
     Parser parser("CREATE TABLE t (created TIMESTAMP WITH TIME ZONE)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_TRUE(stmt->columns[0]->type.with_time_zone);
@@ -145,7 +153,8 @@ TEST_F(ParserV2DDLTest, CreateTable_NotNull) {
     Parser parser("CREATE TABLE t (id INT NOT NULL)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     ASSERT_GE(stmt->columns[0]->constraints.size(), 1);
@@ -156,7 +165,8 @@ TEST_F(ParserV2DDLTest, CreateTable_PrimaryKey) {
     Parser parser("CREATE TABLE t (id INT PRIMARY KEY)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     ASSERT_GE(stmt->columns[0]->constraints.size(), 1);
@@ -167,7 +177,8 @@ TEST_F(ParserV2DDLTest, CreateTable_Unique) {
     Parser parser("CREATE TABLE t (email VARCHAR(100) UNIQUE)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     ASSERT_GE(stmt->columns[0]->constraints.size(), 1);
@@ -178,7 +189,8 @@ TEST_F(ParserV2DDLTest, CreateTable_Default) {
     Parser parser("CREATE TABLE t (status INT DEFAULT 0)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     ASSERT_GE(stmt->columns[0]->constraints.size(), 1);
@@ -190,7 +202,8 @@ TEST_F(ParserV2DDLTest, CreateTable_References) {
     Parser parser("CREATE TABLE orders (user_id INT REFERENCES users(id))");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     ASSERT_GE(stmt->columns[0]->constraints.size(), 1);
@@ -205,7 +218,8 @@ TEST_F(ParserV2DDLTest, CreateTable_ReferencesOnDelete) {
     Parser parser("CREATE TABLE orders (user_id INT REFERENCES users ON DELETE CASCADE)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     auto& constraint = stmt->columns[0]->constraints[0];
@@ -216,7 +230,8 @@ TEST_F(ParserV2DDLTest, CreateTable_MultipleColumnConstraints) {
     Parser parser("CREATE TABLE t (id INT NOT NULL PRIMARY KEY DEFAULT 1)");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     EXPECT_GE(stmt->columns[0]->constraints.size(), 3);
@@ -230,7 +245,8 @@ TEST_F(ParserV2DDLTest, CreateTable_TablePrimaryKey) {
     Parser parser("CREATE TABLE t (id INT, name VARCHAR(50), PRIMARY KEY (id))");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     ASSERT_EQ(stmt->constraints.size(), 1);
@@ -243,7 +259,8 @@ TEST_F(ParserV2DDLTest, CreateTable_CompositePrimaryKey) {
     Parser parser("CREATE TABLE t (a INT, b INT, PRIMARY KEY (a, b))");
     auto result = parser.parseStatement();
 
-    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
     auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
 
     ASSERT_EQ(stmt->constraints.size(), 1);
@@ -927,6 +944,171 @@ TEST_F(ParserV2DDLTest, CancelJobRun_Basic) {
 
     ASSERT_NE(stmt, nullptr);
     EXPECT_EQ(getString(parser, stmt->job_run_uuid), "01234567-89ab-cdef-0123-456789abcdef");
+}
+
+TEST_F(ParserV2DDLTest, CreateJob_AllSettings) {
+    Parser parser(
+        "CREATE JOB nightly_etl "
+        "SCHEDULE = CRON '0 2 * * *' "
+        "DEPENDS ON daily_sweep, update_stats "
+        "CLASS = LOCAL_SAFE "
+        "PARTITION BY SHARD_SET 'region=*' "
+        "MAX_RETRIES = 3 "
+        "RETRY_BACKOFF = 10 MINUTES "
+        "TIMEOUT = 2 HOURS "
+        "ON COMPLETION DROP "
+        "RUN AS analyst_role "
+        "DESCRIPTION = 'nightly ETL job' "
+        "STATE = PAUSED "
+        "AS 'SELECT 1'");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
+    auto* stmt = dynamic_cast<CreateJobStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(getString(parser, stmt->job_name), "nightly_etl");
+    EXPECT_EQ(stmt->schedule_kind, JobScheduleKind::CRON);
+    EXPECT_EQ(getString(parser, stmt->cron_expression), "0 2 * * *");
+    EXPECT_EQ(stmt->depends_on.size(), 2u);
+    EXPECT_EQ(getString(parser, stmt->depends_on[0]), "daily_sweep");
+    EXPECT_EQ(getString(parser, stmt->depends_on[1]), "update_stats");
+    EXPECT_TRUE(stmt->has_max_retries);
+    EXPECT_EQ(stmt->max_retries, 3u);
+    EXPECT_TRUE(stmt->has_retry_backoff);
+    EXPECT_EQ(stmt->retry_backoff_seconds, 600u);
+    EXPECT_TRUE(stmt->has_timeout);
+    EXPECT_EQ(stmt->timeout_seconds, 7200u);
+    EXPECT_TRUE(stmt->has_on_completion);
+    EXPECT_EQ(stmt->on_completion, JobOnCompletion::DROP);
+    EXPECT_TRUE(stmt->has_run_as);
+    EXPECT_EQ(getString(parser, stmt->run_as_role), "analyst_role");
+    EXPECT_TRUE(stmt->has_description);
+    EXPECT_EQ(getString(parser, stmt->description), "nightly ETL job");
+    EXPECT_TRUE(stmt->has_state);
+    EXPECT_EQ(stmt->state, JobState::PAUSED);
+}
+
+TEST_F(ParserV2DDLTest, CreateOrAlterJob_Basic) {
+    Parser parser(
+        "CREATE OR ALTER JOB hourly_stats "
+        "SCHEDULE = EVERY 10 MINUTES "
+        "AS 'SELECT 1'");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
+    auto* stmt = dynamic_cast<CreateJobStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->or_alter);
+    EXPECT_FALSE(stmt->recreate);
+}
+
+TEST_F(ParserV2DDLTest, RecreateJob_Basic) {
+    Parser parser(
+        "RECREATE JOB daily_rollup "
+        "SCHEDULE = CRON '0 1 * * *' "
+        "AS 'SELECT 1'");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<CreateJobStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_FALSE(stmt->or_alter);
+    EXPECT_TRUE(stmt->recreate);
+}
+
+TEST_F(ParserV2DDLTest, AlterJob_Advanced) {
+    Parser parser(
+        "ALTER JOB nightly_etl "
+        "SET DEPENDS ON daily_sweep, update_stats, archive_log "
+        "SET ON COMPLETION DROP "
+        "SET PARTITION BY DYNAMIC 'region=*' "
+        "SET AS 'SELECT 1'");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
+    auto* stmt = dynamic_cast<AlterJobStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->has_depends_on);
+    EXPECT_EQ(stmt->depends_on.size(), 3u);
+    EXPECT_TRUE(stmt->has_on_completion);
+    EXPECT_EQ(stmt->on_completion, JobOnCompletion::DROP);
+    EXPECT_TRUE(stmt->has_partition);
+    EXPECT_EQ(getString(parser, stmt->partition_strategy), "DYNAMIC");
+    EXPECT_TRUE(stmt->has_job_body);
+    EXPECT_EQ(stmt->job_type, JobType::SQL);
+}
+
+TEST_F(ParserV2DDLTest, AlterJob_StatePaused) {
+    Parser parser("ALTER JOB nightly_etl SET STATE = PAUSED");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<AlterJobStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(getString(parser, stmt->job_name), "nightly_etl");
+    EXPECT_TRUE(stmt->has_state);
+    EXPECT_EQ(stmt->state, JobState::PAUSED);
+}
+
+TEST_F(ParserV2DDLTest, DropJob_KeepHistory) {
+    Parser parser("DROP JOB nightly_etl KEEP HISTORY");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<DropJobStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(getString(parser, stmt->job_name), "nightly_etl");
+    EXPECT_TRUE(stmt->keep_history);
+}
+
+TEST_F(ParserV2DDLTest, ShowJobs_LikePattern) {
+    Parser parser("SHOW JOBS LIKE 'night%'");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<ShowStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->show_type, ShowStmt::ShowType::JOBS);
+    EXPECT_EQ(getString(parser, stmt->like_pattern), "night%");
+}
+
+TEST_F(ParserV2DDLTest, ShowJobRuns_ForJob) {
+    Parser parser("SHOW JOB RUNS FOR nightly_etl");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<ShowStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->show_type, ShowStmt::ShowType::JOB_RUNS);
+    EXPECT_EQ(getString(parser, stmt->name), "nightly_etl");
+}
+
+TEST_F(ParserV2DDLTest, GrantExecuteOnJob) {
+    Parser parser("GRANT EXECUTE ON JOB nightly_etl TO alice");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<GrantStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->object_type, PrivilegeObjectType::JOB);
+    ASSERT_FALSE(stmt->privileges.empty());
+    EXPECT_EQ(stmt->privileges[0], PrivilegeType::EXECUTE);
+}
+
+TEST_F(ParserV2DDLTest, RevokeExecuteOnJob) {
+    Parser parser("REVOKE EXECUTE ON JOB nightly_etl FROM alice");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<RevokeStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->object_type, PrivilegeObjectType::JOB);
+    ASSERT_FALSE(stmt->privileges.empty());
+    EXPECT_EQ(stmt->privileges[0], PrivilegeType::EXECUTE);
 }
 
 // =============================================================================

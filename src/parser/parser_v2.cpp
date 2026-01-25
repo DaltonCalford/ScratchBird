@@ -161,6 +161,10 @@ Statement* Parser::parseStatementInternal() {
 
     // Gatekeeper dispatch
     if (check(TokenType::KW_WITH))      return parseWithStatement();
+    if (matchContextual("RECREATE")) {
+        expectContextual("JOB", "Expected JOB after RECREATE");
+        return parseCreateJob(false, true);
+    }
     if (match(TokenType::KW_CREATE))    return parseCreate();
     if (match(TokenType::KW_ALTER))     return parseAlter();
     if (match(TokenType::KW_DROP))      return parseDrop();
@@ -230,12 +234,18 @@ Statement* Parser::parseStatementInternal() {
 Statement* Parser::parseCreate() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
-    // Check for OR REPLACE
+    // Check for OR REPLACE / OR ALTER
     bool or_replace = false;
-    if (checkContextual("OR")) {
-        matchContextual("OR");
-        expectContextual("REPLACE", "Expected REPLACE after OR");
-        or_replace = true;
+    bool or_alter = false;
+    if (check(TokenType::KW_OR) || checkContextual("OR")) {
+        match(TokenType::KW_OR) || matchContextual("OR");
+        if (matchContextual("REPLACE")) {
+            or_replace = true;
+        } else if (match(TokenType::KW_ALTER) || matchContextual("ALTER")) {
+            or_alter = true;
+        } else {
+            error("Expected REPLACE or ALTER after OR");
+        }
     }
 
     // Check for UNIQUE (for CREATE UNIQUE INDEX)
@@ -279,18 +289,30 @@ Statement* Parser::parseCreate() {
 
     // Dispatch based on object type
     if (matchContextual("SCHEMA")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
         return parseCreateSchema();
     }
 
     if (matchContextual("DATABASE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
         return parseCreateDatabase();
     }
 
     if (matchContextual("DOMAIN")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
         return parseCreateDomain();
     }
 
     if (matchContextual("TABLE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
         auto* stmt = parseCreateTable(or_replace, temp_type);
         if (stmt) {
             stmt->temp_type = temp_type;
@@ -300,6 +322,9 @@ Statement* Parser::parseCreate() {
     }
 
     if (matchContextual("INDEX")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
         auto* stmt = parseCreateIndex();
         if (stmt) {
             stmt->unique = unique;
@@ -308,6 +333,9 @@ Statement* Parser::parseCreate() {
     }
 
     if (matchContextual("VIEW")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
         auto* stmt = parseCreateView(or_replace);
         if (stmt) {
             stmt->temporary = temporary;
@@ -317,6 +345,9 @@ Statement* Parser::parseCreate() {
     }
 
     if (matchContextual("SEQUENCE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
         auto* stmt = parseCreateSequence();
         if (stmt) {
             stmt->or_replace = or_replace;
@@ -325,12 +356,42 @@ Statement* Parser::parseCreate() {
         return stmt;
     }
 
-    if (matchContextual("FUNCTION"))   return parseCreateFunction(or_replace);
-    if (matchContextual("PROCEDURE"))  return parseCreateProcedure(or_replace);
-    if (matchContextual("TRIGGER"))    return parseCreateTrigger(or_replace);
-    if (matchContextual("USER"))       return parseCreateUser();
-    if (matchContextual("ROLE"))       return parseCreateRole();
-    if (matchContextual("JOB"))        return parseCreateJob();
+    if (matchContextual("FUNCTION")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateFunction(or_replace);
+    }
+    if (matchContextual("PROCEDURE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateProcedure(or_replace);
+    }
+    if (matchContextual("TRIGGER")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateTrigger(or_replace);
+    }
+    if (matchContextual("USER")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateUser();
+    }
+    if (matchContextual("ROLE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateRole();
+    }
+    if (matchContextual("JOB")) {
+        if (or_replace) {
+            error("CREATE OR REPLACE is not supported for JOB");
+        }
+        return parseCreateJob(or_alter, false);
+    }
 
     error("Expected object type after CREATE (TABLE, INDEX, VIEW, SEQUENCE, ROLE, USER, ...)");
     return nullptr;
@@ -387,10 +448,12 @@ CreateRoleStmt* Parser::parseCreateRole() {
 // CREATE JOB
 // =============================================================================
 
-CreateJobStmt* Parser::parseCreateJob() {
+CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
     SourceLocation start = currentLocation();
 
     auto* stmt = arena_.create<CreateJobStmt>();
+    stmt->or_alter = or_alter;
+    stmt->recreate = recreate;
     stmt->job_name = expectIdentifier("Expected job name");
 
     auto parse_duration_seconds = [&](const char* context) -> uint32_t {
@@ -474,10 +537,101 @@ CreateJobStmt* Parser::parseCreateJob() {
         error("Expected CRON, AT, or EVERY after SCHEDULE");
     };
 
+    auto parse_partition_list = [&](const char* context) -> StringPool::StringId {
+        expect(TokenType::LEFT_PAREN, std::string("Expected '(' after ").append(context));
+        std::string combined;
+        bool first = true;
+        while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+            if (!check(TokenType::STRING_LITERAL) && !check(TokenType::IDENTIFIER)) {
+                error(std::string("Expected shard identifier or string for ").append(context));
+                break;
+            }
+            auto text = stringPool().get(current().value.string_id);
+            advance();
+            if (!first) {
+                combined.push_back(',');
+            }
+            combined.append(text);
+            first = false;
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(context));
+        if (combined.empty()) {
+            error(std::string(context).append(" requires at least one shard"));
+            return StringPool::INVALID_ID;
+        }
+        return stringPool().intern(combined);
+    };
+
+    auto parse_partition_expression = [&](const char* context) -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::IDENTIFIER)) {
+            auto id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::RIGHT_PAREN)) {
+                error(std::string(context).append(" expression cannot be empty"));
+                advance();
+                return StringPool::INVALID_ID;
+            }
+
+            std::string_view input = state_.lexer().input();
+            size_t start = current().span.start.offset;
+            size_t end = start;
+            bool saw_token = false;
+            int depth = 1;
+            Token last = current();
+
+            while (!isAtEnd()) {
+                if (check(TokenType::LEFT_PAREN)) {
+                    depth++;
+                } else if (check(TokenType::RIGHT_PAREN)) {
+                    depth--;
+                    if (depth == 0) {
+                        break;
+                    }
+                }
+                last = current();
+                saw_token = true;
+                advance();
+            }
+
+            if (saw_token) {
+                end = last.span.start.offset + last.span.length;
+                if (end > input.size()) {
+                    end = input.size();
+                }
+            }
+
+            expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(context));
+            if (!saw_token || end <= start) {
+                error(std::string(context).append(" expression cannot be empty"));
+                return StringPool::INVALID_ID;
+            }
+
+            std::string_view text = input.substr(start, end - start);
+            size_t trim_start = text.find_first_not_of(" \t\r\n");
+            if (trim_start == std::string_view::npos) {
+                error(std::string(context).append(" expression cannot be empty"));
+                return StringPool::INVALID_ID;
+            }
+            size_t trim_end = text.find_last_not_of(" \t\r\n");
+            return stringPool().intern(text.substr(trim_start, trim_end - trim_start + 1));
+        }
+
+        error(std::string("Expected expression for ").append(context));
+        return StringPool::INVALID_ID;
+    };
+
     bool has_schedule = false;
 
     while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
-        if (checkContextual("AS") || checkContextual("CALL") || checkContextual("EXEC")) {
+        if (check(TokenType::KW_AS) || check(TokenType::KW_CALL) ||
+            check(TokenType::KW_EXECUTE) ||
+            checkContextual("AS") || checkContextual("CALL") || checkContextual("EXEC")) {
             break;
         }
 
@@ -485,7 +639,9 @@ CreateJobStmt* Parser::parseCreateJob() {
             parse_schedule();
             has_schedule = true;
         } else if (matchContextual("DEPENDS")) {
-            expectContextual("ON", "Expected ON after DEPENDS");
+            if (!(match(TokenType::KW_ON) || matchContextual("ON"))) {
+                error("Expected ON after DEPENDS");
+            }
             do {
                 stmt->depends_on.push_back(expectIdentifier("Expected dependency job name"));
             } while (match(TokenType::COMMA));
@@ -501,10 +657,14 @@ CreateJobStmt* Parser::parseCreateJob() {
                 stmt->partition_shard = parse_timestamp_literal("SINGLE_SHARD");
             } else if (matchContextual("SHARD_SET")) {
                 stmt->partition_strategy = stringPool().intern("SHARD_SET");
-                stmt->partition_expression = parse_timestamp_literal("SHARD_SET");
+                if (check(TokenType::LEFT_PAREN)) {
+                    stmt->partition_expression = parse_partition_list("SHARD_SET");
+                } else {
+                    stmt->partition_expression = parse_partition_expression("SHARD_SET");
+                }
             } else if (matchContextual("DYNAMIC")) {
                 stmt->partition_strategy = stringPool().intern("DYNAMIC");
-                stmt->partition_expression = parse_timestamp_literal("DYNAMIC");
+                stmt->partition_expression = parse_partition_expression("DYNAMIC");
             } else {
                 error("Expected partition strategy after PARTITION BY");
             }
@@ -525,18 +685,22 @@ CreateJobStmt* Parser::parseCreateJob() {
             expect(TokenType::EQUAL, "Expected '=' after TIMEOUT");
             stmt->has_timeout = true;
             stmt->timeout_seconds = parse_duration_seconds("TIMEOUT");
-        } else if (matchContextual("ON")) {
-            expectContextual("COMPLETION", "Expected COMPLETION after ON");
+        } else if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            if (!matchContextual("COMPLETION")) {
+                error("Expected COMPLETION after ON");
+            }
             stmt->has_on_completion = true;
             if (matchContextual("PRESERVE")) {
                 stmt->on_completion = JobOnCompletion::PRESERVE;
-            } else if (matchContextual("DROP")) {
+            } else if (match(TokenType::KW_DROP) || matchContextual("DROP")) {
                 stmt->on_completion = JobOnCompletion::DROP;
             } else {
                 error("Expected PRESERVE or DROP after ON COMPLETION");
             }
         } else if (matchContextual("RUN")) {
-            expectContextual("AS", "Expected AS after RUN");
+            if (!(match(TokenType::KW_AS) || matchContextual("AS"))) {
+                error("Expected AS after RUN");
+            }
             stmt->has_run_as = true;
             stmt->run_as_role = expectIdentifier("Expected role name after RUN AS");
         } else if (matchContextual("DESCRIPTION")) {
@@ -548,12 +712,27 @@ CreateJobStmt* Parser::parseCreateJob() {
                 stmt->description = current().value.string_id;
                 advance();
             }
+        } else if (matchContextual("STATE")) {
+            expect(TokenType::EQUAL, "Expected '=' after STATE");
+            stmt->has_state = true;
+            if (matchContextual("ENABLED")) {
+                stmt->state = JobState::ENABLED;
+            } else if (matchContextual("DISABLED")) {
+                stmt->state = JobState::DISABLED;
+            } else if (matchContextual("PAUSED")) {
+                stmt->state = JobState::PAUSED;
+            } else {
+                error("Expected ENABLED, DISABLED, or PAUSED after STATE");
+            }
         } else if (matchContextual("ENABLED")) {
             stmt->has_state = true;
             stmt->state = JobState::ENABLED;
         } else if (matchContextual("DISABLED")) {
             stmt->has_state = true;
             stmt->state = JobState::DISABLED;
+        } else if (matchContextual("PAUSED")) {
+            stmt->has_state = true;
+            stmt->state = JobState::PAUSED;
         } else {
             break;
         }
@@ -563,7 +742,7 @@ CreateJobStmt* Parser::parseCreateJob() {
         error("CREATE JOB requires SCHEDULE");
     }
 
-    if (matchContextual("AS")) {
+    if (match(TokenType::KW_AS) || matchContextual("AS")) {
         if (!check(TokenType::STRING_LITERAL)) {
             error("Expected SQL string after AS");
         } else {
@@ -571,7 +750,7 @@ CreateJobStmt* Parser::parseCreateJob() {
             stmt->job_sql = current().value.string_id;
             advance();
         }
-    } else if (matchContextual("CALL")) {
+    } else if (match(TokenType::KW_CALL) || matchContextual("CALL")) {
         stmt->job_type = JobType::PROCEDURE;
         SchemaPath proc_path = parseSchemaPath(state_);
         if (proc_path.isEmpty()) {
@@ -583,7 +762,7 @@ CreateJobStmt* Parser::parseCreateJob() {
         if (match(TokenType::LEFT_PAREN)) {
             expect(TokenType::RIGHT_PAREN, "Expected ')' after CALL procedure");
         }
-    } else if (matchContextual("EXEC")) {
+    } else if (match(TokenType::KW_EXECUTE) || matchContextual("EXEC")) {
         stmt->job_type = JobType::EXTERNAL;
         if (!check(TokenType::STRING_LITERAL)) {
             error("Expected command string after EXEC");
@@ -2599,6 +2778,7 @@ Statement* Parser::parseAlter() {
     if (matchContextual("DATABASE")) return parseAlterDatabase();
     if (matchContextual("DOMAIN")) return parseAlterDomain();
     if (matchContextual("JOB")) return parseAlterJob();
+    if (matchContextual("SYSTEM")) return parseAlterSystem();
 
     auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
         SourceLocation start = currentLocation();
@@ -2983,11 +3163,216 @@ AlterJobStmt* Parser::parseAlterJob() {
         return false;
     };
 
+    auto parse_partition_list = [&](const char* context) -> StringPool::StringId {
+        expect(TokenType::LEFT_PAREN, std::string("Expected '(' after ").append(context));
+        std::string combined;
+        bool first = true;
+        while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+            if (!check(TokenType::STRING_LITERAL) && !check(TokenType::IDENTIFIER)) {
+                error(std::string("Expected shard identifier or string for ").append(context));
+                break;
+            }
+            auto text = stringPool().get(current().value.string_id);
+            advance();
+            if (!first) {
+                combined.push_back(',');
+            }
+            combined.append(text);
+            first = false;
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(context));
+        if (combined.empty()) {
+            error(std::string(context).append(" requires at least one shard"));
+            return StringPool::INVALID_ID;
+        }
+        return stringPool().intern(combined);
+    };
+
+    auto parse_partition_expression = [&](const char* context) -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::IDENTIFIER)) {
+            auto id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::RIGHT_PAREN)) {
+                error(std::string(context).append(" expression cannot be empty"));
+                advance();
+                return StringPool::INVALID_ID;
+            }
+
+            std::string_view input = state_.lexer().input();
+            size_t start = current().span.start.offset;
+            size_t end = start;
+            bool saw_token = false;
+            int depth = 1;
+            Token last = current();
+
+            while (!isAtEnd()) {
+                if (check(TokenType::LEFT_PAREN)) {
+                    depth++;
+                } else if (check(TokenType::RIGHT_PAREN)) {
+                    depth--;
+                    if (depth == 0) {
+                        break;
+                    }
+                }
+                last = current();
+                saw_token = true;
+                advance();
+            }
+
+            if (saw_token) {
+                end = last.span.start.offset + last.span.length;
+                if (end > input.size()) {
+                    end = input.size();
+                }
+            }
+
+            expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(context));
+            if (!saw_token || end <= start) {
+                error(std::string(context).append(" expression cannot be empty"));
+                return StringPool::INVALID_ID;
+            }
+
+            std::string_view text = input.substr(start, end - start);
+            size_t trim_start = text.find_first_not_of(" \t\r\n");
+            if (trim_start == std::string_view::npos) {
+                error(std::string(context).append(" expression cannot be empty"));
+                return StringPool::INVALID_ID;
+            }
+            size_t trim_end = text.find_last_not_of(" \t\r\n");
+            return stringPool().intern(text.substr(trim_start, trim_end - trim_start + 1));
+        }
+
+        error(std::string("Expected expression for ").append(context));
+        return StringPool::INVALID_ID;
+    };
+
+    auto parse_partition = [&]() {
+        if (!matchContextual("PARTITION")) {
+            return false;
+        }
+        expectContextual("BY", "Expected BY after PARTITION");
+        stmt->has_partition = true;
+        if (matchContextual("ALL_SHARDS")) {
+            stmt->partition_strategy = stringPool().intern("ALL_SHARDS");
+        } else if (matchContextual("SINGLE_SHARD")) {
+            stmt->partition_strategy = stringPool().intern("SINGLE_SHARD");
+            stmt->partition_shard = parse_timestamp_literal("SINGLE_SHARD");
+        } else if (matchContextual("SHARD_SET")) {
+            stmt->partition_strategy = stringPool().intern("SHARD_SET");
+            if (check(TokenType::LEFT_PAREN)) {
+                stmt->partition_expression = parse_partition_list("SHARD_SET");
+            } else {
+                stmt->partition_expression = parse_partition_expression("SHARD_SET");
+            }
+        } else if (matchContextual("DYNAMIC")) {
+            stmt->partition_strategy = stringPool().intern("DYNAMIC");
+            stmt->partition_expression = parse_partition_expression("DYNAMIC");
+        } else {
+            error("Expected partition strategy after PARTITION BY");
+        }
+        return true;
+    };
+
+    auto parse_job_body = [&]() {
+        if (match(TokenType::KW_AS) || matchContextual("AS")) {
+            stmt->has_job_body = true;
+            stmt->job_type = JobType::SQL;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected SQL string after AS");
+            } else {
+                stmt->job_sql = current().value.string_id;
+                advance();
+            }
+            return true;
+        }
+        if (match(TokenType::KW_CALL) || matchContextual("CALL")) {
+            stmt->has_job_body = true;
+            stmt->job_type = JobType::PROCEDURE;
+            SchemaPath proc_path = parseSchemaPath(state_);
+            if (proc_path.isEmpty()) {
+                error("Expected procedure name after CALL");
+            } else {
+                std::string proc_name = schemaPathToString(proc_path, stringPool());
+                stmt->procedure_name = stringPool().intern(proc_name);
+            }
+            if (match(TokenType::LEFT_PAREN)) {
+                expect(TokenType::RIGHT_PAREN, "Expected ')' after CALL procedure");
+            }
+            return true;
+        }
+        if (match(TokenType::KW_EXECUTE) || matchContextual("EXEC")) {
+            stmt->has_job_body = true;
+            stmt->job_type = JobType::EXTERNAL;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected command string after EXEC");
+            } else {
+                stmt->external_command = current().value.string_id;
+                advance();
+            }
+            return true;
+        }
+        return false;
+    };
+
     while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
         bool saw_set = match(TokenType::KW_SET);
 
-        if (parse_schedule()) {
+        if (saw_set && matchContextual("SECRET")) {
+            stmt->has_secret = true;
+            stmt->drop_secret = false;
+            stmt->secret_key = expectIdentifier("Expected secret key after SECRET");
+            expect(TokenType::EQUAL, "Expected '=' after secret key");
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal for secret value");
+            } else {
+                stmt->secret_value = current().value.string_id;
+                advance();
+            }
+        } else if ((match(TokenType::KW_DROP) || matchContextual("DROP")) &&
+                   matchContextual("SECRET")) {
+            stmt->has_secret = true;
+            stmt->drop_secret = true;
+            stmt->secret_key = expectIdentifier("Expected secret key after DROP SECRET");
+        } else if (parse_schedule()) {
             // handled
+        } else if (parse_job_body()) {
+            // handled
+        } else if (matchContextual("DEPENDS")) {
+            if (!(match(TokenType::KW_ON) || matchContextual("ON"))) {
+                error("Expected ON after DEPENDS");
+            }
+            stmt->has_depends_on = true;
+            if (matchContextual("NONE")) {
+                stmt->clear_depends_on = true;
+            } else {
+                do {
+                    stmt->depends_on.push_back(expectIdentifier("Expected dependency job name"));
+                } while (match(TokenType::COMMA));
+            }
+        } else if (matchContextual("CLASS")) {
+            expect(TokenType::EQUAL, "Expected '=' after CLASS");
+            stmt->has_job_class = true;
+            stmt->job_class = expectIdentifier("Expected job class");
+        } else if (parse_partition()) {
+            // handled
+        } else if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            if (!matchContextual("COMPLETION")) {
+                error("Expected COMPLETION after ON");
+            }
+            stmt->has_on_completion = true;
+            if (matchContextual("PRESERVE")) {
+                stmt->on_completion = JobOnCompletion::PRESERVE;
+            } else if (match(TokenType::KW_DROP) || matchContextual("DROP")) {
+                stmt->on_completion = JobOnCompletion::DROP;
+            } else {
+                error("Expected PRESERVE or DROP after ON COMPLETION");
+            }
         } else if (matchContextual("STATE")) {
             expect(TokenType::EQUAL, "Expected '=' after STATE");
             stmt->has_state = true;
@@ -3018,7 +3403,9 @@ AlterJobStmt* Parser::parseAlterJob() {
             stmt->has_timeout = true;
             stmt->timeout_seconds = parse_duration_seconds("TIMEOUT");
         } else if (matchContextual("RUN")) {
-            expectContextual("AS", "Expected AS after RUN");
+            if (!(match(TokenType::KW_AS) || matchContextual("AS"))) {
+                error("Expected AS after RUN");
+            }
             stmt->has_run_as = true;
             stmt->run_as_role = expectIdentifier("Expected role name after RUN AS");
         } else if (matchContextual("DESCRIPTION")) {
@@ -3032,7 +3419,7 @@ AlterJobStmt* Parser::parseAlterJob() {
             }
         } else {
             if (saw_set) {
-                error("Expected SCHEDULE, STATE, MAX_RETRIES, RETRY_BACKOFF, TIMEOUT, RUN AS, or DESCRIPTION after SET");
+                error("Expected SCHEDULE, STATE, MAX_RETRIES, RETRY_BACKOFF, TIMEOUT, RUN AS, DESCRIPTION, AS, CALL, EXEC, DEPENDS ON, PARTITION BY, ON COMPLETION, or CLASS after SET");
             }
             break;
         }
@@ -3042,6 +3429,48 @@ AlterJobStmt* Parser::parseAlterJob() {
             continue;
         }
     }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AlterSystemStmt* Parser::parseAlterSystem() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+        error("Expected SET after ALTER SYSTEM");
+    }
+
+    auto parseConfigKey = [&]() -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (!isIdentifier()) {
+            error("Expected configuration key");
+            return StringPool::INVALID_ID;
+        }
+
+        std::string name = std::string(stringPool().get(current().value.string_id));
+        advance();
+        while (match(TokenType::DOT)) {
+            if (!isIdentifier()) {
+                error("Expected configuration key segment after '.'");
+                break;
+            }
+            name += ".";
+            name += std::string(stringPool().get(current().value.string_id));
+            advance();
+        }
+
+        return stringPool().intern(name);
+    };
+
+    stmt->name = parseConfigKey();
+    expect(TokenType::EQUAL, "Expected '=' after configuration key");
+    stmt->value = parseExpression();
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -5507,6 +5936,21 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
 
     expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
 
+    if (upper_name == "JSON_EXTRACT")
+    {
+        if (expr->arguments.size() < 2)
+        {
+            error("JSON_EXTRACT requires at least two arguments");
+        }
+    }
+    else if (upper_name == "JSON_OBJECT")
+    {
+        if ((expr->arguments.size() % 2) != 0)
+        {
+            error("JSON_OBJECT requires an even number of arguments");
+        }
+    }
+
     return expr;
 }
 
@@ -6573,6 +7017,34 @@ ShowStmt* Parser::parseShow() {
             stmt->name = expectIdentifier("Expected object name after FOR");
         }
     }
+    // SHOW JOBS [LIKE pattern]
+    else if (matchContextual("JOBS")) {
+        stmt->show_type = ShowStmt::ShowType::JOBS;
+        parseLikeClause();
+    }
+    // SHOW JOB name or SHOW JOB RUNS [FOR] job_name
+    else if (matchContextual("JOB")) {
+        if (matchContextual("RUNS")) {
+            stmt->show_type = ShowStmt::ShowType::JOB_RUNS;
+            if (matchContextual("FOR")) {
+                // optional
+            }
+            if (check(TokenType::STRING_LITERAL)) {
+                stmt->name = current().value.string_id;
+                advance();
+            } else {
+                stmt->name = expectIdentifier("Expected job name");
+            }
+        } else {
+            stmt->show_type = ShowStmt::ShowType::JOB;
+            if (check(TokenType::STRING_LITERAL)) {
+                stmt->name = current().value.string_id;
+                advance();
+            } else {
+                stmt->name = expectIdentifier("Expected job name");
+            }
+        }
+    }
     // SHOW CHECKS table
     else if (matchContextual("CHECKS") || matchContextual("CHECK")) {
         stmt->show_type = ShowStmt::ShowType::CHECKS;
@@ -6620,6 +7092,10 @@ ShowStmt* Parser::parseShow() {
     // SHOW SYSTEM
     else if (matchContextual("SYSTEM")) {
         stmt->show_type = ShowStmt::ShowType::SYSTEM;
+    }
+    // SHOW METRICS
+    else if (matchContextual("METRICS")) {
+        stmt->show_type = ShowStmt::ShowType::METRICS;
     }
     // SHOW PARSER VERSION (unsupported)
     else if (matchContextual("PARSER")) {
@@ -6756,12 +7232,27 @@ GrantStmt* Parser::parseGrant() {
             stmt->privileges.push_back(PrivilegeType::REFERENCES);
         } else if (matchContextual("TRIGGER")) {
             stmt->privileges.push_back(PrivilegeType::TRIGGER);
-        } else if (matchContextual("EXECUTE")) {
-            stmt->privileges.push_back(PrivilegeType::EXECUTE);
+        } else if (match(TokenType::KW_EXECUTE) || matchContextual("EXECUTE")) {
+            if (matchContextual("EXTERNAL")) {
+                expectContextual("JOB", "Expected JOB after EXECUTE EXTERNAL");
+                stmt->privileges.push_back(PrivilegeType::EXECUTE_EXTERNAL_JOB);
+            } else {
+                stmt->privileges.push_back(PrivilegeType::EXECUTE);
+            }
         } else if (matchContextual("USAGE")) {
             stmt->privileges.push_back(PrivilegeType::USAGE);
         } else if (match(TokenType::KW_COPY)) {
             stmt->privileges.push_back(PrivilegeType::COPY);
+        } else if (matchContextual("CREATE")) {
+            expectContextual("JOB", "Expected JOB after CREATE");
+            stmt->privileges.push_back(PrivilegeType::CREATE_JOB);
+        } else if (matchContextual("VIEW")) {
+            expectContextual("JOB", "Expected JOB after VIEW");
+            if (!matchContextual("HISTORY")) {
+                error("Expected HISTORY after VIEW JOB");
+                return nullptr;
+            }
+            stmt->privileges.push_back(PrivilegeType::VIEW_JOB_HISTORY);
         } else if (matchContextual("ALL")) {
             matchContextual("PRIVILEGES");  // Optional
             stmt->privileges.push_back(PrivilegeType::ALL);
@@ -6776,6 +7267,8 @@ GrantStmt* Parser::parseGrant() {
 
     if (matchContextual("TABLE")) {
         stmt->object_type = PrivilegeObjectType::TABLE;
+    } else if (matchContextual("JOB")) {
+        stmt->object_type = PrivilegeObjectType::JOB;
     } else if (matchContextual("SEQUENCE")) {
         stmt->object_type = PrivilegeObjectType::SEQUENCE;
     } else if (matchContextual("FUNCTION")) {
@@ -6839,8 +7332,25 @@ RevokeStmt* Parser::parseRevoke() {
             stmt->privileges.push_back(PrivilegeType::UPDATE);
         } else if (match(TokenType::KW_DELETE)) {
             stmt->privileges.push_back(PrivilegeType::DELETE);
+        } else if (match(TokenType::KW_EXECUTE) || matchContextual("EXECUTE")) {
+            if (matchContextual("EXTERNAL")) {
+                expectContextual("JOB", "Expected JOB after EXECUTE EXTERNAL");
+                stmt->privileges.push_back(PrivilegeType::EXECUTE_EXTERNAL_JOB);
+            } else {
+                stmt->privileges.push_back(PrivilegeType::EXECUTE);
+            }
         } else if (match(TokenType::KW_COPY)) {
             stmt->privileges.push_back(PrivilegeType::COPY);
+        } else if (matchContextual("CREATE")) {
+            expectContextual("JOB", "Expected JOB after CREATE");
+            stmt->privileges.push_back(PrivilegeType::CREATE_JOB);
+        } else if (matchContextual("VIEW")) {
+            expectContextual("JOB", "Expected JOB after VIEW");
+            if (!matchContextual("HISTORY")) {
+                error("Expected HISTORY after VIEW JOB");
+                return nullptr;
+            }
+            stmt->privileges.push_back(PrivilegeType::VIEW_JOB_HISTORY);
         } else if (matchContextual("ALL")) {
             matchContextual("PRIVILEGES");
             stmt->privileges.push_back(PrivilegeType::ALL);
@@ -6855,6 +7365,8 @@ RevokeStmt* Parser::parseRevoke() {
 
     if (matchContextual("TABLE")) {
         stmt->object_type = PrivilegeObjectType::TABLE;
+    } else if (matchContextual("JOB")) {
+        stmt->object_type = PrivilegeObjectType::JOB;
     } else if (matchContextual("SEQUENCE")) {
         stmt->object_type = PrivilegeObjectType::SEQUENCE;
     } else if (matchContextual("FUNCTION")) {

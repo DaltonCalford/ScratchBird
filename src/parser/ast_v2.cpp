@@ -77,6 +77,7 @@ void ReleaseSavepointStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // Session statements
 void SetStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterSystemStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ResetStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ShowStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ExplainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -290,6 +291,7 @@ const char* astKindToString(ASTKind kind) {
 
         // Session
         case ASTKind::SetStmt: return "SetStmt";
+        case ASTKind::AlterSystemStmt: return "AlterSystemStmt";
         case ASTKind::ResetStmt: return "ResetStmt";
         case ASTKind::ShowStmt: return "ShowStmt";
         case ASTKind::ExplainStmt: return "ExplainStmt";

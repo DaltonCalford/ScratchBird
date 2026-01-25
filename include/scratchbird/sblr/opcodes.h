@@ -1258,6 +1258,10 @@ namespace scratchbird
             EXT_SHOW_VARIABLE = 0x7B,  // SHOW variable_name - show session variable value
             EXT_SHOW_ALL = 0x7C,  // SHOW ALL - show all session variables
             EXT_SHOW_TRANSACTION_LEVEL = 0x7D,  // SHOW TRANSACTION ISOLATION LEVEL
+            EXT_SHOW_JOBS = 0x7E,  // SHOW JOBS [LIKE pattern]
+            EXT_SHOW_JOB_RUNS = 0x7F,  // SHOW JOB RUNS [FOR] job_name
+            EXT_SHOW_JOB = 0x0113,  // SHOW JOB job_name
+            EXT_SHOW_METRICS = 0x0114,  // SHOW METRICS
             EXT_SELECT_TABLE_STAR = 0x80,  // SELECT t.* - qualified table star (followed by table UUID)
             EXT_SET_VARIABLE = 0x81,  // SET variable = value - generic session variable
             EXT_ON_CONFLICT = 0x82,  // INSERT ... ON CONFLICT marker
@@ -1291,6 +1295,7 @@ namespace scratchbird
             EXT_DROP_DOMAIN = 0x010F,  // DROP DOMAIN
             EXT_REBIND_DOMAIN = 0x0110,  // Rebind domain dependencies (admin)
             EXT_RESOLVE_DOMAIN_CONFLICT = 0x0111,  // Resolve domain conflicts (admin)
+            EXT_ALTER_SYSTEM = 0x0112,  // ALTER SYSTEM SET section.key = value
 
             // Null-safe comparison operators (MySQL/PostgreSQL)
             EXT_NULL_SAFE_EQ = 0x0200,  // NULL-safe equality (<=> / IS NOT DISTINCT FROM)

@@ -873,6 +873,24 @@ set_target_properties(sb_security PROPERTIES
 
 message(STATUS "CLI tool: sb_security (security administration)")
 
+# sb_admin - Administration Tool
+add_executable(sb_admin cli/sb_admin.cpp)
+
+target_link_libraries(sb_admin PRIVATE
+    scratchbird_client
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_link_group
+)
+
+set_target_properties(sb_admin PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sb_admin (administration)")
+
 # sb_fb_isql - Firebird Interactive SQL Shell
 add_executable(sb_fb_isql cli/sb_fb_isql.cpp)
 
@@ -921,7 +939,7 @@ set_target_properties(sb_my_isql PROPERTIES
 message(STATUS "CLI tool: sb_my_isql (MySQL SQL shell)")
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_odbc_driver scratchbird_testing
+install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security sb_admin scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_odbc_driver scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

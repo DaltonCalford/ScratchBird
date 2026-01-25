@@ -212,6 +212,7 @@ private:
     void generateConnect(ResolvedConnectStmt* stmt);
     void generateDisconnect(ResolvedDisconnectStmt* stmt);
     void generateSet(ResolvedSetStmt* stmt);
+    void generateAlterSystem(ResolvedAlterSystemStmt* stmt);
     void generateShow(ResolvedShowStmt* stmt);
     void generateSweepDatabase(ResolvedSweepDatabaseStmt* stmt);
     void generateGrant(ResolvedGrantStmt* stmt);

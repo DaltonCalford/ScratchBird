@@ -175,7 +175,12 @@ ALTER JOB job_name
   [SET RETRY_BACKOFF = duration]
   [SET TIMEOUT = duration]
   [SET RUN AS role_name]
-  [SET DESCRIPTION = '...'];
+  [SET DESCRIPTION = '...']
+  [SET ON COMPLETION PRESERVE | DROP]
+  [SET DEPENDS ON job_name [, ...] | NONE]
+  [SET CLASS = class_name]
+  [SET PARTITION BY ALL_SHARDS | SINGLE_SHARD 'shard_uuid' | SHARD_SET (...) | DYNAMIC expr]
+  [SET AS 'sql_statement' | CALL procedure_name() | EXEC 'external_command'];
 ```
 
 ### DROP JOB

@@ -3203,6 +3203,14 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     if (func_name == "json_extract" || func_name == "json_set" ||
         func_name == "json_insert" || func_name == "json_remove" ||
         func_name == "json_object" || func_name == "json_array") {
+        if (func_name == "json_extract" && arg_types.size() < 2) {
+            error(span, "JSON_EXTRACT requires at least two arguments");
+            return std::nullopt;
+        }
+        if (func_name == "json_object" && (arg_types.size() % 2) != 0) {
+            error(span, "JSON_OBJECT requires an even number of arguments");
+            return std::nullopt;
+        }
         ret_type->data_type = DataType::JSON;
         ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
         ref.return_type = ret_type;
@@ -3606,6 +3614,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
         // Session
         case ASTKind::SetStmt:
             return analyzeSet(static_cast<SetStmt*>(stmt));
+        case ASTKind::AlterSystemStmt:
+            return analyzeAlterSystem(static_cast<AlterSystemStmt*>(stmt));
         case ASTKind::ShowStmt:
             return analyzeShow(static_cast<ShowStmt*>(stmt));
         case ASTKind::ExplainStmt:
@@ -3762,6 +3772,18 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeSet(SetStmt* stmt) {
     return resolved;
 }
 
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterSystem(AlterSystemStmt* stmt) {
+    auto* resolved = arena_.create<ResolvedAlterSystemStmt>();
+    resolved->span = stmt->span;
+    resolved->variable_name = stmt->name;
+    if (!stmt->value) {
+        error(stmt->span, "ALTER SYSTEM requires a value");
+    } else {
+        resolved->value = analyzeExpression(stmt->value);
+    }
+    return resolved;
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeShow(ShowStmt* stmt) {
     auto* resolved = arena_.create<ResolvedShowStmt>();
     resolved->span = stmt->span;
@@ -3817,6 +3839,15 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeGrant(GrantStmt* stmt) {
                 break;
             case PrivilegeType::COPY:
                 mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::COPY_FILE);
+                break;
+            case PrivilegeType::CREATE_JOB:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE_JOB);
+                break;
+            case PrivilegeType::VIEW_JOB_HISTORY:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::VIEW_JOB_HISTORY);
+                break;
+            case PrivilegeType::EXECUTE_EXTERNAL_JOB:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE_EXTERNAL_JOB);
                 break;
             case PrivilegeType::ALL:
                 mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::ALL);
@@ -3874,6 +3905,15 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeRevoke(RevokeStmt* stmt) {
                 break;
             case PrivilegeType::COPY:
                 mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::COPY_FILE);
+                break;
+            case PrivilegeType::CREATE_JOB:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE_JOB);
+                break;
+            case PrivilegeType::VIEW_JOB_HISTORY:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::VIEW_JOB_HISTORY);
+                break;
+            case PrivilegeType::EXECUTE_EXTERNAL_JOB:
+                mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE_EXTERNAL_JOB);
                 break;
             case PrivilegeType::ALL:
                 mask |= static_cast<uint32_t>(core::CatalogManager::Privilege::ALL);
@@ -4524,6 +4564,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateJob(CreateJobStmt* stmt) {
     auto* resolved = arena_.create<ResolvedCreateJobStmt>();
     resolved->span = stmt->span;
 
+    resolved->or_alter = stmt->or_alter;
+    resolved->recreate = stmt->recreate;
     resolved->job_name = stmt->job_name;
     resolved->job_type = stmt->job_type;
     resolved->job_sql = stmt->job_sql;
@@ -5797,6 +5839,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterJob(AlterJobStmt* stmt) {
     resolved->starts_at = stmt->starts_at;
     resolved->ends_at = stmt->ends_at;
 
+    resolved->has_job_body = stmt->has_job_body;
+    resolved->job_type = stmt->job_type;
+    resolved->job_sql = stmt->job_sql;
+    resolved->procedure_name = stmt->procedure_name;
+    resolved->external_command = stmt->external_command;
+
     resolved->has_state = stmt->has_state;
     resolved->state = stmt->state;
     resolved->has_max_retries = stmt->has_max_retries;
@@ -5805,10 +5853,27 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterJob(AlterJobStmt* stmt) {
     resolved->retry_backoff_seconds = stmt->retry_backoff_seconds;
     resolved->has_timeout = stmt->has_timeout;
     resolved->timeout_seconds = stmt->timeout_seconds;
+    resolved->has_on_completion = stmt->has_on_completion;
+    resolved->on_completion = stmt->on_completion;
     resolved->has_run_as = stmt->has_run_as;
     resolved->run_as_role = stmt->run_as_role;
     resolved->has_description = stmt->has_description;
     resolved->description = stmt->description;
+
+    resolved->has_job_class = stmt->has_job_class;
+    resolved->job_class = stmt->job_class;
+    resolved->has_partition = stmt->has_partition;
+    resolved->partition_strategy = stmt->partition_strategy;
+    resolved->partition_expression = stmt->partition_expression;
+    resolved->partition_shard = stmt->partition_shard;
+
+    resolved->has_depends_on = stmt->has_depends_on;
+    resolved->clear_depends_on = stmt->clear_depends_on;
+    resolved->depends_on = stmt->depends_on;
+    resolved->has_secret = stmt->has_secret;
+    resolved->drop_secret = stmt->drop_secret;
+    resolved->secret_key = stmt->secret_key;
+    resolved->secret_value = stmt->secret_value;
 
     return resolved;
 }

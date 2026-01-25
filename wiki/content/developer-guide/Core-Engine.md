@@ -287,6 +287,18 @@ The engine includes a job scheduler for:
 - Scheduled tasks
 - Async operations
 
+**Catalog objects:**
+- `sys.jobs`, `sys.job_runs`, `sys.job_dependencies`
+- `sys.job_secrets` for external job secrets (referenced by allowlist)
+
+**External jobs:**
+- Require absolute command paths.
+- Working directory must exist.
+- Environment variables are injected only from an allowlist, with `SECRET:<key>` entries mapped to `SB_JOB_SECRET_<key>`.
+
+**Admin tooling:**
+- `sb_admin <db> job list|runs|metrics` uses the local TCP listener to query job state and metrics.
+
 ---
 
 ## Error Handling
