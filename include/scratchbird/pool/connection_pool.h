@@ -38,6 +38,7 @@ class DatabasePool;
 class PooledConnection;
 class DatabaseStatementCache;
 class DatabaseResultCache;
+class ConnectionStatementCache;
 class HealthChecker;
 class PoolManager;
 
@@ -532,6 +533,11 @@ public:
     // Statement cache reference
     StatementCache* statementCache() const { return stmt_cache_; }
     void setStatementCache(StatementCache* cache) { stmt_cache_ = cache; }
+    ConnectionStatementCache* sessionStatementCache() const { return session_stmt_cache_.get(); }
+    void setSessionStatementCache(std::unique_ptr<ConnectionStatementCache> cache) {
+        session_stmt_cache_ = std::move(cache);
+    }
+    void clearSessionStatementCache();
 
 private:
     static std::atomic<uint64_t> next_id_;
@@ -565,6 +571,7 @@ private:
 
     // Statement cache
     StatementCache* stmt_cache_ = nullptr;
+    std::unique_ptr<ConnectionStatementCache> session_stmt_cache_;
 
     // Tagging and affinity
     std::map<std::string, std::string> tags_;

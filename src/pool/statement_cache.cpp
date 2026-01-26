@@ -1289,5 +1289,123 @@ bool should_cache_statement(const StatementCacheConfig& config, StatementType ty
 
 }  // namespace statement_cache_utils
 
+// =============================================================================
+// ConnectionStatementCache Implementation
+// =============================================================================
+
+ConnectionStatementCache::ConnectionStatementCache(DatabaseStatementCache* shared_cache,
+                                                   size_t max_entries)
+    : shared_cache_(shared_cache)
+    , max_entries_(max_entries)
+    , fingerprinter_(shared_cache ? shared_cache->config() : StatementCacheConfig{}) {
+}
+
+std::shared_ptr<CachedStatement> ConnectionStatementCache::get(
+    std::string_view sql,
+    const std::vector<uint32_t>& param_types,
+    uint64_t schema_version_id,
+    const std::string& privilege_signature) {
+    if (!shared_cache_) {
+        return nullptr;
+    }
+
+    std::string key = fingerprinter_.cache_key(sql, param_types, schema_version_id,
+                                               privilege_signature);
+
+    auto it = local_cache_.find(key);
+    if (it != local_cache_.end()) {
+        promote_lru(key);
+        return it->second.first;
+    }
+
+    auto shared_stmt = shared_cache_->get(sql, param_types, schema_version_id,
+                                          privilege_signature);
+    if (!shared_stmt) {
+        return nullptr;
+    }
+
+    if (max_entries_ == 0) {
+        return shared_stmt;
+    }
+
+    if (local_cache_.size() >= max_entries_) {
+        evict_one();
+    }
+
+    lru_list_.push_front(key);
+    local_cache_[key] = {shared_stmt, lru_list_.begin()};
+    return shared_stmt;
+}
+
+bool ConnectionStatementCache::put(std::shared_ptr<CachedStatement> statement) {
+    if (!statement) {
+        return false;
+    }
+
+    bool shared_ok = true;
+    if (shared_cache_) {
+        shared_ok = shared_cache_->put(statement);
+    }
+
+    if (max_entries_ == 0) {
+        return shared_ok;
+    }
+
+    std::string key = cache_key_for_statement(*statement);
+    auto it = local_cache_.find(key);
+    if (it != local_cache_.end()) {
+        promote_lru(key);
+        it->second.first = std::move(statement);
+        return shared_ok;
+    }
+
+    if (local_cache_.size() >= max_entries_) {
+        evict_one();
+    }
+
+    lru_list_.push_front(key);
+    local_cache_[key] = {std::move(statement), lru_list_.begin()};
+    return shared_ok;
+}
+
+void ConnectionStatementCache::clear() {
+    local_cache_.clear();
+    lru_list_.clear();
+}
+
+size_t ConnectionStatementCache::size() const {
+    return local_cache_.size();
+}
+
+void ConnectionStatementCache::promote_lru(const std::string& key) {
+    auto it = local_cache_.find(key);
+    if (it == local_cache_.end()) {
+        return;
+    }
+    lru_list_.erase(it->second.second);
+    lru_list_.push_front(key);
+    it->second.second = lru_list_.begin();
+}
+
+void ConnectionStatementCache::evict_one() {
+    if (lru_list_.empty()) {
+        return;
+    }
+    std::string key = lru_list_.back();
+    lru_list_.pop_back();
+    local_cache_.erase(key);
+}
+
+std::string ConnectionStatementCache::cache_key_for_statement(const CachedStatement& statement) const {
+    const auto& meta = statement.metadata();
+    std::string base_fp = meta.fingerprint.empty()
+        ? fingerprinter_.fingerprint(statement.sql())
+        : meta.fingerprint;
+    return fingerprinter_.cache_key_from_fingerprint(base_fp,
+                                                     meta.parameter_types,
+                                                     meta.schema_version_id,
+                                                     meta.privilege_signature);
+}
+
 }  // namespace pool
 }  // namespace scratchbird

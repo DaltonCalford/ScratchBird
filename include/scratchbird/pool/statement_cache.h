@@ -37,6 +37,7 @@ namespace pool {
 // Forward declarations
 class DatabaseStatementCache;
 class CachedStatement;
+class ConnectionStatementCache;
 
 /**
  * @brief Eviction policy for statement cache
@@ -621,6 +622,40 @@ private:
     std::unordered_map<std::string, std::shared_ptr<DatabaseStatementCache>> caches_;
     mutable std::shared_mutex mutex_;
     bool initialized_ = false;
+};
+
+/**
+ * @brief Per-connection statement cache backed by a shared database cache
+ *
+ * Maintains a small per-session cache for hot statements while delegating
+ * global storage and eviction to the shared DatabaseStatementCache.
+ */
+class ConnectionStatementCache {
+public:
+    ConnectionStatementCache(DatabaseStatementCache* shared_cache,
+                             size_t max_entries);
+
+    std::shared_ptr<CachedStatement> get(std::string_view sql,
+                                         const std::vector<uint32_t>& param_types = {},
+                                         uint64_t schema_version_id = 0,
+                                         const std::string& privilege_signature = {});
+
+    bool put(std::shared_ptr<CachedStatement> statement);
+    void clear();
+    size_t size() const;
+
+private:
+    void promote_lru(const std::string& key);
+    void evict_one();
+    std::string cache_key_for_statement(const CachedStatement& statement) const;
+
+    DatabaseStatementCache* shared_cache_ = nullptr;
+    size_t max_entries_ = 0;
+    StatementFingerprinter fingerprinter_;
+    std::list<std::string> lru_list_;
+    std::unordered_map<std::string,
+                       std::pair<std::shared_ptr<CachedStatement>, std::list<std::string>::iterator>>
+        local_cache_;
 };
 
 /**

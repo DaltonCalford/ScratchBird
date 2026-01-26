@@ -130,10 +130,12 @@ PooledConnection::PooledConnection(PooledConnection&& other) noexcept
     , bytes_received_(other.bytes_received_)
     , validation_failures_(other.validation_failures_)
     , stmt_cache_(other.stmt_cache_)
+    , session_stmt_cache_(std::move(other.session_stmt_cache_))
     , tags_(std::move(other.tags_))
     , affinity_(std::move(other.affinity_)) {
     other.pool_ = nullptr;
     other.stmt_cache_ = nullptr;
+    other.session_stmt_cache_.reset();
 }
 
 PooledConnection& PooledConnection::operator=(PooledConnection&& other) noexcept {
@@ -159,13 +161,21 @@ PooledConnection& PooledConnection::operator=(PooledConnection&& other) noexcept
         bytes_received_ = other.bytes_received_;
         validation_failures_ = other.validation_failures_;
         stmt_cache_ = other.stmt_cache_;
+        session_stmt_cache_ = std::move(other.session_stmt_cache_);
         tags_ = std::move(other.tags_);
         affinity_ = std::move(other.affinity_);
 
         other.pool_ = nullptr;
         other.stmt_cache_ = nullptr;
+        other.session_stmt_cache_.reset();
     }
     return *this;
+}
+
+void PooledConnection::clearSessionStatementCache() {
+    if (session_stmt_cache_) {
+        session_stmt_cache_->clear();
+    }
 }
 
 core::Status PooledConnection::connect(const ConnectionConfig& config, core::ErrorContext* ctx) {
@@ -632,6 +642,11 @@ void DatabasePool::clearStatementCache() {
     if (stmt_cache_) {
         stmt_cache_->clear();
     }
+    for (auto& conn : all_connections_) {
+        if (conn) {
+            conn->clearSessionStatementCache();
+        }
+    }
 }
 
 void DatabasePool::clearResultCache() {
@@ -771,6 +786,10 @@ PooledConnection* DatabasePool::createConnection(const std::string& user, core::
     conn->setState(ConnectionState::ACQUIRED);
     if (stmt_cache_) {
         conn->setStatementCache(stmt_cache_.get());
+        if (effective_config_.statement_cache_size > 0) {
+            conn->setSessionStatementCache(std::make_unique<ConnectionStatementCache>(
+                stmt_cache_.get(), effective_config_.statement_cache_size));
+        }
     }
 
     auto* raw_conn = conn.get();
