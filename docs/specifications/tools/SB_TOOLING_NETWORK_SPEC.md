@@ -78,6 +78,8 @@ Some tools may optionally spawn a local helper process.
 ### sb_charset_loader
 - Remote mode uploads charset data through server APIs.
 - Local mode updates charset catalog directly.
+- Current status: loader tool is deprecated in code and needs restoration or
+  replacement before this network spec can be implemented.
 
 ## Related Specs
 

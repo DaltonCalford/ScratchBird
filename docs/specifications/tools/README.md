@@ -17,7 +17,7 @@ Additional tool integration specifications are located in:
 - **[SB_BACKUP_CLI_SPECIFICATION.md](SB_BACKUP_CLI_SPECIFICATION.md)** - sb_backup CLI behavior
 - **[SB_VERIFY_CLI_SPECIFICATION.md](SB_VERIFY_CLI_SPECIFICATION.md)** - sb_verify CLI behavior
 - **[SB_SECURITY_CLI_SPECIFICATION.md](SB_SECURITY_CLI_SPECIFICATION.md)** - sb_security CLI behavior
-- **[SB_TOOLING_NETWORK_SPEC.md](SB_TOOLING_NETWORK_SPEC.md)** - Network support for sb_backup/sb_verify/sb_security/sb_charset_loader
+- **[SB_TOOLING_NETWORK_SPEC.md](SB_TOOLING_NETWORK_SPEC.md)** - Network support for sb_backup/sb_verify/sb_security/sb_charset_loader (loader currently deprecated)
 - **[Beta Requirements - Tools](../beta_requirements/tools/)** - Tool compatibility specifications for Beta release
   - DBeaver
   - pgAdmin

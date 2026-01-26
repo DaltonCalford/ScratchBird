@@ -291,7 +291,8 @@ namespace scratchbird::core
         for (uint32_t page_id = start_page;; ++page_id)
         {
             void *page_buffer;
-            Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+            Status status = db_->buffer_pool()->pinPage(
+                page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
             if (status == Status::IO_ERROR)
             {
                 // Page doesn't exist, we've reached the end
@@ -350,7 +351,8 @@ namespace scratchbird::core
                                     VacuumStats *stats, ErrorContext *ctx) -> Status
     {
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+        Status status = db_->buffer_pool()->pinPage(
+            page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             return status;
@@ -409,7 +411,8 @@ namespace scratchbird::core
         }
 
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+        Status status = db_->buffer_pool()->pinPage(
+            page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             return status;
@@ -437,7 +440,8 @@ namespace scratchbird::core
     {
         // Pin the page
         void *page_buffer;
-        Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+        Status status = db_->buffer_pool()->pinPage(
+            page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             return status;
@@ -640,7 +644,8 @@ namespace scratchbird::core
         {
             // Pin the page
             void *page_buffer;
-            status = bp->pinPage(page_id, &page_buffer, ctx);
+            status = bp->pinPage(
+                page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
             if (status == Status::IO_ERROR)
             {
                 // Page doesn't exist, we've reached the end

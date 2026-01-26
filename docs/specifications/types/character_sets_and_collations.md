@@ -31,6 +31,37 @@ ScratchBird will support multiple character sets and collations for internationa
 - Support for `LC_COLLATE` and `LC_CTYPE`
 - ICU collation support (future)
 
+## Resource Baseline (Alpha Requirement)
+ScratchBird resources must include a complete baseline of character sets and collations
+required for Firebird, PostgreSQL, and MySQL compatibility.
+
+### Charset coverage requirements
+- `resources/charsets/charsets.json` must include all Firebird Appendix H character
+  set names (and Firebird aliases), plus all PostgreSQL encodings and MySQL 8.x
+  character sets.
+- Firebird baseline names (from Appendix H):
+  ASCII, BIG_5, CP943C, CYRL, DOS437, DOS737, DOS775, DOS850, DOS852, DOS857,
+  DOS858, DOS860, DOS861, DOS862, DOS863, DOS864, DOS865, DOS866, DOS869,
+  EUCJ_0208, GB18030, GBK, GB_2312, ISO8859_1, ISO8859_2, ISO8859_3, ISO8859_4,
+  ISO8859_5, ISO8859_6, ISO8859_7, ISO8859_8, ISO8859_9, ISO8859_13, KOI8R,
+  KOI8U, KSC_5601, NEXT, NONE, OCTETS, SJIS_0208, TIS620, UNICODE_FSS, UTF8,
+  WIN1250, WIN1251, WIN1252, WIN1253.
+- Provide engine-specific aliases where names differ (examples):
+  - Firebird: WIN125x alias for Windows-125x; ISO8859_1 alias for ISO-8859-1;
+    UTF8 alias for UTF-8; BIG_5 alias for Big5; GB_2312 alias for GB2312.
+  - MySQL: utf8mb4, utf8mb3, and charset family names must be preserved as
+    aliases even if mapped to UTF-8 internally.
+  - PostgreSQL: SQL_ASCII, MULE_INTERNAL, and EUC_* variants must be preserved
+    as named encodings where supported.
+
+### Collation coverage requirements
+- `resources/collations/collations.json` must include:
+  - Firebird Appendix H collations for each Firebird charset (names preserved).
+  - MySQL 8.x default collations per charset (names preserved).
+  - PostgreSQL locale collations via OS/ICU ingestion plus built-in `C`/`POSIX`.
+- Collation resources must expose default collation per charset and allow multiple
+  collations per charset (case-insensitive, accent-insensitive, binary).
+
 ## Architecture
 
 ### Character Set Structure

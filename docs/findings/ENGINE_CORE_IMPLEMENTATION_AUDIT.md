@@ -10,18 +10,17 @@ gaps that block a fully implemented Alpha engine.
   - `docs/findings/SPECIFICATIONS_ALPHA_IMPLEMENTATION_AUDIT_DEEP.md`
   - `docs/findings/CACHE_AND_BUFFER_IMPLEMENTATION_REVIEW.md`
   - `docs/findings/TABLESPACE_IMPLEMENTATION_AUDIT.md`
-  - `docs/findings/INDEX_IMPLEMENTATION_GAPS.md`
+  - `docs/findings/INDEX_IMPLEMENTATION_GAPS-completed.md`
   - `docs/findings/MGA_GC_THREAD_AUDIT.md`
   - `docs/findings/SCHEDULER_JOB_RUNNER_AUDIT.md`
 
 ## Summary
 - **Implemented (evidence)**: core MGA transaction lifecycle, sweep/GC loop, basic
   storage engine DML, catalog persistence, optimizer runtime, and TOAST plumbing.
-- **Partial**: tablespace routing, index maintenance across all types, security
+- **Partial**: tablespace routing, security
   enforcement (view definer/RLS SELECT), monitoring view parity, statistics
   coverage, and some catalog behaviors (schema roots).
-- **Missing**: scheduler/job system, full tablespace DDL wiring in parsers, and
-  full index migration safety for all index types.
+- **Missing**: full tablespace DDL wiring in parsers.
 
 ## Findings by Core Area
 
@@ -32,6 +31,8 @@ gaps that block a fully implemented Alpha engine.
   `ScratchBird/src/core/storage_engine.cpp:432`
 - Compressed page manager exists:
   `ScratchBird/src/core/compressed_page_manager.cpp:10`
+- Index TID updates implemented across index types for tablespace migration:
+  `ScratchBird/src/core/catalog_manager.cpp:11895-12443`
 
 **Partial / Missing**
 - Tablespace-aware DML paths are incomplete (GPID routing not fully wired).
@@ -93,7 +94,7 @@ gaps that block a fully implemented Alpha engine.
   `ScratchBird/src/core/catalog_manager.cpp:11125-11227`
 - GiST cache cleanup intentionally leaks (type integration incomplete):
   `ScratchBird/src/sblr/index_cache.cpp:286`
-  See `docs/findings/INDEX_IMPLEMENTATION_GAPS.md`.
+  See `docs/findings/INDEX_IMPLEMENTATION_GAPS-completed.md`.
 
 ### 6) Query Optimizer and Execution
 
@@ -178,8 +179,9 @@ gaps that block a fully implemented Alpha engine.
 
 ### 11) Scheduler and Jobs
 
-**Missing**
-- Full job scheduler/runner is not implemented; only ad-hoc tasks exist.
+**Implemented (code-truth)**
+- Persistent job catalog, scheduler loop, cron parsing, DDL surface, security,
+  and audit hooks are implemented.
   See `docs/findings/SCHEDULER_JOB_RUNNER_AUDIT.md`.
 
 ### 12) UDR Runtime
@@ -195,7 +197,7 @@ gaps that block a fully implemented Alpha engine.
 1. Fix catalog bootstrap schema roots (/emulated + /public root).
 2. Complete tablespace routing + multi-file support.
 3. Implement index TID updates for all index types.
-4. Implement full scheduler/job system.
+4. (Removed) Scheduler/job system now implemented; see scheduler audit.
 5. Enforce constraints (PK/FK/UNIQUE/CHECK/NOT NULL) in executor.
 6. Implement security enforcement gaps (view definer checks + RLS SELECT) and
    monitoring view parity (sys.* + MON$ data sources).

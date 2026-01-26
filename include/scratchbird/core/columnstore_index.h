@@ -4,6 +4,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
@@ -141,7 +142,8 @@ namespace scratchbird
             Status saveSegmentCatalog(ErrorContext* ctx);
 
             GPID indexGPID(uint64_t page_num) const;
-            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr) const;
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr,
+                                BufferPool::AccessStrategy strategy = BufferPool::AccessStrategy::Normal) const;
             Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr) const;
             Status flushColumnBuffer(uint16_t column_id, ErrorContext* ctx);
 

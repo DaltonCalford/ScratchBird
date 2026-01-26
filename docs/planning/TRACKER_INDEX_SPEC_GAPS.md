@@ -32,7 +32,8 @@ This checklist tracks spec-driven gaps for index implementations, with a focus o
   - [x] Core Bloom filter pages + BTree/Hash/GIN attach, query gating, and GC rebuild hooks.
   - [x] Persist Bloom filter meta pointer/config in index params + SQL options (CREATE INDEX).
   - [x] ALTER INDEX SET bloom_filter options.
-- [ ] **Inverted Index:** implement full inverted index (positions, compression, BM25) per spec (`docs/specifications/indexes/InvertedIndex.md`). (In progress: core on-disk structs + dictionary/posting list append/read + docstats persistence + ASCII tokenization + basic BM25 search + DML hooks + TSQuery AND/OR/NOT/phrase parsing in search + @@ executor routing + FULLTEXT index selection for simple @@ predicates + VByte posting list compression + segment rotation/merge scaffolding + optional positions/offsets/payload storage + Snowball stemming integration (dlopen) + min/max term length filtering + phrase evaluation using positions + unit smoke test)
+- [x] **Inverted Index:** core structures + DML + search implemented per spec (`docs/specifications/indexes/InvertedIndex.md`).
+  - [ ] Implement GC purge via `InvertedIndex::removeDeadEntries` (`src/core/inverted_index.cpp:3795`).
 - [ ] **IVF Index:** implement IVF (training, PQ, inverted lists, query path) per spec (`docs/specifications/indexes/IVFIndex.md`).
 - [ ] **Zone Maps Index:** implement zone map index per spec (`docs/specifications/indexes/ZoneMapsIndex.md`).
 

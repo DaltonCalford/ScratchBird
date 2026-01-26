@@ -15,7 +15,7 @@ cluster/sharding, and tooling are out of scope.
 
 - `ScratchBird/docs/specifications/core/ENGINE_CORE_UNIFIED_SPEC.md`
 - `ScratchBird/docs/findings/ENGINE_CORE_IMPLEMENTATION_AUDIT.md`
-- `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS.md`
+- `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS-completed.md`
 - `ScratchBird/docs/findings/TABLESPACE_IMPLEMENTATION_AUDIT.md`
 - `ScratchBird/docs/findings/SCHEDULER_JOB_RUNNER_AUDIT.md`
 - `ScratchBird/docs/findings/MGA_GC_THREAD_AUDIT.md`
@@ -46,7 +46,7 @@ cluster/sharding, and tooling are out of scope.
 ### WS-2 Tablespace Routing + GPID Wiring
 
 - [ ] Execute `ScratchBird/docs/planning/TABLESPACE_REMEDIATION_PLAN.md` phases.
-- [x] Confirm CREATE TABLE/INDEX placement honors TABLESPACE and schema defaults.
+- [ ] Confirm CREATE TABLE/INDEX placement honors TABLESPACE and schema defaults (still missing).
 - [x] Allocate table root pages via tablespace-aware APIs in catalog manager.
 - [ ] Ensure GPID-aware DML across heap/index/TOAST paths.
 
@@ -54,8 +54,8 @@ cluster/sharding, and tooling are out of scope.
 
 - [x] Implement TID updates for all non-BTree/Hash index types listed in
   
-      `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS.md`.
-- [ ] Fix GiST cache cleanup once type integration is complete.
+      `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS-completed.md`.
+- [x] Fix GiST cache cleanup once type integration is complete.
 - [ ] Add tests covering migrations and index integrity rebuilds.
 
 ### WS-4 Scheduler and Job System
@@ -137,7 +137,7 @@ Update this table as work progresses.
 | Workstream                  | Status      | Owner | Milestone  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | --------------------------- | ----------- | ----- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | WS-1 Catalog bootstrap      | Done        |       | Alpha Core | Root paths updated; migration/repair pass added                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| WS-2 Tablespace routing     | In Progress |       | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace header v2 write + v1 read support; tablespace_files catalog wiring added; tablespace table/index counts maintained                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| WS-2 Tablespace routing     | In Progress |       | Alpha Core | Tablespace ID allocation aligned with reserved ID=1; root_gpid wired in catalog records; tablespace_files catalog wiring added; tablespace table/index counts maintained; TABLESPACE clause + schema defaults still dropped in parser/bytecode path                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | WS-3 Index migration safety | Done        |       | Alpha Core | Index migration TID updates + GiST cache cleanup verified                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | WS-4 Scheduler/job system   | Done        |       | Alpha Core | Job DDL parsing/bytecode/executor + scheduler thread complete; cron/dependency unit tests added; maintenance jobs + audit/permission hooks added; CANCEL JOB RUN support added; maintenance/cancel tests added; scheduler.enabled + pre_execute_delay_ms config wiring added; ALTER SYSTEM runtime scheduler config + job timeout handling added; scheduler max_concurrent_jobs/job_timeout_seconds config defaults wired; concurrent job execution + job DDL coverage expanded; SHOW JOBS/JOB RUNS parser + job GRANT/REVOKE support added; CREATE OR ALTER/RECREATE/expanded ALTER support for job body/dependencies/on-completion/partitioning; scheduler TSAN teardown join fix |
 | WS-5 Constraint enforcement | Done        |       | Alpha Core | PK/UNIQUE enforcement now covers unique indexes and COPY composite constraints; FK validation now enforces referenced PK/UNIQUE keys; CHECK/NOT NULL enforcement covers MERGE and FK actions; constraint failure/dependency tests added and passing                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -219,6 +219,7 @@ Update this table as work progresses.
 - 2026-02-01: Extended MON$CALL_STACK to include per-connection stacks across sessions.
 - 2026-02-01: Wired MON$CALL_STACK timestamps/source line/column from executor statement tracking.
 - 2026-02-01: Added bytecode debug spans to update executor source line/column during execution.
+- 2026-02-02: Full rebuild + sequential `ctest` pass completed (2355 tests, 0 failures).
 
 
 

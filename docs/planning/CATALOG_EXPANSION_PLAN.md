@@ -13,7 +13,9 @@ Last updated: 2026-01-09
 - Schema bootstrap (22-schema hierarchy, PUBLIC default): `ScratchBird/src/core/catalog_manager.cpp:1930`
 - Column permissions table allocation (not persisted in root): `ScratchBird/src/core/catalog_manager.cpp:1605`
 - Catalog backfill list (no column/object/policy/tablespace_files pages): `ScratchBird/src/core/catalog_manager.cpp:2258`
-- Tablespace file catalog struct (not wired): `ScratchBird/include/scratchbird/core/tablespace.h:135`
+- Tablespace file catalog wiring (root pointer + read/write):
+  `ScratchBird/include/scratchbird/core/tablespace.h:135`,
+  `ScratchBird/src/core/catalog_manager.cpp:7816-7920`, `ScratchBird/src/core/catalog_manager.cpp:10253-10410`
 
 ## Current implementation summary (code truth)
 - Catalog root page is stored at page 3 (not page 1) and uses a 4KB struct layout
@@ -56,26 +58,24 @@ The following items show clear divergence between code and
    no allocation or root-page persistence. Any grant/policy usage will fail
    when page ids are zero.
 
-3) Tablespace file catalog is defined (`SBTablespaceFileCatalog`) but no
-   root pointer or read/write wiring exists. Multi-file tablespaces cannot be
-   persisted or reloaded (`ScratchBird/include/scratchbird/core/tablespace.h:135`).
+3) Tablespace file catalog wiring is now present; remaining gap is full
+   multi-file semantics + DDL reachability (see tablespace plan).
 
-4) Backfill list omits column permissions, object permissions, policies, and
-   tablespace files. Older databases will never allocate these pages during
-   load (`ScratchBird/src/core/catalog_manager.cpp:2258`).
+4) Backfill list still omits column permissions, object permissions, and
+   policies. Tablespace files are now included (`ScratchBird/src/core/catalog_manager.cpp:2258`).
 
 ## Expansion plan (phased checklist)
 ### Phase A - Root page + allocation + backfill
-[ ] Add root page fields for: column_permissions, object_permissions,
-    policies, and tablespace_files.
+[ ] Add root page fields for: column_permissions, object_permissions, and policies.
+    (tablespace_files root pointer already present)
 [ ] Update `writeCatalogRoot` and `readCatalogRoot` to persist those pointers.
 [ ] Allocate these pages during catalog initialization.
 [ ] Extend catalog backfill to allocate missing pages for older databases.
 
 ### Phase B - Tablespace file persistence
-[ ] Implement read/write helpers for `SBTablespaceFileCatalog`.
-[ ] Persist full file list on CREATE/ALTER TABLESPACE and ATTACH.
-[ ] Load `TablespaceInfo.file_paths` from sb_tablespace_files on startup
+[x] Implement read/write helpers for `SBTablespaceFileCatalog`.
+[x] Persist full file list on CREATE/ALTER TABLESPACE and ATTACH.
+[x] Load `TablespaceInfo.file_paths` from sb_tablespace_files on startup
     (fallback to primary_path if needed).
 
 ### Phase C - Spec alignment (documentation-only)

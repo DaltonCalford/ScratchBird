@@ -254,6 +254,26 @@ public:
 };
 ```
 
+### Timezone Data Ingestion and Updates
+ScratchBird uses IANA tzdata as the canonical timezone source. Timezone records
+must be loaded into `pg_timezone` using the loader tool and the catalog should
+record the tzdata version used for traceability.
+
+**Loader tool (required):**
+- `sb_timezone_loader` loads TZif files from a zoneinfo directory or a single file.
+- Tool options: `--from <dir>`, `--file <path>`, `--stats` (per
+  `ScratchBird/tools/sb_timezone_loader.cpp`).
+
+**Version tracking (required):**
+- Store the IANA tzdata version (e.g., `2024b`) in a small metadata record
+  (proposed: `sys.config` key `timezone.tzdata_version` or a dedicated catalog
+  row in `pg_timezone`).
+
+**Update workflow (expected):**
+1. Replace tzdata in `resources/timezones/` (or use system `/usr/share/zoneinfo`).
+2. Run `sb_timezone_loader` to refresh `pg_timezone`.
+3. Update the recorded tzdata version in the catalog metadata.
+
 ### Implementation Pattern
 ```cpp
 // During database open

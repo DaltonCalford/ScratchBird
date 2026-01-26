@@ -19,10 +19,10 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| CB-P0-01 Cache/buffer canonical spec alignment | Pending | Align `CACHE_AND_BUFFER_ARCHITECTURE.md` to code-truth + WS-9 targets |
-| CB-P0-02 Buffer pool spec alignment | Pending | Update `STORAGE_ENGINE_BUFFER_POOL.md` to match current implementation + Alpha target |
-| CB-P0-03 Cache config keys normalization | Pending | Align config keys across user docs and specs |
-| CB-P1-01 Scan-resistant ring buffers | Pending | Sequential scan/sweep/GC/bulk write rings |
+| CB-P0-01 Cache/buffer canonical spec alignment | Done | Updated monitoring + config references |
+| CB-P0-02 Buffer pool spec alignment | Done | Added telemetry wiring + Alpha notes |
+| CB-P0-03 Cache config keys normalization | Done | Canonical keys referenced from `sb_server.conf` doc |
+| CB-P1-01 Scan-resistant ring buffers | In Progress | Sequential scan/sweep/GC/bulk write rings |
 | CB-P1-02 Hot/cold segmentation | Pending | Midpoint insertion or young/old list |
 | CB-P1-03 Read-ahead policy | Pending | Sequential detection + range hints |
 | CB-P1-04 Multi-pool layout option | Pending | Hot/cold/temp or tablespace pools |
@@ -50,8 +50,7 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 - Files: `ScratchBird/docs/specifications/storage/STORAGE_ENGINE_BUFFER_POOL.md`
 
 **CB-P0-03** Normalize cache config keys in config specs and examples.
-- Files: `ScratchBird/docs/specifications/configuration/sb_server.conf.md`,
-  `ScratchBird/docs/specifications/configuration/scratchbird.yml.md`
+- Files: `ScratchBird/docs/user-documentation/configuration/sb_server.conf.md`
 
 Acceptance: docs describe the same cache architecture and reference the canonical config keys.
 
@@ -134,3 +133,5 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-01-25: Buffer pool flush now skips pinned pages and guards writes with content mutex; catalog heap updates lock page content to clear TSAN race.
 - 2026-02-01: Wired buffer pool telemetry counters for hits/misses/reads/writes and dirty/pages gauges.
 - 2026-02-01: Full rebuild + sequential `ctest` pass completed (2355 tests, 0 failures).
+- 2026-02-02: COPY FROM now uses bulk-write ring via connection bulk-write mode.
+- 2026-02-02: Full rebuild + sequential `ctest` pass completed (2355 tests, 0 failures).

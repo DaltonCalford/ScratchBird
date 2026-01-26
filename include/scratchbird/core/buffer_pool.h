@@ -32,6 +32,14 @@ namespace scratchbird::core
     class BufferPool
     {
     public:
+        enum class AccessStrategy
+        {
+            Normal,
+            Sequential,
+            Vacuum,
+            BulkWrite
+        };
+
         // Buffer pool configuration
         struct Config
         {
@@ -67,7 +75,8 @@ namespace scratchbird::core
          *
          * Note: For new code, use pinPageGlobal(GPID) instead.
          */
-        auto pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx = nullptr) -> Status;
+        auto pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx = nullptr,
+                     AccessStrategy strategy = AccessStrategy::Normal) -> Status;
 
         /**
          * Unpin a page (LEGACY API - tablespace 0 only)
@@ -128,7 +137,8 @@ namespace scratchbird::core
          *   void *buffer;
          *   Status s = buffer_pool->pinPageGlobal(gpid, &buffer);
          */
-        auto pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx = nullptr) -> Status;
+        auto pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx = nullptr,
+                           AccessStrategy strategy = AccessStrategy::Normal) -> Status;
 
         /**
          * unpinPageGlobal - Unpin a page (GPID version)
@@ -437,6 +447,22 @@ namespace scratchbird::core
         // Clock Sweep algorithm state
         uint32_t clock_hand_ = 0;                           // Current position of clock hand
 
+        struct RingBuffer
+        {
+            std::vector<uint32_t> frames;
+            uint32_t next = 0;
+
+            void reset(uint32_t size)
+            {
+                frames.assign(size, UINT32_MAX);
+                next = 0;
+            }
+        };
+
+        RingBuffer seq_ring_;
+        RingBuffer vacuum_ring_;
+        RingBuffer bulk_write_ring_;
+
         // P2-2: Atomic dirty page counter for O(1) getDirtyPageCount()
         // Updated atomically whenever is_dirty flag changes on any frame
         std::atomic<uint32_t> dirty_page_count_{0};
@@ -450,10 +476,14 @@ namespace scratchbird::core
 
         // Helper methods
         auto evictPage(uint32_t &evicted_frame, ErrorContext *ctx) -> Status;
+        auto evictSpecificFrame(uint32_t frame_index, ErrorContext *ctx) -> Status;
         // PHASE 1, TASK 1.2.3: Changed page_id to gpid (GPID is 64-bit)
         auto readPageFromDisk(GPID gpid, uint8_t *buffer, ErrorContext *ctx) -> Status;
         auto writePageToDisk(GPID gpid, const uint8_t *buffer, ErrorContext *ctx) -> Status;
         void updateLru(uint32_t frame_index);
+        void initializeRingBuffers();
+        RingBuffer* getRingBuffer(AccessStrategy strategy);
+        uint32_t nextRingSlot(RingBuffer &ring);
 
         // Background writer methods (Issue 2.20)
         void backgroundWriterMain();                        // Background writer thread main loop

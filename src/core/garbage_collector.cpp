@@ -345,7 +345,8 @@ namespace scratchbird::core
 
         // Pin the page through buffer pool
         void *page_buffer;
-        Status s = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+        Status s = db_->buffer_pool()->pinPage(
+            page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
         if (s != Status::OK)
         {
             LOG_WARNING(VACUUM, "Failed to pin page %u for GC: %d", page_id, static_cast<int>(s));

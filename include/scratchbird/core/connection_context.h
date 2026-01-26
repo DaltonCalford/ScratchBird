@@ -144,6 +144,14 @@ namespace scratchbird::core
         {
             return is_read_only_;
         }
+        bool isBulkWriteMode() const
+        {
+            return bulk_write_mode_;
+        }
+        void setBulkWriteMode(bool enabled)
+        {
+            bulk_write_mode_ = enabled;
+        }
         std::chrono::microseconds getTransactionStartTime() const
         {
             return xact_start_time_;
@@ -440,6 +448,7 @@ namespace scratchbird::core
         IsolationLevel isolation_level_; // Current isolation level
         ReadCommittedMode read_committed_mode_; // READ COMMITTED variant
         bool is_read_only_;              // Is transaction read-only?
+        bool bulk_write_mode_ = false;   // COPY/loader bulk write hint
         bool wait_for_locks_;            // Wait for locks or fail immediately?
         uint32_t lock_timeout_seconds_;  // Lock timeout (0 = no wait, UINT32_MAX = wait forever)
         bool autocommit_mode_ = false;   // Autocommit mode (session-level)

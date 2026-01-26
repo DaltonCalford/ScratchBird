@@ -1809,7 +1809,8 @@ namespace scratchbird::core
         void *page_buffer;
         if (tablespace_id_ == PRIMARY_TABLESPACE_ID)
         {
-            Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+            Status status = db_->buffer_pool()->pinPage(
+                page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Sequential);
             if (status == Status::OK)
             {
                 page_data_ = static_cast<uint8_t *>(page_buffer);
@@ -1828,7 +1829,8 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        Status status = db_->buffer_pool()->pinPageGlobal(gpid, &page_buffer, ctx);
+        Status status = db_->buffer_pool()->pinPageGlobal(
+            gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Sequential);
         if (status == Status::OK)
         {
             page_data_ = static_cast<uint8_t *>(page_buffer);

@@ -173,9 +173,10 @@ GPID ColumnstoreIndex::indexGPID(uint64_t page_num) const
     return makeGPID(index_info_.idx_tablespace_id, page_num);
 }
 
-Status ColumnstoreIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+Status ColumnstoreIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx,
+                                      BufferPool::AccessStrategy strategy)
 {
-    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx, strategy);
 }
 
 Status ColumnstoreIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
@@ -2472,7 +2473,8 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
 
         // Pin page and initialize
         void *page_buffer = nullptr;
-        status = pinIndexPage(current_page, &page_buffer, ctx);
+        status = pinIndexPage(current_page, &page_buffer, ctx,
+                              BufferPool::AccessStrategy::BulkWrite);
         if (status != Status::OK)
         {
             // Clean up on failure
@@ -2924,7 +2926,8 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     }
 
     void *page_buffer = nullptr;
-    Status pin_status = buffer_pool->pinPageGlobal(metadata_gpid, &page_buffer, ctx);
+    Status pin_status = buffer_pool->pinPageGlobal(metadata_gpid, &page_buffer, ctx,
+                                                   BufferPool::AccessStrategy::BulkWrite);
     if (pin_status != Status::OK)
     {
         PageManager *page_mgr = db->page_manager();
@@ -3223,7 +3226,8 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         {
             // Link previous segment's last page to new segment's first page
             void *page_buffer = nullptr;
-            Status link_status = pinIndexPage(prev_page, &page_buffer, ctx);
+            Status link_status = pinIndexPage(prev_page, &page_buffer, ctx,
+                                              BufferPool::AccessStrategy::BulkWrite);
             if (link_status != Status::OK)
                 return link_status;
 
@@ -3233,7 +3237,8 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
             unpinIndexPage(prev_page, true, ctx);  // Mark dirty
 
             // Set prev pointer in new segment's first page
-            Status new_pin_status = pinIndexPage(new_segment_page, &page_buffer, ctx);
+            Status new_pin_status = pinIndexPage(new_segment_page, &page_buffer, ctx,
+                                                 BufferPool::AccessStrategy::BulkWrite);
             if (new_pin_status != Status::OK)
                 return new_pin_status;
 
@@ -3265,7 +3270,8 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 Status ColumnstoreIndex::updateMetadataPage(ErrorContext *ctx)
 {
     void *page_buffer = nullptr;
-    Status status = pinIndexPage(metadata_page_, &page_buffer, ctx);
+    Status status = pinIndexPage(metadata_page_, &page_buffer, ctx,
+                                 BufferPool::AccessStrategy::BulkWrite);
     if (status != Status::OK)
     {
         return status;

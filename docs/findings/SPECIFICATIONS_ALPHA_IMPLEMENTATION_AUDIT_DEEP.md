@@ -55,7 +55,7 @@ alpha TODO list.
   `ScratchBird/src/core/catalog_manager.cpp:17577-17688`.
 
 **Missing / Needs update**
-- Full job scheduler is not present (no scheduler module; see Scheduler section).
+- Job scheduler is now present; see Scheduler section for updated status.
 
 ## DDL/DML Parser (parser/, ddl/, dml/)
 
@@ -209,11 +209,15 @@ alpha TODO list.
 
 ## Scheduler / Job Runner (scheduler/)
 
-**Missing**
-- No dedicated scheduler/job-runner module found under `ScratchBird/src/`.
-- Only ad-hoc job patterns (TRUNCATE) and network thread pool scheduling exist:  
-  `ScratchBird/src/network/thread_pool.cpp:137-458`,  
-  `ScratchBird/src/core/catalog_manager.cpp:17577-17688`.
+**Implemented (evidence)**
+- Dedicated scheduler module exists with cron parsing, job queueing, and
+  execution loop.
+  `ScratchBird/src/core/job_scheduler.cpp:467-1188`,  
+  `ScratchBird/src/core/job_scheduler_utils.cpp:101-273`.
+- Persistent job catalog tables (jobs/job_runs/job_dependencies) are wired via
+  catalog manager and exposed as sys tables.
+  `ScratchBird/src/core/catalog_manager.cpp:383-7900`,  
+  `ScratchBird/src/catalog/sys_catalog.cpp:4-435`.
 
 ## Specs Needing Update (Alpha Scope)
 
@@ -226,7 +230,7 @@ alpha TODO list.
 
 ## Final TODO Candidates (Alpha)
 
-1. **Scheduler/Job Runner**: implement or re-scope; specs exist but runtime missing.
+1. **Scheduler/Job Runner**: implemented; verify spec parity and cluster-forward compatibility.
 2. **UDR Core Runtime**: adapter specs exist but UDR execution engine module is absent.
 3. **Tablespaces**: DML routing is partial; multi-file and GPID routing still pending.
 4. **Parser Gap Lists**: implement missing MySQL/PG items per gap docs.

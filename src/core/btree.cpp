@@ -297,9 +297,10 @@ namespace scratchbird::core
         return makeGPID(index_info_.idx_tablespace_id, page_num);
     }
 
-    Status BTree::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+    Status BTree::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx,
+                               BufferPool::AccessStrategy strategy)
     {
-        return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+        return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx, strategy);
     }
 
     Status BTree::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
@@ -2920,6 +2921,8 @@ namespace scratchbird::core
                      return this->compare_keys(a.first, b.first) < 0;
                  });
 
+        const auto bulk_strategy = BufferPool::AccessStrategy::BulkWrite;
+
         // ========================================================================
         // Phase 2: Build leaf pages from sorted entries - O(N)
         // ========================================================================
@@ -2964,7 +2967,7 @@ namespace scratchbird::core
 
             // Pin and initialize the page
             void *page_data_ptr = nullptr;
-            status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx);
+            status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx, bulk_strategy);
             if (status != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to pin leaf page during bulk load");
@@ -3042,7 +3045,7 @@ namespace scratchbird::core
 
                 // Update previous page's right sibling pointer
                 void *prev_page_ptr = nullptr;
-                status = pinIndexPage(leaf_pages.back(), &prev_page_ptr, ctx);
+                status = pinIndexPage(leaf_pages.back(), &prev_page_ptr, ctx, bulk_strategy);
                 if (status == Status::OK)
                 {
                     auto *prev_page = reinterpret_cast<SBBTreePage *>(prev_page_ptr);
@@ -3059,7 +3062,7 @@ namespace scratchbird::core
         if (!leaf_pages.empty())
         {
             void *last_page_ptr = nullptr;
-            Status status = pinIndexPage(leaf_pages.back(), &last_page_ptr, ctx);
+            Status status = pinIndexPage(leaf_pages.back(), &last_page_ptr, ctx, bulk_strategy);
             if (status == Status::OK)
             {
                 auto *last_page = reinterpret_cast<SBBTreePage *>(last_page_ptr);
@@ -3076,7 +3079,7 @@ namespace scratchbird::core
         if (leaf_pages.size() == 1)
         {
             void *root_page_ptr = nullptr;
-            Status status = pinIndexPage(leaf_pages[0], &root_page_ptr, ctx);
+            Status status = pinIndexPage(leaf_pages[0], &root_page_ptr, ctx, bulk_strategy);
             if (status == Status::OK)
             {
                 auto *root_page = reinterpret_cast<SBBTreePage *>(root_page_ptr);
@@ -3130,7 +3133,7 @@ namespace scratchbird::core
                 internal_page_num = static_cast<uint32_t>(getPageNumber(internal_gpid));
 
                 void *page_data_ptr = nullptr;
-                status = pinIndexPage(internal_page_num, &page_data_ptr, ctx);
+                status = pinIndexPage(internal_page_num, &page_data_ptr, ctx, bulk_strategy);
                 if (status != Status::OK)
                 {
                     SET_ERROR_CONTEXT(ctx, status, "Failed to pin internal page during bulk load");
@@ -3246,7 +3249,7 @@ namespace scratchbird::core
 
                     // Update parent pointer of this child page
                     void *child_ptr = nullptr;
-                    status = pinIndexPage(current_level[child_idx], &child_ptr, ctx);
+                    status = pinIndexPage(current_level[child_idx], &child_ptr, ctx, bulk_strategy);
                     if (status == Status::OK)
                     {
                         auto *child_page = reinterpret_cast<SBBTreePage *>(child_ptr);
@@ -3271,7 +3274,7 @@ namespace scratchbird::core
                     page->btr_left_sibling = next_level.back();
 
                     void *prev_page_ptr = nullptr;
-                    status = pinIndexPage(next_level.back(), &prev_page_ptr, ctx);
+                    status = pinIndexPage(next_level.back(), &prev_page_ptr, ctx, bulk_strategy);
                     if (status == Status::OK)
                     {
                         auto *prev_page = reinterpret_cast<SBBTreePage *>(prev_page_ptr);
@@ -3288,7 +3291,7 @@ namespace scratchbird::core
             if (!next_level.empty())
             {
                 void *last_page_ptr = nullptr;
-                Status status = pinIndexPage(next_level.back(), &last_page_ptr, ctx);
+                Status status = pinIndexPage(next_level.back(), &last_page_ptr, ctx, bulk_strategy);
                 if (status == Status::OK)
                 {
                     auto *last_page = reinterpret_cast<SBBTreePage *>(last_page_ptr);
@@ -3309,7 +3312,7 @@ namespace scratchbird::core
         if (!current_level.empty())
         {
             void *root_page_ptr = nullptr;
-            Status status = pinIndexPage(current_level[0], &root_page_ptr, ctx);
+            Status status = pinIndexPage(current_level[0], &root_page_ptr, ctx, bulk_strategy);
             if (status == Status::OK)
             {
                 auto *root_page = reinterpret_cast<SBBTreePage *>(root_page_ptr);

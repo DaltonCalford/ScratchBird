@@ -48,10 +48,10 @@ Contains the official IANA timezone database (tzdata) used for temporal operatio
 **Loading timezones:**
 ```bash
 # Load from source files
-./sb_timezone_loader /path/to/database.sb resources/timezones
+./sb_timezone_loader /path/to/database.sb --from resources/timezones
 
 # Or use system zoneinfo (if available)
-./sb_timezone_loader /path/to/database.sb /usr/share/zoneinfo
+./sb_timezone_loader /path/to/database.sb --from /usr/share/zoneinfo
 ```
 
 **Updating:**
@@ -59,6 +59,9 @@ Contains the official IANA timezone database (tzdata) used for temporal operatio
 cd resources/timezones
 curl -L -O https://data.iana.org/time-zones/releases/tzdata-latest.tar.gz
 tar -xzf tzdata-latest.tar.gz
+
+# Reload into database
+./sb_timezone_loader /path/to/database.sb --from resources/timezones --stats
 ```
 
 **References:**
@@ -71,7 +74,8 @@ tar -xzf tzdata-latest.tar.gz
 
 ### Supported Character Sets
 
-Contains definitions for 39+ character sets supported by major database engines.
+Contains a baseline set of character sets. Full Firebird/PostgreSQL/MySQL
+coverage is required by spec and tracked in the resources audit.
 
 **Categories:**
 - **Unicode:** UTF-8, UTF-16, UTF-32
@@ -86,19 +90,21 @@ Contains definitions for 39+ character sets supported by major database engines.
 
 **Loading character sets:**
 ```bash
-# Load built-in character sets (UTF-8, ASCII, ISO-8859-1, UTF-16, UTF-32)
+# Note: sb_charset_loader is currently deprecated in code.
+# Character sets and collations are expected to load during database initialization.
+# Once the loader tool is restored, the intended usage is:
 ./sb_charset_loader /path/to/database.sb --builtin
-
-# Load all character sets from definitions
-./sb_charset_loader /path/to/database.sb resources/charsets
+./sb_charset_loader /path/to/database.sb --all
 ```
 
-**Database Engine Coverage:**
+**Database Engine Coverage (Target Baseline):**
 - PostgreSQL: 25+ character sets
 - MySQL/MariaDB: 15+ character sets
 - SQL Server: 20+ code pages
 - Oracle: 30+ character sets
 - Firebird: 10+ character sets
+See `ScratchBird/docs/specifications/types/character_sets_and_collations.md`
+and `ScratchBird/docs/findings/RESOURCES_I18N_TIMEZONE_AUDIT.md`.
 
 ---
 
@@ -148,7 +154,8 @@ Header (44 bytes)
 └── POSIX TZ string (for future dates)
 ```
 
-See `docs/planning/DATA_LOADERS_IMPLEMENTATION_PLAN.md` for parser implementation.
+See `docs/planning/RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN.md` for the
+current resource-loading remediation plan.
 
 ### Character Set Files (JSON Format)
 
@@ -248,7 +255,7 @@ curl -L -O https://data.iana.org/time-zones/releases/tzdata-latest.tar.gz
 tar -xzf tzdata-latest.tar.gz
 
 # Reload into database
-./sb_timezone_loader /path/to/database.sb resources/timezones --replace
+./sb_timezone_loader /path/to/database.sb --from resources/timezones --stats
 ```
 
 **Update frequency:** Check https://www.iana.org/time-zones 2-4 times per year

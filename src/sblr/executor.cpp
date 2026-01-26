@@ -52850,10 +52850,34 @@ namespace scratchbird
                     return true;
                 };
 
+                struct ScopedBulkWriteMode
+                {
+                    core::ConnectionContext* ctx = nullptr;
+                    bool prior = false;
+
+                    explicit ScopedBulkWriteMode(core::ConnectionContext* ctx_in)
+                        : ctx(ctx_in), prior(ctx_in ? ctx_in->isBulkWriteMode() : false)
+                    {
+                        if (ctx)
+                        {
+                            ctx->setBulkWriteMode(true);
+                        }
+                    }
+
+                    ~ScopedBulkWriteMode()
+                    {
+                        if (ctx)
+                        {
+                            ctx->setBulkWriteMode(prior);
+                        }
+                    }
+                };
+
                 std::string line;
                 int affected_count = 0;
                 uint64_t bytes_total = 0;
                 bool skipped_header = false;
+                ScopedBulkWriteMode bulk_scope(core::ConnectionContext::getCurrent());
                 while (std::getline(*in, line))
                 {
                     bytes_total += line.size() + 1;

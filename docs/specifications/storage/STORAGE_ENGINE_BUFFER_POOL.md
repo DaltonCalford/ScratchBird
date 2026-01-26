@@ -11,6 +11,7 @@
 - Clock-sweep eviction with LRU fallback and dirty-page preference
 - Adaptive background writer with dirty-ratio thresholds
 - Dirty page counter + basic hit/miss/eviction/flush stats
+- Buffer pool telemetry wiring (hits/misses/reads/writes + dirty/pages gauges)
 - Page pin/unpin + per-page content mutex
 
 **Not Yet Implemented (Alpha target in this spec):**
@@ -971,6 +972,16 @@ void collect_buffer_pool_stats(
     memcpy(stats, &pool->bp_stats, sizeof(BufferPoolStats));
 }
 ```
+
+### 6.2 Telemetry Wiring (Alpha)
+
+The buffer pool emits metrics through the telemetry registry to support
+`scratchbird_buffer_pool_*` counters and gauges. SQL monitoring views are
+defined separately in the cache/buffer architecture spec.
+
+**Code references:**
+- `src/core/buffer_pool.cpp:190-330`
+- `src/core/buffer_pool.cpp:1040-1100`
 
 ## 7. Integration Points
 

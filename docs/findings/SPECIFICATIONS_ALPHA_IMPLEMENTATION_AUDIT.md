@@ -53,7 +53,7 @@ this is a structure-and-evidence audit, not full behavioral validation.
 | **udr_connectors/** | 7 | `src/fdw/` (partial) | Partial | Firebird/MySQL/PG adapters exist; confirm parity. |
 | **api/** | 3 | `src/client/` | Partial | Needs API parity audit. |
 | **query/** | 2 | `src/optimizer/` | Partial | Optimizer docs vs code need verification. |
-| **scheduler/** | 3 | none found | Outstanding | No scheduler/job-runner module found. |
+| **scheduler/** | 3 | `src/core/job_scheduler.cpp` | Partial | Scheduler implemented; verify spec parity. |
 | **compression/** | 2 | none obvious | Outstanding | Compression specs appear unimplemented. |
 | **TEMPORARY_TABLES_SPECIFICATION.md** | 1 | unknown | Partial | Spec exists; code parity not verified. |
 | **MEMORY_MANAGEMENT.md** | 1 | core | Partial | Needs allocator/buffer audit. |
@@ -70,7 +70,7 @@ this is a structure-and-evidence audit, not full behavioral validation.
 
 ## Alpha-Scope Outstanding or High-Risk Areas
 
-- **Scheduler/job runner**: specs exist but no code modules found (`scheduler/`).
+- **Scheduler/job runner**: implemented; verify spec parity and cluster-forward compatibility.
 - **Git config normalization**: spec updated to canonical `repo_*` keys; parser is legacy-only.
 - **Parser gaps**: `MYSQL_PARSER_IMPLEMENTATION_GAPS.md` and
   `POSTGRESQL_PARSER_IMPLEMENTATION_GAPS.md` list missing items.

@@ -18,60 +18,53 @@
   `ScratchBird/include/scratchbird/core/audit_logger.h`,
   `ScratchBird/include/scratchbird/core/catalog_manager.h`
 
-## Implemented (code-truth)
-- General-purpose thread pool supports delayed/repeating tasks with a scheduler loop (in-memory only).
-  - Code: `ScratchBird/src/network/thread_pool.cpp:123-466`
-- Asynchronous TRUNCATE TABLE job runner with job_id tracking and background thread execution.
-  - Code: `ScratchBird/src/core/catalog_manager.cpp:17581-17755`
-  - Code (caller and async job ID output): `ScratchBird/src/sblr/executor.cpp:10020-10106`
-- Background task runners exist for internal subsystems (LSM compaction, parallel executor), but are not tied to job scheduling.
-  - Code: `ScratchBird/src/core/lsm_thread_pool.cpp:33-366`
-  - Code: `ScratchBird/src/executor/parallel_executor.cpp:46-163`
+## Implemented (code-truth, updated)
+- Persistent job catalog tables exist and are exposed as `sys.jobs`, `sys.job_runs`,
+  `sys.job_dependencies` virtual tables.
+  - Code: `ScratchBird/src/catalog/sys_catalog.cpp:4-435`
+  - Code: `ScratchBird/src/core/catalog_manager.cpp:383-7900`
+- Scheduler thread and execution loop implemented with job queueing, concurrency
+  limits, and run state tracking.
+  - Code: `ScratchBird/src/core/job_scheduler.cpp:467-1188`
+- Cron parsing and next-run calculation implemented (timezone-aware).
+  - Code: `ScratchBird/src/core/job_scheduler_utils.cpp:101-273`
+  - Code: `ScratchBird/src/core/job_scheduler.cpp:543-624`
+- Job DDL and execution surface implemented in parser/semantic/bytecode/executor:
+  - Parser: `ScratchBird/src/parser/parser_v2.cpp:389-394`, `ScratchBird/src/parser/parser_v2.cpp:1350-1903`
+  - Semantic: `ScratchBird/src/sblr/semantic_analyzer_v2.cpp:3531-3580`
+  - Bytecode: `ScratchBird/src/sblr/bytecode_generator_v2.cpp:562-623`
+  - Executor: `ScratchBird/src/sblr/executor.cpp:35543-36192`
+- Scheduler config keys and runtime update wiring implemented (`scheduler.*`).
+  - Code: `ScratchBird/src/core/database.cpp:257-365`
+- Security and audit hooks for job DDL/execution implemented.
+  - Code: `ScratchBird/src/sblr/executor.cpp:35575-36192`
 
-## Missing or Partial vs Spec
+## Missing or Partial vs Spec (remaining)
 
 ### F-SCHED-001 sys.jobs/sys.job_runs/sys.job_dependencies catalog is not implemented
-- Spec: `ScratchBird/docs/specifications/scheduler/ALPHA_SCHEDULER_SPECIFICATION.md` (Catalog Schema),
-  `ScratchBird/docs/specifications/scheduler/README.md` (Catalog Schema).
-- Code: No references to `sys.jobs`, `sys.job_runs`, or `sys.job_dependencies` in the source tree
-  (search returned no matches).
-- Status: Missing
+- Status: Resolved (see Implemented section)
 
 ### F-SCHED-002 Scheduler thread and execution loop are not implemented
-- Spec: `ScratchBird/docs/specifications/scheduler/ALPHA_SCHEDULER_SPECIFICATION.md` (Alpha Architecture, Job Execution).
-- Code: No scheduler_thread implementation; only a generic task scheduler in the network thread pool
-  without persistence or catalog integration.
-  `ScratchBird/src/network/thread_pool.cpp:123-466`
-- Status: Missing
+- Status: Resolved (job scheduler loop implemented)
 
 ### F-SCHED-003 Cron parsing/next-run calculation not implemented
-- Spec: `ScratchBird/docs/specifications/scheduler/ALPHA_SCHEDULER_SPECIFICATION.md` (Cron parsing, next-run).
-- Code: No cron parsing or next-run logic in source tree (search returned no matches for "cron").
-- Status: Missing
+- Status: Resolved (cron parsing utilities implemented)
 
 ### F-SCHED-004 Job DDL (CREATE/ALTER/DROP/EXECUTE JOB) is not implemented
-- Spec: `ScratchBird/docs/specifications/scheduler/ALPHA_SCHEDULER_SPECIFICATION.md` (SQL Syntax),
-  `ScratchBird/docs/specifications/scheduler/README.md` (SQL Syntax, EXECUTE JOB).
-- Code: No parser/executor support for CREATE/ALTER/DROP/EXECUTE JOB in V2 or adapters
-  (search returned no matches for CREATE JOB or sys.jobs).
-- Status: Missing
+- Status: Resolved (parser/semantic/bytecode/executor implemented)
 
 ### F-SCHED-005 Job dependency tracking (DAG) not implemented
-- Spec: `ScratchBird/docs/specifications/scheduler/ALPHA_SCHEDULER_SPECIFICATION.md` (Job Dependencies).
-- Code: No sys.job_dependencies table or dependency evaluation in scheduler (not present in code).
-- Status: Missing
+- Status: Resolved (job_dependencies table + dependency checks)
+  - Code: `ScratchBird/src/core/job_scheduler.cpp:599`
+  - Code: `ScratchBird/src/core/catalog_manager.cpp:998-26572`
 
 ### F-SCHED-006 Security privileges and audit events for jobs are not implemented
-- Spec: `ScratchBird/docs/specifications/scheduler/ALPHA_SCHEDULER_SPECIFICATION.md` (Security Model).
-- Code: No CREATE JOB privilege or JOB_* audit event types exist.
-  `ScratchBird/include/scratchbird/core/catalog_manager.h:944-1009`,
-  `ScratchBird/include/scratchbird/core/audit_logger.h:25-90`
-- Status: Missing
+- Status: Resolved (job privileges + audit events implemented)
+  - Code: `ScratchBird/src/sblr/executor.cpp:35575-36192`
 
 ### F-SCHED-007 Scheduler configuration keys and ALTER SYSTEM controls not implemented
-- Spec: `ScratchBird/docs/specifications/scheduler/ALPHA_SCHEDULER_SPECIFICATION.md` (Alpha Configuration).
-- Code: No references to scheduler.* config keys or ALTER SYSTEM scheduling controls in source tree.
-- Status: Missing
+- Status: Resolved (scheduler config keys wired)
+  - Code: `ScratchBird/src/core/database.cpp:257-365`
 
 ### F-SCHED-008 Event scheduler spec is separate and unimplemented
 - Spec: `ScratchBird/docs/specifications/ddl/DDL_EVENTS.md` (CREATE/ALTER/DROP EVENT, event scheduler thread).
@@ -80,10 +73,9 @@
 - Note: This is a parallel scheduling model to CREATE JOB; see "Spec conflicts" below.
 
 ### F-SCHED-009 Job cancellation/timeouts not wired
-- Spec: Alpha spec defines `job_timeout_seconds` and implies cancellation.
-- Code: ThreadPool cancellation is stubbed and cannot cancel by task ID.
-  `ScratchBird/src/network/thread_pool.cpp:264-283`
-- Status: Missing/Partial
+- Status: Resolved (CANCEL JOB RUN + timeout enforcement implemented)
+  - Code: `ScratchBird/src/sblr/executor.cpp:36110-36192`
+  - Code: `ScratchBird/src/core/job_scheduler.cpp:900-1063`
 
 ## Spec Conflicts and Gaps
 
@@ -129,8 +121,7 @@
   strict validation to avoid invalid job definitions migrating forward.
 
 ## Summary
-The scheduler subsystem is fully specified (Alpha + Beta) but not implemented in code.
-There is partial job-runner infrastructure (thread pools and an async TRUNCATE job),
-yet no persistent scheduler, catalog schema, DDL surface, or security model exists.
-Documentation conflicts (CREATE JOB vs CREATE EVENT, schema naming, SQL syntax drift)
-must be resolved before implementation to ensure security and cluster-ready behavior.
+The Alpha scheduler subsystem is now implemented end-to-end (catalog, DDL, scheduler
+thread, cron parsing, security, auditing). Remaining work is primarily around the
+separate Firebird-style EVENT notification feature (not a scheduler) and any
+documented schema/terminology mismatches between specs.

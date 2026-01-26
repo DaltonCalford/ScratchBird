@@ -215,7 +215,7 @@ ScratchBird Database
 +----------------------+-------------------------+
 ```
 
-- **Tablespace ID** (16 bits): 0 = primary file, 1-65535 = tablespace files
+- **Tablespace ID** (16 bits): 0 = primary file, 1 = reserved, 2-65535 = tablespace files
 - **Page Number** (48 bits): Page within tablespace (up to 281TB with 16K pages)
 
 **Stable TID Preservation** (Firebird MGA):
@@ -376,7 +376,7 @@ struct TablespaceHeader {
     PageHeader page_header;             // Standard 64-byte header
 
     // Identification (64 bytes)
-    char tablespace_name[32];           // Name (max 31 chars + null)
+    char tablespace_name[64];           // Name (max 63 chars + null)
     UuidV7Bytes tablespace_uuid;        // UUID v7 (16 bytes)
     UuidV7Bytes database_uuid;          // Database UUID (16 bytes)
 
@@ -416,7 +416,7 @@ struct SBTablespaceCatalog {
     uint8_t reserved1[7];
 
     // Identification
-    uint16_t tablespace_id;             // Tablespace ID (1-65535, 0 = primary)
+    uint16_t tablespace_id;             // Tablespace ID (0 = primary, 1 = reserved, 2-65535 custom)
     char tablespace_name[64];           // Name (null-terminated)
     UuidV7Bytes tablespace_uuid;        // UUID v7
 

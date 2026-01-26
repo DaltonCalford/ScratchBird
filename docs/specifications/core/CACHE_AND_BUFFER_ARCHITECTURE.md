@@ -1,7 +1,7 @@
 # Cache and Buffer Architecture Specification
 
 **Status:** Alpha specification (current state documented; target state defined)
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-02-02
 **Scope:** Buffer pool, storage caches, statement/plan caches, query result caches, and cache observability
 
 ---
@@ -130,11 +130,15 @@ Out of scope:
 ### 5.7 Monitoring
 
 - Metrics registry defines buffer pool counters/gauges.
-- **No wiring** from buffer pool to these metrics.
+- **Buffer pool metrics wired** for hits/misses/reads/writes and dirty/pages gauges.
 - Query profiler supports buffer hit/miss fields, but there are no call sites.
+- Statement/result/translation cache metrics remain unwired.
 
 **Code references:**
 - `src/core/telemetry.cpp:496-521`
+- `src/core/buffer_pool.cpp:190-330`
+- `src/core/buffer_pool.cpp:1040-1100`
+- `src/sblr/executor.cpp:52853`
 - `src/optimizer/query_profiler.cpp:71-88`
 
 ---
@@ -254,7 +258,8 @@ Expose cache stats in monitoring views (see `docs/specifications/operations/`):
 
 ## 9) Configuration Surface
 
-Configuration keys follow existing naming conventions (systemd spec / config files):
+Configuration keys follow existing naming conventions (systemd spec / config files)
+and are documented in `docs/user-documentation/configuration/sb_server.conf.md`:
 
 - `buffer_pool_size`
 - `buffer_pool_page_size`

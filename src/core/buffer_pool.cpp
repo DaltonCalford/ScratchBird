@@ -10,6 +10,10 @@
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        constexpr uint32_t RING_DIVISOR = 8;
+    }
 
     BufferPool::BufferPool(Database *db, const Config &config) : db_(db), config_(config)
     {
@@ -63,6 +67,8 @@ namespace scratchbird::core
             lru_list_.push_back(i);
         }
 
+        initializeRingBuffers();
+
         metrics_ = &ScratchBirdMetrics::getInstance();
         metrics_->initialize();
         updatePoolTelemetry();
@@ -103,20 +109,34 @@ namespace scratchbird::core
     }
 
     // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call pinPageGlobal
-    auto BufferPool::pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx) -> Status
+    auto BufferPool::pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx,
+                             AccessStrategy strategy) -> Status
     {
         GPID gpid = convertPageIDtoGPID(page_id);
-        return pinPageGlobal(gpid, buffer, ctx);
+        return pinPageGlobal(gpid, buffer, ctx, strategy);
     }
 
     // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
     // P2-1: Updated to use partitioned page table locks
-    auto BufferPool::pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx) -> Status
+    auto BufferPool::pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx,
+                                   AccessStrategy strategy) -> Status
     {
         if (buffer == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null buffer pointer");
             return Status::INVALID_ARGUMENT;
+        }
+
+        AccessStrategy effective_strategy = strategy;
+        if (effective_strategy == AccessStrategy::Normal)
+        {
+            if (auto* conn_ctx = ConnectionContext::getCurrent())
+            {
+                if (conn_ctx->isBulkWriteMode())
+                {
+                    effective_strategy = AccessStrategy::BulkWrite;
+                }
+            }
         }
 
         if (frames_.size() != config_.pool_size)
@@ -145,6 +165,8 @@ namespace scratchbird::core
                     frames_[i].usage_count.store(0, std::memory_order_relaxed);
                     lru_list_.push_back(i);
                 }
+
+                initializeRingBuffers();
             }
         }
 
@@ -232,7 +254,10 @@ namespace scratchbird::core
                 }
 
                 *buffer = frames_[frame_index].data.get();
-                updateLru(frame_index);
+                if (effective_strategy == AccessStrategy::Normal)
+                {
+                    updateLru(frame_index);
+                }
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
                 if (auto* conn_ctx = ConnectionContext::getCurrent())
                 {
@@ -257,14 +282,45 @@ namespace scratchbird::core
             }
         }
 
+        RingBuffer *ring = getRingBuffer(effective_strategy);
+        uint32_t ring_slot = 0;
+
         if (!found_free)
         {
-            // Need to evict a page
-            Status status = evictPage(frame_index, ctx);
-            if (status != Status::OK)
+            bool used_ring_frame = false;
+            if (ring && !ring->frames.empty())
             {
-                return status;
+                ring_slot = nextRingSlot(*ring);
+                uint32_t ring_frame = ring->frames[ring_slot];
+
+                if (ring_frame != UINT32_MAX)
+                {
+                    Status ring_status = evictSpecificFrame(ring_frame, ctx);
+                    if (ring_status == Status::OK)
+                    {
+                        frame_index = ring_frame;
+                        used_ring_frame = true;
+                    }
+                    else if (ring_status != Status::INVALID_ARGUMENT)
+                    {
+                        return ring_status;
+                    }
+                }
             }
+
+            if (!used_ring_frame)
+            {
+                // Need to evict a page
+                Status status = evictPage(frame_index, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+        }
+        else if (ring && !ring->frames.empty())
+        {
+            ring_slot = nextRingSlot(*ring);
         }
 
         // Read page from disk
@@ -293,7 +349,15 @@ namespace scratchbird::core
         }
 
         // Update LRU (still maintained for fallback)
-        updateLru(frame_index);
+        if (effective_strategy == AccessStrategy::Normal)
+        {
+            updateLru(frame_index);
+        }
+
+        if (ring && !ring->frames.empty())
+        {
+            ring->frames[ring_slot] = frame_index;
+        }
 
         *buffer = frames_[frame_index].data.get();
         return Status::OK;
@@ -639,6 +703,100 @@ namespace scratchbird::core
         // Release the content mutex for this page
         frames_[frame_index].content_mutex->unlock();
 
+        return Status::OK;
+    }
+
+    void BufferPool::initializeRingBuffers()
+    {
+        uint32_t ring_size = std::max<uint32_t>(1, config_.pool_size / RING_DIVISOR);
+        seq_ring_.reset(ring_size);
+        vacuum_ring_.reset(ring_size);
+        bulk_write_ring_.reset(ring_size);
+    }
+
+    auto BufferPool::getRingBuffer(AccessStrategy strategy) -> RingBuffer*
+    {
+        switch (strategy)
+        {
+            case AccessStrategy::Sequential:
+                return &seq_ring_;
+            case AccessStrategy::Vacuum:
+                return &vacuum_ring_;
+            case AccessStrategy::BulkWrite:
+                return &bulk_write_ring_;
+            case AccessStrategy::Normal:
+            default:
+                return nullptr;
+        }
+    }
+
+    auto BufferPool::nextRingSlot(RingBuffer &ring) -> uint32_t
+    {
+        uint32_t slot = ring.next;
+        ring.next = (ring.next + 1) % ring.frames.size();
+        return slot;
+    }
+
+    auto BufferPool::evictSpecificFrame(uint32_t frame_index, ErrorContext *ctx) -> Status
+    {
+        if (frame_index >= config_.pool_size)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Frame &frame = frames_[frame_index];
+        if (frame.pin_count.load(std::memory_order_relaxed) > 0)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (frame.gpid == INVALID_GPID)
+        {
+            frame.is_dirty = false;
+            frame.pin_count.store(0, std::memory_order_relaxed);
+            frame.usage_count.store(0, std::memory_order_relaxed);
+            return Status::OK;
+        }
+
+        size_t partition_idx = getPartitionIndex(frame.gpid);
+        auto &partition = page_table_partitions_[partition_idx];
+        std::lock_guard<std::mutex> partition_lock(partition.mutex);
+
+        auto page_table_it = partition.table.find(frame.gpid);
+        if (page_table_it == partition.table.end() || page_table_it->second != frame_index)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint32_t pin_count = frame.pin_count.load(std::memory_order_relaxed);
+        if (pin_count != 0)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (frame.is_dirty)
+        {
+            Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+            updateDirtyTelemetry();
+            stats_.flushes.fetch_add(1, std::memory_order_relaxed);
+            stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
+        }
+        else
+        {
+            stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        partition.table.erase(page_table_it);
+        frame.gpid = INVALID_GPID;
+        frame.is_dirty = false;
+        frame.pin_count.store(0, std::memory_order_relaxed);
+        frame.usage_count.store(0, std::memory_order_relaxed);
+        stats_.evictions.fetch_add(1, std::memory_order_relaxed);
         return Status::OK;
     }
 

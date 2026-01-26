@@ -4,6 +4,12 @@ This directory contains character set definition files used by ScratchBird for t
 
 ## Supported Character Sets
 
+Note: This list represents the target baseline. The current resource JSON may
+not yet include all entries. See
+`ScratchBird/docs/findings/RESOURCES_I18N_TIMEZONE_AUDIT.md` and
+`ScratchBird/docs/specifications/types/character_sets_and_collations.md` for
+coverage requirements and gaps.
+
 ### Unicode Encodings (Built-in - No files required)
 - **UTF-8** - Variable width (1-4 bytes), default for PostgreSQL, MySQL 8.0+
 - **UTF-16** - Variable width (2 or 4 bytes)

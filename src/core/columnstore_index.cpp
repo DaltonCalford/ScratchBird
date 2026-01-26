@@ -80,7 +80,8 @@ namespace core {
 
         // Write to meta_page_a
         void* buffer_a = nullptr;
-        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_a), &buffer_a, ctx);
+        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_a), &buffer_a, ctx,
+                                            BufferPool::AccessStrategy::BulkWrite);
         if (status != Status::OK)
         {
             page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_a), nullptr);
@@ -92,7 +93,8 @@ namespace core {
 
         // Write to meta_page_b (same content)
         void* buffer_b = nullptr;
-        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_b), &buffer_b, ctx);
+        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_b), &buffer_b, ctx,
+                                            BufferPool::AccessStrategy::BulkWrite);
         if (status != Status::OK)
         {
             page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_a), nullptr);
@@ -134,9 +136,10 @@ namespace core {
         return makeGPID(tablespace_id_, page_num);
     }
 
-    Status ColumnstoreIndexSimple::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx) const
+    Status ColumnstoreIndexSimple::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx,
+                                                BufferPool::AccessStrategy strategy) const
     {
-        return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+        return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx, strategy);
     }
 
     Status ColumnstoreIndexSimple::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx) const
@@ -749,7 +752,8 @@ namespace core {
 
         // Write to meta_page_a (primary)
         void* buffer_a = nullptr;
-        Status status = pinIndexPage(meta_page_, &buffer_a, ctx);
+        Status status = pinIndexPage(meta_page_, &buffer_a, ctx,
+                                     BufferPool::AccessStrategy::BulkWrite);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_a for write");
@@ -760,7 +764,8 @@ namespace core {
 
         // Write to meta_page_b (peer)
         void* buffer_b = nullptr;
-        status = pinIndexPage(peer_meta_page_, &buffer_b, ctx);
+        status = pinIndexPage(peer_meta_page_, &buffer_b, ctx,
+                              BufferPool::AccessStrategy::BulkWrite);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_b for write");

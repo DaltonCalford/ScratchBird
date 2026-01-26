@@ -4,7 +4,7 @@
 Implement full tablespace functionality per Alpha decisions and close all gaps listed in:
 - `ScratchBird/docs/findings/TABLESPACE_DECISIONS_AND_SCOPE.md`
 - `ScratchBird/docs/findings/TABLESPACE_IMPLEMENTATION_AUDIT.md`
-- `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS.md`
+- `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS-completed.md`
 
 ## Guiding Decisions (Locked)
 - IDs: 0 = primary, 1 = reserved (future), 2..65535 = custom.
@@ -53,6 +53,7 @@ Acceptance: specs reflect decisions and no longer contradict implementation inte
 
 **TS-P1-03** Enforce tablespace ID allocation: skip 1, allow 2..65535.
 - Files: `ScratchBird/src/core/catalog_manager.cpp`
+  - Status: Complete (allocator starts at 2 in create/attach)
 
 **TS-P1-04** Implement multi-file tablespace catalog (pg_tablespace_files) and loader.
 - Files: `ScratchBird/include/scratchbird/core/tablespace.h`,
@@ -60,6 +61,7 @@ Acceptance: specs reflect decisions and no longer contradict implementation inte
 
 **TS-P1-05** Maintain table_count/index_count on create/drop/migrate/attach/detach.
 - Files: `ScratchBird/src/core/catalog_manager.cpp`
+  - Status: Complete (updateTablespaceCounts wiring)
 
 Acceptance: catalog records and on-disk headers are consistent with new format; root_gpid is used.
 
@@ -92,6 +94,7 @@ Acceptance: V2 can execute tablespace DDL; emulated parsers reject per parity.
 - Scope: Vector/HNSW, Full-text, GIN, GiST, SP-GiST, BRIN, R-tree
 - Files: `ScratchBird/src/core/catalog_manager.cpp`,
   index implementations under `ScratchBird/src/core/`
+  - Status: Complete (updateIndexTIDs per index type)
 
 **TS-P3-05** Fix GiST index cache cleanup (remove deliberate leak once types are fully integrated).
 - Files: `ScratchBird/src/sblr/index_cache.cpp`
@@ -133,6 +136,7 @@ Acceptance: test suite covers core tablespace flows and failure modes.
 ## Recent Progress
 - 2026-01-21: Added sb_tablespace_files catalog page allocation/backfill plus load/persist helpers for tablespace file paths.
 - 2026-01-21: Maintained tablespace table_count/index_count on table/index create/drop and table migration.
-- 2026-01-21: Implemented tablespace-aware heap allocation and GPID-based pin/unpin in StorageEngine DML paths.
+- 2026-01-21: Added tablespace-aware heap allocation hooks in StorageEngine; findFreePage still
+  limited to primary tablespace (see F-TS-003).
 - 2026-01-21: Heap scans now iterate GPID-based pages for custom tablespaces and emit correct TIDs.
 - 2026-01-21: deleteTuple legacy path honors tablespace ID overrides from TIDs.

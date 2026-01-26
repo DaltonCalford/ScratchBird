@@ -7,6 +7,7 @@
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/buffer_pool.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -605,7 +606,8 @@ private:
     uint32_t metadata_page_ = 0;
 
     GPID indexGPID(uint64_t page_num) const;
-    Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+    Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr,
+                        BufferPool::AccessStrategy strategy = BufferPool::AccessStrategy::Normal);
     Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
 
     // Last segment page cache - avoids O(n) traversal when appending segments

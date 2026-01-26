@@ -37,6 +37,9 @@
   - Code: `ScratchBird/src/core/catalog_manager.cpp:9434-10586`
 - DDL executor supports tablespace opcodes (create/alter/drop/attach/detach, alter table set tablespace).
   - Code: `ScratchBird/src/sblr/executor.cpp:1676-1754`, `ScratchBird/src/sblr/executor.cpp:7076-11361`
+- Table/index root pages allocated in target tablespace; tablespace counts updated on create/drop/migration.
+  - Code: `ScratchBird/src/core/catalog_manager.cpp:6565-6760`, `ScratchBird/src/core/catalog_manager.cpp:7183-7360`,
+    `ScratchBird/src/core/catalog_manager.cpp:10398-10436`
 - Offline table migration plumbing (page copy + TID remap), with TID resolver hooks.
   - Code: `ScratchBird/src/core/catalog_manager.cpp:11246-11802`, `ScratchBird/src/core/tid_resolver.cpp:145-271`
 - TOAST creation/migration uses parent tablespace id.
@@ -71,10 +74,10 @@
 ### F-TS-004 Table/index root pages always allocated in primary file
 - Spec: objects placed in their specified tablespace.
   `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md:172-176`
-- Code: createTable/createIndex allocate root pages via legacy allocatePage.
-  `ScratchBird/src/core/catalog_manager.cpp:6046-6050`,
-  `ScratchBird/src/core/catalog_manager.cpp:6708-6712`
-- Status: Partial
+- Code: createTable/createIndex allocate via allocatePageInTablespace.
+  `ScratchBird/src/core/catalog_manager.cpp:6565-6715`,
+  `ScratchBird/src/core/catalog_manager.cpp:7265-7285`
+- Status: Resolved
 
 ### F-TS-005 Online migration rejected
 - Spec: `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md:705-710`
@@ -84,9 +87,10 @@
 
 ### F-TS-006 Index TID updates are incomplete across index types
 - Spec: `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md:1122-1135`
-- Code: BTree/Hash update implemented; others log NOT YET IMPLEMENTED and require rebuild.
-  `ScratchBird/src/core/catalog_manager.cpp:11125-11227`
-- Status: Partial
+- Code: TID updates implemented for B-Tree, Hash, HNSW, FULLTEXT/GIN, GiST, BRIN, R-tree, SP-GiST,
+  Bitmap, Columnstore, LSM (per index type case handling).
+  `ScratchBird/src/core/catalog_manager.cpp:11895-12443`
+- Status: Resolved
 
 ### F-TS-007 Tablespace header transaction fields are never synchronized
 - Spec: per-tablespace header tracks OIT/latest XID.
@@ -105,10 +109,11 @@
 ### F-TS-009 tablespace catalog counts are not maintained
 - Spec: per-tablespace `table_count` / `index_count` tracked.
   `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md:439-440`
-- Code: createTable/createIndex do not update tablespace counts.
-  `ScratchBird/src/core/catalog_manager.cpp:6005-6135`,
-  `ScratchBird/src/core/catalog_manager.cpp:6617-6750`
-- Status: Missing
+- Code: updateTablespaceCounts invoked on create/drop/migrate; counts persisted in sb_tablespace.
+  `ScratchBird/src/core/catalog_manager.cpp:6565-6760`,
+  `ScratchBird/src/core/catalog_manager.cpp:7183-7360`,
+  `ScratchBird/src/core/catalog_manager.cpp:10398-10436`
+- Status: Resolved
 
 ### F-TS-010 Multi-file tablespace catalog is unused
 - Spec: pg_tablespace_files table and multi-file support.
@@ -132,12 +137,11 @@
 ### F-TS-013 Tablespace ID allocation is inconsistent with spec
 - Spec: 0 = primary, 1-65535 = custom tablespaces.
   `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md:218-219`
-- Code: GPID defines primary=0, createTablespace starts from 2 and comment implies 1=primary, while
-  attachTablespace allocates from 1.
+- Code: GPID defines 0=primary, 1=reserved; create/attach allocate from 2.
   `ScratchBird/include/scratchbird/core/gpid.h:19-21`,
-  `ScratchBird/src/core/catalog_manager.cpp:9623-9631`,
-  `ScratchBird/src/core/catalog_manager.cpp:10287-10294`
-- Status: Mismatch
+  `ScratchBird/src/core/catalog_manager.cpp:9924-9942`,
+  `ScratchBird/src/core/catalog_manager.cpp:11120-11147`
+- Status: Resolved (allocator aligns to reserved ID=1 policy)
 
 ### F-TS-014 Tablespace name length mismatch (catalog vs header)
 - Spec: header uses 32-byte name, catalog uses 64-byte name.
@@ -177,7 +181,7 @@
 - Status: Spec mismatch (behavior needs reconciliation)
 
 ## Spec Gaps / Updates Recommended
-- Document the chosen tablespace ID policy (0 primary, whether 1 is reserved) and align allocator logic.
+- Update spec to reflect reserved ID=1 policy (code now allocates from 2..65535).
   `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md:218-219`
 - Clarify name length limits (header vs catalog) and expected truncation or validation rules.
   `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md:379-421`
