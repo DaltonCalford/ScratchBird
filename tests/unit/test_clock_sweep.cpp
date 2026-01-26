@@ -13,6 +13,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "test_helpers.h"
 #include <cstring>
 
@@ -217,4 +218,99 @@ TEST_F(ClockSweepTest, StatisticsTracking)
     EXPECT_GE(final_stats.hits + final_stats.misses,
               initial_stats.hits + initial_stats.misses)
         << "Statistics should have been updated";
+}
+
+TEST_F(ClockSweepTest, SequentialRingPreservesHotPages)
+{
+    ErrorContext err_ctx;
+    BufferPool::Config config;
+    config.pool_size = 4;
+    config.page_size = db_->page_size();
+    config.enable_background_writer = false;
+
+    BufferPool local_pool(db_.get(), config);
+    ASSERT_EQ(local_pool.initialize(&err_ctx), Status::OK);
+
+    std::vector<uint32_t> page_ids;
+    for (int i = 0; i < 8; ++i)
+    {
+        uint32_t page_id = 0;
+        ASSERT_EQ(db_->page_manager()->allocatePage(page_id, &err_ctx), Status::OK);
+        page_ids.push_back(page_id);
+    }
+
+    void *buf = nullptr;
+    ASSERT_EQ(local_pool.pinPage(page_ids[0], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[0], false, &err_ctx);
+    ASSERT_EQ(local_pool.pinPage(page_ids[1], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[1], false, &err_ctx);
+
+    for (size_t i = 2; i < page_ids.size(); ++i)
+    {
+        ASSERT_EQ(local_pool.pinPage(page_ids[i], &buf, &err_ctx,
+                                     BufferPool::AccessStrategy::Sequential),
+                  Status::OK);
+        local_pool.unpinPage(page_ids[i], false, &err_ctx);
+    }
+
+    auto stats_before = local_pool.getStats();
+    ASSERT_EQ(local_pool.pinPage(page_ids[0], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[0], false, &err_ctx);
+    ASSERT_EQ(local_pool.pinPage(page_ids[1], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[1], false, &err_ctx);
+    auto stats_after = local_pool.getStats();
+
+    EXPECT_EQ(stats_after.misses, stats_before.misses);
+    EXPECT_GE(stats_after.hits, stats_before.hits + 2);
+
+    local_pool.shutdown();
+}
+
+TEST_F(ClockSweepTest, BulkWriteModeUsesRing)
+{
+    ErrorContext err_ctx;
+    BufferPool::Config config;
+    config.pool_size = 4;
+    config.page_size = db_->page_size();
+    config.enable_background_writer = false;
+
+    BufferPool local_pool(db_.get(), config);
+    ASSERT_EQ(local_pool.initialize(&err_ctx), Status::OK);
+
+    std::vector<uint32_t> page_ids;
+    for (int i = 0; i < 8; ++i)
+    {
+        uint32_t page_id = 0;
+        ASSERT_EQ(db_->page_manager()->allocatePage(page_id, &err_ctx), Status::OK);
+        page_ids.push_back(page_id);
+    }
+
+    ConnectionContext conn_ctx(db_.get(), 0);
+    conn_ctx.setBulkWriteMode(true);
+    ConnectionContext::setCurrent(&conn_ctx);
+
+    void *buf = nullptr;
+    ASSERT_EQ(local_pool.pinPage(page_ids[0], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[0], false, &err_ctx);
+    ASSERT_EQ(local_pool.pinPage(page_ids[1], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[1], false, &err_ctx);
+
+    for (size_t i = 2; i < page_ids.size(); ++i)
+    {
+        ASSERT_EQ(local_pool.pinPage(page_ids[i], &buf, &err_ctx), Status::OK);
+        local_pool.unpinPage(page_ids[i], false, &err_ctx);
+    }
+
+    auto stats_before = local_pool.getStats();
+    ASSERT_EQ(local_pool.pinPage(page_ids[0], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[0], false, &err_ctx);
+    ASSERT_EQ(local_pool.pinPage(page_ids[1], &buf, &err_ctx), Status::OK);
+    local_pool.unpinPage(page_ids[1], false, &err_ctx);
+    auto stats_after = local_pool.getStats();
+
+    EXPECT_EQ(stats_after.misses, stats_before.misses);
+    EXPECT_GE(stats_after.hits, stats_before.hits + 2);
+
+    ConnectionContext::setCurrent(nullptr);
+    local_pool.shutdown();
 }

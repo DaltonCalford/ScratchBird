@@ -281,7 +281,8 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
                 if (bp)
                 {
                     void *page_buffer = nullptr;
-                    if (pinIndexPage(current_page, &page_buffer, ctx) == Status::OK)
+                    if (pinIndexPage(current_page, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Sequential) == Status::OK)
                     {
                         auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
                         current_page = page->cs_next_segment;
@@ -336,7 +337,8 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
                     if (bp)
                     {
                         void *page_buffer = nullptr;
-                        if (pinIndexPage(current_page, &page_buffer, ctx) == Status::OK)
+                        if (pinIndexPage(current_page, &page_buffer, ctx,
+                                         BufferPool::AccessStrategy::Sequential) == Status::OK)
                         {
                             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
                             current_page = page->cs_next_segment;
@@ -443,7 +445,8 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
             if (bp)
             {
                 void *page_buffer = nullptr;
-                if (pinIndexPage(current_page, &page_buffer, ctx) == Status::OK)
+                if (pinIndexPage(current_page, &page_buffer, ctx,
+                                 BufferPool::AccessStrategy::Sequential) == Status::OK)
                 {
                     auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
                     current_page = page->cs_next_segment;
@@ -2598,7 +2601,8 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
 
     // Pin first segment page
     void *page_buffer = nullptr;
-    Status status = pinIndexPage(segment_page, &page_buffer, ctx);
+    Status status = pinIndexPage(segment_page, &page_buffer, ctx,
+                                 BufferPool::AccessStrategy::Sequential);
     if (status != Status::OK)
         return status;
 
@@ -2641,7 +2645,8 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
 
             // Get next page from previous page's cs_next_segment
             void *prev_page_buffer = nullptr;
-            Status pin_status = pinIndexPage(current_page, &prev_page_buffer, ctx);
+            Status pin_status = pinIndexPage(current_page, &prev_page_buffer, ctx,
+                                             BufferPool::AccessStrategy::Sequential);
             if (pin_status != Status::OK)
                 return pin_status;
 
@@ -2657,7 +2662,8 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
             }
 
             // Pin next page
-            pin_status = pinIndexPage(current_page, &page_buffer, ctx);
+            pin_status = pinIndexPage(current_page, &page_buffer, ctx,
+                                      BufferPool::AccessStrategy::Sequential);
             if (pin_status != Status::OK)
                 return pin_status;
 
@@ -3387,7 +3393,8 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             // Entire segment is invisible, skip to next
             void *page_buffer = nullptr;
             uint32_t old_page = iterator->current_segment_page;
-            Status status = pinIndexPage(old_page, &page_buffer, ctx);
+            Status status = pinIndexPage(old_page, &page_buffer, ctx,
+                                         BufferPool::AccessStrategy::Sequential);
             if (status != Status::OK)
                 return status;
 
@@ -3407,7 +3414,8 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             // Skip this segment entirely
             void *page_buffer = nullptr;
             uint32_t old_page = iterator->current_segment_page;
-            Status status = pinIndexPage(old_page, &page_buffer, ctx);
+            Status status = pinIndexPage(old_page, &page_buffer, ctx,
+                                         BufferPool::AccessStrategy::Sequential);
             if (status != Status::OK)
                 return status;
 
@@ -3505,7 +3513,8 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             // Move to next segment
             void *page_buffer = nullptr;
             uint32_t old_page = iterator->current_segment_page;
-            Status status = pinIndexPage(old_page, &page_buffer, ctx);
+            Status status = pinIndexPage(old_page, &page_buffer, ctx,
+                                         BufferPool::AccessStrategy::Sequential);
             if (status != Status::OK)
                 return status;
 

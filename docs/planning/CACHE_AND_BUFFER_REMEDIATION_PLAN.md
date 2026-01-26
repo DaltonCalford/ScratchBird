@@ -135,3 +135,6 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-02-01: Full rebuild + sequential `ctest` pass completed (2355 tests, 0 failures).
 - 2026-02-02: COPY FROM now uses bulk-write ring via connection bulk-write mode.
 - 2026-02-02: Full rebuild + sequential `ctest` pass completed (2355 tests, 0 failures).
+- 2026-02-02: Added unit coverage for sequential and bulk-write ring behavior.
+- 2026-02-02: Columnstore scan paths now pin pages with sequential access strategy.
+- 2026-02-02: Focused columnstore test run completed (ctest -R Columnstore, 19 tests, 0 failures).
