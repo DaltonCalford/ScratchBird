@@ -294,6 +294,31 @@ public:
     uint64_t hash(std::string_view fingerprint) const;
 
     /**
+     * @brief Generate a parameter signature string
+     * @param param_types Parameter type OIDs
+     * @return Stable signature string (empty if no parameters)
+     */
+    std::string parameter_signature(const std::vector<uint32_t>& param_types) const;
+
+    /**
+     * @brief Generate cache key from SQL + parameter types
+     * @param sql The SQL statement
+     * @param param_types Parameter type OIDs
+     * @return Cache key string
+     */
+    std::string cache_key(std::string_view sql,
+                          const std::vector<uint32_t>& param_types) const;
+
+    /**
+     * @brief Generate cache key from fingerprint + parameter types
+     * @param fingerprint Normalized fingerprint
+     * @param param_types Parameter type OIDs
+     * @return Cache key string
+     */
+    std::string cache_key_from_fingerprint(std::string_view fingerprint,
+                                           const std::vector<uint32_t>& param_types) const;
+
+    /**
      * @brief Detect statement type from SQL
      * @param sql The SQL statement
      * @return Statement type classification
@@ -340,9 +365,12 @@ public:
     /**
      * @brief Get a cached statement by SQL
      * @param sql The SQL statement
+     * @param param_types Parameter type OIDs (optional)
      * @return Cached statement if found
      */
     std::shared_ptr<CachedStatement> get(std::string_view sql);
+    std::shared_ptr<CachedStatement> get(std::string_view sql,
+                                         const std::vector<uint32_t>& param_types);
 
     /**
      * @brief Get a cached statement by fingerprint hash
@@ -361,16 +389,20 @@ public:
     /**
      * @brief Remove a statement from the cache
      * @param sql The SQL statement
+     * @param param_types Parameter type OIDs (optional)
      * @return true if removed
      */
     bool remove(std::string_view sql);
+    bool remove(std::string_view sql, const std::vector<uint32_t>& param_types);
 
     /**
      * @brief Check if statement is cached
      * @param sql The SQL statement
+     * @param param_types Parameter type OIDs (optional)
      * @return true if cached
      */
     bool contains(std::string_view sql) const;
+    bool contains(std::string_view sql, const std::vector<uint32_t>& param_types) const;
 
     /**
      * @brief Clear all cached statements

@@ -158,6 +158,42 @@ uint64_t StatementFingerprinter::hash(std::string_view fingerprint) const {
     return hash;
 }
 
+std::string StatementFingerprinter::parameter_signature(const std::vector<uint32_t>& param_types) const {
+    if (param_types.empty()) {
+        return {};
+    }
+
+    std::ostringstream oss;
+    for (size_t i = 0; i < param_types.size(); ++i) {
+        if (i > 0) {
+            oss << ',';
+        }
+        oss << param_types[i];
+    }
+    return oss.str();
+}
+
+std::string StatementFingerprinter::cache_key(std::string_view sql,
+                                              const std::vector<uint32_t>& param_types) const {
+    std::string fp = fingerprint(sql);
+    return cache_key_from_fingerprint(fp, param_types);
+}
+
+std::string StatementFingerprinter::cache_key_from_fingerprint(
+    std::string_view fingerprint,
+    const std::vector<uint32_t>& param_types) const {
+    std::string sig = parameter_signature(param_types);
+    if (sig.empty()) {
+        return std::string(fingerprint);
+    }
+    std::string key;
+    key.reserve(fingerprint.size() + sig.size() + 4);
+    key.append(fingerprint);
+    key.append("|P:");
+    key.append(sig);
+    return key;
+}
+
 StatementType StatementFingerprinter::detect_type(std::string_view sql) const {
     // Skip leading whitespace
     size_t pos = 0;
@@ -392,7 +428,13 @@ DatabaseStatementCache::~DatabaseStatementCache() {
 }
 
 std::shared_ptr<CachedStatement> DatabaseStatementCache::get(std::string_view sql) {
-    std::string fp = fingerprinter_.fingerprint(sql);
+    return get(sql, {});
+}
+
+std::shared_ptr<CachedStatement> DatabaseStatementCache::get(
+    std::string_view sql,
+    const std::vector<uint32_t>& param_types) {
+    std::string fp = fingerprinter_.cache_key(sql, param_types);
     uint64_t hash = fingerprinter_.hash(fp);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -469,8 +511,17 @@ bool DatabaseStatementCache::put(std::shared_ptr<CachedStatement> statement) {
         return false;
     }
 
-    std::string fp = statement->fingerprint();
-    uint64_t hash = statement->fingerprint_hash();
+    auto& metadata = statement->metadata();
+    std::string base_fp = metadata.fingerprint.empty()
+        ? fingerprinter_.fingerprint(statement->sql())
+        : metadata.fingerprint;
+    std::string fp = fingerprinter_.cache_key_from_fingerprint(base_fp, metadata.parameter_types);
+    uint64_t hash = fingerprinter_.hash(fp);
+    if (metadata.fingerprint != fp || metadata.fingerprint_hash != hash) {
+        metadata.fingerprint = fp;
+        metadata.fingerprint_hash = hash;
+        statement->update_memory_usage();
+    }
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
@@ -535,7 +586,12 @@ bool DatabaseStatementCache::put(std::shared_ptr<CachedStatement> statement) {
 }
 
 bool DatabaseStatementCache::remove(std::string_view sql) {
-    std::string fp = fingerprinter_.fingerprint(sql);
+    return remove(sql, {});
+}
+
+bool DatabaseStatementCache::remove(std::string_view sql,
+                                    const std::vector<uint32_t>& param_types) {
+    std::string fp = fingerprinter_.cache_key(sql, param_types);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
@@ -582,7 +638,12 @@ bool DatabaseStatementCache::remove(std::string_view sql) {
 }
 
 bool DatabaseStatementCache::contains(std::string_view sql) const {
-    std::string fp = fingerprinter_.fingerprint(sql);
+    return contains(sql, {});
+}
+
+bool DatabaseStatementCache::contains(std::string_view sql,
+                                      const std::vector<uint32_t>& param_types) const {
+    std::string fp = fingerprinter_.cache_key(sql, param_types);
 
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return cache_.find(fp) != cache_.end();
