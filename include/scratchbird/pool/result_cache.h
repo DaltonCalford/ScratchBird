@@ -151,6 +151,8 @@ struct ResultMetadata {
     std::string fingerprint;
     uint64_t fingerprint_hash = 0;
     std::vector<CachedValue> parameters;  // Bound parameter values
+    uint64_t schema_version_id = 0;
+    std::string privilege_signature;
 
     // Table references (for invalidation)
     std::vector<std::string> referenced_tables;
@@ -320,6 +322,11 @@ public:
     std::string generate_key(
         std::string_view sql,
         const std::vector<CachedValue>& parameters) const;
+    std::string generate_key(
+        std::string_view sql,
+        const std::vector<CachedValue>& parameters,
+        uint64_t schema_version_id,
+        const std::string& privilege_signature) const;
 
     /**
      * @brief Generate cache key hash
@@ -337,6 +344,7 @@ public:
 
 private:
     std::string serialize_parameters(const std::vector<CachedValue>& params) const;
+    std::string serialize_value(const CachedValue& value) const;
 };
 
 /**
@@ -361,7 +369,9 @@ public:
      */
     std::shared_ptr<CachedResult> get(
         std::string_view sql,
-        const std::vector<CachedValue>& parameters = {});
+        const std::vector<CachedValue>& parameters = {},
+        uint64_t schema_version_id = 0,
+        const std::string& privilege_signature = {});
 
     /**
      * @brief Get cached result by key hash
@@ -385,7 +395,9 @@ public:
      */
     bool remove(
         std::string_view sql,
-        const std::vector<CachedValue>& parameters = {});
+        const std::vector<CachedValue>& parameters = {},
+        uint64_t schema_version_id = 0,
+        const std::string& privilege_signature = {});
 
     /**
      * @brief Check if result is cached
@@ -395,7 +407,9 @@ public:
      */
     bool contains(
         std::string_view sql,
-        const std::vector<CachedValue>& parameters = {}) const;
+        const std::vector<CachedValue>& parameters = {},
+        uint64_t schema_version_id = 0,
+        const std::string& privilege_signature = {}) const;
 
     /**
      * @brief Clear all cached results

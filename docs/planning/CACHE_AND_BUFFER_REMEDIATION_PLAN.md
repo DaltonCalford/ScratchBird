@@ -31,7 +31,7 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 | CB-P2-03 Schema/privilege invalidation | Done | Cache keys include schema version + privilege bundles |
 | CB-P2-04 Session cache backed by global cache | Done | Per-connection cache backed by shared cache |
 | CB-P3-01 Result cache eligibility rules | Done | Deterministic + snapshot safety |
-| CB-P3-02 Result cache keying | Pending | Schema version/privileges/params |
+| CB-P3-02 Result cache keying | Done | Schema version/privileges/params |
 | CB-P3-03 Result cache read/write path | Pending | Compiler/executor wiring |
 | CB-P4-01 Translation cache implementation | Pending | Per-dialect SQL->SBLR cache |
 | CB-P4-02 Translation cache segmentation | Pending | Dialect/schema/privileges |
@@ -148,3 +148,4 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-02-02: Added schema version + privilege signature cache keying for invalidation safety.
 - 2026-02-02: Added per-connection statement cache backed by shared database cache.
 - 2026-02-02: Added result cache eligibility gates (determinism, snapshot safety, thresholds).
+- 2026-02-02: Added result cache keying for schema/privilege context.

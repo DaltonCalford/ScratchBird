@@ -206,6 +206,14 @@ bool CachedResult::decompress() {
 std::string ResultCacheKeyGenerator::generate_key(
     std::string_view sql,
     const std::vector<CachedValue>& parameters) const {
+    return generate_key(sql, parameters, 0, {});
+}
+
+std::string ResultCacheKeyGenerator::generate_key(
+    std::string_view sql,
+    const std::vector<CachedValue>& parameters,
+    uint64_t schema_version_id,
+    const std::string& privilege_signature) const {
 
     std::ostringstream ss;
     ss << sql;
@@ -213,6 +221,13 @@ std::string ResultCacheKeyGenerator::generate_key(
     if (!parameters.empty()) {
         ss << "|";
         ss << serialize_parameters(parameters);
+    }
+
+    if (schema_version_id != 0) {
+        ss << "|S:" << schema_version_id;
+    }
+    if (!privilege_signature.empty()) {
+        ss << "|A:" << privilege_signature;
     }
 
     return ss.str();
@@ -262,10 +277,14 @@ std::string ResultCacheKeyGenerator::serialize_parameters(const std::vector<Cach
 
     for (size_t i = 0; i < params.size(); ++i) {
         if (i > 0) ss << ",";
-        ss << result_cache_utils::format_value(params[i]);
+        ss << serialize_value(params[i]);
     }
 
     return ss.str();
+}
+
+std::string ResultCacheKeyGenerator::serialize_value(const CachedValue& value) const {
+    return result_cache_utils::format_value(value);
 }
 
 // =============================================================================
@@ -292,9 +311,12 @@ DatabaseResultCache::~DatabaseResultCache() {
 
 std::shared_ptr<CachedResult> DatabaseResultCache::get(
     std::string_view sql,
-    const std::vector<CachedValue>& parameters) {
+    const std::vector<CachedValue>& parameters,
+    uint64_t schema_version_id,
+    const std::string& privilege_signature) {
 
-    std::string key = key_generator_.generate_key(sql, parameters);
+    std::string key = key_generator_.generate_key(sql, parameters, schema_version_id,
+                                                  privilege_signature);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
@@ -384,7 +406,9 @@ bool DatabaseResultCache::put(std::shared_ptr<CachedResult> result) {
 
     std::string key = key_generator_.generate_key(
         result->metadata().sql,
-        result->metadata().parameters);
+        result->metadata().parameters,
+        result->metadata().schema_version_id,
+        result->metadata().privilege_signature);
     uint64_t hash = key_generator_.hash(key);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -451,9 +475,12 @@ bool DatabaseResultCache::put(std::shared_ptr<CachedResult> result) {
 
 bool DatabaseResultCache::remove(
     std::string_view sql,
-    const std::vector<CachedValue>& parameters) {
+    const std::vector<CachedValue>& parameters,
+    uint64_t schema_version_id,
+    const std::string& privilege_signature) {
 
-    std::string key = key_generator_.generate_key(sql, parameters);
+    std::string key = key_generator_.generate_key(sql, parameters, schema_version_id,
+                                                  privilege_signature);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
@@ -492,9 +519,12 @@ bool DatabaseResultCache::remove(
 
 bool DatabaseResultCache::contains(
     std::string_view sql,
-    const std::vector<CachedValue>& parameters) const {
+    const std::vector<CachedValue>& parameters,
+    uint64_t schema_version_id,
+    const std::string& privilege_signature) const {
 
-    std::string key = key_generator_.generate_key(sql, parameters);
+    std::string key = key_generator_.generate_key(sql, parameters, schema_version_id,
+                                                  privilege_signature);
 
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return cache_.find(key) != cache_.end();
