@@ -519,7 +519,8 @@ namespace scratchbird::core
     }
 
     // P2-3: TOAST Chunk Prefetching - LEGACY API
-    auto BufferPool::prefetchPages(const std::vector<uint32_t> &page_ids, ErrorContext *ctx) -> Status
+    auto BufferPool::prefetchPages(const std::vector<uint32_t> &page_ids, ErrorContext *ctx,
+                                   AccessStrategy strategy) -> Status
     {
         // Convert to GPIDs and call GPID version
         std::vector<GPID> gpids;
@@ -528,11 +529,12 @@ namespace scratchbird::core
         {
             gpids.push_back(convertPageIDtoGPID(page_id));
         }
-        return prefetchPagesGlobal(gpids, ctx);
+        return prefetchPagesGlobal(gpids, ctx, strategy);
     }
 
     // P2-3: TOAST Chunk Prefetching - Batch read pages into buffer pool
-    auto BufferPool::prefetchPagesGlobal(const std::vector<GPID> &gpids, ErrorContext *ctx) -> Status
+    auto BufferPool::prefetchPagesGlobal(const std::vector<GPID> &gpids, ErrorContext *ctx,
+                                         AccessStrategy strategy) -> Status
     {
         if (gpids.empty())
         {
@@ -579,7 +581,7 @@ namespace scratchbird::core
         for (GPID gpid : pages_to_fetch)
         {
             void *buffer = nullptr;
-            Status status = pinPageGlobal(gpid, &buffer, ctx);
+            Status status = pinPageGlobal(gpid, &buffer, ctx, strategy);
             if (status == Status::OK)
             {
                 // Immediately unpin - page stays in cache

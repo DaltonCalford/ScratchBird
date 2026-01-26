@@ -35,10 +35,18 @@
 #include "scratchbird/core/gpid.h"
 #include <cctype>
 #include <cstring>
+#include <algorithm>
 #include <new>
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        constexpr uint32_t READAHEAD_MIN_PAGES = 2;
+        constexpr uint32_t READAHEAD_MAX_PAGES = 32;
+        constexpr uint32_t READAHEAD_SEQ_THRESHOLD = 3;
+        constexpr uint32_t READAHEAD_GROWTH_FACTOR = 2;
+    }
 
     StorageEngine::StorageEngine(Database *db)
         : db_(db), buffer_pool_(db->buffer_pool()), page_manager_(db->page_manager()),
@@ -1563,6 +1571,8 @@ namespace scratchbird::core
         : db_(db), engine_(engine), table_id_(table_id), current_page_(start_page),
           current_item_(0), last_page_(0), done_(false)
     {
+        ra_current_pages_ = READAHEAD_MIN_PAGES;
+
         if (db_ && db_->page_manager())
         {
             uint32_t total_pages = db_->page_manager()->totalPages();
@@ -1814,6 +1824,7 @@ namespace scratchbird::core
             if (status == Status::OK)
             {
                 page_data_ = static_cast<uint8_t *>(page_buffer);
+                maybeReadAheadPrimary(page_id, ctx);
             }
             return status;
         }
@@ -1835,8 +1846,116 @@ namespace scratchbird::core
         {
             page_data_ = static_cast<uint8_t *>(page_buffer);
             current_gpid_ = gpid;
+            maybeReadAheadTablespace(page_id, ctx);
         }
         return status;
+    }
+
+    void HeapScanIterator::maybeReadAheadPrimary(uint32_t page_id, ErrorContext *ctx)
+    {
+        bool sequential = (ra_last_page_ != UINT32_MAX && page_id == ra_last_page_ + 1);
+        if (sequential)
+        {
+            ra_seq_count_++;
+            if (ra_seq_count_ >= READAHEAD_SEQ_THRESHOLD)
+            {
+                if (ra_seq_count_ > READAHEAD_SEQ_THRESHOLD)
+                {
+                    ra_current_pages_ = std::min(READAHEAD_MAX_PAGES,
+                                                 ra_current_pages_ * READAHEAD_GROWTH_FACTOR);
+                }
+                else if (ra_current_pages_ == 0)
+                {
+                    ra_current_pages_ = READAHEAD_MIN_PAGES;
+                }
+            }
+        }
+        else
+        {
+            ra_seq_count_ = 0;
+            ra_current_pages_ = READAHEAD_MIN_PAGES;
+        }
+
+        ra_last_page_ = page_id;
+        if (ra_seq_count_ < READAHEAD_SEQ_THRESHOLD)
+        {
+            return;
+        }
+
+        uint32_t start = page_id + 1;
+        if (start > last_page_)
+        {
+            return;
+        }
+
+        uint32_t end = std::min(last_page_, page_id + ra_current_pages_);
+        std::vector<uint32_t> page_ids;
+        page_ids.reserve(end - start + 1);
+        for (uint32_t next = start; next <= end; ++next)
+        {
+            page_ids.push_back(next);
+        }
+
+        db_->buffer_pool()->prefetchPages(page_ids, ctx, BufferPool::AccessStrategy::Sequential);
+    }
+
+    void HeapScanIterator::maybeReadAheadTablespace(size_t page_index, ErrorContext *ctx)
+    {
+        bool sequential = (ra_last_index_ != std::numeric_limits<size_t>::max() &&
+                           page_index == ra_last_index_ + 1);
+        if (sequential)
+        {
+            ra_seq_count_++;
+            if (ra_seq_count_ >= READAHEAD_SEQ_THRESHOLD)
+            {
+                if (ra_seq_count_ > READAHEAD_SEQ_THRESHOLD)
+                {
+                    ra_current_pages_ = std::min(READAHEAD_MAX_PAGES,
+                                                 ra_current_pages_ * READAHEAD_GROWTH_FACTOR);
+                }
+                else if (ra_current_pages_ == 0)
+                {
+                    ra_current_pages_ = READAHEAD_MIN_PAGES;
+                }
+            }
+        }
+        else
+        {
+            ra_seq_count_ = 0;
+            ra_current_pages_ = READAHEAD_MIN_PAGES;
+        }
+
+        ra_last_index_ = page_index;
+        if (ra_seq_count_ < READAHEAD_SEQ_THRESHOLD)
+        {
+            return;
+        }
+
+        size_t start = page_index + 1;
+        if (start >= allocated_pages_.size())
+        {
+            return;
+        }
+
+        size_t end = std::min(allocated_pages_.size() - 1,
+                              page_index + static_cast<size_t>(ra_current_pages_));
+        std::vector<GPID> gpids;
+        gpids.reserve(end - start + 1);
+        for (size_t idx = start; idx <= end; ++idx)
+        {
+            GPID gpid = allocated_pages_[idx];
+            if (getPageNumber(gpid) < 2)
+            {
+                continue;
+            }
+            gpids.push_back(gpid);
+        }
+
+        if (!gpids.empty())
+        {
+            db_->buffer_pool()->prefetchPagesGlobal(gpids, ctx,
+                                                    BufferPool::AccessStrategy::Sequential);
+        }
     }
 
     auto StorageEngine::deleteTuple(const ID &table_id, uint64_t tid, uint64_t xmax,

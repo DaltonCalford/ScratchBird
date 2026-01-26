@@ -205,12 +205,14 @@ namespace scratchbird::core
          * Thread-safety: Uses partition locks for page table lookups, global lock
          *                only when frame allocation is needed.
          */
-        auto prefetchPages(const std::vector<uint32_t> &page_ids, ErrorContext *ctx = nullptr) -> Status;
+        auto prefetchPages(const std::vector<uint32_t> &page_ids, ErrorContext *ctx = nullptr,
+                           AccessStrategy strategy = AccessStrategy::Normal) -> Status;
 
         /**
          * P2-3: Prefetch multiple pages (GPID version)
          */
-        auto prefetchPagesGlobal(const std::vector<GPID> &gpids, ErrorContext *ctx = nullptr) -> Status;
+        auto prefetchPagesGlobal(const std::vector<GPID> &gpids, ErrorContext *ctx = nullptr,
+                                 AccessStrategy strategy = AccessStrategy::Normal) -> Status;
 
         /**
          * flushTablespace - Flush all dirty pages for a specific tablespace

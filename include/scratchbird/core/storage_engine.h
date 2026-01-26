@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_map>
 #include <mutex>
+#include <limits>
 
 namespace scratchbird::core
 {
@@ -65,12 +66,18 @@ namespace scratchbird::core
         bool done_;
         bool filter_session_ = false;
         ID session_id_{};
+        uint32_t ra_current_pages_ = 0;
+        uint32_t ra_seq_count_ = 0;
+        uint32_t ra_last_page_ = UINT32_MAX;
+        size_t ra_last_index_ = std::numeric_limits<size_t>::max();
 
         // Current page data
         uint8_t *page_data_ = nullptr;
 
         // Load next page
         auto loadPage(uint32_t page_id, ErrorContext *ctx) -> Status;
+        void maybeReadAheadPrimary(uint32_t page_id, ErrorContext *ctx);
+        void maybeReadAheadTablespace(size_t page_index, ErrorContext *ctx);
     };
 
     // Iterator for index scan
