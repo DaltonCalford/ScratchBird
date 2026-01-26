@@ -8,6 +8,8 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/table_stats_manager.h"
+#include "scratchbird/core/telemetry.h"
+#include "scratchbird/core/transaction_manager.h"
 #include <algorithm>
 #include <cctype>
 #include <unordered_set>
@@ -91,6 +93,79 @@ std::string FirebirdCatalogHandler::padToChar63(const std::string& s) {
     // since ScratchBird handles variable-length properly
     return s;
 }
+
+namespace {
+
+const TypedValue* getColumnValue(const VirtualRow& row, const std::string& name) {
+    return row.getColumn(name);
+}
+
+std::string getTextValue(const TypedValue* value) {
+    if (!value || value->isNull()) {
+        return {};
+    }
+    if (value->type() == DataType::VARCHAR) {
+        return value->getVarchar();
+    }
+    return value->getText();
+}
+
+TypedValue textOrNull(const std::string& value) {
+    if (value.empty()) {
+        return TypedValue();
+    }
+    return TypedValue::makeText(value);
+}
+
+int64_t getInt64Value(const TypedValue* value, int64_t fallback = 0) {
+    if (!value || value->isNull()) {
+        return fallback;
+    }
+    switch (value->type()) {
+        case DataType::INT16:
+            return static_cast<int64_t>(value->getUInt16());
+        case DataType::INT32:
+            return static_cast<int64_t>(value->getInt32());
+        case DataType::INT64:
+            return value->getInt64();
+        case DataType::FLOAT32:
+            return static_cast<int64_t>(value->getFloat32());
+        case DataType::FLOAT64:
+            return static_cast<int64_t>(value->getFloat64());
+        default:
+            return fallback;
+    }
+}
+
+bool getBoolValue(const TypedValue* value, bool fallback = false) {
+    if (!value || value->isNull()) {
+        return fallback;
+    }
+    return value->getBool();
+}
+
+ID getUuidValue(const TypedValue* value) {
+    ID id{};
+    if (!value || value->isNull()) {
+        return id;
+    }
+    const auto& bytes = value->getUUID();
+    for (size_t i = 0; i < bytes.size() && i < id.bytes.size(); ++i) {
+        id.bytes[i] = bytes[i];
+    }
+    return id;
+}
+
+Status querySysTable(const std::string& table_name, VirtualResultSet& results) {
+    VirtualCatalogRouter& router = VirtualCatalogRouter::getInstance();
+    if (!router.isInitialized()) {
+        return Status::OK;
+    }
+    ErrorContext ctx;
+    return router.routeQuery(ProtocolType::SCRATCHBIRD, "sys", table_name, "", results, &ctx);
+}
+
+}  // namespace
 
 // ============================================================================
 // Ownership Checking
@@ -1743,17 +1818,71 @@ Status FirebirdCatalogHandler::queryMonDatabase(VirtualResultSet& results, Error
         DataType::INT64, DataType::TEXT, DataType::TEXT
     };
 
+    VirtualResultSet perf;
+    querySysTable("performance", perf);
+
+    std::unordered_map<std::string, double> perf_values;
+    std::string db_name;
+    for (const auto& row : perf.rows) {
+        const auto* metric = getColumnValue(row, "metric");
+        const auto* value = getColumnValue(row, "value");
+        const auto* db_value = getColumnValue(row, "database_name");
+        if (db_name.empty()) {
+            db_name = getTextValue(db_value);
+        }
+        if (!metric || !value || metric->isNull() || value->isNull()) {
+            continue;
+        }
+        perf_values[getTextValue(metric)] = value->getFloat64();
+    }
+
+    if (db_name.empty()) {
+        db_name = "scratchbird";
+    }
+
+    VirtualResultSet transactions;
+    querySysTable("transactions", transactions);
+
+    int64_t oldest_xid = 0;
+    int64_t oldest_active = 0;
+    int64_t oldest_snapshot = 0;
+    int64_t next_xid = 0;
+
+    for (const auto& row : transactions.rows) {
+        int64_t txn_id = getInt64Value(getColumnValue(row, "transaction_id"));
+        if (txn_id == 0) {
+            continue;
+        }
+        if (oldest_xid == 0 || txn_id < oldest_xid) {
+            oldest_xid = txn_id;
+        }
+        if (txn_id > next_xid) {
+            next_xid = txn_id;
+        }
+        std::string state = getTextValue(getColumnValue(row, "state"));
+        if (state == "active") {
+            if (oldest_active == 0 || txn_id < oldest_active) {
+                oldest_active = txn_id;
+            }
+        }
+    }
+    oldest_snapshot = oldest_xid;
+
     VirtualRow row;
     row.columns = {
-        {"MON$DATABASE_NAME", TypedValue::makeVarchar("scratchbird.sbdb")},
-        {"MON$PAGE_SIZE", TypedValue::makeInt64(16384)},
-        {"MON$ODS_MAJOR", TypedValue::makeInt64(13)},  // Firebird 5.0
-        {"MON$ODS_MINOR", TypedValue::makeInt64(0)},
-        {"MON$OLDEST_TRANSACTION", TypedValue::makeInt64(1)},
-        {"MON$OLDEST_ACTIVE", TypedValue::makeInt64(1)},
-        {"MON$OLDEST_SNAPSHOT", TypedValue::makeInt64(1)},
-        {"MON$NEXT_TRANSACTION", TypedValue::makeInt64(100)},
-        {"MON$PAGE_BUFFERS", TypedValue::makeInt64(2048)},
+        {"MON$DATABASE_NAME", TypedValue::makeVarchar(db_name)},
+        {"MON$PAGE_SIZE", TypedValue::makeInt64(static_cast<int64_t>(
+                               perf_values["page_size_bytes"]))},
+        {"MON$ODS_MAJOR", TypedValue::makeInt64(static_cast<int64_t>(
+                               perf_values["ods_major"]))},
+        {"MON$ODS_MINOR", TypedValue::makeInt64(static_cast<int64_t>(
+                               perf_values["ods_minor"]))},
+        {"MON$OLDEST_TRANSACTION", TypedValue::makeInt64(oldest_xid)},
+        {"MON$OLDEST_ACTIVE", TypedValue::makeInt64(oldest_active)},
+        {"MON$OLDEST_SNAPSHOT", TypedValue::makeInt64(oldest_snapshot)},
+        {"MON$NEXT_TRANSACTION", TypedValue::makeInt64(next_xid)},
+        {"MON$PAGE_BUFFERS", TypedValue::makeInt64(static_cast<int64_t>(
+                               perf_values["buffer_pool_pages_total"]))},
         {"MON$SQL_DIALECT", TypedValue::makeInt64(3)},
         {"MON$SHUTDOWN_MODE", TypedValue::makeInt64(0)},  // Online
         {"MON$SWEEP_INTERVAL", TypedValue::makeInt64(20000)},
@@ -1761,7 +1890,8 @@ Status FirebirdCatalogHandler::queryMonDatabase(VirtualResultSet& results, Error
         {"MON$FORCED_WRITES", TypedValue::makeInt64(1)},
         {"MON$RESERVE_SPACE", TypedValue::makeInt64(1)},
         {"MON$CREATION_DATE", TypedValue()},  // NULL
-        {"MON$PAGES", TypedValue::makeInt64(1000)},
+        {"MON$PAGES", TypedValue::makeInt64(static_cast<int64_t>(
+                         perf_values["allocated_pages"]))},
         {"MON$STAT_ID", TypedValue::makeInt64(1)},
         {"MON$BACKUP_STATE", TypedValue::makeInt64(0)},  // Normal
         {"MON$CRYPT_PAGE", TypedValue::makeInt64(0)},
@@ -1787,47 +1917,55 @@ Status FirebirdCatalogHandler::queryMonAttachments(VirtualResultSet& results, Er
         DataType::TEXT, DataType::INT64, DataType::TEXT, DataType::TEXT
     };
 
-    std::vector<ProcessControlBlock> backends;
-    core::ErrorContext proc_ctx;
-    if (core::ProcArrayManager::getAllActiveBackends(&backends, &proc_ctx) != Status::OK) {
+    VirtualResultSet sessions;
+    if (querySysTable("sessions", sessions) != Status::OK) {
         return Status::OK;
     }
 
-    std::unordered_map<ID, CatalogManager::SessionInfo, IDHash> sessions_by_id;
-    if (catalog_manager_) {
-        std::vector<CatalogManager::SessionInfo> sessions;
-        if (catalog_manager_->listSessions(sessions, nullptr) == Status::OK) {
-            for (const auto& session : sessions) {
-                sessions_by_id[session.session_id] = session;
-            }
-        }
-    }
+    for (const auto& session_row : sessions.rows) {
+        const auto* connection_id = getColumnValue(session_row, "connection_id");
+        std::string state = getTextValue(getColumnValue(session_row, "state"));
 
-    for (const auto& backend : backends) {
-        const CatalogManager::SessionInfo* session = nullptr;
-        auto it = sessions_by_id.find(backend.session_id);
-        if (it != sessions_by_id.end()) {
-            session = &it->second;
+        int64_t state_value = 0;
+        if (state == "active") {
+            state_value = 1;
+        } else if (state == "waiting") {
+            state_value = 2;
+        } else if (state == "idle_in_txn") {
+            state_value = 1;
+        } else {
+            state_value = 0;
         }
 
         VirtualRow row;
         row.columns = {
-            {"MON$ATTACHMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
-            {"MON$SERVER_PID", backend.backend_pid == 0 ? TypedValue() : TypedValue::makeInt64(static_cast<int64_t>(backend.backend_pid))},
-            {"MON$STATE", TypedValue::makeInt64(1)},  // Active
-            {"MON$ATTACHMENT_NAME", TypedValue::makeVarchar("scratchbird.sbdb")},
-            {"MON$USER", session ? TypedValue::makeVarchar(session->username) : TypedValue::makeVarchar("SYSDBA")},
-            {"MON$ROLE", TypedValue()},
-            {"MON$REMOTE_PROTOCOL", TypedValue::makeVarchar("TCP/IP")},
-            {"MON$REMOTE_ADDRESS", TypedValue::makeVarchar("127.0.0.1")},
+            {"MON$ATTACHMENT_ID", connection_id && !connection_id->isNull()
+                ? TypedValue::makeInt64(connection_id->getInt64())
+                : TypedValue()},
+            {"MON$SERVER_PID", TypedValue()},
+            {"MON$STATE", TypedValue::makeInt64(state_value)},
+            {"MON$ATTACHMENT_NAME", textOrNull(getTextValue(
+                getColumnValue(session_row, "database_name")))},
+            {"MON$USER", textOrNull(getTextValue(
+                getColumnValue(session_row, "user_name")))},
+            {"MON$ROLE", textOrNull(getTextValue(
+                getColumnValue(session_row, "role_name")))},
+            {"MON$REMOTE_PROTOCOL", textOrNull(getTextValue(
+                getColumnValue(session_row, "protocol")))},
+            {"MON$REMOTE_ADDRESS", textOrNull(getTextValue(
+                getColumnValue(session_row, "client_addr")))},
             {"MON$REMOTE_PID", TypedValue()},
-            {"MON$CHARACTER_SET_ID", TypedValue::makeInt64(4)},  // UTF8
-            {"MON$TIMESTAMP", backend.start_time == 0 ? TypedValue() : TypedValue::makeTimestamp(static_cast<int64_t>(backend.start_time))},
+            {"MON$CHARACTER_SET_ID", TypedValue::makeInt64(4)},
+            {"MON$TIMESTAMP", getColumnValue(session_row, "connected_at")
+                ? *getColumnValue(session_row, "connected_at")
+                : TypedValue()},
             {"MON$GARBAGE_COLLECTION", TypedValue::makeInt64(1)},
             {"MON$REMOTE_PROCESS", TypedValue()},
-            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
-            {"MON$CLIENT_VERSION", TypedValue::makeVarchar("ScratchBird 1.0")},
-            {"MON$REMOTE_VERSION", TypedValue::makeVarchar("ScratchBird 1.0")}
+            {"MON$STAT_ID", connection_id && !connection_id->isNull()
+                ? TypedValue::makeInt64(connection_id->getInt64())
+                : TypedValue()},
+            {"MON$CLIENT_VERSION", TypedValue::makeVarchar("ScratchBird")},
+            {"MON$REMOTE_VERSION", TypedValue::makeVarchar("ScratchBird")}
         };
         results.rows.push_back(std::move(row));
     }
@@ -1849,33 +1987,93 @@ Status FirebirdCatalogHandler::queryMonTransactions(VirtualResultSet& results, E
         DataType::INT16, DataType::INT16, DataType::INT64
     };
 
-    std::vector<ProcessControlBlock> backends;
-    core::ErrorContext proc_ctx;
-    if (core::ProcArrayManager::getAllActiveBackends(&backends, &proc_ctx) != Status::OK) {
+    VirtualResultSet sessions;
+    querySysTable("sessions", sessions);
+
+    std::unordered_map<ID, int64_t, IDHash> attachment_by_session;
+    for (const auto& session_row : sessions.rows) {
+        ID session_id = getUuidValue(getColumnValue(session_row, "session_id"));
+        int64_t attachment_id = getInt64Value(getColumnValue(session_row, "connection_id"));
+        if (attachment_id != 0) {
+            attachment_by_session[session_id] = attachment_id;
+        }
+    }
+
+    VirtualResultSet transactions;
+    if (querySysTable("transactions", transactions) != Status::OK) {
         return Status::OK;
     }
 
-    for (const auto& backend : backends) {
-        if (backend.xid == 0) {
+    int64_t oldest_xid = 0;
+    int64_t oldest_active = 0;
+    for (const auto& row : transactions.rows) {
+        int64_t txn_id = getInt64Value(getColumnValue(row, "transaction_id"));
+        if (txn_id == 0) {
             continue;
         }
-        VirtualRow row;
-        row.columns = {
-            {"MON$TRANSACTION_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
-            {"MON$ATTACHMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
-            {"MON$STATE", TypedValue::makeInt64(1)},  // Active
-            {"MON$TIMESTAMP", backend.xact_start_time == 0 ? TypedValue() : TypedValue::makeTimestamp(static_cast<int64_t>(backend.xact_start_time))},
-            {"MON$TOP_TRANSACTION", TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
-            {"MON$OLDEST_TRANSACTION", TypedValue::makeInt64(1)},
-            {"MON$OLDEST_ACTIVE", TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
-            {"MON$ISOLATION_MODE", TypedValue::makeInt64(static_cast<int64_t>(backend.isolation_level))},
-            {"MON$LOCK_TIMEOUT", TypedValue::makeInt64(-1)},  // Infinite
-            {"MON$READ_ONLY", TypedValue::makeInt64(backend.is_read_only ? 1 : 0)},
+        if (oldest_xid == 0 || txn_id < oldest_xid) {
+            oldest_xid = txn_id;
+        }
+        std::string state = getTextValue(getColumnValue(row, "state"));
+        if (state == "active") {
+            if (oldest_active == 0 || txn_id < oldest_active) {
+                oldest_active = txn_id;
+            }
+        }
+    }
+
+    for (const auto& row : transactions.rows) {
+        int64_t txn_id = getInt64Value(getColumnValue(row, "transaction_id"));
+        if (txn_id == 0) {
+            continue;
+        }
+
+        ID session_id = getUuidValue(getColumnValue(row, "session_id"));
+        int64_t attachment_id = 0;
+        auto att_it = attachment_by_session.find(session_id);
+        if (att_it != attachment_by_session.end()) {
+            attachment_id = att_it->second;
+        }
+
+        std::string state = getTextValue(getColumnValue(row, "state"));
+        int64_t state_value = 0;
+        if (state == "active") {
+            state_value = 1;
+        } else if (state == "waiting") {
+            state_value = 2;
+        } else if (state == "committed") {
+            state_value = 3;
+        } else if (state == "rolledback") {
+            state_value = 4;
+        }
+
+        std::string isolation = getTextValue(getColumnValue(row, "isolation_level"));
+        int64_t isolation_value = 0;
+        if (isolation == "repeatable_read") {
+            isolation_value = 1;
+        } else if (isolation == "serializable") {
+            isolation_value = 2;
+        }
+
+        VirtualRow out_row;
+        out_row.columns = {
+            {"MON$TRANSACTION_ID", TypedValue::makeInt64(txn_id)},
+            {"MON$ATTACHMENT_ID", attachment_id == 0 ? TypedValue() : TypedValue::makeInt64(attachment_id)},
+            {"MON$STATE", TypedValue::makeInt64(state_value)},
+            {"MON$TIMESTAMP", getColumnValue(row, "start_time")
+                ? *getColumnValue(row, "start_time")
+                : TypedValue()},
+            {"MON$TOP_TRANSACTION", TypedValue::makeInt64(txn_id)},
+            {"MON$OLDEST_TRANSACTION", TypedValue::makeInt64(oldest_xid)},
+            {"MON$OLDEST_ACTIVE", TypedValue::makeInt64(oldest_active)},
+            {"MON$ISOLATION_MODE", TypedValue::makeInt64(isolation_value)},
+            {"MON$LOCK_TIMEOUT", TypedValue()},
+            {"MON$READ_ONLY", TypedValue::makeInt64(getBoolValue(getColumnValue(row, "read_only")) ? 1 : 0)},
             {"MON$AUTO_COMMIT", TypedValue::makeInt64(0)},
             {"MON$AUTO_UNDO", TypedValue::makeInt64(1)},
-            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))}
+            {"MON$STAT_ID", TypedValue::makeInt64(txn_id)}
         };
-        results.rows.push_back(std::move(row));
+        results.rows.push_back(std::move(out_row));
     }
 
     return Status::OK;
@@ -1891,31 +2089,57 @@ Status FirebirdCatalogHandler::queryMonStatements(VirtualResultSet& results, Err
         DataType::INT16, DataType::TIMESTAMP, DataType::TEXT, DataType::INT64
     };
 
-    std::vector<ProcessControlBlock> backends;
-    core::ErrorContext proc_ctx;
-    if (core::ProcArrayManager::getAllActiveBackends(&backends, &proc_ctx) != Status::OK) {
+    VirtualResultSet sessions;
+    querySysTable("sessions", sessions);
+
+    std::unordered_map<ID, int64_t, IDHash> attachment_by_session;
+    for (const auto& session_row : sessions.rows) {
+        ID session_id = getUuidValue(getColumnValue(session_row, "session_id"));
+        int64_t attachment_id = getInt64Value(getColumnValue(session_row, "connection_id"));
+        if (attachment_id != 0) {
+            attachment_by_session[session_id] = attachment_id;
+        }
+    }
+
+    VirtualResultSet statements;
+    if (querySysTable("statements", statements) != Status::OK) {
         return Status::OK;
     }
 
-    for (const auto& backend : backends) {
-        if (backend.query_start_time == 0) {
+    for (const auto& stmt_row : statements.rows) {
+        int64_t stmt_id = getInt64Value(getColumnValue(stmt_row, "statement_id"));
+        if (stmt_id == 0) {
             continue;
         }
 
-        std::string sql_text;
-        if (backend.query_text[0] != '\0') {
-            sql_text = backend.query_text;
+        ID session_id = getUuidValue(getColumnValue(stmt_row, "session_id"));
+        int64_t attachment_id = 0;
+        auto att_it = attachment_by_session.find(session_id);
+        if (att_it != attachment_by_session.end()) {
+            attachment_id = att_it->second;
+        }
+
+        std::string state = getTextValue(getColumnValue(stmt_row, "state"));
+        int64_t state_value = 0;
+        if (state == "running") {
+            state_value = 1;
+        } else if (state == "waiting") {
+            state_value = 2;
         }
 
         VirtualRow row;
         row.columns = {
-            {"MON$STATEMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.query_start_time))},
-            {"MON$ATTACHMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
-            {"MON$TRANSACTION_ID", backend.xid == 0 ? TypedValue() : TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
-            {"MON$STATE", TypedValue::makeInt64(1)},
-            {"MON$TIMESTAMP", TypedValue::makeTimestamp(static_cast<int64_t>(backend.query_start_time))},
-            {"MON$SQL_TEXT", sql_text.empty() ? TypedValue() : TypedValue::makeText(sql_text)},
-            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))}
+            {"MON$STATEMENT_ID", TypedValue::makeInt64(stmt_id)},
+            {"MON$ATTACHMENT_ID", attachment_id == 0 ? TypedValue() : TypedValue::makeInt64(attachment_id)},
+            {"MON$TRANSACTION_ID", getColumnValue(stmt_row, "transaction_id")
+                ? *getColumnValue(stmt_row, "transaction_id")
+                : TypedValue()},
+            {"MON$STATE", TypedValue::makeInt64(state_value)},
+            {"MON$TIMESTAMP", getColumnValue(stmt_row, "start_time")
+                ? *getColumnValue(stmt_row, "start_time")
+                : TypedValue()},
+            {"MON$SQL_TEXT", textOrNull(getTextValue(getColumnValue(stmt_row, "sql_text")))},
+            {"MON$STAT_ID", TypedValue::makeInt64(stmt_id)}
         };
         results.rows.push_back(std::move(row));
     }

@@ -3,7 +3,7 @@
 /**
  * ScratchBird sys.* Catalog Handler
  *
- * Exposes internal scheduler/job catalog data as queryable sys.* tables.
+ * Exposes system monitoring and scheduler/job data as queryable sys.* tables.
  */
 
 #include "scratchbird/catalog/virtual_catalog.h"
@@ -76,6 +76,10 @@ private:
     static void setResultColumns(const ColumnDefs& def, VirtualResultSet& results);
     static void setColumnInfo(const ColumnDefs& def, std::vector<CatalogManager::ColumnInfo>& columns);
 
+    Status querySessions(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryTransactions(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryLocks(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryStatements(VirtualResultSet& results, ErrorContext* ctx);
     Status queryJobs(VirtualResultSet& results, ErrorContext* ctx);
     Status queryJobRuns(VirtualResultSet& results, ErrorContext* ctx);
     Status queryJobDependencies(VirtualResultSet& results, ErrorContext* ctx);

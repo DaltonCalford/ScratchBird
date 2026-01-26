@@ -471,6 +471,21 @@ void ScratchBirdMetrics::initialize() {
         "Total number of query errors",
         {"error_type", "database"});
 
+    query_rows_returned_total = reg.registerCounter(
+        "scratchbird_query_rows_returned_total",
+        "Total rows returned by SELECT queries",
+        {"type", "database"});
+
+    query_rows_affected_total = reg.registerCounter(
+        "scratchbird_query_rows_affected_total",
+        "Total rows affected by DML queries",
+        {"type", "database"});
+
+    query_currently_running = reg.registerGauge(
+        "scratchbird_query_currently_running",
+        "Number of currently running statements",
+        {"database"});
+
     // Transaction metrics
     transactions_total = reg.registerCounter(
         "scratchbird_transactions_total",
@@ -605,6 +620,27 @@ void ScratchBirdMetrics::initialize() {
     toast_writes_total = reg.registerCounter(
         "scratchbird_toast_writes_total",
         "Total TOAST value writes");
+
+    // COPY metrics
+    copy_rows_total = reg.registerCounter(
+        "scratchbird_copy_rows_total",
+        "Rows processed by COPY",
+        {"direction"});
+
+    copy_bytes_total = reg.registerCounter(
+        "scratchbird_copy_bytes_total",
+        "Bytes processed by COPY",
+        {"direction"});
+
+    copy_errors_total = reg.registerCounter(
+        "scratchbird_copy_errors_total",
+        "Total COPY errors");
+
+    copy_duration_seconds = reg.registerHistogram(
+        "scratchbird_copy_duration_seconds",
+        "COPY duration in seconds",
+        Histogram::DEFAULT_LATENCY_BUCKETS,
+        {"direction"});
 
     // Scheduler metrics
     scheduler_queue_depth = reg.registerGauge(

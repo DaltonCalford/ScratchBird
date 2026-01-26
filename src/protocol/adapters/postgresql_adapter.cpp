@@ -10,6 +10,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/telemetry.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
@@ -1327,6 +1328,7 @@ core::Status PostgresqlAdapter::handleCopyData(network::Connection* conn) {
         }
         return sendBuffer(conn);
     }
+    copy_context_.bytes += current_msg_data_.size();
     copy_context_.buffer.append(reinterpret_cast<const char*>(current_msg_data_.data()),
                                 current_msg_data_.size());
     return core::Status::OK;
@@ -1348,6 +1350,11 @@ core::Status PostgresqlAdapter::handleCopyFail(network::Connection* conn) {
     if (message.empty()) {
         message = "COPY failed";
     }
+    if (copy_context_.active) {
+        std::string direction = copy_context_.from_stdin ? "from" : "to";
+        recordCopyMetrics(direction, copy_context_.rows, copy_context_.bytes, true,
+                          copy_context_.start_time);
+    }
     bool from_extended = copy_context_.from_extended;
     sendErrorResponse(conn, "ERROR", "57014", message);
     copy_context_ = CopyContext{};
@@ -1362,6 +1369,31 @@ core::Status PostgresqlAdapter::handleTerminate(network::Connection* conn) {
     pg_state_ = PgProtocolState::CLOSING;
     conn->close(network::CloseReason::CLIENT_DISCONNECT);
     return core::Status::OK;
+}
+
+void PostgresqlAdapter::recordCopyMetrics(const std::string& direction,
+                                          uint64_t rows,
+                                          uint64_t bytes,
+                                          bool error,
+                                          const std::chrono::steady_clock::time_point& start_time) {
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    if (metrics.copy_rows_total && rows > 0) {
+        metrics.copy_rows_total->inc(static_cast<double>(rows), {direction});
+    }
+    if (metrics.copy_bytes_total && bytes > 0) {
+        metrics.copy_bytes_total->inc(static_cast<double>(bytes), {direction});
+    }
+    if (metrics.copy_errors_total && error) {
+        metrics.copy_errors_total->inc(1.0);
+    }
+    if (metrics.copy_duration_seconds) {
+        auto end_time = std::chrono::steady_clock::now();
+        double duration_seconds =
+            std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time).count();
+        metrics.copy_duration_seconds->observe(duration_seconds, {direction});
+    }
 }
 
 // ============================================================================
@@ -2529,6 +2561,9 @@ core::Status PostgresqlAdapter::startCopyOut(network::Connection* conn, CopyCont
 
     copy_context_ = ctx;
     copy_context_.active = true;
+    copy_context_.bytes = 0;
+    copy_context_.rows = 0;
+    copy_context_.start_time = std::chrono::steady_clock::now();
     pg_state_ = PgProtocolState::COPY_OUT;
 
     QueryContext query;
@@ -2554,6 +2589,7 @@ core::Status PostgresqlAdapter::startCopyOut(network::Connection* conn, CopyCont
     if (result.has_error) {
         sendProtocolError(conn, result.error_code, result.sqlstate,
                           result.error_message, result.error_detail, result.error_hint);
+        recordCopyMetrics("to", 0, 0, true, copy_context_.start_time);
         copy_context_ = CopyContext{};
         pg_state_ = PgProtocolState::READY;
         if (!ctx.from_extended) {
@@ -2617,6 +2653,7 @@ core::Status PostgresqlAdapter::startCopyOut(network::Connection* conn, CopyCont
         return escape_text_field(value);
     };
 
+    uint64_t bytes_sent = 0;
     auto send_row = [&](const std::vector<std::string>& fields) {
         std::string line;
         for (size_t i = 0; i < fields.size(); ++i) {
@@ -2626,6 +2663,7 @@ core::Status PostgresqlAdapter::startCopyOut(network::Connection* conn, CopyCont
             line += fields[i];
         }
         line.push_back('\n');
+        bytes_sent += line.size();
         sendCopyData(conn, line.data(), line.size());
     };
 
@@ -2657,8 +2695,12 @@ core::Status PostgresqlAdapter::startCopyOut(network::Connection* conn, CopyCont
     sendCopyDone(conn);
 
     copy_context_.rows = result.rows.size();
+    copy_context_.bytes = bytes_sent;
     std::string tag = "COPY " + std::to_string(copy_context_.rows);
     sendCommandComplete(conn, tag);
+
+    recordCopyMetrics("to", copy_context_.rows, copy_context_.bytes, false,
+                      copy_context_.start_time);
 
     if (ctx.from_extended && !ctx.portal_name.empty()) {
         auto it = portals_.find(ctx.portal_name);
@@ -2697,6 +2739,8 @@ core::Status PostgresqlAdapter::startCopyIn(network::Connection* conn, CopyConte
     copy_context_.active = true;
     copy_context_.buffer.clear();
     copy_context_.rows = 0;
+    copy_context_.bytes = 0;
+    copy_context_.start_time = std::chrono::steady_clock::now();
     pg_state_ = PgProtocolState::COPY_IN;
 
     sendCopyInResponse(conn, 0, {});
@@ -2880,6 +2924,7 @@ core::Status PostgresqlAdapter::finishCopyIn(network::Connection* conn) {
     if (!ok) {
         sendErrorResponse(conn, "ERROR", "0A000",
                           parse_error.empty() ? "COPY parsing failed" : parse_error);
+        recordCopyMetrics("from", 0, copy_context_.bytes, true, copy_context_.start_time);
         copy_context_ = CopyContext{};
         pg_state_ = PgProtocolState::READY;
         if (!ctx.from_extended) {
@@ -2935,6 +2980,7 @@ core::Status PostgresqlAdapter::finishCopyIn(network::Connection* conn) {
         const auto& row = rows[row_idx];
         if (!ctx.columns.empty() && row.size() != ctx.columns.size()) {
             sendErrorResponse(conn, "ERROR", "0A000", "COPY column count does not match");
+            recordCopyMetrics("from", inserted, copy_context_.bytes, true, copy_context_.start_time);
             copy_context_ = CopyContext{};
             pg_state_ = PgProtocolState::READY;
             if (!ctx.from_extended) {
@@ -2966,6 +3012,7 @@ core::Status PostgresqlAdapter::finishCopyIn(network::Connection* conn) {
         if (result.has_error) {
             sendProtocolError(conn, result.error_code, result.sqlstate,
                               result.error_message, result.error_detail, result.error_hint);
+            recordCopyMetrics("from", inserted, copy_context_.bytes, true, copy_context_.start_time);
             copy_context_ = CopyContext{};
             pg_state_ = PgProtocolState::READY;
             if (!ctx.from_extended) {
@@ -2978,6 +3025,8 @@ core::Status PostgresqlAdapter::finishCopyIn(network::Connection* conn) {
 
     std::string tag = "COPY " + std::to_string(inserted);
     sendCommandComplete(conn, tag);
+
+    recordCopyMetrics("from", inserted, copy_context_.bytes, false, copy_context_.start_time);
 
     if (ctx.from_extended && !ctx.portal_name.empty()) {
         auto it = portals_.find(ctx.portal_name);

@@ -6,6 +6,7 @@
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/telemetry.h"
 #include <cassert>
 #include <cctype>
 #include <cstdio>
@@ -167,6 +168,55 @@ namespace scratchbird::core
             }
 
             return out;
+        }
+
+        std::string baseNameFromPath(const std::string& path)
+        {
+            size_t last_slash = path.find_last_of("/\\");
+            if (last_slash == std::string::npos)
+            {
+                return path;
+            }
+            return path.substr(last_slash + 1);
+        }
+
+        std::string classifyQueryType(const std::string& keyword)
+        {
+            if (keyword == "SELECT" || keyword == "WITH")
+            {
+                return "select";
+            }
+            if (keyword == "INSERT")
+            {
+                return "insert";
+            }
+            if (keyword == "UPDATE")
+            {
+                return "update";
+            }
+            if (keyword == "DELETE")
+            {
+                return "delete";
+            }
+            if (keyword == "MERGE")
+            {
+                return "merge";
+            }
+            if (keyword == "COPY")
+            {
+                return "copy";
+            }
+            if (keyword == "CREATE" || keyword == "ALTER" || keyword == "DROP" ||
+                keyword == "TRUNCATE" || keyword == "COMMENT" || keyword == "GRANT" ||
+                keyword == "REVOKE" || keyword == "RENAME")
+            {
+                return "ddl";
+            }
+            if (!keyword.empty())
+            {
+                return "other";
+            }
+            return "unknown";
         }
 
         bool isZeroUuidLocal(const ID& id)
@@ -359,6 +409,7 @@ namespace scratchbird::core
           statement_timeout_seconds_(other.statement_timeout_seconds_),
           last_statement_text_(std::move(other.last_statement_text_)),
           last_statement_hash_(other.last_statement_hash_),
+          last_statement_query_type_(std::move(other.last_statement_query_type_)),
           last_statement_type_(other.last_statement_type_),
           last_statement_status_(other.last_statement_status_),
           last_statement_time_(other.last_statement_time_),
@@ -425,6 +476,7 @@ namespace scratchbird::core
         other.session_is_superuser_ = false;  // WP-5 EXEC-M3
         other.last_statement_text_.clear();
         other.last_statement_hash_ = 0;
+        other.last_statement_query_type_.clear();
         other.last_statement_type_ = StatementType::UNKNOWN;
         other.last_statement_status_ = StatementStatus::UNKNOWN;
         other.last_statement_time_ = 0;
@@ -513,6 +565,7 @@ namespace scratchbird::core
             statement_timeout_seconds_ = other.statement_timeout_seconds_;
             last_statement_text_ = std::move(other.last_statement_text_);
             last_statement_hash_ = other.last_statement_hash_;
+            last_statement_query_type_ = std::move(other.last_statement_query_type_);
             last_statement_type_ = other.last_statement_type_;
             last_statement_status_ = other.last_statement_status_;
             last_statement_time_ = other.last_statement_time_;
@@ -579,6 +632,7 @@ namespace scratchbird::core
             other.session_is_superuser_ = false;  // WP-5 EXEC-M3
             other.last_statement_text_.clear();
             other.last_statement_hash_ = 0;
+            other.last_statement_query_type_.clear();
             other.last_statement_type_ = StatementType::UNKNOWN;
             other.last_statement_status_ = StatementStatus::UNKNOWN;
             other.last_statement_time_ = 0;
@@ -1133,6 +1187,8 @@ namespace scratchbird::core
             }
         }
 
+        last_statement_query_type_ = classifyQueryType(keyword);
+
         if (keyword.empty())
         {
             last_statement_type_ = StatementType::UNKNOWN;
@@ -1155,6 +1211,22 @@ namespace scratchbird::core
 
         last_statement_status_ = StatementStatus::IN_PROGRESS;
 
+        auto& metrics = ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.query_currently_running)
+        {
+            std::string database_name = "default";
+            if (db_)
+            {
+                database_name = baseNameFromPath(db_->path());
+                if (database_name.empty())
+                {
+                    database_name = "default";
+                }
+            }
+            metrics.query_currently_running->inc(1.0, {database_name});
+        }
+
         ProcArrayManager::setQueryInfo(proc_id_, last_statement_time_, sql, nullptr);
     }
 
@@ -1171,6 +1243,54 @@ namespace scratchbird::core
         ProcArrayManager::clearQueryInfo(proc_id_, last_statement_time_, nullptr);
         statement_io_active_ = false;
         statement_id_ = 0;
+
+        std::string database_name = "default";
+        if (db_)
+        {
+            database_name = baseNameFromPath(db_->path());
+            if (database_name.empty())
+            {
+                database_name = "default";
+            }
+        }
+
+        std::string query_type = last_statement_query_type_.empty()
+            ? "unknown"
+            : last_statement_query_type_;
+
+        auto& metrics = ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.queries_total)
+        {
+            metrics.queries_total->inc(1.0, {query_type, database_name});
+        }
+        if (metrics.query_currently_running)
+        {
+            metrics.query_currently_running->dec(1.0, {database_name});
+        }
+        if (metrics.query_duration_seconds && start_time != 0 && end_time >= start_time)
+        {
+            double duration_seconds =
+                static_cast<double>(end_time - start_time) / 1000000.0;
+            metrics.query_duration_seconds->observe(duration_seconds,
+                                                    {query_type, database_name});
+        }
+        if (metrics.query_rows_returned_total &&
+            query_type == "select" &&
+            rows_affected > 0)
+        {
+            metrics.query_rows_returned_total->inc(
+                static_cast<double>(rows_affected),
+                {"select", database_name});
+        }
+        if (metrics.query_rows_affected_total &&
+            rows_affected > 0 &&
+            (query_type == "insert" || query_type == "update" || query_type == "delete"))
+        {
+            metrics.query_rows_affected_total->inc(
+                static_cast<double>(rows_affected),
+                {query_type, database_name});
+        }
 
         CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
         if (catalog && !last_statement_text_.empty())
@@ -1225,6 +1345,42 @@ namespace scratchbird::core
         ProcArrayManager::clearQueryInfo(proc_id_, last_statement_time_, nullptr);
         statement_io_active_ = false;
         statement_id_ = 0;
+
+        std::string database_name = "default";
+        if (db_)
+        {
+            database_name = baseNameFromPath(db_->path());
+            if (database_name.empty())
+            {
+                database_name = "default";
+            }
+        }
+
+        std::string query_type = last_statement_query_type_.empty()
+            ? "unknown"
+            : last_statement_query_type_;
+
+        auto& metrics = ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.queries_total)
+        {
+            metrics.queries_total->inc(1.0, {query_type, database_name});
+        }
+        if (metrics.query_currently_running)
+        {
+            metrics.query_currently_running->dec(1.0, {database_name});
+        }
+        if (metrics.query_duration_seconds && start_time != 0 && end_time >= start_time)
+        {
+            double duration_seconds =
+                static_cast<double>(end_time - start_time) / 1000000.0;
+            metrics.query_duration_seconds->observe(duration_seconds,
+                                                    {query_type, database_name});
+        }
+        if (metrics.query_errors_total)
+        {
+            metrics.query_errors_total->inc(1.0, {"error", database_name});
+        }
 
         CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
         if (catalog && !last_statement_text_.empty())

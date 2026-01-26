@@ -214,6 +214,9 @@ public:
     Histogram* query_duration_seconds;      // Query execution time
     Counter* queries_total;                  // Total queries executed
     Counter* query_errors_total;             // Query errors by type
+    Counter* query_rows_returned_total;      // Rows returned by SELECT
+    Counter* query_rows_affected_total;      // Rows affected by DML
+    Gauge* query_currently_running;         // In-flight statements
 
     // Transaction metrics
     Counter* transactions_total;             // Total transactions
@@ -258,6 +261,12 @@ public:
     // TOAST metrics
     Counter* toast_reads_total;             // TOAST value reads
     Counter* toast_writes_total;            // TOAST value writes
+
+    // COPY metrics
+    Counter* copy_rows_total;               // Rows processed by COPY
+    Counter* copy_bytes_total;              // Bytes processed by COPY
+    Counter* copy_errors_total;             // COPY errors
+    Histogram* copy_duration_seconds;       // COPY duration
 
     // Scheduler metrics
     Gauge* scheduler_queue_depth;          // Due jobs waiting

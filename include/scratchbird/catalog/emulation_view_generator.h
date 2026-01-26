@@ -511,6 +511,303 @@ private:
             "Maps triggers to Firebird RDB$TRIGGERS format"
         });
 
+        // MON$DATABASE - Monitoring database metadata
+        views.push_back({
+            "MON$DATABASE",
+            R"SQL(
+                SELECT
+                    COALESCE((SELECT database_name FROM sys.sessions
+                              WHERE database_name IS NOT NULL LIMIT 1),
+                             'scratchbird') AS MON$DATABASE_NAME,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'page_size_bytes' LIMIT 1), 0) AS MON$PAGE_SIZE,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'ods_major' LIMIT 1), 0) AS MON$ODS_MAJOR,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'ods_minor' LIMIT 1), 0) AS MON$ODS_MINOR,
+                    COALESCE((SELECT MIN(transaction_id) FROM sys.transactions), 0) AS MON$OLDEST_TRANSACTION,
+                    COALESCE((SELECT MIN(transaction_id) FROM sys.transactions
+                              WHERE state = 'active'), 0) AS MON$OLDEST_ACTIVE,
+                    COALESCE((SELECT MIN(transaction_id) FROM sys.transactions), 0) AS MON$OLDEST_SNAPSHOT,
+                    COALESCE((SELECT MAX(transaction_id) FROM sys.transactions), 0) AS MON$NEXT_TRANSACTION,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'buffer_pool_pages_total' LIMIT 1), 0) AS MON$PAGE_BUFFERS,
+                    3 AS MON$SQL_DIALECT,
+                    0 AS MON$SHUTDOWN_MODE,
+                    0 AS MON$SWEEP_INTERVAL,
+                    0 AS MON$READ_ONLY,
+                    1 AS MON$FORCED_WRITES,
+                    1 AS MON$RESERVE_SPACE,
+                    NULL AS MON$CREATION_DATE,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'allocated_pages' LIMIT 1), 0) AS MON$PAGES,
+                    1 AS MON$STAT_ID,
+                    0 AS MON$BACKUP_STATE,
+                    0 AS MON$CRYPT_PAGE,
+                    'SYSDBA' AS MON$OWNER,
+                    'Default' AS MON$SEC_DATABASE
+            )SQL",
+            {"MON$DATABASE_NAME", "MON$PAGE_SIZE", "MON$ODS_MAJOR", "MON$ODS_MINOR",
+             "MON$OLDEST_TRANSACTION", "MON$OLDEST_ACTIVE", "MON$OLDEST_SNAPSHOT",
+             "MON$NEXT_TRANSACTION", "MON$PAGE_BUFFERS", "MON$SQL_DIALECT",
+             "MON$SHUTDOWN_MODE", "MON$SWEEP_INTERVAL", "MON$READ_ONLY",
+             "MON$FORCED_WRITES", "MON$RESERVE_SPACE", "MON$CREATION_DATE",
+             "MON$PAGES", "MON$STAT_ID", "MON$BACKUP_STATE",
+             "MON$CRYPT_PAGE", "MON$OWNER", "MON$SEC_DATABASE"},
+            {DataType::TEXT, DataType::INT64, DataType::INT16, DataType::INT16,
+             DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT16,
+             DataType::INT16, DataType::INT64, DataType::INT16,
+             DataType::INT16, DataType::INT16, DataType::TIMESTAMP,
+             DataType::INT64, DataType::INT64, DataType::INT16,
+             DataType::INT64, DataType::TEXT, DataType::TEXT},
+            "Maps sys.performance/sys.transactions to Firebird MON$DATABASE"
+        });
+
+        // MON$ATTACHMENTS - Active sessions
+        views.push_back({
+            "MON$ATTACHMENTS",
+            R"SQL(
+                SELECT
+                    s.connection_id AS MON$ATTACHMENT_ID,
+                    NULL AS MON$SERVER_PID,
+                    CASE s.state
+                        WHEN 'active' THEN 1
+                        WHEN 'waiting' THEN 2
+                        WHEN 'idle_in_txn' THEN 1
+                        WHEN 'idle' THEN 0
+                        ELSE 0
+                    END AS MON$STATE,
+                    s.database_name AS MON$ATTACHMENT_NAME,
+                    s.user_name AS MON$USER,
+                    s.role_name AS MON$ROLE,
+                    s.protocol AS MON$REMOTE_PROTOCOL,
+                    s.client_addr AS MON$REMOTE_ADDRESS,
+                    NULL AS MON$REMOTE_PID,
+                    4 AS MON$CHARACTER_SET_ID,
+                    s.connected_at AS MON$TIMESTAMP,
+                    1 AS MON$GARBAGE_COLLECTION,
+                    NULL AS MON$REMOTE_PROCESS,
+                    s.connection_id AS MON$STAT_ID,
+                    'ScratchBird' AS MON$CLIENT_VERSION,
+                    'ScratchBird' AS MON$REMOTE_VERSION
+                FROM sys.sessions s
+            )SQL",
+            {"MON$ATTACHMENT_ID", "MON$SERVER_PID", "MON$STATE", "MON$ATTACHMENT_NAME",
+             "MON$USER", "MON$ROLE", "MON$REMOTE_PROTOCOL", "MON$REMOTE_ADDRESS",
+             "MON$REMOTE_PID", "MON$CHARACTER_SET_ID", "MON$TIMESTAMP", "MON$GARBAGE_COLLECTION",
+             "MON$REMOTE_PROCESS", "MON$STAT_ID", "MON$CLIENT_VERSION", "MON$REMOTE_VERSION"},
+            {DataType::INT64, DataType::INT64, DataType::INT16, DataType::TEXT,
+             DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT,
+             DataType::INT64, DataType::INT16, DataType::TIMESTAMP, DataType::INT16,
+             DataType::TEXT, DataType::INT64, DataType::TEXT, DataType::TEXT},
+            "Maps sys.sessions to Firebird MON$ATTACHMENTS"
+        });
+
+        // MON$TRANSACTIONS - Active transactions
+        views.push_back({
+            "MON$TRANSACTIONS",
+            R"SQL(
+                SELECT
+                    t.transaction_id AS MON$TRANSACTION_ID,
+                    s.connection_id AS MON$ATTACHMENT_ID,
+                    CASE t.state
+                        WHEN 'active' THEN 1
+                        WHEN 'waiting' THEN 2
+                        WHEN 'committed' THEN 3
+                        WHEN 'rolledback' THEN 4
+                        ELSE 0
+                    END AS MON$STATE,
+                    t.start_time AS MON$TIMESTAMP,
+                    t.transaction_id AS MON$TOP_TRANSACTION,
+                    COALESCE((SELECT MIN(transaction_id) FROM sys.transactions), 0) AS MON$OLDEST_TRANSACTION,
+                    COALESCE((SELECT MIN(transaction_id) FROM sys.transactions
+                              WHERE state = 'active'), 0) AS MON$OLDEST_ACTIVE,
+                    CASE t.isolation_level
+                        WHEN 'read_committed' THEN 0
+                        WHEN 'repeatable_read' THEN 1
+                        WHEN 'serializable' THEN 2
+                        ELSE 0
+                    END AS MON$ISOLATION_MODE,
+                    NULL AS MON$LOCK_TIMEOUT,
+                    CASE t.read_only WHEN true THEN 1 ELSE 0 END AS MON$READ_ONLY,
+                    0 AS MON$AUTO_COMMIT,
+                    1 AS MON$AUTO_UNDO,
+                    t.transaction_id AS MON$STAT_ID
+                FROM sys.transactions t
+                LEFT JOIN sys.sessions s ON s.session_id = t.session_id
+            )SQL",
+            {"MON$TRANSACTION_ID", "MON$ATTACHMENT_ID", "MON$STATE", "MON$TIMESTAMP",
+             "MON$TOP_TRANSACTION", "MON$OLDEST_TRANSACTION", "MON$OLDEST_ACTIVE",
+             "MON$ISOLATION_MODE", "MON$LOCK_TIMEOUT", "MON$READ_ONLY",
+             "MON$AUTO_COMMIT", "MON$AUTO_UNDO", "MON$STAT_ID"},
+            {DataType::INT64, DataType::INT64, DataType::INT16, DataType::TIMESTAMP,
+             DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT16, DataType::INT64, DataType::INT16,
+             DataType::INT16, DataType::INT16, DataType::INT64},
+            "Maps sys.transactions to Firebird MON$TRANSACTIONS"
+        });
+
+        // MON$STATEMENTS - Active statements
+        views.push_back({
+            "MON$STATEMENTS",
+            R"SQL(
+                SELECT
+                    st.statement_id AS MON$STATEMENT_ID,
+                    s.connection_id AS MON$ATTACHMENT_ID,
+                    st.transaction_id AS MON$TRANSACTION_ID,
+                    CASE st.state
+                        WHEN 'running' THEN 1
+                        WHEN 'waiting' THEN 2
+                        WHEN 'idle' THEN 0
+                        ELSE 0
+                    END AS MON$STATE,
+                    st.start_time AS MON$TIMESTAMP,
+                    st.sql_text AS MON$SQL_TEXT,
+                    st.statement_id AS MON$STAT_ID
+                FROM sys.statements st
+                LEFT JOIN sys.sessions s ON s.session_id = st.session_id
+            )SQL",
+            {"MON$STATEMENT_ID", "MON$ATTACHMENT_ID", "MON$TRANSACTION_ID",
+             "MON$STATE", "MON$TIMESTAMP", "MON$SQL_TEXT", "MON$STAT_ID"},
+            {DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT16, DataType::TIMESTAMP, DataType::TEXT, DataType::INT64},
+            "Maps sys.statements to Firebird MON$STATEMENTS"
+        });
+
+        // MON$LOCKS - Current locks
+        views.push_back({
+            "MON$LOCKS",
+            R"SQL(
+                SELECT
+                    l.lock_id AS MON$LOCK_ID,
+                    l.lock_type AS MON$LOCK_TYPE,
+                    l.lock_mode AS MON$LOCK_MODE,
+                    CASE l.lock_state
+                        WHEN 'granted' THEN 1
+                        WHEN 'waiting' THEN 2
+                        ELSE 0
+                    END AS MON$LOCK_STATE,
+                    s.connection_id AS MON$ATTACHMENT_ID,
+                    l.transaction_id AS MON$TRANSACTION_ID,
+                    l.relation_name AS MON$OBJECT_NAME
+                FROM sys.locks l
+                LEFT JOIN sys.sessions s ON s.session_id = l.session_id
+            )SQL",
+            {"MON$LOCK_ID", "MON$LOCK_TYPE", "MON$LOCK_MODE", "MON$LOCK_STATE",
+             "MON$ATTACHMENT_ID", "MON$TRANSACTION_ID", "MON$OBJECT_NAME"},
+            {DataType::INT64, DataType::TEXT, DataType::TEXT, DataType::INT16,
+             DataType::INT64, DataType::INT64, DataType::TEXT},
+            "Maps sys.locks to Firebird MON$LOCKS"
+        });
+
+        // MON$IO_STATS - I/O statistics
+        views.push_back({
+            "MON$IO_STATS",
+            R"SQL(
+                SELECT
+                    stat_id AS MON$STAT_ID,
+                    stat_group AS MON$STAT_GROUP,
+                    page_reads AS MON$PAGE_READS,
+                    page_writes AS MON$PAGE_WRITES,
+                    page_fetches AS MON$PAGE_FETCHES,
+                    page_marks AS MON$PAGE_MARKS
+                FROM sys.io_stats
+            )SQL",
+            {"MON$STAT_ID", "MON$STAT_GROUP", "MON$PAGE_READS", "MON$PAGE_WRITES",
+             "MON$PAGE_FETCHES", "MON$PAGE_MARKS"},
+            {DataType::INT64, DataType::INT16, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64},
+            "Maps sys.io_stats to Firebird MON$IO_STATS"
+        });
+
+        // MON$TABLE_STATS - Table statistics
+        views.push_back({
+            "MON$TABLE_STATS",
+            R"SQL(
+                SELECT
+                    0 AS MON$STAT_ID,
+                    table_name AS MON$TABLE_NAME
+                FROM sys.table_stats
+            )SQL",
+            {"MON$STAT_ID", "MON$TABLE_NAME"},
+            {DataType::INT64, DataType::TEXT},
+            "Maps sys.table_stats to Firebird MON$TABLE_STATS"
+        });
+
+        // MON$CALL_STACK - Stubbed to sys.statements
+        views.push_back({
+            "MON$CALL_STACK",
+            R"SQL(
+                SELECT
+                    statement_id AS MON$STAT_ID,
+                    0 AS MON$CALL_ID,
+                    statement_id AS MON$STATEMENT_ID,
+                    0 AS MON$CALL_TYPE,
+                    NULL AS MON$OBJECT_NAME
+                FROM sys.statements
+                WHERE 1 = 0
+            )SQL",
+            {"MON$STAT_ID", "MON$CALL_ID", "MON$STATEMENT_ID",
+             "MON$CALL_TYPE", "MON$OBJECT_NAME"},
+            {DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT16, DataType::TEXT},
+            "Stub view for MON$CALL_STACK backed by sys.statements"
+        });
+
+        // MON$RECORD_STATS - Stubbed to sys.table_stats
+        views.push_back({
+            "MON$RECORD_STATS",
+            R"SQL(
+                SELECT
+                    0 AS MON$STAT_ID,
+                    0 AS MON$RECORD_IDX_READS,
+                    0 AS MON$RECORD_INSERTS,
+                    0 AS MON$RECORD_UPDATES,
+                    0 AS MON$RECORD_DELETES
+                FROM sys.table_stats
+                WHERE 1 = 0
+            )SQL",
+            {"MON$STAT_ID", "MON$RECORD_IDX_READS", "MON$RECORD_INSERTS",
+             "MON$RECORD_UPDATES", "MON$RECORD_DELETES"},
+            {DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64},
+            "Stub view for MON$RECORD_STATS backed by sys.table_stats"
+        });
+
+        // MON$MEMORY_USAGE - Stubbed to sys.performance
+        views.push_back({
+            "MON$MEMORY_USAGE",
+            R"SQL(
+                SELECT
+                    0 AS MON$STAT_ID,
+                    0 AS MON$MEMORY_USED,
+                    0 AS MON$MEMORY_ALLOCATED
+                FROM sys.performance
+                WHERE 1 = 0
+            )SQL",
+            {"MON$STAT_ID", "MON$MEMORY_USED", "MON$MEMORY_ALLOCATED"},
+            {DataType::INT64, DataType::INT64, DataType::INT64},
+            "Stub view for MON$MEMORY_USAGE backed by sys.performance"
+        });
+
+        // MON$CONTEXT_VARIABLES - Stubbed to sys.sessions
+        views.push_back({
+            "MON$CONTEXT_VARIABLES",
+            R"SQL(
+                SELECT
+                    connection_id AS MON$ATTACHMENT_ID,
+                    transaction_id AS MON$TRANSACTION_ID,
+                    NULL AS MON$VARIABLE_NAME,
+                    NULL AS MON$VARIABLE_VALUE
+                FROM sys.sessions
+                WHERE 1 = 0
+            )SQL",
+            {"MON$ATTACHMENT_ID", "MON$TRANSACTION_ID", "MON$VARIABLE_NAME", "MON$VARIABLE_VALUE"},
+            {DataType::INT64, DataType::INT64, DataType::TEXT, DataType::TEXT},
+            "Stub view for MON$CONTEXT_VARIABLES backed by sys.sessions"
+        });
+
         return views;
     }
 
@@ -564,6 +861,199 @@ private:
             "PostgreSQL pg_views view"
         });
 
+        views.push_back({
+            "pg_stat_activity",
+            R"SQL(
+                SELECT
+                    NULL AS datid,
+                    s.database_name AS datname,
+                    CAST(s.connection_id AS INT32) AS pid,
+                    NULL AS usesysid,
+                    s.user_name AS usename,
+                    NULL AS application_name,
+                    s.client_addr AS client_addr,
+                    s.client_port AS client_port,
+                    s.connected_at AS backend_start,
+                    t.start_time AS xact_start,
+                    st.start_time AS query_start,
+                    s.last_activity_at AS state_change,
+                    CASE s.state
+                        WHEN 'idle' THEN 'idle'
+                        WHEN 'active' THEN 'active'
+                        WHEN 'idle_in_txn' THEN 'idle in transaction'
+                        WHEN 'waiting' THEN 'active'
+                        ELSE NULL
+                    END AS state,
+                    CASE WHEN s.wait_event IS NULL THEN NULL ELSE 'Lock' END AS wait_event_type,
+                    s.wait_event AS wait_event,
+                    t.transaction_id AS backend_xid,
+                    NULL AS backend_xmin,
+                    COALESCE(st.sql_text, s.current_query) AS query,
+                    'client backend' AS backend_type
+                FROM sys.sessions s
+                LEFT JOIN sys.transactions t ON t.session_id = s.session_id
+                LEFT JOIN sys.statements st ON st.session_id = s.session_id
+            )SQL",
+            {"datid", "datname", "pid", "usesysid", "usename", "application_name",
+             "client_addr", "client_port", "backend_start", "xact_start", "query_start",
+             "state_change", "state", "wait_event_type", "wait_event", "backend_xid",
+             "backend_xmin", "query", "backend_type"},
+            {DataType::INT32, DataType::TEXT, DataType::INT32, DataType::INT32, DataType::TEXT,
+             DataType::TEXT, DataType::TEXT, DataType::INT32, DataType::TIMESTAMP,
+             DataType::TIMESTAMP, DataType::TIMESTAMP, DataType::TIMESTAMP, DataType::TEXT,
+             DataType::TEXT, DataType::TEXT, DataType::INT64, DataType::INT64, DataType::TEXT,
+             DataType::TEXT},
+            "PostgreSQL pg_stat_activity from sys.sessions/sys.statements/sys.transactions"
+        });
+
+        views.push_back({
+            "pg_locks",
+            R"SQL(
+                SELECT
+                    l.lock_type AS locktype,
+                    NULL AS database,
+                    NULL AS relation,
+                    l.page AS page,
+                    l.tuple AS tuple,
+                    l.virtual_xid AS virtualxid,
+                    l.transaction_id AS transactionid,
+                    NULL AS classid,
+                    NULL AS objid,
+                    NULL AS objsubid,
+                    CAST(l.session_id AS TEXT) AS virtualtransaction,
+                    s.connection_id AS pid,
+                    l.lock_mode AS mode,
+                    l.granted AS granted,
+                    FALSE AS fastpath
+                FROM sys.locks l
+                LEFT JOIN sys.sessions s ON s.session_id = l.session_id
+            )SQL",
+            {"locktype", "database", "relation", "page", "tuple", "virtualxid",
+             "transactionid", "classid", "objid", "objsubid", "virtualtransaction",
+             "pid", "mode", "granted", "fastpath"},
+            {DataType::TEXT, DataType::INT32, DataType::INT32, DataType::INT64, DataType::INT64,
+             DataType::TEXT, DataType::INT64, DataType::INT32, DataType::INT32, DataType::INT32,
+             DataType::TEXT, DataType::INT32, DataType::TEXT, DataType::BOOLEAN, DataType::BOOLEAN},
+            "PostgreSQL pg_locks from sys.locks"
+        });
+
+        views.push_back({
+            "pg_stat_database",
+            R"SQL(
+                SELECT
+                    NULL AS datid,
+                    '{database_name}' AS datname,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'connections_active' LIMIT 1), 0) AS numbackends,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'transactions_committed_total' LIMIT 1), 0) AS xact_commit,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'transactions_rolled_back_total' LIMIT 1), 0) AS xact_rollback,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'buffer_pool_reads_total{source=disk}' LIMIT 1), 0) AS blks_read,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'buffer_pool_reads_total{source=cache}' LIMIT 1), 0) AS blks_hit,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'query_rows_returned_total' LIMIT 1), 0) AS tup_returned,
+                    NULL AS tup_fetched,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'query_rows_affected_total{type=insert}' LIMIT 1), 0) AS tup_inserted,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'query_rows_affected_total{type=update}' LIMIT 1), 0) AS tup_updated,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'query_rows_affected_total{type=delete}' LIMIT 1), 0) AS tup_deleted,
+                    0 AS conflicts,
+                    0 AS temp_files,
+                    0 AS temp_bytes,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'deadlocks_total' LIMIT 1), 0) AS deadlocks,
+                    NULL AS blk_read_time,
+                    NULL AS blk_write_time,
+                    NULL AS stats_reset
+            )SQL",
+            {"datid", "datname", "numbackends", "xact_commit", "xact_rollback",
+             "blks_read", "blks_hit", "tup_returned", "tup_fetched", "tup_inserted",
+             "tup_updated", "tup_deleted", "conflicts", "temp_files", "temp_bytes",
+             "deadlocks", "blk_read_time", "blk_write_time", "stats_reset"},
+            {DataType::INT32, DataType::TEXT, DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::FLOAT64, DataType::FLOAT64, DataType::TIMESTAMP},
+            "PostgreSQL pg_stat_database from sys.performance"
+        });
+
+        views.push_back({
+            "pg_stat_bgwriter",
+            R"SQL(
+                SELECT
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'buffer_pool_writes_total' LIMIT 1), 0) AS buffers_clean,
+                    NULL AS maxwritten_clean,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'page_buffers' LIMIT 1), 0) AS buffers_alloc,
+                    NULL AS stats_reset
+            )SQL",
+            {"buffers_clean", "maxwritten_clean", "buffers_alloc", "stats_reset"},
+            {DataType::INT64, DataType::INT64, DataType::INT64, DataType::TIMESTAMP},
+            "PostgreSQL pg_stat_bgwriter from sys.performance"
+        });
+
+        views.push_back({
+            "pg_stat_all_tables",
+            R"SQL(
+                SELECT
+                    NULL AS relid,
+                    schema_name AS schemaname,
+                    table_name AS relname,
+                    seq_scan_count AS seq_scan,
+                    last_seq_scan_at AS last_seq_scan,
+                    seq_rows_read AS seq_tup_read,
+                    idx_scan_count AS idx_scan,
+                    last_idx_scan_at AS last_idx_scan,
+                    idx_rows_fetch AS idx_tup_fetch,
+                    rows_inserted AS n_tup_ins,
+                    rows_updated AS n_tup_upd,
+                    rows_deleted AS n_tup_del,
+                    rows_hot_updated AS n_tup_hot_upd,
+                    rows_newpage_updated AS n_tup_newpage_upd,
+                    live_rows_estimate AS n_live_tup,
+                    dead_rows_estimate AS n_dead_tup,
+                    mod_since_analyze AS n_mod_since_analyze,
+                    ins_since_vacuum AS n_ins_since_vacuum,
+                    last_vacuum_at AS last_vacuum,
+                    last_autovacuum_at AS last_autovacuum,
+                    last_analyze_at AS last_analyze,
+                    last_autoanalyze_at AS last_autoanalyze,
+                    vacuum_count AS vacuum_count,
+                    autovacuum_count AS autovacuum_count,
+                    analyze_count AS analyze_count,
+                    autoanalyze_count AS autoanalyze_count,
+                    total_vacuum_time_ms / 1000.0 AS total_vacuum_time,
+                    total_autovacuum_time_ms / 1000.0 AS total_autovacuum_time,
+                    total_analyze_time_ms / 1000.0 AS total_analyze_time,
+                    total_autoanalyze_time_ms / 1000.0 AS total_autoanalyze_time
+                FROM sys.table_stats
+            )SQL",
+            {"relid", "schemaname", "relname", "seq_scan", "last_seq_scan",
+             "seq_tup_read", "idx_scan", "last_idx_scan", "idx_tup_fetch",
+             "n_tup_ins", "n_tup_upd", "n_tup_del", "n_tup_hot_upd",
+             "n_tup_newpage_upd", "n_live_tup", "n_dead_tup",
+             "n_mod_since_analyze", "n_ins_since_vacuum", "last_vacuum",
+             "last_autovacuum", "last_analyze", "last_autoanalyze",
+             "vacuum_count", "autovacuum_count", "analyze_count",
+             "autoanalyze_count", "total_vacuum_time", "total_autovacuum_time",
+             "total_analyze_time", "total_autoanalyze_time"},
+            {DataType::INT32, DataType::TEXT, DataType::TEXT, DataType::INT64,
+             DataType::TIMESTAMP, DataType::INT64, DataType::INT64, DataType::TIMESTAMP,
+             DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::TIMESTAMP, DataType::TIMESTAMP,
+             DataType::TIMESTAMP, DataType::TIMESTAMP, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::FLOAT64, DataType::FLOAT64,
+             DataType::FLOAT64, DataType::FLOAT64},
+            "PostgreSQL pg_stat_all_tables from sys.table_stats"
+        });
+
         return views;
     }
 
@@ -608,6 +1098,123 @@ private:
             {DataType::VARCHAR, DataType::VARCHAR, DataType::VARCHAR, DataType::VARCHAR,
              DataType::VARCHAR, DataType::INT64, DataType::VARCHAR},
             "MySQL INFORMATION_SCHEMA.TABLES view"
+        });
+
+        views.push_back({
+            "PROCESSLIST",
+            R"SQL(
+                SELECT
+                    s.connection_id AS ID,
+                    s.user_name AS USER,
+                    CASE
+                        WHEN s.client_addr IS NULL THEN NULL
+                        WHEN s.client_port IS NULL THEN s.client_addr
+                        ELSE s.client_addr || ':' || CAST(s.client_port AS TEXT)
+                    END AS HOST,
+                    s.database_name AS DB,
+                    CASE s.state
+                        WHEN 'idle' THEN 'Sleep'
+                        WHEN 'idle_in_txn' THEN 'Sleep'
+                        WHEN 'active' THEN 'Query'
+                        WHEN 'waiting' THEN 'Query'
+                        ELSE 'Sleep'
+                    END AS COMMAND,
+                    NULL AS TIME,
+                    s.state AS STATE,
+                    COALESCE(st.sql_text, s.current_query) AS INFO
+                FROM sys.sessions s
+                LEFT JOIN sys.statements st ON st.session_id = s.session_id
+            )SQL",
+            {"ID", "USER", "HOST", "DB", "COMMAND", "TIME", "STATE", "INFO"},
+            {DataType::INT64, DataType::TEXT, DataType::TEXT, DataType::TEXT,
+             DataType::TEXT, DataType::INT64, DataType::TEXT, DataType::TEXT},
+            "MySQL information_schema.PROCESSLIST from sys.sessions/sys.statements"
+        });
+
+        views.push_back({
+            "data_locks",
+            R"SQL(
+                SELECT
+                    'SCRATCHBIRD' AS ENGINE,
+                    l.lock_id AS LOCK_ID,
+                    CAST(l.lock_id AS TEXT) AS ENGINE_LOCK_ID,
+                    l.transaction_id AS ENGINE_TRANSACTION_ID,
+                    s.connection_id AS THREAD_ID,
+                    NULL AS EVENT_ID,
+                    NULL AS OBJECT_SCHEMA,
+                    l.relation_name AS OBJECT_NAME,
+                    NULL AS PARTITION_NAME,
+                    NULL AS SUBPARTITION_NAME,
+                    NULL AS INDEX_NAME,
+                    NULL AS OBJECT_INSTANCE_BEGIN,
+                    l.lock_type AS LOCK_TYPE,
+                    l.lock_mode AS LOCK_MODE,
+                    l.lock_state AS LOCK_STATUS,
+                    COALESCE(CAST(l.tuple AS TEXT), CAST(l.page AS TEXT)) AS LOCK_DATA
+                FROM sys.locks l
+                LEFT JOIN sys.sessions s ON s.session_id = l.session_id
+            )SQL",
+            {"ENGINE", "LOCK_ID", "ENGINE_LOCK_ID", "ENGINE_TRANSACTION_ID", "THREAD_ID",
+             "EVENT_ID", "OBJECT_SCHEMA", "OBJECT_NAME", "PARTITION_NAME", "SUBPARTITION_NAME",
+             "INDEX_NAME", "OBJECT_INSTANCE_BEGIN", "LOCK_TYPE", "LOCK_MODE",
+             "LOCK_STATUS", "LOCK_DATA"},
+            {DataType::TEXT, DataType::INT64, DataType::TEXT, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT,
+             DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT,
+             DataType::TEXT},
+            "MySQL performance_schema.data_locks from sys.locks"
+        });
+
+        views.push_back({
+            "global_status",
+            R"SQL(
+                SELECT 'Connections' AS VARIABLE_NAME,
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'connections_total' LIMIT 1), 0) AS VARIABLE_VALUE
+                UNION ALL
+                SELECT 'Threads_connected',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'connections_active' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Threads_running',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'query_currently_running' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Com_select',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'queries_total{type=select}' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Com_insert',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'queries_total{type=insert}' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Com_update',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'queries_total{type=update}' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Com_delete',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'queries_total{type=delete}' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Innodb_buffer_pool_read_requests',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'buffer_pool_reads_total{source=cache}' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Innodb_buffer_pool_reads',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'buffer_pool_reads_total{source=disk}' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Innodb_row_lock_waits',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'lock_waits_total' LIMIT 1), 0)
+                UNION ALL
+                SELECT 'Uptime',
+                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                                 WHERE metric = 'uptime_seconds' LIMIT 1), 0)
+            )SQL",
+            {"VARIABLE_NAME", "VARIABLE_VALUE"},
+            {DataType::TEXT, DataType::INT64},
+            "MySQL performance_schema.global_status from sys.performance"
         });
 
         return views;

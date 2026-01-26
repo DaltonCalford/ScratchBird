@@ -16,6 +16,7 @@
 #include "scratchbird/server/ipc_server.h"
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <unordered_map>
 #include <deque>
@@ -290,6 +291,12 @@ protected:
                               std::vector<uint8_t>& bytecode_out,
                               std::string& error_out) override;
 
+    void recordCopyMetrics(const std::string& direction,
+                           uint64_t rows,
+                           uint64_t bytes,
+                           bool error,
+                           const std::chrono::steady_clock::time_point& start_time);
+
 private:
     struct CopyOptions {
         enum class Format {
@@ -312,6 +319,8 @@ private:
         std::string select_query;
         std::string buffer;
         size_t rows = 0;
+        uint64_t bytes = 0;
+        std::chrono::steady_clock::time_point start_time{};
         std::string portal_name;
         std::string statement_name;
         CopyOptions options;

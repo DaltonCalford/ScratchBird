@@ -473,6 +473,7 @@ namespace scratchbird::core
         // Last statement tracking (for dormant reattach inspection)
         std::string last_statement_text_;
         uint64_t last_statement_hash_ = 0;
+        std::string last_statement_query_type_;
         StatementType last_statement_type_ = StatementType::UNKNOWN;
         StatementStatus last_statement_status_ = StatementStatus::UNKNOWN;
         uint64_t last_statement_time_ = 0;

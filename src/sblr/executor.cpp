@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <exception>
 #include <functional>
 #include <optional>
 #include <iostream>
@@ -51290,6 +51291,60 @@ namespace scratchbird
                 column_names.push_back(readString());
             }
 
+            auto& metrics = core::ScratchBirdMetrics::getInstance();
+            metrics.initialize();
+            const std::string direction_label = (direction == 1) ? "from" : "to";
+            struct CopyMetricsTracker
+            {
+                core::Counter* rows = nullptr;
+                core::Counter* bytes = nullptr;
+                core::Counter* errors = nullptr;
+                core::Histogram* duration = nullptr;
+                std::string direction;
+                std::chrono::steady_clock::time_point start_time;
+                uint64_t rows_value = 0;
+                uint64_t bytes_value = 0;
+                bool success = false;
+                int uncaught = 0;
+
+                CopyMetricsTracker(core::ScratchBirdMetrics& metrics_ref,
+                                   const std::string& dir)
+                    : rows(metrics_ref.copy_rows_total),
+                      bytes(metrics_ref.copy_bytes_total),
+                      errors(metrics_ref.copy_errors_total),
+                      duration(metrics_ref.copy_duration_seconds),
+                      direction(dir),
+                      start_time(std::chrono::steady_clock::now()),
+                      uncaught(std::uncaught_exceptions())
+                {
+                }
+
+                ~CopyMetricsTracker()
+                {
+                    if (duration)
+                    {
+                        auto end_time = std::chrono::steady_clock::now();
+                        double seconds =
+                            std::chrono::duration_cast<std::chrono::duration<double>>(
+                                end_time - start_time).count();
+                        duration->observe(seconds, {direction});
+                    }
+                    if (rows && rows_value > 0)
+                    {
+                        rows->inc(static_cast<double>(rows_value), {direction});
+                    }
+                    if (bytes && bytes_value > 0)
+                    {
+                        bytes->inc(static_cast<double>(bytes_value), {direction});
+                    }
+                    if (!success && errors && std::uncaught_exceptions() > uncaught)
+                    {
+                        errors->inc(1.0);
+                    }
+                }
+            };
+            CopyMetricsTracker copy_metrics(metrics, direction_label);
+
             struct CopyOptions
             {
                 enum class Format : uint8_t
@@ -51562,33 +51617,43 @@ namespace scratchbird
                 }
 
                 size_t row_count = 0;
+                uint64_t bytes_total = 0;
                 if (query_results)
                 {
                     if (options.header)
                     {
+                        std::string line;
                         for (size_t c = 0; c < query_results->columnCount(); ++c)
                         {
-                            if (c > 0) (*out) << options.delimiter;
-                            (*out) << format_field(query_results->columnName(c), false);
+                            if (c > 0) line.push_back(options.delimiter);
+                            line += format_field(query_results->columnName(c), false);
                         }
-                        (*out) << '\n';
+                        line.push_back('\n');
+                        bytes_total += line.size();
+                        (*out) << line;
                     }
 
                     for (size_t r = 0; r < query_results->rowCount(); ++r)
                     {
+                        std::string line;
                         for (size_t c = 0; c < query_results->columnCount(); ++c)
                         {
                             const auto& val = query_results->getValue(r, c);
                             std::string text = val.isNull() ? std::string() : val.toString();
-                            if (c > 0) (*out) << options.delimiter;
-                            (*out) << format_field(text, val.isNull());
+                            if (c > 0) line.push_back(options.delimiter);
+                            line += format_field(text, val.isNull());
                         }
-                        (*out) << '\n';
+                        line.push_back('\n');
+                        bytes_total += line.size();
+                        (*out) << line;
                         row_count++;
                     }
                 }
 
                 last_affected_rows_ = static_cast<int64_t>(row_count);
+                copy_metrics.rows_value = row_count;
+                copy_metrics.bytes_value = bytes_total;
+                copy_metrics.success = true;
                 return;
             }
 
@@ -51721,15 +51786,19 @@ namespace scratchbird
 
                 core::Tuple tuple;
                 size_t row_count = 0;
+                uint64_t bytes_total = 0;
                 if (options.header)
                 {
+                    std::string line;
                     for (size_t i = 0; i < col_indices.size(); ++i)
                     {
                         const auto& col_name = all_columns[col_indices[i]].column_name;
-                        if (i > 0) (*out) << options.delimiter;
-                        (*out) << format_field(col_name, false);
+                        if (i > 0) line.push_back(options.delimiter);
+                        line += format_field(col_name, false);
                     }
-                    (*out) << '\n';
+                    line.push_back('\n');
+                    bytes_total += line.size();
+                    (*out) << line;
                 }
                 while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
                 {
@@ -51739,18 +51808,24 @@ namespace scratchbird
                         continue;
                     }
 
+                    std::string line;
                     for (size_t i = 0; i < col_indices.size(); ++i)
                     {
                         const auto& val = row_values[col_indices[i]];
                         std::string text = val.isNull() ? std::string() : val.toString();
-                        if (i > 0) (*out) << options.delimiter;
-                        (*out) << format_field(text, val.isNull());
+                        if (i > 0) line.push_back(options.delimiter);
+                        line += format_field(text, val.isNull());
                     }
-                    (*out) << '\n';
+                    line.push_back('\n');
+                    bytes_total += line.size();
+                    (*out) << line;
                     row_count++;
                 }
 
                 last_affected_rows_ = static_cast<int64_t>(row_count);
+                copy_metrics.rows_value = row_count;
+                copy_metrics.bytes_value = bytes_total;
+                copy_metrics.success = true;
             }
             else if (direction == 1)
             {
@@ -52730,9 +52805,11 @@ namespace scratchbird
 
                 std::string line;
                 int affected_count = 0;
+                uint64_t bytes_total = 0;
                 bool skipped_header = false;
                 while (std::getline(*in, line))
                 {
+                    bytes_total += line.size() + 1;
                     if (!line.empty() && line.back() == '\r')
                     {
                         line.pop_back();
@@ -52790,6 +52867,9 @@ namespace scratchbird
                 }
 
                 last_affected_rows_ = affected_count;
+                copy_metrics.rows_value = static_cast<uint64_t>(affected_count);
+                copy_metrics.bytes_value = bytes_total;
+                copy_metrics.success = true;
             }
             else
             {
