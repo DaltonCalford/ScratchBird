@@ -27,6 +27,7 @@
 #include <memory>
 #include <variant>
 #include <stack>
+#include <optional>
 #include <unordered_set>
 #include <unordered_map>
 #include <atomic>
@@ -255,6 +256,7 @@ namespace scratchbird
                                      const std::vector<Value>& args,
                                      Value& result_out,
                                      core::ErrorContext* ctx = nullptr) -> core::Status;
+            bool isEffectiveSuperuser() const;
             void recordObjectDefinition(core::CatalogManager::ObjectType object_type,
                                          const core::ID& object_id);
             void deleteObjectDefinition(core::CatalogManager::ObjectType object_type,
@@ -268,6 +270,8 @@ namespace scratchbird
             // NOTE: This is a non-owning pointer that must be set before executing security-related operations
             core::ConnectionContext *conn_ctx_ = nullptr;
             std::unique_ptr<core::ConnectionContext> owned_conn_ctx_;
+            std::optional<core::ID> effective_user_override_;
+            std::optional<bool> effective_superuser_override_;
             std::istream* copy_input_stream_ = nullptr;
             std::ostream* copy_output_stream_ = nullptr;
 

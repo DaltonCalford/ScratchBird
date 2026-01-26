@@ -21,18 +21,30 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/proc_array.h"
+#include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/opcodes.h"
 
 #include <filesystem>
 #include <memory>
 
 using namespace scratchbird;
 using namespace scratchbird::core;
+using scratchbird::sblr::Executor;
+using scratchbird::sblr::QueryCompilerV2;
+using scratchbird::sblr::Opcode;
 
 class SecurityPhase3_4_RLS_Test : public ::testing::Test
 {
 protected:
     std::unique_ptr<Database> db;
+    std::unique_ptr<ConnectionContext> conn_ctx_;
+    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<Executor> executor_;
     std::string test_db_path;
+    uint32_t proc_id_ = 0;
 
     void SetUp() override
     {
@@ -52,15 +64,70 @@ protected:
         db = std::make_unique<Database>();
         status = db->open(test_db_path, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to open test database: " << ctx.message;
+
+        status = ProcArrayManager::initialize(db.get(), 4, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to initialize ProcArray: " << ctx.message;
+
+        status = ProcArrayManager::registerBackend(&proc_id_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to register backend: " << ctx.message;
+
+        conn_ctx_ = std::make_unique<ConnectionContext>(db.get(), proc_id_);
+        status = conn_ctx_->initialize(&ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to initialize connection context: " << ctx.message;
+
+        auto system_user = db->catalog_manager()->getSystemUserId(&ctx);
+        conn_ctx_->setCurrentUser(system_user, true);
+
+        core::CatalogManager::SchemaInfo schema;
+        ASSERT_EQ(db->catalog_manager()->getSchema("PUBLIC", schema, &ctx), core::Status::OK)
+            << "Failed to get PUBLIC schema: " << ctx.message;
+        conn_ctx_->setCurrentSchemaId(schema.schema_id);
+
+        compiler_ = std::make_unique<QueryCompilerV2>(db.get());
+        compiler_->setCurrentSchema(schema.schema_id);
+
+        executor_ = std::make_unique<Executor>(db.get());
+        executor_->setConnectionContext(conn_ctx_.get());
+        executor_->setCurrentSchema(schema.schema_id);
     }
 
     void TearDown() override
     {
+        executor_.reset();
+        compiler_.reset();
+        conn_ctx_.reset();
+
+        ErrorContext ctx;
+        ProcArrayManager::unregisterBackend(proc_id_, &ctx);
+        ProcArrayManager::shutdown(&ctx);
+
         db.reset();
         if (std::filesystem::exists(test_db_path))
         {
             std::filesystem::remove_all(test_db_path);
         }
+    }
+
+    scratchbird::sblr::ExecutionResult executeSQL(const std::string& sql)
+    {
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success())
+        {
+            if (!compile_result.errors().empty())
+            {
+                return scratchbird::sblr::ExecutionResult(compile_result.errors().front());
+            }
+            return scratchbird::sblr::ExecutionResult("Compile error");
+        }
+
+        return executor_->execute(compile_result.bytecode());
+    }
+
+    void commitTransaction()
+    {
+        ErrorContext ctx;
+        auto status = conn_ctx_->commit(&ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to commit: " << ctx.message;
     }
 
     // Helper to create a test table
@@ -100,6 +167,37 @@ protected:
         EXPECT_EQ(status, Status::OK) << "Failed to create table: " << ctx.message;
 
         return table_id;
+    }
+
+    std::string makeBinaryPolicyHex(const std::string& column,
+                                    Opcode op,
+                                    int32_t literal) const
+    {
+        std::vector<uint8_t> bytes;
+        bytes.push_back(static_cast<uint8_t>(Opcode::COLUMN_REF));
+
+        uint8_t len_buf[10];
+        size_t len_bytes = scratchbird::sblr::writeUVarint(len_buf, column.size());
+        bytes.insert(bytes.end(), len_buf, len_buf + len_bytes);
+        bytes.insert(bytes.end(), column.begin(), column.end());
+
+        bytes.push_back(static_cast<uint8_t>(Opcode::LITERAL_INT32));
+        uint8_t int_buf[4];
+        scratchbird::sblr::writeInt32(int_buf, static_cast<uint32_t>(literal));
+        bytes.insert(bytes.end(), int_buf, int_buf + 4);
+
+        bytes.push_back(static_cast<uint8_t>(op));
+
+        static const char hex_chars[] = "0123456789abcdef";
+        std::string hex;
+        hex.reserve(2 + bytes.size() * 2);
+        hex.append("0x");
+        for (uint8_t byte : bytes)
+        {
+            hex.push_back(hex_chars[(byte >> 4) & 0x0F]);
+            hex.push_back(hex_chars[byte & 0x0F]);
+        }
+        return hex;
     }
 
 };
@@ -471,39 +569,31 @@ TEST_F(SecurityPhase3_4_RLS_Test, RuntimeFiltering)
     // Create test table
     ID table_id = createTestTable("products");
 
-    // Enable RLS on table
+    auto insert_a = executeSQL("INSERT INTO products (id, name, tenant_id) VALUES (1, 'alpha', 1)");
+    ASSERT_TRUE(insert_a.success()) << "INSERT failed: " << insert_a.error();
+    auto insert_b = executeSQL("INSERT INTO products (id, name, tenant_id) VALUES (2, 'beta', 2)");
+    ASSERT_TRUE(insert_b.success()) << "INSERT failed: " << insert_b.error();
+    commitTransaction();
+
+    // Enable RLS on table (forced so superuser cannot bypass)
     ErrorContext ctx;
-    auto status = db->catalog_manager()->setTableRLS(table_id, true, false, &ctx);
+    auto status = db->catalog_manager()->setTableRLS(table_id, true, true, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to enable RLS: " << ctx.message;
 
-    // Create a simple policy: price < 100
-    // This policy will filter out expensive products
-    std::string using_expr = "price < 100";
-    std::vector<std::string> roles = {"users"};
-
+    // Create policy: tenant_id = 1
+    std::string using_expr = makeBinaryPolicyHex("tenant_id", Opcode::EXPR_EQ, 1);
     ID policy_id;
     status = db->catalog_manager()->createPolicy(
         table_id,
-        "cheap_products_only",
-        CatalogManager::PolicyType::SELECT,
-        roles,
+        "tenant_filter",
+        CatalogManager::PolicyType::ALL,
+        {},  // all roles
         using_expr,
-        "",  // no WITH CHECK
+        using_expr,
         policy_id,
         &ctx);
 
     ASSERT_EQ(status, Status::OK) << "Failed to create policy: " << ctx.message;
-
-    // TODO Phase 3.4.7: Add actual SELECT query execution test
-    // This would require:
-    // 1. Insert test data (products with different prices)
-    // 2. Execute SELECT query with RLS enforcement
-    // 3. Verify that only products with price < 100 are returned
-    //
-    // For now, we verify that:
-    // - RLS is enabled
-    // - Policy is created
-    // - Policy expression is stored correctly
 
     // Verify RLS is enabled
     CatalogManager::TableInfo table_info;
@@ -513,11 +603,54 @@ TEST_F(SecurityPhase3_4_RLS_Test, RuntimeFiltering)
 
     // Verify policy exists and has correct expression
     CatalogManager::PolicyInfo policy_info;
-    status = db->catalog_manager()->getPolicy(table_id, "cheap_products_only", policy_info, &ctx);
+    status = db->catalog_manager()->getPolicy(table_id, "tenant_filter", policy_info, &ctx);
     ASSERT_EQ(status, Status::OK);
     EXPECT_EQ(policy_info.using_expr, using_expr);
 
-    std::cout << "Note: Full runtime filtering test requires executor integration (pending)" << std::endl;
+    auto select_result = executeSQL("SELECT id, tenant_id FROM products ORDER BY id");
+    ASSERT_TRUE(select_result.success()) << "SELECT failed: " << select_result.error();
+
+    auto* rs = select_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt32(), 1);
+    EXPECT_EQ(rs->getValue(0, 1).toInt32(), 1);
+}
+
+TEST_F(SecurityPhase3_4_RLS_Test, DmlHonorsWithCheckPolicies)
+{
+    ID table_id = createTestTable("tasks");
+
+    auto insert_ok = executeSQL("INSERT INTO tasks (id, name, tenant_id) VALUES (1, 'ok', 1)");
+    ASSERT_TRUE(insert_ok.success()) << "INSERT failed: " << insert_ok.error();
+    commitTransaction();
+
+    ErrorContext ctx;
+    auto status = db->catalog_manager()->setTableRLS(table_id, true, true, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to enable RLS: " << ctx.message;
+
+    std::string policy_expr = makeBinaryPolicyHex("tenant_id", Opcode::EXPR_EQ, 1);
+    ID policy_id;
+    status = db->catalog_manager()->createPolicy(
+        table_id,
+        "tenant_guard",
+        CatalogManager::PolicyType::ALL,
+        {},
+        policy_expr,
+        policy_expr,
+        policy_id,
+        &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create policy: " << ctx.message;
+
+    auto insert_blocked = executeSQL("INSERT INTO tasks (id, name, tenant_id) VALUES (2, 'blocked', 2)");
+    EXPECT_FALSE(insert_blocked.success());
+    EXPECT_NE(insert_blocked.error().find("Row-level security policy violation"),
+              std::string::npos);
+
+    auto update_blocked = executeSQL("UPDATE tasks SET tenant_id = 2 WHERE id = 1");
+    EXPECT_FALSE(update_blocked.success());
+    EXPECT_NE(update_blocked.error().find("Row-level security policy violation"),
+              std::string::npos);
 }
 
 // Test 19: TOAST Persistence

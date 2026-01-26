@@ -527,6 +527,8 @@ public:
             ID owner_id;
             std::string definition;  // SELECT query text
             bool check_option;
+            bool security_definer = false;    // SECURITY DEFINER view
+            bool security_barrier = false;    // SECURITY BARRIER view
             std::vector<std::string> column_names;  // Optional explicit columns
             uint64_t created_time;
             uint64_t last_modified_time;

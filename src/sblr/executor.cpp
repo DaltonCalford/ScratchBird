@@ -17929,6 +17929,13 @@ namespace scratchbird
                     continue;
                 }
 
+                if (!checkRLSPolicies(table_info.table_id, row_values, all_columns,
+                                      core::CatalogManager::PolicyType::SELECT,
+                                      false /* is_with_check */))
+                {
+                    continue;
+                }
+
                 // Evaluate WHERE clause if present
                 if (has_where)
                 {
@@ -18743,6 +18750,13 @@ namespace scratchbird
                     // Deserialize tuple
                     std::vector<Value> row_values;
                     if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                    {
+                        continue;
+                    }
+
+                    if (!checkRLSPolicies(table_info.table_id, row_values, all_columns,
+                                          core::CatalogManager::PolicyType::SELECT,
+                                          false /* is_with_check */))
                     {
                         continue;
                     }
@@ -20009,6 +20023,21 @@ namespace scratchbird
             // Execute the view's bytecode
             Executor view_executor(db_);
             view_executor.setConnectionContext(conn_ctx_);  // Preserve security context
+            if (view_info.security_definer)
+            {
+                view_executor.effective_user_override_ = view_info.owner_id;
+                view_executor.effective_superuser_override_.reset();
+                if (db_ && db_->catalog_manager())
+                {
+                    core::CatalogManager::BasicUserInfo user_info;
+                    core::ErrorContext user_ctx;
+                    if (db_->catalog_manager()->getUserBasic(view_info.owner_id, user_info, &user_ctx)
+                        == core::Status::OK)
+                    {
+                        view_executor.effective_superuser_override_ = user_info.is_superuser;
+                    }
+                }
+            }
             auto exec_result = view_executor.execute(compile_result.bytecode());
 
             if (!exec_result.success())
@@ -21417,6 +21446,13 @@ namespace scratchbird
                         return;
                     }
 
+                    if (!checkRLSPolicies(table_info.table_id, row_values, all_columns,
+                                          core::CatalogManager::PolicyType::SELECT,
+                                          false /* is_with_check */))
+                    {
+                        return;
+                    }
+
                     if (has_where && !skip_where_eval)
                     {
                         size_t saved_pc = pc_;
@@ -21582,6 +21618,13 @@ namespace scratchbird
                     {
                         std::vector<Value> row_values;
                         if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                        {
+                            continue;
+                        }
+                        if (!isZeroUuid(table_id) &&
+                            !checkRLSPolicies(table_id, row_values, columns,
+                                              core::CatalogManager::PolicyType::SELECT,
+                                              false /* is_with_check */))
                         {
                             continue;
                         }
@@ -42706,6 +42749,10 @@ namespace scratchbird
                 static const core::ID zero_id = {};
                 return zero_id;
             }
+            if (effective_user_override_.has_value())
+            {
+                return effective_user_override_.value();
+            }
             return conn_ctx_->getCurrentUserId();
         }
 
@@ -42727,6 +42774,34 @@ namespace scratchbird
                 return false; // No connection context = no privileges
             }
             return conn_ctx_->isSuperuser();
+        }
+
+        bool Executor::isEffectiveSuperuser() const
+        {
+            if (!conn_ctx_)
+            {
+                return false;
+            }
+            if (!effective_user_override_.has_value())
+            {
+                return conn_ctx_->isSuperuser();
+            }
+            if (effective_superuser_override_.has_value())
+            {
+                return effective_superuser_override_.value();
+            }
+            if (!db_ || !db_->catalog_manager())
+            {
+                return false;
+            }
+            core::CatalogManager::BasicUserInfo user_info;
+            core::ErrorContext err_ctx;
+            if (db_->catalog_manager()->getUserBasic(effective_user_override_.value(),
+                                                     user_info, &err_ctx) == core::Status::OK)
+            {
+                return user_info.is_superuser;
+            }
+            return false;
         }
 
         void Executor::recordObjectDefinition(core::CatalogManager::ObjectType object_type,
@@ -42788,13 +42863,13 @@ namespace scratchbird
             }
 
             // Superusers bypass all permission checks (zero overhead!)
-            if (conn_ctx_->isSuperuser())
+            if (isEffectiveSuperuser())
             {
                 return true;
             }
 
             // Get current user ID
-            const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
+            const core::ID& current_user_id = getCurrentUserID();
 
             // Check if object_id is zero UUID (invalid object)
             static const core::ID zero_id = {};
@@ -42848,13 +42923,13 @@ namespace scratchbird
             }
 
             // Superusers bypass all permission checks (zero overhead!)
-            if (conn_ctx_->isSuperuser())
+            if (isEffectiveSuperuser())
             {
                 return true;
             }
 
             // Get current user ID
-            const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
+            const core::ID& current_user_id = getCurrentUserID();
 
             // Check if object_id is zero UUID (invalid object)
             static const core::ID zero_id = {};

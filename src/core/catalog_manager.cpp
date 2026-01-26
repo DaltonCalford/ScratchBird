@@ -767,7 +767,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t refresh_strategy; // MVRefreshStrategy enum
         uint8_t refresh_on_commit; // 1 if refresh on commit
         uint8_t supports_concurrent; // 1 if concurrent refresh supported
-        uint8_t reserved[2];
+        uint8_t security_definer; // 1 if SECURITY DEFINER view
+        uint8_t security_barrier; // 1 if security barrier view
         uint64_t created_time;
         uint64_t last_modified_time;
         uint64_t last_refreshed; // For materialized views
@@ -23390,6 +23391,8 @@ auto CatalogManager::writeViewRecord(const ViewInfo &view, ErrorContext *ctx) ->
     record.change_log_table_id = view.change_log_table_id;
     record.name_is_delimited = view.name_is_delimited ? 1 : 0;
     record.check_option = view.check_option ? 1 : 0;
+    record.security_definer = view.security_definer ? 1 : 0;
+    record.security_barrier = view.security_barrier ? 1 : 0;
     record.is_materialized = view.materialized ? 1 : 0;
     record.refresh_strategy = static_cast<uint8_t>(view.refresh_strategy);
     record.refresh_on_commit = view.refresh_on_commit ? 1 : 0;
@@ -23434,6 +23437,8 @@ auto CatalogManager::updateViewRecord(const ViewInfo &view, ErrorContext *ctx) -
     record.change_log_table_id = view.change_log_table_id;
     record.name_is_delimited = view.name_is_delimited ? 1 : 0;
     record.check_option = view.check_option ? 1 : 0;
+    record.security_definer = view.security_definer ? 1 : 0;
+    record.security_barrier = view.security_barrier ? 1 : 0;
     record.is_materialized = view.materialized ? 1 : 0;
     record.refresh_strategy = static_cast<uint8_t>(view.refresh_strategy);
     record.refresh_on_commit = view.refresh_on_commit ? 1 : 0;
@@ -23492,6 +23497,8 @@ auto CatalogManager::readViewRecords(ErrorContext *ctx) -> Status
             loadStringFromToast(record.definition_oid, xmin, info.definition, ctx);
         }
         info.check_option = record.check_option != 0;
+        info.security_definer = record.security_definer != 0;
+        info.security_barrier = record.security_barrier != 0;
         info.column_names.clear();
         if (record.columns_oid != 0)
         {
