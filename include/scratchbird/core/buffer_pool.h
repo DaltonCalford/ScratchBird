@@ -20,6 +20,7 @@ namespace scratchbird::core
 
     // Forward declarations
     class Database;
+    class ScratchBirdMetrics;
 
     /**
      * Buffer Pool - Manages in-memory page cache
@@ -445,6 +446,7 @@ namespace scratchbird::core
         std::atomic<bool> bgwriter_shutdown_{false};        // Shutdown flag for background writer
         std::condition_variable bgwriter_cv_;               // Condition variable for bgwriter wake-up
         std::mutex bgwriter_mutex_;                         // Mutex for background writer coordination
+        ScratchBirdMetrics *metrics_{nullptr};              // Telemetry wiring (optional)
 
         // Helper methods
         auto evictPage(uint32_t &evicted_frame, ErrorContext *ctx) -> Status;
@@ -460,6 +462,8 @@ namespace scratchbird::core
         uint32_t getDirtyPageCount() const;                 // Get count of dirty pages
         void startBackgroundWriter();                       // Start background writer thread
         void stopBackgroundWriter();                        // Stop background writer thread
+        void updateDirtyTelemetry();                        // Sync dirty page gauge
+        void updatePoolTelemetry();                         // Sync pool size/total gauges
     };
 
 } // namespace scratchbird::core

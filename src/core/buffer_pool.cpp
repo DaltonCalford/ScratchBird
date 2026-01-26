@@ -1,6 +1,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include <cstring>
@@ -61,6 +62,11 @@ namespace scratchbird::core
             // Add to LRU list (all frames start as free)
             lru_list_.push_back(i);
         }
+
+        metrics_ = &ScratchBirdMetrics::getInstance();
+        metrics_->initialize();
+        updatePoolTelemetry();
+        updateDirtyTelemetry();
 
         // Start background writer if enabled (Issue 2.20)
         if (config_.enable_background_writer)
@@ -182,6 +188,14 @@ namespace scratchbird::core
 
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                if (metrics_ && metrics_->buffer_pool_hits_total)
+                {
+                    metrics_->buffer_pool_hits_total->inc();
+                }
+                if (metrics_ && metrics_->buffer_pool_hits_total)
+                {
+                    metrics_->buffer_pool_hits_total->inc();
+                }
                 if (auto* conn_ctx = ConnectionContext::getCurrent())
                 {
                     conn_ctx->recordPageFetch();
@@ -196,6 +210,10 @@ namespace scratchbird::core
 
         // MEDIUM-1 FIX: Use relaxed atomic increment for stats
         stats_.misses.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_ && metrics_->buffer_pool_misses_total)
+        {
+            metrics_->buffer_pool_misses_total->inc();
+        }
 
         // Re-check partition in case another thread loaded the page while we waited
         {
@@ -322,6 +340,7 @@ namespace scratchbird::core
         {
             frames_[frame_index].is_dirty = true;
             dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
+            updateDirtyTelemetry();
             if (auto* conn_ctx = ConnectionContext::getCurrent())
             {
                 conn_ctx->recordPageMark();
@@ -389,6 +408,7 @@ namespace scratchbird::core
             // P2-2: Decrement dirty counter when transitioning from dirty to clean
             frames_[frame_index].is_dirty = false;
             dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+            updateDirtyTelemetry();
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
@@ -424,6 +444,7 @@ namespace scratchbird::core
                 // P2-2: Decrement dirty counter when transitioning from dirty to clean
                 frames_[i].is_dirty = false;
                 dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+                updateDirtyTelemetry();
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             }
@@ -540,6 +561,7 @@ namespace scratchbird::core
                 // P2-2: Decrement dirty counter when transitioning from dirty to clean
                 frames_[i].is_dirty = false;
                 dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+                updateDirtyTelemetry();
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 flushed_count++;
             }
@@ -822,6 +844,7 @@ namespace scratchbird::core
                 }
                 // P2-2: Decrement dirty counter since page is being flushed during eviction
                 dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+                updateDirtyTelemetry();
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
@@ -859,7 +882,12 @@ namespace scratchbird::core
     {
         // Call new Database GPID method (supports multi-tablespace addressing)
         // Database class handles tablespace validation and routing for Phase 1
-        return db_->read_page_global(gpid, buffer, ctx);
+        Status status = db_->read_page_global(gpid, buffer, ctx);
+        if (status == Status::OK && metrics_ && metrics_->buffer_pool_reads_total)
+        {
+            metrics_->buffer_pool_reads_total->inc();
+        }
+        return status;
     }
 
     // PHASE 1, TASK 1.2.4: Use Database::write_page_global() for GPID-based I/O
@@ -871,6 +899,10 @@ namespace scratchbird::core
         Status status = db_->write_page_global(gpid, buffer, ctx);
         if (status == Status::OK)
         {
+            if (metrics_ && metrics_->buffer_pool_writes_total)
+            {
+                metrics_->buffer_pool_writes_total->inc();
+            }
             if (auto* conn_ctx = ConnectionContext::getCurrent())
             {
                 conn_ctx->recordPageWrite();
@@ -1000,6 +1032,7 @@ namespace scratchbird::core
         {
             frames_[frame_index].is_dirty = true;
             dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
+            updateDirtyTelemetry();
             if (auto* conn_ctx = ConnectionContext::getCurrent())
             {
                 conn_ctx->recordPageMark();
@@ -1202,6 +1235,7 @@ namespace scratchbird::core
                 // P2-2: Decrement dirty counter when transitioning from dirty to clean
                 frame.is_dirty = false;
                 dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+                updateDirtyTelemetry();
                 pages_written++;
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.bgwriter_pages_written.fetch_add(1, std::memory_order_relaxed);
@@ -1246,6 +1280,32 @@ namespace scratchbird::core
         // P2-2: O(1) dirty page count using atomic counter
         // No longer requires mutex or O(N) scan through frames
         return dirty_page_count_.load(std::memory_order_relaxed);
+    }
+
+    void BufferPool::updateDirtyTelemetry()
+    {
+        if (!metrics_ || !metrics_->buffer_pool_pages_dirty)
+        {
+            return;
+        }
+        metrics_->buffer_pool_pages_dirty->set(getDirtyPageCount());
+    }
+
+    void BufferPool::updatePoolTelemetry()
+    {
+        if (!metrics_)
+        {
+            return;
+        }
+        if (metrics_->buffer_pool_size_bytes)
+        {
+            metrics_->buffer_pool_size_bytes->set(
+                static_cast<double>(config_.pool_size) * static_cast<double>(config_.page_size));
+        }
+        if (metrics_->buffer_pool_pages_total)
+        {
+            metrics_->buffer_pool_pages_total->set(config_.pool_size);
+        }
     }
 
 } // namespace scratchbird::core

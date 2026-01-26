@@ -76,10 +76,12 @@ protected:
         ASSERT_EQ(db_->open(db_path_, &ctx), Status::OK) << ctx.message;
 
         ASSERT_EQ(db_->connect(conn_, &ctx), Status::OK) << ctx.message;
+        ConnectionContext::setCurrent(conn_.get());
     }
 
     void TearDown() override
     {
+        ConnectionContext::setCurrent(nullptr);
         conn_.reset();
         if (db_)
         {
@@ -209,7 +211,7 @@ TEST_F(TablespaceMigrationIndexUpdateTest, BitmapIndexUpdatesTidsAfterMigration)
     TID tid(makeGPID(3, 100), 7);
     ASSERT_EQ(index->insert(key, std::strlen(key), tid, &ctx), Status::OK) << ctx.message;
 
-    uint64_t current_xid = db_->transaction_manager()->getCurrentXid();
+    uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
     std::vector<TID> results;
     ASSERT_EQ(index->find(key, std::strlen(key), current_xid, &results, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(results.size(), 1u);

@@ -105,3 +105,5 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 
 ## Recent Progress
 - 2026-01-25: Buffer pool flush now skips pinned pages and guards writes with content mutex; catalog heap updates lock page content to clear TSAN race.
+- 2026-02-01: Wired buffer pool telemetry counters for hits/misses/reads/writes and dirty/pages gauges.
+- 2026-02-01: Full rebuild + sequential `ctest` pass completed (2355 tests, 0 failures).

@@ -859,6 +859,7 @@ Contents:
 - [ ] V2 supports all Firebird context variables
 - [ ] V2 supports all Firebird transaction modes
 - [ ] V2 supports Firebird PSQL syntax
+  - [ ] PSQL CASE statement (simple + searched forms)
 - [ ] V2 uses Firebird-style DDL (RECREATE, etc.)
 - [ ] V2 uses Firebird-style operators
 - [ ] No PostgreSQL-specific keywords in reserved list
@@ -1035,4 +1036,3 @@ WHERE oi.order_id IN (
 
 **End of Specification**
 **Next Steps:** Review, approve, and begin Phase 1 implementation
-

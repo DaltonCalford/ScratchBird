@@ -80,6 +80,32 @@ CASE @status\_code
     ELSE SET @message \= 'Unknown Error';  
 END CASE;
 
+#### **CASE statement syntax (PSQL control flow)**
+Status: Planned (PSQL statement-level CASE; distinct from CASE expression).
+
+**Simple CASE**
+```
+CASE <expr>
+    WHEN <expr> THEN <statement> [;]
+    [ WHEN <expr> THEN <statement> [;] ]*
+    [ ELSE <statement> [;] ]
+END CASE;
+```
+
+**Searched CASE**
+```
+CASE
+    WHEN <condition> THEN <statement> [;]
+    [ WHEN <condition> THEN <statement> [;] ]*
+    [ ELSE <statement> [;] ]
+END CASE;
+```
+
+Notes:
+- `<statement>` may be a single PSQL statement or a BEGIN...END block.
+- This is a statement-level control structure. For expression use (inside DML),
+  use the CASE expression in SQL.
+
 ### **3.2. Loops (LOOP, WHILE, FOR)**
 
 \-- Basic LOOP with an EXIT condition  

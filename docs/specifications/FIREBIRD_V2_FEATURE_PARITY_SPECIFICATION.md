@@ -443,6 +443,19 @@ IF (condition) THEN
 [ELSE
   statement;]
 
+-- CASE (statement-level)
+CASE <expr>
+  WHEN <expr> THEN statement;
+  [WHEN <expr> THEN statement;]*
+  [ELSE statement;]
+END CASE;
+
+CASE
+  WHEN <condition> THEN statement;
+  [WHEN <condition> THEN statement;]*
+  [ELSE statement;]
+END CASE;
+
 -- Loops
 WHILE (condition) DO
   statement;
@@ -1129,6 +1142,7 @@ SET TRANSACTION
 | CREATE TRIGGER | ❌ | ❌ | ✅ | ⚠️ | **CRITICAL** |
 | DECLARE VARIABLE | ❌ | ❌ | ✅ | ⚠️ | **CRITICAL** |
 | IF/WHILE/FOR | ❌ | ❌ | ✅ | ⚠️ | **CRITICAL** |
+| CASE (PSQL statement) | ❌ | ❌ | ✅ | ⚠️ | **CRITICAL** |
 | Exception Handling | ❌ | ❌ | ✅ | ⚠️ | **CRITICAL** |
 | **Transaction Control** |
 | RECORD_VERSION variant | ✅ | ⚠️ | ✅ | ✅ | HIGH |
@@ -1238,7 +1252,7 @@ SELECT RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION') FROM RDB$DATABASE;  -- FAILS
 - [ ] Implement CREATE PROCEDURE parsing (both parsers)
 - [ ] Implement EXECUTE BLOCK parsing (both parsers)
 - [ ] Implement CREATE TRIGGER parsing (both parsers)
-- [ ] Implement PSQL control structures (DECLARE, IF, WHILE, FOR, exception handling)
+- [ ] Implement PSQL control structures (DECLARE, IF, CASE, WHILE, FOR, exception handling)
 - [ ] Connect parsers to existing AST nodes (ExecuteBlockStmt, IfStmt, etc.)
 - [ ] Implement executor support for PSQL opcodes
 
