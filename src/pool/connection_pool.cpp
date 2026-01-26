@@ -22,6 +22,23 @@
 
 namespace scratchbird {
 namespace pool {
+namespace {
+
+StatementEvictionPolicy mapStatementPolicy(EvictionPolicy policy) {
+    switch (policy) {
+        case EvictionPolicy::LFU:
+            return StatementEvictionPolicy::LFU;
+        case EvictionPolicy::FIFO:
+            return StatementEvictionPolicy::FIFO;
+        case EvictionPolicy::TTL:
+            return StatementEvictionPolicy::LRU;
+        case EvictionPolicy::LRU:
+        default:
+            return StatementEvictionPolicy::LRU;
+    }
+}
+
+} // namespace
 
 // =============================================================================
 // PooledConnection::Impl Definition
@@ -308,7 +325,13 @@ DatabasePool::DatabasePool(const std::string& database_name,
     stats_.start_time = std::chrono::steady_clock::now();
 
     // Initialize caches
-    // TODO: Create actual cache instances
+    if (effective_config_.statement_cache_enabled) {
+        StatementCacheConfig config;
+        config.max_statements = effective_config_.statement_cache_pool_size;
+        config.max_statements_per_connection = effective_config_.statement_cache_size;
+        config.eviction_policy = mapStatementPolicy(effective_config_.statement_cache_policy);
+        stmt_cache_ = std::make_unique<StatementCache>(database_name_, config);
+    }
 }
 
 DatabasePool::~DatabasePool() {
@@ -606,7 +629,9 @@ void DatabasePool::markConnectionBroken(PooledConnection* conn) {
 }
 
 void DatabasePool::clearStatementCache() {
-    // TODO: Implement statement cache clearing
+    if (stmt_cache_) {
+        stmt_cache_->clear();
+    }
 }
 
 void DatabasePool::clearResultCache() {
@@ -614,7 +639,9 @@ void DatabasePool::clearResultCache() {
 }
 
 void DatabasePool::invalidateCacheForTable(const std::string& table_name) {
-    // TODO: Implement table-specific cache invalidation
+    if (stmt_cache_) {
+        stmt_cache_->invalidate_by_table(table_name);
+    }
 }
 
 std::vector<PooledConnection*> DatabasePool::getIdleConnections() {
@@ -742,6 +769,9 @@ PooledConnection* DatabasePool::createConnection(const std::string& user, core::
 
     conn->setPool(this);
     conn->setState(ConnectionState::ACQUIRED);
+    if (stmt_cache_) {
+        conn->setStatementCache(stmt_cache_.get());
+    }
 
     auto* raw_conn = conn.get();
 
