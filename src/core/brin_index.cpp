@@ -200,9 +200,10 @@ GPID BrinIndex::indexGPID(uint64_t page_num) const
     return makeGPID(index_info_.idx_tablespace_id, page_num);
 }
 
-Status BrinIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+Status BrinIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx,
+                               BufferPool::AccessStrategy strategy)
 {
-    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+    return db_->buffer_pool()->pinPageGlobal(indexGPID(page_num), buffer, ctx, strategy);
 }
 
 Status BrinIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
@@ -435,7 +436,8 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
     while (current_page_num != 0)
     {
         void *page_buffer = nullptr;
-        Status status = pinIndexPage(current_page_num, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_num, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Sequential);
         if (status != Status::OK || !page_buffer)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
@@ -544,7 +546,8 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
 
     // Pin root page
     void *page_buffer = nullptr;
-    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, ctx);
+    Status status = pinIndexPage(index_info_.idx_root_page, &page_buffer, ctx,
+                                 BufferPool::AccessStrategy::Vacuum);
     if (status != Status::OK || !page_buffer)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
@@ -706,7 +709,8 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
     while (current_page_id != 0)
     {
         void *page_buffer = nullptr;
-        Status status = pinIndexPage(current_page_id, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_id, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             LOG_WARNING(GENERAL, "BRIN GC: Failed to pin page %u", current_page_id);
@@ -801,7 +805,8 @@ Status BrinIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, ui
     while (current_page_id != 0)
     {
         void *page_buffer = nullptr;
-        Status status = pinIndexPage(current_page_id, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page_id, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK || !page_buffer)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page during TID update");

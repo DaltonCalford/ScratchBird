@@ -1877,7 +1877,8 @@ namespace scratchbird::core
 
         // Pin root page
         void *root_page_data_ptr = nullptr;
-        Status status = pinIndexPage(root_page, &root_page_data_ptr, ctx);
+        Status status = pinIndexPage(root_page, &root_page_data_ptr, ctx,
+                                     BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin root page for vacuum");
@@ -1903,7 +1904,8 @@ namespace scratchbird::core
             for (int16_t l = tree_height - 1; l > level; --l)
             {
                 void *page_data_ptr = nullptr;
-                status = pinIndexPage(current_page, &page_data_ptr, ctx);
+                status = pinIndexPage(current_page, &page_data_ptr, ctx,
+                                      BufferPool::AccessStrategy::Vacuum);
                 if (status != Status::OK)
                 {
                     continue;
@@ -1935,7 +1937,8 @@ namespace scratchbird::core
                 pages_at_level.push_back(current_page);
 
                 void *page_data_ptr = nullptr;
-                status = pinIndexPage(current_page, &page_data_ptr, ctx);
+                status = pinIndexPage(current_page, &page_data_ptr, ctx,
+                                      BufferPool::AccessStrategy::Vacuum);
                 if (status != Status::OK)
                 {
                     break;
@@ -1971,11 +1974,13 @@ namespace scratchbird::core
                 void *left_data_ptr = nullptr;
                 void *right_data_ptr = nullptr;
 
-                status = pinIndexPage(left_page, &left_data_ptr, ctx);
+                status = pinIndexPage(left_page, &left_data_ptr, ctx,
+                                      BufferPool::AccessStrategy::Vacuum);
                 if (status != Status::OK)
                     continue;
 
-                status = pinIndexPage(right_page, &right_data_ptr, ctx);
+                status = pinIndexPage(right_page, &right_data_ptr, ctx,
+                                      BufferPool::AccessStrategy::Vacuum);
                 if (status != Status::OK)
                 {
                     unpinIndexPage(left_page, false, ctx);
@@ -2015,7 +2020,8 @@ namespace scratchbird::core
         BufferPool *bp = db_->buffer_pool();
 
         void *page_data_ptr = nullptr;
-        Status status = pinIndexPage(page_id, &page_data_ptr, ctx);
+        Status status = pinIndexPage(page_id, &page_data_ptr, ctx,
+                                     BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             return status;

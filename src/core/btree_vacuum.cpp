@@ -24,7 +24,8 @@ namespace scratchbird::core
         // Navigate to leftmost leaf
         BufferPool *bp = db_->buffer_pool();
         void *page_buffer;
-        Status status = pinIndexPage(current_page, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             return status;
@@ -59,7 +60,8 @@ namespace scratchbird::core
             }
 
             current_page = next_page;
-            status = pinIndexPage(current_page, &page_buffer, ctx);
+            status = pinIndexPage(current_page, &page_buffer, ctx,
+                                  BufferPool::AccessStrategy::Vacuum);
             if (status != Status::OK)
             {
                 return status;
@@ -80,7 +82,8 @@ namespace scratchbird::core
             }
 
             // Get next sibling
-            status = pinIndexPage(current_page, &page_buffer, ctx);
+            status = pinIndexPage(current_page, &page_buffer, ctx,
+                                  BufferPool::AccessStrategy::Vacuum);
             if (status != Status::OK)
             {
                 break;
@@ -111,7 +114,8 @@ namespace scratchbird::core
 
         BufferPool *bp = db_->buffer_pool();
         void *page_buffer;
-        Status status = pinIndexPage(page_id, &page_buffer, ctx);
+        Status status = pinIndexPage(page_id, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
             return status;

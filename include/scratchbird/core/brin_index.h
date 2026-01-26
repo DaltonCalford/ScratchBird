@@ -7,6 +7,7 @@
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/buffer_pool.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -413,7 +414,8 @@ namespace scratchbird
                                   uint64_t current_xid,
                                   ErrorContext *ctx) const;
 
-            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
+            Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr,
+                                BufferPool::AccessStrategy strategy = BufferPool::AccessStrategy::Normal);
             Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
             GPID indexGPID(uint64_t page_num) const;
 

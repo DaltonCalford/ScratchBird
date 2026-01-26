@@ -593,7 +593,8 @@ Status ColumnstoreIndex::getStats(ColumnstoreStats *stats_out, ErrorContext *ctx
     {
         // Pin segment page
         void *page_buffer = nullptr;
-        Status status = pinIndexPage(current_page, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Sequential);
         if (status != Status::OK)
             return status;
 
@@ -671,7 +672,8 @@ Status ColumnstoreIndex::updateTIDsAfterMigration(
     while (current_page != 0 && pages_scanned < 100000)
     {
         void *page_buffer = nullptr;
-        Status status = pinIndexPage(current_page, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Sequential);
         if (status != Status::OK)
         {
             return status;
@@ -2308,7 +2310,8 @@ Status ColumnstoreIndex::findSegment(const ID &column_uuid,
     {
         // Pin segment page
         void *page_buffer = nullptr;
-        Status status = pinIndexPage(current_page, &page_buffer, ctx);
+        Status status = pinIndexPage(current_page, &page_buffer, ctx,
+                                     BufferPool::AccessStrategy::Sequential);
         if (status != Status::OK)
             return status;
 
