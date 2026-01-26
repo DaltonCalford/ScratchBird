@@ -40,11 +40,19 @@ namespace scratchbird::core
             BulkWrite
         };
 
+        enum class PoolLayout
+        {
+            Single,
+            HotCold,
+            Tablespace
+        };
+
         // Buffer pool configuration
         struct Config
         {
             uint32_t pool_size = 32;    // Number of pages in pool
             uint32_t page_size = 16384; // Page size in bytes
+            PoolLayout layout = PoolLayout::Single;
 
             // Adaptive flushing configuration (Issue 2.20)
             bool enable_background_writer = true;   // Enable background writer thread

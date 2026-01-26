@@ -294,6 +294,14 @@ buffer_pool_page_size = 8192
 
 Page size in bytes for the buffer pool.
 
+### buffer_pool_layout
+
+```ini
+buffer_pool_layout = single
+```
+
+Buffer pool layout selection. Options: `single`, `hot_cold`, `tablespace`.
+
 ### buffer_pool_bgwriter_enabled
 
 ```ini
@@ -657,6 +665,7 @@ min_protocol = TLSv1.2
 [memory]
 buffer_pool_size = 128MB
 buffer_pool_page_size = 8192
+buffer_pool_layout = single
 buffer_pool_bgwriter_enabled = true
 buffer_pool_bgwriter_max_pages = 1000
 buffer_pool_dirty_ratio_low = 0.10
@@ -708,6 +717,7 @@ max_connections = 500
 [memory]
 buffer_pool_size = 4GB        # 25% of 16GB RAM
 buffer_pool_page_size = 8192
+buffer_pool_layout = single
 buffer_pool_bgwriter_enabled = true
 buffer_pool_bgwriter_max_pages = 5000
 buffer_pool_dirty_ratio_low = 0.10

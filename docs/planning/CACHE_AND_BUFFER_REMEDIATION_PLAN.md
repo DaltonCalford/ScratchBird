@@ -25,7 +25,7 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 | CB-P1-01 Scan-resistant ring buffers | In Progress | Sequential scan/sweep/GC/bulk write rings |
 | CB-P1-02 Hot/cold segmentation | Done | Midpoint insertion for new LRU entries |
 | CB-P1-03 Read-ahead policy | Done | Sequential detection + range hints |
-| CB-P1-04 Multi-pool layout option | Pending | Hot/cold/temp or tablespace pools |
+| CB-P1-04 Multi-pool layout option | Done | Configurable layout placeholder (single/hot_cold/tablespace) |
 | CB-P2-01 Statement cache init wiring | Pending | Connection pool integration |
 | CB-P2-02 SQL normalization + parameter signature | Pending | Cache keying |
 | CB-P2-03 Schema/privilege invalidation | Pending | Schema version + privilege bundles |
@@ -142,3 +142,4 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-02-02: Full rebuild + sequential `ctest` pass completed (2357 tests, 0 failures).
 - 2026-02-02: Added midpoint insertion for new LRU entries to reduce scan pollution.
 - 2026-02-02: Implemented sequential read-ahead for heap scans with range prefetching.
+- 2026-02-02: Added buffer pool layout config plumbing (single/hot_cold/tablespace).

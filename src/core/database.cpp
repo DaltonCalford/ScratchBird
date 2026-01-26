@@ -33,6 +33,8 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <cstring>
+#include <cctype>
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <filesystem>
@@ -43,6 +45,51 @@
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        std::string toLowerAscii(std::string value)
+        {
+            for (char &ch : value)
+            {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            return value;
+        }
+
+        BufferPool::PoolLayout parseBufferPoolLayout(const std::string &value, bool *recognized)
+        {
+            std::string normalized = toLowerAscii(value);
+            if (normalized.empty() || normalized == "single" || normalized == "default")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::PoolLayout::Single;
+            }
+            if (normalized == "hot_cold" || normalized == "hot-cold" || normalized == "hotcold")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::PoolLayout::HotCold;
+            }
+            if (normalized == "tablespace" || normalized == "tablespaces")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::PoolLayout::Tablespace;
+            }
+            if (recognized)
+            {
+                *recognized = false;
+            }
+            return BufferPool::PoolLayout::Single;
+        }
+    }
     namespace {
     constexpr uint32_t kSysarchScramIterations = 4096;
     constexpr const char* kSysarchUser = "SYSARCH";
@@ -1129,6 +1176,15 @@ namespace scratchbird::core
         BufferPool::Config bp_config;
         bp_config.pool_size = Config::getInstance().getUInt("memory", "buffer_pool_size", 128);
         bp_config.page_size = page_size_;
+        std::string layout_value = Config::getInstance().getString("memory", "buffer_pool_layout",
+                                                                   "single");
+        bool layout_recognized = false;
+        bp_config.layout = parseBufferPoolLayout(layout_value, &layout_recognized);
+        if (!layout_recognized && !layout_value.empty())
+        {
+            LOG_WARN(GENERAL, "Unknown buffer_pool_layout '%s'; using single pool",
+                     layout_value.c_str());
+        }
         try
         {
             buffer_pool_ = std::make_unique<BufferPool>(this, bp_config);

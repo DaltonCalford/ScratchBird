@@ -14,6 +14,20 @@ namespace scratchbird::core
     namespace
     {
         constexpr uint32_t RING_DIVISOR = 8;
+
+        const char* poolLayoutToString(BufferPool::PoolLayout layout)
+        {
+            switch (layout)
+            {
+                case BufferPool::PoolLayout::Single:
+                    return "single";
+                case BufferPool::PoolLayout::HotCold:
+                    return "hot_cold";
+                case BufferPool::PoolLayout::Tablespace:
+                    return "tablespace";
+            }
+            return "unknown";
+        }
     }
 
     BufferPool::BufferPool(Database *db, const Config &config) : db_(db), config_(config)
@@ -29,6 +43,12 @@ namespace scratchbird::core
     auto BufferPool::initialize(ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
+
+        if (config_.layout != PoolLayout::Single)
+        {
+            LOG_WARN(GENERAL, "Buffer pool layout '%s' requested; using single pool",
+                     poolLayoutToString(config_.layout));
+        }
 
         if (frames_.size() != config_.pool_size)
         {
