@@ -196,6 +196,7 @@ namespace scratchbird::core
         bool getSessionVariable(const std::string& name, std::string& out) const;
         void clearSessionVariable(const std::string& name);
         void clearSessionVariables();
+        std::vector<std::pair<std::string, std::string>> listSessionVariables() const;
 
         // Security context types (Phase 3.1 - SQL Object Permissions)
         enum class RoleSwitchPolicy : uint8_t
@@ -247,6 +248,7 @@ namespace scratchbird::core
 
         // Get current effective security context
         SecurityContext getCurrentSecurityContext() const;
+        std::vector<SecurityContext> listSecurityContextStack() const;
 
         // Check if we're in a DEFINER context
         bool isDefinerContext() const;
@@ -321,6 +323,7 @@ namespace scratchbird::core
         void beginStatementTracking(const std::string& sql);
         void endStatementTrackingSuccess(int64_t rows_affected);
         void endStatementTrackingFailure(uint32_t error_code, const std::string& sqlstate);
+        void updateStatementSourceLocation(int32_t line, int32_t column);
 
         void recordPageRead();
         void recordPageWrite();
@@ -347,6 +350,8 @@ namespace scratchbird::core
         StatementType lastStatementType() const { return last_statement_type_; }
         StatementStatus lastStatementStatus() const { return last_statement_status_; }
         uint64_t lastStatementTime() const { return last_statement_time_; }
+        int32_t lastStatementLine() const { return last_statement_line_; }
+        int32_t lastStatementColumn() const { return last_statement_column_; }
         int64_t lastRowsAffected() const { return last_rows_affected_; }
         uint32_t lastErrorCode() const { return last_error_code_; }
         const std::string& lastSqlstate() const { return last_sqlstate_; }
@@ -477,6 +482,8 @@ namespace scratchbird::core
         StatementType last_statement_type_ = StatementType::UNKNOWN;
         StatementStatus last_statement_status_ = StatementStatus::UNKNOWN;
         uint64_t last_statement_time_ = 0;
+        int32_t last_statement_line_ = 0;
+        int32_t last_statement_column_ = 0;
         int64_t last_rows_affected_ = 0;
         uint32_t last_error_code_ = 0;
         std::string last_sqlstate_;

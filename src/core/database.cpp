@@ -494,6 +494,30 @@ namespace scratchbird::core
         return out;
     }
 
+    std::vector<Database::ConnectionSecuritySnapshot> Database::snapshotConnectionSecurityStacks() const
+    {
+        std::vector<ConnectionSecuritySnapshot> out;
+        std::lock_guard<std::mutex> lock(connection_registry_mutex_);
+        out.reserve(connection_registry_.size());
+        for (const auto& [proc_id, ctx] : connection_registry_)
+        {
+            if (!ctx)
+            {
+                continue;
+            }
+            ConnectionSecuritySnapshot snap;
+            snap.proc_id = proc_id;
+            snap.session_id = ctx->effectiveSessionId();
+            snap.statement_id = ctx->currentStatementId();
+            snap.statement_time = ctx->lastStatementTime();
+            snap.statement_line = ctx->lastStatementLine();
+            snap.statement_column = ctx->lastStatementColumn();
+            snap.security_stack = ctx->listSecurityContextStack();
+            out.push_back(std::move(snap));
+        }
+        return out;
+    }
+
     Status Database::detachToDormant(std::unique_ptr<ConnectionContext> &connection,
                                      ID &dormant_id_out,
                                      ErrorContext *ctx)

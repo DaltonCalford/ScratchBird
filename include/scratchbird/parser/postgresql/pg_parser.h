@@ -268,6 +268,7 @@ private:
     void emitF64(double val);
     void emitString(std::string_view str);
     void emitUUID(const core::ID& uuid);
+    void emitDebugSpan(const SourceSpan& span);
     void emitTypeDefinition(const PgDataType& type);
     bool resolveDomainId(const std::string& type_name, core::ID& domain_id_out);
 

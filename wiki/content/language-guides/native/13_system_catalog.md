@@ -21,6 +21,7 @@ Notes:
 - Information schema views are expected but not audited in this pass.
 - Use `SHOW` commands (see `10_session_show_set.md`) for object summaries.
 
-Spec delta:
-- `SYSTEM_CATALOG_STRUCTURE.md` still flags GRANT/REVOKE and several system
-  tables as not implemented; validate current catalog population against spec.
+Implementation notes:
+- GRANT/REVOKE: Fully implemented. Parser supports GRANT/REVOKE for privileges (table, column, schema level) and roles. Executor handles executeGrantPrivilege, executeRevokePrivilege, executeGrantRole, executeRevokeRole with WITH GRANT OPTION support.
+- sys.jobs, sys.job_runs, sys.job_dependencies: Implemented and queryable (WS-4 complete)
+- Some system tables flagged in `SYSTEM_CATALOG_STRUCTURE.md` may still need population validation.

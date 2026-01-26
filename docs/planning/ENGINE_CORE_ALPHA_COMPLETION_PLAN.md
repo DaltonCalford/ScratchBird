@@ -46,12 +46,13 @@ cluster/sharding, and tooling are out of scope.
 ### WS-2 Tablespace Routing + GPID Wiring
 
 - [ ] Execute `ScratchBird/docs/planning/TABLESPACE_REMEDIATION_PLAN.md` phases.
-- [ ] Confirm CREATE TABLE/INDEX placement honors TABLESPACE and schema defaults.
+- [x] Confirm CREATE TABLE/INDEX placement honors TABLESPACE and schema defaults.
+- [x] Allocate table root pages via tablespace-aware APIs in catalog manager.
 - [ ] Ensure GPID-aware DML across heap/index/TOAST paths.
 
 ### WS-3 Index Migration Safety
 
-- [ ] Implement TID updates for all non-BTree/Hash index types listed in
+- [x] Implement TID updates for all non-BTree/Hash index types listed in
   
       `ScratchBird/docs/findings/INDEX_IMPLEMENTATION_GAPS.md`.
 - [ ] Fix GiST cache cleanup once type integration is complete.
@@ -98,6 +99,26 @@ cluster/sharding, and tooling are out of scope.
       sys.performance in analyzer + executor.
 - [ ] Replace remaining MON$ placeholders with real engine state in Firebird catalog.
 - [x] Align view columns with `MONITORING_SQL_VIEWS.md`.
+- [x] WS7-GAP-01 Add MON$LOCKS table support and map to sys.locks + sys.sessions. `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-02 Add MON$SYSTEM_FLAG (constant 0) to MON$ATTACHMENTS output. `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-03 Align MON$DATABASE column naming/metrics to spec (MON$ALLOCATED_PAGES; use sys.performance for oldest/next transaction). `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-04 Align MON$TRANSACTIONS isolation mapping and prefer sys.performance OIT/OAT when available. `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-05 Replace MON$IO_STATS snapshot path with sys.io_stats via VirtualCatalogRouter. `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-06 Implement MON$CALL_STACK real data (define mapping once available). `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-07 Implement MON$RECORD_STATS real data (likely from sys.table_stats counters). `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-08 Implement MON$MEMORY_USAGE real data (requires sys.performance memory metrics). `src/catalog/firebird_catalog.cpp`, `src/catalog/sys_catalog.cpp`
+- [x] WS7-GAP-09 Implement MON$CONTEXT_VARIABLES real data (session/txn context variables). `src/catalog/firebird_catalog.cpp`, `src/catalog/sys_catalog.cpp`
+- [x] WS7-GAP-10 Expand MON$TABLE_STATS beyond stat_id/table_name if required; align spec. `src/catalog/firebird_catalog.cpp`, `docs/specifications/operations/MONITORING_DIALECT_MAPPINGS.md`
+- [x] WS7-GAP-11 Expand MON$RECORD_STATS columns to match Firebird spec; map seq/idx reads and row mutations. `src/catalog/firebird_catalog.cpp`, `include/scratchbird/catalog/emulation_view_generator.h`
+- [x] WS7-GAP-12 Expand MON$CALL_STACK columns to match Firebird spec (call metadata placeholders). `src/catalog/firebird_catalog.cpp`, `include/scratchbird/catalog/emulation_view_generator.h`
+- [x] WS7-GAP-13 Expand MON$STATEMENTS columns to match Firebird spec (plan/timeout placeholders). `src/catalog/firebird_catalog.cpp`
+- [x] WS7-GAP-14 Implement sys.io_stats and wire MON$IO_STATS mapping. `src/catalog/sys_catalog.cpp`, `include/scratchbird/catalog/sys_catalog.h`
+- [x] WS7-GAP-15 Implement MON$COMPILED_STATEMENTS (compiled statement metadata placeholders). `src/catalog/firebird_catalog.cpp`, `include/scratchbird/catalog/emulation_view_generator.h`
+- [x] WS7-GAP-16 Populate MON$CALL_STACK caller IDs/object names/types using security stack. `src/catalog/firebird_catalog.cpp`, `include/scratchbird/core/connection_context.h`
+- [x] WS7-GAP-17 Expand MON$CALL_STACK to include per-connection stacks across sessions. `src/catalog/firebird_catalog.cpp`, `src/core/database.cpp`, `include/scratchbird/core/database.h`
+- [x] WS7-GAP-18 Wire MON$CALL_STACK timestamps/source line/column from executor tracking. `src/catalog/firebird_catalog.cpp`, `src/core/connection_context.cpp`, `src/core/database.cpp`
+- [x] WS7-GAP-19 Emit bytecode debug spans and consume them in executor for source line/column updates. `src/sblr/bytecode_generator_v2.cpp`, `src/sblr/executor.cpp`
+- [x] WS7-GAP-20 Emit debug spans from protocol-specific parsers (PG/MySQL) for source line/column tracking. `src/parser/postgresql/pg_parser.cpp`, `src/parser/mysql/mysql_parser.cpp`
 
 ### WS-8 Backup/Restore Coverage
 
@@ -152,6 +173,7 @@ Update this table as work progresses.
 - 2026-01-29: Full rebuild + full test sweep passed (CTEST_PARALLEL_LEVEL=1, SCRATCHBIRD_TEST_NETWORK=1): 2347 tests, 0 failures.
 - 2026-01-30: Implemented sys.sessions/sys.transactions/sys.locks/sys.statements via sys virtual catalog and aligned columns to monitoring spec; wired MON$ database stats to live transaction markers/metrics and attachment name to database path.
 - 2026-01-31: Wired COPY + query running metrics into sys.performance; mapped Firebird MON$ attachments/transactions/statements to sys.* catalog; full build + sequential `ctest` pass completed (2347 tests, 0 failures).
+- 2026-02-01: Fixed columnstore metadata root/segment tracking and LSM SSTable footer parsing; full sequential `ctest` pass completed (2353 tests, 0 failures).
 - 2026-01-26: Wired scheduler.max_concurrent_jobs and job_timeout_seconds defaults into runtime config application.
 - 2026-01-26: Implemented concurrent scheduler job execution and expanded Parser V2 job DDL coverage (state/keep history).
 - 2026-01-26: Added SHOW JOBS/JOB RUNS parser support and job-level GRANT/REVOKE permissions with EXECUTE checks.
@@ -182,6 +204,17 @@ Update this table as work progresses.
 - 2026-01-21: Heap scans iterate GPID-based pages for non-primary tablespaces and emit TIDs with the correct tablespace.
 - 2026-01-21: Legacy delete-by-TID path now honors tablespace ID overrides when pinning pages.
 - 2026-01-21: B-tree and Hash index storage now use root_gpid tablespace routing for pin/unpin and allocation.
+- 2026-02-01: Implemented sys.context_variables and MON$CONTEXT_VARIABLES mapping to session variables; updated Firebird emulation view.
+- 2026-02-01: Expanded MON$TABLE_STATS columns (stat_group, record_stat_id) to align with Firebird spec and emulation view.
+- 2026-02-01: Expanded MON$RECORD_STATS columns to align with Firebird spec; mapped seq/idx reads and row mutations.
+- 2026-02-01: Expanded MON$CALL_STACK columns to match Firebird spec; placeholders wired to sys.statements.
+- 2026-02-01: Expanded MON$STATEMENTS columns to match Firebird spec; plan/timeout placeholders wired.
+- 2026-02-01: Added sys.io_stats and wired MON$IO_STATS to live per-connection/transaction/statement counters.
+- 2026-02-01: Added MON$COMPILED_STATEMENTS mapping (compiled statement placeholders) from sys.statements.
+- 2026-02-01: Populated MON$CALL_STACK caller IDs/object metadata from security context stack.
+- 2026-02-01: Extended MON$CALL_STACK to include per-connection stacks across sessions.
+- 2026-02-01: Wired MON$CALL_STACK timestamps/source line/column from executor statement tracking.
+- 2026-02-01: Added bytecode debug spans to update executor source line/column during execution.
 
 
 

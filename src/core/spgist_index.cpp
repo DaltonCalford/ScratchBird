@@ -1080,6 +1080,119 @@ Status SPGiSTIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
     return status;
 }
 
+Status SPGiSTIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                             uint64_t* tids_updated_out,
+                                             uint64_t* pages_modified_out,
+                                             ErrorContext* ctx)
+{
+    std::unique_lock lock(mutex_);
+
+    if (tids_updated_out)
+    {
+        *tids_updated_out = 0;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = 0;
+    }
+
+    if (tid_mapping.empty())
+    {
+        return Status::OK;
+    }
+
+    uint64_t tids_updated = 0;
+    uint64_t pages_modified = 0;
+
+    Status status = updateTIDsAfterMigrationRecursive(root_page_, tid_mapping,
+                                                      &tids_updated, &pages_modified, ctx);
+    if (status == Status::OK)
+    {
+        if (tids_updated_out)
+        {
+            *tids_updated_out = tids_updated;
+        }
+        if (pages_modified_out)
+        {
+            *pages_modified_out = pages_modified;
+        }
+    }
+
+    return status;
+}
+
+Status SPGiSTIndex::updateTIDsAfterMigrationRecursive(
+    uint64_t page_num,
+    const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+    uint64_t* tids_updated,
+    uint64_t* pages_modified,
+    ErrorContext* ctx)
+{
+    SBSPGiSTPage* page = nullptr;
+    Status status = loadPage(page_num, &page, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    SPGiSTNodeType node_type = static_cast<SPGiSTNodeType>(page->spgist_node_type);
+
+    if (node_type == SPGiSTNodeType::LEAF)
+    {
+        bool modified = false;
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+
+        for (uint16_t i = 0; i < page->spgist_count; ++i)
+        {
+            SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(entry_ptr);
+            auto it = tid_mapping.find(leaf->leaf_tid.gpid);
+            if (it != tid_mapping.end())
+            {
+                leaf->leaf_tid.gpid = it->second;
+                modified = true;
+                if (tids_updated)
+                {
+                    (*tids_updated)++;
+                }
+            }
+            entry_ptr += leaf->leaf_size;
+        }
+
+        if (modified && pages_modified)
+        {
+            (*pages_modified)++;
+        }
+
+        return Status::OK;
+    }
+
+    // Inner node: recurse into children
+    uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+    SBSPGiSTInnerTuple* inner = reinterpret_cast<SBSPGiSTInnerTuple*>(entry_ptr);
+
+    entry_ptr += sizeof(SBSPGiSTInnerTuple) + inner->inner_prefixSize;
+
+    size_t label_size = (inner->inner_nNodes > 0) ?
+                       (inner->inner_size - sizeof(SBSPGiSTInnerTuple) -
+                        inner->inner_prefixSize - (inner->inner_nNodes * sizeof(uint64_t))) /
+                        inner->inner_nNodes : 0;
+
+    uint8_t* child_pages_ptr = entry_ptr + (inner->inner_nNodes * label_size);
+    uint64_t* child_pages = reinterpret_cast<uint64_t*>(child_pages_ptr);
+
+    for (uint16_t i = 0; i < inner->inner_nNodes; ++i)
+    {
+        status = updateTIDsAfterMigrationRecursive(child_pages[i], tid_mapping,
+                                                   tids_updated, pages_modified, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    return Status::OK;
+}
+
 Status SPGiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
                                                const std::set<TID>& dead_set,
                                                uint64_t* entries_removed,

@@ -370,6 +370,7 @@ private:
     void emitF64(double val);
     void emitString(std::string_view str);
     void emitTypeDefinition(const MySQLDataType& type);
+    void emitDebugSpan(const SourceSpan& span);
 
     // Statement parsing
     void parseStatementInternal();

@@ -540,7 +540,7 @@ private:
                     1 AS MON$RESERVE_SPACE,
                     NULL AS MON$CREATION_DATE,
                     COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                              WHERE metric = 'allocated_pages' LIMIT 1), 0) AS MON$PAGES,
+                              WHERE metric = 'allocated_pages' LIMIT 1), 0) AS MON$ALLOCATED_PAGES,
                     1 AS MON$STAT_ID,
                     0 AS MON$BACKUP_STATE,
                     0 AS MON$CRYPT_PAGE,
@@ -552,7 +552,7 @@ private:
              "MON$NEXT_TRANSACTION", "MON$PAGE_BUFFERS", "MON$SQL_DIALECT",
              "MON$SHUTDOWN_MODE", "MON$SWEEP_INTERVAL", "MON$READ_ONLY",
              "MON$FORCED_WRITES", "MON$RESERVE_SPACE", "MON$CREATION_DATE",
-             "MON$PAGES", "MON$STAT_ID", "MON$BACKUP_STATE",
+             "MON$ALLOCATED_PAGES", "MON$STAT_ID", "MON$BACKUP_STATE",
              "MON$CRYPT_PAGE", "MON$OWNER", "MON$SEC_DATABASE"},
             {DataType::TEXT, DataType::INT64, DataType::INT16, DataType::INT16,
              DataType::INT64, DataType::INT64, DataType::INT64,
@@ -675,6 +675,27 @@ private:
             "Maps sys.statements to Firebird MON$STATEMENTS"
         });
 
+        // MON$COMPILED_STATEMENTS - Compiled statement metadata
+        views.push_back({
+            "MON$COMPILED_STATEMENTS",
+            R"SQL(
+                SELECT
+                    st.statement_id AS MON$COMPILED_STATEMENT_ID,
+                    st.sql_text AS MON$SQL_TEXT,
+                    NULL AS MON$EXPLAINED_PLAN,
+                    NULL AS MON$OBJECT_NAME,
+                    NULL AS MON$OBJECT_TYPE,
+                    NULL AS MON$PACKAGE_NAME,
+                    st.statement_id AS MON$STAT_ID
+                FROM sys.statements st
+            )SQL",
+            {"MON$COMPILED_STATEMENT_ID", "MON$SQL_TEXT", "MON$EXPLAINED_PLAN",
+             "MON$OBJECT_NAME", "MON$OBJECT_TYPE", "MON$PACKAGE_NAME", "MON$STAT_ID"},
+            {DataType::INT64, DataType::TEXT, DataType::TEXT,
+             DataType::TEXT, DataType::INT16, DataType::TEXT, DataType::INT64},
+            "Maps sys.statements to Firebird MON$COMPILED_STATEMENTS"
+        });
+
         // MON$LOCKS - Current locks
         views.push_back({
             "MON$LOCKS",
@@ -727,11 +748,13 @@ private:
             R"SQL(
                 SELECT
                     0 AS MON$STAT_ID,
-                    table_name AS MON$TABLE_NAME
+                    0 AS MON$STAT_GROUP,
+                    table_name AS MON$TABLE_NAME,
+                    0 AS MON$RECORD_STAT_ID
                 FROM sys.table_stats
             )SQL",
-            {"MON$STAT_ID", "MON$TABLE_NAME"},
-            {DataType::INT64, DataType::TEXT},
+            {"MON$STAT_ID", "MON$STAT_GROUP", "MON$TABLE_NAME", "MON$RECORD_STAT_ID"},
+            {DataType::INT64, DataType::INT16, DataType::TEXT, DataType::INT64},
             "Maps sys.table_stats to Firebird MON$TABLE_STATS"
         });
 
@@ -740,18 +763,27 @@ private:
             "MON$CALL_STACK",
             R"SQL(
                 SELECT
-                    statement_id AS MON$STAT_ID,
                     0 AS MON$CALL_ID,
                     statement_id AS MON$STATEMENT_ID,
-                    0 AS MON$CALL_TYPE,
-                    NULL AS MON$OBJECT_NAME
+                    NULL AS MON$CALLER_ID,
+                    NULL AS MON$OBJECT_NAME,
+                    NULL AS MON$OBJECT_TYPE,
+                    start_time AS MON$TIMESTAMP,
+                    NULL AS MON$SOURCE_LINE,
+                    NULL AS MON$SOURCE_COLUMN,
+                    statement_id AS MON$STAT_ID,
+                    NULL AS MON$PACKAGE_NAME,
+                    NULL AS MON$COMPILED_STATEMENT_ID
                 FROM sys.statements
-                WHERE 1 = 0
             )SQL",
-            {"MON$STAT_ID", "MON$CALL_ID", "MON$STATEMENT_ID",
-             "MON$CALL_TYPE", "MON$OBJECT_NAME"},
+            {"MON$CALL_ID", "MON$STATEMENT_ID", "MON$CALLER_ID",
+             "MON$OBJECT_NAME", "MON$OBJECT_TYPE", "MON$TIMESTAMP",
+             "MON$SOURCE_LINE", "MON$SOURCE_COLUMN", "MON$STAT_ID",
+             "MON$PACKAGE_NAME", "MON$COMPILED_STATEMENT_ID"},
             {DataType::INT64, DataType::INT64, DataType::INT64,
-             DataType::INT16, DataType::TEXT},
+             DataType::TEXT, DataType::INT16, DataType::TIMESTAMP,
+             DataType::INT32, DataType::INT32, DataType::INT64,
+             DataType::TEXT, DataType::INT64},
             "Stub view for MON$CALL_STACK backed by sys.statements"
         });
 
@@ -761,16 +793,35 @@ private:
             R"SQL(
                 SELECT
                     0 AS MON$STAT_ID,
-                    0 AS MON$RECORD_IDX_READS,
-                    0 AS MON$RECORD_INSERTS,
-                    0 AS MON$RECORD_UPDATES,
-                    0 AS MON$RECORD_DELETES
+                    0 AS MON$STAT_GROUP,
+                    COALESCE(seq_rows_read, 0) AS MON$RECORD_SEQ_READS,
+                    COALESCE(idx_rows_fetch, 0) AS MON$RECORD_IDX_READS,
+                    COALESCE(rows_inserted, 0) AS MON$RECORD_INSERTS,
+                    COALESCE(rows_updated, 0) AS MON$RECORD_UPDATES,
+                    COALESCE(rows_deleted, 0) AS MON$RECORD_DELETES,
+                    0 AS MON$RECORD_BACKOUTS,
+                    0 AS MON$RECORD_PURGES,
+                    0 AS MON$RECORD_EXPUNGES,
+                    0 AS MON$RECORD_LOCKS,
+                    0 AS MON$RECORD_WAITS,
+                    0 AS MON$RECORD_CONFLICTS,
+                    0 AS MON$BACKVERSION_READS,
+                    0 AS MON$FRAGMENT_READS,
+                    0 AS MON$RECORD_RPT_READS,
+                    0 AS MON$RECORD_IMGC
                 FROM sys.table_stats
-                WHERE 1 = 0
             )SQL",
-            {"MON$STAT_ID", "MON$RECORD_IDX_READS", "MON$RECORD_INSERTS",
-             "MON$RECORD_UPDATES", "MON$RECORD_DELETES"},
-            {DataType::INT64, DataType::INT64, DataType::INT64,
+            {"MON$STAT_ID", "MON$STAT_GROUP", "MON$RECORD_SEQ_READS",
+             "MON$RECORD_IDX_READS", "MON$RECORD_INSERTS", "MON$RECORD_UPDATES",
+             "MON$RECORD_DELETES", "MON$RECORD_BACKOUTS", "MON$RECORD_PURGES",
+             "MON$RECORD_EXPUNGES", "MON$RECORD_LOCKS", "MON$RECORD_WAITS",
+             "MON$RECORD_CONFLICTS", "MON$BACKVERSION_READS", "MON$FRAGMENT_READS",
+             "MON$RECORD_RPT_READS", "MON$RECORD_IMGC"},
+            {DataType::INT64, DataType::INT16, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT64,
+             DataType::INT64, DataType::INT64, DataType::INT64,
              DataType::INT64, DataType::INT64},
             "Stub view for MON$RECORD_STATS backed by sys.table_stats"
         });
@@ -780,11 +831,11 @@ private:
             "MON$MEMORY_USAGE",
             R"SQL(
                 SELECT
-                    0 AS MON$STAT_ID,
-                    0 AS MON$MEMORY_USED,
-                    0 AS MON$MEMORY_ALLOCATED
-                FROM sys.performance
-                WHERE 1 = 0
+                    1 AS MON$STAT_ID,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'memory_used_bytes' LIMIT 1), 0) AS MON$MEMORY_USED,
+                    COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
+                              WHERE metric = 'memory_allocated_bytes' LIMIT 1), 0) AS MON$MEMORY_ALLOCATED
             )SQL",
             {"MON$STAT_ID", "MON$MEMORY_USED", "MON$MEMORY_ALLOCATED"},
             {DataType::INT64, DataType::INT64, DataType::INT64},
@@ -796,16 +847,15 @@ private:
             "MON$CONTEXT_VARIABLES",
             R"SQL(
                 SELECT
-                    connection_id AS MON$ATTACHMENT_ID,
+                    attachment_id AS MON$ATTACHMENT_ID,
                     transaction_id AS MON$TRANSACTION_ID,
-                    NULL AS MON$VARIABLE_NAME,
-                    NULL AS MON$VARIABLE_VALUE
-                FROM sys.sessions
-                WHERE 1 = 0
+                    variable_name AS MON$VARIABLE_NAME,
+                    variable_value AS MON$VARIABLE_VALUE
+                FROM sys.context_variables
             )SQL",
             {"MON$ATTACHMENT_ID", "MON$TRANSACTION_ID", "MON$VARIABLE_NAME", "MON$VARIABLE_VALUE"},
             {DataType::INT64, DataType::INT64, DataType::TEXT, DataType::TEXT},
-            "Stub view for MON$CONTEXT_VARIABLES backed by sys.sessions"
+            "MON$CONTEXT_VARIABLES backed by sys.context_variables"
         });
 
         return views;

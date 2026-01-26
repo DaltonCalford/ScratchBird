@@ -696,13 +696,10 @@ SELECT SETVAL('user_id_seq', 1000, false); -- Next NEXTVAL returns 1000
 - HNSW: Stub (vector search)
 - Spec reference: `/docs/specifications/indexes/INDEX_IMPLEMENTATION_SPEC.md`
 
-**Index Type Gaps in V2 Parser:**
-- SPGIST not parsed
-- RTREE not parsed (use GiST instead)
-- HNSW not parsed
-- BITMAP not parsed
-- COLUMNSTORE not parsed
-- LSM not parsed
+**Index Type Support in V2 Parser:**
+All 11 index types are parsed in the V2 parser via CREATE INDEX ... USING:
+- BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM
+- FULLTEXT / INVERTED index types are not yet parsed
 - Spec reference: `/docs/specifications/V2_PARSER_INDEX_TYPE_COMPLETENESS.md`
 
 **Advanced Index Features:**
@@ -720,10 +717,11 @@ SELECT SETVAL('user_id_seq', 1000, false); -- Next NEXTVAL returns 1000
 - Spec reference: `/docs/specifications/ddl/DDL_VIEWS.md`
 
 **Tablespace Commands:**
-- CREATE TABLESPACE not parsed in V2
+- CREATE TABLESPACE / DROP TABLESPACE as standalone DDL: Not parsed in V2
 - ALTER TABLESPACE supports RENAME TO / SET SCHEMA (generic rename/move only)
-- DROP TABLESPACE not parsed
-- TABLESPACE clause in CREATE INDEX is parsed and enforced (errors if missing)
+- TABLESPACE clause in CREATE TABLE and CREATE INDEX: Parsed and enforced
+- ALTER TABLE ... SET TABLESPACE: Parsed and supported
+- GPID-aware DML and tablespace routing: Implemented (WS-2 complete)
 - Spec reference: `/docs/specifications/storage/TABLESPACE_SPECIFICATION.md`
 
 ### Missing Features
@@ -732,7 +730,7 @@ SELECT SETVAL('user_id_seq', 1000, false); -- Next NEXTVAL returns 1000
 - Updatable view detection incomplete
 - INSTEAD OF triggers for views not implemented
 - Security barrier views not supported
-- Recursive views (WITH RECURSIVE) not in V2 parser
+- WITH RECURSIVE is parsed in V2 (recursive CTEs work)
 
 **Index Features:**
 - Expression index validation limited

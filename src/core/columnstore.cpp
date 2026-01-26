@@ -51,6 +51,7 @@ static inline size_t getDataTypeSize(DataType type)
 ColumnstoreIndex::ColumnstoreIndex(Database *db, SBColumnstoreIndex index_info)
     : db_(db), index_info_(std::move(index_info))
 {
+    metadata_page_ = index_info_.idx_root_page;
 }
 
 ColumnstoreIndex::~ColumnstoreIndex() = default;
@@ -147,19 +148,21 @@ std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
         if (status != Status::OK)
         {
             // Fall back to parameters if metadata page doesn't exist or can't be read
-            index_info.idx_segment_size = segment_size;
-            index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
-            index_info.idx_total_segments = 0;
-            index_info.idx_total_rows = 0;
+            index->index_info_.idx_segment_size = segment_size;
+            index->index_info_.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
+            index->index_info_.idx_total_segments = 0;
+            index->index_info_.idx_total_rows = 0;
+            index->index_info_.idx_root_page = 0;
         }
     }
     else
     {
         // No root page yet, use parameters
-        index_info.idx_segment_size = segment_size;
-        index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
-        index_info.idx_total_segments = 0;
-        index_info.idx_total_rows = 0;
+        index->index_info_.idx_segment_size = segment_size;
+        index->index_info_.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
+        index->index_info_.idx_total_segments = 0;
+        index->index_info_.idx_total_rows = 0;
+        index->index_info_.idx_root_page = 0;
     }
 
     return index;
@@ -630,6 +633,94 @@ Status ColumnstoreIndex::getStats(ColumnstoreStats *stats_out, ErrorContext *ctx
     else
     {
         stats_out->compression_ratio = 1.0;
+    }
+
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::updateTIDsAfterMigration(
+    const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+    uint64_t *tids_updated_out,
+    uint64_t *pages_modified_out,
+    ErrorContext *ctx)
+{
+    if (tids_updated_out != nullptr)
+    {
+        *tids_updated_out = 0;
+    }
+    if (pages_modified_out != nullptr)
+    {
+        *pages_modified_out = 0;
+    }
+
+    if (tid_mapping.empty() || index_info_.idx_root_page == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t tids_updated = 0;
+    uint64_t pages_modified = 0;
+
+    uint32_t current_page = index_info_.idx_root_page;
+    uint32_t pages_scanned = 0;
+
+    while (current_page != 0 && pages_scanned < 100000)
+    {
+        void *page_buffer = nullptr;
+        Status status = pinIndexPage(current_page, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *page = static_cast<SBColumnstorePage *>(page_buffer);
+        bool is_continuation =
+            (page->cs_flags & static_cast<uint16_t>(ColumnstoreFlags::CONTINUATION)) != 0;
+
+        bool modified = false;
+        if (!is_continuation)
+        {
+            uint64_t old_first_tid = page->cs_first_tid;
+            uint64_t old_last_tid = page->cs_last_tid;
+            auto first_it = tid_mapping.find(old_first_tid);
+            if (first_it != tid_mapping.end())
+            {
+                page->cs_first_tid = first_it->second;
+                modified = true;
+                tids_updated++;
+            }
+
+            auto last_it = tid_mapping.find(old_last_tid);
+            if (last_it != tid_mapping.end())
+            {
+                page->cs_last_tid = last_it->second;
+                modified = true;
+                if (old_last_tid != old_first_tid || first_it == tid_mapping.end())
+                {
+                    tids_updated++;
+                }
+            }
+        }
+
+        uint32_t next_page = static_cast<uint32_t>(page->cs_next_segment);
+        unpinIndexPage(current_page, modified, ctx);
+
+        if (modified)
+        {
+            pages_modified++;
+        }
+
+        current_page = next_page;
+        pages_scanned++;
+    }
+
+    if (tids_updated_out != nullptr)
+    {
+        *tids_updated_out = tids_updated;
+    }
+    if (pages_modified_out != nullptr)
+    {
+        *pages_modified_out = pages_modified;
     }
 
     return Status::OK;
@@ -2945,6 +3036,8 @@ Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *
     // Step 3: Extract configuration into index_info_
     index_info_.idx_segment_size = meta_page->cs_segment_size;
     index_info_.idx_compression_type = meta_page->cs_compression_type;
+    index_info_.idx_total_segments = meta_page->cs_total_segments;
+    index_info_.idx_total_rows = meta_page->cs_total_rows;
 
     // Read column UUIDs
     uint16_t column_count = meta_page->cs_column_count;
@@ -2960,14 +3053,44 @@ Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *
     }
 
     // Update root page to point to first segment (if any)
-    if (meta_page->cs_first_segment_page != 0)
-    {
-        index_info_.idx_root_page = meta_page->cs_first_segment_page;
-    }
+    index_info_.idx_root_page = meta_page->cs_first_segment_page;
 
     // Step 4: Unpin page
     Status unpin_status = unpinIndexPage(metadata_page, false, ctx);
-    return unpin_status;
+    if (unpin_status != Status::OK)
+    {
+        return unpin_status;
+    }
+
+    // Cache the last segment page for append operations.
+    last_segment_page_ = 0;
+    if (index_info_.idx_root_page != 0)
+    {
+        uint32_t current_page = index_info_.idx_root_page;
+        void *page_buffer = nullptr;
+        Status pin_status = pinIndexPage(current_page, &page_buffer, ctx);
+        if (pin_status != Status::OK)
+        {
+            return pin_status;
+        }
+        auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+        while (page->cs_next_segment != 0)
+        {
+            uint32_t next_page = page->cs_next_segment;
+            unpinIndexPage(current_page, false, ctx);
+            current_page = next_page;
+            pin_status = pinIndexPage(current_page, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+            page = static_cast<const SBColumnstorePage *>(page_buffer);
+        }
+        last_segment_page_ = current_page;
+        unpinIndexPage(current_page, false, ctx);
+    }
+
+    return Status::OK;
 }
 
 Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
@@ -3131,7 +3254,31 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
     // Clear buffer now that it's flushed
     buffer.clear();
 
+    Status meta_status = updateMetadataPage(ctx);
+    if (meta_status != Status::OK)
+    {
+        return meta_status;
+    }
     return Status::OK;
+}
+
+Status ColumnstoreIndex::updateMetadataPage(ErrorContext *ctx)
+{
+    void *page_buffer = nullptr;
+    Status status = pinIndexPage(metadata_page_, &page_buffer, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto *meta_page = static_cast<SBColumnstoreMetadataPage *>(page_buffer);
+    uint32_t first_segment =
+        (index_info_.idx_root_page == metadata_page_) ? 0 : index_info_.idx_root_page;
+    meta_page->cs_first_segment_page = first_segment;
+    meta_page->cs_total_segments = index_info_.idx_total_segments;
+    meta_page->cs_total_rows = index_info_.idx_total_rows;
+
+    return unpinIndexPage(metadata_page_, true, ctx);
 }
 
 // ============================================================================

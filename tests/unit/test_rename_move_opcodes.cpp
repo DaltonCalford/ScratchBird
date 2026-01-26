@@ -137,14 +137,27 @@ bool readExtendedHeader(const std::vector<uint8_t>& bytecode,
     if (bytecode[1] != static_cast<uint8_t>(sblr::SBLR_VERSION)) {
         return false;
     }
-    if (bytecode[2] != static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+    size_t pos = 2;
+    if (bytecode[pos] == static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+        if (pos + 2 >= bytecode.size()) {
+            return false;
+        }
+        uint16_t ext = sblr::readInt16(&bytecode[pos + 1]);
+        if (ext == static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DEBUG_SPAN)) {
+            pos += 1 + 2 + 4 + 4;
+        }
+    }
+    if (pos + 2 >= bytecode.size()) {
         return false;
     }
-    uint16_t opcode = sblr::readInt16(&bytecode[3]);
+    if (bytecode[pos] != static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+        return false;
+    }
+    uint16_t opcode = sblr::readInt16(&bytecode[pos + 1]);
     if (opcode != static_cast<uint16_t>(expected)) {
         return false;
     }
-    *offset = 5;
+    *offset = pos + 3;
     return true;
 }
 

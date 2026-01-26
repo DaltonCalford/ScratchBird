@@ -23,11 +23,43 @@
 #include <iomanip>
 #include <queue>
 #include <cstring>
+#include <filesystem>
 
 namespace scratchbird
 {
 namespace core
 {
+
+namespace {
+bool updateLsmValueForMapping(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                              std::vector<uint8_t> *value)
+{
+    if (!value || value->size() != (sizeof(uint64_t) + sizeof(uint16_t)))
+    {
+        return false;
+    }
+
+    uint64_t gpid = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); ++i)
+    {
+        gpid |= (static_cast<uint64_t>((*value)[i]) << (i * 8));
+    }
+
+    auto it = tid_mapping.find(gpid);
+    if (it == tid_mapping.end())
+    {
+        return false;
+    }
+
+    uint64_t new_gpid = it->second;
+    for (size_t i = 0; i < sizeof(uint64_t); ++i)
+    {
+        (*value)[i] = static_cast<uint8_t>((new_gpid >> (i * 8)) & 0xFF);
+    }
+
+    return true;
+}
+} // namespace
 
 // ============================================================================
 // Constructor / Destructor
@@ -887,6 +919,161 @@ Status LSMTreeIndex::getStatistics(Statistics *stats_out, ErrorContext *ctx)
     uint64_t total_sstables, total_size;
     compaction_mgr_->getStatistics(&total_sstables, &total_size);
     stats_out->total_size_bytes = total_size;
+
+    return Status::OK;
+}
+
+Status LSMTreeIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                              uint64_t *tids_updated_out,
+                                              uint64_t *files_modified_out,
+                                              ErrorContext *ctx)
+{
+    if (tids_updated_out != nullptr)
+    {
+        *tids_updated_out = 0;
+    }
+    if (files_modified_out != nullptr)
+    {
+        *files_modified_out = 0;
+    }
+
+    if (tid_mapping.empty())
+    {
+        return Status::OK;
+    }
+
+    uint64_t total_updated = 0;
+    uint64_t total_files_modified = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(memtable_mutex_);
+        if (active_memtable_)
+        {
+            uint64_t updated = 0;
+            Status status = active_memtable_->updateTIDsAfterMigration(tid_mapping, &updated, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            total_updated += updated;
+        }
+        if (immutable_memtable_)
+        {
+            uint64_t updated = 0;
+            Status status = immutable_memtable_->updateTIDsAfterMigration(tid_mapping, &updated, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            total_updated += updated;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(sstables_mutex_);
+        for (auto &level : sstables_)
+        {
+            for (auto &reader : level)
+            {
+                if (!reader)
+                {
+                    continue;
+                }
+
+                if (!reader->isOpen())
+                {
+                    Status status = reader->open(ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                }
+
+                auto iter = reader->createIterator();
+                if (!iter)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to create SSTable iterator");
+                    return Status::IO_ERROR;
+                }
+
+                std::string src_path = reader->getFilePath();
+                std::string tmp_path = src_path + ".tmp";
+
+                SSTableWriter writer(tmp_path, block_size_, reader->compressionType());
+                Status status = writer.open(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                bool file_updated = false;
+                for (; iter->isValid(); iter->next())
+                {
+                    std::vector<uint8_t> value = iter->value();
+                    if (updateLsmValueForMapping(tid_mapping, &value))
+                    {
+                        total_updated++;
+                        file_updated = true;
+                    }
+
+                    Status add_status = writer.addEntry(iter->key(), value,
+                                                        iter->sequenceNumber(),
+                                                        iter->entryType(),
+                                                        iter->xmin(),
+                                                        iter->xmax(),
+                                                        ctx);
+                    if (add_status != Status::OK)
+                    {
+                        writer.close(nullptr);
+                        return add_status;
+                    }
+                }
+
+                Status finish_status = writer.finish(ctx);
+                if (finish_status != Status::OK)
+                {
+                    writer.close(nullptr);
+                    return finish_status;
+                }
+                writer.close(nullptr);
+
+                if (!file_updated)
+                {
+                    std::filesystem::remove(tmp_path);
+                    continue;
+                }
+
+                reader->close(nullptr);
+
+                std::error_code ec;
+                std::filesystem::rename(tmp_path, src_path, ec);
+                if (ec)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                     ("Failed to replace SSTable: " + src_path).c_str());
+                    return Status::IO_ERROR;
+                }
+
+                auto new_reader = std::make_unique<SSTableReader>(src_path, block_size_);
+                status = new_reader->open(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                reader = std::move(new_reader);
+                total_files_modified++;
+            }
+        }
+    }
+
+    if (tids_updated_out != nullptr)
+    {
+        *tids_updated_out = total_updated;
+    }
+    if (files_modified_out != nullptr)
+    {
+        *files_modified_out = total_files_modified;
+    }
 
     return Status::OK;
 }

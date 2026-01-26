@@ -1038,6 +1038,91 @@ namespace scratchbird
             return stats;
         }
 
+        Status BitmapIndex::updateTIDsAfterMigration(
+            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            uint64_t *tids_updated_out,
+            uint64_t *pages_modified_out,
+            ErrorContext *ctx)
+        {
+            if (tids_updated_out != nullptr)
+            {
+                *tids_updated_out = 0;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = 0;
+            }
+
+            if (tid_mapping.empty() || dictionary_page_ == 0)
+            {
+                return Status::OK;
+            }
+
+            uint64_t total_updated = 0;
+            uint64_t total_pages_modified = 0;
+
+            uint32_t current_dict_page = dictionary_page_;
+            uint32_t pages_scanned = 0;
+
+            while (current_dict_page != 0 && pages_scanned < 1000)
+            {
+                uint8_t *page_data = nullptr;
+                Status status = pinIndexPage(current_dict_page, (void **)&page_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *dict_page = reinterpret_cast<SBBitmapDictionaryPage *>(page_data);
+                uint32_t next_page = dict_page->bmp_dict_next_page;
+                uint16_t entry_count = dict_page->bmp_dict_count;
+
+                uint8_t *entry_data = page_data + sizeof(SBBitmapDictionaryPage);
+
+                for (uint16_t i = 0; i < entry_count; i++)
+                {
+                    auto *entry = reinterpret_cast<BitmapDictionaryEntry *>(entry_data);
+                    uint32_t bitmap_root = entry->bitmap_root_page;
+
+                    if (bitmap_root != 0)
+                    {
+                        auto bitmap = loadBitmap(bitmap_root, ctx);
+                        if (bitmap)
+                        {
+                            uint64_t updated = 0;
+                            uint64_t pages_modified = 0;
+                            Status update_status = bitmap->updateTIDsAfterMigration(
+                                tid_mapping, &updated, &pages_modified, ctx);
+                            if (update_status != Status::OK)
+                            {
+                                unpinIndexPage(current_dict_page, false, ctx);
+                                return update_status;
+                            }
+                            total_updated += updated;
+                            total_pages_modified += pages_modified;
+                        }
+                    }
+
+                    entry_data += sizeof(BitmapDictionaryEntry) + entry->value_length;
+                }
+
+                unpinIndexPage(current_dict_page, false, ctx);
+                current_dict_page = next_page;
+                pages_scanned++;
+            }
+
+            if (tids_updated_out != nullptr)
+            {
+                *tids_updated_out = total_updated;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = total_pages_modified;
+            }
+
+            return Status::OK;
+        }
+
         // ========================================
         // RoaringBitmap Implementation
         // ========================================
@@ -1415,6 +1500,195 @@ namespace scratchbird
             }
 
             return results;
+        }
+
+        Status RoaringBitmap::updateTIDsAfterMigration(
+            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            uint64_t *tids_updated_out,
+            uint64_t *pages_modified_out,
+            ErrorContext *ctx)
+        {
+            (void)ctx;
+            if (tids_updated_out != nullptr)
+            {
+                *tids_updated_out = 0;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = 0;
+            }
+
+            if (tid_mapping.empty())
+            {
+                return Status::OK;
+            }
+
+            struct BuildContainer
+            {
+                uint64_t key = 0;
+                std::vector<VersionedBitmapEntry> entries;
+                std::vector<uint32_t> page_numbers;
+            };
+
+            std::unordered_map<uint64_t, BuildContainer> build;
+            uint64_t updated = 0;
+
+            for (const auto &container : containers_)
+            {
+                uint64_t old_key = container.key;
+                uint64_t new_key = old_key;
+                auto map_it = tid_mapping.find(old_key);
+                if (map_it != tid_mapping.end())
+                {
+                    new_key = map_it->second;
+                }
+
+                auto &dest = build[new_key];
+                dest.key = new_key;
+                if (container.page_number != 0)
+                {
+                    dest.page_numbers.push_back(container.page_number);
+                }
+
+                if (container.type == ContainerType::ARRAY)
+                {
+                    for (const auto &entry : container.array_data_versioned)
+                    {
+                        dest.entries.push_back(entry);
+                        if (new_key != old_key)
+                        {
+                            updated++;
+                        }
+                    }
+                }
+                else if (container.type == ContainerType::BITSET)
+                {
+                    for (const auto &kv : container.bitset_versions)
+                    {
+                        dest.entries.push_back(kv.second);
+                        if (new_key != old_key)
+                        {
+                            updated++;
+                        }
+                    }
+                }
+            }
+
+            std::vector<Container> new_containers;
+            new_containers.reserve(build.size());
+
+            uint64_t pages_modified = 0;
+            cardinality_ = 0;
+
+            for (auto &kv : build)
+            {
+                auto &bc = kv.second;
+                if (bc.entries.empty())
+                {
+                    continue;
+                }
+
+                std::sort(bc.entries.begin(), bc.entries.end(),
+                          [](const VersionedBitmapEntry &a, const VersionedBitmapEntry &b) {
+                              return a.tid_low < b.tid_low;
+                          });
+
+                std::vector<VersionedBitmapEntry> deduped;
+                deduped.reserve(bc.entries.size());
+                for (const auto &entry : bc.entries)
+                {
+                    if (!deduped.empty() && deduped.back().tid_low == entry.tid_low)
+                    {
+                        auto &existing = deduped.back();
+                        bool keep_existing = true;
+                        if (existing.xmax != 0 && entry.xmax == 0)
+                        {
+                            keep_existing = false;
+                        }
+                        else if (existing.xmax == entry.xmax && entry.xmin < existing.xmin)
+                        {
+                            keep_existing = false;
+                        }
+                        if (!keep_existing)
+                        {
+                            existing = entry;
+                        }
+                        continue;
+                    }
+                    deduped.push_back(entry);
+                }
+
+                Container container;
+                container.key = bc.key;
+                container.page_number = bc.page_numbers.empty() ? 0 : bc.page_numbers.front();
+                container.num_values = static_cast<uint16_t>(deduped.size());
+
+                if (deduped.size() > ARRAY_MAX_SIZE)
+                {
+                    container.type = ContainerType::BITSET;
+                    container.bitset_data.resize(BITSET_SIZE_UINT64, 0);
+                    for (const auto &entry : deduped)
+                    {
+                        size_t word_idx = entry.tid_low / 64;
+                        size_t bit_idx = entry.tid_low % 64;
+                        if (word_idx < container.bitset_data.size())
+                        {
+                            container.bitset_data[word_idx] |= (1ULL << bit_idx);
+                        }
+                        container.bitset_versions[entry.tid_low] = entry;
+                    }
+                }
+                else
+                {
+                    container.type = ContainerType::ARRAY;
+                    container.array_data_versioned = std::move(deduped);
+                }
+
+                if (bc.page_numbers.size() > 1)
+                {
+                    for (size_t i = 1; i < bc.page_numbers.size(); ++i)
+                    {
+                        uint32_t page_num = bc.page_numbers[i];
+                        if (page_num != 0)
+                        {
+                            db_->page_manager()->freePageGlobal(
+                                makeGPID(tablespace_id_, page_num), nullptr);
+                        }
+                    }
+                }
+
+                Status save_status = saveContainer(container, ctx);
+                if (save_status != Status::OK)
+                {
+                    return save_status;
+                }
+
+                pages_modified++;
+                cardinality_ += container.num_values;
+                new_containers.push_back(std::move(container));
+            }
+
+            containers_.swap(new_containers);
+
+            uint8_t *root_data = nullptr;
+            if (pinIndexPage(root_page_, (void **)&root_data, ctx) == Status::OK)
+            {
+                auto *root = reinterpret_cast<SBRoaringBitmapRootPage *>(root_data);
+                root->rbr_total_cardinality = cardinality_;
+                root->rbr_num_containers = static_cast<uint32_t>(containers_.size());
+                unpinIndexPage(root_page_, true, ctx);
+            }
+
+            if (tids_updated_out != nullptr)
+            {
+                *tids_updated_out = updated;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = pages_modified;
+            }
+
+            return Status::OK;
         }
 
         // TASK-CRITICAL-2: Visible cardinality (only visible entries)

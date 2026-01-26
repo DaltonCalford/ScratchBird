@@ -1166,6 +1166,33 @@ namespace scratchbird::core
         statement_io_active_ = true;
         statement_id_ = last_statement_time_;
 
+        last_statement_line_ = 0;
+        last_statement_column_ = 0;
+        int32_t line = 1;
+        int32_t col = 1;
+        bool found = false;
+        for (size_t i = 0; i < sql.size(); ++i)
+        {
+            unsigned char c = static_cast<unsigned char>(sql[i]);
+            if (c == '\n')
+            {
+                ++line;
+                col = 1;
+                continue;
+            }
+            if (!std::isspace(c))
+            {
+                found = true;
+                break;
+            }
+            ++col;
+        }
+        if (found)
+        {
+            last_statement_line_ = line;
+            last_statement_column_ = col;
+        }
+
         // Classify statement type using the leading keyword only (fast, dialect-agnostic).
         size_t i = 0;
         while (i < sql.size() && std::isspace(static_cast<unsigned char>(sql[i])))
@@ -1329,6 +1356,17 @@ namespace scratchbird::core
                 catalog->recordStatementDigest(entry, nullptr);
             }
         }
+    }
+
+    void ConnectionContext::updateStatementSourceLocation(int32_t line, int32_t column)
+    {
+        if (line <= 0 || column <= 0)
+        {
+            return;
+        }
+        last_statement_line_ = line;
+        last_statement_column_ = column;
+        last_activity_time_ = nowMicros();
     }
 
     void ConnectionContext::endStatementTrackingFailure(uint32_t error_code,
@@ -2328,6 +2366,18 @@ namespace scratchbird::core
         session_variables_.clear();
     }
 
+    std::vector<std::pair<std::string, std::string>> ConnectionContext::listSessionVariables() const
+    {
+        std::lock_guard<std::mutex> lock(session_vars_mutex_);
+        std::vector<std::pair<std::string, std::string>> variables;
+        variables.reserve(session_variables_.size());
+        for (const auto& entry : session_variables_)
+        {
+            variables.emplace_back(entry.first, entry.second);
+        }
+        return variables;
+    }
+
     void ConnectionContext::setCurrentUser(const ID& user_id, bool is_superuser)
     {
         // WP-5 EXEC-M3: Initialize session user on first call (authentication)
@@ -2478,6 +2528,11 @@ namespace scratchbird::core
         ctx.policy_epoch_table = policy_epoch_table_;
 
         return ctx;
+    }
+
+    std::vector<ConnectionContext::SecurityContext> ConnectionContext::listSecurityContextStack() const
+    {
+        return security_stack_;
     }
 
     bool ConnectionContext::isDefinerContext() const

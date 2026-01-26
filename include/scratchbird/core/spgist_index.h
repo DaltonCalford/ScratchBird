@@ -15,6 +15,7 @@
 #include <string>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 namespace scratchbird::core
 {
@@ -441,6 +442,12 @@ public:
                             ErrorContext* ctx = nullptr) override;
     const char* indexTypeName() const override { return "SP-GiST"; }
 
+    // Update TIDs after tablespace migration (GPID remap)
+    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                    uint64_t* tids_updated_out = nullptr,
+                                    uint64_t* pages_modified_out = nullptr,
+                                    ErrorContext* ctx = nullptr);
+
     // Index metadata
     const ID& getIndexUUID() const { return index_uuid_; }
     const ID& getTableUUID() const { return table_uuid_; }
@@ -487,6 +494,12 @@ private:
                                      uint64_t* entries_removed,
                                      uint64_t* pages_modified,
                                      ErrorContext* ctx);
+
+    Status updateTIDsAfterMigrationRecursive(uint64_t page_num,
+                                             const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                             uint64_t* tids_updated,
+                                             uint64_t* pages_modified,
+                                             ErrorContext* ctx);
 
     // Helper methods
     bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const;

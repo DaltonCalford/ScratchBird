@@ -314,15 +314,13 @@ WHERE price > (
 ### Missing Features
 
 **Common Table Expressions (WITH):**
-- WITH (CTE) syntax not parsed in V2
-- WITH RECURSIVE not supported
-- Named subqueries not available
-- Workaround: Use subqueries or views
+- WITH (CTE) syntax: Fully parsed in V2 with named column lists and multiple CTEs
+- WITH RECURSIVE: Parsed and supported
 - Spec reference: `/docs/specifications/dml/01_SELECT.md`
 
 **Advanced Join Features:**
-- NATURAL JOIN not supported
-- USING clause not supported (use ON instead)
+- NATURAL JOIN: Parsed (NATURAL, NATURAL_LEFT, NATURAL_RIGHT, NATURAL_FULL)
+- USING clause: Parsed with column list support
 - Some join type combinations may have limitations
 
 **Window Function Features:**

@@ -6,8 +6,6 @@
 
 This document describes programmable SQL features in ScratchBird's Native V2 SQL dialect, including stored procedures, functions, triggers, and procedural blocks.
 
-**CRITICAL STATUS:** Programmable SQL features are largely **not implemented** in the V2 parser. This document describes the intended functionality based on specifications. Most features listed here are planned but not yet available.
-
 **Parser Pipeline:** V2 Parser → AST v2 → SemanticAnalyzerV2 → BytecodeGeneratorV2 → Executor
 
 **Source Code References:**
@@ -22,33 +20,35 @@ This document describes programmable SQL features in ScratchBird's Native V2 SQL
 
 ### Description
 
-**STATUS: NOT IMPLEMENTED IN V2 PARSER**
-
 Creates a stored function that returns a value. Functions can be used in SQL expressions and must return a value.
 
-### Syntax (Planned)
+### Syntax
 
 ```sql
 CREATE [OR REPLACE] FUNCTION <function_name> (
-    [<parameter_name> <parameter_type> [, ...]]
+    [<parameter_name> [IN | OUT | INOUT] <parameter_type> [DEFAULT <value>] [, ...]]
 )
 RETURNS <return_type>
+[DETERMINISTIC]
+[SQL SECURITY {DEFINER | INVOKER}]
 AS
 BEGIN
     <function_body>
 END
 ```
 
-### Parameters (Planned)
+### Parameters
 
 - **OR REPLACE**: Replaces existing function with same name
-- **function_name**: Name of the function
-- **parameter_name**: Parameter name
-- **parameter_type**: Data type of parameter
+- **function_name**: Name of the function (schema-qualified paths supported)
+- **IN / OUT / INOUT**: Parameter direction (IN is default)
+- **DEFAULT**: Default value for parameter
+- **DETERMINISTIC**: Marks function as producing same output for same input
+- **SQL SECURITY**: Controls execution context (DEFINER runs as creator, INVOKER as caller)
 - **return_type**: Return data type
 - **function_body**: Procedural SQL statements
 
-### Examples (Planned)
+### Examples
 
 **Example 1: Simple function**
 ```sql
@@ -64,6 +64,7 @@ END
 ```sql
 CREATE FUNCTION get_discount(customer_level VARCHAR)
 RETURNS DECIMAL
+DETERMINISTIC
 AS
 BEGIN
     IF customer_level = 'gold' THEN
@@ -80,6 +81,7 @@ END
 ```sql
 CREATE FUNCTION get_customer_total(cust_id INTEGER)
 RETURNS DECIMAL
+SQL SECURITY INVOKER
 AS
     total DECIMAL;
 BEGIN
@@ -90,11 +92,12 @@ BEGIN
 END
 ```
 
-### Notes
+### Implementation Status
 
-- AST nodes exist for function definitions but are not parsed in V2
-- Parser has TODO markers for function implementation
-- Spec reference: `/docs/specifications/ddl/DDL_FUNCTIONS.md`
+- V2 parser: Parses CREATE [OR REPLACE] FUNCTION with full parameter list, RETURNS, DETERMINISTIC, SQL SECURITY, and body capture
+- Bytecode generator: Emits `EXT_CREATE_FUNCTION_STMT` opcode with all metadata
+- Executor: Registers function in catalog via `registerFunction()` with schema resolution, ownership, and dependency tracking
+- **Limitation:** Function bodies are stored as source text in the catalog. Procedural body interpretation (IF/WHILE/FOR control flow within the body) is not yet wired for runtime invocation.
 
 ---
 
@@ -102,32 +105,34 @@ END
 
 ### Description
 
-**STATUS: NOT IMPLEMENTED IN V2 PARSER**
+Creates a stored procedure for executing procedural logic. Unlike functions, procedures don't return values directly but can have OUT parameters and a RETURNS clause.
 
-Creates a stored procedure for executing procedural logic. Unlike functions, procedures don't return values directly but can have OUT parameters.
-
-### Syntax (Planned)
+### Syntax
 
 ```sql
 CREATE [OR REPLACE] PROCEDURE <procedure_name> (
-    [<parameter_name> [IN | OUT | INOUT] <parameter_type> [, ...]]
+    [<parameter_name> [IN | OUT | INOUT] <parameter_type> [DEFAULT <value>] [, ...]]
 )
+[RETURNS (<param_name> <type> [, ...])]
+[SQL SECURITY {DEFINER | INVOKER}]
 AS
 BEGIN
     <procedure_body>
 END
 ```
 
-### Parameters (Planned)
+### Parameters
 
 - **OR REPLACE**: Replaces existing procedure
-- **procedure_name**: Name of the procedure
+- **procedure_name**: Name of the procedure (schema-qualified paths supported)
 - **IN**: Input parameter (default)
 - **OUT**: Output parameter
 - **INOUT**: Input/output parameter
+- **RETURNS**: Named output parameters (Firebird-style)
+- **SQL SECURITY**: Execution context
 - **procedure_body**: Procedural SQL statements
 
-### Examples (Planned)
+### Examples
 
 **Example 1: Simple procedure**
 ```sql
@@ -159,42 +164,12 @@ BEGIN
 END
 ```
 
-**Example 3: Complex procedure with transactions**
-```sql
-CREATE PROCEDURE process_payment(
-    order_id INTEGER,
-    payment_amount DECIMAL
-)
-AS
-BEGIN
-    -- Update order
-    UPDATE orders
-    SET paid_amount = paid_amount + payment_amount
-    WHERE id = order_id;
+### Implementation Status
 
-    -- Record payment
-    INSERT INTO payments (order_id, amount, paid_at)
-    VALUES (order_id, payment_amount, CURRENT_TIMESTAMP);
-
-    -- Update status if fully paid
-    UPDATE orders
-    SET status = 'paid'
-    WHERE id = order_id
-      AND paid_amount >= total_amount;
-
-    COMMIT;
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK;
-        RAISE;
-END
-```
-
-### Notes
-
-- AST nodes exist but not parsed in V2
-- Firebird-style procedure syntax planned
-- Spec reference: `/docs/specifications/ddl/DDL_PROCEDURES.md`
+- V2 parser: Parses CREATE [OR REPLACE] PROCEDURE with IN/OUT/INOUT params, RETURNS output params, SQL SECURITY, and body capture
+- Bytecode generator: Emits `EXT_CREATE_PROCEDURE_STMT` opcode with all metadata
+- Executor: Registers procedure in catalog via `registerProcedure()` with schema resolution, ownership, and dependency tracking
+- **Limitation:** Procedure bodies are stored as source text. Procedural body interpretation for runtime execution of complex control flow is not yet wired.
 
 ---
 
@@ -202,11 +177,9 @@ END
 
 ### Description
 
-**STATUS: NOT IMPLEMENTED IN V2 PARSER**
-
 Creates a trigger that automatically executes in response to INSERT, UPDATE, or DELETE operations on a table.
 
-### Syntax (Planned)
+### Syntax
 
 ```sql
 CREATE [OR REPLACE] TRIGGER <trigger_name>
@@ -219,7 +192,7 @@ BEGIN
 END
 ```
 
-### Parameters (Planned)
+### Parameters
 
 - **OR REPLACE**: Replaces existing trigger
 - **trigger_name**: Name of the trigger
@@ -229,7 +202,7 @@ END
 - **POSITION**: Execution order (lower numbers first)
 - **trigger_body**: Procedural SQL statements
 
-### Examples (Planned)
+### Examples
 
 **Example 1: Before insert trigger**
 ```sql
@@ -256,24 +229,13 @@ BEGIN
 END
 ```
 
-**Example 3: Before delete trigger**
-```sql
-CREATE TRIGGER prevent_admin_delete
-    FOR users
-    BEFORE DELETE
-AS
-BEGIN
-    IF OLD.role = 'admin' THEN
-        EXCEPTION custom_exception 'Cannot delete admin users';
-    END IF;
-END
-```
+### Implementation Status
 
-### Notes
-
-- AST nodes exist but not parsed in V2
-- Firebird-style trigger syntax planned
-- Spec reference: `/docs/specifications/ddl/DDL_TRIGGERS.md`
+- V2 parser: Parses CREATE [OR REPLACE] TRIGGER with FOR table, BEFORE/AFTER timing, INSERT/UPDATE/DELETE events, POSITION, and body capture
+- Bytecode generator: Emits `EXT_CREATE_TRIGGER` opcode with all metadata
+- Executor: Registers trigger in catalog via `createTrigger()` with table binding, event type, and timing
+- Runtime triggers (C++-registered) expose old/new values via TriggerContext
+- **Limitation:** SQL trigger body interpretation is not yet fully wired for procedural runtime execution
 
 Trigger quick reference: [Trigger Cheat Sheet](../../user-guides/Trigger-Cheat-Sheet.md)
 
@@ -285,13 +247,13 @@ Trigger quick reference: [Trigger Cheat Sheet](../../user-guides/Trigger-Cheat-S
 Row-level triggers expose pseudo-records for column values before and after the
 change.
 
-#### Syntax (Planned)
+#### Syntax
 ```sql
 NEW.<column>
 OLD.<column>
 ```
 
-#### Examples (Planned)
+#### Examples
 ```sql
 -- BEFORE INSERT
 NEW.created_at = CURRENT_TIMESTAMP;
@@ -304,9 +266,9 @@ END IF;
 ```
 
 #### Status
-- Not implemented in V2 parser (CREATE TRIGGER is not parsed).
-- Runtime triggers (C++-registered) expose old/new values via TriggerContext,
-  but there is no SQL trigger interpreter.
+- CREATE TRIGGER is parsed in V2 with full DDL support
+- Runtime triggers (C++-registered) expose old/new values via TriggerContext
+- SQL trigger body procedural interpretation is not yet wired for runtime execution
 
 ---
 
@@ -314,23 +276,21 @@ END IF;
 
 ### Description
 
-**STATUS: NOT IMPLEMENTED IN V2 PARSER**
-
 Executes an anonymous procedural block without creating a stored procedure.
 
-### Syntax (Planned)
+### Syntax
 
 ```sql
-EXECUTE BLOCK [(parameter_declarations)]
-[RETURNS (output_definitions)]
+EXECUTE BLOCK [(parameter = value [, ...])]
+[RETURNS (output_name type [, ...])]
 AS
-    [<variable_declarations>]
+    [DECLARE VARIABLE name type [NOT NULL] [DEFAULT value];]
 BEGIN
     <procedural_statements>
 END
 ```
 
-### Examples (Planned)
+### Examples
 
 **Example 1: Simple anonymous block**
 ```sql
@@ -345,8 +305,8 @@ END
 ```sql
 EXECUTE BLOCK
 AS
-    DECLARE total_count INTEGER;
-    DECLARE avg_amount DECIMAL;
+    DECLARE VARIABLE total_count INTEGER;
+    DECLARE VARIABLE avg_amount DECIMAL;
 BEGIN
     SELECT COUNT(*), AVG(amount)
     INTO total_count, avg_amount
@@ -371,12 +331,53 @@ BEGIN
 END
 ```
 
-### Notes
+### Implementation Status
 
-- Useful for one-time complex operations
-- Can have input parameters and output results
-- SUSPEND statement yields row in result set
-- Not parsed in V2
+- V2 parser: Parses EXECUTE BLOCK with input parameters, RETURNS output definitions, DECLARE VARIABLE (with NOT NULL and DEFAULT), and BEGIN/END body parsing
+- **Limitation:** Procedural body runtime execution (control flow, SUSPEND) is not yet fully wired
+
+---
+
+## EXECUTE PROCEDURE / EXECUTE STATEMENT
+
+### Description
+
+Executes a stored procedure or dynamic SQL statement.
+
+### Syntax
+
+```sql
+EXECUTE PROCEDURE procedure_name [(parameters)]
+    [RETURNING_VALUES variable_list];
+
+EXECUTE STATEMENT sql_string
+    [WITH AUTONOMOUS TRANSACTION]
+    [INTO variable_list];
+```
+
+### Examples
+
+**Example 1: Execute procedure**
+```sql
+EXECUTE PROCEDURE update_statistics;
+```
+
+**Example 2: Execute procedure with parameters**
+```sql
+EXECUTE PROCEDURE create_user('alice', 'alice@example.com')
+    RETURNING_VALUES :new_user_id;
+```
+
+**Example 3: Execute dynamic SQL**
+```sql
+EXECUTE STATEMENT 'UPDATE ' || :table_name || ' SET active = 1';
+```
+
+### Implementation Status
+
+- V2 parser: Parses EXECUTE PROCEDURE with arguments and RETURNING_VALUES clause
+- V2 parser: Parses EXECUTE STATEMENT for dynamic SQL
+- **Limitation:** Dynamic SQL runtime interpretation is not yet fully wired
 
 ---
 
@@ -384,11 +385,9 @@ END
 
 ### Description
 
-**STATUS: NOT IMPLEMENTED IN V2 PARSER**
-
 Procedural SQL provides flow control and variable handling within functions, procedures, triggers, and blocks.
 
-### Control Flow (Planned)
+### Control Flow
 
 **IF Statement:**
 ```sql
@@ -425,11 +424,11 @@ BEGIN
 END
 ```
 
-### Variables (Planned)
+### Variables
 
 **Declaration:**
 ```sql
-DECLARE variable_name type [DEFAULT value];
+DECLARE VARIABLE variable_name type [NOT NULL] [DEFAULT value];
 ```
 
 **Assignment:**
@@ -446,7 +445,7 @@ FROM table
 WHERE condition;
 ```
 
-### Other Statements (Planned)
+### Other Statements
 
 **SUSPEND:**
 ```sql
@@ -468,100 +467,29 @@ RETURN value; -- Return from function
 EXCEPTION exception_name 'message';
 ```
 
-### Notes
+### Implementation Status
 
-- Full Firebird-style procedural SQL planned
-- Not implemented in V2 parser
-- Spec reference: `/docs/specifications/sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
-
----
-
-## EXECUTE PROCEDURE / EXECUTE STATEMENT
-
-### Description
-
-**STATUS: NOT IMPLEMENTED IN V2 PARSER**
-
-Executes a stored procedure or dynamic SQL statement.
-
-### Syntax (Planned)
-
-```sql
-EXECUTE PROCEDURE procedure_name [(parameters)]
-    [RETURNING_VALUES variable_list];
-
-EXECUTE STATEMENT sql_string
-    [WITH AUTONOMOUS TRANSACTION]
-    [INTO variable_list];
-```
-
-### Examples (Planned)
-
-**Example 1: Execute procedure**
-```sql
-EXECUTE PROCEDURE update_statistics;
-```
-
-**Example 2: Execute procedure with parameters**
-```sql
-EXECUTE PROCEDURE create_user('alice', 'alice@example.com')
-    RETURNING_VALUES :new_user_id;
-```
-
-**Example 3: Execute dynamic SQL**
-```sql
-EXECUTE STATEMENT 'UPDATE ' || :table_name || ' SET active = 1';
-```
-
-### Notes
-
-- Required for calling stored procedures
-- Dynamic SQL execution for runtime-generated queries
-- Not implemented in V2 parser
+- DECLARE VARIABLE is parsed within EXECUTE BLOCK (with NOT NULL, DEFAULT)
+- BEGIN/END block structure is parsed
+- **Limitation:** Procedural control flow (IF/WHILE/FOR) within bodies, runtime variable assignment, and SUSPEND are not yet fully wired for execution. Bodies are captured as source text during DDL and stored in the catalog.
 
 ---
 
 ## Known Limitations
 
-### Missing Features
+### What Works
 
-**All Programmable SQL:**
-- CREATE FUNCTION not parsed in V2
-- CREATE PROCEDURE not parsed in V2
-- CREATE TRIGGER not parsed in V2
-- EXECUTE BLOCK not parsed in V2
-- EXECUTE PROCEDURE not parsed
-- EXECUTE STATEMENT not parsed
-- All procedural statements (IF, WHILE, FOR, etc.) not parsed
-- Variable declarations not supported
-- Exception handling not implemented
-- Spec references:
-  - `/docs/specifications/ddl/DDL_FUNCTIONS.md`
-  - `/docs/specifications/ddl/DDL_PROCEDURES.md`
-  - `/docs/specifications/ddl/DDL_TRIGGERS.md`
+- **CREATE FUNCTION**: Full DDL parsing, bytecode generation, and catalog registration across all parsers (V2, Firebird, MySQL, PostgreSQL)
+- **CREATE PROCEDURE**: Full DDL parsing, bytecode generation, and catalog registration across all parsers
+- **CREATE TRIGGER**: Full DDL parsing, bytecode generation, and catalog registration across all parsers
+- **EXECUTE BLOCK**: Parsed with input/output parameters, variable declarations, and body
+- **EXECUTE PROCEDURE**: Parsed with arguments and RETURNING_VALUES
+- **EXECUTE STATEMENT**: Parsed for dynamic SQL
 
-**Parser Status:**
-- AST nodes defined in `ast_v2.h` for functions, procedures, triggers
-- Parser has TODO comments indicating planned implementation
-- No bytecode generation or executor support currently
-- Critical finding documented in `/docs/audit/parsers/CRITICAL_FINDINGS.md`
+### Remaining Gaps
 
-**Alternative Approaches:**
-- Use multiple SQL statements instead of procedures
-- Implement logic in application layer
-- Use emulated database procedures (Firebird, PostgreSQL, etc.) via CREATE DATABASE EMULATED
-
-### Implementation Priority
-
-Programmable SQL is a **critical gap** for Firebird compatibility and advanced database functionality:
-
-1. **High Priority**: Basic CREATE FUNCTION/PROCEDURE parsing
-2. **High Priority**: Simple procedural blocks (BEGIN/END, IF, assignments)
-3. **Medium Priority**: Triggers (BEFORE/AFTER INSERT/UPDATE/DELETE)
-4. **Medium Priority**: Loops (WHILE, FOR)
-5. **Medium Priority**: Exception handling
-6. **Lower Priority**: EXECUTE BLOCK with SUSPEND
-7. **Lower Priority**: Dynamic SQL (EXECUTE STATEMENT)
+- **Procedural body runtime execution**: Function/procedure/trigger bodies are stored as source text. Complex procedural control flow (IF, WHILE, FOR, SUSPEND, exception handling) within bodies is not yet wired for runtime interpretation. Simple single-statement bodies work through the standard execution path.
+- **CALL syntax**: Standard SQL CALL statement not yet an alias for EXECUTE PROCEDURE
 
 ### Spec References
 
@@ -569,12 +497,3 @@ Programmable SQL is a **critical gap** for Firebird compatibility and advanced d
 - Procedures: `/docs/specifications/ddl/DDL_PROCEDURES.md`
 - Triggers: `/docs/specifications/ddl/DDL_TRIGGERS.md`
 - Transaction model: `/docs/specifications/sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
-- Parser audit: `/docs/audit/parsers/V2/SUMMARY.md`
-- Critical findings: `/docs/audit/parsers/CRITICAL_FINDINGS.md`
-
-### General Notes
-
-- This is the largest gap in V2 parser compared to Firebird and PostgreSQL
-- Implementation would significantly improve Firebird migration compatibility
-- All features are spec-defined but not implemented
-- Work is planned for future Alpha/Beta phases

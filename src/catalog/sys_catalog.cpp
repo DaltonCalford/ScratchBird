@@ -164,9 +164,11 @@ std::string jobRunStateToString(core::CatalogManager::JobRunState state) {
 void SysCatalogHandler::initializeTableNames() {
     table_names_ = {
         "sessions",
+        "context_variables",
         "transactions",
         "locks",
         "statements",
+        "io_stats",
         "jobs",
         "job_runs",
         "job_dependencies",
@@ -254,6 +256,13 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"wait_resource", DataType::TEXT, true}
     };
 
+    static const ColumnDefs kContextVariablesColumns = {
+        {"attachment_id", DataType::INT64, true},
+        {"transaction_id", DataType::INT64, true},
+        {"variable_name", DataType::TEXT, false},
+        {"variable_value", DataType::TEXT, true}
+    };
+
     static const ColumnDefs kTransactionsColumns = {
         {"transaction_id", DataType::INT64, false},
         {"transaction_uuid", DataType::UUID, true},
@@ -302,8 +311,23 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"wait_resource", DataType::TEXT, true}
     };
 
+    static const ColumnDefs kIoStatsColumns = {
+        {"stat_id", DataType::INT64, false},
+        {"stat_group", DataType::INT16, false},
+        {"session_id", DataType::UUID, true},
+        {"transaction_id", DataType::INT64, true},
+        {"statement_id", DataType::INT64, true},
+        {"page_reads", DataType::INT64, true},
+        {"page_writes", DataType::INT64, true},
+        {"page_fetches", DataType::INT64, true},
+        {"page_marks", DataType::INT64, true}
+    };
+
     if (equalsCaseInsensitive(table_name, "sessions")) {
         return &kSessionsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "context_variables")) {
+        return &kContextVariablesColumns;
     }
     if (equalsCaseInsensitive(table_name, "transactions")) {
         return &kTransactionsColumns;
@@ -313,6 +337,9 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     }
     if (equalsCaseInsensitive(table_name, "statements")) {
         return &kStatementsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "io_stats")) {
+        return &kIoStatsColumns;
     }
     if (equalsCaseInsensitive(table_name, "jobs")) {
         return &kJobsColumns;
@@ -384,6 +411,9 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     if (equalsCaseInsensitive(table_name, "sessions")) {
         return querySessions(results, ctx);
     }
+    if (equalsCaseInsensitive(table_name, "context_variables")) {
+        return queryContextVariables(results, ctx);
+    }
     if (equalsCaseInsensitive(table_name, "transactions")) {
         return queryTransactions(results, ctx);
     }
@@ -392,6 +422,9 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "statements")) {
         return queryStatements(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "io_stats")) {
+        return queryIoStats(results, ctx);
     }
     if (equalsCaseInsensitive(table_name, "jobs")) {
         return queryJobs(results, ctx);
@@ -574,6 +607,118 @@ Status SysCatalogHandler::querySessions(VirtualResultSet& results, ErrorContext*
                                        std::to_string(backend.wait_lock_id))}
         };
         results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryContextVariables(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    core::ConnectionContext* conn_ctx = core::ConnectionContext::getCurrent();
+    if (!conn_ctx) {
+        return Status::OK;
+    }
+
+    const int64_t attachment_id = static_cast<int64_t>(conn_ctx->getProcId());
+    const auto variables = conn_ctx->listSessionVariables();
+    for (const auto& entry : variables) {
+        VirtualRow row;
+        row.columns = {
+            {"attachment_id", TypedValue::makeInt64(attachment_id)},
+            {"transaction_id", TypedValue()},
+            {"variable_name", TypedValue::makeText(entry.first)},
+            {"variable_value", entry.second.empty() ? TypedValue() : TypedValue::makeText(entry.second)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryIoStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    auto snapshots = db->snapshotConnectionIoStats();
+    if (snapshots.empty()) {
+        return Status::OK;
+    }
+
+    uint64_t db_page_reads = 0;
+    uint64_t db_page_writes = 0;
+    uint64_t db_page_fetches = 0;
+    uint64_t db_page_marks = 0;
+
+    for (const auto& snap : snapshots) {
+        db_page_reads += snap.connection_io.page_reads;
+        db_page_writes += snap.connection_io.page_writes;
+        db_page_fetches += snap.connection_io.page_fetches;
+        db_page_marks += snap.connection_io.page_marks;
+    }
+
+    VirtualRow db_row;
+    db_row.columns = {
+        {"stat_id", TypedValue::makeInt64(0)},
+        {"stat_group", TypedValue::makeInt64(0)},
+        {"session_id", TypedValue::makeNull(DataType::UUID)},
+        {"transaction_id", TypedValue()},
+        {"statement_id", TypedValue()},
+        {"page_reads", TypedValue::makeInt64(static_cast<int64_t>(db_page_reads))},
+        {"page_writes", TypedValue::makeInt64(static_cast<int64_t>(db_page_writes))},
+        {"page_fetches", TypedValue::makeInt64(static_cast<int64_t>(db_page_fetches))},
+        {"page_marks", TypedValue::makeInt64(static_cast<int64_t>(db_page_marks))}
+    };
+    results.rows.push_back(std::move(db_row));
+
+    for (const auto& snap : snapshots) {
+        VirtualRow connection_row;
+        connection_row.columns = {
+            {"stat_id", TypedValue::makeInt64(static_cast<int64_t>(snap.proc_id))},
+            {"stat_group", TypedValue::makeInt64(1)},
+            {"session_id", uuidValueOrNull(snap.session_id)},
+            {"transaction_id", TypedValue()},
+            {"statement_id", TypedValue()},
+            {"page_reads", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_reads))},
+            {"page_writes", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_writes))},
+            {"page_fetches", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_fetches))},
+            {"page_marks", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_marks))}
+        };
+        results.rows.push_back(std::move(connection_row));
+
+        if (snap.transaction_id != 0) {
+            VirtualRow txn_row;
+            txn_row.columns = {
+                {"stat_id", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_id))},
+                {"stat_group", TypedValue::makeInt64(2)},
+                {"session_id", uuidValueOrNull(snap.session_id)},
+                {"transaction_id", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_id))},
+                {"statement_id", TypedValue()},
+                {"page_reads", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_reads))},
+                {"page_writes", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_writes))},
+                {"page_fetches", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_fetches))},
+                {"page_marks", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_marks))}
+            };
+            results.rows.push_back(std::move(txn_row));
+        }
+
+        if (snap.statement_id != 0) {
+            VirtualRow stmt_row;
+            stmt_row.columns = {
+                {"stat_id", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_id))},
+                {"stat_group", TypedValue::makeInt64(3)},
+                {"session_id", uuidValueOrNull(snap.session_id)},
+                {"transaction_id", snap.transaction_id != 0
+                    ? TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_id))
+                    : TypedValue()},
+                {"statement_id", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_id))},
+                {"page_reads", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_reads))},
+                {"page_writes", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_writes))},
+                {"page_fetches", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_fetches))},
+                {"page_marks", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_marks))}
+            };
+            results.rows.push_back(std::move(stmt_row));
+        }
     }
 
     return Status::OK;
@@ -1086,6 +1231,20 @@ Status SysCatalogHandler::queryPerformance(VirtualResultSet& results, ErrorConte
     }
     if (metrics.buffer_pool_pages_dirty) {
         add_row("buffer_pool_pages_dirty", metrics.buffer_pool_pages_dirty->get(), "count");
+    }
+    double buffer_pool_pages = metrics.buffer_pool_pages_total
+        ? metrics.buffer_pool_pages_total->get()
+        : 0.0;
+    double page_size_bytes = db ? static_cast<double>(db->page_size()) : 0.0;
+    if (metrics.buffer_pool_size_bytes || (buffer_pool_pages > 0.0 && page_size_bytes > 0.0)) {
+        double allocated_bytes = metrics.buffer_pool_size_bytes
+            ? metrics.buffer_pool_size_bytes->get()
+            : buffer_pool_pages * page_size_bytes;
+        double used_bytes = (buffer_pool_pages > 0.0 && page_size_bytes > 0.0)
+            ? buffer_pool_pages * page_size_bytes
+            : allocated_bytes;
+        add_row("memory_allocated_bytes", allocated_bytes, "bytes");
+        add_row("memory_used_bytes", used_bytes, "bytes");
     }
     if (metrics.buffer_pool_hits_total) {
         add_row("cache_hits_total", metrics.buffer_pool_hits_total->get(), "count");

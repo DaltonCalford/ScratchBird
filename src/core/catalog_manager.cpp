@@ -16,6 +16,10 @@
 #include "scratchbird/core/gin_index.h"
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/brin_index.h"
+#include "scratchbird/core/spgist_index.h"
+#include "scratchbird/core/bitmap_index.h"
+#include "scratchbird/core/columnstore.h"
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include "scratchbird/core/config.h"
 #include <cstring>
@@ -6599,10 +6603,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
-        // Allocate root page for table data
+        // Allocate root page for table data (tablespace-aware)
         PageManager *pm = db_->page_manager();
-        uint32_t root_page;
-        Status status = pm->allocatePage(root_page, ctx);
+        GPID root_gpid = 0;
+        Status status = pm->allocatePageInTablespace(tablespace_id, &root_gpid, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -6637,7 +6641,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
         }
-        table.root_gpid = makeGPID(tablespace_id, root_page);
+        table.root_gpid = root_gpid;
         table.column_count = columns.size();
         table.row_count = 0;
         table.table_type = options ? options->table_type : TableType::HEAP;
@@ -6661,7 +6665,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = writeTableRecord(table, ctx);
         if (status != Status::OK)
         {
-            pm->freePage(root_page, ctx); // Free allocated page
+            pm->freePageGlobal(root_gpid, ctx); // Free allocated page
             return status;
         }
 
@@ -6681,7 +6685,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             // Rollback: mark table record as invalid (logical delete)
             deleteTableRecord(table.table_id, ctx);
-            pm->freePage(root_page, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
             return status;
         }
 
@@ -12264,6 +12268,162 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     }
 
                     LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
+                break;
+
+            case IndexType::SPGIST:
+                {
+                    LOG_INFO(CATALOG, "Index '%s': SP-GiST index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<SPGiSTIndex> spgist_index =
+                        SPGiSTIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (!spgist_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open SP-GiST index");
+                        LOG_ERROR(CATALOG, "Failed to open SP-GiST index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = spgist_index->updateTIDsAfterMigration(tid_mapping,
+                                                                                  &tids_updated,
+                                                                                  &pages_modified,
+                                                                                  ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in SP-GiST index");
+                        LOG_ERROR(CATALOG, "SP-GiST TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
+                break;
+
+            case IndexType::BITMAP:
+                {
+                    LOG_INFO(CATALOG, "Index '%s': Bitmap index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<BitmapIndex> bitmap_index =
+                        BitmapIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (!bitmap_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open Bitmap index");
+                        LOG_ERROR(CATALOG, "Failed to open Bitmap index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = bitmap_index->updateTIDsAfterMigration(tid_mapping,
+                                                                                  &tids_updated,
+                                                                                  &pages_modified,
+                                                                                  ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in Bitmap index");
+                        LOG_ERROR(CATALOG, "Bitmap TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
+                break;
+
+            case IndexType::COLUMNSTORE:
+                {
+                    LOG_INFO(CATALOG, "Index '%s': Columnstore index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    auto columnstore = ColumnstoreIndex::open(db_, index_info.index_id,
+                                                             index_info.root_gpid, 1024, ctx);
+                    if (!columnstore)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open Columnstore index");
+                        LOG_ERROR(CATALOG, "Failed to open Columnstore index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = columnstore->updateTIDsAfterMigration(tid_mapping,
+                                                                                 &tids_updated,
+                                                                                 &pages_modified,
+                                                                                 ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in Columnstore index");
+                        LOG_ERROR(CATALOG, "Columnstore TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
+                break;
+
+            case IndexType::LSM:
+                {
+                    LOG_INFO(CATALOG, "Index '%s': LSM index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    auto lsm_index = LSMTreeIndex::open(db_, index_info.index_id,
+                                                        static_cast<uint32_t>(getPageNumber(index_info.root_gpid)),
+                                                        ctx);
+                    if (!lsm_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open LSM index");
+                        LOG_ERROR(CATALOG, "Failed to open LSM index '%s'", index_info.index_name.c_str());
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = lsm_index->updateTIDsAfterMigration(tid_mapping,
+                                                                               &tids_updated,
+                                                                               &pages_modified,
+                                                                               ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in LSM index");
+                        LOG_ERROR(CATALOG, "LSM TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu files",
                             index_info.index_name.c_str(), tids_updated, pages_modified);
                     total_tids_updated += tids_updated;
                     total_pages_modified += pages_modified;

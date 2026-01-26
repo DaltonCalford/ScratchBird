@@ -518,6 +518,9 @@ BytecodeResultV2 BytecodeGeneratorV2::generate(ResolvedStatement* stmt) {
 // =============================================================================
 
 void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
+    if (stmt) {
+        emitDebugSpan(stmt->span);
+    }
     if (auto* select = dynamic_cast<ResolvedSelectStmt*>(stmt)) {
         generateSelect(select);
     } else if (auto* insert = dynamic_cast<ResolvedInsertStmt*>(stmt)) {
@@ -621,6 +624,19 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
     } else {
         current_result_->addError("Unknown statement type for bytecode generation");
     }
+}
+
+void BytecodeGeneratorV2::emitDebugSpan(const SourceSpan& span) {
+    if (!current_result_) {
+        return;
+    }
+    if (span.length == 0 || span.start.line == 0 || span.start.column == 0) {
+        return;
+    }
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DEBUG_SPAN));
+    current_result_->writeInt32(span.start.line);
+    current_result_->writeInt32(span.start.column);
 }
 
 // =============================================================================

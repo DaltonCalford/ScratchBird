@@ -228,6 +228,24 @@ protected:
         if (bytes_read) *bytes_read = len_bytes + static_cast<size_t>(length);
         return result;
     }
+
+    size_t skipDebugSpan(const std::vector<uint8_t>& bytecode, size_t offset) const
+    {
+        if (offset + 3 >= bytecode.size())
+        {
+            return offset;
+        }
+        if (bytecode[offset] != static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+        {
+            return offset;
+        }
+        uint16_t ext = scratchbird::sblr::readInt16(&bytecode[offset + 1]);
+        if (ext != static_cast<uint16_t>(ExtendedOpcode::EXT_DEBUG_SPAN))
+        {
+            return offset;
+        }
+        return offset + 1 + 2 + 4 + 4;
+    }
 };
 
 // ===== CREATE INDEX Tests =====
@@ -554,7 +572,7 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexBytecodeFormat)
     EXPECT_EQ(bc[1], SBLR_VERSION);
 
     // Check CREATE_INDEX opcode
-    size_t pos = 2;
+    size_t pos = skipDebugSpan(bc, 2);
     EXPECT_EQ(bc[pos], static_cast<uint8_t>(Opcode::CREATE_INDEX));
     pos++;
 
@@ -592,7 +610,7 @@ TEST_F(IndexBytecodeGenerationTest, DropIndexBytecodeFormat)
     EXPECT_EQ(bc[1], SBLR_VERSION);
 
     // Check DROP_INDEX opcode
-    size_t pos = 2;
+    size_t pos = skipDebugSpan(bc, 2);
     EXPECT_EQ(bc[pos], static_cast<uint8_t>(Opcode::DROP_INDEX));
     pos++;
 

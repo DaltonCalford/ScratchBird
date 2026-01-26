@@ -161,6 +161,7 @@ private:
     // ==========================================================================
 
     void generateStatement(ResolvedStatement* stmt);
+    void emitDebugSpan(const SourceSpan& span);
 
     // DML
     void generateSelect(ResolvedSelectStmt* stmt);

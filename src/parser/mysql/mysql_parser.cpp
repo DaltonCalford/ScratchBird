@@ -429,6 +429,19 @@ void Parser::emitString(std::string_view str) {
     }
 }
 
+void Parser::emitDebugSpan(const SourceSpan& span) {
+    if (!emit_enabled_) {
+        return;
+    }
+    if (span.length == 0 || span.start.line == 0 || span.start.column == 0) {
+        return;
+    }
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DEBUG_SPAN));
+    emitU32(span.start.line);
+    emitU32(span.start.column);
+}
+
 // ============================================================================
 // Main Parsing Entry Points
 // ============================================================================
@@ -490,6 +503,7 @@ std::vector<ParseResult> Parser::parseAll() {
 // ============================================================================
 
 void Parser::parseStatementInternal() {
+    emitDebugSpan(current_token_.span);
     switch (current_token_.type) {
         case TokenType::KW_SELECT:
             parseSelectStmt();

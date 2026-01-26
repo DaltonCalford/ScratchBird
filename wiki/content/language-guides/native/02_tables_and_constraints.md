@@ -646,9 +646,11 @@ CREATE TABLE orders (
 - Spec reference: `/docs/specifications/ddl/DDL_TABLES.md`
 
 **Constraint Features:**
-- DEFERRABLE and INITIALLY DEFERRED not supported
-- Named constraint support is partial
-- Constraint validation (VALIDATE CONSTRAINT) not implemented
+- DEFERRABLE and INITIALLY DEFERRED: Implemented. SET CONSTRAINTS ALL/name DEFERRED/IMMEDIATE works.
+- Named constraints: Fully supported in parser and catalog
+- Constraint validation (VALIDATE CONSTRAINT): Not implemented
+- PK/UNIQUE/FK/CHECK/NOT NULL enforcement: Fully implemented on INSERT/UPDATE/DELETE
+- FK referential actions (CASCADE/RESTRICT/SET NULL/SET DEFAULT): Fully implemented
 
 **Identity Column Options:**
 - Full IDENTITY column options not completely wired

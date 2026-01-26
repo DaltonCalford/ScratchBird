@@ -190,7 +190,9 @@ private:
     Status queryMonAttachments(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonTransactions(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonStatements(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonCompiledStatements(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonCallStack(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMonLocks(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonIoStats(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonRecordStats(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMonMemoryUsage(VirtualResultSet& results, ErrorContext* ctx);
@@ -233,7 +235,9 @@ private:
     void getMonAttachmentsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonTransactionsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonStatementsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonCompiledStatementsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonCallStackColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonLocksColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonIoStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonRecordStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonMemoryUsageColumns(std::vector<CatalogManager::ColumnInfo>& cols);

@@ -343,6 +343,13 @@ namespace scratchbird
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;
 
+            // Update TIDs after tablespace migration (GPID remap)
+            Status updateTIDsAfterMigration(
+                const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                uint64_t *tids_updated_out = nullptr,
+                uint64_t *pages_modified_out = nullptr,
+                ErrorContext *ctx = nullptr);
+
             // Get index type name for logging
             const char *indexTypeName() const override
             {
@@ -430,6 +437,13 @@ namespace scratchbird
             uint64_t visibleCardinality(uint64_t current_xid,
                                        class TransactionManager *txn_mgr,
                                        ErrorContext *ctx = nullptr) const;
+
+            // Update TIDs after tablespace migration (GPID remap)
+            Status updateTIDsAfterMigration(
+                const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                uint64_t *tids_updated_out = nullptr,
+                uint64_t *pages_modified_out = nullptr,
+                ErrorContext *ctx = nullptr);
 
             // Logical operations (static methods)
             static std::unique_ptr<RoaringBitmap> bitwiseAnd(

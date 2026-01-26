@@ -11,6 +11,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <unordered_map>
 
 namespace scratchbird
 {
@@ -88,6 +89,11 @@ public:
     // Get all entries (for flushing to SSTable)
     Status getAllEntries(std::vector<MemtableEntry> *entries_out,
                         ErrorContext *ctx = nullptr);
+
+    // Update TIDs after tablespace migration (GPID remap)
+    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                    uint64_t *entries_updated_out = nullptr,
+                                    ErrorContext *ctx = nullptr);
 
     // Check if memtable is full
     bool isFull() const { return current_size_ >= max_size_; }
@@ -220,6 +226,9 @@ public:
     // Get file path
     const std::string& getFilePath() const { return file_path_; }
 
+    // Get compression type
+    CompressionType compressionType() const { return compression_type_; }
+
     // Check if open
     bool isOpen() const { return fd_ >= 0; }
 
@@ -231,6 +240,7 @@ private:
     size_t block_size_;
     int fd_;
     uint64_t file_size_;
+    uint64_t data_end_offset_;
 
     std::vector<uint8_t> min_key_;
     std::vector<uint8_t> max_key_;
@@ -515,6 +525,12 @@ public:
      */
     Status getStatistics(Statistics *stats_out,
                         ErrorContext *ctx = nullptr);
+
+    // Update TIDs after tablespace migration (GPID remap)
+    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                    uint64_t *tids_updated_out = nullptr,
+                                    uint64_t *files_modified_out = nullptr,
+                                    ErrorContext *ctx = nullptr);
 
 private:
     // Index configuration

@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/catalog/firebird_catalog.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/table_stats_manager.h"
@@ -17,6 +18,20 @@
 #include <unistd.h>
 
 namespace scratchbird::catalog {
+
+namespace {
+bool isZeroIdLocal(const core::ID& id)
+{
+    for (auto byte : id.bytes)
+    {
+        if (byte != 0)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+} // namespace
 
 // ============================================================================
 // Initialization
@@ -59,7 +74,9 @@ void FirebirdCatalogHandler::initializeTableNames() {
         "MON$ATTACHMENTS",
         "MON$TRANSACTIONS",
         "MON$STATEMENTS",
+        "MON$COMPILED_STATEMENTS",
         "MON$CALL_STACK",
+        "MON$LOCKS",
         "MON$IO_STATS",
         "MON$RECORD_STATS",
         "MON$MEMORY_USAGE",
@@ -260,7 +277,9 @@ Status FirebirdCatalogHandler::queryTable(const std::string& /* schema_name */,
     if (upper == "MON$ATTACHMENTS") return queryMonAttachments(results, ctx);
     if (upper == "MON$TRANSACTIONS") return queryMonTransactions(results, ctx);
     if (upper == "MON$STATEMENTS") return queryMonStatements(results, ctx);
+    if (upper == "MON$COMPILED_STATEMENTS") return queryMonCompiledStatements(results, ctx);
     if (upper == "MON$CALL_STACK") return queryMonCallStack(results, ctx);
+    if (upper == "MON$LOCKS") return queryMonLocks(results, ctx);
     if (upper == "MON$IO_STATS") return queryMonIoStats(results, ctx);
     if (upper == "MON$RECORD_STATS") return queryMonRecordStats(results, ctx);
     if (upper == "MON$MEMORY_USAGE") return queryMonMemoryUsage(results, ctx);
@@ -309,7 +328,9 @@ Status FirebirdCatalogHandler::getTableColumns(const std::string& /* schema_name
     if (upper == "MON$ATTACHMENTS") { getMonAttachmentsColumns(columns); return Status::OK; }
     if (upper == "MON$TRANSACTIONS") { getMonTransactionsColumns(columns); return Status::OK; }
     if (upper == "MON$STATEMENTS") { getMonStatementsColumns(columns); return Status::OK; }
+    if (upper == "MON$COMPILED_STATEMENTS") { getMonCompiledStatementsColumns(columns); return Status::OK; }
     if (upper == "MON$CALL_STACK") { getMonCallStackColumns(columns); return Status::OK; }
+    if (upper == "MON$LOCKS") { getMonLocksColumns(columns); return Status::OK; }
     if (upper == "MON$IO_STATS") { getMonIoStatsColumns(columns); return Status::OK; }
     if (upper == "MON$RECORD_STATS") { getMonRecordStatsColumns(columns); return Status::OK; }
     if (upper == "MON$MEMORY_USAGE") { getMonMemoryUsageColumns(columns); return Status::OK; }
@@ -1805,7 +1826,7 @@ Status FirebirdCatalogHandler::queryMonDatabase(VirtualResultSet& results, Error
         "MON$NEXT_TRANSACTION", "MON$PAGE_BUFFERS", "MON$SQL_DIALECT",
         "MON$SHUTDOWN_MODE", "MON$SWEEP_INTERVAL", "MON$READ_ONLY",
         "MON$FORCED_WRITES", "MON$RESERVE_SPACE", "MON$CREATION_DATE",
-        "MON$PAGES", "MON$STAT_ID", "MON$BACKUP_STATE",
+        "MON$ALLOCATED_PAGES", "MON$STAT_ID", "MON$BACKUP_STATE",
         "MON$CRYPT_PAGE", "MON$OWNER", "MON$SEC_DATABASE"
     };
     results.column_types = {
@@ -1840,33 +1861,43 @@ Status FirebirdCatalogHandler::queryMonDatabase(VirtualResultSet& results, Error
         db_name = "scratchbird";
     }
 
-    VirtualResultSet transactions;
-    querySysTable("transactions", transactions);
+    int64_t oldest_xid = static_cast<int64_t>(perf_values["oldest_transaction"]);
+    int64_t oldest_active = static_cast<int64_t>(perf_values["oldest_active"]);
+    int64_t oldest_snapshot = static_cast<int64_t>(perf_values["oldest_snapshot"]);
+    int64_t next_xid = static_cast<int64_t>(perf_values["next_transaction"]);
 
-    int64_t oldest_xid = 0;
-    int64_t oldest_active = 0;
-    int64_t oldest_snapshot = 0;
-    int64_t next_xid = 0;
+    const bool need_txn_scan =
+        oldest_xid == 0 || oldest_active == 0 || oldest_snapshot == 0 || next_xid == 0;
+    if (need_txn_scan) {
+        VirtualResultSet transactions;
+        querySysTable("transactions", transactions);
 
-    for (const auto& row : transactions.rows) {
-        int64_t txn_id = getInt64Value(getColumnValue(row, "transaction_id"));
-        if (txn_id == 0) {
-            continue;
-        }
-        if (oldest_xid == 0 || txn_id < oldest_xid) {
-            oldest_xid = txn_id;
-        }
-        if (txn_id > next_xid) {
-            next_xid = txn_id;
-        }
-        std::string state = getTextValue(getColumnValue(row, "state"));
-        if (state == "active") {
-            if (oldest_active == 0 || txn_id < oldest_active) {
-                oldest_active = txn_id;
+        for (const auto& row : transactions.rows) {
+            int64_t txn_id = getInt64Value(getColumnValue(row, "transaction_id"));
+            if (txn_id == 0) {
+                continue;
+            }
+            if (oldest_xid == 0 || txn_id < oldest_xid) {
+                oldest_xid = txn_id;
+            }
+            if (next_xid == 0 || txn_id > next_xid) {
+                next_xid = txn_id;
+            }
+            std::string state = getTextValue(getColumnValue(row, "state"));
+            if (state == "active") {
+                if (oldest_active == 0 || txn_id < oldest_active) {
+                    oldest_active = txn_id;
+                }
             }
         }
+        if (oldest_snapshot == 0) {
+            oldest_snapshot = oldest_xid;
+        }
     }
-    oldest_snapshot = oldest_xid;
+
+    if (oldest_active == 0 && oldest_xid != 0) {
+        oldest_active = oldest_xid;
+    }
 
     VirtualRow row;
     row.columns = {
@@ -1890,7 +1921,7 @@ Status FirebirdCatalogHandler::queryMonDatabase(VirtualResultSet& results, Error
         {"MON$FORCED_WRITES", TypedValue::makeInt64(1)},
         {"MON$RESERVE_SPACE", TypedValue::makeInt64(1)},
         {"MON$CREATION_DATE", TypedValue()},  // NULL
-        {"MON$PAGES", TypedValue::makeInt64(static_cast<int64_t>(
+        {"MON$ALLOCATED_PAGES", TypedValue::makeInt64(static_cast<int64_t>(
                          perf_values["allocated_pages"]))},
         {"MON$STAT_ID", TypedValue::makeInt64(1)},
         {"MON$BACKUP_STATE", TypedValue::makeInt64(0)},  // Normal
@@ -1908,13 +1939,15 @@ Status FirebirdCatalogHandler::queryMonAttachments(VirtualResultSet& results, Er
         "MON$ATTACHMENT_ID", "MON$SERVER_PID", "MON$STATE", "MON$ATTACHMENT_NAME",
         "MON$USER", "MON$ROLE", "MON$REMOTE_PROTOCOL", "MON$REMOTE_ADDRESS",
         "MON$REMOTE_PID", "MON$CHARACTER_SET_ID", "MON$TIMESTAMP", "MON$GARBAGE_COLLECTION",
-        "MON$REMOTE_PROCESS", "MON$STAT_ID", "MON$CLIENT_VERSION", "MON$REMOTE_VERSION"
+        "MON$REMOTE_PROCESS", "MON$STAT_ID", "MON$CLIENT_VERSION", "MON$REMOTE_VERSION",
+        "MON$SYSTEM_FLAG"
     };
     results.column_types = {
         DataType::INT64, DataType::INT64, DataType::INT16, DataType::TEXT,
         DataType::TEXT, DataType::TEXT, DataType::TEXT, DataType::TEXT,
         DataType::INT64, DataType::INT16, DataType::TIMESTAMP, DataType::INT16,
-        DataType::TEXT, DataType::INT64, DataType::TEXT, DataType::TEXT
+        DataType::TEXT, DataType::INT64, DataType::TEXT, DataType::TEXT,
+        DataType::INT16
     };
 
     VirtualResultSet sessions;
@@ -1965,7 +1998,8 @@ Status FirebirdCatalogHandler::queryMonAttachments(VirtualResultSet& results, Er
                 ? TypedValue::makeInt64(connection_id->getInt64())
                 : TypedValue()},
             {"MON$CLIENT_VERSION", TypedValue::makeVarchar("ScratchBird")},
-            {"MON$REMOTE_VERSION", TypedValue::makeVarchar("ScratchBird")}
+            {"MON$REMOTE_VERSION", TypedValue::makeVarchar("ScratchBird")},
+            {"MON$SYSTEM_FLAG", TypedValue::makeInt64(0)}
         };
         results.rows.push_back(std::move(row));
     }
@@ -1999,27 +2033,46 @@ Status FirebirdCatalogHandler::queryMonTransactions(VirtualResultSet& results, E
         }
     }
 
+    VirtualResultSet perf;
+    querySysTable("performance", perf);
+
+    std::unordered_map<std::string, double> perf_values;
+    for (const auto& row : perf.rows) {
+        const auto* metric = getColumnValue(row, "metric");
+        const auto* value = getColumnValue(row, "value");
+        if (!metric || !value || metric->isNull() || value->isNull()) {
+            continue;
+        }
+        perf_values[getTextValue(metric)] = value->getFloat64();
+    }
+
+    int64_t oldest_xid = static_cast<int64_t>(perf_values["oldest_transaction"]);
+    int64_t oldest_active = static_cast<int64_t>(perf_values["oldest_active"]);
+
     VirtualResultSet transactions;
     if (querySysTable("transactions", transactions) != Status::OK) {
         return Status::OK;
     }
 
-    int64_t oldest_xid = 0;
-    int64_t oldest_active = 0;
-    for (const auto& row : transactions.rows) {
-        int64_t txn_id = getInt64Value(getColumnValue(row, "transaction_id"));
-        if (txn_id == 0) {
-            continue;
-        }
-        if (oldest_xid == 0 || txn_id < oldest_xid) {
-            oldest_xid = txn_id;
-        }
-        std::string state = getTextValue(getColumnValue(row, "state"));
-        if (state == "active") {
-            if (oldest_active == 0 || txn_id < oldest_active) {
-                oldest_active = txn_id;
+    if (oldest_xid == 0 || oldest_active == 0) {
+        for (const auto& row : transactions.rows) {
+            int64_t txn_id = getInt64Value(getColumnValue(row, "transaction_id"));
+            if (txn_id == 0) {
+                continue;
+            }
+            if (oldest_xid == 0 || txn_id < oldest_xid) {
+                oldest_xid = txn_id;
+            }
+            std::string state = getTextValue(getColumnValue(row, "state"));
+            if (state == "active") {
+                if (oldest_active == 0 || txn_id < oldest_active) {
+                    oldest_active = txn_id;
+                }
             }
         }
+    }
+    if (oldest_active == 0 && oldest_xid != 0) {
+        oldest_active = oldest_xid;
     }
 
     for (const auto& row : transactions.rows) {
@@ -2049,10 +2102,12 @@ Status FirebirdCatalogHandler::queryMonTransactions(VirtualResultSet& results, E
 
         std::string isolation = getTextValue(getColumnValue(row, "isolation_level"));
         int64_t isolation_value = 0;
-        if (isolation == "repeatable_read") {
+        if (isolation == "serializable") {
+            isolation_value = 0;
+        } else if (isolation == "repeatable_read") {
             isolation_value = 1;
-        } else if (isolation == "serializable") {
-            isolation_value = 2;
+        } else if (isolation == "read_committed") {
+            isolation_value = 4;
         }
 
         VirtualRow out_row;
@@ -2082,11 +2137,14 @@ Status FirebirdCatalogHandler::queryMonTransactions(VirtualResultSet& results, E
 Status FirebirdCatalogHandler::queryMonStatements(VirtualResultSet& results, ErrorContext* /* ctx */) {
     results.column_names = {
         "MON$STATEMENT_ID", "MON$ATTACHMENT_ID", "MON$TRANSACTION_ID",
-        "MON$STATE", "MON$TIMESTAMP", "MON$SQL_TEXT", "MON$STAT_ID"
+        "MON$STATE", "MON$TIMESTAMP", "MON$SQL_TEXT", "MON$STAT_ID",
+        "MON$EXPLAINED_PLAN", "MON$STATEMENT_TIMEOUT", "MON$STATEMENT_TIMER",
+        "MON$COMPILED_STATEMENT_ID"
     };
     results.column_types = {
         DataType::INT64, DataType::INT64, DataType::INT64,
-        DataType::INT16, DataType::TIMESTAMP, DataType::TEXT, DataType::INT64
+        DataType::INT16, DataType::TIMESTAMP, DataType::TEXT, DataType::INT64,
+        DataType::TEXT, DataType::INT32, DataType::TIMESTAMP, DataType::INT64
     };
 
     VirtualResultSet sessions;
@@ -2139,6 +2197,47 @@ Status FirebirdCatalogHandler::queryMonStatements(VirtualResultSet& results, Err
                 ? *getColumnValue(stmt_row, "start_time")
                 : TypedValue()},
             {"MON$SQL_TEXT", textOrNull(getTextValue(getColumnValue(stmt_row, "sql_text")))},
+            {"MON$STAT_ID", TypedValue::makeInt64(stmt_id)},
+            {"MON$EXPLAINED_PLAN", TypedValue()},
+            {"MON$STATEMENT_TIMEOUT", TypedValue::makeInt64(0)},
+            {"MON$STATEMENT_TIMER", TypedValue()},
+            {"MON$COMPILED_STATEMENT_ID", TypedValue()}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryMonCompiledStatements(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$COMPILED_STATEMENT_ID", "MON$SQL_TEXT", "MON$EXPLAINED_PLAN",
+        "MON$OBJECT_NAME", "MON$OBJECT_TYPE", "MON$PACKAGE_NAME", "MON$STAT_ID"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::TEXT, DataType::TEXT,
+        DataType::TEXT, DataType::INT16, DataType::TEXT, DataType::INT64
+    };
+
+    VirtualResultSet statements;
+    if (querySysTable("statements", statements) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& stmt_row : statements.rows) {
+        int64_t stmt_id = getInt64Value(getColumnValue(stmt_row, "statement_id"));
+        if (stmt_id == 0) {
+            continue;
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"MON$COMPILED_STATEMENT_ID", TypedValue::makeInt64(stmt_id)},
+            {"MON$SQL_TEXT", textOrNull(getTextValue(getColumnValue(stmt_row, "sql_text")))},
+            {"MON$EXPLAINED_PLAN", TypedValue()},
+            {"MON$OBJECT_NAME", TypedValue()},
+            {"MON$OBJECT_TYPE", TypedValue()},
+            {"MON$PACKAGE_NAME", TypedValue()},
             {"MON$STAT_ID", TypedValue::makeInt64(stmt_id)}
         };
         results.rows.push_back(std::move(row));
@@ -2149,13 +2248,158 @@ Status FirebirdCatalogHandler::queryMonStatements(VirtualResultSet& results, Err
 
 Status FirebirdCatalogHandler::queryMonCallStack(VirtualResultSet& results, ErrorContext* /* ctx */) {
     results.column_names = {
-        "MON$STAT_ID", "MON$CALL_ID", "MON$STATEMENT_ID",
-        "MON$CALL_TYPE", "MON$OBJECT_NAME"
+        "MON$CALL_ID", "MON$STATEMENT_ID", "MON$CALLER_ID", "MON$OBJECT_NAME",
+        "MON$OBJECT_TYPE", "MON$TIMESTAMP", "MON$SOURCE_LINE",
+        "MON$SOURCE_COLUMN", "MON$STAT_ID", "MON$PACKAGE_NAME",
+        "MON$COMPILED_STATEMENT_ID"
     };
     results.column_types = {
-        DataType::INT64, DataType::INT64, DataType::INT64,
-        DataType::INT16, DataType::TEXT
+        DataType::INT64, DataType::INT64, DataType::INT64, DataType::TEXT,
+        DataType::INT16, DataType::TIMESTAMP, DataType::INT32,
+        DataType::INT32, DataType::INT64, DataType::TEXT,
+        DataType::INT64
     };
+
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    auto stacks = db->snapshotConnectionSecurityStacks();
+    if (stacks.empty()) {
+        return Status::OK;
+    }
+
+    int64_t global_call_id = 1;
+    for (const auto& stack_snap : stacks) {
+        if (stack_snap.security_stack.empty()) {
+            continue;
+        }
+
+        int64_t statement_id = static_cast<int64_t>(stack_snap.statement_id);
+        if (statement_id == 0 && catalog_manager_) {
+            statement_id = static_cast<int64_t>(stack_snap.proc_id + 1);
+        }
+
+        TypedValue statement_ts = stack_snap.statement_time == 0
+            ? TypedValue()
+            : TypedValue::makeTimestamp(static_cast<int64_t>(stack_snap.statement_time));
+        TypedValue source_line = stack_snap.statement_line <= 0
+            ? TypedValue()
+            : TypedValue::makeInt64(static_cast<int64_t>(stack_snap.statement_line));
+        TypedValue source_column = stack_snap.statement_column <= 0
+            ? TypedValue()
+            : TypedValue::makeInt64(static_cast<int64_t>(stack_snap.statement_column));
+
+        int64_t base_call_id = global_call_id;
+        for (size_t idx = 0; idx < stack_snap.security_stack.size(); ++idx) {
+            const auto& security_ctx = stack_snap.security_stack[idx];
+            std::string object_name;
+            int64_t object_type = 0;
+            core::CatalogManager::ResolvedObject resolved;
+            if (catalog_manager_ &&
+                catalog_manager_->resolveObjectId(security_ctx.object_id, resolved, nullptr) == Status::OK) {
+                object_name = resolved.object_name;
+                switch (resolved.object_type) {
+                    case core::CatalogManager::ObjectType::TRIGGER:
+                        object_type = 2;
+                        break;
+                    case core::CatalogManager::ObjectType::PROCEDURE:
+                        object_type = 5;
+                        break;
+                    case core::CatalogManager::ObjectType::FUNCTION:
+                        object_type = 15;
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            const int64_t call_id = base_call_id + static_cast<int64_t>(idx);
+            VirtualRow row;
+            row.columns = {
+                {"MON$CALL_ID", TypedValue::makeInt64(call_id)},
+                {"MON$STATEMENT_ID", statement_id == 0 ? TypedValue() : TypedValue::makeInt64(statement_id)},
+                {"MON$CALLER_ID", idx > 0 ? TypedValue::makeInt64(call_id - 1) : TypedValue()},
+                {"MON$OBJECT_NAME", object_name.empty() ? TypedValue() : TypedValue::makeText(object_name)},
+                {"MON$OBJECT_TYPE", object_type == 0 ? TypedValue() : TypedValue::makeInt64(object_type)},
+                {"MON$TIMESTAMP", statement_ts},
+                {"MON$SOURCE_LINE", source_line},
+                {"MON$SOURCE_COLUMN", source_column},
+                {"MON$STAT_ID", TypedValue::makeInt64(call_id)},
+                {"MON$PACKAGE_NAME", TypedValue()},
+                {"MON$COMPILED_STATEMENT_ID", TypedValue()}
+            };
+            results.rows.push_back(std::move(row));
+            ++global_call_id;
+        }
+    }
+    return Status::OK;
+}
+
+Status FirebirdCatalogHandler::queryMonLocks(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    results.column_names = {
+        "MON$LOCK_ID", "MON$LOCK_TYPE", "MON$LOCK_MODE", "MON$LOCK_STATE",
+        "MON$ATTACHMENT_ID", "MON$TRANSACTION_ID", "MON$OBJECT_NAME"
+    };
+    results.column_types = {
+        DataType::INT64, DataType::TEXT, DataType::TEXT, DataType::INT16,
+        DataType::INT64, DataType::INT64, DataType::TEXT
+    };
+
+    VirtualResultSet sessions;
+    querySysTable("sessions", sessions);
+
+    std::unordered_map<ID, int64_t, IDHash> attachment_by_session;
+    for (const auto& session_row : sessions.rows) {
+        ID session_id = getUuidValue(getColumnValue(session_row, "session_id"));
+        int64_t attachment_id = getInt64Value(getColumnValue(session_row, "connection_id"));
+        if (attachment_id != 0) {
+            attachment_by_session[session_id] = attachment_id;
+        }
+    }
+
+    VirtualResultSet locks;
+    if (querySysTable("locks", locks) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& lock_row : locks.rows) {
+        std::string state = getTextValue(getColumnValue(lock_row, "lock_state"));
+        int64_t state_value = 0;
+        if (state == "granted") {
+            state_value = 1;
+        } else if (state == "waiting") {
+            state_value = 2;
+        }
+
+        ID session_id = getUuidValue(getColumnValue(lock_row, "session_id"));
+        int64_t attachment_id = 0;
+        auto att_it = attachment_by_session.find(session_id);
+        if (att_it != attachment_by_session.end()) {
+            attachment_id = att_it->second;
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"MON$LOCK_ID", getColumnValue(lock_row, "lock_id")
+                ? *getColumnValue(lock_row, "lock_id")
+                : TypedValue()},
+            {"MON$LOCK_TYPE", textOrNull(getTextValue(
+                getColumnValue(lock_row, "lock_type")))},
+            {"MON$LOCK_MODE", textOrNull(getTextValue(
+                getColumnValue(lock_row, "lock_mode")))},
+            {"MON$LOCK_STATE", TypedValue::makeInt64(state_value)},
+            {"MON$ATTACHMENT_ID", attachment_id == 0 ? TypedValue() : TypedValue::makeInt64(attachment_id)},
+            {"MON$TRANSACTION_ID", getColumnValue(lock_row, "transaction_id")
+                ? *getColumnValue(lock_row, "transaction_id")
+                : TypedValue()},
+            {"MON$OBJECT_NAME", textOrNull(getTextValue(
+                getColumnValue(lock_row, "relation_name")))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
     return Status::OK;
 }
 
@@ -2169,58 +2413,34 @@ Status FirebirdCatalogHandler::queryMonIoStats(VirtualResultSet& results, ErrorC
         DataType::INT64, DataType::INT64
     };
 
-    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
-    if (!db)
-    {
+    VirtualResultSet io_stats;
+    if (querySysTable("io_stats", io_stats) != Status::OK) {
         return Status::OK;
     }
 
-    auto snapshots = db->snapshotConnectionIoStats();
-    for (const auto& snap : snapshots)
-    {
-        // Group 1: connection (attachment)
-        {
-            VirtualRow row;
-            row.columns = {
-                {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(snap.proc_id + 1))},
-                {"MON$STAT_GROUP", TypedValue::makeInt16(1)},
-                {"MON$PAGE_READS", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_reads))},
-                {"MON$PAGE_WRITES", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_writes))},
-                {"MON$PAGE_FETCHES", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_fetches))},
-                {"MON$PAGE_MARKS", TypedValue::makeInt64(static_cast<int64_t>(snap.connection_io.page_marks))}
-            };
-            results.rows.push_back(std::move(row));
-        }
-
-        // Group 2: transaction
-        if (snap.transaction_id != 0)
-        {
-            VirtualRow row;
-            row.columns = {
-                {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_id))},
-                {"MON$STAT_GROUP", TypedValue::makeInt16(2)},
-                {"MON$PAGE_READS", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_reads))},
-                {"MON$PAGE_WRITES", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_writes))},
-                {"MON$PAGE_FETCHES", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_fetches))},
-                {"MON$PAGE_MARKS", TypedValue::makeInt64(static_cast<int64_t>(snap.transaction_io.page_marks))}
-            };
-            results.rows.push_back(std::move(row));
-        }
-
-        // Group 3: statement
-        if (snap.statement_active && snap.statement_id != 0)
-        {
-            VirtualRow row;
-            row.columns = {
-                {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_id))},
-                {"MON$STAT_GROUP", TypedValue::makeInt16(3)},
-                {"MON$PAGE_READS", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_reads))},
-                {"MON$PAGE_WRITES", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_writes))},
-                {"MON$PAGE_FETCHES", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_fetches))},
-                {"MON$PAGE_MARKS", TypedValue::makeInt64(static_cast<int64_t>(snap.statement_io.page_marks))}
-            };
-            results.rows.push_back(std::move(row));
-        }
+    for (const auto& stat_row : io_stats.rows) {
+        VirtualRow row;
+        row.columns = {
+            {"MON$STAT_ID", getColumnValue(stat_row, "stat_id")
+                ? *getColumnValue(stat_row, "stat_id")
+                : TypedValue()},
+            {"MON$STAT_GROUP", getColumnValue(stat_row, "stat_group")
+                ? *getColumnValue(stat_row, "stat_group")
+                : TypedValue()},
+            {"MON$PAGE_READS", getColumnValue(stat_row, "page_reads")
+                ? *getColumnValue(stat_row, "page_reads")
+                : TypedValue()},
+            {"MON$PAGE_WRITES", getColumnValue(stat_row, "page_writes")
+                ? *getColumnValue(stat_row, "page_writes")
+                : TypedValue()},
+            {"MON$PAGE_FETCHES", getColumnValue(stat_row, "page_fetches")
+                ? *getColumnValue(stat_row, "page_fetches")
+                : TypedValue()},
+            {"MON$PAGE_MARKS", getColumnValue(stat_row, "page_marks")
+                ? *getColumnValue(stat_row, "page_marks")
+                : TypedValue()}
+        };
+        results.rows.push_back(std::move(row));
     }
 
     return Status::OK;
@@ -2228,13 +2448,60 @@ Status FirebirdCatalogHandler::queryMonIoStats(VirtualResultSet& results, ErrorC
 
 Status FirebirdCatalogHandler::queryMonRecordStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
     results.column_names = {
-        "MON$STAT_ID", "MON$RECORD_IDX_READS", "MON$RECORD_INSERTS",
-        "MON$RECORD_UPDATES", "MON$RECORD_DELETES"
+        "MON$STAT_ID", "MON$STAT_GROUP", "MON$RECORD_SEQ_READS", "MON$RECORD_IDX_READS",
+        "MON$RECORD_INSERTS", "MON$RECORD_UPDATES", "MON$RECORD_DELETES",
+        "MON$RECORD_BACKOUTS", "MON$RECORD_PURGES", "MON$RECORD_EXPUNGES",
+        "MON$RECORD_LOCKS", "MON$RECORD_WAITS", "MON$RECORD_CONFLICTS",
+        "MON$BACKVERSION_READS", "MON$FRAGMENT_READS", "MON$RECORD_RPT_READS",
+        "MON$RECORD_IMGC"
     };
     results.column_types = {
+        DataType::INT64, DataType::INT16, DataType::INT64, DataType::INT64,
         DataType::INT64, DataType::INT64, DataType::INT64,
-        DataType::INT64, DataType::INT64
+        DataType::INT64, DataType::INT64, DataType::INT64,
+        DataType::INT64, DataType::INT64, DataType::INT64,
+        DataType::INT64, DataType::INT64, DataType::INT64,
+        DataType::INT64
     };
+
+    VirtualResultSet table_stats;
+    if (querySysTable("table_stats", table_stats) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& stats_row : table_stats.rows) {
+        ID table_id = getUuidValue(getColumnValue(stats_row, "table_id"));
+        uint64_t stat_id = isZeroIdLocal(table_id) ? 0 : static_cast<uint64_t>(IDHash{}(table_id));
+
+        int64_t seq_reads = getInt64Value(getColumnValue(stats_row, "seq_rows_read"));
+        int64_t idx_reads = getInt64Value(getColumnValue(stats_row, "idx_rows_fetch"));
+        int64_t inserts = getInt64Value(getColumnValue(stats_row, "rows_inserted"));
+        int64_t updates = getInt64Value(getColumnValue(stats_row, "rows_updated"));
+        int64_t deletes = getInt64Value(getColumnValue(stats_row, "rows_deleted"));
+
+        VirtualRow row;
+        row.columns = {
+            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(stat_id))},
+            {"MON$STAT_GROUP", TypedValue::makeInt64(0)},
+            {"MON$RECORD_SEQ_READS", TypedValue::makeInt64(seq_reads)},
+            {"MON$RECORD_IDX_READS", TypedValue::makeInt64(idx_reads)},
+            {"MON$RECORD_INSERTS", TypedValue::makeInt64(inserts)},
+            {"MON$RECORD_UPDATES", TypedValue::makeInt64(updates)},
+            {"MON$RECORD_DELETES", TypedValue::makeInt64(deletes)},
+            {"MON$RECORD_BACKOUTS", TypedValue::makeInt64(0)},
+            {"MON$RECORD_PURGES", TypedValue::makeInt64(0)},
+            {"MON$RECORD_EXPUNGES", TypedValue::makeInt64(0)},
+            {"MON$RECORD_LOCKS", TypedValue::makeInt64(0)},
+            {"MON$RECORD_WAITS", TypedValue::makeInt64(0)},
+            {"MON$RECORD_CONFLICTS", TypedValue::makeInt64(0)},
+            {"MON$BACKVERSION_READS", TypedValue::makeInt64(0)},
+            {"MON$FRAGMENT_READS", TypedValue::makeInt64(0)},
+            {"MON$RECORD_RPT_READS", TypedValue::makeInt64(0)},
+            {"MON$RECORD_IMGC", TypedValue::makeInt64(0)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
     return Status::OK;
 }
 
@@ -2245,15 +2512,46 @@ Status FirebirdCatalogHandler::queryMonMemoryUsage(VirtualResultSet& results, Er
     results.column_types = {
         DataType::INT64, DataType::INT64, DataType::INT64
     };
+
+    VirtualResultSet perf;
+    querySysTable("performance", perf);
+
+    int64_t memory_used = 0;
+    int64_t memory_allocated = 0;
+    for (const auto& row : perf.rows) {
+        const auto* metric = getColumnValue(row, "metric");
+        const auto* value = getColumnValue(row, "value");
+        if (!metric || !value || metric->isNull() || value->isNull()) {
+            continue;
+        }
+        std::string name = getTextValue(metric);
+        if (name == "memory_used_bytes") {
+            memory_used = static_cast<int64_t>(value->getFloat64());
+        } else if (name == "memory_allocated_bytes") {
+            memory_allocated = static_cast<int64_t>(value->getFloat64());
+        }
+    }
+
+    if (memory_used == 0 && memory_allocated == 0) {
+        return Status::OK;
+    }
+
+    VirtualRow row;
+    row.columns = {
+        {"MON$STAT_ID", TypedValue::makeInt64(1)},
+        {"MON$MEMORY_USED", TypedValue::makeInt64(memory_used)},
+        {"MON$MEMORY_ALLOCATED", TypedValue::makeInt64(memory_allocated)}
+    };
+    results.rows.push_back(std::move(row));
     return Status::OK;
 }
 
 Status FirebirdCatalogHandler::queryMonTableStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
     results.column_names = {
-        "MON$STAT_ID", "MON$TABLE_NAME"
+        "MON$STAT_ID", "MON$STAT_GROUP", "MON$TABLE_NAME", "MON$RECORD_STAT_ID"
     };
     results.column_types = {
-        DataType::INT64, DataType::TEXT
+        DataType::INT64, DataType::INT16, DataType::TEXT, DataType::INT64
     };
 
     auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
@@ -2275,7 +2573,9 @@ Status FirebirdCatalogHandler::queryMonTableStats(VirtualResultSet& results, Err
         VirtualRow row;
         row.columns = {
             {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(stat_id))},
-            {"MON$TABLE_NAME", TypedValue::makeText(table_info.table_name)}
+            {"MON$STAT_GROUP", TypedValue::makeInt64(0)},
+            {"MON$TABLE_NAME", TypedValue::makeText(table_info.table_name)},
+            {"MON$RECORD_STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(stat_id))}
         };
         results.rows.push_back(std::move(row));
     }
@@ -2290,6 +2590,30 @@ Status FirebirdCatalogHandler::queryMonContextVariables(VirtualResultSet& result
     results.column_types = {
         DataType::INT64, DataType::INT64, DataType::TEXT, DataType::TEXT
     };
+
+    VirtualResultSet variables;
+    if (querySysTable("context_variables", variables) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& var_row : variables.rows) {
+        VirtualRow row;
+        row.columns = {
+            {"MON$ATTACHMENT_ID", getColumnValue(var_row, "attachment_id")
+                ? *getColumnValue(var_row, "attachment_id")
+                : TypedValue()},
+            {"MON$TRANSACTION_ID", getColumnValue(var_row, "transaction_id")
+                ? *getColumnValue(var_row, "transaction_id")
+                : TypedValue()},
+            {"MON$VARIABLE_NAME", getColumnValue(var_row, "variable_name")
+                ? *getColumnValue(var_row, "variable_name")
+                : TypedValue()},
+            {"MON$VARIABLE_VALUE", getColumnValue(var_row, "variable_value")
+                ? *getColumnValue(var_row, "variable_value")
+                : TypedValue()}
+        };
+        results.rows.push_back(std::move(row));
+    }
     return Status::OK;
 }
 
@@ -2644,7 +2968,7 @@ void FirebirdCatalogHandler::getMonDatabaseColumns(std::vector<CatalogManager::C
     cols.push_back(makeCol("MON$FORCED_WRITES", DataType::INT16, true));
     cols.push_back(makeCol("MON$RESERVE_SPACE", DataType::INT16, true));
     cols.push_back(makeCol("MON$CREATION_DATE", DataType::TIMESTAMP, true));
-    cols.push_back(makeCol("MON$PAGES", DataType::INT64, true));
+    cols.push_back(makeCol("MON$ALLOCATED_PAGES", DataType::INT64, true));
     cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
     cols.push_back(makeCol("MON$BACKUP_STATE", DataType::INT16, true));
     cols.push_back(makeCol("MON$CRYPT_PAGE", DataType::INT64, true));
@@ -2670,6 +2994,7 @@ void FirebirdCatalogHandler::getMonAttachmentsColumns(std::vector<CatalogManager
     cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
     cols.push_back(makeCol("MON$CLIENT_VERSION", DataType::TEXT, true));
     cols.push_back(makeCol("MON$REMOTE_VERSION", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$SYSTEM_FLAG", DataType::INT16, true));
 }
 
 void FirebirdCatalogHandler::getMonTransactionsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
@@ -2698,14 +3023,46 @@ void FirebirdCatalogHandler::getMonStatementsColumns(std::vector<CatalogManager:
     cols.push_back(makeCol("MON$TIMESTAMP", DataType::TIMESTAMP, true));
     cols.push_back(makeCol("MON$SQL_TEXT", DataType::TEXT, true));
     cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$EXPLAINED_PLAN", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$STATEMENT_TIMEOUT", DataType::INT32, true));
+    cols.push_back(makeCol("MON$STATEMENT_TIMER", DataType::TIMESTAMP, true));
+    cols.push_back(makeCol("MON$COMPILED_STATEMENT_ID", DataType::INT64, true));
+}
+
+void FirebirdCatalogHandler::getMonCompiledStatementsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$COMPILED_STATEMENT_ID", DataType::INT64, false));
+    cols.push_back(makeCol("MON$SQL_TEXT", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$EXPLAINED_PLAN", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$OBJECT_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$OBJECT_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$PACKAGE_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
 }
 
 void FirebirdCatalogHandler::getMonCallStackColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
     cols.clear();
-    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
     cols.push_back(makeCol("MON$CALL_ID", DataType::INT64, true));
     cols.push_back(makeCol("MON$STATEMENT_ID", DataType::INT64, true));
-    cols.push_back(makeCol("MON$CALL_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$CALLER_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$OBJECT_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$OBJECT_TYPE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$TIMESTAMP", DataType::TIMESTAMP, true));
+    cols.push_back(makeCol("MON$SOURCE_LINE", DataType::INT32, true));
+    cols.push_back(makeCol("MON$SOURCE_COLUMN", DataType::INT32, true));
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$PACKAGE_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$COMPILED_STATEMENT_ID", DataType::INT64, true));
+}
+
+void FirebirdCatalogHandler::getMonLocksColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$LOCK_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$LOCK_TYPE", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$LOCK_MODE", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$LOCK_STATE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$ATTACHMENT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$TRANSACTION_ID", DataType::INT64, true));
     cols.push_back(makeCol("MON$OBJECT_NAME", DataType::TEXT, true));
 }
 
@@ -2722,10 +3079,22 @@ void FirebirdCatalogHandler::getMonIoStatsColumns(std::vector<CatalogManager::Co
 void FirebirdCatalogHandler::getMonRecordStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
     cols.clear();
     cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$STAT_GROUP", DataType::INT16, true));
+    cols.push_back(makeCol("MON$RECORD_SEQ_READS", DataType::INT64, true));
     cols.push_back(makeCol("MON$RECORD_IDX_READS", DataType::INT64, true));
     cols.push_back(makeCol("MON$RECORD_INSERTS", DataType::INT64, true));
     cols.push_back(makeCol("MON$RECORD_UPDATES", DataType::INT64, true));
     cols.push_back(makeCol("MON$RECORD_DELETES", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_BACKOUTS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_PURGES", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_EXPUNGES", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_LOCKS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_WAITS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_CONFLICTS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$BACKVERSION_READS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$FRAGMENT_READS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_RPT_READS", DataType::INT64, true));
+    cols.push_back(makeCol("MON$RECORD_IMGC", DataType::INT64, true));
 }
 
 void FirebirdCatalogHandler::getMonMemoryUsageColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
@@ -2738,7 +3107,9 @@ void FirebirdCatalogHandler::getMonMemoryUsageColumns(std::vector<CatalogManager
 void FirebirdCatalogHandler::getMonTableStatsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
     cols.clear();
     cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$STAT_GROUP", DataType::INT16, true));
     cols.push_back(makeCol("MON$TABLE_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$RECORD_STAT_ID", DataType::INT64, true));
 }
 
 void FirebirdCatalogHandler::getMonContextVariablesColumns(std::vector<CatalogManager::ColumnInfo>& cols) {

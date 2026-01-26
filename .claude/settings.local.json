@@ -60,7 +60,8 @@
       "Bash(./sync-to-wiki.sh:*)",
       "Bash(/home/dcalford/CliWork/ScratchBird/wiki/scripts/sync-to-wiki.sh)",
       "Bash(/home/dcalford/CliWork/ScratchBird/wiki/scripts/sync-to-wiki.sh:*)",
-      "WebFetch(domain:www.metabase.com)"
+      "WebFetch(domain:www.metabase.com)",
+      "Bash(xargs ls:*)"
     ]
   }
 }

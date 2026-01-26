@@ -496,6 +496,12 @@ public:
 
     Status getStats(ColumnstoreStats *stats_out, ErrorContext *ctx = nullptr);
 
+    // Update TIDs after tablespace migration (GPID remap)
+    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                    uint64_t *tids_updated_out = nullptr,
+                                    uint64_t *pages_modified_out = nullptr,
+                                    ErrorContext *ctx = nullptr);
+
     // Compression methods (public for testing)
 
     /**
@@ -596,6 +602,7 @@ public:
 private:
     Database *db_;
     SBColumnstoreIndex index_info_;
+    uint32_t metadata_page_ = 0;
 
     GPID indexGPID(uint64_t page_num) const;
     Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr);
@@ -652,6 +659,7 @@ private:
      * Flush buffered values to a segment
      */
     Status flushSegment(const ID &column_uuid, ErrorContext *ctx);
+    Status updateMetadataPage(ErrorContext *ctx);
 
     /**
      * Get column data type from catalog

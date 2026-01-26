@@ -176,6 +176,17 @@ namespace scratchbird
                 IOStatsSnapshot statement_io;
             };
 
+            struct ConnectionSecuritySnapshot
+            {
+                uint32_t proc_id = 0;
+                ID session_id{};
+                uint64_t statement_id = 0;
+                uint64_t statement_time = 0;
+                int32_t statement_line = 0;
+                int32_t statement_column = 0;
+                std::vector<ConnectionContext::SecurityContext> security_stack;
+            };
+
             // Dormant transaction handling (reattach support).
             // The ConnectionContext is retained to preserve locks and ProcArray visibility.
             Status detachToDormant(std::unique_ptr<class ConnectionContext> &connection,
@@ -185,6 +196,8 @@ namespace scratchbird
             Status reattachDormant(const ID &dormant_id,
                                    std::unique_ptr<class ConnectionContext> &connection_out,
                                    ErrorContext *ctx = nullptr);
+
+            std::vector<ConnectionSecuritySnapshot> snapshotConnectionSecurityStacks() const;
 
             // Get database information
             bool is_open() const

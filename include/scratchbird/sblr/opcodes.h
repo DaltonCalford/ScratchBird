@@ -1138,6 +1138,7 @@ namespace scratchbird
             EXT_FUNC_TRUNC = 0xE9,  // TRUNC(x [, precision]) - truncate toward zero
             EXT_FUNC_MOD = 0xEA,  // MOD(x, y) - modulo (remainder of x/y)
             EXT_FUNC_SQRT = 0xEB,  // SQRT(x) - square root
+            EXT_DEBUG_SPAN = 0x0FF0,  // Debug: source line/column span marker
             EXT_FUNC_CBRT = 0xEC,  // CBRT(x) - cube root
             EXT_FUNC_POWER = 0xED,  // POWER(x, y) / POW(x, y) - x raised to power y
             EXT_FUNC_EXP = 0xEE,  // EXP(x) - e raised to power x

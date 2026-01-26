@@ -219,6 +219,65 @@ Status Memtable::getAllEntries(std::vector<MemtableEntry> *entries_out,
     return Status::OK;
 }
 
+Status Memtable::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                          uint64_t *entries_updated_out,
+                                          ErrorContext *ctx)
+{
+    (void)ctx;
+    if (entries_updated_out != nullptr)
+    {
+        *entries_updated_out = 0;
+    }
+
+    if (tid_mapping.empty())
+    {
+        return Status::OK;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    uint64_t updated = 0;
+    for (auto &kv : entries_)
+    {
+        for (auto &entry : kv.second)
+        {
+            if (entry.entry_type != ENTRY_TYPE_INSERT)
+            {
+                continue;
+            }
+
+            if (entry.value.size() != (sizeof(uint64_t) + sizeof(uint16_t)))
+            {
+                continue;
+            }
+
+            uint64_t gpid = 0;
+            for (size_t i = 0; i < sizeof(uint64_t); ++i)
+            {
+                gpid |= (static_cast<uint64_t>(entry.value[i]) << (i * 8));
+            }
+
+            auto it = tid_mapping.find(gpid);
+            if (it != tid_mapping.end())
+            {
+                uint64_t new_gpid = it->second;
+                for (size_t i = 0; i < sizeof(uint64_t); ++i)
+                {
+                    entry.value[i] = static_cast<uint8_t>((new_gpid >> (i * 8)) & 0xFF);
+                }
+                updated++;
+            }
+        }
+    }
+
+    if (entries_updated_out != nullptr)
+    {
+        *entries_updated_out = updated;
+    }
+
+    return Status::OK;
+}
+
 // ============================================================================
 // SSTableWriter Implementation
 // ============================================================================
@@ -395,11 +454,24 @@ Status SSTableWriter::finish(ErrorContext *ctx)
     const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL" in hex
     footer.insert(footer.end(), (uint8_t *)&FOOTER_MAGIC, (uint8_t *)&FOOTER_MAGIC + sizeof(FOOTER_MAGIC));
 
-    // Write footer
+    // Write footer payload
     ssize_t written = ::write(fd_, footer.data(), footer.size());
     if (written < 0 || (size_t)written != footer.size())
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write SSTable footer");
+        return Status::IO_ERROR;
+    }
+
+    // Append footer size + magic trailer so readers can locate variable-sized footers.
+    uint32_t footer_size = static_cast<uint32_t>(footer.size());
+    uint8_t trailer[sizeof(footer_size) + sizeof(FOOTER_MAGIC)];
+    std::memcpy(trailer, &footer_size, sizeof(footer_size));
+    std::memcpy(trailer + sizeof(footer_size), &FOOTER_MAGIC, sizeof(FOOTER_MAGIC));
+
+    written = ::write(fd_, trailer, sizeof(trailer));
+    if (written < 0 || static_cast<size_t>(written) != sizeof(trailer))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write SSTable footer trailer");
         return Status::IO_ERROR;
     }
 
@@ -438,6 +510,7 @@ SSTableReader::SSTableReader(const std::string &file_path, size_t block_size)
       block_size_(block_size),
       fd_(-1),
       file_size_(0),
+      data_end_offset_(0),
       num_entries_(0),
       compression_type_(CompressionType::NONE)
 {
@@ -473,34 +546,77 @@ Status SSTableReader::open(ErrorContext *ctx)
     }
     file_size_ = size;
 
-    // Read footer (read last block to accommodate Bloom filter and index)
     // Footer format: [min_key][max_key][num_entries][index][bloom_filter_size][bloom_data][magic]
-    const size_t footer_size = block_size_;
-    if (file_size_ < (int64_t)footer_size)
+    // Trailer (new): [footer_size(uint32)][magic(uint32)] to locate variable-sized footer.
+    const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL"
+    std::vector<uint8_t> footer;
+    off_t footer_offset = 0;
+    bool has_trailer = false;
+
+    if (file_size_ >= static_cast<uint64_t>(sizeof(uint32_t) * 2))
     {
-        ::close(fd_);
-        fd_ = -1;
-        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "SSTable file too small");
-        return Status::PAGE_CORRUPT;
+        uint8_t trailer[sizeof(uint32_t) * 2];
+        if (::lseek(fd_, static_cast<off_t>(file_size_ - sizeof(trailer)), SEEK_SET) ==
+            static_cast<off_t>(file_size_ - sizeof(trailer)))
+        {
+            ssize_t nread = ::read(fd_, trailer, sizeof(trailer));
+            if (nread == static_cast<ssize_t>(sizeof(trailer)))
+            {
+                uint32_t footer_size = 0;
+                uint32_t magic = 0;
+                std::memcpy(&footer_size, trailer, sizeof(footer_size));
+                std::memcpy(&magic, trailer + sizeof(footer_size), sizeof(magic));
+                if (magic == FOOTER_MAGIC &&
+                    footer_size > 0 &&
+                    footer_size + sizeof(trailer) <= file_size_)
+                {
+                    footer_offset = static_cast<off_t>(file_size_ - sizeof(trailer) - footer_size);
+                    footer.resize(footer_size);
+                    if (::lseek(fd_, footer_offset, SEEK_SET) == footer_offset)
+                    {
+                        nread = ::read(fd_, footer.data(), footer.size());
+                        if (nread == static_cast<ssize_t>(footer.size()))
+                        {
+                            has_trailer = true;
+                            data_end_offset_ = static_cast<uint64_t>(footer_offset);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    off_t footer_offset = file_size_ - footer_size;
-    if (::lseek(fd_, footer_offset, SEEK_SET) != footer_offset)
+    if (!has_trailer)
     {
-        ::close(fd_);
-        fd_ = -1;
-        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek to SSTable footer");
-        return Status::IO_ERROR;
-    }
+        // Fallback to legacy fixed-block footer.
+        const size_t footer_size = block_size_;
+        if (file_size_ < (int64_t)footer_size)
+        {
+            ::close(fd_);
+            fd_ = -1;
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "SSTable file too small");
+            return Status::PAGE_CORRUPT;
+        }
 
-    std::vector<uint8_t> footer(footer_size);
-    ssize_t nread = ::read(fd_, footer.data(), footer_size);
-    if (nread < 0)
-    {
-        ::close(fd_);
-        fd_ = -1;
-        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read SSTable footer");
-        return Status::IO_ERROR;
+        footer_offset = file_size_ - footer_size;
+        if (::lseek(fd_, footer_offset, SEEK_SET) != footer_offset)
+        {
+            ::close(fd_);
+            fd_ = -1;
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek to SSTable footer");
+            return Status::IO_ERROR;
+        }
+
+        footer.resize(footer_size);
+        ssize_t nread = ::read(fd_, footer.data(), footer_size);
+        if (nread < 0)
+        {
+            ::close(fd_);
+            fd_ = -1;
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read SSTable footer");
+            return Status::IO_ERROR;
+        }
+        data_end_offset_ = static_cast<uint64_t>(footer_offset);
     }
 
     // Parse footer
@@ -626,7 +742,6 @@ Status SSTableReader::open(ErrorContext *ctx)
     // Footer magic (optional verification)
     if (pos + sizeof(uint32_t) <= footer.size())
     {
-        const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL"
         uint32_t magic;
         std::memcpy(&magic, footer.data() + pos, sizeof(magic));
         if (magic != FOOTER_MAGIC)
@@ -878,10 +993,11 @@ Status SSTableReader::close(ErrorContext *ctx)
 class SSTableReaderIterator : public SSTableReader::Iterator
 {
 public:
-    SSTableReaderIterator(int fd, uint64_t file_size, size_t block_size)
+    SSTableReaderIterator(int fd, uint64_t file_size, uint64_t data_end_offset, size_t block_size)
         : fd_(fd),
           file_size_(file_size),
           block_size_(block_size),
+          data_end_offset_(data_end_offset),
           current_offset_(0),
           valid_(false)
     {
@@ -899,7 +1015,7 @@ public:
         // Read next entry from SSTable
         // Entry format: [key_len][key][value_len][value][seq][type][xmin][xmax]
 
-        if (current_offset_ >= file_size_)
+        if (current_offset_ >= data_end_offset_)
         {
             valid_ = false;
             return;
@@ -913,7 +1029,7 @@ public:
         }
 
         // Read key length
-        uint16_t key_len;
+        uint32_t key_len;
         if (::read(fd_, &key_len, sizeof(key_len)) != sizeof(key_len))
         {
             valid_ = false;
@@ -922,7 +1038,7 @@ public:
 
         // Check if we've reached the footer (entries end before footer)
         // A key_len of 0 or impossibly large indicates end of data
-        if (key_len == 0 || key_len > 65535)
+        if (key_len == 0 || key_len > file_size_)
         {
             valid_ = false;
             return;
@@ -979,8 +1095,8 @@ public:
 
         // Update offset to next entry
         current_offset_ += sizeof(key_len) + key_len + sizeof(value_len) + value_len +
-                          sizeof(current_sequence_) + sizeof(current_type_) +
-                          sizeof(current_xmin_) + sizeof(current_xmax_);
+                            sizeof(current_sequence_) + sizeof(current_type_) +
+                            sizeof(current_xmin_) + sizeof(current_xmax_);
 
         valid_ = true;
     }
@@ -1019,6 +1135,7 @@ private:
     int fd_;
     uint64_t file_size_;
     size_t block_size_;
+    uint64_t data_end_offset_;
     uint64_t current_offset_;
     bool valid_;
 
@@ -1037,7 +1154,7 @@ std::unique_ptr<SSTableReader::Iterator> SSTableReader::createIterator()
         return nullptr;
     }
 
-    return std::make_unique<SSTableReaderIterator>(fd_, file_size_, block_size_);
+    return std::make_unique<SSTableReaderIterator>(fd_, file_size_, data_end_offset_, block_size_);
 }
 
 } // namespace core

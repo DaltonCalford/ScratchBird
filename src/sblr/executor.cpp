@@ -1897,6 +1897,22 @@ namespace scratchbird
                     case Opcode::EXTENDED_OPCODE:
                     {
                         uint16_t ext_op = readExtendedOpcode();
+                        if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DEBUG_SPAN))
+                        {
+                            int32_t line = static_cast<int32_t>(readInt32());
+                            int32_t column = static_cast<int32_t>(readInt32());
+                            if (conn_ctx_)
+                            {
+                                conn_ctx_->updateStatementSourceLocation(line, column);
+                            }
+                            if (pc_ >= bytecode_size_)
+                            {
+                                result = ExecutionResult();
+                                break;
+                            }
+                            op = static_cast<Opcode>(readByte());
+                            continue;
+                        }
                         if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_AUTOCOMMIT) ||
                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COMMIT_RETAINING) ||
                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_RETAINING) ||
@@ -3657,6 +3673,10 @@ namespace scratchbird
                             case ExtendedOpcode::EXT_REGEX_NOT_MATCH_CI:
                             case ExtendedOpcode::EXT_ASCII:
                             case ExtendedOpcode::EXT_CHR:
+                                break;
+                            case ExtendedOpcode::EXT_DEBUG_SPAN:
+                                readInt32();
+                                readInt32();
                                 break;
                             case ExtendedOpcode::EXT_PLACEHOLDER:
                                 readInt16();
@@ -5727,6 +5747,11 @@ namespace scratchbird
             }
             LOG_INFO(EXECUTOR, "CREATE TABLE schema loaded: %s", schema_info.schema_name.c_str());
 
+            if (tablespace_name.empty())
+            {
+                tablespace_id = schema_info.default_tablespace_id;
+            }
+
             // Check CREATE permission on schema (skip for system/emulated schemas and embedded mode)
             const auto& user_id = getCurrentUserID();
             bool skip_permission_check = current_schema_set_ || (user_id == core::ID{}) || (temp_type != 0);
@@ -6233,6 +6258,11 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
+            }
+
+            if (tablespace_name.empty())
+            {
+                tablespace_id = table_info.tablespace_id;
             }
 
             // Create index in catalog
@@ -25352,6 +25382,16 @@ namespace scratchbird
                 {
                     uint16_t ext_op = readExtendedOpcode();
 
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DEBUG_SPAN))
+                    {
+                        int32_t line = static_cast<int32_t>(readInt32());
+                        int32_t column = static_cast<int32_t>(readInt32());
+                        if (conn_ctx_)
+                        {
+                            conn_ctx_->updateStatementSourceLocation(line, column);
+                        }
+                        break;
+                    }
                     if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_NULL_SAFE_EQ))
                     {
                         Value right = pop();
@@ -31674,6 +31714,7 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_CORR),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_COVAR_POP),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_DECODE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_DEBUG_SPAN),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_DECRYPT_DOMAIN_VALUE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ENCODE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ENCRYPT_DOMAIN_VALUE),
@@ -43676,6 +43717,12 @@ namespace scratchbird
                     case Opcode::EXTENDED_OPCODE:
                     {
                         uint16_t ext = readExtendedOpcode();
+                        if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_DEBUG_SPAN))
+                        {
+                            readInt32();
+                            readInt32();
+                            break;
+                        }
                         if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_TSMATCH))
                         {
                             if (stack.size() < 2)
