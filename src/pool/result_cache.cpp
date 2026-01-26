@@ -851,11 +851,33 @@ std::string DatabaseResultCache::evict_one_by_ttl() {
 }
 
 bool DatabaseResultCache::should_cache(const CachedResult& result) const {
+    // Determinism and snapshot safety
+    if (config_.require_deterministic &&
+        (!result.metadata().is_deterministic || result.metadata().contains_volatile_functions)) {
+        return false;
+    }
+    if (config_.require_snapshot_safe && !result.metadata().is_snapshot_safe) {
+        return false;
+    }
+
+    // Parameter-only caching
+    if (config_.cache_parameterized_only && result.metadata().parameters.empty()) {
+        return false;
+    }
+
     // Check row count
     if (result.row_count() < config_.min_rows_to_cache) {
         return false;
     }
     if (result.row_count() > config_.max_rows_to_cache) {
+        return false;
+    }
+    if (result.row_count() > config_.max_rows_per_result) {
+        return false;
+    }
+    if (result.metadata().total_rows > 0 &&
+        result.metadata().total_rows > config_.max_rows_per_result &&
+        !config_.enable_partial_caching) {
         return false;
     }
 
@@ -864,9 +886,24 @@ bool DatabaseResultCache::should_cache(const CachedResult& result) const {
         return false;
     }
 
+    // Query cost threshold
+    if (result.metadata().query_cost < config_.min_cost_to_cache) {
+        return false;
+    }
+
     // Check empty results
     if (result.row_count() == 0 && !config_.cache_empty_results) {
         return false;
+    }
+
+    // Partial results
+    if (result.metadata().is_partial) {
+        if (!config_.enable_partial_caching) {
+            return false;
+        }
+        if (result.row_count() > config_.partial_cache_rows) {
+            return false;
+        }
     }
 
     // Check excluded tables

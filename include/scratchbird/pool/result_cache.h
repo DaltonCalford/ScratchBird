@@ -91,8 +91,11 @@ struct ResultCacheConfig {
     // Caching criteria
     uint32_t min_rows_to_cache = 0;       // Minimum rows (0 = cache everything)
     uint32_t max_rows_to_cache = 10000;   // Maximum rows to cache
+    uint32_t max_rows_per_result = 100000; // Hard cap on cached rows
     uint64_t min_cost_to_cache = 0;       // Minimum query cost
     bool cache_empty_results = true;       // Cache zero-row results
+    bool require_deterministic = true;     // Only cache deterministic queries
+    bool require_snapshot_safe = true;     // Only cache snapshot-stable queries
 
     // Partial caching
     bool enable_partial_caching = true;   // Cache partial results
@@ -167,6 +170,9 @@ struct ResultMetadata {
     // Query execution info
     std::chrono::microseconds execution_time{0};
     double query_cost = 0.0;
+    bool is_deterministic = true;
+    bool is_snapshot_safe = true;
+    bool contains_volatile_functions = false;
 };
 
 /**
