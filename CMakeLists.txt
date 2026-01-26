@@ -50,6 +50,9 @@ if(PkgConfig_FOUND)
     pkg_check_modules(LIBXML2 libxml-2.0)
 endif()
 
+# Required packages
+find_package(ZLIB REQUIRED)
+
 # If LZ4 not found via pkg-config, try to find it manually
 if(NOT LZ4_FOUND)
     find_path(LZ4_INCLUDE_DIRS NAMES lz4.h)

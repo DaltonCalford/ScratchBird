@@ -2232,6 +2232,35 @@ namespace scratchbird::core
         return true;
     }
 
+    Status PageManager::getTablespaceTotalPages(uint16_t tablespace_id,
+                                               uint32_t *total_pages_out,
+                                               ErrorContext *ctx) const
+    {
+        if (total_pages_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "total_pages_out is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            *total_pages_out = total_pages_;
+            return Status::OK;
+        }
+
+        std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+        auto it = tablespace_fsms_.find(tablespace_id);
+        if (it == tablespace_fsms_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tablespace not found or not loaded");
+            return Status::NOT_FOUND;
+        }
+
+        *total_pages_out = it->second.total_pages;
+        return Status::OK;
+    }
+
     // === PHASE 5, TASK 5.1.1: Page Enumeration ===
 
     Status PageManager::getAllocatedPages(uint16_t tablespace_id,

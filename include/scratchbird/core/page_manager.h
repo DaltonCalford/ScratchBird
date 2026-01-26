@@ -284,6 +284,18 @@ namespace scratchbird::core
                               std::vector<GPID> &pages_out,
                               ErrorContext *ctx = nullptr) -> Status;
 
+        /**
+         * getTablespaceTotalPages - Get total pages for a tablespace
+         *
+         * @param tablespace_id Tablespace ID (0 = primary, 1-65535 = custom)
+         * @param total_pages_out Output total page count
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        auto getTablespaceTotalPages(uint16_t tablespace_id,
+                                     uint32_t *total_pages_out,
+                                     ErrorContext *ctx = nullptr) const -> Status;
+
     protected:
         Database *db_;       // Database instance
         uint32_t page_size_; // Page size

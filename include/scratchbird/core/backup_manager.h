@@ -70,6 +70,7 @@ struct RestoreConfig {
     uint64_t target_time = 0;           // Target time for PITR (0 = latest)
     std::string target_lsn;             // Target LSN for PITR (empty = latest)
     bool partial_restore = false;       // Allow partial restore on errors
+    bool allow_tablespace_create = false; // Create missing tablespace files when restoring
 };
 
 // Backup manifest header (stored at beginning of backup file)
@@ -91,7 +92,9 @@ struct BackupManifestHeader {
     uint8_t parent_backup_uuid[16];     // Parent backup UUID (for incremental)
     char label[128];                    // Backup label
     uint32_t checksum;                  // Header checksum
-    uint8_t reserved2[56];              // Reserved for future use
+    uint64_t tablespace_info_offset;    // Offset to tablespace manifest (0 if none)
+    uint64_t tablespace_info_size;      // Size of tablespace manifest in bytes
+    uint8_t reserved2[40];              // Reserved for future use
 };
 #pragma pack(pop)
 
@@ -103,6 +106,16 @@ struct BackupPageEntry {
     uint32_t original_size;             // Original page size
     uint32_t checksum;                  // Page checksum
     uint64_t file_offset;               // Offset in backup file
+};
+#pragma pack(pop)
+
+// Tablespace manifest entry header (variable-length file paths follow)
+#pragma pack(push, 1)
+struct BackupTablespaceEntryHeader {
+    uint16_t tablespace_id;             // Tablespace ID
+    uint16_t file_count;                // Number of files in tablespace
+    uint32_t reserved;                  // Reserved for alignment/future
+    uint64_t total_pages;               // Total pages in tablespace
 };
 #pragma pack(pop)
 
