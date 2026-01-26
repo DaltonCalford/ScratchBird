@@ -94,6 +94,7 @@ void CachedStatement::update_memory_usage() {
     }
 
     bytes += metadata_.parameter_types.size() * sizeof(uint32_t);
+    bytes += metadata_.privilege_signature.size();
 
     for (const auto& col : metadata_.result_column_names) {
         bytes += col.size();
@@ -174,23 +175,34 @@ std::string StatementFingerprinter::parameter_signature(const std::vector<uint32
 }
 
 std::string StatementFingerprinter::cache_key(std::string_view sql,
-                                              const std::vector<uint32_t>& param_types) const {
+                                              const std::vector<uint32_t>& param_types,
+                                              uint64_t schema_version_id,
+                                              const std::string& privilege_signature) const {
     std::string fp = fingerprint(sql);
-    return cache_key_from_fingerprint(fp, param_types);
+    return cache_key_from_fingerprint(fp, param_types, schema_version_id, privilege_signature);
 }
 
 std::string StatementFingerprinter::cache_key_from_fingerprint(
     std::string_view fingerprint,
-    const std::vector<uint32_t>& param_types) const {
+    const std::vector<uint32_t>& param_types,
+    uint64_t schema_version_id,
+    const std::string& privilege_signature) const {
     std::string sig = parameter_signature(param_types);
-    if (sig.empty()) {
-        return std::string(fingerprint);
-    }
     std::string key;
-    key.reserve(fingerprint.size() + sig.size() + 4);
+    key.reserve(fingerprint.size() + sig.size() + privilege_signature.size() + 32);
     key.append(fingerprint);
-    key.append("|P:");
-    key.append(sig);
+    if (!sig.empty()) {
+        key.append("|P:");
+        key.append(sig);
+    }
+    if (schema_version_id != 0) {
+        key.append("|S:");
+        key.append(std::to_string(schema_version_id));
+    }
+    if (!privilege_signature.empty()) {
+        key.append("|A:");
+        key.append(privilege_signature);
+    }
     return key;
 }
 
@@ -433,8 +445,11 @@ std::shared_ptr<CachedStatement> DatabaseStatementCache::get(std::string_view sq
 
 std::shared_ptr<CachedStatement> DatabaseStatementCache::get(
     std::string_view sql,
-    const std::vector<uint32_t>& param_types) {
-    std::string fp = fingerprinter_.cache_key(sql, param_types);
+    const std::vector<uint32_t>& param_types,
+    uint64_t schema_version_id,
+    const std::string& privilege_signature) {
+    std::string fp = fingerprinter_.cache_key(sql, param_types, schema_version_id,
+                                              privilege_signature);
     uint64_t hash = fingerprinter_.hash(fp);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -515,7 +530,10 @@ bool DatabaseStatementCache::put(std::shared_ptr<CachedStatement> statement) {
     std::string base_fp = metadata.fingerprint.empty()
         ? fingerprinter_.fingerprint(statement->sql())
         : metadata.fingerprint;
-    std::string fp = fingerprinter_.cache_key_from_fingerprint(base_fp, metadata.parameter_types);
+    std::string fp = fingerprinter_.cache_key_from_fingerprint(base_fp,
+                                                               metadata.parameter_types,
+                                                               metadata.schema_version_id,
+                                                               metadata.privilege_signature);
     uint64_t hash = fingerprinter_.hash(fp);
     if (metadata.fingerprint != fp || metadata.fingerprint_hash != hash) {
         metadata.fingerprint = fp;
@@ -590,8 +608,11 @@ bool DatabaseStatementCache::remove(std::string_view sql) {
 }
 
 bool DatabaseStatementCache::remove(std::string_view sql,
-                                    const std::vector<uint32_t>& param_types) {
-    std::string fp = fingerprinter_.cache_key(sql, param_types);
+                                    const std::vector<uint32_t>& param_types,
+                                    uint64_t schema_version_id,
+                                    const std::string& privilege_signature) {
+    std::string fp = fingerprinter_.cache_key(sql, param_types, schema_version_id,
+                                              privilege_signature);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
@@ -642,8 +663,11 @@ bool DatabaseStatementCache::contains(std::string_view sql) const {
 }
 
 bool DatabaseStatementCache::contains(std::string_view sql,
-                                      const std::vector<uint32_t>& param_types) const {
-    std::string fp = fingerprinter_.cache_key(sql, param_types);
+                                      const std::vector<uint32_t>& param_types,
+                                      uint64_t schema_version_id,
+                                      const std::string& privilege_signature) const {
+    std::string fp = fingerprinter_.cache_key(sql, param_types, schema_version_id,
+                                              privilege_signature);
 
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return cache_.find(fp) != cache_.end();

@@ -28,7 +28,7 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 | CB-P1-04 Multi-pool layout option | Done | Configurable layout placeholder (single/hot_cold/tablespace) |
 | CB-P2-01 Statement cache init wiring | Done | Connection pool integration |
 | CB-P2-02 SQL normalization + parameter signature | Done | Cache keying |
-| CB-P2-03 Schema/privilege invalidation | Pending | Schema version + privilege bundles |
+| CB-P2-03 Schema/privilege invalidation | Done | Cache keys include schema version + privilege bundles |
 | CB-P2-04 Session cache backed by global cache | Pending | Prepared statement cache path |
 | CB-P3-01 Result cache eligibility rules | Pending | Deterministic + snapshot safety |
 | CB-P3-02 Result cache keying | Pending | Schema version/privileges/params |
@@ -145,3 +145,4 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-02-02: Added buffer pool layout config plumbing (single/hot_cold/tablespace).
 - 2026-02-02: Wired statement cache initialization into connection pool.
 - 2026-02-02: Added parameter signature-aware cache keys for statement cache lookups.
+- 2026-02-02: Added schema version + privilege signature cache keying for invalidation safety.

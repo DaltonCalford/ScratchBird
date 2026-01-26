@@ -134,6 +134,10 @@ struct StatementMetadata {
     uint32_t parameter_count = 0;
     std::vector<uint32_t> parameter_types;  // OIDs
 
+    // Invalidation context
+    uint64_t schema_version_id = 0;
+    std::string privilege_signature;
+
     // Result information
     uint32_t result_column_count = 0;
     std::vector<std::string> result_column_names;
@@ -307,7 +311,9 @@ public:
      * @return Cache key string
      */
     std::string cache_key(std::string_view sql,
-                          const std::vector<uint32_t>& param_types) const;
+                          const std::vector<uint32_t>& param_types,
+                          uint64_t schema_version_id = 0,
+                          const std::string& privilege_signature = {}) const;
 
     /**
      * @brief Generate cache key from fingerprint + parameter types
@@ -316,7 +322,9 @@ public:
      * @return Cache key string
      */
     std::string cache_key_from_fingerprint(std::string_view fingerprint,
-                                           const std::vector<uint32_t>& param_types) const;
+                                           const std::vector<uint32_t>& param_types,
+                                           uint64_t schema_version_id = 0,
+                                           const std::string& privilege_signature = {}) const;
 
     /**
      * @brief Detect statement type from SQL
@@ -370,7 +378,9 @@ public:
      */
     std::shared_ptr<CachedStatement> get(std::string_view sql);
     std::shared_ptr<CachedStatement> get(std::string_view sql,
-                                         const std::vector<uint32_t>& param_types);
+                                         const std::vector<uint32_t>& param_types,
+                                         uint64_t schema_version_id = 0,
+                                         const std::string& privilege_signature = {});
 
     /**
      * @brief Get a cached statement by fingerprint hash
@@ -393,7 +403,9 @@ public:
      * @return true if removed
      */
     bool remove(std::string_view sql);
-    bool remove(std::string_view sql, const std::vector<uint32_t>& param_types);
+    bool remove(std::string_view sql, const std::vector<uint32_t>& param_types,
+                uint64_t schema_version_id = 0,
+                const std::string& privilege_signature = {});
 
     /**
      * @brief Check if statement is cached
@@ -402,7 +414,9 @@ public:
      * @return true if cached
      */
     bool contains(std::string_view sql) const;
-    bool contains(std::string_view sql, const std::vector<uint32_t>& param_types) const;
+    bool contains(std::string_view sql, const std::vector<uint32_t>& param_types,
+                  uint64_t schema_version_id = 0,
+                  const std::string& privilege_signature = {}) const;
 
     /**
      * @brief Clear all cached statements
