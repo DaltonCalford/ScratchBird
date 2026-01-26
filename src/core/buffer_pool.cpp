@@ -7,6 +7,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cassert>
+#include <iterator>
 
 namespace scratchbird::core
 {
@@ -351,7 +352,7 @@ namespace scratchbird::core
         // Update LRU (still maintained for fallback)
         if (effective_strategy == AccessStrategy::Normal)
         {
-            updateLru(frame_index);
+            insertLruMidpoint(frame_index);
         }
 
         if (ring && !ring->frames.empty())
@@ -1087,6 +1088,25 @@ namespace scratchbird::core
 
         // Add to end of LRU list (most recently used)
         lru_list_.push_back(frame_index);
+    }
+
+    void BufferPool::insertLruMidpoint(uint32_t frame_index)
+    {
+        // CRITICAL: This method MUST be called with mutex_ held
+        assert(frame_index < config_.pool_size && "insertLruMidpoint called with invalid frame_index");
+
+        // Remove any stale entry, then insert at midpoint to avoid scan pollution.
+        lru_list_.remove(frame_index);
+        if (lru_list_.empty())
+        {
+            lru_list_.push_back(frame_index);
+            return;
+        }
+
+        size_t midpoint = lru_list_.size() / 2;
+        auto it = lru_list_.begin();
+        std::advance(it, static_cast<long>(midpoint));
+        lru_list_.insert(it, frame_index);
     }
 
     // PHASE 1, TASK 1.2.3: LEGACY API - Convert result GPID to page_id

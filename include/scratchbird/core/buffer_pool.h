@@ -481,6 +481,7 @@ namespace scratchbird::core
         auto readPageFromDisk(GPID gpid, uint8_t *buffer, ErrorContext *ctx) -> Status;
         auto writePageToDisk(GPID gpid, const uint8_t *buffer, ErrorContext *ctx) -> Status;
         void updateLru(uint32_t frame_index);
+        void insertLruMidpoint(uint32_t frame_index);
         void initializeRingBuffers();
         RingBuffer* getRingBuffer(AccessStrategy strategy);
         uint32_t nextRingSlot(RingBuffer &ring);

@@ -23,7 +23,7 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 | CB-P0-02 Buffer pool spec alignment | Done | Added telemetry wiring + Alpha notes |
 | CB-P0-03 Cache config keys normalization | Done | Canonical keys referenced from `sb_server.conf` doc |
 | CB-P1-01 Scan-resistant ring buffers | In Progress | Sequential scan/sweep/GC/bulk write rings |
-| CB-P1-02 Hot/cold segmentation | Pending | Midpoint insertion or young/old list |
+| CB-P1-02 Hot/cold segmentation | Done | Midpoint insertion for new LRU entries |
 | CB-P1-03 Read-ahead policy | Pending | Sequential detection + range hints |
 | CB-P1-04 Multi-pool layout option | Pending | Hot/cold/temp or tablespace pools |
 | CB-P2-01 Statement cache init wiring | Pending | Connection pool integration |
@@ -140,3 +140,4 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-02-02: Focused columnstore test run completed (ctest -R Columnstore, 19 tests, 0 failures).
 - 2026-02-02: B-Tree vacuum, BRIN scan/GC, and columnstore stats/migration scans now use sequential/vacuum access strategy.
 - 2026-02-02: Full rebuild + sequential `ctest` pass completed (2357 tests, 0 failures).
+- 2026-02-02: Added midpoint insertion for new LRU entries to reduce scan pollution.
