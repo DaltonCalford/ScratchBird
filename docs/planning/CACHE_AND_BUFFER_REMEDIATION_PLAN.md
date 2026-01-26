@@ -15,6 +15,33 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 - Translation cache integration (parser/adapter)
 - Monitoring/metrics wiring + SQL views
 
+## Tracker (WS-9)
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| CB-P0-01 Cache/buffer canonical spec alignment | Pending | Align `CACHE_AND_BUFFER_ARCHITECTURE.md` to code-truth + WS-9 targets |
+| CB-P0-02 Buffer pool spec alignment | Pending | Update `STORAGE_ENGINE_BUFFER_POOL.md` to match current implementation + Alpha target |
+| CB-P0-03 Cache config keys normalization | Pending | Align config keys across user docs and specs |
+| CB-P1-01 Scan-resistant ring buffers | Pending | Sequential scan/sweep/GC/bulk write rings |
+| CB-P1-02 Hot/cold segmentation | Pending | Midpoint insertion or young/old list |
+| CB-P1-03 Read-ahead policy | Pending | Sequential detection + range hints |
+| CB-P1-04 Multi-pool layout option | Pending | Hot/cold/temp or tablespace pools |
+| CB-P2-01 Statement cache init wiring | Pending | Connection pool integration |
+| CB-P2-02 SQL normalization + parameter signature | Pending | Cache keying |
+| CB-P2-03 Schema/privilege invalidation | Pending | Schema version + privilege bundles |
+| CB-P2-04 Session cache backed by global cache | Pending | Prepared statement cache path |
+| CB-P3-01 Result cache eligibility rules | Pending | Deterministic + snapshot safety |
+| CB-P3-02 Result cache keying | Pending | Schema version/privileges/params |
+| CB-P3-03 Result cache read/write path | Pending | Compiler/executor wiring |
+| CB-P4-01 Translation cache implementation | Pending | Per-dialect SQL->SBLR cache |
+| CB-P4-02 Translation cache segmentation | Pending | Dialect/schema/privileges |
+| CB-P5-01 Buffer pool telemetry wiring | Done | Hits/misses/reads/writes + dirty/pages gauges |
+| CB-P5-02 Cache hit/miss metrics (statement/result/translation) | Pending | Telemetry wiring |
+| CB-P5-03 SQL monitoring views | Pending | `sys.cache_stats`, `sys.buffer_pool_stats`, `sys.statement_cache` |
+| CB-P6-01 Cache unit tests | Pending | Keying/invalidation/eviction |
+| CB-P6-02 Cache integration tests | Pending | Hit/miss ratios |
+| CB-P6-03 Benchmarks | Pending | Scan-resistant vs baseline |
+
 ## Phase 0: Specification Alignment (Docs)
 **CB-P0-01** Keep cache/buffer canonical spec as the source of truth.
 - Files: `ScratchBird/docs/specifications/core/CACHE_AND_BUFFER_ARCHITECTURE.md`
