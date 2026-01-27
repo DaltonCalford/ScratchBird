@@ -274,6 +274,17 @@ public:
     Counter* scheduler_jobs_failed_total;  // Failed job runs
     Histogram* scheduler_job_run_latency_seconds; // Job run duration
 
+    // Cache metrics
+    Counter* statement_cache_hits_total;      // Statement cache hits
+    Counter* statement_cache_misses_total;    // Statement cache misses
+    Counter* statement_cache_evictions_total; // Statement cache evictions
+    Counter* result_cache_hits_total;         // Result cache hits
+    Counter* result_cache_misses_total;       // Result cache misses
+    Counter* result_cache_evictions_total;    // Result cache evictions
+    Counter* translation_cache_hits_total;    // Translation cache hits
+    Counter* translation_cache_misses_total;  // Translation cache misses
+    Counter* translation_cache_evictions_total; // Translation cache evictions
+
 private:
     ScratchBirdMetrics() = default;
     bool initialized_ = false;

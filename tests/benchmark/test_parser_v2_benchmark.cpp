@@ -52,8 +52,10 @@ protected:
         catalog_ = db_.catalog_manager();
         ASSERT_NE(catalog_, nullptr);
 
-        status = catalog_->createSchema("test", "test_user", test_schema_id_, &ctx);
+        core::CatalogManager::SchemaInfo schema;
+        status = catalog_->getSchema("PUBLIC", schema, &ctx);
         ASSERT_EQ(status, core::Status::OK);
+        test_schema_id_ = schema.schema_id;
 
         // Create V2 compiler
         compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(&db_);

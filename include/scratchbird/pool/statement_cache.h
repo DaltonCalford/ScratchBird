@@ -272,6 +272,16 @@ struct CacheStatistics {
 };
 
 /**
+ * @brief Snapshot for statement cache entries (monitoring)
+ */
+struct StatementCacheEntrySnapshot {
+    std::string sql;
+    std::string fingerprint;
+    StatementType statement_type = StatementType::UNKNOWN;
+    StatementStats stats;
+};
+
+/**
  * @brief Statement fingerprinter for cache key generation
  *
  * Creates normalized fingerprints from SQL statements by:
@@ -462,6 +472,13 @@ public:
     // Statistics
     const CacheStatistics& statistics() const { return stats_; }
     void reset_statistics();
+
+    /**
+     * @brief Snapshot top cached statements by hit count
+     * @param limit Maximum number of entries to return (0 = no limit)
+     * @return Snapshot list ordered by hit_count desc
+     */
+    std::vector<StatementCacheEntrySnapshot> top_statements(size_t limit) const;
 
     // Configuration
     const StatementCacheConfig& config() const { return config_; }

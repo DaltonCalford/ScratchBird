@@ -12,6 +12,7 @@
  */
 
 #include "scratchbird/pool/result_cache.h"
+#include "scratchbird/core/telemetry.h"
 #include <algorithm>
 #include <functional>
 #include <iomanip>
@@ -350,6 +351,11 @@ std::shared_ptr<CachedResult> DatabaseResultCache::get(
         cache_.erase(it);
 
         stats_.expiration_count++;
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.result_cache_evictions_total) {
+            metrics.result_cache_evictions_total->inc();
+        }
         update_statistics_on_get(false);
         return nullptr;
     }
@@ -442,6 +448,11 @@ bool DatabaseResultCache::put(std::shared_ptr<CachedResult> result) {
 
         if (!evicted.empty()) {
             stats_.eviction_count++;
+            auto& metrics = core::ScratchBirdMetrics::getInstance();
+            metrics.initialize();
+            if (metrics.result_cache_evictions_total) {
+                metrics.result_cache_evictions_total->inc();
+            }
         }
     }
 
@@ -660,6 +671,11 @@ uint64_t DatabaseResultCache::evict_to_memory(uint64_t target_bytes) {
         }
 
         stats_.eviction_count++;
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.result_cache_evictions_total) {
+            metrics.result_cache_evictions_total->inc();
+        }
     }
 
     stats_.last_eviction = std::chrono::system_clock::now();
@@ -705,6 +721,13 @@ uint64_t DatabaseResultCache::evict_expired() {
 
     stats_.expiration_count += evicted;
     stats_.entry_count = cache_.size();
+    if (evicted > 0) {
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.result_cache_evictions_total) {
+            metrics.result_cache_evictions_total->inc(static_cast<double>(evicted));
+        }
+    }
 
     return evicted;
 }
@@ -970,15 +993,29 @@ void DatabaseResultCache::ensure_capacity(uint64_t needed_bytes) {
         }
 
         stats_.eviction_count++;
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.result_cache_evictions_total) {
+            metrics.result_cache_evictions_total->inc();
+        }
     }
 }
 
 void DatabaseResultCache::update_statistics_on_get(bool hit) {
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
     if (hit) {
         stats_.total_hits++;
         stats_.queries_served_from_cache++;
+        if (metrics.result_cache_hits_total) {
+            metrics.result_cache_hits_total->inc();
+        }
     } else {
         stats_.total_misses++;
+        if (metrics.result_cache_misses_total) {
+            metrics.result_cache_misses_total->inc();
+        }
     }
 
     uint64_t total = stats_.total_hits + stats_.total_misses;

@@ -17,6 +17,23 @@
 namespace scratchbird {
 namespace protocol {
 
+namespace {
+const char* dialectTagForProtocol(network::ProtocolType type) {
+    switch (type) {
+        case network::ProtocolType::POSTGRESQL:
+            return "postgresql";
+        case network::ProtocolType::MYSQL:
+            return "mysql";
+        case network::ProtocolType::FIREBIRD:
+            return "firebird";
+        case network::ProtocolType::NATIVE:
+        case network::ProtocolType::AUTO_DETECT:
+        default:
+            return "scratchbird";
+    }
+}
+} // namespace
+
 // ============================================================================
 // Protocol State Helpers
 // ============================================================================
@@ -48,6 +65,7 @@ ProtocolAdapter::ProtocolAdapter(const ProtocolAdapterConfig& config)
     if (!config.database_path.empty()) {
         database_path_ = config.database_path;
     }
+    translation_cache_ = &TranslationCacheManager::getInstance();
 }
 
 ProtocolAdapter::~ProtocolAdapter() = default;
@@ -391,24 +409,7 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
     }
 
     if (connection_ctx_) {
-        const char* dialect_tag = "scratchbird";
-        switch (getProtocolType()) {
-            case network::ProtocolType::POSTGRESQL:
-                dialect_tag = "postgresql";
-                break;
-            case network::ProtocolType::MYSQL:
-                dialect_tag = "mysql";
-                break;
-            case network::ProtocolType::FIREBIRD:
-                dialect_tag = "firebird";
-                break;
-            case network::ProtocolType::NATIVE:
-            case network::ProtocolType::AUTO_DETECT:
-            default:
-                dialect_tag = "scratchbird";
-                break;
-        }
-        connection_ctx_->set_dialect_tag(dialect_tag);
+        connection_ctx_->set_dialect_tag(dialectTagForProtocol(getProtocolType()));
 
         core::ID protocol_session_id;
         generateSessionId(protocol_session_id.bytes.data());
@@ -425,6 +426,7 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
 core::Status ProtocolAdapter::compileQuery(const std::string& sql,
                                            std::vector<uint8_t>& bytecode_out,
                                            std::string& error_out) {
+    core::Database* db = engineDatabase();
     struct ConnectionContextGuard
     {
         core::ConnectionContext* previous = nullptr;
@@ -450,12 +452,39 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
     };
 
     ConnectionContextGuard ctx_guard(connection_ctx_.get());
+    const char* dialect_tag = dialectTagForProtocol(getProtocolType());
+    uint64_t schema_version = 0;
+    std::string privilege_signature;
+    if (db && db->catalog_manager() && connection_ctx_) {
+        core::CatalogManager::SchemaInfo schema_info;
+        if (db->catalog_manager()->getSchema(connection_ctx_->getCurrentSchemaId(),
+                                              schema_info, nullptr) == core::Status::OK) {
+            schema_version = schema_info.last_modified_time;
+        }
+        uint64_t policy_epoch = 0;
+        db->catalog_manager()->getSecurityPolicyEpoch(policy_epoch, nullptr);
+        privilege_signature = connection_ctx_->getCurrentUserId().toString();
+        privilege_signature.push_back('|');
+        privilege_signature.append(connection_ctx_->getActiveRoleId().toString());
+        privilege_signature.push_back('|');
+        privilege_signature.append(std::to_string(policy_epoch));
+    }
+    if (translation_cache_ && translation_cache_->isEnabled()) {
+        if (translation_cache_->get(dialect_tag, sql, schema_version,
+                                    privilege_signature, bytecode_out)) {
+            return core::Status::OK;
+        }
+    }
     auto result = compiler_v2_->compile(sql);
     if (!result.success()) {
         error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
         return core::Status::INVALID_ARGUMENT;
     }
     bytecode_out = result.bytecode();
+    if (translation_cache_ && translation_cache_->isEnabled()) {
+        translation_cache_->put(dialect_tag, sql, schema_version,
+                                privilege_signature, bytecode_out);
+    }
     return core::Status::OK;
 }
 

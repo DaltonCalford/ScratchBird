@@ -313,6 +313,8 @@ namespace scratchbird
             // Bound parameters for placeholders (prepared statements)
             std::vector<std::string> parameter_values_;
             std::vector<bool> parameter_nulls_;
+            std::unordered_set<core::ID, core::IDHash> last_select_table_ids_;
+            bool last_select_cacheable_ = true;
 
             // BLR savepoint scope tracking (implicit savepoints)
             std::vector<std::string> blr_savepoint_stack_;

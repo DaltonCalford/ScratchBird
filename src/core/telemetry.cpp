@@ -660,6 +660,43 @@ void ScratchBirdMetrics::initialize() {
         "Job run duration in seconds",
         Histogram::DEFAULT_LATENCY_BUCKETS);
 
+    // Cache metrics
+    statement_cache_hits_total = reg.registerCounter(
+        "scratchbird_statement_cache_hits_total",
+        "Total statement cache hits");
+
+    statement_cache_misses_total = reg.registerCounter(
+        "scratchbird_statement_cache_misses_total",
+        "Total statement cache misses");
+
+    statement_cache_evictions_total = reg.registerCounter(
+        "scratchbird_statement_cache_evictions_total",
+        "Total statement cache evictions");
+
+    result_cache_hits_total = reg.registerCounter(
+        "scratchbird_result_cache_hits_total",
+        "Total result cache hits");
+
+    result_cache_misses_total = reg.registerCounter(
+        "scratchbird_result_cache_misses_total",
+        "Total result cache misses");
+
+    result_cache_evictions_total = reg.registerCounter(
+        "scratchbird_result_cache_evictions_total",
+        "Total result cache evictions");
+
+    translation_cache_hits_total = reg.registerCounter(
+        "scratchbird_translation_cache_hits_total",
+        "Total translation cache hits");
+
+    translation_cache_misses_total = reg.registerCounter(
+        "scratchbird_translation_cache_misses_total",
+        "Total translation cache misses");
+
+    translation_cache_evictions_total = reg.registerCounter(
+        "scratchbird_translation_cache_evictions_total",
+        "Total translation cache evictions");
+
     initialized_ = true;
 }
 

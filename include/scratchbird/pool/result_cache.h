@@ -91,7 +91,6 @@ struct ResultCacheConfig {
     // Caching criteria
     uint32_t min_rows_to_cache = 0;       // Minimum rows (0 = cache everything)
     uint32_t max_rows_to_cache = 10000;   // Maximum rows to cache
-    uint32_t max_rows_per_result = 100000; // Hard cap on cached rows
     uint64_t min_cost_to_cache = 0;       // Minimum query cost
     bool cache_empty_results = true;       // Cache zero-row results
     bool require_deterministic = true;     // Only cache deterministic queries

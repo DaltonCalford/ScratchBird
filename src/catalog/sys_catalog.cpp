@@ -58,6 +58,15 @@ core::TypedValue timestampValueOrNull(uint64_t value) {
     return core::TypedValue::makeTimestamp(static_cast<int64_t>(value));
 }
 
+core::TypedValue timestampValueOrNull(const std::chrono::system_clock::time_point& value) {
+    if (value.time_since_epoch().count() == 0) {
+        return core::TypedValue::makeNull(core::DataType::TIMESTAMP);
+    }
+    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+        value.time_since_epoch()).count();
+    return core::TypedValue::makeTimestamp(static_cast<int64_t>(micros));
+}
+
 std::string isolationLevelToString(uint8_t isolation_level) {
     switch (static_cast<core::IsolationLevel>(isolation_level)) {
         case core::IsolationLevel::READ_COMMITTED:
@@ -169,6 +178,9 @@ void SysCatalogHandler::initializeTableNames() {
         "locks",
         "statements",
         "io_stats",
+        "cache_stats",
+        "buffer_pool_stats",
+        "statement_cache",
         "jobs",
         "job_runs",
         "job_dependencies",
@@ -235,6 +247,48 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"scope", DataType::TEXT, true},
         {"database_name", DataType::TEXT, true},
         {"updated_at", DataType::TIMESTAMP, true}
+    };
+
+    static const ColumnDefs kCacheStatsColumns = {
+        {"cache_type", DataType::TEXT, false},
+        {"database_name", DataType::TEXT, true},
+        {"hits_total", DataType::INT64, true},
+        {"misses_total", DataType::INT64, true},
+        {"evictions_total", DataType::INT64, true},
+        {"entries", DataType::INT64, true},
+        {"memory_bytes", DataType::INT64, true},
+        {"hit_ratio", DataType::FLOAT64, true},
+        {"updated_at", DataType::TIMESTAMP, true}
+    };
+
+    static const ColumnDefs kBufferPoolStatsColumns = {
+        {"database_name", DataType::TEXT, true},
+        {"pool_size_bytes", DataType::INT64, true},
+        {"pages_total", DataType::INT64, true},
+        {"pages_dirty", DataType::INT64, true},
+        {"hits_total", DataType::INT64, true},
+        {"misses_total", DataType::INT64, true},
+        {"reads_total", DataType::INT64, true},
+        {"writes_total", DataType::INT64, true},
+        {"hit_ratio", DataType::FLOAT64, true},
+        {"updated_at", DataType::TIMESTAMP, true}
+    };
+
+    static const ColumnDefs kStatementCacheColumns = {
+        {"database_name", DataType::TEXT, true},
+        {"sql_text", DataType::TEXT, true},
+        {"fingerprint", DataType::TEXT, true},
+        {"statement_type", DataType::TEXT, true},
+        {"hit_count", DataType::INT64, true},
+        {"miss_count", DataType::INT64, true},
+        {"execution_count", DataType::INT64, true},
+        {"error_count", DataType::INT64, true},
+        {"created_at", DataType::TIMESTAMP, true},
+        {"last_accessed", DataType::TIMESTAMP, true},
+        {"last_executed", DataType::TIMESTAMP, true},
+        {"avg_execution_time_ms", DataType::INT64, true},
+        {"memory_bytes", DataType::INT64, true},
+        {"plan_memory_bytes", DataType::INT64, true}
     };
 
     static const ColumnDefs kSessionsColumns = {
@@ -341,6 +395,15 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     if (equalsCaseInsensitive(table_name, "io_stats")) {
         return &kIoStatsColumns;
     }
+    if (equalsCaseInsensitive(table_name, "cache_stats")) {
+        return &kCacheStatsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "buffer_pool_stats")) {
+        return &kBufferPoolStatsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "statement_cache")) {
+        return &kStatementCacheColumns;
+    }
     if (equalsCaseInsensitive(table_name, "jobs")) {
         return &kJobsColumns;
     }
@@ -425,6 +488,15 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "io_stats")) {
         return queryIoStats(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "cache_stats")) {
+        return queryCacheStats(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "buffer_pool_stats")) {
+        return queryBufferPoolStats(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "statement_cache")) {
+        return queryStatementCache(results, ctx);
     }
     if (equalsCaseInsensitive(table_name, "jobs")) {
         return queryJobs(results, ctx);
@@ -1363,6 +1435,136 @@ Status SysCatalogHandler::queryPerformance(VirtualResultSet& results, ErrorConte
         add_row("scheduler_job_run_latency_avg_ms", avg_sec * 1000.0, "ms");
     }
 
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryCacheStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto now_micros = []() -> int64_t {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    std::string db_name;
+    if (catalog_manager_ && catalog_manager_->database()) {
+        db_name = baseNameFromPath(catalog_manager_->database()->path());
+    }
+
+    const core::TypedValue updated_at = core::TypedValue::makeTimestamp(now_micros());
+
+    auto add_row = [&](const std::string& cache_type,
+                       const std::string& database_name,
+                       int64_t hits,
+                       int64_t misses,
+                       int64_t evictions,
+                       int64_t entries,
+                       int64_t memory_bytes,
+                       double hit_ratio) {
+        VirtualRow row;
+        row.columns = {
+            {"cache_type", core::TypedValue::makeText(cache_type)},
+            {"database_name", database_name.empty()
+                                  ? core::TypedValue::makeNull(DataType::TEXT)
+                                  : core::TypedValue::makeText(database_name)},
+            {"hits_total", core::TypedValue::makeInt64(hits)},
+            {"misses_total", core::TypedValue::makeInt64(misses)},
+            {"evictions_total", core::TypedValue::makeInt64(evictions)},
+            {"entries", core::TypedValue::makeInt64(entries)},
+            {"memory_bytes", core::TypedValue::makeInt64(memory_bytes)},
+            {"hit_ratio", core::TypedValue::makeFloat64(hit_ratio)},
+            {"updated_at", updated_at}
+        };
+        results.rows.push_back(std::move(row));
+    };
+
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    auto counter_value = [](core::Counter* counter) -> int64_t {
+        return counter ? static_cast<int64_t>(counter->get()) : 0;
+    };
+
+    int64_t stmt_hits = counter_value(metrics.statement_cache_hits_total);
+    int64_t stmt_misses = counter_value(metrics.statement_cache_misses_total);
+    int64_t stmt_evictions = counter_value(metrics.statement_cache_evictions_total);
+    double stmt_total = static_cast<double>(stmt_hits + stmt_misses);
+    double stmt_hit_ratio = stmt_total > 0.0 ? stmt_hits / stmt_total : 0.0;
+    add_row("statement_cache", db_name, stmt_hits, stmt_misses, stmt_evictions, 0, 0, stmt_hit_ratio);
+
+    int64_t result_hits = counter_value(metrics.result_cache_hits_total);
+    int64_t result_misses = counter_value(metrics.result_cache_misses_total);
+    int64_t result_evictions = counter_value(metrics.result_cache_evictions_total);
+    double result_total = static_cast<double>(result_hits + result_misses);
+    double result_hit_ratio = result_total > 0.0 ? result_hits / result_total : 0.0;
+    add_row("result_cache", db_name, result_hits, result_misses, result_evictions, 0, 0, result_hit_ratio);
+
+    int64_t translation_hits = counter_value(metrics.translation_cache_hits_total);
+    int64_t translation_misses = counter_value(metrics.translation_cache_misses_total);
+    int64_t translation_evictions = counter_value(metrics.translation_cache_evictions_total);
+    double translation_total = static_cast<double>(translation_hits + translation_misses);
+    double translation_hit_ratio = translation_total > 0.0 ? translation_hits / translation_total : 0.0;
+    add_row("translation_cache", "", translation_hits, translation_misses, translation_evictions, 0, 0,
+            translation_hit_ratio);
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryBufferPoolStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto now_micros = []() -> int64_t {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    std::string db_name;
+    if (catalog_manager_ && catalog_manager_->database()) {
+        db_name = baseNameFromPath(catalog_manager_->database()->path());
+    }
+
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    double hits = metrics.buffer_pool_hits_total ? metrics.buffer_pool_hits_total->get() : 0.0;
+    double misses = metrics.buffer_pool_misses_total ? metrics.buffer_pool_misses_total->get() : 0.0;
+    double total = hits + misses;
+    double hit_ratio = total > 0.0 ? hits / total : 0.0;
+
+    VirtualRow row;
+    row.columns = {
+        {"database_name", db_name.empty()
+                              ? core::TypedValue::makeNull(DataType::TEXT)
+                              : core::TypedValue::makeText(db_name)},
+        {"pool_size_bytes", core::TypedValue::makeInt64(
+                                metrics.buffer_pool_size_bytes
+                                    ? static_cast<int64_t>(metrics.buffer_pool_size_bytes->get())
+                                    : 0)},
+        {"pages_total", core::TypedValue::makeInt64(
+                            metrics.buffer_pool_pages_total
+                                ? static_cast<int64_t>(metrics.buffer_pool_pages_total->get())
+                                : 0)},
+        {"pages_dirty", core::TypedValue::makeInt64(
+                            metrics.buffer_pool_pages_dirty
+                                ? static_cast<int64_t>(metrics.buffer_pool_pages_dirty->get())
+                                : 0)},
+        {"hits_total", core::TypedValue::makeInt64(static_cast<int64_t>(hits))},
+        {"misses_total", core::TypedValue::makeInt64(static_cast<int64_t>(misses))},
+        {"reads_total", core::TypedValue::makeInt64(
+                            metrics.buffer_pool_reads_total
+                                ? static_cast<int64_t>(metrics.buffer_pool_reads_total->get())
+                                : 0)},
+        {"writes_total", core::TypedValue::makeInt64(
+                             metrics.buffer_pool_writes_total
+                                 ? static_cast<int64_t>(metrics.buffer_pool_writes_total->get())
+                                 : 0)},
+        {"hit_ratio", core::TypedValue::makeFloat64(hit_ratio)},
+        {"updated_at", core::TypedValue::makeTimestamp(now_micros())}
+    };
+    results.rows.push_back(std::move(row));
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryStatementCache(VirtualResultSet& results, ErrorContext* /* ctx */) {
     return Status::OK;
 }
 

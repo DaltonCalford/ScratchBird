@@ -27,6 +27,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "unit/types/*.cpp"
     "unit/domains/*.cpp"
     "integration/*.cpp"
+    "benchmark/*.cpp"
 )
 
 # Explicitly exclude deprecated tests
@@ -214,6 +215,7 @@ target_link_libraries(scratchbird_tests
     scratchbird_sblr
     ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_protocol
+    scratchbird_pool
     scratchbird_client
     scratchbird_server
     scratchbird_network

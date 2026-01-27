@@ -1182,8 +1182,8 @@ namespace scratchbird::core
         bp_config.layout = parseBufferPoolLayout(layout_value, &layout_recognized);
         if (!layout_recognized && !layout_value.empty())
         {
-            LOG_WARN(GENERAL, "Unknown buffer_pool_layout '%s'; using single pool",
-                     layout_value.c_str());
+            LOG_WARNING(GENERAL, "Unknown buffer_pool_layout '%s'; using single pool",
+                        layout_value.c_str());
         }
         try
         {

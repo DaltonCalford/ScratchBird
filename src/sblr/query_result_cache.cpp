@@ -11,6 +11,7 @@
 // November 25, 2025
 
 #include "scratchbird/sblr/query_result_cache.h"
+#include "scratchbird/core/telemetry.h"
 #include <algorithm>
 #include <cstring>
 
@@ -148,6 +149,11 @@ CachedResultSet* QueryResultCache::get(const QueryHash& hash)
 {
     if (!enabled_) {
         ++misses_;
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.result_cache_misses_total) {
+            metrics.result_cache_misses_total->inc();
+        }
         return nullptr;
     }
 
@@ -156,6 +162,11 @@ CachedResultSet* QueryResultCache::get(const QueryHash& hash)
     auto it = cache_map_.find(hash);
     if (it == cache_map_.end()) {
         ++misses_;
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.result_cache_misses_total) {
+            metrics.result_cache_misses_total->inc();
+        }
         return nullptr;
     }
 
@@ -168,6 +179,13 @@ CachedResultSet* QueryResultCache::get(const QueryHash& hash)
     moveToFront(it->second);
 
     ++hits_;
+    {
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.result_cache_hits_total) {
+            metrics.result_cache_hits_total->inc();
+        }
+    }
     return &it->second->second;
 }
 
@@ -240,8 +258,11 @@ void QueryResultCache::invalidateTable(const core::ID& table_id)
         }
     }
 
-    // Remove table from reverse index
-    table_to_queries_.erase(it);
+    // Remove table from reverse index if still present
+    auto table_it = table_to_queries_.find(table_id);
+    if (table_it != table_to_queries_.end() && table_it->second.empty()) {
+        table_to_queries_.erase(table_it);
+    }
 }
 
 void QueryResultCache::invalidateAll()
@@ -328,6 +349,11 @@ void QueryResultCache::evictLRU()
     auto it = std::prev(lru_list_.end());
     removeEntry(it);
     ++evictions_;
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+    if (metrics.result_cache_evictions_total) {
+        metrics.result_cache_evictions_total->inc();
+    }
 }
 
 void QueryResultCache::moveToFront(LRUIterator it)
@@ -388,6 +414,10 @@ size_t QueryResultCache::estimateResultSize(const CachedResultSet& result) const
 
             // Additional size for variable-length types
             if (!value.isNull()) {
+                if (value.isEncrypted()) {
+                    size += value.encryptedData().size();
+                    continue;
+                }
                 switch (value.type()) {
                     case core::DataType::VARCHAR:
                         size += value.getVarchar().size();

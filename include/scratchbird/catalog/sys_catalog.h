@@ -86,6 +86,9 @@ private:
     Status queryPerformance(VirtualResultSet& results, ErrorContext* ctx);
     Status queryContextVariables(VirtualResultSet& results, ErrorContext* ctx);
     Status queryIoStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryCacheStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryBufferPoolStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryStatementCache(VirtualResultSet& results, ErrorContext* ctx);
 };
 
 } // namespace scratchbird::catalog

@@ -22,7 +22,7 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 | CB-P0-01 Cache/buffer canonical spec alignment | Done | Updated monitoring + config references |
 | CB-P0-02 Buffer pool spec alignment | Done | Added telemetry wiring + Alpha notes |
 | CB-P0-03 Cache config keys normalization | Done | Canonical keys referenced from `sb_server.conf` doc |
-| CB-P1-01 Scan-resistant ring buffers | In Progress | Sequential scan/sweep/GC/bulk write rings |
+| CB-P1-01 Scan-resistant ring buffers | Done | Sequential scan/sweep/GC/bulk write rings |
 | CB-P1-02 Hot/cold segmentation | Done | Midpoint insertion for new LRU entries |
 | CB-P1-03 Read-ahead policy | Done | Sequential detection + range hints |
 | CB-P1-04 Multi-pool layout option | Done | Configurable layout placeholder (single/hot_cold/tablespace) |
@@ -32,15 +32,15 @@ This plan targets Alpha completeness and aligns all cache tiers with the canonic
 | CB-P2-04 Session cache backed by global cache | Done | Per-connection cache backed by shared cache |
 | CB-P3-01 Result cache eligibility rules | Done | Deterministic + snapshot safety |
 | CB-P3-02 Result cache keying | Done | Schema version/privileges/params |
-| CB-P3-03 Result cache read/write path | Pending | Compiler/executor wiring |
-| CB-P4-01 Translation cache implementation | Pending | Per-dialect SQL->SBLR cache |
-| CB-P4-02 Translation cache segmentation | Pending | Dialect/schema/privileges |
+| CB-P3-03 Result cache read/write path | Done | Executor read/write wiring |
+| CB-P4-01 Translation cache implementation | Done | Per-dialect SQL->SBLR cache |
+| CB-P4-02 Translation cache segmentation | Done | Dialect/schema/privileges |
 | CB-P5-01 Buffer pool telemetry wiring | Done | Hits/misses/reads/writes + dirty/pages gauges |
-| CB-P5-02 Cache hit/miss metrics (statement/result/translation) | Pending | Telemetry wiring |
-| CB-P5-03 SQL monitoring views | Pending | `sys.cache_stats`, `sys.buffer_pool_stats`, `sys.statement_cache` |
-| CB-P6-01 Cache unit tests | Pending | Keying/invalidation/eviction |
-| CB-P6-02 Cache integration tests | Pending | Hit/miss ratios |
-| CB-P6-03 Benchmarks | Pending | Scan-resistant vs baseline |
+| CB-P5-02 Cache hit/miss metrics (statement/result/translation) | Done | Telemetry wiring |
+| CB-P5-03 SQL monitoring views | Done | `sys.cache_stats`, `sys.buffer_pool_stats`, `sys.statement_cache` |
+| CB-P6-01 Cache unit tests | Done | Keying/invalidation/eviction |
+| CB-P6-02 Cache integration tests | Done | Hit/miss ratios |
+| CB-P6-03 Benchmarks | Done | Scan-resistant vs baseline |
 
 ## Phase 0: Specification Alignment (Docs)
 **CB-P0-01** Keep cache/buffer canonical spec as the source of truth.
@@ -149,3 +149,14 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-02-02: Added per-connection statement cache backed by shared database cache.
 - 2026-02-02: Added result cache eligibility gates (determinism, snapshot safety, thresholds).
 - 2026-02-02: Added result cache keying for schema/privilege context.
+- 2026-02-02: Wired SBLR query result cache read/write path for SELECT bytecode + params.
+- 2026-02-02: Full rebuild + sequential `ctest` pass completed (2359 tests, 0 failures).
+- 2026-02-02: Added per-dialect SQL->SBLR translation cache in protocol adapters.
+- 2026-02-02: Segmented translation cache by dialect, schema version, and privilege signature.
+- 2026-02-02: Emitted statement/result/translation cache hit/miss/eviction metrics via telemetry counters.
+- 2026-02-02: Added `sys.cache_stats`, `sys.buffer_pool_stats`, and `sys.statement_cache` monitoring views.
+- 2026-02-02: Added unit tests for statement/result/translation cache keying, invalidation, and eviction.
+- 2026-02-02: Added integration tests for repeated workload cache hit/miss ratios.
+- 2026-02-02: Added cache/buffer scan-resistance benchmark and enabled benchmark sources in test suite.
+- 2026-02-02: Enabled scan-resistant ring buffers for sequential, vacuum/GC, and bulk-write access strategies.
+- 2026-02-02: Full rebuild + sequential `ctest` pass completed (2396 tests, 0 failures).

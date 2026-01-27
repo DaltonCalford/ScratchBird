@@ -46,8 +46,8 @@ namespace scratchbird::core
 
         if (config_.layout != PoolLayout::Single)
         {
-            LOG_WARN(GENERAL, "Buffer pool layout '%s' requested; using single pool",
-                     poolLayoutToString(config_.layout));
+            LOG_WARNING(GENERAL, "Buffer pool layout '%s' requested; using single pool",
+                        poolLayoutToString(config_.layout));
         }
 
         if (frames_.size() != config_.pool_size)

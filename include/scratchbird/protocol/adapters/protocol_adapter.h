@@ -18,6 +18,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
+#include "scratchbird/protocol/translation_cache.h"
 #include <filesystem>
 
 #include <memory>
@@ -393,6 +394,7 @@ protected:
     std::unique_ptr<core::ConnectionContext> connection_ctx_;
     std::unique_ptr<sblr::Executor> executor_;
     std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
+    TranslationCache* translation_cache_ = nullptr;
 };
 
 // ============================================================================

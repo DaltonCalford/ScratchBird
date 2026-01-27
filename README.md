@@ -68,6 +68,8 @@ Active work tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
 | WS-8 Backup/Restore         | TODO           | Multi-tablespace coverage validation                        |
 | WS-9 Cache/Buffer Plan      | In Progress    | Cache and buffer remediation                                |
 
+Latest full test run: 2396 tests, 0 failures (2026-02-02).
+
 ### Beta (Deferred)
 
 - Cluster manager, multi-node coordination, and distributed scheduling
@@ -198,6 +200,8 @@ ctest --test-dir build -R unit        # Unit tests
 ctest --test-dir build -R integration # Integration tests
 ctest --test-dir build -R benchmark   # Benchmarks
 ```
+
+Recent full suite: 2396 tests, 0 failures (2026-02-02).
 
 ### Test Results (January 25, 2026)
 

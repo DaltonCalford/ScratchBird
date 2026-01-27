@@ -161,6 +161,14 @@ namespace scratchbird
                                                   core::ErrorContext* ctx);
             bool userHasRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx,
                              const core::ID& role_id);
+            QueryHash computeResultCacheHash(const std::vector<uint8_t>& bytecode,
+                                              const std::vector<std::string>& params,
+                                              const std::vector<bool>& nulls,
+                                              uint64_t policy_epoch);
+            std::unique_ptr<ResultSet> buildResultSetFromCache(const CachedResultSet& cached);
+            CachedResultSet buildCachedResultSetFromResultSet(
+                const ResultSet& result_set,
+                const std::unordered_set<core::ID, core::IDHash>& table_ids);
             core::Status checkJobDependencyCycle(core::CatalogManager* catalog,
                                                  const core::ID& job_id,
                                                  const std::vector<core::ID>& dependencies,
@@ -1632,6 +1640,9 @@ namespace scratchbird
                 Opcode op = static_cast<Opcode>(readByte());
                 ExecutionResult result;
                 bool is_txn_control = false;
+                std::optional<QueryHash> result_cache_hash;
+                bool use_cached_result = false;
+                bool cache_checked = false;
 
                 auto execute_cte_def = [&](ExecutionResult& result) -> bool
                 {
@@ -1713,6 +1724,41 @@ namespace scratchbird
 
                 while (true)
                 {
+                    if (!cache_checked)
+                    {
+                        if (op == Opcode::SELECT)
+                        {
+                            QueryResultCache& cache = QueryResultCacheManager::getInstance();
+                            if (cache.isEnabled())
+                            {
+                                uint64_t policy_epoch = 0;
+                                if (db_ && db_->catalog_manager())
+                                {
+                                    db_->catalog_manager()->getSecurityPolicyEpoch(policy_epoch, nullptr);
+                                }
+                                QueryHash hash = computeResultCacheHash(bytecode, parameter_values_,
+                                                                        parameter_nulls_, policy_epoch);
+                                if (auto* cached = cache.get(hash))
+                                {
+                                    result = ExecutionResult(buildResultSetFromCache(*cached));
+                                    use_cached_result = true;
+                                }
+                                else
+                                {
+                                    result_cache_hash = hash;
+                                }
+                            }
+                            cache_checked = true;
+                        }
+                        else if (op != Opcode::EXTENDED_OPCODE)
+                        {
+                            cache_checked = true;
+                        }
+                    }
+                    if (use_cached_result)
+                    {
+                        break;
+                    }
                     switch (op)
                     {
                     case Opcode::CREATE_TABLE:
@@ -1911,6 +1957,7 @@ namespace scratchbird
                                 break;
                             }
                             op = static_cast<Opcode>(readByte());
+                            cache_checked = false;
                             continue;
                         }
                         if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_AUTOCOMMIT) ||
@@ -2961,6 +3008,13 @@ namespace scratchbird
                     }
 
                     break;
+                }
+
+                if (result_cache_hash && result.success() && result.hasResultSet() && last_select_cacheable_)
+                {
+                    CachedResultSet cached = buildCachedResultSetFromResultSet(
+                        *result.resultSet(), last_select_table_ids_);
+                    QueryResultCacheManager::getInstance().put(*result_cache_hash, std::move(cached));
                 }
 
                 // Clear statement snapshot after successful execution
@@ -20632,6 +20686,8 @@ namespace scratchbird
         {
             // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive SELECT operation
             checkQueryLimits();
+            last_select_table_ids_.clear();
+            last_select_cacheable_ = true;
 
             const std::string saved_table = current_table_;
             struct TableContextRestore {
@@ -20803,6 +20859,15 @@ namespace scratchbird
                 }
                 return cte_results_.find(normalize_cte_name(ref.table_name)) != cte_results_.end();
             };
+
+            if (!joins.empty() || table_refs.size() > 1)
+            {
+                last_select_cacheable_ = false;
+            }
+            if (table_refs.size() == 1 && is_cte_ref(table_refs.front()))
+            {
+                last_select_cacheable_ = false;
+            }
 
             current_table_.clear();
             if (table_refs.size() == 1 && joins.empty())
@@ -21011,6 +21076,7 @@ namespace scratchbird
                         error("Table not found for aggregation");
                     }
                 }
+                last_select_table_ids_.insert(table_info.table_id);
 
                 std::vector<core::CatalogManager::ColumnInfo> all_columns;
                 if (db_->catalog_manager()->getColumns(table_id, all_columns, nullptr) != core::Status::OK)
@@ -21111,6 +21177,7 @@ namespace scratchbird
                             std::string alias = item.alias.empty() ? col_name : item.alias;
                             projection_items.push_back({col_name, alias});
                         }
+                        last_select_cacheable_ = false;
                         executeMonitoringQuery(table_name);
                         return;
                     }
@@ -21137,6 +21204,7 @@ namespace scratchbird
                             std::string alias = item.alias.empty() ? col_name : item.alias;
                             projection_items.push_back({col_name, alias});
                         }
+                        last_select_cacheable_ = false;
                         executeObjectResolverQuery(projection_items, has_star,
                                                   has_where, where_start_pc, where_end_pc);
                         return;
@@ -21200,6 +21268,7 @@ namespace scratchbird
                                     std::string alias = item.alias.empty() ? col_name : item.alias;
                                     projection_items.push_back({col_name, alias});
                                 }
+                                last_select_cacheable_ = false;
                                 executeViewQuery(view_info, projection_items, has_star);
                                 return;
                             }
@@ -21235,6 +21304,7 @@ namespace scratchbird
                             if (!has_expr && executeVirtualCatalogQuery(table_name, projection_items, has_star,
                                                                        has_where, where_start_pc, where_end_pc))
                             {
+                                last_select_cacheable_ = false;
                                 return;
                             }
                         }
@@ -21282,9 +21352,12 @@ namespace scratchbird
                     if (!has_expr && executeVirtualCatalogQuery(table_name, projection_items, has_star,
                                                                has_where, where_start_pc, where_end_pc))
                     {
+                        last_select_cacheable_ = false;
                         return;
                     }
                 }
+
+                last_select_table_ids_.insert(table_info.table_id);
 
                 // Check SELECT permission on table (skip for emulated schemas)
                 bool skip_permission_check = current_schema_set_;
@@ -48951,6 +49024,84 @@ namespace scratchbird
                     }
                 }
                 return true;
+            }
+
+            QueryHash computeResultCacheHash(const std::vector<uint8_t>& bytecode,
+                                              const std::vector<std::string>& params,
+                                              const std::vector<bool>& nulls,
+                                              uint64_t policy_epoch)
+            {
+                std::vector<uint8_t> payload;
+                payload.reserve(bytecode.size() + params.size() * 16);
+                payload.insert(payload.end(), bytecode.begin(), bytecode.end());
+
+                for (size_t i = 0; i < params.size(); ++i)
+                {
+                    payload.push_back(0x1f);
+                    bool is_null = (i < nulls.size()) ? nulls[i] : false;
+                    payload.push_back(is_null ? 0 : 1);
+                    if (!is_null)
+                    {
+                        payload.insert(payload.end(), params[i].begin(), params[i].end());
+                    }
+                    payload.push_back(0x1e);
+                }
+
+                for (int i = 7; i >= 0; --i)
+                {
+                    payload.push_back(static_cast<uint8_t>((policy_epoch >> (i * 8)) & 0xFF));
+                }
+
+                return QueryResultCache::computeHash(payload);
+            }
+
+            std::unique_ptr<ResultSet> buildResultSetFromCache(const CachedResultSet& cached)
+            {
+                auto result_set = std::make_unique<ResultSet>();
+                for (size_t i = 0; i < cached.column_names.size(); ++i)
+                {
+                    result_set->addColumn(cached.column_names[i], cached.column_types[i]);
+                }
+                for (const auto& row : cached.rows)
+                {
+                    std::vector<Value> values;
+                    values.reserve(row.size());
+                    for (const auto& value : row)
+                    {
+                        values.push_back(value);
+                    }
+                    result_set->addRow(std::move(values));
+                }
+                return result_set;
+            }
+
+            CachedResultSet buildCachedResultSetFromResultSet(
+                const ResultSet& result_set,
+                const std::unordered_set<core::ID, core::IDHash>& table_ids)
+            {
+                CachedResultSet cached;
+                cached.table_ids = table_ids;
+                size_t column_count = result_set.columnCount();
+                cached.column_names.reserve(column_count);
+                cached.column_types.reserve(column_count);
+                for (size_t i = 0; i < column_count; ++i)
+                {
+                    cached.column_names.push_back(result_set.columnName(i));
+                    cached.column_types.push_back(result_set.columnType(i));
+                }
+                size_t row_count = result_set.rowCount();
+                cached.rows.reserve(row_count);
+                for (size_t r = 0; r < row_count; ++r)
+                {
+                    std::vector<Value> row;
+                    row.reserve(column_count);
+                    for (size_t c = 0; c < column_count; ++c)
+                    {
+                        row.push_back(result_set.getValue(r, c));
+                    }
+                    cached.rows.push_back(std::move(row));
+                }
+                return cached;
             }
 
             bool isDbOwnerRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx)

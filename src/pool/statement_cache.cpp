@@ -12,6 +12,7 @@
  */
 
 #include "scratchbird/pool/statement_cache.h"
+#include "scratchbird/core/telemetry.h"
 #include <algorithm>
 #include <cctype>
 #include <functional>
@@ -570,6 +571,11 @@ bool DatabaseStatementCache::put(std::shared_ptr<CachedStatement> statement) {
 
         if (!evicted.empty()) {
             stats_.eviction_count++;
+            auto& metrics = core::ScratchBirdMetrics::getInstance();
+            metrics.initialize();
+            if (metrics.statement_cache_evictions_total) {
+                metrics.statement_cache_evictions_total->inc();
+            }
         }
     }
 
@@ -780,6 +786,13 @@ uint64_t DatabaseStatementCache::evict(uint64_t target_count) {
 
     stats_.eviction_count += evicted;
     stats_.last_eviction = std::chrono::system_clock::now();
+    if (evicted > 0) {
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.statement_cache_evictions_total) {
+            metrics.statement_cache_evictions_total->inc(static_cast<double>(evicted));
+        }
+    }
 
     return evicted;
 }
@@ -824,6 +837,13 @@ uint64_t DatabaseStatementCache::evict_expired() {
 
     stats_.expiration_count += evicted;
     stats_.statement_count = cache_.size();
+    if (evicted > 0) {
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.statement_cache_evictions_total) {
+            metrics.statement_cache_evictions_total->inc(static_cast<double>(evicted));
+        }
+    }
 
     return evicted;
 }
@@ -841,6 +861,40 @@ void DatabaseStatementCache::reset_statistics() {
     stats_.hits_by_type.clear();
     stats_.avg_lookup_time = std::chrono::microseconds{0};
     stats_.avg_prepare_time = std::chrono::microseconds{0};
+}
+
+std::vector<StatementCacheEntrySnapshot> DatabaseStatementCache::top_statements(size_t limit) const {
+    std::vector<StatementCacheEntrySnapshot> snapshot;
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+
+    snapshot.reserve(cache_.size());
+    for (const auto& pair : cache_) {
+        const auto& stmt = pair.second;
+        if (!stmt) {
+            continue;
+        }
+        StatementCacheEntrySnapshot entry;
+        entry.sql = stmt->sql();
+        entry.fingerprint = stmt->fingerprint();
+        entry.statement_type = stmt->statement_type();
+        entry.stats = stmt->stats();
+        snapshot.push_back(std::move(entry));
+    }
+
+    std::sort(snapshot.begin(), snapshot.end(),
+              [](const StatementCacheEntrySnapshot& left,
+                 const StatementCacheEntrySnapshot& right) {
+                  if (left.stats.hit_count != right.stats.hit_count) {
+                      return left.stats.hit_count > right.stats.hit_count;
+                  }
+                  return left.stats.last_accessed > right.stats.last_accessed;
+              });
+
+    if (limit > 0 && snapshot.size() > limit) {
+        snapshot.resize(limit);
+    }
+
+    return snapshot;
 }
 
 void DatabaseStatementCache::update_config(const StatementCacheConfig& config) {
@@ -1034,11 +1088,20 @@ bool DatabaseStatementCache::should_cache(const CachedStatement& stmt) const {
 }
 
 void DatabaseStatementCache::update_statistics_on_get(bool hit, StatementType type) {
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
     if (hit) {
         stats_.total_hits++;
         stats_.hits_by_type[type]++;
+        if (metrics.statement_cache_hits_total) {
+            metrics.statement_cache_hits_total->inc();
+        }
     } else {
         stats_.total_misses++;
+        if (metrics.statement_cache_misses_total) {
+            metrics.statement_cache_misses_total->inc();
+        }
     }
 
     uint64_t total = stats_.total_hits + stats_.total_misses;
@@ -1315,6 +1378,11 @@ std::shared_ptr<CachedStatement> ConnectionStatementCache::get(
     auto it = local_cache_.find(key);
     if (it != local_cache_.end()) {
         promote_lru(key);
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.statement_cache_hits_total) {
+            metrics.statement_cache_hits_total->inc();
+        }
         return it->second.first;
     }
 
