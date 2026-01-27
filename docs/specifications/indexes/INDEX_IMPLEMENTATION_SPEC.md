@@ -51,7 +51,7 @@
    - File: `src/core/garbage_collector.cpp:870-946`
    - Task: Add GC hooks for GIST, SPGIST, RTREE, BITMAP, COLUMNSTORE, FULLTEXT, LSM.
 
-**Optional/Advanced Index Types (15/15 not implemented):**
+**Optional/Advanced Index Types (16/16 not implemented):**
 - ❌ **IVF** - Vector similarity
 - ❌ **ZONEMAP** - Min/max pruning
 - ❌ **ZORDER** - Morton curve
@@ -67,6 +67,7 @@
 - ❌ **ART** - Adaptive radix tree
 - ❌ **LEARNED** - RMI learned index
 - ❌ **LSM_TTL** - Time-series retention
+- ❌ **JSON_PATH** - JSON/JSONB path index
 
 **Optional Specs:** See `docs/specifications/indexes/` for detailed implementation documents.
 
@@ -85,11 +86,11 @@
 
 **Core (Alpha scope):** BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN, BITMAP, RTREE, HNSW, COLUMNSTORE, LSM
 
-**Optional/Advanced (Beta scope):** IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL
+**Optional/Advanced (Beta scope):** IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL, JSON_PATH
 
 **DDL Note:** SQL uses lowercase keywords in `USING` clauses (e.g., `USING zorder`). Bloom filters are index options (`WITH (bloom_filter = true)`), not a standalone index type.
 
-**Total Index Types:** 27 (12 core + 15 optional)
+**Total Index Types:** 28 (12 core + 16 optional)
 
 ## Overview
 

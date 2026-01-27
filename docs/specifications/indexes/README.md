@@ -2,7 +2,7 @@
 
 **[← Back to Specifications Index](../README.md)**
 
-This directory contains index implementation specifications for ScratchBird's comprehensive index system, supporting 27 index types (12 core + 15 optional).
+This directory contains index implementation specifications for ScratchBird's comprehensive index system, supporting 28 index types (12 core + 16 optional).
 
 ## Overview
 
