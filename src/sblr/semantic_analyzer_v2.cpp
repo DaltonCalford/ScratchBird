@@ -5,6 +5,8 @@
  */
 
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
+#include "scratchbird/sblr/bytecode_generator_v2.h"
+#include "scratchbird/parser/parser_v2.h"
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
@@ -885,6 +887,12 @@ core::DomainType toCoreDomainType(DomainKind kind) {
             return core::DomainType::SET;
         case DomainKind::VARIANT:
             return core::DomainType::VARIANT;
+        case DomainKind::RANGE:
+            return core::DomainType::RANGE;
+        case DomainKind::BASE:
+            return core::DomainType::BASE;
+        case DomainKind::SHELL:
+            return core::DomainType::SHELL;
     }
     return core::DomainType::BASIC;
 }
@@ -2002,6 +2010,44 @@ void SemanticAnalyzerV2::popCTEScope() {
     if (!cte_scopes_.empty()) {
         cte_scopes_.pop_back();
     }
+}
+
+void SemanticAnalyzerV2::pushPsqlScope() {
+    psql_var_scopes_.emplace_back();
+}
+
+void SemanticAnalyzerV2::popPsqlScope() {
+    if (!psql_var_scopes_.empty()) {
+        psql_var_scopes_.pop_back();
+    }
+}
+
+void SemanticAnalyzerV2::seedPsqlVariable(std::string_view name, const ResolvedType& type) {
+    StringPool::StringId id = string_pool_.intern(name);
+    declarePsqlVariable(id, type);
+}
+
+void SemanticAnalyzerV2::declarePsqlVariable(StringPool::StringId name, const ResolvedType& type) {
+    if (psql_var_scopes_.empty()) {
+        pushPsqlScope();
+    }
+    std::string key = core::IdentifierUtils::toUpper(std::string(getString(name)));
+    psql_var_scopes_.back()[key] = PsqlVarEntry{name, type};
+}
+
+const SemanticAnalyzerV2::PsqlVarEntry* SemanticAnalyzerV2::findPsqlVariable(
+    StringPool::StringId name) const {
+    if (psql_var_scopes_.empty()) {
+        return nullptr;
+    }
+    std::string key = core::IdentifierUtils::toUpper(std::string(getString(name)));
+    for (auto it = psql_var_scopes_.rbegin(); it != psql_var_scopes_.rend(); ++it) {
+        auto found = it->find(key);
+        if (found != it->end()) {
+            return &found->second;
+        }
+    }
+    return nullptr;
 }
 
 void SemanticAnalyzerV2::registerCTE(const CTEEntry& entry) {
@@ -3522,6 +3568,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateProcedure(static_cast<CreateProcedureStmt*>(stmt));
         case ASTKind::CreateTriggerStmt:
             return analyzeCreateTrigger(static_cast<CreateTriggerStmt*>(stmt));
+        case ASTKind::ExecuteBlockStmt:
+            return analyzeExecuteBlock(static_cast<ExecuteBlockStmt*>(stmt));
+        case ASTKind::ExecuteProcedureStmt:
+            return analyzeExecuteProcedure(static_cast<ExecuteProcedureStmt*>(stmt));
+        case ASTKind::ExecuteStatementStmt:
+            return analyzeExecuteStatement(static_cast<ExecuteStatementStmt*>(stmt));
         case ASTKind::CreatePackageStmt:
             return analyzeCreatePackage(static_cast<CreatePackageStmt*>(stmt));
         case ASTKind::CreateUserStmt:
@@ -3532,10 +3584,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateJob(static_cast<CreateJobStmt*>(stmt));
         case ASTKind::CreateExceptionStmt:
             return analyzeCreateException(static_cast<CreateExceptionStmt*>(stmt));
+        case ASTKind::CreateTypeStmt:
+            return analyzeCreateType(static_cast<CreateTypeStmt*>(stmt));
         case ASTKind::CreateDomainStmt:
             return analyzeCreateDomain(static_cast<CreateDomainStmt*>(stmt));
+        case ASTKind::AlterTypeStmt:
+            return analyzeAlterType(static_cast<AlterTypeStmt*>(stmt));
         case ASTKind::AlterDomainStmt:
             return analyzeAlterDomain(static_cast<AlterDomainStmt*>(stmt));
+        case ASTKind::DropTypeStmt:
+            return analyzeDropType(static_cast<DropTypeStmt*>(stmt));
         case ASTKind::DropDomainStmt:
             return analyzeDropDomain(static_cast<DropDomainStmt*>(stmt));
         case ASTKind::DropDatabaseStmt:
@@ -3590,6 +3648,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeUpdate(static_cast<UpdateStmt*>(stmt));
         case ASTKind::DeleteStmt:
             return analyzeDelete(static_cast<DeleteStmt*>(stmt));
+        case ASTKind::MergeStmt:
+            return analyzeMerge(static_cast<MergeStmt*>(stmt));
         case ASTKind::CopyStmt:
             return analyzeCopy(static_cast<CopyStmt*>(stmt));
 
@@ -4433,6 +4493,34 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateFunction(CreateFunctionStmt*
         resolved->body = std::string(string_pool_.get(stmt->body));
     }
 
+    if (!resolved->body.empty()) {
+        Parser body_parser(resolved->body);
+        auto parse_result = body_parser.parsePsqlBody();
+        if (!parse_result.success()) {
+            error(stmt->span, "Failed to parse function body");
+        } else {
+            SemanticAnalyzerV2 body_analyzer(catalog_, body_parser.stringPool());
+            for (const auto& param : resolved->params) {
+                body_analyzer.seedPsqlVariable(string_pool_.get(param.name), param.type);
+            }
+            auto sem_result = body_analyzer.analyze(parse_result.statement());
+            if (!sem_result.success()) {
+                error(stmt->span, "Failed to analyze function body");
+            } else if (auto* exec_block =
+                           dynamic_cast<ResolvedExecuteBlockStmt*>(sem_result.statement())) {
+                if (exec_block->body) {
+                    BytecodeGeneratorV2 generator(body_parser.stringPool());
+                    auto bytecode_result = generator.generatePsql(exec_block->body);
+                    if (bytecode_result.success()) {
+                        resolved->psql_bytecode = bytecode_result.bytecode();
+                    } else {
+                        error(stmt->span, "Failed to compile function PSQL body");
+                    }
+                }
+            }
+        }
+    }
+
     return resolved;
 }
 
@@ -4471,6 +4559,34 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateProcedure(CreateProcedureStm
         resolved->body = std::string(string_pool_.get(stmt->body));
     }
 
+    if (!resolved->body.empty()) {
+        Parser body_parser(resolved->body);
+        auto parse_result = body_parser.parsePsqlBody();
+        if (!parse_result.success()) {
+            error(stmt->span, "Failed to parse procedure body");
+        } else {
+            SemanticAnalyzerV2 body_analyzer(catalog_, body_parser.stringPool());
+            for (const auto& param : resolved->params) {
+                body_analyzer.seedPsqlVariable(string_pool_.get(param.name), param.type);
+            }
+            auto sem_result = body_analyzer.analyze(parse_result.statement());
+            if (!sem_result.success()) {
+                error(stmt->span, "Failed to analyze procedure body");
+            } else if (auto* exec_block =
+                           dynamic_cast<ResolvedExecuteBlockStmt*>(sem_result.statement())) {
+                if (exec_block->body) {
+                    BytecodeGeneratorV2 generator(body_parser.stringPool());
+                    auto bytecode_result = generator.generatePsql(exec_block->body);
+                    if (bytecode_result.success()) {
+                        resolved->psql_bytecode = bytecode_result.bytecode();
+                    } else {
+                        error(stmt->span, "Failed to compile procedure PSQL body");
+                    }
+                }
+            }
+        }
+    }
+
     return resolved;
 }
 
@@ -4489,6 +4605,36 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTrigger(CreateTriggerStmt* s
     resolved->granularity = stmt->granularity;
     if (stmt->body != StringPool::INVALID_ID) {
         resolved->body = std::string(string_pool_.get(stmt->body));
+    }
+
+    if (!resolved->body.empty()) {
+        Parser body_parser(resolved->body);
+        auto parse_result = body_parser.parsePsqlBody();
+        if (!parse_result.success()) {
+            error(stmt->span, "Failed to parse trigger body");
+        } else {
+            SemanticAnalyzerV2 body_analyzer(catalog_, body_parser.stringPool());
+            ResolvedType trigger_record_type;
+            trigger_record_type.data_type = DataType::COMPOSITE;
+            trigger_record_type.is_nullable = true;
+            body_analyzer.seedPsqlVariable("NEW", trigger_record_type);
+            body_analyzer.seedPsqlVariable("OLD", trigger_record_type);
+            auto sem_result = body_analyzer.analyze(parse_result.statement());
+            if (!sem_result.success()) {
+                error(stmt->span, "Failed to analyze trigger body");
+            } else if (auto* exec_block =
+                           dynamic_cast<ResolvedExecuteBlockStmt*>(sem_result.statement())) {
+                if (exec_block->body) {
+                    BytecodeGeneratorV2 generator(body_parser.stringPool());
+                    auto bytecode_result = generator.generatePsql(exec_block->body);
+                    if (bytecode_result.success()) {
+                        resolved->psql_bytecode = bytecode_result.bytecode();
+                    } else {
+                        error(stmt->span, "Failed to compile trigger PSQL body");
+                    }
+                }
+            }
+        }
     }
 
     return resolved;
@@ -4629,6 +4775,165 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateException(CreateExceptionStm
 
     if (stmt->message != StringPool::INVALID_ID) {
         resolved->message = std::string(string_pool_.get(stmt->message));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateType(CreateTypeStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateDomainStmt>();
+    resolved->span = stmt->span;
+    resolved->if_not_exists = stmt->if_not_exists;
+    resolved->domain_path = stmt->type_path;
+    resolved->has_dialect = stmt->has_dialect;
+    resolved->dialect_tag = stmt->dialect_tag;
+    resolved->has_compat = stmt->has_compat;
+    resolved->compat_name = stmt->compat_name;
+    resolved->has_comment = stmt->has_comment;
+    resolved->comment = stmt->comment;
+
+    switch (stmt->type_kind) {
+        case TypeKind::ENUM:
+            resolved->domain_kind = DomainKind::ENUM;
+            break;
+        case TypeKind::RECORD:
+            resolved->domain_kind = DomainKind::RECORD;
+            break;
+        case TypeKind::RANGE:
+            resolved->domain_kind = DomainKind::RANGE;
+            break;
+        case TypeKind::BASE:
+            resolved->domain_kind = DomainKind::BASE;
+            break;
+        case TypeKind::SHELL:
+            resolved->domain_kind = DomainKind::SHELL;
+            break;
+    }
+
+    core::ObjectPath obj_path = buildObjectPath(stmt->type_path, string_pool_);
+    core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+    core::ErrorContext ctx;
+    core::CatalogManager::ResolveOptions opts;
+    opts.allow_search_path = false;
+    ID existing_id{};
+    Status status = catalog_.resolveObjectPath(
+        obj_path,
+        core::CatalogManager::ObjectType::DOMAIN,
+        opts,
+        existing_id,
+        resolved_type,
+        &ctx);
+    if (status == Status::OK) {
+        if (!stmt->if_not_exists) {
+            error(stmt->span, "Type already exists");
+            return nullptr;
+        }
+    } else if (status != Status::NOT_FOUND) {
+        std::string msg = ctx.message.empty() ? "Failed to resolve type" : ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    if (resolved->domain_kind == DomainKind::RECORD) {
+        if (stmt->record_fields.empty()) {
+            error(stmt->span, "RECORD type must define at least one field");
+            return nullptr;
+        }
+        std::unordered_set<std::string> field_names;
+        for (const auto& field : stmt->record_fields) {
+            std::string name = core::IdentifierUtils::toUpper(
+                std::string(string_pool_.get(field.name)));
+            if (!field_names.insert(name).second) {
+                error(field.span, "Duplicate RECORD field name");
+                return nullptr;
+            }
+            ResolvedDomainRecordField resolved_field;
+            resolved_field.name = field.name;
+            resolved_field.type = resolveTypeName(field.type);
+            resolved_field.nullable = field.nullable;
+            resolved_field.default_value = trimString(field.default_value);
+            if (resolved_field.type.data_type == DataType::UNKNOWN && !resolved_field.type.is_domain) {
+                error(field.type.span, "Unknown field type for RECORD type");
+                return nullptr;
+            }
+            resolved->record_fields.push_back(std::move(resolved_field));
+        }
+    } else if (resolved->domain_kind == DomainKind::ENUM) {
+        if (stmt->enum_values.empty()) {
+            error(stmt->span, "ENUM type must have at least one value");
+            return nullptr;
+        }
+        int32_t next_position = 1;
+        std::unordered_set<std::string> enum_labels;
+        for (const auto& value : stmt->enum_values) {
+            std::string label = std::string(string_pool_.get(value.label));
+            if (!enum_labels.insert(label).second) {
+                error(value.span, "Duplicate ENUM label");
+                return nullptr;
+            }
+            ResolvedDomainEnumValue resolved_value;
+            resolved_value.label = value.label;
+            resolved_value.position = value.has_position ? value.position : next_position;
+            resolved->enum_values.push_back(std::move(resolved_value));
+            next_position++;
+        }
+    } else if (resolved->domain_kind == DomainKind::RANGE) {
+        resolved->range_options.has_subtype = stmt->range_options.has_subtype;
+        if (stmt->range_options.has_subtype) {
+            resolved->range_options.subtype = resolveTypeName(stmt->range_options.subtype);
+            if (resolved->range_options.subtype.data_type == DataType::UNKNOWN &&
+                !resolved->range_options.subtype.is_domain) {
+                error(stmt->range_options.subtype.span, "Unknown RANGE subtype");
+                return nullptr;
+            }
+        }
+        resolved->range_options.has_subtype_collation = stmt->range_options.has_subtype_collation;
+        resolved->range_options.subtype_collation = stmt->range_options.subtype_collation;
+        resolved->range_options.has_subtype_opclass = stmt->range_options.has_subtype_opclass;
+        resolved->range_options.subtype_opclass = stmt->range_options.subtype_opclass;
+        resolved->range_options.has_canonical = stmt->range_options.has_canonical;
+        resolved->range_options.canonical = stmt->range_options.canonical;
+        resolved->range_options.has_subtype_diff = stmt->range_options.has_subtype_diff;
+        resolved->range_options.subtype_diff = stmt->range_options.subtype_diff;
+        resolved->range_options.has_multirange = stmt->range_options.has_multirange;
+        resolved->range_options.multirange = stmt->range_options.multirange;
+    } else if (resolved->domain_kind == DomainKind::BASE) {
+        if (stmt->base_options.has_storage) {
+            resolved->base_options.storage = resolveTypeName(stmt->base_options.storage);
+            resolved->base_options.has_storage = true;
+        }
+        resolved->base_options.input_function = stmt->base_options.input_function;
+        resolved->base_options.output_function = stmt->base_options.output_function;
+        resolved->base_options.has_receive = stmt->base_options.has_receive;
+        resolved->base_options.receive_function = stmt->base_options.receive_function;
+        resolved->base_options.has_send = stmt->base_options.has_send;
+        resolved->base_options.send_function = stmt->base_options.send_function;
+        resolved->base_options.has_typmod_in = stmt->base_options.has_typmod_in;
+        resolved->base_options.typmod_in_function = stmt->base_options.typmod_in_function;
+        resolved->base_options.has_typmod_out = stmt->base_options.has_typmod_out;
+        resolved->base_options.typmod_out_function = stmt->base_options.typmod_out_function;
+        resolved->base_options.has_analyze = stmt->base_options.has_analyze;
+        resolved->base_options.analyze_function = stmt->base_options.analyze_function;
+        resolved->base_options.has_alignment = stmt->base_options.has_alignment;
+        resolved->base_options.alignment = stmt->base_options.alignment;
+        resolved->base_options.has_storage_mode = stmt->base_options.has_storage_mode;
+        resolved->base_options.storage_mode = stmt->base_options.storage_mode;
+        resolved->base_options.has_category = stmt->base_options.has_category;
+        resolved->base_options.category = stmt->base_options.category;
+        resolved->base_options.has_preferred = stmt->base_options.has_preferred;
+        resolved->base_options.preferred = stmt->base_options.preferred;
+
+        if (resolved->base_options.input_function.empty() ||
+            resolved->base_options.output_function.empty()) {
+            error(stmt->span, "BASE type requires INPUT and OUTPUT functions");
+            return nullptr;
+        }
+    } else if (resolved->domain_kind == DomainKind::SHELL) {
+        resolved->is_shell = true;
     }
 
     return resolved;
@@ -4995,6 +5300,128 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDatabase(AlterDatabaseStmt* s
     return resolved;
 }
 
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterType(AlterTypeStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterTypeStmt>();
+    resolved->span = stmt->span;
+    resolved->action = stmt->action;
+    resolved->type_path = stmt->type_path;
+    resolved->new_name = stmt->new_name;
+    resolved->new_schema = stmt->new_schema;
+    resolved->value_label = stmt->value_label;
+    resolved->has_before = stmt->has_before;
+    resolved->before_label = stmt->before_label;
+    resolved->has_after = stmt->has_after;
+    resolved->after_label = stmt->after_label;
+    resolved->old_label = stmt->old_label;
+    resolved->new_label = stmt->new_label;
+    resolved->is_range_options = stmt->is_range_options;
+    resolved->is_base_options = stmt->is_base_options;
+
+    if (stmt->is_range_options) {
+        resolved->range_options.has_subtype = stmt->range_options.has_subtype;
+        if (stmt->range_options.has_subtype) {
+            resolved->range_options.subtype = resolveTypeName(stmt->range_options.subtype);
+        }
+        resolved->range_options.has_subtype_collation = stmt->range_options.has_subtype_collation;
+        resolved->range_options.subtype_collation = stmt->range_options.subtype_collation;
+        resolved->range_options.has_subtype_opclass = stmt->range_options.has_subtype_opclass;
+        resolved->range_options.subtype_opclass = stmt->range_options.subtype_opclass;
+        resolved->range_options.has_canonical = stmt->range_options.has_canonical;
+        resolved->range_options.canonical = stmt->range_options.canonical;
+        resolved->range_options.has_subtype_diff = stmt->range_options.has_subtype_diff;
+        resolved->range_options.subtype_diff = stmt->range_options.subtype_diff;
+        resolved->range_options.has_multirange = stmt->range_options.has_multirange;
+        resolved->range_options.multirange = stmt->range_options.multirange;
+    }
+
+    if (stmt->is_base_options) {
+        if (stmt->base_options.has_storage) {
+            resolved->base_options.storage = resolveTypeName(stmt->base_options.storage);
+            resolved->base_options.has_storage = true;
+        }
+        resolved->base_options.input_function = stmt->base_options.input_function;
+        resolved->base_options.output_function = stmt->base_options.output_function;
+        resolved->base_options.has_receive = stmt->base_options.has_receive;
+        resolved->base_options.receive_function = stmt->base_options.receive_function;
+        resolved->base_options.has_send = stmt->base_options.has_send;
+        resolved->base_options.send_function = stmt->base_options.send_function;
+        resolved->base_options.has_typmod_in = stmt->base_options.has_typmod_in;
+        resolved->base_options.typmod_in_function = stmt->base_options.typmod_in_function;
+        resolved->base_options.has_typmod_out = stmt->base_options.has_typmod_out;
+        resolved->base_options.typmod_out_function = stmt->base_options.typmod_out_function;
+        resolved->base_options.has_analyze = stmt->base_options.has_analyze;
+        resolved->base_options.analyze_function = stmt->base_options.analyze_function;
+        resolved->base_options.has_alignment = stmt->base_options.has_alignment;
+        resolved->base_options.alignment = stmt->base_options.alignment;
+        resolved->base_options.has_storage_mode = stmt->base_options.has_storage_mode;
+        resolved->base_options.storage_mode = stmt->base_options.storage_mode;
+        resolved->base_options.has_category = stmt->base_options.has_category;
+        resolved->base_options.category = stmt->base_options.category;
+        resolved->base_options.has_preferred = stmt->base_options.has_preferred;
+        resolved->base_options.preferred = stmt->base_options.preferred;
+    }
+
+    core::ObjectPath obj_path = buildObjectPath(stmt->type_path, string_pool_);
+    core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+    core::ErrorContext ctx;
+    core::CatalogManager::ResolveOptions opts;
+    opts.allow_search_path = false;
+    ID type_id{};
+    Status status = catalog_.resolveObjectPath(
+        obj_path,
+        core::CatalogManager::ObjectType::DOMAIN,
+        opts,
+        type_id,
+        resolved_type,
+        &ctx);
+    if (status != Status::OK) {
+        std::string msg = ctx.message.empty() ? "Type not found" : ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    core::DomainInfo dinfo;
+    if (catalog_.getDomainById(type_id, dinfo, &ctx) != Status::OK) {
+        std::string msg = ctx.message.empty() ? "Failed to load type" : ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    switch (stmt->action) {
+        case AlterTypeAction::ADD_VALUE:
+        case AlterTypeAction::RENAME_VALUE:
+            if (dinfo.domain_type != core::DomainType::ENUM) {
+                error(stmt->span, "ALTER TYPE ... VALUE is only valid for ENUM types");
+                return nullptr;
+            }
+            break;
+        case AlterTypeAction::SET_OPTIONS:
+            if (stmt->is_range_options && dinfo.domain_type != core::DomainType::RANGE) {
+                error(stmt->span, "ALTER TYPE SET options are only valid for RANGE types");
+                return nullptr;
+            }
+            if (stmt->is_base_options && dinfo.domain_type != core::DomainType::BASE) {
+                error(stmt->span, "ALTER TYPE SET options are only valid for BASE types");
+                return nullptr;
+            }
+            break;
+        case AlterTypeAction::FINALIZE:
+            if (dinfo.domain_type != core::DomainType::SHELL) {
+                error(stmt->span, "ALTER TYPE FINALIZE is only valid for SHELL types");
+                return nullptr;
+            }
+            break;
+        default:
+            break;
+    }
+
+    return resolved;
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDomain(AlterDomainStmt* stmt) {
     if (!stmt) {
         return nullptr;
@@ -5126,6 +5553,20 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDomain(AlterDomainStmt* stmt)
             break;
     }
 
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropType(DropTypeStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropTypeStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->types = stmt->types;
+    resolved->cascade = stmt->cascade;
+    resolved->restrict = stmt->restrict;
     return resolved;
 }
 
@@ -6335,6 +6776,422 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDelete(DeleteStmt* stmt) {
     return resolved;
 }
 
+ResolvedStatement* SemanticAnalyzerV2::analyzeMerge(MergeStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedMergeStmt>();
+    resolved->span = stmt->span;
+    resolved->target_table = stmt->target_table;
+    resolved->target_alias = stmt->target_alias;
+    resolved->source_table = stmt->source_table;
+    resolved->source_alias = stmt->source_alias;
+
+    if (stmt->source_query) {
+        error(stmt->span, "MERGE USING subquery is not supported yet");
+        return nullptr;
+    }
+
+    resolved->on_condition = analyzeExpression(stmt->on_condition);
+
+    for (const auto& clause : stmt->when_matched) {
+        ResolvedMergeStmt::WhenMatched resolved_clause;
+        if (clause.and_condition) {
+            resolved_clause.and_condition = analyzeExpression(clause.and_condition);
+        }
+        resolved_clause.is_delete = clause.is_delete;
+        for (const auto& assignment : clause.assignments) {
+            resolved_clause.assignments.emplace_back(
+                assignment.first,
+                analyzeExpression(assignment.second));
+        }
+        resolved->when_matched.push_back(std::move(resolved_clause));
+    }
+
+    for (const auto& clause : stmt->when_not_matched) {
+        ResolvedMergeStmt::WhenNotMatched resolved_clause;
+        if (clause.and_condition) {
+            resolved_clause.and_condition = analyzeExpression(clause.and_condition);
+        }
+        resolved_clause.columns = clause.columns;
+        for (auto* value : clause.values) {
+            resolved_clause.values.push_back(analyzeExpression(value));
+        }
+        resolved->when_not_matched.push_back(std::move(resolved_clause));
+    }
+
+    for (const auto& clause : stmt->when_not_matched_by_source) {
+        ResolvedMergeStmt::WhenNotMatchedBySource resolved_clause;
+        if (clause.and_condition) {
+            resolved_clause.and_condition = analyzeExpression(clause.and_condition);
+        }
+        resolved_clause.is_delete = clause.is_delete;
+        for (const auto& assignment : clause.assignments) {
+            resolved_clause.assignments.emplace_back(
+                assignment.first,
+                analyzeExpression(assignment.second));
+        }
+        resolved->when_not_matched_by_source.push_back(std::move(resolved_clause));
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeExecuteBlock(ExecuteBlockStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedExecuteBlockStmt>();
+    resolved->span = stmt->span;
+
+    in_psql_ = true;
+    pushPsqlScope();
+
+    auto build_var = [&](const VariableDecl& var) {
+        ResolvedPsqlVariable resolved_var;
+        resolved_var.name = var.name;
+        resolved_var.not_null = var.not_null;
+
+        if (var.type.name != StringPool::INVALID_ID || var.type.is_array) {
+            resolved_var.type = resolveTypeName(var.type);
+        } else {
+            resolved_var.type.data_type = DataType::UNKNOWN;
+            resolved_var.type.is_nullable = true;
+        }
+
+        if (var.default_value) {
+            resolved_var.has_default = true;
+            resolved_var.default_value = analyzeExpression(var.default_value);
+        }
+        return resolved_var;
+    };
+
+    for (const auto& param : stmt->input_params) {
+        auto resolved_var = build_var(param);
+        declarePsqlVariable(resolved_var.name, resolved_var.type);
+        resolved->input_params.push_back(std::move(resolved_var));
+    }
+    for (const auto& param : stmt->output_params) {
+        auto resolved_var = build_var(param);
+        declarePsqlVariable(resolved_var.name, resolved_var.type);
+        resolved->output_params.push_back(std::move(resolved_var));
+    }
+
+    auto* block = dynamic_cast<CompoundStmt*>(stmt->body);
+    if (block) {
+        resolved->body = static_cast<ResolvedPsqlBlock*>(
+            analyzePsqlBlock(block, stmt->variables));
+    }
+
+    popPsqlScope();
+    in_psql_ = false;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeExecuteProcedure(ExecuteProcedureStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedExecuteProcedureStmt>();
+    resolved->span = stmt->span;
+    resolved->procedure_path = stmt->procedure_path;
+
+    in_psql_ = true;
+    for (auto* arg : stmt->arguments) {
+        resolved->arguments.push_back(analyzeExpression(arg));
+    }
+    resolved->returning_variables = stmt->returning_variables;
+    in_psql_ = false;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeExecuteStatement(ExecuteStatementStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedExecuteStatementStmt>();
+    resolved->span = stmt->span;
+
+    in_psql_ = true;
+    resolved->sql = analyzeExpression(stmt->sql);
+    for (auto* param : stmt->parameters) {
+        resolved->parameters.push_back(analyzeExpression(param));
+    }
+    resolved->into_variables = stmt->into_variables;
+    in_psql_ = false;
+
+    return resolved;
+}
+
+ResolvedPsqlBlock* SemanticAnalyzerV2::analyzePsqlBlock(CompoundStmt* stmt,
+                                                        const std::vector<VariableDecl>& variables) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedPsqlBlock>();
+    resolved->kind = ResolvedPsqlStmtKind::BLOCK;
+    resolved->span = stmt->span;
+
+    pushPsqlScope();
+
+    for (const auto& var : variables) {
+        ResolvedPsqlVariable resolved_var;
+        resolved_var.name = var.name;
+        resolved_var.not_null = var.not_null;
+        resolved_var.type = resolveTypeName(var.type);
+        if (var.default_value) {
+            resolved_var.has_default = true;
+            resolved_var.default_value = analyzeExpression(var.default_value);
+        }
+        declarePsqlVariable(resolved_var.name, resolved_var.type);
+        resolved->variables.push_back(std::move(resolved_var));
+    }
+
+    for (auto* inner : stmt->statements) {
+        if (auto* resolved_stmt = analyzePsqlStatement(inner)) {
+            resolved->statements.push_back(resolved_stmt);
+        }
+    }
+
+    for (auto* handler_stmt : stmt->exception_handlers) {
+        if (auto* when_stmt = dynamic_cast<WhenExceptionStmt*>(handler_stmt)) {
+            ResolvedPsqlExceptionHandler handler;
+            handler.type = when_stmt->type;
+            handler.sqlcode = when_stmt->sqlcode;
+            handler.gdscode = when_stmt->gdscode;
+            handler.exception_name = when_stmt->exception_name;
+            handler.handler = analyzePsqlStatement(when_stmt->handler);
+            resolved->exception_handlers.push_back(std::move(handler));
+        }
+    }
+
+    popPsqlScope();
+    return resolved;
+}
+
+ResolvedPsqlStatement* SemanticAnalyzerV2::analyzePsqlStatement(Statement* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* span_node = dynamic_cast<ASTNode*>(stmt);
+    SourceSpan span = span_node ? span_node->span : SourceSpan{};
+
+    switch (stmt->kind()) {
+        case ASTKind::CompoundStmt: {
+            return analyzePsqlBlock(static_cast<CompoundStmt*>(stmt), {});
+        }
+        case ASTKind::DeclareVariableStmt: {
+            auto* decl = static_cast<DeclareVariableStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlDeclareVar>();
+            resolved->kind = ResolvedPsqlStmtKind::DECLARE_VAR;
+            resolved->span = span;
+            resolved->name = decl->name;
+            resolved->not_null = decl->not_null;
+            resolved->type = resolveTypeName(decl->type);
+            if (decl->default_value) {
+                resolved->has_default = true;
+                resolved->default_value = analyzeExpression(decl->default_value);
+            }
+            declarePsqlVariable(resolved->name, resolved->type);
+            return resolved;
+        }
+        case ASTKind::AssignmentStmt: {
+            auto* assign = static_cast<AssignmentStmt*>(stmt);
+            if (!findPsqlVariable(assign->variable)) {
+                error(span, "Unknown PSQL variable in assignment");
+                return nullptr;
+            }
+            auto* resolved = arena_.create<ResolvedPsqlAssign>();
+            resolved->kind = ResolvedPsqlStmtKind::ASSIGN;
+            resolved->span = span;
+            resolved->variable = assign->variable;
+            resolved->value = analyzeExpression(assign->value);
+            return resolved;
+        }
+        case ASTKind::IfStmt: {
+            auto* if_stmt = static_cast<IfStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlIf>();
+            resolved->kind = ResolvedPsqlStmtKind::IF;
+            resolved->span = span;
+            resolved->condition = analyzeExpression(if_stmt->condition);
+            resolved->then_branch = analyzePsqlStatement(if_stmt->then_branch);
+            resolved->else_branch = analyzePsqlStatement(if_stmt->else_branch);
+            return resolved;
+        }
+        case ASTKind::WhileStmt: {
+            auto* while_stmt = static_cast<WhileStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlWhile>();
+            resolved->kind = ResolvedPsqlStmtKind::WHILE_LOOP;
+            resolved->span = span;
+            resolved->condition = analyzeExpression(while_stmt->condition);
+            resolved->body = analyzePsqlStatement(while_stmt->body);
+            return resolved;
+        }
+        case ASTKind::LoopStmt: {
+            auto* loop_stmt = static_cast<LoopStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlLoop>();
+            resolved->kind = ResolvedPsqlStmtKind::LOOP;
+            resolved->span = span;
+            resolved->body = analyzePsqlStatement(loop_stmt->body);
+            return resolved;
+        }
+        case ASTKind::LeaveStmt: {
+            auto* leave = static_cast<LeaveStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlLeave>();
+            resolved->kind = ResolvedPsqlStmtKind::LEAVE;
+            resolved->span = span;
+            resolved->label = leave->label;
+            return resolved;
+        }
+        case ASTKind::ContinueStmt: {
+            auto* cont = static_cast<ContinueStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlContinue>();
+            resolved->kind = ResolvedPsqlStmtKind::CONTINUE;
+            resolved->span = span;
+            resolved->label = cont->label;
+            return resolved;
+        }
+        case ASTKind::ExitStmt: {
+            auto* resolved = arena_.create<ResolvedPsqlExit>();
+            resolved->kind = ResolvedPsqlStmtKind::EXIT;
+            resolved->span = span;
+            return resolved;
+        }
+        case ASTKind::SuspendStmt: {
+            auto* resolved = arena_.create<ResolvedPsqlSuspend>();
+            resolved->kind = ResolvedPsqlStmtKind::SUSPEND;
+            resolved->span = span;
+            return resolved;
+        }
+        case ASTKind::ReturnStmt: {
+            auto* ret = static_cast<ReturnStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlReturn>();
+            resolved->kind = ResolvedPsqlStmtKind::RETURN;
+            resolved->span = span;
+            if (ret->value) {
+                resolved->has_value = true;
+                resolved->value = analyzeExpression(ret->value);
+            }
+            return resolved;
+        }
+        case ASTKind::ExceptionRaiseStmt: {
+            auto* raise = static_cast<ExceptionRaiseStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlRaise>();
+            resolved->kind = ResolvedPsqlStmtKind::RAISE;
+            resolved->span = span;
+            resolved->exception_name = raise->exception_name;
+            resolved->message = analyzeExpression(raise->message);
+            return resolved;
+        }
+        case ASTKind::DeclareCursorStmt: {
+            auto* decl = static_cast<DeclareCursorStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlDeclareCursor>();
+            resolved->kind = ResolvedPsqlStmtKind::DECLARE_CURSOR;
+            resolved->span = span;
+            resolved->cursor_name = decl->cursor_name;
+            resolved->scroll = decl->scroll;
+            resolved->select_stmt = analyzeStatement(decl->select_stmt);
+            return resolved;
+        }
+        case ASTKind::OpenCursorStmt: {
+            auto* open = static_cast<OpenCursorStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlOpenCursor>();
+            resolved->kind = ResolvedPsqlStmtKind::OPEN_CURSOR;
+            resolved->span = span;
+            resolved->cursor_name = open->cursor_name;
+            return resolved;
+        }
+        case ASTKind::FetchCursorStmt: {
+            auto* fetch = static_cast<FetchCursorStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlFetchCursor>();
+            resolved->kind = ResolvedPsqlStmtKind::FETCH_CURSOR;
+            resolved->span = span;
+            resolved->cursor_name = fetch->cursor_name;
+            resolved->direction = fetch->direction;
+            if (fetch->offset) {
+                resolved->offset = analyzeExpression(fetch->offset);
+            }
+            resolved->into_variables = fetch->into_variables;
+            return resolved;
+        }
+        case ASTKind::CloseCursorStmt: {
+            auto* close = static_cast<CloseCursorStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlCloseCursor>();
+            resolved->kind = ResolvedPsqlStmtKind::CLOSE_CURSOR;
+            resolved->span = span;
+            resolved->cursor_name = close->cursor_name;
+            return resolved;
+        }
+        case ASTKind::ForSelectStmt: {
+            auto* for_stmt = static_cast<ForSelectStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlForSelect>();
+            resolved->kind = ResolvedPsqlStmtKind::FOR_SELECT;
+            resolved->span = span;
+            resolved->select_stmt = analyzeStatement(for_stmt->select_stmt);
+            resolved->into_variables = for_stmt->into_variables;
+            resolved->body = analyzePsqlStatement(for_stmt->body);
+            return resolved;
+        }
+        case ASTKind::ForExecuteStmt: {
+            auto* for_stmt = static_cast<ForExecuteStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlForExecute>();
+            resolved->kind = ResolvedPsqlStmtKind::FOR_EXECUTE;
+            resolved->span = span;
+            resolved->sql = analyzeExpression(for_stmt->sql);
+            for (auto* param : for_stmt->parameters) {
+                resolved->parameters.push_back(analyzeExpression(param));
+            }
+            resolved->into_variables = for_stmt->into_variables;
+            resolved->body = analyzePsqlStatement(for_stmt->body);
+            return resolved;
+        }
+        case ASTKind::ExecuteProcedureStmt: {
+            auto* exec = static_cast<ExecuteProcedureStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlExecuteProcedure>();
+            resolved->kind = ResolvedPsqlStmtKind::EXECUTE_PROCEDURE;
+            resolved->span = span;
+            resolved->procedure_path = exec->procedure_path;
+            for (auto* arg : exec->arguments) {
+                resolved->arguments.push_back(analyzeExpression(arg));
+            }
+            resolved->returning_variables = exec->returning_variables;
+            return resolved;
+        }
+        case ASTKind::ExecuteStatementStmt: {
+            auto* exec = static_cast<ExecuteStatementStmt*>(stmt);
+            auto* resolved = arena_.create<ResolvedPsqlExecuteStatement>();
+            resolved->kind = ResolvedPsqlStmtKind::EXECUTE_STATEMENT;
+            resolved->span = span;
+            resolved->sql = analyzeExpression(exec->sql);
+            for (auto* param : exec->parameters) {
+                resolved->parameters.push_back(analyzeExpression(param));
+            }
+            resolved->into_variables = exec->into_variables;
+            return resolved;
+        }
+        case ASTKind::SelectStmt:
+        case ASTKind::InsertStmt:
+        case ASTKind::UpdateStmt:
+        case ASTKind::DeleteStmt: {
+            auto* resolved_sql = arena_.create<ResolvedPsqlSqlStatement>();
+            resolved_sql->kind = ResolvedPsqlStmtKind::SQL_STATEMENT;
+            resolved_sql->span = span;
+            resolved_sql->statement = analyzeStatement(stmt);
+            return resolved_sql;
+        }
+        default:
+            error(span, "Unsupported PSQL statement");
+            return nullptr;
+    }
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeCopy(CopyStmt* stmt) {
     if (!stmt) {
         return nullptr;
@@ -6596,6 +7453,17 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeLiteral(LiteralExpr* expr) {
 }
 
 ResolvedExpression* SemanticAnalyzerV2::analyzeColumnRef(ColumnRefExpr* expr) {
+    if (in_psql_ && !expr->column.has_table_qualifier) {
+        const auto* var_entry = findPsqlVariable(expr->column.column_name);
+        if (var_entry) {
+            auto* resolved = arena_.create<ResolvedVariableExpr>();
+            resolved->span = expr->span;
+            resolved->name = var_entry->name;
+            resolved->type = var_entry->type;
+            return resolved;
+        }
+    }
+
     StringPool::StringId table_alias = StringPool::INVALID_ID;
     if (expr->column.has_table_qualifier && !expr->column.table_path.components.empty()) {
         // Use last component of table path as alias
@@ -6604,6 +7472,14 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeColumnRef(ColumnRefExpr* expr) {
 
     auto resolved_col = resolveColumn(table_alias, expr->column.column_name, expr->span);
     if (!resolved_col) {
+        if (in_psql_ && !expr->column.has_table_qualifier) {
+            auto* resolved = arena_.create<ResolvedVariableExpr>();
+            resolved->span = expr->span;
+            resolved->name = expr->column.column_name;
+            resolved->type.data_type = DataType::UNKNOWN;
+            resolved->type.is_nullable = true;
+            return resolved;
+        }
         return nullptr;
     }
 

@@ -145,7 +145,7 @@ QueryHash QueryResultCache::computeHash(const std::vector<uint8_t>& bytecode)
     return hash;
 }
 
-CachedResultSet* QueryResultCache::get(const QueryHash& hash)
+bool QueryResultCache::get(const QueryHash& hash, CachedResultSet& out)
 {
     if (!enabled_) {
         ++misses_;
@@ -154,7 +154,7 @@ CachedResultSet* QueryResultCache::get(const QueryHash& hash)
         if (metrics.result_cache_misses_total) {
             metrics.result_cache_misses_total->inc();
         }
-        return nullptr;
+        return false;
     }
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -167,7 +167,7 @@ CachedResultSet* QueryResultCache::get(const QueryHash& hash)
         if (metrics.result_cache_misses_total) {
             metrics.result_cache_misses_total->inc();
         }
-        return nullptr;
+        return false;
     }
 
     // Update access metadata
@@ -186,7 +186,8 @@ CachedResultSet* QueryResultCache::get(const QueryHash& hash)
             metrics.result_cache_hits_total->inc();
         }
     }
-    return &it->second->second;
+    out = it->second->second;
+    return true;
 }
 
 void QueryResultCache::put(const QueryHash& hash, CachedResultSet result)

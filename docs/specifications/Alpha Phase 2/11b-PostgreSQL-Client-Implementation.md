@@ -8,10 +8,11 @@ PostgreSQL wire protocol client adapter for Remote Database UDR.
 
 ## Overview
 
-Implements PostgreSQL wire protocol client using libpq library.
+Implements PostgreSQL wire protocol client directly (no external client
+libraries required).
 
 **Protocol**: PostgreSQL Frontend/Backend Protocol 3.0  
-**Library**: libpq (PostgreSQL client library)  
+**Library**: None (ScratchBird native client)  
 **Supported Versions**: PostgreSQL 9.6 - 17.x
 
 ---
@@ -66,10 +67,6 @@ host=hostname port=5432 dbname=database user=username password=password sslmode=
 - SCRAM-SHA-256 (PostgreSQL 10+)
 - SSL/TLS certificates
 
-**Build Requirements:**
-```
-libpq-dev (Debian/Ubuntu)
-postgresql-devel (RHEL/CentOS)
-```
+**Build Requirements:** None (protocol client is bundled with the UDR).
 
 See main specification for complete usage examples.

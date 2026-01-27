@@ -10,9 +10,8 @@ connects to PostgreSQL using the native wire protocol without vendor drivers.
 
 ## References
 - ../UDR_CONNECTOR_BASELINE.md
-- ../../remote_database_udr/03-POSTGRESQL_ADAPTER.md
-- ../../remote_database_udr/06-QUERY_EXECUTION.md
-- ../../remote_database_udr/07-SCHEMA_INTROSPECTION.md
+- ../../Alpha Phase 2/11-Remote-Database-UDR-Specification.md
+- ../../Alpha Phase 2/11b-PostgreSQL-Client-Implementation.md
 - ../../wire_protocols/postgresql_wire_protocol.md
 
 ## UDR Module
@@ -65,6 +64,67 @@ CREATE USER MAPPING FOR migration_role
 CALL sys.remote_exec('legacy_pg', 'CREATE TABLE tmp(id int)');
 SELECT * FROM sys.remote_query('legacy_pg', 'SELECT count(*) FROM users');
 CALL sys.remote_call('legacy_pg', 'refresh_materialized_view', '{"name":"mv"}');
+```
+
+## Metadata Discovery (Required)
+Use pg_catalog and information_schema for schema analysis:
+- pg_namespace, pg_class, pg_attribute
+- pg_index, pg_constraint
+- pg_proc, pg_trigger
+- information_schema.columns for type/nullable defaults
+
+### Introspection Examples (PostgreSQL)
+```sql
+-- Schemas
+SELECT n.oid, n.nspname
+FROM pg_namespace n
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%';
+
+-- Tables / views / materialized views
+SELECT c.oid, n.nspname, c.relname, c.relkind
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r','p','v','m','f');
+
+-- Columns (with defaults)
+SELECT a.attrelid, a.attnum, a.attname, t.typname,
+       a.atttypmod, a.attnotnull,
+       pg_get_expr(d.adbin, d.adrelid) AS default_expr
+FROM pg_attribute a
+JOIN pg_type t ON t.oid = a.atttypid
+LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE a.attnum > 0 AND NOT a.attisdropped;
+
+-- Primary keys / unique constraints
+SELECT c.oid, c.contype, c.conname, c.conrelid, c.conkey
+FROM pg_constraint c
+WHERE c.contype IN ('p','u');
+
+-- Foreign keys
+SELECT c.oid, c.conname, c.conrelid, c.confrelid, c.conkey, c.confkey
+FROM pg_constraint c
+WHERE c.contype = 'f';
+
+-- Indexes
+SELECT i.indexrelid, i.indrelid, i.indkey, i.indisunique, i.indisprimary
+FROM pg_index i;
+
+-- Routines (PG 11+ prokind; fallback to proisagg/proiswindow for older)
+SELECT p.oid, n.nspname, p.proname, p.prokind, p.prorettype, p.proargtypes
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace;
+
+-- Triggers
+SELECT t.oid, t.tgrelid, t.tgname, t.tgtype, t.tgenabled
+FROM pg_trigger t
+WHERE NOT t.tgisinternal;
+
+-- Sequences
+SELECT c.oid, n.nspname, c.relname
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'S';
 ```
 
 ## Schema Emulation and Migration

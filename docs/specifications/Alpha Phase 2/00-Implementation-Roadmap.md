@@ -121,7 +121,7 @@ This document provides a comprehensive implementation roadmap for the distribute
 
 ### Phase 3: Protocol Handlers (Months 7-9)
 
-**Goal**: Enable client compatibility with native drivers
+**Goal**: Enable client compatibility with native wire protocols
 
 #### Milestones
 
@@ -133,7 +133,7 @@ This document provides a comprehensive implementation roadmap for the distribute
    - [ ] System catalog virtualization (pg_catalog, information_schema)
    - [ ] SCRAM-SHA-256 authentication
    - [ ] Result set formatting
-   - [ ] Testing with libpq
+   - [ ] Protocol conformance tests (libpq/psql optional for validation)
 
 2. **MySQL Protocol**
    - [ ] Wire protocol handler (handshake, auth, commands)
@@ -143,7 +143,7 @@ This document provides a comprehensive implementation roadmap for the distribute
    - [ ] System catalog virtualization (information_schema, mysql.*)
    - [ ] caching_sha2_password authentication
    - [ ] Binary protocol support
-   - [ ] Testing with MySQL Connector
+   - [ ] Protocol conformance tests (mysql client/connector optional for validation)
 
 3. **Parser Plugin Framework**
    - [ ] Plugin API definition

@@ -104,6 +104,8 @@ Key network specs:
 | └─ [tools/](beta_requirements/tools/) | Database tools | DBeaver, pgAdmin, etc. | ✅ Specified |
 | └─ [cloud/](beta_requirements/cloud-container/) | Cloud deployment | Docker, K8s, Helm | ✅ Specified |
 | └─ [optional/](beta_requirements/optional/) | Optional beta engine features | Storage encoding optimizations | ✅ Draft |
+| └─ [nosql/](beta_requirements/nosql/) | NoSQL storage structures | Model gap report | ✅ Draft |
+| └─ [indexes/](beta_requirements/indexes/) | Beta index pointers | Canonical index specs | ✅ Draft |
 
 ### Additional Subsystems
 
@@ -124,8 +126,8 @@ Key network specs:
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| **udr_connectors/** | UDR connectors | 7 connector specs | ⚠️ Consolidate |
-| **remote_database_udr/** | Remote DB adapters | 10 adapter specs | ⚠️ Consolidate |
+| **udr_connectors/** | UDR connectors | Native + Beta connector specs | ⚠️ Consolidate |
+| [Remote DB UDR](Alpha%20Phase%202/11-Remote-Database-UDR-Specification.md) | Remote database connectors | Core spec | ✅ Active |
 | [UDR System](Alpha%20Phase%202/10-UDR-System-Specification.md) | UDR architecture | System design | ✅ Active |
 
 ### Reference Material
@@ -178,6 +180,7 @@ All Data Definition Language specifications:
 - [DDL_VIEWS.md](ddl/DDL_VIEWS.md) - View management
 - [DDL_INDEXES.md](ddl/DDL_INDEXES.md) - Index creation
 - [DDL_SEQUENCES.md](ddl/DDL_SEQUENCES.md) - Sequence management
+- [DDL_TYPES.md](ddl/DDL_TYPES.md) - Type definitions
 
 **Advanced Objects:**
 - [DDL_DOMAINS_COMPREHENSIVE.md](types/DDL_DOMAINS_COMPREHENSIVE.md) (963 lines) - Complete domain specification
@@ -356,6 +359,8 @@ Administrative tools and interfaces:
 Deployment and operations:
 
 - [SYSTEMD_SERVICE_SPECIFICATION.md](deployment/SYSTEMD_SERVICE_SPECIFICATION.md) (2,127 lines) - systemd integration
+- [INSTALLATION_AND_BUILD_SPECIFICATION.md](deployment/INSTALLATION_AND_BUILD_SPECIFICATION.md) - install/build methods
+- [WINDOWS_CROSS_COMPILE_SPECIFICATION.md](deployment/WINDOWS_CROSS_COMPILE_SPECIFICATION.md) - Windows cross-compile
 - [ALPHA3_TEST_PLAN.md](testing/ALPHA3_TEST_PLAN.md) (727 lines) - Test planning
 
 ### Architecture

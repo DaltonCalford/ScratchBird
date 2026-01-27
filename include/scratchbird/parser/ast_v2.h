@@ -71,6 +71,8 @@ enum class ASTKind : uint16_t {
     CreateJobStmt,
     CreateTypeStmt,
     CreateDomainStmt,
+    AlterTypeStmt,
+    DropTypeStmt,
     AlterDomainStmt,
     DropDomainStmt,
     AlterTableStmt,
@@ -381,6 +383,9 @@ enum class DomainKind : uint8_t {
     ENUM = 2,
     SET = 3,
     VARIANT = 4,
+    RANGE = 5,
+    BASE = 6,
+    SHELL = 7,
 };
 
 /**
@@ -413,6 +418,68 @@ struct DomainEnumValue {
     bool has_position = false;
     int32_t position = 0;
     SourceSpan span;
+};
+
+enum class TypeKind : uint8_t {
+    ENUM = 0,
+    RECORD = 1,
+    RANGE = 2,
+    BASE = 3,
+    SHELL = 4,
+};
+
+enum class BaseTypeAlignment : uint8_t {
+    CHAR = 0,
+    SHORT = 1,
+    INT = 2,
+    DOUBLE = 3,
+};
+
+enum class BaseTypeStorageMode : uint8_t {
+    PLAIN = 0,
+    EXTERNAL = 1,
+    EXTENDED = 2,
+    MAIN = 3,
+};
+
+struct RangeTypeOptions {
+    TypeName subtype;
+    bool has_subtype = false;
+    bool has_subtype_collation = false;
+    std::string subtype_collation;
+    bool has_subtype_opclass = false;
+    std::string subtype_opclass;
+    bool has_canonical = false;
+    std::string canonical;
+    bool has_subtype_diff = false;
+    std::string subtype_diff;
+    bool has_multirange = false;
+    bool multirange = false;
+};
+
+struct BaseTypeOptions {
+    TypeName storage;
+    bool has_storage = false;
+    std::string input_function;
+    std::string output_function;
+    bool has_receive = false;
+    std::string receive_function;
+    bool has_send = false;
+    std::string send_function;
+    bool has_typmod_in = false;
+    std::string typmod_in_function;
+    bool has_typmod_out = false;
+    std::string typmod_out_function;
+    bool has_analyze = false;
+    std::string analyze_function;
+    bool has_alignment = false;
+    BaseTypeAlignment alignment = BaseTypeAlignment::INT;
+    bool has_storage_mode = false;
+    BaseTypeStorageMode storage_mode = BaseTypeStorageMode::PLAIN;
+    bool has_category = false;
+    char category = '\0';
+    bool has_preferred = false;
+    bool preferred = false;
 };
 
 /**
@@ -1054,6 +1121,78 @@ public:
 
     bool has_quality = false;
     DomainQualityOptions quality;
+};
+
+/**
+ * CREATE TYPE statement
+ */
+class CreateTypeStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateTypeStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_not_exists = false;
+    SchemaPath type_path;
+    TypeKind type_kind = TypeKind::RECORD;
+    std::vector<DomainRecordField> record_fields;
+    std::vector<DomainEnumValue> enum_values;
+    RangeTypeOptions range_options;
+    BaseTypeOptions base_options;
+    bool is_shell = false;
+    bool has_dialect = false;
+    std::string dialect_tag;
+    bool has_compat = false;
+    std::string compat_name;
+    bool has_comment = false;
+    std::string comment;
+};
+
+/**
+ * ALTER TYPE statement
+ */
+enum class AlterTypeAction : uint8_t {
+    RENAME_TO = 50,
+    SET_SCHEMA = 51,
+    ADD_VALUE = 52,
+    RENAME_VALUE = 53,
+    SET_OPTIONS = 54,
+    FINALIZE = 55,
+};
+
+class AlterTypeStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterTypeStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    AlterTypeAction action = AlterTypeAction::RENAME_TO;
+    SchemaPath type_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+    StringPool::StringId new_schema = StringPool::INVALID_ID;
+    StringPool::StringId value_label = StringPool::INVALID_ID;
+    bool has_before = false;
+    StringPool::StringId before_label = StringPool::INVALID_ID;
+    bool has_after = false;
+    StringPool::StringId after_label = StringPool::INVALID_ID;
+    StringPool::StringId old_label = StringPool::INVALID_ID;
+    StringPool::StringId new_label = StringPool::INVALID_ID;
+    bool is_range_options = false;
+    bool is_base_options = false;
+    RangeTypeOptions range_options;
+    BaseTypeOptions base_options;
+};
+
+/**
+ * DROP TYPE statement
+ */
+class DropTypeStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropTypeStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> types;
+    bool cascade = false;
+    bool restrict = false;
 };
 
 /**
@@ -3136,7 +3275,10 @@ public:
     virtual void visit(CreateRoleStmt* stmt) = 0;
     virtual void visit(CreateExceptionStmt* stmt) = 0;
     virtual void visit(CreateJobStmt* stmt) = 0;
+    virtual void visit(CreateTypeStmt* stmt) = 0;
     virtual void visit(CreateDomainStmt* stmt) = 0;
+    virtual void visit(AlterTypeStmt* stmt) = 0;
+    virtual void visit(DropTypeStmt* stmt) = 0;
     virtual void visit(AlterDomainStmt* stmt) = 0;
     virtual void visit(DropDomainStmt* stmt) = 0;
     virtual void visit(DropDatabaseStmt* stmt) = 0;

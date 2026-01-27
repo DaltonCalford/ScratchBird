@@ -10,8 +10,8 @@ connects using the native MySQL wire protocol without vendor drivers.
 
 ## References
 - ../UDR_CONNECTOR_BASELINE.md
-- ../../remote_database_udr/04-MYSQL_ADAPTER.md
-- ../../remote_database_udr/06-QUERY_EXECUTION.md
+- ../../Alpha Phase 2/11-Remote-Database-UDR-Specification.md
+- ../../Alpha Phase 2/11c-MySQL-Client-Implementation.md
 - ../../wire_protocols/mysql_wire_protocol.md
 
 ## UDR Module
@@ -66,6 +66,62 @@ CALL sys.remote_exec('legacy_mysql', 'ALTER TABLE users ADD COLUMN foo int');
 SELECT * FROM sys.remote_query('legacy_mysql', 'SELECT count(*) FROM users');
 CALL sys.remote_call('legacy_mysql', 'rebuild_indexes', '{"schema":"prod"}');
 ```
+
+## Metadata Discovery (Required)
+Use information_schema for schema analysis:
+- information_schema.schemata, tables, columns
+- statistics, table_constraints, key_column_usage, referential_constraints
+- routines, parameters, triggers
+
+### Introspection Examples (MySQL/MariaDB)
+```sql
+-- Schemas (databases)
+SELECT schema_name, default_character_set_name, default_collation_name
+FROM information_schema.schemata;
+
+-- Tables / views
+SELECT table_schema, table_name, table_type, engine
+FROM information_schema.tables
+WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys');
+
+-- Columns
+SELECT table_schema, table_name, column_name, data_type, column_type,
+       is_nullable, column_default, extra
+FROM information_schema.columns
+WHERE table_schema = ? AND table_name = ?
+ORDER BY ordinal_position;
+
+-- Primary/unique/foreign keys
+SELECT tc.constraint_name, tc.constraint_type, kcu.table_schema,
+       kcu.table_name, kcu.column_name, kcu.referenced_table_schema,
+       kcu.referenced_table_name, kcu.referenced_column_name
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu
+  ON tc.constraint_schema = kcu.constraint_schema
+ AND tc.constraint_name = kcu.constraint_name
+WHERE tc.table_schema = ? AND tc.table_name = ?
+  AND tc.constraint_type IN ('PRIMARY KEY','UNIQUE','FOREIGN KEY');
+
+-- Indexes
+SELECT table_schema, table_name, index_name, non_unique, seq_in_index, column_name
+FROM information_schema.statistics
+WHERE table_schema = ? AND table_name = ?
+ORDER BY index_name, seq_in_index;
+
+-- Routines
+SELECT routine_schema, routine_name, routine_type, data_type
+FROM information_schema.routines
+WHERE routine_schema = ?;
+
+-- Triggers
+SELECT trigger_schema, trigger_name, event_manipulation, action_timing
+FROM information_schema.triggers
+WHERE trigger_schema = ?;
+```
+
+## Schema Mounting
+MySQL/MariaDB database maps to schema (no separate schema layer). Imported
+schemas are mounted under `legacy_<server>` (or `mount_root` override).
 
 ## Testing Checklist
 - TLS handshake and auth plugin negotiation.

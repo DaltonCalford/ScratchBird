@@ -8,10 +8,11 @@ MySQL wire protocol client adapter for Remote Database UDR.
 
 ## Overview
 
-Implements MySQL wire protocol client using libmysqlclient library.
+Implements MySQL wire protocol client directly (no external client
+libraries required).
 
 **Protocol**: MySQL Client/Server Protocol  
-**Library**: libmysqlclient (MySQL client library)  
+**Library**: None (ScratchBird native client)  
 **Supported Versions**: MySQL 5.7, 8.0+, MariaDB 10.x
 
 ---
@@ -43,18 +44,11 @@ RemoteTableMetadata* get_mysql_table_metadata(void* handle, const char* schema, 
 ## Implementation Notes
 
 **Connection Parameters:**
-```c
-mysql_real_connect(
-    mysql,
-    "hostname",
-    "username",
-    "password",
-    "database",
-    3306,  // port
-    NULL,  // unix_socket
-    0      // client_flag
-);
-```
+- host
+- port
+- database
+- username
+- password
 
 **Type Mapping:**
 | MySQL Type | Internal Type |
@@ -76,11 +70,7 @@ mysql_real_connect(
 - caching_sha2_password (MySQL 8.0+)
 - SSL/TLS
 
-**Build Requirements:**
-```
-libmysqlclient-dev (Debian/Ubuntu)
-mysql-devel (RHEL/CentOS)
-```
+**Build Requirements:** None (protocol client is bundled with the UDR).
 
 **Special Considerations:**
 - Handle MySQL's unsigned integer types

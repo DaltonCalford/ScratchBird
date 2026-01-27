@@ -11,6 +11,8 @@ ScratchBird supports modern deployment models including systemd service integrat
 ## Specifications in this Directory
 
 - **[SYSTEMD_SERVICE_SPECIFICATION.md](SYSTEMD_SERVICE_SPECIFICATION.md)** (2,127 lines) - systemd service integration specification
+- **[INSTALLATION_AND_BUILD_SPECIFICATION.md](INSTALLATION_AND_BUILD_SPECIFICATION.md)** - install/build methods and dependency matrix
+- **[WINDOWS_CROSS_COMPILE_SPECIFICATION.md](WINDOWS_CROSS_COMPILE_SPECIFICATION.md)** - Windows cross-compile requirements
 
 ## Key Features
 

@@ -143,6 +143,7 @@ public:
      * Generate bytecode from a resolved statement
      */
     BytecodeResultV2 generate(ResolvedStatement* stmt);
+    BytecodeResultV2 generatePsql(ResolvedPsqlBlock* block);
 
     /**
      * Enable/disable optimization passes
@@ -155,6 +156,15 @@ private:
     BytecodeResultV2* current_result_ = nullptr;
     bool optimizations_enabled_ = true;
     std::string_view source_sql_;
+    struct PsqlLoopContext {
+        size_t loop_start = 0;
+        size_t loop_end_patch = 0;
+        size_t loop_end = 0;
+        StringPool::StringId label = StringPool::INVALID_ID;
+        std::vector<size_t> break_patches;
+        std::vector<size_t> continue_patches;
+    };
+    std::vector<PsqlLoopContext> psql_loop_stack_;
 
     // ==========================================================================
     // Statement Generation
@@ -169,6 +179,7 @@ private:
     void generateInsert(ResolvedInsertStmt* stmt);
     void generateUpdate(ResolvedUpdateStmt* stmt);
     void generateDelete(ResolvedDeleteStmt* stmt);
+    void generateMerge(ResolvedMergeStmt* stmt);
     void generateCopy(ResolvedCopyStmt* stmt);
     void generateWithClause(ResolvedWithClause* with);
 
@@ -184,14 +195,19 @@ private:
     void generateCreateFunction(ResolvedCreateFunctionStmt* stmt);
     void generateCreateProcedure(ResolvedCreateProcedureStmt* stmt);
     void generateCreateTrigger(ResolvedCreateTriggerStmt* stmt);
+    void generateExecuteBlock(ResolvedExecuteBlockStmt* stmt);
+    void generateExecuteProcedure(ResolvedExecuteProcedureStmt* stmt);
+    void generateExecuteStatement(ResolvedExecuteStatementStmt* stmt);
     void generateCreatePackage(ResolvedCreatePackageStmt* stmt);
     void generateCreateUser(ResolvedCreateUserStmt* stmt);
     void generateCreateRole(ResolvedCreateRoleStmt* stmt);
     void generateCreateJob(ResolvedCreateJobStmt* stmt);
     void generateCreateException(ResolvedCreateExceptionStmt* stmt);
     void generateCreateDomain(ResolvedCreateDomainStmt* stmt);
+    void generateAlterType(ResolvedAlterTypeStmt* stmt);
     void generateDropDatabase(ResolvedDropDatabaseStmt* stmt);
     void generateAlterDomain(ResolvedAlterDomainStmt* stmt);
+    void generateDropType(ResolvedDropTypeStmt* stmt);
     void generateDropDomain(ResolvedDropDomainStmt* stmt);
     void generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt);
     void generateAlterTable(ResolvedAlterTableStmt* stmt);
@@ -220,6 +236,14 @@ private:
     void generateRevoke(ResolvedRevokeStmt* stmt);
     void generateTruncateTable(ResolvedTruncateTableStmt* stmt);
     void generateExplain(ResolvedExplainStmt* stmt);
+
+    // ==========================================================================
+    // PSQL Generation
+    // ==========================================================================
+
+    void generatePsqlBlock(ResolvedPsqlBlock* block);
+    void generatePsqlStatement(ResolvedPsqlStatement* stmt);
+    void generatePsqlExpressionPayload(ResolvedExpression* expr);
 
     // ==========================================================================
     // Expression Generation

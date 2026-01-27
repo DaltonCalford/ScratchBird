@@ -137,6 +137,57 @@ ParseResult Parser::parseStatement() {
     return result;
 }
 
+ParseResult Parser::parsePsqlBody() {
+    ParseModeGuard guard(state_, ParseMode::PSQL);
+    ParseResult result;
+
+    auto* block = arena_.create<ExecuteBlockStmt>();
+
+    // Optional DECLARE section (DECLARE [VARIABLE] name type ...)
+    while (check(TokenType::KW_DECLARE)) {
+        advance();
+        matchContextual("VARIABLE");
+
+        VariableDecl var;
+        var.name = expectIdentifier("Expected variable name");
+        var.type = parseTypeName();
+
+        if (match(TokenType::KW_NOT)) {
+            expect(TokenType::KW_NULL, "Expected NULL after NOT");
+            var.not_null = true;
+        }
+
+        if (match(TokenType::EQUAL) || match(TokenType::KW_DEFAULT)) {
+            var.default_value = parseExpression();
+        }
+
+        block->variables.push_back(var);
+        match(TokenType::SEMICOLON);
+    }
+
+    if (check(TokenType::KW_BEGIN)) {
+        advance();
+        block->body = parseBeginEndBlock();
+        result.setStatement(block);
+        return result;
+    }
+
+    // Fallback: single PSQL statement
+    Statement* inner = parsePSQLStatement();
+    if (!inner) {
+        for (const auto& err : errors_) {
+            result.addError(err);
+        }
+        return result;
+    }
+
+    auto* compound = arena_.create<CompoundStmt>();
+    compound->statements.push_back(inner);
+    block->body = compound;
+    result.setStatement(block);
+    return result;
+}
+
 std::vector<ParseResult> Parser::parseStatements() {
     std::vector<ParseResult> results;
 
@@ -221,7 +272,7 @@ Statement* Parser::parseStatementInternal() {
     if (matchContextual("COMMENT"))     return parseComment();
 
     // MERGE statement
-    if (matchContextual("MERGE"))       return parseMerge();
+    if (match(TokenType::KW_MERGE) || matchContextual("MERGE")) return parseMerge();
 
     error("Expected SQL statement");
     return nullptr;
@@ -373,6 +424,24 @@ Statement* Parser::parseCreate() {
             error("CREATE OR ALTER is only supported for JOB");
         }
         return parseCreateTrigger(or_replace);
+    }
+    if (matchContextual("PACKAGE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreatePackage(or_replace);
+    }
+    if (matchContextual("EXCEPTION")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateException(or_replace);
+    }
+    if (matchContextual("TYPE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateType(or_replace);
     }
     if (matchContextual("USER")) {
         if (or_alter) {
@@ -2766,6 +2835,327 @@ CreateTriggerStmt* Parser::parseCreateTrigger(bool or_replace) {
     return stmt;
 }
 
+CreatePackageStmt* Parser::parseCreatePackage(bool or_replace) {
+    auto* stmt = arena_.create<CreatePackageStmt>();
+    stmt->or_replace = or_replace;
+
+    if (matchContextual("BODY")) {
+        stmt->is_body = true;
+    }
+
+    stmt->package_path = parseSchemaPath(state_);
+    if (!(match(TokenType::KW_AS) || matchContextual("AS"))) {
+        error("Expected AS before package body");
+    }
+    std::string body = captureStatementBody();
+    if (!body.empty()) {
+        if (stmt->is_body) {
+            stmt->body = stringPool().intern(body);
+        } else {
+            stmt->header = stringPool().intern(body);
+        }
+    }
+
+    return stmt;
+}
+
+CreateExceptionStmt* Parser::parseCreateException(bool or_replace) {
+    auto* stmt = arena_.create<CreateExceptionStmt>();
+    stmt->or_replace = or_replace;
+    stmt->exception_path = parseSchemaPath(state_);
+
+    if (check(TokenType::STRING_LITERAL)) {
+        stmt->message = current().value.string_id;
+        advance();
+    } else if (check(TokenType::IDENTIFIER)) {
+        stmt->message = expectIdentifier("Expected exception message");
+    } else {
+        error("Expected exception message");
+    }
+
+    return stmt;
+}
+
+CreateTypeStmt* Parser::parseCreateType(bool /*or_replace*/) {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateTypeStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        stmt->if_not_exists = true;
+    }
+
+    stmt->type_path = parseSchemaPath(state_);
+    if (stmt->type_path.isEmpty()) {
+        error("Expected type name");
+    }
+
+    if (match(TokenType::KW_AS) || matchContextual("AS")) {
+        // Optional AS keyword for type definition.
+    }
+
+    auto parse_record_fields = [&]() {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after RECORD");
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            SourceLocation field_start = currentLocation();
+            DomainRecordField field;
+            field.name = expectIdentifier("Expected field name");
+            field.type = parseTypeName();
+            if (matchContextual("COLLATE")) {
+                expectIdentifier("Expected collation name");
+            }
+            if (match(TokenType::KW_NOT)) {
+                expect(TokenType::KW_NULL, "Expected NULL after NOT");
+                field.nullable = false;
+            } else if (match(TokenType::KW_NULL)) {
+                field.nullable = true;
+            }
+            if (match(TokenType::KW_DEFAULT)) {
+                Expression* expr = parseExpression();
+                field.default_value = extractExpressionText(expr);
+                field.has_default = true;
+            }
+            field.span = makeSpan(field_start);
+            stmt->record_fields.push_back(std::move(field));
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after RECORD fields");
+    };
+
+    auto parse_enum_values = [&]() {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after ENUM");
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            SourceLocation value_start = currentLocation();
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal for ENUM label");
+                break;
+            }
+            DomainEnumValue value;
+            value.label = current().value.string_id;
+            advance();
+            if (match(TokenType::EQUAL)) {
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("Expected integer position after '='");
+                } else {
+                    value.has_position = true;
+                    value.position = static_cast<int32_t>(current().value.int_value);
+                    advance();
+                }
+            }
+            value.span = makeSpan(value_start);
+            stmt->enum_values.push_back(std::move(value));
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after ENUM values");
+    };
+
+    auto parse_range_options = [&]() {
+        stmt->range_options = RangeTypeOptions{};
+        expect(TokenType::LEFT_PAREN, "Expected '(' after RANGE");
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            StringPool::StringId key_id = expectIdentifier("Expected RANGE option name");
+            std::string key = std::string(stringPool().get(key_id));
+            expect(TokenType::EQUAL, "Expected '=' after RANGE option name");
+            if (key == "SUBTYPE") {
+                stmt->range_options.subtype = parseTypeName();
+                stmt->range_options.has_subtype = true;
+            } else if (key == "SUBTYPE_COLLATION") {
+                stmt->range_options.subtype_collation = std::string(stringPool().get(expectIdentifier("Expected collation name")));
+                stmt->range_options.has_subtype_collation = true;
+            } else if (key == "SUBTYPE_OPCLASS") {
+                stmt->range_options.subtype_opclass = std::string(stringPool().get(expectIdentifier("Expected opclass name")));
+                stmt->range_options.has_subtype_opclass = true;
+            } else if (key == "CANONICAL") {
+                stmt->range_options.canonical = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                stmt->range_options.has_canonical = true;
+            } else if (key == "SUBTYPE_DIFF") {
+                stmt->range_options.subtype_diff = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                stmt->range_options.has_subtype_diff = true;
+            } else if (key == "MULTIRANGE") {
+                if (matchContextual("TRUE")) {
+                    stmt->range_options.multirange = true;
+                } else if (matchContextual("FALSE")) {
+                    stmt->range_options.multirange = false;
+                } else if (check(TokenType::INTEGER_LITERAL)) {
+                    stmt->range_options.multirange = current().value.int_value != 0;
+                    advance();
+                } else {
+                    error("Expected TRUE/FALSE for MULTIRANGE");
+                }
+                stmt->range_options.has_multirange = true;
+            } else {
+                error("Unsupported RANGE option: " + key);
+            }
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after RANGE options");
+    };
+
+    auto parse_base_options = [&]() {
+        stmt->base_options = BaseTypeOptions{};
+        expect(TokenType::LEFT_PAREN, "Expected '(' after BASE");
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            StringPool::StringId key_id = expectIdentifier("Expected BASE option name");
+            std::string key = std::string(stringPool().get(key_id));
+            expect(TokenType::EQUAL, "Expected '=' after BASE option name");
+            if (key == "STORAGE") {
+                stmt->base_options.storage = parseTypeName();
+                stmt->base_options.has_storage = true;
+            } else if (key == "INPUT") {
+                stmt->base_options.input_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+            } else if (key == "OUTPUT") {
+                stmt->base_options.output_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+            } else if (key == "RECEIVE") {
+                stmt->base_options.receive_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                stmt->base_options.has_receive = true;
+            } else if (key == "SEND") {
+                stmt->base_options.send_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                stmt->base_options.has_send = true;
+            } else if (key == "TYPMOD_IN") {
+                stmt->base_options.typmod_in_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                stmt->base_options.has_typmod_in = true;
+            } else if (key == "TYPMOD_OUT") {
+                stmt->base_options.typmod_out_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                stmt->base_options.has_typmod_out = true;
+            } else if (key == "ANALYZE") {
+                stmt->base_options.analyze_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                stmt->base_options.has_analyze = true;
+            } else if (key == "ALIGNMENT") {
+                if (matchContextual("CHAR")) {
+                    stmt->base_options.alignment = BaseTypeAlignment::CHAR;
+                } else if (matchContextual("SHORT")) {
+                    stmt->base_options.alignment = BaseTypeAlignment::SHORT;
+                } else if (matchContextual("INT")) {
+                    stmt->base_options.alignment = BaseTypeAlignment::INT;
+                } else if (matchContextual("DOUBLE")) {
+                    stmt->base_options.alignment = BaseTypeAlignment::DOUBLE;
+                } else {
+                    error("Expected CHAR/SHORT/INT/DOUBLE for ALIGNMENT");
+                }
+                stmt->base_options.has_alignment = true;
+            } else if (key == "STORAGE_MODE") {
+                if (matchContextual("PLAIN")) {
+                    stmt->base_options.storage_mode = BaseTypeStorageMode::PLAIN;
+                } else if (matchContextual("EXTERNAL")) {
+                    stmt->base_options.storage_mode = BaseTypeStorageMode::EXTERNAL;
+                } else if (matchContextual("EXTENDED")) {
+                    stmt->base_options.storage_mode = BaseTypeStorageMode::EXTENDED;
+                } else if (matchContextual("MAIN")) {
+                    stmt->base_options.storage_mode = BaseTypeStorageMode::MAIN;
+                } else {
+                    error("Expected PLAIN/EXTERNAL/EXTENDED/MAIN for STORAGE_MODE");
+                }
+                stmt->base_options.has_storage_mode = true;
+            } else if (key == "CATEGORY") {
+                if (check(TokenType::STRING_LITERAL)) {
+                    auto text = std::string(stringPool().get(current().value.string_id));
+                    advance();
+                    if (!text.empty()) {
+                        stmt->base_options.category = text[0];
+                        stmt->base_options.has_category = true;
+                    }
+                } else {
+                    error("Expected string literal for CATEGORY");
+                }
+            } else if (key == "PREFERRED") {
+                if (matchContextual("TRUE")) {
+                    stmt->base_options.preferred = true;
+                } else if (matchContextual("FALSE")) {
+                    stmt->base_options.preferred = false;
+                } else if (check(TokenType::INTEGER_LITERAL)) {
+                    stmt->base_options.preferred = current().value.int_value != 0;
+                    advance();
+                } else {
+                    error("Expected TRUE/FALSE for PREFERRED");
+                }
+                stmt->base_options.has_preferred = true;
+            } else {
+                error("Unsupported BASE option: " + key);
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after BASE options");
+    };
+
+    if (matchContextual("ENUM")) {
+        stmt->type_kind = TypeKind::ENUM;
+        parse_enum_values();
+    } else if (matchContextual("RECORD")) {
+        stmt->type_kind = TypeKind::RECORD;
+        parse_record_fields();
+    } else if (check(TokenType::LEFT_PAREN)) {
+        stmt->type_kind = TypeKind::RECORD;
+        parse_record_fields();
+    } else if (matchContextual("RANGE")) {
+        stmt->type_kind = TypeKind::RANGE;
+        parse_range_options();
+    } else if (matchContextual("BASE")) {
+        stmt->type_kind = TypeKind::BASE;
+        parse_base_options();
+    } else if (matchContextual("SHELL")) {
+        stmt->type_kind = TypeKind::SHELL;
+        stmt->is_shell = true;
+    } else {
+        error("Expected ENUM, RECORD, RANGE, BASE, or SHELL in CREATE TYPE");
+    }
+
+    while (match(TokenType::KW_WITH)) {
+        if (matchContextual("DIALECT")) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after WITH DIALECT");
+            if (check(TokenType::STRING_LITERAL)) {
+                stmt->dialect_tag = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else if (isIdentifier()) {
+                stmt->dialect_tag = std::string(stringPool().get(currentIdentifier()));
+                advance();
+            } else {
+                error("Expected dialect name");
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after DIALECT");
+            stmt->has_dialect = true;
+        } else if (matchContextual("COMPAT")) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after WITH COMPAT");
+            if (check(TokenType::STRING_LITERAL)) {
+                stmt->compat_name = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else if (isIdentifier()) {
+                stmt->compat_name = std::string(stringPool().get(currentIdentifier()));
+                advance();
+            } else {
+                error("Expected compat name");
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after COMPAT");
+            stmt->has_compat = true;
+        } else {
+            error("Expected DIALECT or COMPAT after WITH");
+        }
+    }
+
+    if (matchContextual("COMMENT")) {
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after COMMENT");
+        } else {
+            stmt->comment = std::string(stringPool().get(current().value.string_id));
+            stmt->has_comment = true;
+            advance();
+        }
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 // =============================================================================
 // ALTER Statements
 // =============================================================================
@@ -2776,6 +3166,7 @@ Statement* Parser::parseAlter() {
     if (matchContextual("TABLE")) return parseAlterTable();
     if (matchContextual("SCHEMA")) return parseAlterSchema();
     if (matchContextual("DATABASE")) return parseAlterDatabase();
+    if (matchContextual("TYPE")) return parseAlterType();
     if (matchContextual("DOMAIN")) return parseAlterDomain();
     if (matchContextual("JOB")) return parseAlterJob();
     if (matchContextual("SYSTEM")) return parseAlterSystem();
@@ -3010,6 +3401,211 @@ AlterDatabaseStmt* Parser::parseAlterDatabase() {
         }
     } else {
         error("Expected RENAME TO, OWNER TO, or ALIAS ADD/DROP after database name");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AlterTypeStmt* Parser::parseAlterType() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterTypeStmt>();
+    stmt->type_path = parseSchemaPath(state_);
+    if (stmt->type_path.isEmpty()) {
+        error("Expected type name");
+    }
+
+    if (matchContextual("RENAME")) {
+        if (matchContextual("VALUE")) {
+            stmt->action = AlterTypeAction::RENAME_VALUE;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after RENAME VALUE");
+            } else {
+                stmt->old_label = current().value.string_id;
+                advance();
+            }
+            expectContextual("TO", "Expected TO after RENAME VALUE");
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after TO");
+            } else {
+                stmt->new_label = current().value.string_id;
+                advance();
+            }
+        } else {
+            expectContextual("TO", "Expected TO after RENAME");
+            stmt->action = AlterTypeAction::RENAME_TO;
+            stmt->new_name = expectIdentifier("Expected new type name");
+        }
+    } else if (match(TokenType::KW_SET)) {
+        if (matchContextual("SCHEMA")) {
+            stmt->action = AlterTypeAction::SET_SCHEMA;
+            stmt->new_schema = expectIdentifier("Expected schema name");
+        } else if (check(TokenType::LEFT_PAREN)) {
+            stmt->action = AlterTypeAction::SET_OPTIONS;
+            expect(TokenType::LEFT_PAREN, "Expected '(' after SET");
+            while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+                StringPool::StringId key_id = expectIdentifier("Expected option name");
+                std::string key = std::string(stringPool().get(key_id));
+                expect(TokenType::EQUAL, "Expected '=' after option name");
+                if (key == "SUBTYPE") {
+                    stmt->is_range_options = true;
+                    stmt->range_options.subtype = parseTypeName();
+                    stmt->range_options.has_subtype = true;
+                } else if (key == "SUBTYPE_COLLATION") {
+                    stmt->is_range_options = true;
+                    stmt->range_options.subtype_collation = std::string(stringPool().get(expectIdentifier("Expected collation name")));
+                    stmt->range_options.has_subtype_collation = true;
+                } else if (key == "SUBTYPE_OPCLASS") {
+                    stmt->is_range_options = true;
+                    stmt->range_options.subtype_opclass = std::string(stringPool().get(expectIdentifier("Expected opclass name")));
+                    stmt->range_options.has_subtype_opclass = true;
+                } else if (key == "CANONICAL") {
+                    stmt->is_range_options = true;
+                    stmt->range_options.canonical = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                    stmt->range_options.has_canonical = true;
+                } else if (key == "SUBTYPE_DIFF") {
+                    stmt->is_range_options = true;
+                    stmt->range_options.subtype_diff = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                    stmt->range_options.has_subtype_diff = true;
+                } else if (key == "MULTIRANGE") {
+                    stmt->is_range_options = true;
+                    if (matchContextual("TRUE")) {
+                        stmt->range_options.multirange = true;
+                    } else if (matchContextual("FALSE")) {
+                        stmt->range_options.multirange = false;
+                    } else if (check(TokenType::INTEGER_LITERAL)) {
+                        stmt->range_options.multirange = current().value.int_value != 0;
+                        advance();
+                    } else {
+                        error("Expected TRUE/FALSE for MULTIRANGE");
+                    }
+                    stmt->range_options.has_multirange = true;
+                } else if (key == "STORAGE") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.storage = parseTypeName();
+                    stmt->base_options.has_storage = true;
+                } else if (key == "INPUT") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.input_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                } else if (key == "OUTPUT") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.output_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                } else if (key == "RECEIVE") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.receive_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                    stmt->base_options.has_receive = true;
+                } else if (key == "SEND") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.send_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                    stmt->base_options.has_send = true;
+                } else if (key == "TYPMOD_IN") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.typmod_in_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                    stmt->base_options.has_typmod_in = true;
+                } else if (key == "TYPMOD_OUT") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.typmod_out_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                    stmt->base_options.has_typmod_out = true;
+                } else if (key == "ANALYZE") {
+                    stmt->is_base_options = true;
+                    stmt->base_options.analyze_function = std::string(stringPool().get(expectIdentifier("Expected function name")));
+                    stmt->base_options.has_analyze = true;
+                } else if (key == "ALIGNMENT") {
+                    stmt->is_base_options = true;
+                    if (matchContextual("CHAR")) {
+                        stmt->base_options.alignment = BaseTypeAlignment::CHAR;
+                    } else if (matchContextual("SHORT")) {
+                        stmt->base_options.alignment = BaseTypeAlignment::SHORT;
+                    } else if (matchContextual("INT")) {
+                        stmt->base_options.alignment = BaseTypeAlignment::INT;
+                    } else if (matchContextual("DOUBLE")) {
+                        stmt->base_options.alignment = BaseTypeAlignment::DOUBLE;
+                    } else {
+                        error("Expected CHAR/SHORT/INT/DOUBLE for ALIGNMENT");
+                    }
+                    stmt->base_options.has_alignment = true;
+                } else if (key == "STORAGE_MODE") {
+                    stmt->is_base_options = true;
+                    if (matchContextual("PLAIN")) {
+                        stmt->base_options.storage_mode = BaseTypeStorageMode::PLAIN;
+                    } else if (matchContextual("EXTERNAL")) {
+                        stmt->base_options.storage_mode = BaseTypeStorageMode::EXTERNAL;
+                    } else if (matchContextual("EXTENDED")) {
+                        stmt->base_options.storage_mode = BaseTypeStorageMode::EXTENDED;
+                    } else if (matchContextual("MAIN")) {
+                        stmt->base_options.storage_mode = BaseTypeStorageMode::MAIN;
+                    } else {
+                        error("Expected PLAIN/EXTERNAL/EXTENDED/MAIN for STORAGE_MODE");
+                    }
+                    stmt->base_options.has_storage_mode = true;
+                } else if (key == "CATEGORY") {
+                    stmt->is_base_options = true;
+                    if (check(TokenType::STRING_LITERAL)) {
+                        auto text = std::string(stringPool().get(current().value.string_id));
+                        advance();
+                        if (!text.empty()) {
+                            stmt->base_options.category = text[0];
+                            stmt->base_options.has_category = true;
+                        }
+                    } else {
+                        error("Expected string literal for CATEGORY");
+                    }
+                } else if (key == "PREFERRED") {
+                    stmt->is_base_options = true;
+                    if (matchContextual("TRUE")) {
+                        stmt->base_options.preferred = true;
+                    } else if (matchContextual("FALSE")) {
+                        stmt->base_options.preferred = false;
+                    } else if (check(TokenType::INTEGER_LITERAL)) {
+                        stmt->base_options.preferred = current().value.int_value != 0;
+                        advance();
+                    } else {
+                        error("Expected TRUE/FALSE for PREFERRED");
+                    }
+                    stmt->base_options.has_preferred = true;
+                } else {
+                    error("Unsupported ALTER TYPE option: " + key);
+                }
+
+                if (!match(TokenType::COMMA)) {
+                    break;
+                }
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after SET options");
+        } else {
+            error("Expected SCHEMA or '(' after SET");
+        }
+    } else if (matchContextual("ADD")) {
+        expectContextual("VALUE", "Expected VALUE after ADD");
+        stmt->action = AlterTypeAction::ADD_VALUE;
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after ADD VALUE");
+        } else {
+            stmt->value_label = current().value.string_id;
+            advance();
+        }
+        if (matchContextual("BEFORE")) {
+            stmt->has_before = true;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after BEFORE");
+            } else {
+                stmt->before_label = current().value.string_id;
+                advance();
+            }
+        } else if (matchContextual("AFTER")) {
+            stmt->has_after = true;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after AFTER");
+            } else {
+                stmt->after_label = current().value.string_id;
+                advance();
+            }
+        }
+    } else if (matchContextual("FINALIZE")) {
+        stmt->action = AlterTypeAction::FINALIZE;
+    } else {
+        error("Expected RENAME, SET, ADD VALUE, or FINALIZE after type name");
     }
 
     stmt->span = makeSpan(start);
@@ -3594,12 +4190,14 @@ Statement* Parser::parseDrop() {
     if (matchContextual("VIEW")) return parseDropView();
     if (matchContextual("JOB")) return parseDropJob();
     if (matchContextual("DOMAIN")) return parseDropDomain();
+    if (matchContextual("TYPE")) return parseDropType();
     if (matchContextual("FUNCTION")) return parseDropFunction();
     if (matchContextual("PROCEDURE")) return parseDropProcedure();
     if (matchContextual("TRIGGER")) return parseDropTrigger();
     if (matchContextual("PACKAGE")) return parseDropPackage();
     if (matchContextual("ROLE")) return parseDropRole();
     if (matchContextual("EXCEPTION")) return parseDropException();
+    if (matchContextual("SEQUENCE")) return parseDropSequence();
     if (matchContextual("MATERIALIZED")) {
         expectContextual("VIEW", "Expected VIEW after MATERIALIZED");
         auto* stmt = parseDropView();
@@ -3894,6 +4492,52 @@ DropExceptionStmt* Parser::parseDropException() {
     do {
         stmt->exceptions.push_back(parseSchemaPath(state_));
     } while (match(TokenType::COMMA));
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropTypeStmt* Parser::parseDropType() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropTypeStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->types.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    } else if (matchContextual("RESTRICT")) {
+        stmt->restrict = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropSequenceStmt* Parser::parseDropSequence() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropSequenceStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->sequences.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    }
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -7752,7 +8396,7 @@ Statement* Parser::parsePSQLStatement() {
     // Assignment: variable := expression
     if (isIdentifier()) {
         StringPool::StringId var_name = currentIdentifier();
-        if (match(TokenType::COLON_EQUALS)) {
+        if (match(TokenType::COLON_EQUALS) || match(TokenType::EQUAL)) {
             auto* stmt = arena_.create<AssignmentStmt>();
             stmt->variable = var_name;
             stmt->value = parseExpression();
@@ -7780,9 +8424,14 @@ Statement* Parser::parseBeginEndBlock() {
             break;
         }
 
+        size_t start_offset = current().span.start.offset;
         Statement* inner = parsePSQLStatement();
         if (inner) {
             stmt->statements.push_back(inner);
+        } else {
+            if (!isAtEnd() && current().span.start.offset == start_offset) {
+                synchronize();
+            }
         }
 
         match(TokenType::SEMICOLON);

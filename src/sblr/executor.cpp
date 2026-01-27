@@ -10,6 +10,8 @@
 #include <iostream>
 #include <sstream>
 #include "scratchbird/parser/shared_types.h"
+#include "scratchbird/parser/parser_v2.h"
+#include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/resolved_ast_v2.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
 #define SCRATCHBIRD_WITH_COMPILER 1
@@ -1528,6 +1530,9 @@ namespace scratchbird
             current_table_.clear();
             current_columns_.clear();
             current_result_set_.reset();
+            psql_output_vars_.clear();
+            psql_output_types_.clear();
+            psql_output_active_ = false;
             cte_results_.clear();
             cte_column_names_.clear();
             cte_column_types_.clear();
@@ -1738,9 +1743,10 @@ namespace scratchbird
                                 }
                                 QueryHash hash = computeResultCacheHash(bytecode, parameter_values_,
                                                                         parameter_nulls_, policy_epoch);
-                                if (auto* cached = cache.get(hash))
+                                CachedResultSet cached;
+                                if (cache.get(hash, cached))
                                 {
-                                    result = ExecutionResult(buildResultSetFromCache(*cached));
+                                    result = ExecutionResult(buildResultSetFromCache(cached));
                                     use_cached_result = true;
                                 }
                                 else
@@ -2201,7 +2207,9 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_BLOCK))
                         {
                             executeBlock();
-                            result = ExecutionResult();
+                            result = current_result_set_
+                                ? ExecutionResult(std::move(current_result_set_))
+                                : ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DECLARE))
                         {
@@ -2238,9 +2246,21 @@ namespace scratchbird
                             executeReturnStatement();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SUSPEND))
+                        {
+                            executeSuspendStatement();
+                            result = current_result_set_
+                                ? ExecutionResult(std::move(current_result_set_))
+                                : ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RAISE))
                         {
                             executeRaiseStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXECUTE_STMT))
+                        {
+                            executeExecuteStatement();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TRY))
@@ -2314,9 +2334,21 @@ namespace scratchbird
                             args.reserve(static_cast<size_t>(arg_count));
                             for (int32_t i = 0; i < arg_count; ++i)
                             {
-                                // Execute the expression bytecode - it will push result onto stack
-                                evaluateExpression();
-                                args.push_back(pop());
+                                uint32_t expr_len = readInt32();
+                                size_t expr_start = pc_;
+                                size_t expr_end = pc_ + expr_len;
+                                pc_ = expr_end;
+
+                                size_t saved_pc = pc_;
+                                pc_ = expr_start;
+                                args.push_back(evaluateExpressionRange(expr_end));
+                                pc_ = saved_pc;
+                            }
+
+                            int32_t out_count = readInt32();
+                            for (int32_t i = 0; i < out_count; ++i)
+                            {
+                                readString();
                             }
 
                             // Call the procedure using the existing callProcedureByName method
@@ -9136,6 +9168,7 @@ namespace scratchbird
             bool has_security = (flags & 0x04) != 0;
             bool has_validation = (flags & 0x08) != 0;
             bool has_quality = (flags & 0x10) != 0;
+            bool has_comment = (flags & 0x20) != 0;
 
             uint8_t domain_kind = readByte();
             std::string domain_path = readString();
@@ -9166,6 +9199,8 @@ namespace scratchbird
             std::vector<core::EnumValue> enum_values;
             core::DomainTypeRef set_element_type;
             std::vector<core::DomainTypeRef> variant_allowed_types;
+            core::RangeTypeInfo range_info;
+            core::BaseTypeInfo base_info;
             bool enum_wrap = false;
 
             switch (static_cast<parser::v2::DomainKind>(domain_kind))
@@ -9220,6 +9255,67 @@ namespace scratchbird
                     }
                     break;
                 }
+                case parser::v2::DomainKind::RANGE:
+                {
+                    range_info.subtype = read_type_ref();
+                    range_info.subtype_collation = readString();
+                    range_info.subtype_opclass = readString();
+                    range_info.canonical_function = readString();
+                    range_info.subtype_diff_function = readString();
+                    range_info.multirange = readByte() != 0;
+                    break;
+                }
+                case parser::v2::DomainKind::BASE:
+                {
+                    bool has_storage = readByte() != 0;
+                    if (has_storage)
+                    {
+                        base_info.storage = read_type_ref();
+                    }
+                    base_info.input_function = readString();
+                    base_info.output_function = readString();
+                    if (readByte() != 0)
+                    {
+                        base_info.receive_function = readString();
+                    }
+                    if (readByte() != 0)
+                    {
+                        base_info.send_function = readString();
+                    }
+                    if (readByte() != 0)
+                    {
+                        base_info.typmod_in_function = readString();
+                    }
+                    if (readByte() != 0)
+                    {
+                        base_info.typmod_out_function = readString();
+                    }
+                    if (readByte() != 0)
+                    {
+                        base_info.analyze_function = readString();
+                    }
+                    if (readByte() != 0)
+                    {
+                        base_info.alignment = readString();
+                    }
+                    if (readByte() != 0)
+                    {
+                        base_info.storage_mode = readString();
+                    }
+                    if (readByte() != 0)
+                    {
+                        uint8_t category = readByte();
+                        base_info.category = static_cast<char>(category);
+                    }
+                    if (readByte() != 0)
+                    {
+                        base_info.preferred = readByte() != 0;
+                        base_info.has_preferred = true;
+                    }
+                    break;
+                }
+                case parser::v2::DomainKind::SHELL:
+                    break;
                 default:
                     error("Unknown CREATE DOMAIN kind");
                     break;
@@ -9382,6 +9478,29 @@ namespace scratchbird
                                                              options,
                                                              domain_id,
                                                              &ctx);
+                    break;
+                case parser::v2::DomainKind::RANGE:
+                    status = domain_mgr->createRangeDomain(schema_id,
+                                                           resolved_domain_name,
+                                                           range_info,
+                                                           options,
+                                                           domain_id,
+                                                           &ctx);
+                    break;
+                case parser::v2::DomainKind::BASE:
+                    status = domain_mgr->createBaseDomain(schema_id,
+                                                          resolved_domain_name,
+                                                          base_info,
+                                                          options,
+                                                          domain_id,
+                                                          &ctx);
+                    break;
+                case parser::v2::DomainKind::SHELL:
+                    status = domain_mgr->createShellDomain(schema_id,
+                                                           resolved_domain_name,
+                                                           options,
+                                                           domain_id,
+                                                           &ctx);
                     break;
                 default:
                     error("Unsupported CREATE DOMAIN kind");
@@ -9573,6 +9692,26 @@ namespace scratchbird
                 }
             }
 
+            if (has_comment)
+            {
+                std::string comment = readString();
+                core::ErrorContext comment_ctx;
+                auto comment_status = db_->catalog_manager()->setComment(
+                    domain_id,
+                    core::CatalogManager::ObjectType::DOMAIN,
+                    comment,
+                    &comment_ctx);
+                if (comment_status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to set domain comment";
+                    if (!comment_ctx.message.empty())
+                    {
+                        err_msg += ": " + comment_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
             recordObjectDefinition(core::CatalogManager::ObjectType::DOMAIN, domain_id);
         }
 
@@ -9580,6 +9719,27 @@ namespace scratchbird
         {
             uint8_t action = readByte();
             std::string domain_path = readString();
+
+            auto read_base_type = [&]() -> core::DomainTypeRef {
+                core::DomainTypeRef ref;
+                uint32_t precision = 0;
+                uint32_t scale = 0;
+                ref.type = readDataTypeWithModifiers(precision, scale);
+                ref.precision = precision;
+                ref.scale = scale;
+                return ref;
+            };
+
+            auto read_type_ref = [&]() -> core::DomainTypeRef {
+                uint8_t kind = readByte();
+                if (kind == 1)
+                {
+                    core::DomainTypeRef ref;
+                    ref.domain_id = readId();
+                    return ref;
+                }
+                return read_base_type();
+            };
 
             core::ID schema_id;
             std::string resolved_domain_name;
@@ -9625,114 +9785,314 @@ namespace scratchbird
                 error("Permission denied: ALTER DOMAIN requires DOMAIN CREATE privilege");
             }
 
-            switch (static_cast<sblr::AlterDomainAction>(action))
+            if (action >= static_cast<uint8_t>(parser::v2::AlterTypeAction::RENAME_TO))
             {
-                case sblr::AlterDomainAction::SET_DEFAULT:
+                switch (static_cast<parser::v2::AlterTypeAction>(action))
                 {
-                    std::string value = readString();
-                    status = domain_mgr->setDefaultValue(domain_info.domain_id, value, &ctx);
-                    if (status != core::Status::OK)
+                    case parser::v2::AlterTypeAction::RENAME_TO:
                     {
-                        std::string err_msg = "ALTER DOMAIN SET DEFAULT failed";
-                        if (!ctx.message.empty())
+                        std::string new_name = readString();
+                        status = domain_mgr->renameDomain(domain_info.domain_id, new_name, &ctx);
+                        if (status != core::Status::OK)
                         {
-                            err_msg += ": " + ctx.message;
+                            std::string err_msg = "ALTER TYPE RENAME failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
                         }
-                        error(err_msg);
+                        break;
                     }
-                    break;
+                    case parser::v2::AlterTypeAction::SET_SCHEMA:
+                    {
+                        std::string schema_name = readString();
+                        auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                        if (!catalog)
+                        {
+                            error("Catalog manager not available");
+                        }
+                        core::CatalogManager::SchemaInfo schema_info;
+                        if (catalog->getSchema(schema_name, schema_info) != core::Status::OK)
+                        {
+                            error("Target schema not found for ALTER TYPE SET SCHEMA");
+                        }
+                        status = catalog->moveObject(core::CatalogManager::ObjectType::DOMAIN,
+                                                     domain_info.domain_id,
+                                                     schema_info.schema_id,
+                                                     std::nullopt,
+                                                     &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "ALTER TYPE SET SCHEMA failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        break;
+                    }
+                    case parser::v2::AlterTypeAction::ADD_VALUE:
+                    {
+                        std::string label = readString();
+                        uint8_t flags = readByte();
+                        std::optional<std::string> before_label;
+                        std::optional<std::string> after_label;
+                        if (flags & 0x01)
+                        {
+                            before_label = readString();
+                        }
+                        if (flags & 0x02)
+                        {
+                            after_label = readString();
+                        }
+                        status = domain_mgr->addEnumValue(domain_info.domain_id,
+                                                          label,
+                                                          before_label,
+                                                          after_label,
+                                                          &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "ALTER TYPE ADD VALUE failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        break;
+                    }
+                    case parser::v2::AlterTypeAction::RENAME_VALUE:
+                    {
+                        std::string old_label = readString();
+                        std::string new_label = readString();
+                        status = domain_mgr->renameEnumValue(domain_info.domain_id,
+                                                             old_label,
+                                                             new_label,
+                                                             &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "ALTER TYPE RENAME VALUE failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        break;
+                    }
+                    case parser::v2::AlterTypeAction::SET_OPTIONS:
+                    {
+                        uint8_t mode = readByte();
+                        if (mode == 1)
+                        {
+                            core::RangeTypeInfo range_info;
+                            range_info.subtype = read_type_ref();
+                            range_info.subtype_collation = readString();
+                            range_info.subtype_opclass = readString();
+                            range_info.canonical_function = readString();
+                            range_info.subtype_diff_function = readString();
+                            range_info.multirange = readByte() != 0;
+                            status = domain_mgr->updateRangeOptions(domain_info.domain_id, range_info, &ctx);
+                        }
+                        else if (mode == 2)
+                        {
+                            core::BaseTypeInfo base_info;
+                            bool has_storage = readByte() != 0;
+                            if (has_storage)
+                            {
+                                base_info.storage = read_type_ref();
+                            }
+                            base_info.input_function = readString();
+                            base_info.output_function = readString();
+                            if (readByte() != 0)
+                            {
+                                base_info.receive_function = readString();
+                            }
+                            if (readByte() != 0)
+                            {
+                                base_info.send_function = readString();
+                            }
+                            if (readByte() != 0)
+                            {
+                                base_info.typmod_in_function = readString();
+                            }
+                            if (readByte() != 0)
+                            {
+                                base_info.typmod_out_function = readString();
+                            }
+                            if (readByte() != 0)
+                            {
+                                base_info.analyze_function = readString();
+                            }
+                            if (readByte() != 0)
+                            {
+                                base_info.alignment = readString();
+                            }
+                            if (readByte() != 0)
+                            {
+                                base_info.storage_mode = readString();
+                            }
+                            if (readByte() != 0)
+                            {
+                                uint8_t category = readByte();
+                                base_info.category = static_cast<char>(category);
+                            }
+                            if (readByte() != 0)
+                            {
+                                base_info.preferred = readByte() != 0;
+                                base_info.has_preferred = true;
+                            }
+                            status = domain_mgr->updateBaseOptions(domain_info.domain_id, base_info, &ctx);
+                        }
+                        else
+                        {
+                            status = core::Status::INVALID_ARGUMENT;
+                        }
+
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "ALTER TYPE SET options failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        break;
+                    }
+                    case parser::v2::AlterTypeAction::FINALIZE:
+                    {
+                        core::BaseTypeInfo base_info;
+                        status = domain_mgr->finalizeShellType(domain_info.domain_id, base_info, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "ALTER TYPE FINALIZE failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        break;
+                    }
+                    default:
+                        error("Unsupported ALTER TYPE action");
+                        break;
                 }
-                case sblr::AlterDomainAction::DROP_DEFAULT:
+            }
+            else
+            {
+                switch (static_cast<sblr::AlterDomainAction>(action))
                 {
-                    status = domain_mgr->setDefaultValue(domain_info.domain_id, std::string(), &ctx);
-                    if (status != core::Status::OK)
+                    case sblr::AlterDomainAction::SET_DEFAULT:
                     {
-                        std::string err_msg = "ALTER DOMAIN DROP DEFAULT failed";
-                        if (!ctx.message.empty())
+                        std::string value = readString();
+                        status = domain_mgr->setDefaultValue(domain_info.domain_id, value, &ctx);
+                        if (status != core::Status::OK)
                         {
-                            err_msg += ": " + ctx.message;
+                            std::string err_msg = "ALTER DOMAIN SET DEFAULT failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
                         }
-                        error(err_msg);
+                        break;
                     }
-                    break;
-                }
-                case sblr::AlterDomainAction::ADD_CHECK:
-                {
-                    std::string expr = readString();
-                    status = domain_mgr->addCheckConstraint(domain_info.domain_id, std::string(), expr, &ctx);
-                    if (status != core::Status::OK)
+                    case sblr::AlterDomainAction::DROP_DEFAULT:
                     {
-                        std::string err_msg = "ALTER DOMAIN ADD CHECK failed";
-                        if (!ctx.message.empty())
+                        status = domain_mgr->setDefaultValue(domain_info.domain_id, std::string(), &ctx);
+                        if (status != core::Status::OK)
                         {
-                            err_msg += ": " + ctx.message;
+                            std::string err_msg = "ALTER DOMAIN DROP DEFAULT failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
                         }
-                        error(err_msg);
+                        break;
                     }
-                    break;
-                }
-                case sblr::AlterDomainAction::DROP_CONSTRAINT:
-                {
-                    std::string name = readString();
-                    status = domain_mgr->dropConstraint(domain_info.domain_id, name, &ctx);
-                    if (status != core::Status::OK)
+                    case sblr::AlterDomainAction::ADD_CHECK:
                     {
-                        std::string err_msg = "ALTER DOMAIN DROP CONSTRAINT failed";
-                        if (!ctx.message.empty())
+                        std::string expr = readString();
+                        status = domain_mgr->addCheckConstraint(domain_info.domain_id, std::string(), expr, &ctx);
+                        if (status != core::Status::OK)
                         {
-                            err_msg += ": " + ctx.message;
+                            std::string err_msg = "ALTER DOMAIN ADD CHECK failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
                         }
-                        error(err_msg);
+                        break;
                     }
-                    break;
-                }
-                case sblr::AlterDomainAction::RENAME:
-                {
-                    std::string new_name = readString();
-                    status = domain_mgr->renameDomain(domain_info.domain_id, new_name, &ctx);
-                    if (status != core::Status::OK)
+                    case sblr::AlterDomainAction::DROP_CONSTRAINT:
                     {
-                        std::string err_msg = "ALTER DOMAIN RENAME failed";
-                        if (!ctx.message.empty())
+                        std::string name = readString();
+                        status = domain_mgr->dropConstraint(domain_info.domain_id, name, &ctx);
+                        if (status != core::Status::OK)
                         {
-                            err_msg += ": " + ctx.message;
+                            std::string err_msg = "ALTER DOMAIN DROP CONSTRAINT failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
                         }
-                        error(err_msg);
+                        break;
                     }
-                    break;
-                }
-                case sblr::AlterDomainAction::SET_COMPAT:
-                {
-                    std::string compat = readString();
-                    status = domain_mgr->setCompatName(domain_info.domain_id, compat, &ctx);
-                    if (status != core::Status::OK)
+                    case sblr::AlterDomainAction::RENAME:
                     {
-                        std::string err_msg = "ALTER DOMAIN SET COMPAT failed";
-                        if (!ctx.message.empty())
+                        std::string new_name = readString();
+                        status = domain_mgr->renameDomain(domain_info.domain_id, new_name, &ctx);
+                        if (status != core::Status::OK)
                         {
-                            err_msg += ": " + ctx.message;
+                            std::string err_msg = "ALTER DOMAIN RENAME failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
                         }
-                        error(err_msg);
+                        break;
                     }
-                    break;
-                }
-                case sblr::AlterDomainAction::DROP_COMPAT:
-                {
-                    status = domain_mgr->setCompatName(domain_info.domain_id, std::string(), &ctx);
-                    if (status != core::Status::OK)
+                    case sblr::AlterDomainAction::SET_COMPAT:
                     {
-                        std::string err_msg = "ALTER DOMAIN DROP COMPAT failed";
-                        if (!ctx.message.empty())
+                        std::string compat = readString();
+                        status = domain_mgr->setCompatName(domain_info.domain_id, compat, &ctx);
+                        if (status != core::Status::OK)
                         {
-                            err_msg += ": " + ctx.message;
+                            std::string err_msg = "ALTER DOMAIN SET COMPAT failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
                         }
-                        error(err_msg);
+                        break;
                     }
-                    break;
+                    case sblr::AlterDomainAction::DROP_COMPAT:
+                    {
+                        status = domain_mgr->setCompatName(domain_info.domain_id, std::string(), &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "ALTER DOMAIN DROP COMPAT failed";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        break;
+                    }
+                    default:
+                        error("Unsupported ALTER DOMAIN action");
+                        break;
                 }
-                default:
-                    error("Unsupported ALTER DOMAIN action");
-                    break;
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::DOMAIN,
@@ -16645,53 +17005,41 @@ namespace scratchbird
                 return;
             }
 
-            // Store ON condition bytecode range
-            size_t on_condition_start = pc_;
-
-            // Skip over ON condition to find where it ends
-            int depth = 1;
-            while (pc_ < bytecode_size_ && depth > 0)
+            struct ExprRange
             {
-                Opcode op = static_cast<Opcode>(readByte());
-                if (op == Opcode::LITERAL_INT32)
+                size_t start = 0;
+                size_t end = 0;
+            };
+
+            auto readExpressionRange = [&](ExprRange& range) {
+                uint32_t len = readInt32();
+                range.start = pc_;
+                range.end = pc_ + len;
+                if (range.end > bytecode_size_)
                 {
-                    pc_ += 4;
-                    depth++;
+                    error("MERGE expression length exceeds bytecode size");
                 }
-                else if (op == Opcode::LITERAL_INT64)
-                {
-                    pc_ += 8;
-                    depth++;
-                }
-                else if (op == Opcode::LITERAL_DOUBLE)
-                {
-                    pc_ += 8;
-                    depth++;
-                }
-                else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
-                {
-                    uint32_t len = readInt32();
-                    pc_ += len;
-                    depth++;
-                }
-                else if (op == Opcode::LITERAL_NULL)
-                {
-                    depth++;
-                }
-                else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
-                {
-                    depth--;
-                }
+                pc_ = range.end;
+            };
+
+            // Read ON condition bytecode range
+            ExprRange on_condition;
+            readExpressionRange(on_condition);
+            if (on_condition.start == on_condition.end)
+            {
+                error("MERGE ON condition missing");
             }
-            size_t on_condition_end = pc_;
 
             // Parse WHEN clauses
             struct WhenClause {
                 enum Type { MATCHED, NOT_MATCHED, NOT_MATCHED_BY_SOURCE };
                 Type type;
-                std::vector<std::pair<std::string, size_t>> assignments; // col_name -> expr bytecode start
+                bool has_condition = false;
+                ExprRange condition;
+                bool is_delete = false;
+                std::vector<std::pair<std::string, ExprRange>> assignments; // col_name -> expr range
                 std::vector<std::string> insert_cols;
-                std::vector<size_t> insert_expr_starts;
+                std::vector<ExprRange> insert_exprs;
             };
             std::vector<WhenClause> when_clauses;
 
@@ -16714,20 +17062,24 @@ namespace scratchbird
                 {
                     WhenClause clause;
                     clause.type = WhenClause::MATCHED;
-
-                    // Read number of assignments
-                    uint32_t num_assignments = readInt32();
-
-                    for (uint32_t i = 0; i < num_assignments; ++i)
+                    clause.has_condition = readByte() != 0;
+                    if (clause.has_condition)
                     {
-                        std::string col_name = readString();
-                        size_t expr_start = pc_;
+                        readExpressionRange(clause.condition);
+                    }
+                    clause.is_delete = readByte() != 0;
 
-                        // Skip expression bytecode
-                        evaluateExpression();
-                        pop();
-
-                        clause.assignments.emplace_back(col_name, expr_start);
+                    if (!clause.is_delete)
+                    {
+                        // Read number of assignments
+                        uint32_t num_assignments = readInt32();
+                        for (uint32_t i = 0; i < num_assignments; ++i)
+                        {
+                            std::string col_name = readString();
+                            ExprRange expr_range;
+                            readExpressionRange(expr_range);
+                            clause.assignments.emplace_back(col_name, expr_range);
+                        }
                     }
 
                     when_clauses.push_back(clause);
@@ -16736,6 +17088,11 @@ namespace scratchbird
                 {
                     WhenClause clause;
                     clause.type = WhenClause::NOT_MATCHED;
+                    clause.has_condition = readByte() != 0;
+                    if (clause.has_condition)
+                    {
+                        readExpressionRange(clause.condition);
+                    }
 
                     // Read column count
                     uint32_t col_count = readInt32();
@@ -16747,12 +17104,9 @@ namespace scratchbird
 
                     for (uint32_t i = 0; i < col_count; ++i)
                     {
-                        size_t expr_start = pc_;
-                        clause.insert_expr_starts.push_back(expr_start);
-
-                        // Skip expression bytecode
-                        evaluateExpression();
-                        pop();
+                        ExprRange expr_range;
+                        readExpressionRange(expr_range);
+                        clause.insert_exprs.push_back(expr_range);
                     }
 
                     when_clauses.push_back(clause);
@@ -16761,6 +17115,23 @@ namespace scratchbird
                 {
                     WhenClause clause;
                     clause.type = WhenClause::NOT_MATCHED_BY_SOURCE;
+                    clause.has_condition = readByte() != 0;
+                    if (clause.has_condition)
+                    {
+                        readExpressionRange(clause.condition);
+                    }
+                    clause.is_delete = readByte() != 0;
+                    if (!clause.is_delete)
+                    {
+                        uint32_t num_assignments = readInt32();
+                        for (uint32_t i = 0; i < num_assignments; ++i)
+                        {
+                            std::string col_name = readString();
+                            ExprRange expr_range;
+                            readExpressionRange(expr_range);
+                            clause.assignments.emplace_back(col_name, expr_range);
+                        }
+                    }
                     when_clauses.push_back(clause);
                 }
             }
@@ -16772,6 +17143,9 @@ namespace scratchbird
                 error("Failed to create source table scan");
                 return;
             }
+
+            std::vector<core::CatalogManager::ColumnInfo> combined_columns = target_columns;
+            combined_columns.insert(combined_columns.end(), source_columns.begin(), source_columns.end());
 
             // Track which target rows have been matched
             std::unordered_set<core::TID> matched_target_tids;
@@ -16809,18 +17183,21 @@ namespace scratchbird
 
                     // Evaluate ON condition
                     size_t saved_pc = pc_;
-                    pc_ = on_condition_start;
+                    pc_ = on_condition.start;
+
+                    std::vector<Value> combined_row;
+                    combined_row.reserve(target_row.size() + source_row.size());
+                    combined_row.insert(combined_row.end(), target_row.begin(), target_row.end());
+                    combined_row.insert(combined_row.end(), source_row.begin(), source_row.end());
 
                     // Set up context for both source and target rows
-                    // For simplicity, we'll use target context (full impl would support both)
-                    current_row_values_ = &target_row;
-                    current_row_columns_ = &target_columns;
+                    current_row_values_ = &combined_row;
+                    current_row_columns_ = &combined_columns;
 
                     bool matches = false;
                     try
                     {
-                        evaluateExpression();
-                        Value condition_result = pop();
+                        Value condition_result = evaluateExpressionRange(on_condition.end);
                         matches = condition_result.toBoolean();
                     }
                     catch (...)
@@ -16845,6 +17222,33 @@ namespace scratchbird
                         {
                             if (clause.type == WhenClause::MATCHED)
                             {
+                                if (clause.has_condition)
+                                {
+                                    size_t cond_pc = pc_;
+                                    pc_ = clause.condition.start;
+                                    current_row_values_ = &combined_row;
+                                    current_row_columns_ = &combined_columns;
+                                    Value cond_val = evaluateExpressionRange(clause.condition.end);
+                                    current_row_values_ = nullptr;
+                                    current_row_columns_ = nullptr;
+                                    pc_ = cond_pc;
+                                    if (!cond_val.toBoolean())
+                                    {
+                                        continue;
+                                    }
+                                }
+
+                                if (clause.is_delete)
+                                {
+                                    auto delete_status = db_->storage_engine()->deleteTuple(
+                                        target_table_info.table_id, target_tuple.tid, nullptr);
+                                    if (delete_status == core::Status::OK)
+                                    {
+                                        merge_affected_count++;
+                                    }
+                                    break; // Only execute first WHEN MATCHED
+                                }
+
                                 // Perform UPDATE
                                 std::vector<Value> updated_row = target_row;
 
@@ -16852,7 +17256,7 @@ namespace scratchbird
                                 for (const auto& assignment : clause.assignments)
                                 {
                                     const std::string& col_name = assignment.first;
-                                    size_t expr_start = assignment.second;
+                                    ExprRange expr_range = assignment.second;
 
                                     // Find column index
                                     size_t col_idx = 0;
@@ -16867,12 +17271,11 @@ namespace scratchbird
 
                                     // Evaluate assignment expression
                                     saved_pc = pc_;
-                                    pc_ = expr_start;
-                                    current_row_values_ = &target_row;
-                                    current_row_columns_ = &target_columns;
+                                    pc_ = expr_range.start;
+                                    current_row_values_ = &combined_row;
+                                    current_row_columns_ = &combined_columns;
 
-                                    evaluateExpression();
-                                    Value new_value = pop();
+                                    Value new_value = evaluateExpressionRange(expr_range.end);
 
                                     current_row_values_ = nullptr;
                                     current_row_columns_ = nullptr;
@@ -16957,18 +17360,33 @@ namespace scratchbird
                     {
                         if (clause.type == WhenClause::NOT_MATCHED)
                         {
+                            if (clause.has_condition)
+                            {
+                                size_t cond_pc = pc_;
+                                pc_ = clause.condition.start;
+                                current_row_values_ = &source_row;
+                                current_row_columns_ = &source_columns;
+                                Value cond_val = evaluateExpressionRange(clause.condition.end);
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = cond_pc;
+                                if (!cond_val.toBoolean())
+                                {
+                                    continue;
+                                }
+                            }
+
                             // Perform INSERT
                             std::vector<Value> insert_values;
 
-                            for (size_t i = 0; i < clause.insert_expr_starts.size(); i++)
+                            for (size_t i = 0; i < clause.insert_exprs.size(); i++)
                             {
                                 size_t saved_pc = pc_;
-                                pc_ = clause.insert_expr_starts[i];
+                                pc_ = clause.insert_exprs[i].start;
                                 current_row_values_ = &source_row;
                                 current_row_columns_ = &source_columns;
 
-                                evaluateExpression();
-                                Value val = pop();
+                                Value val = evaluateExpressionRange(clause.insert_exprs[i].end);
 
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
@@ -17082,12 +17500,96 @@ namespace scratchbird
                         // If this target row was not matched, delete it
                         if (matched_target_tids.find(target_tuple.tid) == matched_target_tids.end())
                         {
-                            auto delete_status = db_->storage_engine()->deleteTuple(
-                                target_table_info.table_id, target_tuple.tid, nullptr);
-
-                            if (delete_status == core::Status::OK)
+                            std::vector<Value> target_row;
+                            if (!deserializeTuple(target_tuple.data, target_tuple.data_size,
+                                                  target_columns, target_row))
                             {
-                                merge_affected_count++;
+                                continue;
+                            }
+
+                            if (clause.has_condition)
+                            {
+                                size_t cond_pc = pc_;
+                                pc_ = clause.condition.start;
+                                current_row_values_ = &target_row;
+                                current_row_columns_ = &target_columns;
+                                Value cond_val = evaluateExpressionRange(clause.condition.end);
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = cond_pc;
+                                if (!cond_val.toBoolean())
+                                {
+                                    continue;
+                                }
+                            }
+
+                            if (clause.is_delete)
+                            {
+                                auto delete_status = db_->storage_engine()->deleteTuple(
+                                    target_table_info.table_id, target_tuple.tid, nullptr);
+                                if (delete_status == core::Status::OK)
+                                {
+                                    merge_affected_count++;
+                                }
+                            }
+                            else
+                            {
+                                std::vector<Value> updated_row = target_row;
+                                for (const auto& assignment : clause.assignments)
+                                {
+                                    const std::string& col_name = assignment.first;
+                                    ExprRange expr_range = assignment.second;
+
+                                    size_t col_idx = 0;
+                                    for (size_t i = 0; i < target_columns.size(); i++)
+                                    {
+                                        if (target_columns[i].column_name == col_name)
+                                        {
+                                            col_idx = i;
+                                            break;
+                                        }
+                                    }
+
+                                    size_t saved_pc = pc_;
+                                    pc_ = expr_range.start;
+                                    current_row_values_ = &target_row;
+                                    current_row_columns_ = &target_columns;
+                                    Value new_value = evaluateExpressionRange(expr_range.end);
+                                    current_row_values_ = nullptr;
+                                    current_row_columns_ = nullptr;
+                                    pc_ = saved_pc;
+
+                                    updated_row[col_idx] = new_value;
+                                }
+
+                                std::vector<uint8_t> new_tuple_data;
+                                core::ErrorContext serialize_ctx;
+                                if (!serializeTupleFromValues(updated_row, target_columns,
+                                                             new_tuple_data, &serialize_ctx))
+                                {
+                                    std::string err_msg = "Failed to serialize updated tuple";
+                                    if (!serialize_ctx.message.empty())
+                                    {
+                                        err_msg += ": " + serialize_ctx.message;
+                                    }
+                                    error(err_msg);
+                                    return;
+                                }
+
+                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(target_tuple.tid));
+                                uint16_t item_id = core::getSlot(target_tuple.tid);
+                                uint32_t new_page_id;
+                                uint16_t new_item_id;
+
+                                auto update_status = db_->storage_engine()->updateTuple(
+                                    target_table_info.table_id, page_id, item_id,
+                                    new_tuple_data.data(), new_tuple_data.size(),
+                                    &new_page_id, &new_item_id, nullptr);
+
+                                if (update_status == core::Status::OK)
+                                {
+                                    merge_affected_count++;
+                                }
                             }
                         }
                     }
@@ -33599,7 +34101,15 @@ namespace scratchbird
 
             // Read parameters and bind to variables
             // Track parameter names and modes for OUT/INOUT handling
-            std::vector<std::pair<std::string, uint8_t>> param_info;  // (name, mode)
+            struct ParamInfo
+            {
+                std::string name;
+                uint8_t mode;
+                core::DataType type;
+            };
+            std::vector<ParamInfo> param_info;
+            std::vector<std::string> output_var_names;
+            std::vector<core::DataType> output_var_types;
 
             for (uint8_t i = 0; i < param_count; ++i)
             {
@@ -33607,7 +34117,12 @@ namespace scratchbird
                 std::string param_name = readString();
                 uint8_t type_code = readByte();
 
-                param_info.emplace_back(param_name, mode);
+                param_info.push_back({param_name, mode, static_cast<core::DataType>(type_code)});
+                if (mode == 1 || mode == 2)
+                {
+                    output_var_names.push_back(param_name);
+                    output_var_types.push_back(static_cast<core::DataType>(type_code));
+                }
 
                 // Pop value from stack and bind to variable
                 if (!stack_.empty() && (mode == 0 || mode == 2))  // IN or INOUT parameter
@@ -33638,13 +34153,13 @@ namespace scratchbird
 
             // Extract OUT/INOUT parameter values before popping frame
             std::vector<Value> out_values;
-            for (const auto& [param_name, mode] : param_info)
+            for (const auto& param : param_info)
             {
-                if (mode == 1 || mode == 2)  // OUT or INOUT
+                if (param.mode == 1 || param.mode == 2)  // OUT or INOUT
                 {
                     try
                     {
-                        Value& param_value = variable_stack_->getVariable(param_name);
+                        Value& param_value = variable_stack_->getVariable(param.name);
                         out_values.push_back(param_value);
                     }
                     catch (...)
@@ -33705,7 +34220,7 @@ namespace scratchbird
 
             // Check EXECUTE permission
             auto ctx = core::ConnectionContext::getCurrent();
-            if (ctx && !ctx->isSuperuser())
+            if (ctx && !ctx->isSuperuser() && ctx->getCurrentUserId() != procedure_info.owner_id)
             {
                 if (!db_->catalog_manager()->hasObjectPermission(
                     procedure_info.procedure_id,
@@ -33765,7 +34280,15 @@ namespace scratchbird
 
             // Read parameters and bind to variables
             // Track parameter names and modes for OUT/INOUT handling
-            std::vector<std::pair<std::string, uint8_t>> param_info;  // (name, mode)
+            struct ParamInfo
+            {
+                std::string name;
+                uint8_t mode;
+                core::DataType type;
+            };
+            std::vector<ParamInfo> param_info;
+            std::vector<std::string> output_var_names;
+            std::vector<core::DataType> output_var_types;
 
             for (uint8_t i = 0; i < param_count; ++i)
             {
@@ -33773,7 +34296,12 @@ namespace scratchbird
                 std::string param_name = readString();
                 uint8_t type_code = readByte();
 
-                param_info.emplace_back(param_name, mode);
+                param_info.push_back({param_name, mode, static_cast<core::DataType>(type_code)});
+                if (mode == 1 || mode == 2)
+                {
+                    output_var_names.push_back(param_name);
+                    output_var_types.push_back(static_cast<core::DataType>(type_code));
+                }
 
                 // Parameters passed on stack (IN/INOUT) or initialized to NULL (OUT)
                 if (!stack_.empty() && (mode == 0 || mode == 2))  // IN or INOUT parameter
@@ -33787,6 +34315,19 @@ namespace scratchbird
                 }
             }
 
+            std::vector<std::string> saved_output_vars = psql_output_vars_;
+            std::vector<core::DataType> saved_output_types = psql_output_types_;
+            bool saved_output_active = psql_output_active_;
+            bool output_context_changed = false;
+
+            if (!output_var_names.empty())
+            {
+                psql_output_vars_ = std::move(output_var_names);
+                psql_output_types_ = std::move(output_var_types);
+                psql_output_active_ = true;
+                output_context_changed = true;
+            }
+
             // Execute procedure body (should be a BLOCK)
             uint8_t block_opcode = readByte();
             if (block_opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
@@ -33798,15 +34339,22 @@ namespace scratchbird
                 }
             }
 
+            if (output_context_changed)
+            {
+                psql_output_vars_ = std::move(saved_output_vars);
+                psql_output_types_ = std::move(saved_output_types);
+                psql_output_active_ = saved_output_active;
+            }
+
             // Extract OUT/INOUT parameter values before popping frame
             std::vector<Value> out_values;
-            for (const auto& [param_name, mode] : param_info)
+            for (const auto& param : param_info)
             {
-                if (mode == 1 || mode == 2)  // OUT or INOUT
+                if (param.mode == 1 || param.mode == 2)  // OUT or INOUT
                 {
                     try
                     {
-                        Value& param_value = variable_stack_->getVariable(param_name);
+                        Value& param_value = variable_stack_->getVariable(param.name);
                         out_values.push_back(param_value);
                     }
                     catch (...)
@@ -33916,12 +34464,24 @@ namespace scratchbird
             // Push new frame for procedure
             variable_stack_->pushFrame();
 
+            std::vector<std::string> output_var_names;
+            std::vector<core::DataType> output_var_types;
+
             // Bind arguments to procedure parameters (if any)
             // Database triggers typically have no arguments, but CALL statements might
             for (size_t i = 0; i < args.size() && i < procedure_info.parameters.size(); ++i)
             {
                 const auto& param = procedure_info.parameters[i];
                 variable_stack_->declareVariable(param.name, args[i]);
+            }
+            for (const auto& param : procedure_info.parameters)
+            {
+                if (param.mode == core::CatalogManager::ParameterMode::OUT ||
+                    param.mode == core::CatalogManager::ParameterMode::INOUT)
+                {
+                    output_var_names.push_back(param.name);
+                    output_var_types.push_back(param.type);
+                }
             }
 
             // Execute the procedure's bytecode
@@ -33936,15 +34496,34 @@ namespace scratchbird
             pc_ = 0;
             return_requested_ = false;
 
+            std::vector<std::string> saved_output_vars = psql_output_vars_;
+            std::vector<core::DataType> saved_output_types = psql_output_types_;
+            bool saved_output_active = psql_output_active_;
+            bool output_context_changed = false;
+
+            if (!output_var_names.empty())
+            {
+                psql_output_vars_ = std::move(output_var_names);
+                psql_output_types_ = std::move(output_var_types);
+                psql_output_active_ = true;
+                output_context_changed = true;
+            }
+
             ExecutionResult result;
             try
             {
-                // Execute bytecode - the procedure body should start with version header
-                // Skip version header if present (bytecode format: [version_major][version_minor])
-                if (bytecode_size_ >= 2)
+                // Execute bytecode - the procedure body should start with a VERSION header.
+                if (bytecode_size_ >= 2 &&
+                    bytecode_[0] == static_cast<uint8_t>(Opcode::VERSION))
                 {
-                    // Skip past version header
-                    pc_ += 2;
+                    uint8_t version = bytecode_[1];
+                    if (version != SBLR_VERSION && version != 0)
+                    {
+                        throw std::runtime_error(
+                            "Unsupported SBLR version in procedure bytecode: " +
+                            std::to_string(static_cast<uint32_t>(version)));
+                    }
+                    pc_ = 2;
                 }
 
                 // Execute main loop until end of bytecode or error
@@ -33960,6 +34539,21 @@ namespace scratchbird
                     {
                         break;  // Normal termination
                     }
+                    if (opcode == static_cast<uint8_t>(Opcode::VERSION))
+                    {
+                        // Allow nested or embedded version headers.
+                        if (pc_ < bytecode_size_)
+                        {
+                            uint8_t version = readByte();
+                            if (version != SBLR_VERSION && version != 0)
+                            {
+                                throw std::runtime_error(
+                                    "Unsupported SBLR version in procedure bytecode: " +
+                                    std::to_string(static_cast<uint32_t>(version)));
+                            }
+                        }
+                        continue;
+                    }
 
                     // Handle extended opcodes for PSQL statements
                     if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
@@ -33967,6 +34561,16 @@ namespace scratchbird
                         uint16_t ext_opcode = readExtendedOpcode();
                         switch (static_cast<ExtendedOpcode>(ext_opcode))
                         {
+                            case ExtendedOpcode::EXT_DEBUG_SPAN:
+                            {
+                                int32_t line = static_cast<int32_t>(readInt32());
+                                int32_t column = static_cast<int32_t>(readInt32());
+                                if (conn_ctx_)
+                                {
+                                    conn_ctx_->updateStatementSourceLocation(line, column);
+                                }
+                                break;
+                            }
                             case ExtendedOpcode::EXT_BLOCK:
                                 executeBlock();
                                 break;
@@ -34002,12 +34606,43 @@ namespace scratchbird
                                 break;
                         }
                     }
+                    else
+                    {
+                        Opcode op = static_cast<Opcode>(opcode);
+                        switch (op)
+                        {
+                            case Opcode::SELECT:
+                                executeSelect();
+                                break;
+                            case Opcode::INSERT:
+                                executeInsert();
+                                break;
+                            case Opcode::UPDATE:
+                                executeUpdate();
+                                break;
+                            case Opcode::DELETE:
+                                executeDelete();
+                                break;
+                            default:
+                                pc_--;  // Back up to re-read opcode in outer context
+                                throw std::runtime_error(
+                                    "Unsupported opcode in procedure execution: " +
+                                    std::to_string(static_cast<uint32_t>(op)));
+                        }
+                    }
                 }
                 result = ExecutionResult();  // Success
             }
             catch (const std::exception& e)
             {
                 result = ExecutionResult(std::string("Error executing procedure '") + procedure_name + "': " + e.what());
+            }
+
+            if (output_context_changed)
+            {
+                psql_output_vars_ = std::move(saved_output_vars);
+                psql_output_types_ = std::move(saved_output_types);
+                psql_output_active_ = saved_output_active;
             }
 
             // Restore bytecode context
@@ -34369,8 +35004,10 @@ namespace scratchbird
 
         void Executor::executeBlock()
         {
-            // Read variable declaration count
+            // Read variable declaration count and parameter counts
             uint8_t var_count = readByte();
+            uint8_t input_count = readByte();
+            uint8_t output_count = readByte();
 
             // Push new block frame
             if (!variable_stack_)
@@ -34378,6 +35015,11 @@ namespace scratchbird
                 variable_stack_ = std::make_unique<VariableStack>();
             }
             variable_stack_->pushFrame();
+
+            std::vector<std::string> declared_names;
+            std::vector<core::DataType> declared_types;
+            declared_names.reserve(var_count);
+            declared_types.reserve(var_count);
 
             // Process variable declarations
             for (uint8_t i = 0; i < var_count; ++i)
@@ -34389,9 +35031,29 @@ namespace scratchbird
                     uint16_t ext_opcode = readExtendedOpcode();
                     if (ext_opcode == static_cast<uint16_t>(ExtendedOpcode::EXT_DECLARE))
                     {
-                        executeVarDeclaration();
+                        std::string var_name;
+                        core::DataType var_type = core::DataType::UNKNOWN;
+                        executeVarDeclaration(&var_name, &var_type);
+                        declared_names.push_back(std::move(var_name));
+                        declared_types.push_back(var_type);
                     }
                 }
+            }
+
+            std::vector<std::string> saved_output_vars = psql_output_vars_;
+            std::vector<core::DataType> saved_output_types = psql_output_types_;
+            bool saved_output_active = psql_output_active_;
+
+            if (output_count > 0 && input_count <= declared_names.size())
+            {
+                size_t start = static_cast<size_t>(input_count);
+                size_t end = std::min(declared_names.size(),
+                                      start + static_cast<size_t>(output_count));
+                psql_output_vars_.assign(declared_names.begin() + start,
+                                         declared_names.begin() + end);
+                psql_output_types_.assign(declared_types.begin() + start,
+                                          declared_types.begin() + end);
+                psql_output_active_ = true;
             }
 
             // Execute statements until END or RETURN
@@ -34417,10 +35079,23 @@ namespace scratchbird
                     }
 
                     // Handle PSQL statement opcodes
-                    switch (static_cast<ExtendedOpcode>(ext_opcode))
-                    {
-                        case ExtendedOpcode::EXT_ASSIGN:
-                            executeAssignment();
+                        switch (static_cast<ExtendedOpcode>(ext_opcode))
+                        {
+                            case ExtendedOpcode::EXT_DEBUG_SPAN:
+                            {
+                                int32_t line = static_cast<int32_t>(readInt32());
+                                int32_t column = static_cast<int32_t>(readInt32());
+                                if (conn_ctx_)
+                                {
+                                    conn_ctx_->updateStatementSourceLocation(line, column);
+                                }
+                                break;
+                            }
+                            case ExtendedOpcode::EXT_ASSIGN:
+                                executeAssignment();
+                                break;
+                        case ExtendedOpcode::EXT_BLOCK:
+                            executeBlock();
                             break;
                         case ExtendedOpcode::EXT_SAVEPOINT_BEGIN:
                             executeBlrSavepointBegin();
@@ -34452,33 +35127,129 @@ namespace scratchbird
                         case ExtendedOpcode::EXT_RETURN:
                             executeReturnStatement();
                             break;
+                        case ExtendedOpcode::EXT_SUSPEND:
+                            executeSuspendStatement();
+                            break;
                         case ExtendedOpcode::EXT_RAISE:
                             executeRaiseStatement();
                             break;
+                        case ExtendedOpcode::EXT_EXECUTE_STMT:
+                            executeExecuteStatement();
+                            break;
+                        case ExtendedOpcode::EXT_CURSOR_DECLARE:
+                            executeCursorDeclare();
+                            break;
+                        case ExtendedOpcode::EXT_CURSOR_OPEN:
+                            executeCursorOpen();
+                            break;
+                        case ExtendedOpcode::EXT_CURSOR_FETCH:
+                            executeCursorFetch();
+                            break;
+                        case ExtendedOpcode::EXT_CURSOR_CLOSE:
+                            executeCursorClose();
+                            break;
+                        case ExtendedOpcode::EXT_CALL:
+                        {
+                            std::string procedure_name = readString();
+                            int32_t arg_count = readInt32();
+
+                            std::vector<Value> args;
+                            args.reserve(static_cast<size_t>(arg_count));
+                            for (int32_t i = 0; i < arg_count; ++i)
+                            {
+                                uint32_t expr_len = readInt32();
+                                size_t expr_start = pc_;
+                                size_t expr_end = pc_ + expr_len;
+                                pc_ = expr_end;
+
+                                size_t saved_pc = pc_;
+                                pc_ = expr_start;
+                                args.push_back(evaluateExpressionRange(expr_end));
+                                pc_ = saved_pc;
+                            }
+
+                            int32_t out_count = readInt32();
+                            for (int32_t i = 0; i < out_count; ++i)
+                            {
+                                readString();
+                            }
+
+                            auto call_result = callProcedureByName(procedure_name, args);
+                            if (!call_result.success())
+                            {
+                                error(call_result.error());
+                            }
+                            break;
+                        }
+                        case ExtendedOpcode::EXT_JUMP:
+                            executeJump();
+                            break;
+                        case ExtendedOpcode::EXT_JUMP_IF_TRUE:
+                            executeJumpIfTrue();
+                            break;
+                        case ExtendedOpcode::EXT_JUMP_IF_FALSE:
+                            executeJumpIfFalse();
+                            break;
                         default:
+                            if (ext_opcode == 0xFE)
+                            {
+                                executeLoopEnd();
+                                break;
+                            }
                             // Unknown opcode, skip
                             break;
                     }
                 }
                 else
                 {
-                    // Regular SQL statement opcode - execute normally
-                    pc_--;  // Back up to re-read opcode
-                    break;  // Exit block processing
+                    // Regular SQL statement opcode inside PSQL block
+                    Opcode op = static_cast<Opcode>(opcode);
+                    switch (op)
+                    {
+                        case Opcode::SELECT:
+                            executeSelect();
+                            break;
+                        case Opcode::INSERT:
+                            executeInsert();
+                            break;
+                        case Opcode::UPDATE:
+                            executeUpdate();
+                            break;
+                        case Opcode::DELETE:
+                            executeDelete();
+                            break;
+                        default:
+                            pc_--;  // Back up to re-read opcode
+                            return;
+                    }
                 }
             }
 
-            // Pop block frame
+            // Restore output context and pop block frame
+            if (output_count > 0)
+            {
+                psql_output_vars_ = std::move(saved_output_vars);
+                psql_output_types_ = std::move(saved_output_types);
+                psql_output_active_ = saved_output_active;
+            }
             variable_stack_->popFrame();
         }
 
-        void Executor::executeVarDeclaration()
+        void Executor::executeVarDeclaration(std::string* out_name, core::DataType* out_type)
         {
             // Read variable name
             std::string var_name = readString();
 
             // Read type code
             uint8_t type_code = readByte();
+            if (out_name)
+            {
+                *out_name = var_name;
+            }
+            if (out_type)
+            {
+                *out_type = static_cast<core::DataType>(type_code);
+            }
 
             // Read has_default flag
             bool has_default = readByte() != 0;
@@ -34486,9 +35257,15 @@ namespace scratchbird
             Value default_value;
             if (has_default)
             {
-                // Evaluate default expression (should be on stack or inline)
-                evaluateExpression();
-                default_value = pop();
+                uint32_t expr_len = readInt32();
+                size_t expr_start = pc_;
+                size_t expr_end = pc_ + expr_len;
+                pc_ = expr_end;
+
+                size_t saved_pc = pc_;
+                pc_ = expr_start;
+                default_value = evaluateExpressionRange(expr_end);
+                pc_ = saved_pc;
             }
 
             // Declare variable in current frame
@@ -34500,19 +35277,29 @@ namespace scratchbird
             // Read variable name
             std::string var_name = readString();
 
-            // Evaluate expression (pushes result onto stack)
-            evaluateExpression();
+            uint32_t expr_len = readInt32();
+            size_t expr_start = pc_;
+            size_t expr_end = pc_ + expr_len;
+            pc_ = expr_end;
 
-            // Pop value and assign to variable
-            Value value = pop();
+            size_t saved_pc = pc_;
+            pc_ = expr_start;
+            Value value = evaluateExpressionRange(expr_end);
+            pc_ = saved_pc;
             variable_stack_->setVariable(var_name, value);
         }
 
         void Executor::executeIfStatement()
         {
-            // Evaluate condition (should already be on stack or needs evaluation)
-            evaluateExpression();
-            Value condition = pop();
+            uint32_t expr_len = readInt32();
+            size_t expr_start = pc_;
+            size_t expr_end = pc_ + expr_len;
+            pc_ = expr_end;
+
+            size_t saved_pc = pc_;
+            pc_ = expr_start;
+            Value condition = evaluateExpressionRange(expr_end);
+            pc_ = saved_pc;
 
             // Read jump offset (for false branch)
             uint32_t false_offset = readInt32();
@@ -34532,103 +35319,90 @@ namespace scratchbird
 
         void Executor::executeLoopStatement()
         {
-            // Read loop end offset
             uint32_t loop_end_offset = readInt32();
-
-            // Read optional label
             std::string label = readString();
+            bool has_condition = readByte() != 0;
 
-            // Remember loop start
-            size_t loop_start = pc_;
-
-            // Push loop state
-            loop_stack_.emplace_back(loop_start, loop_end_offset, label);
-
-            // Execute loop body until EXIT
-            while (pc_ < bytecode_size_)
+            LoopState state(pc_, loop_end_offset, label);
+            if (has_condition)
             {
-                // Check for exit request
-                if (!loop_stack_.empty() && loop_stack_.back().exit_requested)
+                uint32_t expr_len = readInt32();
+                state.has_condition = true;
+                state.condition_bytecode.resize(expr_len);
+                for (uint32_t i = 0; i < expr_len; ++i)
                 {
-                    loop_stack_.back().exit_requested = false;
-                    break;
+                    state.condition_bytecode[i] = readByte();
                 }
 
-                // Execute next statement
-                uint8_t opcode = readByte();
-                if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                Value cond_val = evaluateExpressionFromBuffer(state.condition_bytecode);
+                if (!cond_val.toBoolean())
                 {
-                    uint16_t ext_opcode = readExtendedOpcode();
-
-                    if (ext_opcode == 0xFE)  // END LOOP marker
-                    {
-                        // Loop back to start
-                        pc_ = loop_start;
-                        continue;
-                    }
-
-                    // Handle other opcodes...
-                    pc_ -= 2;  // Back up
-                    break;
+                    pc_ = loop_end_offset;
+                    return;
                 }
             }
 
-            // Pop loop state
-            if (!loop_stack_.empty())
-            {
-                loop_stack_.pop_back();
-            }
+            state.loop_start_pc = pc_;
+            loop_stack_.push_back(std::move(state));
         }
 
         void Executor::executeWhileStatement()
         {
-            // Remember loop start
-            size_t loop_start = pc_;
+            executeLoopStatement();
+        }
 
-            // Read loop end offset
-            uint32_t loop_end_offset = readInt32();
-
-            // Read optional label
-            std::string label = readString();
-
-            // Push loop state
-            loop_stack_.emplace_back(loop_start, loop_end_offset, label);
-
-            // Execute while loop
-            while (pc_ < bytecode_size_)
+        void Executor::executeLoopEnd()
+        {
+            if (loop_stack_.empty())
             {
-                // Evaluate condition
-                evaluateExpression();
-                Value condition = pop();
-
-                bool condition_true = false;
-                condition_true = condition.toBoolean();
-
-                if (!condition_true)
-                {
-                    // Exit loop
-                    pc_ = loop_end_offset;
-                    break;
-                }
-
-                // Check for exit request
-                if (!loop_stack_.empty() && loop_stack_.back().exit_requested)
-                {
-                    loop_stack_.back().exit_requested = false;
-                    pc_ = loop_end_offset;
-                    break;
-                }
-
-                // Execute loop body (simplified - would need proper body parsing)
-                // For now, just advance to next statement
-                break;
+                return;
             }
 
-            // Pop loop state
-            if (!loop_stack_.empty())
+            LoopState& state = loop_stack_.back();
+            if (state.exit_requested)
             {
+                state.exit_requested = false;
                 loop_stack_.pop_back();
+                pc_ = state.loop_end_pc;
+                return;
             }
+
+            if (state.has_condition)
+            {
+                Value cond_val = evaluateExpressionFromBuffer(state.condition_bytecode);
+                if (!cond_val.toBoolean())
+                {
+                    loop_stack_.pop_back();
+                    pc_ = state.loop_end_pc;
+                    return;
+                }
+            }
+
+            pc_ = state.loop_start_pc;
+        }
+
+        Value Executor::evaluateExpressionFromBuffer(const std::vector<uint8_t>& buffer)
+        {
+            if (buffer.empty())
+            {
+                return Value();
+            }
+
+            const uint8_t* saved_bytecode = bytecode_;
+            size_t saved_size = bytecode_size_;
+            size_t saved_pc = pc_;
+
+            bytecode_ = buffer.data();
+            bytecode_size_ = buffer.size();
+            pc_ = 0;
+
+            Value result = evaluateExpressionRange(bytecode_size_);
+
+            bytecode_ = saved_bytecode;
+            bytecode_size_ = saved_size;
+            pc_ = saved_pc;
+
+            return result;
         }
 
         void Executor::executeExitStatement()
@@ -34641,9 +35415,15 @@ namespace scratchbird
 
             if (has_when)
             {
-                // Evaluate WHEN condition
-                evaluateExpression();
-                Value condition = pop();
+                uint32_t expr_len = readInt32();
+                size_t expr_start = pc_;
+                size_t expr_end = pc_ + expr_len;
+                pc_ = expr_end;
+
+                size_t saved_pc = pc_;
+                pc_ = expr_start;
+                Value condition = evaluateExpressionRange(expr_end);
+                pc_ = saved_pc;
 
                 bool condition_true = false;
                 condition_true = condition.toBoolean();
@@ -34686,20 +35466,15 @@ namespace scratchbird
 
             if (has_value)
             {
-                // Evaluate all expression opcodes until END sentinel.
-                while (pc_ < bytecode_size_ &&
-                       bytecode_[pc_] != static_cast<uint8_t>(Opcode::END))
-                {
-                    evaluateExpression();
-                }
+                uint32_t expr_len = readInt32();
+                size_t expr_start = pc_;
+                size_t expr_end = pc_ + expr_len;
+                pc_ = expr_end;
 
-                if (stack_.size() != 1)
-                {
-                    error("RETURN expression produced " + std::to_string(stack_.size()) +
-                          " values, expected 1");
-                }
-
-                return_value_ = pop();
+                size_t saved_pc = pc_;
+                pc_ = expr_start;
+                return_value_ = evaluateExpressionRange(expr_end);
+                pc_ = saved_pc;
             }
             else
             {
@@ -34707,6 +35482,43 @@ namespace scratchbird
             }
 
             return_requested_ = true;
+        }
+
+        void Executor::executeSuspendStatement()
+        {
+            if (!psql_output_active_ || psql_output_vars_.empty() || !variable_stack_)
+            {
+                return;
+            }
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+                for (size_t i = 0; i < psql_output_vars_.size(); ++i)
+                {
+                    core::DataType type = core::DataType::UNKNOWN;
+                    if (i < psql_output_types_.size())
+                    {
+                        type = psql_output_types_[i];
+                    }
+                    current_result_set_->addColumn(psql_output_vars_[i], type);
+                }
+            }
+
+            std::vector<Value> row;
+            row.reserve(psql_output_vars_.size());
+            for (const auto& name : psql_output_vars_)
+            {
+                try
+                {
+                    row.push_back(variable_stack_->getVariable(name));
+                }
+                catch (...)
+                {
+                    row.push_back(Value());
+                }
+            }
+            current_result_set_->addRow(std::move(row));
         }
 
         void Executor::executeRaiseStatement()
@@ -34728,12 +35540,19 @@ namespace scratchbird
             // Read argument count
             uint8_t arg_count = readByte();
 
-            // Evaluate arguments
             std::vector<Value> args;
+            args.reserve(arg_count);
             for (uint8_t i = 0; i < arg_count; ++i)
             {
-                evaluateExpression();
-                args.push_back(pop());
+                uint32_t expr_len = readInt32();
+                size_t expr_start = pc_;
+                size_t expr_end = pc_ + expr_len;
+                pc_ = expr_end;
+
+                size_t saved_pc = pc_;
+                pc_ = expr_start;
+                args.push_back(evaluateExpressionRange(expr_end));
+                pc_ = saved_pc;
             }
 
             // Format message with arguments (simple implementation)
@@ -34795,6 +35614,124 @@ namespace scratchbird
 
             // No handler found - throw C++ exception to propagate up
             throw std::runtime_error("PSQL EXCEPTION: " + formatted_message);
+        }
+
+        void Executor::executeExecuteStatement()
+        {
+            uint32_t sql_expr_len = readInt32();
+            size_t sql_start = pc_;
+            size_t sql_end = pc_ + sql_expr_len;
+            pc_ = sql_end;
+
+            size_t saved_pc = pc_;
+            pc_ = sql_start;
+            Value sql_val = evaluateExpressionRange(sql_end);
+            pc_ = saved_pc;
+
+            std::string sql_text = sql_val.toString();
+
+            uint32_t param_count = readInt32();
+            std::vector<Value> params;
+            params.reserve(param_count);
+            for (uint32_t i = 0; i < param_count; ++i)
+            {
+                uint32_t expr_len = readInt32();
+                size_t expr_start = pc_;
+                size_t expr_end = pc_ + expr_len;
+                pc_ = expr_end;
+
+                size_t saved_param_pc = pc_;
+                pc_ = expr_start;
+                params.push_back(evaluateExpressionRange(expr_end));
+                pc_ = saved_param_pc;
+            }
+
+            uint32_t into_count = readInt32();
+            std::vector<std::string> into_vars;
+            into_vars.reserve(into_count);
+            for (uint32_t i = 0; i < into_count; ++i)
+            {
+                into_vars.push_back(readString());
+            }
+
+            parser::v2::Parser parser(sql_text);
+            auto parse_result = parser.parseStatement();
+            if (!parse_result.success())
+            {
+                std::string err = "EXECUTE STATEMENT parse failed";
+                if (!parse_result.errors().empty())
+                {
+                    err += ": " + parse_result.errors().front().message;
+                }
+                error(err);
+            }
+
+            parser::v2::SemanticAnalyzerV2 analyzer(*db_->catalog_manager(), parser.stringPool());
+            auto sem_result = analyzer.analyze(parse_result.statement());
+            if (!sem_result.success())
+            {
+                std::string err = "EXECUTE STATEMENT semantic analysis failed";
+                if (!sem_result.errors().empty())
+                {
+                    err += ": " + sem_result.errors().front().message;
+                }
+                error(err);
+            }
+
+            parser::v2::BytecodeGeneratorV2 generator(parser.stringPool());
+            auto bytecode_result = generator.generate(sem_result.statement());
+            if (!bytecode_result.success())
+            {
+                std::string err = "EXECUTE STATEMENT bytecode generation failed";
+                if (!bytecode_result.errors().empty())
+                {
+                    err += ": " + bytecode_result.errors().front();
+                }
+                error(err);
+            }
+
+            Executor nested(db_);
+            if (conn_ctx_)
+            {
+                nested.setConnectionContext(conn_ctx_);
+            }
+            if (!params.empty())
+            {
+                std::vector<std::string> param_values;
+                std::vector<bool> param_nulls;
+                param_values.reserve(params.size());
+                param_nulls.reserve(params.size());
+                for (const auto& param : params)
+                {
+                    param_nulls.push_back(param.isNull());
+                    param_values.push_back(param.isNull() ? std::string() : param.toString());
+                }
+                nested.setParameters(param_values, param_nulls);
+            }
+            auto exec_result = nested.execute(bytecode_result.bytecode());
+            if (!exec_result.success())
+            {
+                error("EXECUTE STATEMENT execution failed: " + exec_result.error());
+            }
+
+            if (!into_vars.empty() && variable_stack_)
+            {
+                auto* result_set = exec_result.resultSet();
+                if (result_set && result_set->rowCount() > 0)
+                {
+                    const size_t column_count = result_set->columnCount();
+                    size_t row_index = 0;
+                    for (size_t i = 0; i < into_vars.size(); ++i)
+                    {
+                        Value val = Value();
+                        if (i < column_count)
+                        {
+                            val = result_set->getValue(row_index, i);
+                        }
+                        variable_stack_->setVariable(into_vars[i], val);
+                    }
+                }
+            }
         }
 
         // PSQL Variable Operations
@@ -34928,42 +35865,58 @@ namespace scratchbird
                 error("Cursor '" + cursor_name + "' is already open");
             }
 
-            // Save current execution state
-            size_t saved_pc = pc_;
-            const uint8_t* saved_bytecode = bytecode_;
-            size_t saved_bytecode_size = bytecode_size_;
-
-            try
+            Executor nested(db_);
+            if (conn_ctx_)
             {
-                // Set up cursor query execution context
-                bytecode_ = cursor.query_bytecode.data();
-                bytecode_size_ = cursor.query_bytecode.size();
-                pc_ = 0;
-
-                // Execute the SELECT query
-                // NOTE: This is a simplified implementation. A full implementation would:
-                // 1. Parse and execute the entire SELECT statement
-                // 2. Materialize the results into cursor.result_set
-                // 3. Capture column names and types
-                // For now, we'll just mark the cursor as open with empty results
-                // This allows the basic cursor infrastructure to compile and be tested
-
-                cursor.current_row = 0;
-                cursor.is_open = true;
-
-                // Restore execution state
-                bytecode_ = saved_bytecode;
-                bytecode_size_ = saved_bytecode_size;
-                pc_ = saved_pc;
+                nested.setConnectionContext(conn_ctx_);
             }
-            catch (...)
+            std::vector<uint8_t> query_bytecode = cursor.query_bytecode;
+            if (query_bytecode.empty() ||
+                query_bytecode[0] != static_cast<uint8_t>(Opcode::VERSION))
             {
-                // Restore execution state on error
-                bytecode_ = saved_bytecode;
-                bytecode_size_ = saved_bytecode_size;
-                pc_ = saved_pc;
-                throw;
+                std::vector<uint8_t> wrapped;
+                wrapped.reserve(query_bytecode.size() + 2);
+                wrapped.push_back(static_cast<uint8_t>(Opcode::VERSION));
+                wrapped.push_back(SBLR_VERSION);
+                wrapped.insert(wrapped.end(), query_bytecode.begin(), query_bytecode.end());
+                query_bytecode = std::move(wrapped);
             }
+
+            auto exec_result = nested.execute(query_bytecode);
+            if (!exec_result.success())
+            {
+                error("Cursor '" + cursor_name + "' execution failed: " + exec_result.error());
+            }
+
+            cursor.result_set.clear();
+            cursor.column_names.clear();
+            cursor.column_types.clear();
+
+            if (auto* result_set = exec_result.resultSet())
+            {
+                cursor.column_names.reserve(result_set->columnCount());
+                cursor.column_types.reserve(result_set->columnCount());
+                for (size_t i = 0; i < result_set->columnCount(); ++i)
+                {
+                    cursor.column_names.push_back(result_set->columnName(i));
+                    cursor.column_types.push_back(result_set->columnType(i));
+                }
+
+                cursor.result_set.reserve(result_set->rowCount());
+                for (size_t row = 0; row < result_set->rowCount(); ++row)
+                {
+                    std::vector<Value> values;
+                    values.reserve(result_set->columnCount());
+                    for (size_t col = 0; col < result_set->columnCount(); ++col)
+                    {
+                        values.push_back(result_set->getValue(row, col));
+                    }
+                    cursor.result_set.push_back(std::move(values));
+                }
+            }
+
+            cursor.current_row = 0;
+            cursor.is_open = true;
         }
 
         void Executor::executeCursorFetch()
@@ -35007,6 +35960,7 @@ namespace scratchbird
                         variable_stack_->setVariable(var_name, Value());  // NULL value
                     }
                 }
+                push(Value::makeBoolean(false));
                 return;
             }
 
@@ -35035,6 +35989,7 @@ namespace scratchbird
 
             // Advance to next row
             cursor.current_row++;
+            push(Value::makeBoolean(true));
         }
 
         void Executor::executeCursorClose()
@@ -39738,11 +40693,14 @@ namespace scratchbird
             auto domain_type_to_string = [](core::DomainType type) {
                 switch (type)
                 {
-                    case core::DomainType::BASIC: return "BASIC";
-                    case core::DomainType::RECORD: return "RECORD";
-                    case core::DomainType::ENUM: return "ENUM";
-                    case core::DomainType::SET: return "SET";
-                    case core::DomainType::VARIANT: return "VARIANT";
+                case core::DomainType::BASIC: return "BASIC";
+                case core::DomainType::RECORD: return "RECORD";
+                case core::DomainType::ENUM: return "ENUM";
+                case core::DomainType::SET: return "SET";
+                case core::DomainType::VARIANT: return "VARIANT";
+                case core::DomainType::RANGE: return "RANGE";
+                case core::DomainType::BASE: return "BASE";
+                case core::DomainType::SHELL: return "SHELL";
                     default: return "UNKNOWN";
                 }
             };
@@ -49987,6 +50945,7 @@ namespace scratchbird
             bool or_replace = (flags & 0x01) != 0;
             bool deterministic = (flags & 0x02) != 0;
             bool has_dependencies = (flags & 0x08) != 0;  // Dependency list appended after body
+            bool has_bytecode = (flags & 0x10) != 0;
 
             std::string function_name = readString();
             core::ErrorContext ctx;
@@ -50029,6 +50988,16 @@ namespace scratchbird
             uint32_t return_scale = readInt32();
 
             std::string body = readString();
+            std::vector<uint8_t> bytecode;
+            if (has_bytecode)
+            {
+                uint32_t bytecode_len = readInt32();
+                bytecode.reserve(bytecode_len);
+                for (uint32_t i = 0; i < bytecode_len; ++i)
+                {
+                    bytecode.push_back(readByte());
+                }
+            }
 
             core::CatalogManager::FunctionInfo info;
             info.function_id = core::generateUuidV7();
@@ -50045,6 +51014,10 @@ namespace scratchbird
             info.deterministic = deterministic;
             info.sql_security = decodeSqlSecurity(flags);
             info.source_text = body;
+            if (!bytecode.empty())
+            {
+                info.bytecode = std::move(bytecode);
+            }
             info.created_time = info.modified_time =
                 static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
             if (has_dependencies)
@@ -50068,6 +51041,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool or_replace = (flags & 0x01) != 0;
             bool has_dependencies = (flags & 0x08) != 0;  // Dependency list appended after body
+            bool has_bytecode = (flags & 0x10) != 0;
 
             std::string procedure_name = readString();
             core::ErrorContext ctx;
@@ -50106,6 +51080,16 @@ namespace scratchbird
             }
 
             std::string body = readString();
+            std::vector<uint8_t> bytecode;
+            if (has_bytecode)
+            {
+                uint32_t bytecode_len = readInt32();
+                bytecode.reserve(bytecode_len);
+                for (uint32_t i = 0; i < bytecode_len; ++i)
+                {
+                    bytecode.push_back(readByte());
+                }
+            }
 
             core::CatalogManager::ProcedureInfo info;
             info.procedure_id = core::generateUuidV7();
@@ -50118,6 +51102,10 @@ namespace scratchbird
             info.or_replace = or_replace;
             info.sql_security = decodeProcSqlSecurity(flags);
             info.source_text = body;
+            if (!bytecode.empty())
+            {
+                info.bytecode = std::move(bytecode);
+            }
             info.created_time = info.modified_time =
                 static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
             if (has_dependencies)

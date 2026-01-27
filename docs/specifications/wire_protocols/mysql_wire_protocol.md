@@ -134,6 +134,56 @@ Server OK packet:
 07 00 00 02 00 00 00 02 00 00
 ```
 
+##### Worked Hex Flow (COM_QUERY SELECT 1)
+
+Client → Server: COM_QUERY (`SELECT 1`)
+```
+09 00 00 00  // length=9, seq=0
+03 53 45 4C 45 43 54 20 31  // COM_QUERY + "SELECT 1"
+```
+
+Server → Client: Column count (1)
+```
+01 00 00 01  // length=1, seq=1
+01           // column count
+```
+
+Server → Client: Column definition (single INT column)
+```
+1C 00 00 02  // length=28, seq=2
+03 64 65 66              // catalog = "def"
+04 74 65 73 74           // schema = "test"
+00                       // table = ""
+00                       // org_table = ""
+01 31                    // name = "1"
+01 31                    // org_name = "1"
+0C                       // length of fixed fields
+21 00                    // character set = utf8_general_ci
+01 00 00 00              // column length
+03                       // type = LONG
+00 00                    // flags
+00                       // decimals
+00 00                    // filler
+```
+
+Server → Client: EOF (end of column definitions)
+```
+05 00 00 03  // length=5, seq=3
+FE 00 00 02 00
+```
+
+Server → Client: Row data ("1")
+```
+02 00 00 04  // length=2, seq=4
+01 31        // len=1, value="1"
+```
+
+Server → Client: EOF (end of rows)
+```
+05 00 00 05  // length=5, seq=5
+FE 00 00 02 00
+```
+
 ### 2. Client Authentication
 
 #### Client → Server: Handshake Response (Protocol::HandshakeResponse)

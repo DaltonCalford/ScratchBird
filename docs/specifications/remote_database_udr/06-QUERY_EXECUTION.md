@@ -1,5 +1,9 @@
 # Remote Database UDR - Query Execution Layer
 
+> Reference-only: Canonical UDR and live-migration behavior now lives in
+> `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
+> and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
+
 ## 1. Overview
 
 The Query Execution Layer sits between the ScratchBird query planner and the protocol adapters, handling:

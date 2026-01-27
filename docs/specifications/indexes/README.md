@@ -33,6 +33,9 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 - **[FSTIndex.md](FSTIndex.md)** - Finite State Transducer (prefix/autocomplete)
 - **[SuffixIndex.md](SuffixIndex.md)** - Suffix array/tree for substring search
 
+#### Document & Semi-Structured
+- **[JSONPathIndex.md](JSONPathIndex.md)** - JSON/JSONB path index (Beta)
+
 #### Vector & Similarity Search
 - **[IVFIndex.md](IVFIndex.md)** (2,243 lines) - IVF (Inverted File) index for vector similarity search
 
@@ -69,6 +72,7 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 | **Zone Maps** | Min/max pruning (analytics) | ✅ Specified |
 | **LSM Tree** | Write-optimized storage | ✅ Specified |
 | **Columnstore** | OLAP workloads | ✅ Specified |
+| **JSON Path** | JSON/JSONB path predicates | ✅ Specified (Optional) |
 | **Z-Order (Morton)** | Multi-dimensional range pruning | ✅ Specified (Optional) |
 | **Geohash / S2** | Geo cell indexing | ✅ Specified (Optional) |
 | **Quadtree / Octree** | Spatial partitioning | ✅ Specified (Optional) |
@@ -84,7 +88,7 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 
 **Core (Alpha scope):** BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN, BITMAP, RTREE, HNSW, COLUMNSTORE, LSM
 
-**Optional/Advanced (Beta scope):** IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL
+**Optional/Advanced (Beta scope):** IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL, JSON_PATH
 
 ## Key Concepts
 

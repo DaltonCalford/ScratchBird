@@ -10,8 +10,8 @@ connects using the native Firebird wire protocol without vendor drivers.
 
 ## References
 - ../UDR_CONNECTOR_BASELINE.md
-- ../../remote_database_udr/05-MSSQL_FIREBIRD_ADAPTERS.md
-- ../../remote_database_udr/06-QUERY_EXECUTION.md
+- ../../Alpha Phase 2/11-Remote-Database-UDR-Specification.md
+- ../../Alpha Phase 2/11e-Firebird-Client-Implementation.md
 - ../../wire_protocols/firebird_wire_protocol.md
 
 ## UDR Module
@@ -62,6 +62,64 @@ CALL sys.remote_exec('legacy_fb', 'CREATE TABLE tmp(id int)');
 SELECT * FROM sys.remote_query('legacy_fb', 'SELECT count(*) FROM users');
 CALL sys.remote_call('legacy_fb', 'REBUILD_INDEXES', '{}');
 ```
+
+## Metadata Discovery (Required)
+Use Firebird system tables for schema analysis:
+- RDB$RELATIONS, RDB$RELATION_FIELDS, RDB$FIELDS
+- RDB$INDICES, RDB$INDEX_SEGMENTS
+- RDB$RELATION_CONSTRAINTS, RDB$REF_CONSTRAINTS
+- RDB$PROCEDURES, RDB$PROCEDURE_PARAMETERS
+- RDB$TRIGGERS
+
+### Introspection Examples (Firebird)
+```sql
+-- Tables / views
+SELECT r.RDB$RELATION_NAME, r.RDB$SYSTEM_FLAG, r.RDB$VIEW_BLR
+FROM RDB$RELATIONS r
+WHERE r.RDB$SYSTEM_FLAG = 0;
+
+-- Columns
+SELECT rf.RDB$RELATION_NAME, rf.RDB$FIELD_NAME, f.RDB$FIELD_TYPE,
+       f.RDB$FIELD_SUB_TYPE, f.RDB$FIELD_LENGTH, f.RDB$FIELD_SCALE,
+       f.RDB$FIELD_PRECISION, rf.RDB$NULL_FLAG
+FROM RDB$RELATION_FIELDS rf
+JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE
+WHERE rf.RDB$RELATION_NAME = ?
+ORDER BY rf.RDB$FIELD_POSITION;
+
+-- Constraints (PK/UNIQUE/FOREIGN)
+SELECT rc.RDB$CONSTRAINT_NAME, rc.RDB$CONSTRAINT_TYPE, rc.RDB$RELATION_NAME,
+       rc.RDB$INDEX_NAME, ref.RDB$CONST_NAME_UQ
+FROM RDB$RELATION_CONSTRAINTS rc
+LEFT JOIN RDB$REF_CONSTRAINTS ref
+  ON ref.RDB$CONSTRAINT_NAME = rc.RDB$CONSTRAINT_NAME;
+
+-- Index segments
+SELECT i.RDB$INDEX_NAME, s.RDB$FIELD_NAME, s.RDB$FIELD_POSITION
+FROM RDB$INDICES i
+JOIN RDB$INDEX_SEGMENTS s ON s.RDB$INDEX_NAME = i.RDB$INDEX_NAME
+WHERE i.RDB$RELATION_NAME = ?
+ORDER BY s.RDB$FIELD_POSITION;
+
+-- Procedures
+SELECT p.RDB$PROCEDURE_NAME, p.RDB$PROCEDURE_INPUTS, p.RDB$PROCEDURE_OUTPUTS
+FROM RDB$PROCEDURES p
+WHERE p.RDB$SYSTEM_FLAG = 0;
+
+-- Triggers
+SELECT t.RDB$TRIGGER_NAME, t.RDB$RELATION_NAME, t.RDB$TRIGGER_TYPE, t.RDB$TRIGGER_SEQUENCE
+FROM RDB$TRIGGERS t
+WHERE t.RDB$SYSTEM_FLAG = 0;
+
+-- Sequences (generators)
+SELECT g.RDB$GENERATOR_NAME, g.RDB$SYSTEM_FLAG
+FROM RDB$GENERATORS g
+WHERE g.RDB$SYSTEM_FLAG = 0;
+```
+
+## Schema Mounting
+Firebird has no schema layer. Imported objects are mounted under a single
+schema (default `public`) within `legacy_<server>` (or `mount_root` override).
 
 ## PSQL Considerations
 - Firebird PSQL syntax is not identical to ScratchBird PSQL.

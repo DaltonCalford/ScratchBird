@@ -209,6 +209,8 @@ namespace scratchbird::core
         constexpr uint8_t DOMAIN_CONSTRAINTS_VERSION = 2;
         constexpr uint8_t DOMAIN_FIELDS_VERSION = 2;
         constexpr uint8_t DOMAIN_ENUM_VALUES_VERSION = 1;
+        constexpr uint8_t DOMAIN_RANGE_VERSION = 1;
+        constexpr uint8_t DOMAIN_BASE_VERSION = 1;
 
         void appendUint8(std::string& out, uint8_t value)
         {
@@ -888,6 +890,290 @@ namespace scratchbird::core
                 field.default_value = std::move(default_value);
                 field.domain_id = domain_id;
                 fields_out.push_back(std::move(field));
+            }
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainRangeInfo(const RangeTypeInfo& info)
+        {
+            std::string out;
+            appendUint8(out, DOMAIN_RANGE_VERSION);
+            appendUint8(out, 1);
+            appendTypeRef(out, info.subtype);
+
+            appendUint8(out, info.subtype_collation.empty() ? 0 : 1);
+            if (!info.subtype_collation.empty())
+            {
+                appendString(out, info.subtype_collation);
+            }
+
+            appendUint8(out, info.subtype_opclass.empty() ? 0 : 1);
+            if (!info.subtype_opclass.empty())
+            {
+                appendString(out, info.subtype_opclass);
+            }
+
+            appendUint8(out, info.canonical_function.empty() ? 0 : 1);
+            if (!info.canonical_function.empty())
+            {
+                appendString(out, info.canonical_function);
+            }
+
+            appendUint8(out, info.subtype_diff_function.empty() ? 0 : 1);
+            if (!info.subtype_diff_function.empty())
+            {
+                appendString(out, info.subtype_diff_function);
+            }
+
+            appendUint8(out, info.multirange ? 1 : 0);
+            return out;
+        }
+
+        Status deserializeDomainRangeInfo(const std::string& blob,
+                                          RangeTypeInfo& info_out,
+                                          ErrorContext* ctx)
+        {
+            info_out = RangeTypeInfo{};
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            if (!readUint8(blob, offset, version) || version != DOMAIN_RANGE_VERSION)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain range payload");
+                return Status::DATA_CORRUPTED;
+            }
+
+            uint8_t has_subtype = 0;
+            if (!readUint8(blob, offset, has_subtype))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain range payload");
+                return Status::DATA_CORRUPTED;
+            }
+            if (has_subtype)
+            {
+                if (!readTypeRef(blob, offset, info_out.subtype))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain range payload");
+                    return Status::DATA_CORRUPTED;
+                }
+            }
+
+            auto read_optional_string = [&](std::string& out) -> Status {
+                uint8_t has_value = 0;
+                if (!readUint8(blob, offset, has_value))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain range payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (has_value)
+                {
+                    if (!readString(blob, offset, out))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain range payload");
+                        return Status::DATA_CORRUPTED;
+                    }
+                }
+                return Status::OK;
+            };
+
+            Status status = read_optional_string(info_out.subtype_collation);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.subtype_opclass);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.canonical_function);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.subtype_diff_function);
+            if (status != Status::OK) return status;
+
+            uint8_t multirange = 0;
+            if (!readUint8(blob, offset, multirange))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain range payload");
+                return Status::DATA_CORRUPTED;
+            }
+            info_out.multirange = multirange != 0;
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainBaseInfo(const BaseTypeInfo& info)
+        {
+            std::string out;
+            appendUint8(out, DOMAIN_BASE_VERSION);
+            appendUint8(out, 1);
+            appendTypeRef(out, info.storage);
+
+            appendString(out, info.input_function);
+            appendString(out, info.output_function);
+
+            appendUint8(out, info.receive_function.empty() ? 0 : 1);
+            if (!info.receive_function.empty())
+            {
+                appendString(out, info.receive_function);
+            }
+
+            appendUint8(out, info.send_function.empty() ? 0 : 1);
+            if (!info.send_function.empty())
+            {
+                appendString(out, info.send_function);
+            }
+
+            appendUint8(out, info.typmod_in_function.empty() ? 0 : 1);
+            if (!info.typmod_in_function.empty())
+            {
+                appendString(out, info.typmod_in_function);
+            }
+
+            appendUint8(out, info.typmod_out_function.empty() ? 0 : 1);
+            if (!info.typmod_out_function.empty())
+            {
+                appendString(out, info.typmod_out_function);
+            }
+
+            appendUint8(out, info.analyze_function.empty() ? 0 : 1);
+            if (!info.analyze_function.empty())
+            {
+                appendString(out, info.analyze_function);
+            }
+
+            appendUint8(out, info.alignment.empty() ? 0 : 1);
+            if (!info.alignment.empty())
+            {
+                appendString(out, info.alignment);
+            }
+
+            appendUint8(out, info.storage_mode.empty() ? 0 : 1);
+            if (!info.storage_mode.empty())
+            {
+                appendString(out, info.storage_mode);
+            }
+
+            appendUint8(out, info.category == '\0' ? 0 : 1);
+            if (info.category != '\0')
+            {
+                appendUint8(out, static_cast<uint8_t>(info.category));
+            }
+
+            appendUint8(out, info.has_preferred ? 1 : 0);
+            if (info.has_preferred)
+            {
+                appendUint8(out, info.preferred ? 1 : 0);
+            }
+
+            return out;
+        }
+
+        Status deserializeDomainBaseInfo(const std::string& blob,
+                                         BaseTypeInfo& info_out,
+                                         ErrorContext* ctx)
+        {
+            info_out = BaseTypeInfo{};
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            if (!readUint8(blob, offset, version) || version != DOMAIN_BASE_VERSION)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                return Status::DATA_CORRUPTED;
+            }
+
+            uint8_t has_storage = 0;
+            if (!readUint8(blob, offset, has_storage))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                return Status::DATA_CORRUPTED;
+            }
+            if (has_storage)
+            {
+                if (!readTypeRef(blob, offset, info_out.storage))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                    return Status::DATA_CORRUPTED;
+                }
+            }
+
+            if (!readString(blob, offset, info_out.input_function) ||
+                !readString(blob, offset, info_out.output_function))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                return Status::DATA_CORRUPTED;
+            }
+
+            auto read_optional_string = [&](std::string& out) -> Status {
+                uint8_t has_value = 0;
+                if (!readUint8(blob, offset, has_value))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (has_value)
+                {
+                    if (!readString(blob, offset, out))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                        return Status::DATA_CORRUPTED;
+                    }
+                }
+                return Status::OK;
+            };
+
+            Status status = read_optional_string(info_out.receive_function);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.send_function);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.typmod_in_function);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.typmod_out_function);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.analyze_function);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.alignment);
+            if (status != Status::OK) return status;
+            status = read_optional_string(info_out.storage_mode);
+            if (status != Status::OK) return status;
+
+            uint8_t has_category = 0;
+            if (!readUint8(blob, offset, has_category))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                return Status::DATA_CORRUPTED;
+            }
+            if (has_category)
+            {
+                uint8_t category = 0;
+                if (!readUint8(blob, offset, category))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                info_out.category = static_cast<char>(category);
+            }
+
+            uint8_t has_preferred = 0;
+            if (!readUint8(blob, offset, has_preferred))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                return Status::DATA_CORRUPTED;
+            }
+            if (has_preferred)
+            {
+                uint8_t preferred = 0;
+                if (!readUint8(blob, offset, preferred))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain base payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                info_out.preferred = preferred != 0;
+                info_out.has_preferred = true;
             }
 
             return Status::OK;
@@ -3015,6 +3301,380 @@ namespace scratchbird::core
         return createVariantDomain(schema_id, domain_name, refs, options, domain_id, ctx);
     }
 
+    // ====================
+    // Phase 6b: RANGE/BASE/SHELL Types
+    // ====================
+
+    auto DomainManager::createRangeDomain(const ID& schema_id,
+                                         const std::string& domain_name,
+                                         const RangeTypeInfo& range_info,
+                                         const DomainCreateOptions& options,
+                                         ID& domain_id,
+                                         ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (range_info.subtype.type == DataType::UNKNOWN && range_info.subtype.domain_id == ID{})
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "RANGE subtype is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        domain_id = generateUuidV7();
+
+        DomainInfo info;
+        info.domain_id = domain_id;
+        info.schema_id = schema_id;
+        info.domain_name = domain_name;
+        info.domain_type = DomainType::RANGE;
+        info.base_type = range_info.subtype.type;
+        info.range_info = range_info;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
+        info.created_time = std::time(nullptr);
+        info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
+
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write RANGE domain record");
+            return status;
+        }
+
+        domain_cache_[domain_id] = info;
+        domain_count_++;
+
+        LOG_INFO(CATALOG, "Created RANGE domain '%s'", domain_name.c_str());
+        return Status::OK;
+    }
+
+    auto DomainManager::createBaseDomain(const ID& schema_id,
+                                        const std::string& domain_name,
+                                        const BaseTypeInfo& base_info,
+                                        const DomainCreateOptions& options,
+                                        ID& domain_id,
+                                        ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (base_info.input_function.empty() || base_info.output_function.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BASE type requires INPUT and OUTPUT functions");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        domain_id = generateUuidV7();
+
+        DomainInfo info;
+        info.domain_id = domain_id;
+        info.schema_id = schema_id;
+        info.domain_name = domain_name;
+        info.domain_type = DomainType::BASE;
+        info.base_type = DataType::UNKNOWN;
+        info.base_info = base_info;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
+        info.created_time = std::time(nullptr);
+        info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
+
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write BASE domain record");
+            return status;
+        }
+
+        domain_cache_[domain_id] = info;
+        domain_count_++;
+
+        LOG_INFO(CATALOG, "Created BASE domain '%s'", domain_name.c_str());
+        return Status::OK;
+    }
+
+    auto DomainManager::createShellDomain(const ID& schema_id,
+                                         const std::string& domain_name,
+                                         const DomainCreateOptions& options,
+                                         ID& domain_id,
+                                         ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        domain_id = generateUuidV7();
+
+        DomainInfo info;
+        info.domain_id = domain_id;
+        info.schema_id = schema_id;
+        info.domain_name = domain_name;
+        info.domain_type = DomainType::SHELL;
+        info.base_type = DataType::UNKNOWN;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
+        info.shell_finalized = false;
+        info.created_time = std::time(nullptr);
+        info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
+
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write SHELL domain record");
+            return status;
+        }
+
+        domain_cache_[domain_id] = info;
+        domain_count_++;
+
+        LOG_INFO(CATALOG, "Created SHELL domain '%s'", domain_name.c_str());
+        return Status::OK;
+    }
+
+    auto DomainManager::addEnumValue(const ID& domain_id,
+                                    const std::string& label,
+                                    const std::optional<std::string>& before_label,
+                                    const std::optional<std::string>& after_label,
+                                    ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        auto& info = it->second;
+        if (info.domain_type != DomainType::ENUM)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not an ENUM type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        for (const auto& value : info.enum_values)
+        {
+            if (value.label == label)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ENUM label already exists");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        std::vector<EnumValue> ordered = info.enum_values;
+        auto insert_at = ordered.end();
+        if (before_label.has_value())
+        {
+            insert_at = std::find_if(ordered.begin(), ordered.end(),
+                                     [&](const EnumValue& v) { return v.label == *before_label; });
+            if (insert_at == ordered.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "BEFORE label not found");
+                return Status::NOT_FOUND;
+            }
+        }
+        else if (after_label.has_value())
+        {
+            insert_at = std::find_if(ordered.begin(), ordered.end(),
+                                     [&](const EnumValue& v) { return v.label == *after_label; });
+            if (insert_at == ordered.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "AFTER label not found");
+                return Status::NOT_FOUND;
+            }
+            ++insert_at;
+        }
+
+        EnumValue new_value(label, 0);
+        ordered.insert(insert_at, new_value);
+
+        for (size_t i = 0; i < ordered.size(); ++i)
+        {
+            ordered[i].position = static_cast<int32_t>(i + 1);
+        }
+
+        info.enum_values = std::move(ordered);
+        info.last_modified_time = std::time(nullptr);
+
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update ENUM domain");
+            return status;
+        }
+
+        return Status::OK;
+    }
+
+    auto DomainManager::renameEnumValue(const ID& domain_id,
+                                       const std::string& old_label,
+                                       const std::string& new_label,
+                                       ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        auto& info = it->second;
+        if (info.domain_type != DomainType::ENUM)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not an ENUM type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        bool found = false;
+        for (auto& value : info.enum_values)
+        {
+            if (value.label == old_label)
+            {
+                value.label = new_label;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "ENUM label not found");
+            return Status::NOT_FOUND;
+        }
+
+        info.last_modified_time = std::time(nullptr);
+
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update ENUM domain");
+            return status;
+        }
+
+        return Status::OK;
+    }
+
+    auto DomainManager::updateRangeOptions(const ID& domain_id,
+                                          const RangeTypeInfo& range_info,
+                                          ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        auto& info = it->second;
+        if (info.domain_type != DomainType::RANGE)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not a RANGE type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        info.range_info = range_info;
+        info.last_modified_time = std::time(nullptr);
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update RANGE domain");
+            return status;
+        }
+        return Status::OK;
+    }
+
+    auto DomainManager::updateBaseOptions(const ID& domain_id,
+                                         const BaseTypeInfo& base_info,
+                                         ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        auto& info = it->second;
+        if (info.domain_type != DomainType::BASE)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not a BASE type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        info.base_info = base_info;
+        info.last_modified_time = std::time(nullptr);
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update BASE domain");
+            return status;
+        }
+        return Status::OK;
+    }
+
+    auto DomainManager::finalizeShellType(const ID& domain_id,
+                                         const BaseTypeInfo& base_info,
+                                         ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        auto& info = it->second;
+        if (info.domain_type != DomainType::SHELL)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not a SHELL type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        info.domain_type = DomainType::BASE;
+        info.base_info = base_info;
+        info.shell_finalized = true;
+        info.last_modified_time = std::time(nullptr);
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to finalize SHELL type");
+            return status;
+        }
+        return Status::OK;
+    }
+
     auto DomainManager::extractDataType(const TypedValue& variant_value,
                                        DataType& type,
                                        ErrorContext* ctx) -> Status
@@ -3942,7 +4602,19 @@ namespace scratchbird::core
         }
 
         record->fields_oid = 0;
-        std::string fields_blob = serializeDomainFields(domain.fields);
+        std::string fields_blob;
+        if (domain.domain_type == DomainType::RECORD)
+        {
+            fields_blob = serializeDomainFields(domain.fields);
+        }
+        else if (domain.domain_type == DomainType::RANGE)
+        {
+            fields_blob = serializeDomainRangeInfo(domain.range_info);
+        }
+        else if (domain.domain_type == DomainType::BASE)
+        {
+            fields_blob = serializeDomainBaseInfo(domain.base_info);
+        }
         if (!fields_blob.empty())
         {
             status = catalog->storeStringInToast(fields_blob, xmin, record->fields_oid, ctx);
@@ -3955,7 +4627,11 @@ namespace scratchbird::core
         }
 
         record->enum_values_oid = 0;
-        std::string enum_values_blob = serializeDomainEnumValues(domain.enum_values);
+        std::string enum_values_blob;
+        if (domain.domain_type == DomainType::ENUM)
+        {
+            enum_values_blob = serializeDomainEnumValues(domain.enum_values);
+        }
         if (!enum_values_blob.empty())
         {
             status = catalog->storeStringInToast(enum_values_blob, xmin,
@@ -4133,7 +4809,19 @@ namespace scratchbird::core
                         bp->unpinPage(domains_table_page_, false, ctx);
                         return load_status;
                     }
-                    load_status = deserializeDomainFields(blob, info.fields, ctx);
+
+                    if (info.domain_type == DomainType::RECORD)
+                    {
+                        load_status = deserializeDomainFields(blob, info.fields, ctx);
+                    }
+                    else if (info.domain_type == DomainType::RANGE)
+                    {
+                        load_status = deserializeDomainRangeInfo(blob, info.range_info, ctx);
+                    }
+                    else if (info.domain_type == DomainType::BASE)
+                    {
+                        load_status = deserializeDomainBaseInfo(blob, info.base_info, ctx);
+                    }
                     if (load_status != Status::OK)
                     {
                         bp->unpinPage(domains_table_page_, false, ctx);
@@ -4151,7 +4839,10 @@ namespace scratchbird::core
                         bp->unpinPage(domains_table_page_, false, ctx);
                         return load_status;
                     }
-                    load_status = deserializeDomainEnumValues(blob, info.enum_values, ctx);
+                    if (info.domain_type == DomainType::ENUM)
+                    {
+                        load_status = deserializeDomainEnumValues(blob, info.enum_values, ctx);
+                    }
                     if (load_status != Status::OK)
                     {
                         bp->unpinPage(domains_table_page_, false, ctx);
@@ -4171,6 +4862,14 @@ namespace scratchbird::core
                 if (info.domain_type != DomainType::ENUM)
                 {
                     info.enum_wrap = false;
+                }
+                if (info.domain_type != DomainType::RANGE)
+                {
+                    info.range_info = RangeTypeInfo{};
+                }
+                if (info.domain_type != DomainType::BASE)
+                {
+                    info.base_info = BaseTypeInfo{};
                 }
 
                 domain_cache_[info.domain_id] = info;

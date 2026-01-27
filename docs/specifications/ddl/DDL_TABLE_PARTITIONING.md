@@ -97,11 +97,54 @@ CREATE TABLE customers\_asia PARTITION OF customers
 \-- This insert will be routed to the customers\_europe partition  
 INSERT INTO customers (customer\_id, name, region\_code) VALUES (1, 'ACME Corp', 'FRA');
 
-## **4\. Managing Partitions**
+## **4\. DML Routing and Migration Semantics**
+
+This section defines how INSERT/UPDATE/DELETE behave for partitioned tables.
+
+### **4.1. INSERT Routing**
+
+- Rows are routed by the partition key(s) to a single target partition.
+- If a DEFAULT partition exists, rows that do not match any explicit partition
+  are routed to DEFAULT.
+- If no partition matches and there is no DEFAULT partition, the statement
+  fails with `PARTITION_NOT_FOUND`.
+
+### **4.2. UPDATE Routing (Partition-Key Changes)**
+
+- If the UPDATE does **not** change the partition key, the row stays in the
+  same partition (no migration).
+- If the UPDATE **changes** the partition key, the row **migrates** to the
+  new target partition. The operation is treated as a single atomic change:
+  a delete from the source partition + insert into the target partition.
+- If the new partition key does not map to a valid partition and there is no
+  DEFAULT partition, the statement fails with `PARTITION_NOT_FOUND`.
+- If multiple partitions match (catalog corruption), the statement fails with
+  `PARTITION_AMBIGUOUS`.
+
+### **4.3. DELETE Routing**
+
+- DELETE is applied to the partition that contains each matching row.
+- Partition pruning is applied when predicates include the partition key;
+  otherwise the engine may scan multiple partitions.
+
+### **4.4. DML on Child Partitions**
+
+- Direct DML against a child partition targets that partition only and does
+  not perform routing or migration.
+
+### **4.5. Error Handling**
+
+- `PARTITION_NOT_FOUND`: No valid partition (and no DEFAULT).
+- `PARTITION_AMBIGUOUS`: Multiple partitions match the key.
+- `PARTITION_CONSTRAINT_VIOLATION`: Partition constraint check fails.
+
+---
+
+## **5\. Managing Partitions**
 
 You can add and remove partitions from a partitioned table as your data grows and changes.
 
-### **4.1. Attaching a New Partition (ALTER TABLE ... ATTACH PARTITION)**
+### **5.1. Attaching a New Partition (ALTER TABLE ... ATTACH PARTITION)**
 
 This command adds a new partition to an existing partitioned table. The table being attached must have a structure that matches the parent and a constraint that matches the partition rule.
 
@@ -123,7 +166,7 @@ ALTER TABLE sales
     ATTACH PARTITION sales\_y2024\_q4  
     FOR VALUES FROM ('2024-10-01') TO ('2025-01-01');
 
-### **4.2. Detaching a Partition (ALTER TABLE ... DETACH PARTITION)**
+### **5.2. Detaching a Partition (ALTER TABLE ... DETACH PARTITION)**
 
 This command removes a partition from a partitioned table, converting it into a standalone table. This is a very fast operation as it only involves updating metadata.
 
@@ -140,7 +183,7 @@ ALTER TABLE sales DETACH PARTITION sales\_y2024\_q1;
 \-- The 'sales\_y2024\_q1' table is now a regular, standalone table.  
 \-- You can now move it to archival storage, etc.
 
-## **5\. Dropping Partitions**
+## **6\. Dropping Partitions**
 
 To drop a partition, you simply drop it like a regular table. The command will fail if the table is still attached as a partition. You must DETACH it first before dropping it.
 

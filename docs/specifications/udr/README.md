@@ -11,6 +11,7 @@ User-Defined Resources (UDRs) allow external code to be called from SQL, enablin
 ## Specifications in this Directory
 
 - **[10-UDR-System-Specification.md](10-UDR-System-Specification.md)** - Complete UDR system specification
+- **[UDR_PSQL_EXTENSION_LIBRARY.md](UDR_PSQL_EXTENSION_LIBRARY.md)** - UDR extension packs for scientific/financial PSQL features
 
 ## Key Features
 
@@ -25,12 +26,13 @@ User-Defined Resources (UDRs) allow external code to be called from SQL, enablin
 
 ScratchBird provides built-in UDR connectors:
 
-- **Remote Database UDR** - Connect to PostgreSQL, MySQL, Firebird (MSSQL post-gold)
+- **Remote Database UDR** - Connect to PostgreSQL, MySQL, Firebird, MSSQL (Beta)
 - **Local Files UDR** - Read/write local files
 - **Local Scripts UDR** - Execute local shell scripts
 - **HTTP UDR** - Make HTTP/REST API calls
 
-See [UDR Connectors](../udr_connectors/) and [Remote Database UDR](../remote_database_udr/) for detailed connector specifications.
+See [UDR Connectors](../udr_connectors/) and
+[Remote Database UDR](../Alpha%20Phase%202/11-Remote-Database-UDR-Specification.md) for detailed connector specifications.
 
 ### Example UDR
 
@@ -55,7 +57,7 @@ SELECT my_external_func(price, quantity) FROM orders;
 ## Related Specifications
 
 - [UDR Connectors](../udr_connectors/) - Built-in UDR connector specifications
-- [Remote Database UDR](../remote_database_udr/) - Remote database adapter specifications
+- [Remote Database UDR](../Alpha%20Phase%202/11-Remote-Database-UDR-Specification.md) - Remote database adapter specification
 - [DDL UDR](../ddl/DDL_USER_DEFINED_RESOURCES.md) - CREATE FUNCTION EXTERNAL syntax
 - [Security](../Security%20Design%20Specification/) - UDR security model
 
@@ -63,7 +65,7 @@ SELECT my_external_func(price, quantity) FROM orders;
 
 - **Parent Directory:** [Specifications Index](../README.md)
 - **Related:** [UDR Connectors](../udr_connectors/README.md)
-- **Related:** [Remote Database UDR](../remote_database_udr/README.md)
+- **Related:** [Remote Database UDR](../Alpha%20Phase%202/11-Remote-Database-UDR-Specification.md)
 - **Project Root:** [ScratchBird Home](../../../README.md)
 
 ---

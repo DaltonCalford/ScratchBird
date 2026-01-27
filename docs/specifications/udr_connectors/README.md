@@ -12,6 +12,10 @@ scoped capability set.
 - postgresql_udr: PostgreSQL remote access using the native wire protocol
 - mysql_udr: MySQL/MariaDB remote access using the native wire protocol
 - firebird_udr: Firebird remote access using the native wire protocol
+- mssql_udr: MSSQL remote access using native TDS wire protocol (Beta)
+- scratchbird_udr: ScratchBird remote access using SBWP v1.1 (untrusted)
+- odbc_udr: Embedded ODBC driver manager + bundled drivers (Beta)
+- jdbc_udr: Embedded JDBC runtime + bundled drivers (Beta)
 
 ## Shared Baseline
 
@@ -21,10 +25,10 @@ scoped capability set.
 
 ## References
 
-- ScratchBird/docs/specifications/10-UDR-System-Specification.md
-- ScratchBird/docs/specifications/09_DDL_FOREIGN_DATA.md
-- ScratchBird/docs/specifications/remote_database_udr/* (core logic, pooling,
-  query execution, schema introspection, migration workflows)
+- ScratchBird/docs/specifications/udr/10-UDR-System-Specification.md
+- ScratchBird/docs/specifications/ddl/09_DDL_FOREIGN_DATA.md
+- ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md
 - ScratchBird/docs/specifications/wire_protocols/postgresql_wire_protocol.md
 - ScratchBird/docs/specifications/wire_protocols/mysql_wire_protocol.md
 - ScratchBird/docs/specifications/wire_protocols/firebird_wire_protocol.md
+- ScratchBird/docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md

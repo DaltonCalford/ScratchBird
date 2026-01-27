@@ -56,26 +56,34 @@ namespace
 
     std::vector<uint8_t> buildConstantReturnFunction(const std::string& value)
     {
+        std::vector<uint8_t> expr;
+        appendByte(expr, static_cast<uint8_t>(Opcode::LITERAL_STRING));
+        appendString(expr, value);
+
         std::vector<uint8_t> bytecode;
         appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
         appendByte(bytecode, SBLR_VERSION);
         appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
         appendByte(bytecode, 1);
-        appendByte(bytecode, static_cast<uint8_t>(Opcode::LITERAL_STRING));
-        appendString(bytecode, value);
+        appendInt32(bytecode, static_cast<uint32_t>(expr.size()));
+        bytecode.insert(bytecode.end(), expr.begin(), expr.end());
         appendByte(bytecode, static_cast<uint8_t>(Opcode::END));
         return bytecode;
     }
 
     std::vector<uint8_t> buildIdentityReturnFunction(const std::string& param_name)
     {
+        std::vector<uint8_t> expr;
+        appendExtendedOpcode(expr, ExtendedOpcode::EXT_VAR_LOAD);
+        appendString(expr, param_name);
+
         std::vector<uint8_t> bytecode;
         appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
         appendByte(bytecode, SBLR_VERSION);
         appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
         appendByte(bytecode, 1);
-        appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_VAR_LOAD);
-        appendString(bytecode, param_name);
+        appendInt32(bytecode, static_cast<uint32_t>(expr.size()));
+        bytecode.insert(bytecode.end(), expr.begin(), expr.end());
         appendByte(bytecode, static_cast<uint8_t>(Opcode::END));
         return bytecode;
     }

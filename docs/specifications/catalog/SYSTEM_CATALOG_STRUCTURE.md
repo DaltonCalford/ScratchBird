@@ -149,6 +149,15 @@ struct CatalogRootPage {
     uint32_t extensions_page;
     uint32_t foreign_keys_page;
 
+    // Beta: NoSQL catalog tables
+    uint32_t nosql_collections_page;
+    uint32_t nosql_buckets_page;
+    uint32_t nosql_column_families_page;
+    uint32_t graphs_page;
+    uint32_t graph_vertex_labels_page;
+    uint32_t graph_edge_labels_page;
+    uint32_t graph_properties_page;
+
     // Phase B: Synonyms, FDW, registry, UDR engines/modules
     uint32_t synonyms_page;
     uint32_t foreign_servers_page;

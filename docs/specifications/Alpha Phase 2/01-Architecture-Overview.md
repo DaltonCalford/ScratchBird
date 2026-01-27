@@ -12,11 +12,11 @@ replication/PITR only.
 
 ## Executive Summary
 
-This document describes a distributed, multi-dialect SQL database engine designed for high-performance OLTP and OLAP workloads. The system uses a three-tier architecture with protocol-agnostic wire handlers, supporting PostgreSQL, MySQL, and Firebird client compatibility (MSSQL/TDS is post-gold).
+This document describes a distributed, multi-dialect SQL database engine designed for high-performance OLTP and OLAP workloads. The system uses a three-tier architecture with protocol-agnostic wire handlers, supporting PostgreSQL, MySQL, Firebird, and MSSQL/TDS client compatibility (Beta scope).
 
 ### Key Design Principles
 
-1. **Wire Protocol Compatibility**: Drop-in replacement for PostgreSQL, MySQL, and Firebird (MSSQL/TDS post-gold)
+1. **Wire Protocol Compatibility**: Drop-in replacement for PostgreSQL, MySQL, Firebird, and MSSQL/TDS (Beta scope)
 2. **Multi-Tier Storage**: Separate transaction, ingestion, and analytics engines
 3. **Distributed MVCC**: UUID v7-based versioning with Firebird-style multi-generational architecture
 4. **Clock Synchronization**: Cluster-wide heartbeat for globally ordered timestamps
@@ -36,12 +36,12 @@ This document describes a distributed, multi-dialect SQL database engine designe
 ┌─────────────────────────────────────────────────────────────────┐
 │                    CLIENT APPLICATIONS                          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
-│  │   libpq  │  │  MySQL   │  │  TDS*    │  │ Firebird │       │
-│  │  (PG)    │  │Connector │  │ (MSSQL*) │  │  Client  │       │
+│  │PostgreSQL│  │  MySQL   │  │  MSSQL   │  │ Firebird │       │
+│  │  Client  │  │  Client  │  │  Client  │  │  Client  │       │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
 └───────┼─────────────┼─────────────┼─────────────┼──────────────┘
         │             │             │             │
-    Port 5432     Port 3306     Port 1433*    Port 3050
+    Port 5432     Port 3306     Port 1433     Port 3050
         │             │             │             │
 ┌───────▼─────────────▼─────────────▼─────────────▼──────────────┐
 │              PROTOCOL HANDLER LAYER (Per-Protocol Process)      │
@@ -60,7 +60,7 @@ This document describes a distributed, multi-dialect SQL database engine designe
 │  │  - System catalog virtualization                         │  │
 │  └────────────────────────┬─────────────────────────────────┘  │
 └───────────────────────────┼──────────────────────────────────┘
-* MSSQL/TDS is post-gold and not part of current compatibility.
+* MSSQL/TDS is in Beta scope and part of compatibility targets.
                             │ Unix Domain Socket
                             │ (MessagePack/Protobuf)
 ┌───────────────────────────▼──────────────────────────────────┐
@@ -354,7 +354,7 @@ OLAP Shard Storage:
 
 ## Protocol Handler Architecture
 
-Each protocol (PostgreSQL, MySQL, Firebird; MSSQL post-gold) runs in a separate process with its own parser plugin.
+Each protocol (PostgreSQL, MySQL, Firebird, MSSQL/TDS) runs in a separate process with its own parser plugin.
 
 ### Protocol Handler Process
 
@@ -680,7 +680,7 @@ OLAP:
 ### Core Components
 
 - **Programming Language**: C/C++ (engine core), Rust (optional parsers)
-- **Wire Protocols**: Native implementations (PostgreSQL, MySQL, Firebird; TDS post-gold)
+- **Wire Protocols**: Native implementations (PostgreSQL, MySQL, Firebird, MSSQL/TDS)
 - **Serialization**: MessagePack or Protocol Buffers
 - **Message Broker**: Kafka or NATS Streaming
 - **Clock Sync**: Chrony (software), GPS/PTP (hardware)
@@ -688,7 +688,7 @@ OLAP:
 
 ### Dependencies
 
-- **libpq** (PostgreSQL protocol reference)
+- **Protocol references** (PostgreSQL, MySQL, Firebird, MSSQL/TDS)
 - **MessagePack** or **Protobuf** (serialization)
 - **Kafka** or **NATS** (message broker)
 - **Chrony** (NTP client)

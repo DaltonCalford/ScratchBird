@@ -209,6 +209,63 @@ char* calculate_md5_password(const char* password, const char* username, const c
 }
 ```
 
+#### Worked Hex Flow (Startup + MD5 + Simple Query)
+
+Example flow for `user=alice`, `database=testdb`, MD5 auth, and `SELECT 1`:
+
+StartupMessage (no type byte):
+```
+00 00 00 4F           // Length: 79
+00 03 00 00           // Protocol: 3.0
+75 73 65 72 00        // "user\0"
+61 6C 69 63 65 00     // "alice\0"
+64 61 74 61 62 61 73 65 00  // "database\0"
+74 65 73 74 64 62 00  // "testdb\0"
+61 70 70 6C 69 63 61 74 69 6F 6E 5F 6E 61 6D 65 00  // "application_name\0"
+70 73 71 6C 00        // "psql\0"
+63 6C 69 65 6E 74 5F 65 6E 63 6F 64 69 6E 67 00  // "client_encoding\0"
+55 54 46 38 00        // "UTF8\0"
+00                    // Terminator
+```
+
+AuthenticationMD5 request:
+```
+52 00 00 00 0C 00 00 00 05 01 02 03 04
+```
+
+PasswordMessage (`md5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0`):
+```
+70 00 00 00 28
+6D 64 35 61 61 61 61 61 61 61 61 61 61 61 61 61 61
+61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61
+00
+```
+
+AuthenticationOk + ParameterStatus + BackendKeyData + ReadyForQuery:
+```
+52 00 00 00 08 00 00 00 00                        // Auth OK
+53 00 00 00 19 63 6C 69 65 6E 74 5F 65 6E 63 6F 64 69 6E 67 00 55 54 46 38 00
+4B 00 00 00 0C 00 00 04 D2 01 02 03 04            // BackendKeyData
+5A 00 00 00 05 49                                  // ReadyForQuery (idle)
+```
+
+Simple query (`SELECT 1`) and result:
+```
+51 00 00 00 0D 53 45 4C 45 43 54 20 31 00          // Query
+54 00 00 00 20                                        // RowDescription
+00 01                                                 // Field count = 1
+63 6F 6C 75 6D 6E 31 00                               // "column1\0"
+00 00 00 00                                           // Table OID
+00 00                                                 // Column attr
+00 00 00 17                                           // Type OID (int4)
+00 04                                                 // Type size
+FF FF FF FF                                           // Type modifier
+00 00                                                 // Format code
+44 00 00 00 0B 00 01 00 00 00 01 31                // DataRow ("1")
+43 00 00 00 0D 53 45 4C 45 43 54 20 31 00          // CommandComplete
+5A 00 00 00 05 49                                  // ReadyForQuery
+```
+
 #### SCRAM-SHA-256 Authentication
 
 ```c
@@ -241,6 +298,49 @@ ScratchBird SASL support in Alpha:
 - SCRAM-SHA-256-PLUS (channel binding) is not supported and is rejected.
 - SCRAM client-first messages with channel binding (GS2 "p=") are rejected.
 - If the client selects any other SASL mechanism, the server returns a FATAL error (SQLSTATE 0A000).
+
+#### Worked Hex Flow (SCRAM-SHA-256)
+
+Example flow for `user=alice`, `database=testdb`:
+
+AuthenticationSASL (server → client):
+```
+52 00 00 00 17 00 00 00 0A 53 43 52 41 4D 2D 53 48 41 2D 32 35 36 00 00
+```
+
+SASLInitialResponse (client → server), client-first `n,,n=alice,r=abcdef`:
+```
+70 00 00 00 29
+53 43 52 41 4D 2D 53 48 41 2D 32 35 36 00
+00 00 00 13
+6E 2C 2C 6E 3D 61 6C 69 63 65 2C 72 3D 61 62 63 64 65 66
+```
+
+AuthenticationSASLContinue (server → client), server-first:
+`r=abcdefXYZ,s=QSXCR+Q6sek8bf92,i=4096`
+```
+52 00 00 00 2D 00 00 00 0B
+72 3D 61 62 63 64 65 66 58 59 5A 2C 73 3D 51 53 58 43 52 2B 51 36 73 65 6B 38 62 66 39 32 2C 69 3D 34 30 39 36
+```
+
+SASLResponse (client → server), client-final:
+`c=biws,r=abcdefXYZ,p=xyz`
+```
+70 00 00 00 1C
+63 3D 62 69 77 73 2C 72 3D 61 62 63 64 65 66 58 59 5A 2C 70 3D 78 79 7A
+```
+
+AuthenticationSASLFinal (server → client), server-final:
+`v=abc123`
+```
+52 00 00 00 10 00 00 00 0C 76 3D 61 62 63 31 32 33
+```
+
+AuthenticationOk + ReadyForQuery:
+```
+52 00 00 00 08 00 00 00 00
+5A 00 00 00 05 49
+```
 
 ## Message Types
 
@@ -558,6 +658,71 @@ Client                          Server
   |---------- Sync ('S') -------->|
   |<---- ReadyForQuery ('Z') ------|
   |                               |
+```
+
+### Worked Hex Flow (Parse/Bind/Describe/Execute)
+
+Example: `SELECT $1::int4 AS v` with parameter `42` (text format).
+
+Client → Server (Parse, statement name `s1`):
+```
+50 00 00 00 22
+73 31 00
+53 45 4C 45 43 54 20 24 31 3A 3A 69 6E 74 34 20 41 53 20 76 00
+00 01
+00 00 00 17
+```
+
+Server → Client:
+```
+31 00 00 00 04  // ParseComplete
+```
+
+Client → Server (Bind, unnamed portal):
+```
+42 00 00 00 14
+00
+73 31 00
+00 00
+00 01
+00 00 00 02 34 32
+00 00
+```
+
+Server → Client:
+```
+32 00 00 00 04  // BindComplete
+```
+
+Client → Server (Describe portal):
+```
+44 00 00 00 06 50 00
+```
+
+Server → Client (RowDescription, one int4 column named "v"):
+```
+54 00 00 00 1A
+00 01
+76 00
+00 00 00 00
+00 00
+00 00 00 17
+00 04
+FF FF FF FF
+00 00
+```
+
+Client → Server (Execute + Sync):
+```
+45 00 00 00 09 00 00 00 00 00
+53 00 00 00 04
+```
+
+Server → Client (Row + Complete + Ready):
+```
+44 00 00 00 0C 00 01 00 00 00 02 34 32
+43 00 00 00 0D 53 45 4C 45 43 54 20 31 00
+5A 00 00 00 05 49
 ```
 
 ### Extended Query Edge Cases (ScratchBird Alpha)

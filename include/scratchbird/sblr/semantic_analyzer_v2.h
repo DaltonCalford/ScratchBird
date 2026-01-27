@@ -24,6 +24,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include <vector>
 #include <string>
+#include <string_view>
 #include <memory>
 #include <unordered_map>
 #include <optional>
@@ -187,6 +188,11 @@ public:
      */
     ResolvedASTArena& arena() { return arena_; }
 
+    /**
+     * Seed PSQL variable scope (procedure/function params) for nested PSQL analysis.
+     */
+    void seedPsqlVariable(std::string_view name, const ResolvedType& type);
+
 private:
     CatalogManager& catalog_;
     StringPool& string_pool_;
@@ -212,6 +218,14 @@ private:
     bool in_aggregate_ = false;
     bool has_aggregates_ = false;
     int subquery_depth_ = 0;
+    bool in_psql_ = false;
+
+    struct PsqlVarEntry {
+        StringPool::StringId name = StringPool::INVALID_ID;
+        ResolvedType type;
+    };
+
+    std::vector<std::unordered_map<std::string, PsqlVarEntry>> psql_var_scopes_;
 
     // ==========================================================================
     // Error Handling
@@ -257,6 +271,15 @@ private:
         StringPool::StringId table_alias,
         StringPool::StringId column_name,
         SourceSpan span);
+
+    // ==========================================================================
+    // PSQL Variable Scope
+    // ==========================================================================
+
+    void pushPsqlScope();
+    void popPsqlScope();
+    void declarePsqlVariable(StringPool::StringId name, const ResolvedType& type);
+    const PsqlVarEntry* findPsqlVariable(StringPool::StringId name) const;
 
     /**
      * Resolve a function name
@@ -313,14 +336,19 @@ private:
     ResolvedStatement* analyzeCreateFunction(CreateFunctionStmt* stmt);
     ResolvedStatement* analyzeCreateProcedure(CreateProcedureStmt* stmt);
     ResolvedStatement* analyzeCreateTrigger(CreateTriggerStmt* stmt);
+    ResolvedStatement* analyzeExecuteBlock(ExecuteBlockStmt* stmt);
+    ResolvedStatement* analyzeExecuteProcedure(ExecuteProcedureStmt* stmt);
+    ResolvedStatement* analyzeExecuteStatement(ExecuteStatementStmt* stmt);
     ResolvedStatement* analyzeCreatePackage(CreatePackageStmt* stmt);
     ResolvedStatement* analyzeCreateUser(CreateUserStmt* stmt);
     ResolvedStatement* analyzeCreateRole(CreateRoleStmt* stmt);
     ResolvedStatement* analyzeCreateJob(CreateJobStmt* stmt);
     ResolvedStatement* analyzeCreateException(CreateExceptionStmt* stmt);
+    ResolvedStatement* analyzeCreateType(CreateTypeStmt* stmt);
     ResolvedStatement* analyzeCreateDomain(CreateDomainStmt* stmt);
     ResolvedStatement* analyzeDropDatabase(DropDatabaseStmt* stmt);
     ResolvedStatement* analyzeAlterDatabase(AlterDatabaseStmt* stmt);
+    ResolvedStatement* analyzeAlterType(AlterTypeStmt* stmt);
     ResolvedStatement* analyzeAlterDomain(AlterDomainStmt* stmt);
     ResolvedStatement* analyzeDropDomain(DropDomainStmt* stmt);
     ResolvedStatement* analyzeAlterTable(AlterTableStmt* stmt);
@@ -338,6 +366,7 @@ private:
     ResolvedStatement* analyzeDropRole(DropRoleStmt* stmt);
     ResolvedStatement* analyzeDropJob(DropJobStmt* stmt);
     ResolvedStatement* analyzeDropException(DropExceptionStmt* stmt);
+    ResolvedStatement* analyzeDropType(DropTypeStmt* stmt);
     ResolvedStatement* analyzeAlterJob(AlterJobStmt* stmt);
     ResolvedStatement* analyzeExecuteJob(ExecuteJobStmt* stmt);
     ResolvedStatement* analyzeCancelJobRun(CancelJobRunStmt* stmt);
@@ -348,6 +377,7 @@ private:
     ResolvedStatement* analyzeInsert(InsertStmt* stmt);
     ResolvedStatement* analyzeUpdate(UpdateStmt* stmt);
     ResolvedStatement* analyzeDelete(DeleteStmt* stmt);
+    ResolvedStatement* analyzeMerge(MergeStmt* stmt);
     ResolvedStatement* analyzeCopy(CopyStmt* stmt);
 
     // Transaction/Session
@@ -377,6 +407,11 @@ private:
 
     ResolvedExpression* analyzeLiteral(LiteralExpr* expr);
     ResolvedExpression* analyzeColumnRef(ColumnRefExpr* expr);
+
+    // PSQL helpers
+    ResolvedPsqlStatement* analyzePsqlStatement(Statement* stmt);
+    ResolvedPsqlBlock* analyzePsqlBlock(CompoundStmt* stmt,
+                                        const std::vector<VariableDecl>& variables);
     ResolvedExpression* analyzeBinaryExpr(BinaryExpr* expr);
     ResolvedExpression* analyzeUnaryExpr(UnaryExpr* expr);
     ResolvedExpression* analyzeFunctionCall(FunctionCallExpr* expr);

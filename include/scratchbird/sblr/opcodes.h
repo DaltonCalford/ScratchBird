@@ -1227,6 +1227,8 @@ namespace scratchbird
             EXT_CREATE_TYPE = 0x5B,  // CREATE TYPE type_name AS {ENUM|RANGE|composite}
             EXT_CREATE_DOMAIN = 0x5C,  // CREATE DOMAIN domain_name AS type [constraints]
             EXT_CALL = 0x5D,  // CALL procedure_name(args...) - invoke stored procedure
+            EXT_EXECUTE_STMT = 0x0115,  // EXECUTE STATEMENT (dynamic SQL)
+            EXT_SUSPEND = 0x0116,  // SUSPEND (yield row in selectable procedure)
             EXT_SHOW_TABLE = 0x5E,  // SHOW TABLE object_name - detailed table info
             EXT_SHOW_INDEX = 0x5F,  // SHOW INDEX object_name - detailed index info
             EXT_SHOW_TRIGGER = 0x60,  // SHOW TRIGGER object_name - trigger definition

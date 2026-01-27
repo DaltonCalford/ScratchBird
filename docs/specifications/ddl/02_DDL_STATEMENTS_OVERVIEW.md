@@ -42,6 +42,7 @@ These objects allow for the creation of custom data types and powerful, reusable
 
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
+| **TYPE** | A reusable user-defined type (enum, record, range, base) that can be referenced by columns, domains, and functions. | [DDL\_TYPES.md](DDL_TYPES.md) |
 | **DOMAIN** | A user-defined data type with optional constraints (NOT NULL, CHECK). ScratchBird extends this concept to include complex records, enums, sets, and embedded security rules. | [DDL\_DOMAINS\_COMPREHENSIVE.md](../types/DDL_DOMAINS_COMPREHENSIVE.md) |
 
 ### **2.4. Programmability Objects**
@@ -71,4 +72,3 @@ These objects allow for extending the database's native capabilities with extern
 | Object | Description | Detailed Specification |
 | :---- | :---- | :---- |
 | **USER-DEFINED RESOURCE** | A mechanism for creating functions in external languages (e.g., C, Python). Consists of a LIBRARY object pointing to a shared library file and FUNCTION definitions bound to it. | [DDL\_USER\_DEFINED\_RESOURCES.md](DDL_USER_DEFINED_RESOURCES.md) |
-

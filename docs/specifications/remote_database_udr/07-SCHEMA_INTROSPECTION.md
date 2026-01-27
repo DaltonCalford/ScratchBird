@@ -1,5 +1,9 @@
 # Remote Database UDR - Schema Introspection
 
+> Reference-only: Canonical UDR and live-migration behavior now lives in
+> `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
+> and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
+
 ## 1. Overview
 
 Schema introspection enables automatic discovery and import of remote database schemas, supporting:

@@ -4,7 +4,8 @@
 
 This directory contains detailed byte-level wire protocol specifications for major database systems. These documents provide the low-level protocol details necessary to implement database drivers from scratch.
 
-**Scope Note:** TDS/SQL Server support is post-gold; this spec is retained for future compatibility work.
+**Scope Note:** TDS/SQL Server is Beta scope for UDR connectors only; there is no
+listener/compatibility surface in Alpha.
 
 ## Available Protocol Specifications
 
@@ -41,7 +42,7 @@ This directory contains detailed byte-level wire protocol specifications for maj
   - Event notifications
   - Wire compression
 
-### 4. [TDS Wire Protocol](tds_wire_protocol.md) (SQL Server, post-gold)
+### 4. [TDS Wire Protocol](tds_wire_protocol.md) (SQL Server, Beta UDR)
 - **Protocol Version**: TDS 7.0-7.4 (SQL Server 2000-2019)
 - **Default Port**: 1433
 - **Key Features**:
@@ -54,7 +55,7 @@ This directory contains detailed byte-level wire protocol specifications for maj
 
 ## Protocol Comparison
 
-| Feature | MySQL | PostgreSQL | Firebird | TDS/SQL Server (post-gold) |
+| Feature | MySQL | PostgreSQL | Firebird | TDS/SQL Server (Beta UDR) |
 |---------|-------|------------|----------|----------------|
 | **Packet Size** | Max 16MB | No fixed limit | No fixed limit | Max 64KB |
 | **Byte Order** | Little-endian | Big-endian | Big-endian (XDR) | Mixed |

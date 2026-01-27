@@ -41,6 +41,34 @@ uint8_t mapWaitMode(TransactionWaitMode mode) {
     return mode == TransactionWaitMode::WAIT ? 1 : 0;
 }
 
+std::string baseTypeAlignmentToString(BaseTypeAlignment alignment) {
+    switch (alignment) {
+        case BaseTypeAlignment::CHAR:
+            return "CHAR";
+        case BaseTypeAlignment::SHORT:
+            return "SHORT";
+        case BaseTypeAlignment::INT:
+            return "INT";
+        case BaseTypeAlignment::DOUBLE:
+            return "DOUBLE";
+    }
+    return "INT";
+}
+
+std::string baseTypeStorageModeToString(BaseTypeStorageMode mode) {
+    switch (mode) {
+        case BaseTypeStorageMode::PLAIN:
+            return "PLAIN";
+        case BaseTypeStorageMode::EXTERNAL:
+            return "EXTERNAL";
+        case BaseTypeStorageMode::EXTENDED:
+            return "EXTENDED";
+        case BaseTypeStorageMode::MAIN:
+            return "MAIN";
+    }
+    return "PLAIN";
+}
+
 using ObjectType = scratchbird::core::CatalogManager::ObjectType;
 
 bool isZeroUuid(const scratchbird::core::ID& id) {
@@ -513,6 +541,27 @@ BytecodeResultV2 BytecodeGeneratorV2::generate(ResolvedStatement* stmt) {
     return result;
 }
 
+BytecodeResultV2 BytecodeGeneratorV2::generatePsql(ResolvedPsqlBlock* block) {
+    BytecodeResultV2 result;
+    current_result_ = &result;
+
+    if (!block) {
+        result.addError("Cannot generate bytecode for null PSQL block");
+        current_result_ = nullptr;
+        return result;
+    }
+
+    result.writeOpcode(sblr::Opcode::VERSION);
+    result.writeByte(sblr::SBLR_VERSION);
+
+    generatePsqlBlock(block);
+
+    result.writeOpcode(sblr::Opcode::END);
+
+    current_result_ = nullptr;
+    return result;
+}
+
 // =============================================================================
 // Statement Generation
 // =============================================================================
@@ -529,6 +578,14 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateUpdate(update);
     } else if (auto* del = dynamic_cast<ResolvedDeleteStmt*>(stmt)) {
         generateDelete(del);
+    } else if (auto* merge = dynamic_cast<ResolvedMergeStmt*>(stmt)) {
+        generateMerge(merge);
+    } else if (auto* exec_block = dynamic_cast<ResolvedExecuteBlockStmt*>(stmt)) {
+        generateExecuteBlock(exec_block);
+    } else if (auto* exec_proc = dynamic_cast<ResolvedExecuteProcedureStmt*>(stmt)) {
+        generateExecuteProcedure(exec_proc);
+    } else if (auto* exec_stmt = dynamic_cast<ResolvedExecuteStatementStmt*>(stmt)) {
+        generateExecuteStatement(exec_stmt);
     } else if (auto* copy = dynamic_cast<ResolvedCopyStmt*>(stmt)) {
         generateCopy(copy);
     } else if (auto* create_table = dynamic_cast<ResolvedCreateTableStmt*>(stmt)) {
@@ -565,8 +622,12 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateException(create_exception);
     } else if (auto* create_domain = dynamic_cast<ResolvedCreateDomainStmt*>(stmt)) {
         generateCreateDomain(create_domain);
+    } else if (auto* alter_type = dynamic_cast<ResolvedAlterTypeStmt*>(stmt)) {
+        generateAlterType(alter_type);
     } else if (auto* alter_domain = dynamic_cast<ResolvedAlterDomainStmt*>(stmt)) {
         generateAlterDomain(alter_domain);
+    } else if (auto* drop_type = dynamic_cast<ResolvedDropTypeStmt*>(stmt)) {
+        generateDropType(drop_type);
     } else if (auto* drop_domain = dynamic_cast<ResolvedDropDomainStmt*>(stmt)) {
         generateDropDomain(drop_domain);
     } else if (auto* drop_database = dynamic_cast<ResolvedDropDatabaseStmt*>(stmt)) {
@@ -1038,6 +1099,105 @@ void BytecodeGeneratorV2::generateDelete(ResolvedDeleteStmt* stmt) {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RETURNING);
         generateSelectList(stmt->returning);
     }
+}
+
+void BytecodeGeneratorV2::generateMerge(ResolvedMergeStmt* stmt) {
+    auto writeExpressionPayload = [&](ResolvedExpression* expr) {
+        if (!expr) {
+            current_result_->writeInt32(0);
+            return;
+        }
+
+        BytecodeResultV2 temp;
+        BytecodeResultV2* saved = current_result_;
+        current_result_ = &temp;
+        generateExpression(expr);
+        current_result_ = saved;
+
+        for (const auto& err : temp.errors()) {
+            current_result_->addError(err);
+        }
+        for (const auto& warn : temp.warnings()) {
+            current_result_->addWarning(warn);
+        }
+
+        const auto& bytes = temp.bytecode();
+        if (bytes.size() > std::numeric_limits<uint32_t>::max()) {
+            current_result_->addError("MERGE expression exceeds bytecode size limit");
+            current_result_->writeInt32(0);
+            return;
+        }
+
+        current_result_->writeInt32(static_cast<uint32_t>(bytes.size()));
+        for (uint8_t byte : bytes) {
+            current_result_->writeByte(byte);
+        }
+    };
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_START));
+    current_result_->writeString(schemaPathToString(stmt->target_table, string_pool_));
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_SOURCE));
+    current_result_->writeString(schemaPathToString(stmt->source_table, string_pool_));
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_ON));
+    writeExpressionPayload(stmt->on_condition);
+
+    for (const auto& clause : stmt->when_matched) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_WHEN_MATCHED));
+        current_result_->writeByte(clause.and_condition ? 1 : 0);
+        if (clause.and_condition) {
+            writeExpressionPayload(clause.and_condition);
+        }
+        current_result_->writeByte(clause.is_delete ? 1 : 0);
+        if (!clause.is_delete) {
+            current_result_->writeInt32(static_cast<uint32_t>(clause.assignments.size()));
+            for (const auto& assignment : clause.assignments) {
+                writeStringId(assignment.first);
+                writeExpressionPayload(assignment.second);
+            }
+        }
+    }
+
+    for (const auto& clause : stmt->when_not_matched) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_WHEN_NOT_MATCHED));
+        current_result_->writeByte(clause.and_condition ? 1 : 0);
+        if (clause.and_condition) {
+            writeExpressionPayload(clause.and_condition);
+        }
+        current_result_->writeInt32(static_cast<uint32_t>(clause.columns.size()));
+        for (auto col : clause.columns) {
+            writeStringId(col);
+        }
+        for (auto* value : clause.values) {
+            writeExpressionPayload(value);
+        }
+    }
+
+    for (const auto& clause : stmt->when_not_matched_by_source) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_WHEN_NOT_MATCHED_SOURCE));
+        current_result_->writeByte(clause.and_condition ? 1 : 0);
+        if (clause.and_condition) {
+            writeExpressionPayload(clause.and_condition);
+        }
+        current_result_->writeByte(clause.is_delete ? 1 : 0);
+        if (!clause.is_delete) {
+            current_result_->writeInt32(static_cast<uint32_t>(clause.assignments.size()));
+            for (const auto& assignment : clause.assignments) {
+                writeStringId(assignment.first);
+                writeExpressionPayload(assignment.second);
+            }
+        }
+    }
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_END));
 }
 
 void BytecodeGeneratorV2::generateCopy(ResolvedCopyStmt* stmt) {
@@ -1830,6 +1990,7 @@ void BytecodeGeneratorV2::generateCreateFunction(ResolvedCreateFunctionStmt* stm
     if (stmt->or_replace) flags |= 0x01;
     if (stmt->deterministic) flags |= 0x02;
     if (stmt->sql_security == RoutineSqlSecurity::DEFINER) flags |= 0x04;
+    if (!stmt->psql_bytecode.empty()) flags |= 0x10;
     current_result_->writeByte(flags);
 
     std::string func_name;
@@ -1872,6 +2033,12 @@ void BytecodeGeneratorV2::generateCreateFunction(ResolvedCreateFunctionStmt* stm
     current_result_->writeInt32(type_scale(stmt->return_type));
 
     current_result_->writeString(stmt->body);
+    if (!stmt->psql_bytecode.empty()) {
+        current_result_->writeInt32(static_cast<uint32_t>(stmt->psql_bytecode.size()));
+        for (auto byte : stmt->psql_bytecode) {
+            current_result_->writeByte(byte);
+        }
+    }
 }
 
 void BytecodeGeneratorV2::generateCreateProcedure(ResolvedCreateProcedureStmt* stmt) {
@@ -1881,6 +2048,7 @@ void BytecodeGeneratorV2::generateCreateProcedure(ResolvedCreateProcedureStmt* s
     uint8_t flags = 0;
     if (stmt->or_replace) flags |= 0x01;
     if (stmt->sql_security == RoutineSqlSecurity::DEFINER) flags |= 0x04;
+    if (!stmt->psql_bytecode.empty()) flags |= 0x10;
     current_result_->writeByte(flags);
 
     std::string proc_name;
@@ -1919,6 +2087,12 @@ void BytecodeGeneratorV2::generateCreateProcedure(ResolvedCreateProcedureStmt* s
     }
 
     current_result_->writeString(stmt->body);
+    if (!stmt->psql_bytecode.empty()) {
+        current_result_->writeInt32(static_cast<uint32_t>(stmt->psql_bytecode.size()));
+        for (auto byte : stmt->psql_bytecode) {
+            current_result_->writeByte(byte);
+        }
+    }
 }
 
 void BytecodeGeneratorV2::generateCreateTrigger(ResolvedCreateTriggerStmt* stmt) {
@@ -1938,10 +2112,20 @@ void BytecodeGeneratorV2::generateCreateTrigger(ResolvedCreateTriggerStmt* stmt)
 
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
-    current_result_->writeByte(0);  // flags
+    uint8_t flags = 0;
+    if (!stmt->psql_bytecode.empty()) {
+        flags |= 0x10;
+    }
+    current_result_->writeByte(flags);
     current_result_->writeString(proc_path);
     current_result_->writeByte(0);  // no parameters
     current_result_->writeString(stmt->body);
+    if (!stmt->psql_bytecode.empty()) {
+        current_result_->writeInt32(static_cast<uint32_t>(stmt->psql_bytecode.size()));
+        for (auto byte : stmt->psql_bytecode) {
+            current_result_->writeByte(byte);
+        }
+    }
 
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_TRIGGER));
@@ -1951,6 +2135,565 @@ void BytecodeGeneratorV2::generateCreateTrigger(ResolvedCreateTriggerStmt* stmt)
     current_result_->writeByte(stmt->event_mask);
     current_result_->writeByte(static_cast<uint8_t>(stmt->granularity));
     current_result_->writeString(proc_path);
+}
+
+void BytecodeGeneratorV2::generateExecuteBlock(ResolvedExecuteBlockStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BLOCK));
+
+    auto emit_decl = [&](const ResolvedPsqlVariable& var) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DECLARE));
+        writeStringId(var.name);
+        current_result_->writeByte(static_cast<uint8_t>(var.type.data_type));
+        current_result_->writeByte(var.has_default ? 1 : 0);
+        if (var.has_default) {
+            generatePsqlExpressionPayload(var.default_value);
+        }
+    };
+
+    size_t var_count = stmt->input_params.size() +
+                       stmt->output_params.size();
+    if (stmt->body) {
+        var_count += stmt->body->variables.size();
+    }
+    if (var_count > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("EXECUTE BLOCK variable list exceeds 255 entries");
+        current_result_->writeByte(0);
+    } else {
+        current_result_->writeByte(static_cast<uint8_t>(var_count));
+    }
+
+    if (stmt->input_params.size() > std::numeric_limits<uint8_t>::max() ||
+        stmt->output_params.size() > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("EXECUTE BLOCK parameter list exceeds 255 entries");
+        current_result_->writeByte(0);
+        current_result_->writeByte(0);
+    } else {
+        current_result_->writeByte(static_cast<uint8_t>(stmt->input_params.size()));
+        current_result_->writeByte(static_cast<uint8_t>(stmt->output_params.size()));
+    }
+
+    for (const auto& param : stmt->input_params) {
+        emit_decl(param);
+    }
+    for (const auto& param : stmt->output_params) {
+        emit_decl(param);
+    }
+    if (stmt->body) {
+        for (const auto& var : stmt->body->variables) {
+            emit_decl(var);
+        }
+    }
+
+    if (stmt->body) {
+        for (auto* inner : stmt->body->statements) {
+            generatePsqlStatement(inner);
+        }
+    }
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(0xFF);  // END block marker
+}
+
+void BytecodeGeneratorV2::generateExecuteProcedure(ResolvedExecuteProcedureStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CALL));
+    current_result_->writeString(schemaPathToString(stmt->procedure_path, string_pool_));
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->arguments.size()));
+    for (auto* arg : stmt->arguments) {
+        generatePsqlExpressionPayload(arg);
+    }
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->returning_variables.size()));
+    for (auto id : stmt->returning_variables) {
+        writeStringId(id);
+    }
+}
+
+void BytecodeGeneratorV2::generateExecuteStatement(ResolvedExecuteStatementStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_EXECUTE_STMT));
+    generatePsqlExpressionPayload(stmt->sql);
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->parameters.size()));
+    for (auto* param : stmt->parameters) {
+        generatePsqlExpressionPayload(param);
+    }
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->into_variables.size()));
+    for (auto id : stmt->into_variables) {
+        writeStringId(id);
+    }
+}
+
+void BytecodeGeneratorV2::generatePsqlExpressionPayload(ResolvedExpression* expr) {
+    if (!expr) {
+        current_result_->writeInt32(0);
+        return;
+    }
+
+    BytecodeResultV2 temp;
+    BytecodeResultV2* saved = current_result_;
+    current_result_ = &temp;
+    generateExpression(expr);
+    current_result_ = saved;
+
+    for (const auto& err : temp.errors()) {
+        current_result_->addError(err);
+    }
+    for (const auto& warn : temp.warnings()) {
+        current_result_->addWarning(warn);
+    }
+
+    const auto& bytes = temp.bytecode();
+    if (bytes.size() > std::numeric_limits<uint32_t>::max()) {
+        current_result_->addError("PSQL expression exceeds bytecode size limit");
+        current_result_->writeInt32(0);
+        return;
+    }
+    current_result_->writeInt32(static_cast<uint32_t>(bytes.size()));
+    for (uint8_t byte : bytes) {
+        current_result_->writeByte(byte);
+    }
+}
+
+void BytecodeGeneratorV2::generatePsqlBlock(ResolvedPsqlBlock* block) {
+    if (!block) {
+        return;
+    }
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BLOCK));
+
+    if (block->variables.size() > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("PSQL block variable list exceeds 255 entries");
+        current_result_->writeByte(0);
+    } else {
+        current_result_->writeByte(static_cast<uint8_t>(block->variables.size()));
+    }
+    current_result_->writeByte(0);
+    current_result_->writeByte(0);
+
+    for (const auto& var : block->variables) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DECLARE));
+        writeStringId(var.name);
+        current_result_->writeByte(static_cast<uint8_t>(var.type.data_type));
+        current_result_->writeByte(var.has_default ? 1 : 0);
+        if (var.has_default) {
+            generatePsqlExpressionPayload(var.default_value);
+        }
+    }
+
+    if (!block->exception_handlers.empty()) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TRY));
+        size_t try_end_patch = current_result_->currentOffset();
+        current_result_->writeInt32(0);
+        current_result_->writeByte(static_cast<uint8_t>(block->exception_handlers.size()));
+
+        std::vector<size_t> handler_patches;
+        handler_patches.reserve(block->exception_handlers.size());
+        for (const auto& handler : block->exception_handlers) {
+            std::string name = "ALL";
+            if (handler.type == parser::v2::WhenExceptionStmt::ExceptionType::EXCEPTION &&
+                handler.exception_name != StringPool::INVALID_ID) {
+                name = std::string(getString(handler.exception_name));
+            }
+            current_result_->writeString(name);
+            handler_patches.push_back(current_result_->currentOffset());
+            current_result_->writeInt32(0);
+        }
+
+        for (auto* stmt : block->statements) {
+            generatePsqlStatement(stmt);
+        }
+
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_JUMP));
+        size_t after_handlers_patch = current_result_->currentOffset();
+        current_result_->writeInt32(0);
+
+        size_t handlers_start = current_result_->currentOffset();
+        current_result_->patchInt32(try_end_patch, static_cast<uint32_t>(handlers_start));
+
+        for (size_t i = 0; i < block->exception_handlers.size(); ++i) {
+            current_result_->patchInt32(handler_patches[i],
+                                        static_cast<uint32_t>(current_result_->currentOffset()));
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_EXCEPT_HANDLER));
+            std::string name = "ALL";
+            const auto& handler = block->exception_handlers[i];
+            if (handler.type == parser::v2::WhenExceptionStmt::ExceptionType::EXCEPTION &&
+                handler.exception_name != StringPool::INVALID_ID) {
+                name = std::string(getString(handler.exception_name));
+            }
+            current_result_->writeString(name);
+            size_t handler_end_patch = current_result_->currentOffset();
+            current_result_->writeInt32(0);
+
+            generatePsqlStatement(handler.handler);
+            current_result_->patchInt32(handler_end_patch,
+                                        static_cast<uint32_t>(current_result_->currentOffset()));
+        }
+
+        current_result_->patchInt32(after_handlers_patch,
+                                    static_cast<uint32_t>(current_result_->currentOffset()));
+    } else {
+        for (auto* stmt : block->statements) {
+            generatePsqlStatement(stmt);
+        }
+    }
+
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(0xFF);  // END block marker
+}
+
+void BytecodeGeneratorV2::generatePsqlStatement(ResolvedPsqlStatement* stmt) {
+    if (!stmt) {
+        return;
+    }
+
+    switch (stmt->kind) {
+        case ResolvedPsqlStmtKind::BLOCK:
+            generatePsqlBlock(static_cast<ResolvedPsqlBlock*>(stmt));
+            break;
+        case ResolvedPsqlStmtKind::DECLARE_VAR: {
+            auto* decl = static_cast<ResolvedPsqlDeclareVar*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DECLARE));
+            writeStringId(decl->name);
+            current_result_->writeByte(static_cast<uint8_t>(decl->type.data_type));
+            current_result_->writeByte(decl->has_default ? 1 : 0);
+            if (decl->has_default) {
+                generatePsqlExpressionPayload(decl->default_value);
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::ASSIGN: {
+            auto* assign = static_cast<ResolvedPsqlAssign*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ASSIGN));
+            writeStringId(assign->variable);
+            generatePsqlExpressionPayload(assign->value);
+            break;
+        }
+        case ResolvedPsqlStmtKind::IF: {
+            auto* if_stmt = static_cast<ResolvedPsqlIf*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IF));
+            generatePsqlExpressionPayload(if_stmt->condition);
+            size_t false_patch = current_result_->currentOffset();
+            current_result_->writeInt32(0);
+
+            generatePsqlStatement(if_stmt->then_branch);
+            if (if_stmt->else_branch) {
+                current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+                current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_JUMP));
+                size_t end_patch = current_result_->currentOffset();
+                current_result_->writeInt32(0);
+
+                current_result_->patchInt32(false_patch,
+                                            static_cast<uint32_t>(current_result_->currentOffset()));
+                generatePsqlStatement(if_stmt->else_branch);
+                current_result_->patchInt32(end_patch,
+                                            static_cast<uint32_t>(current_result_->currentOffset()));
+            } else {
+                current_result_->patchInt32(false_patch,
+                                            static_cast<uint32_t>(current_result_->currentOffset()));
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::WHILE_LOOP: {
+            auto* while_stmt = static_cast<ResolvedPsqlWhile*>(stmt);
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_LOOP));
+            size_t loop_end_patch = current_result_->currentOffset();
+            current_result_->writeInt32(0);
+            current_result_->writeString(std::string(getString(while_stmt->label)));
+
+            current_result_->writeByte(1);
+            generatePsqlExpressionPayload(while_stmt->condition);
+
+            PsqlLoopContext ctx;
+            ctx.loop_start = current_result_->currentOffset();
+            ctx.loop_end_patch = loop_end_patch;
+            ctx.label = while_stmt->label;
+            psql_loop_stack_.push_back(ctx);
+
+            generatePsqlStatement(while_stmt->body);
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(0xFE);  // END LOOP marker
+
+            auto loop_ctx = psql_loop_stack_.back();
+            psql_loop_stack_.pop_back();
+            size_t loop_end = current_result_->currentOffset();
+            current_result_->patchInt32(loop_ctx.loop_end_patch,
+                                        static_cast<uint32_t>(loop_end));
+            for (size_t patch : loop_ctx.break_patches) {
+                current_result_->patchInt32(patch, static_cast<uint32_t>(loop_end));
+            }
+            for (size_t patch : loop_ctx.continue_patches) {
+                current_result_->patchInt32(patch, static_cast<uint32_t>(loop_ctx.loop_start));
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::LOOP: {
+            auto* loop = static_cast<ResolvedPsqlLoop*>(stmt);
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_LOOP));
+            size_t loop_end_patch = current_result_->currentOffset();
+            current_result_->writeInt32(0);
+            current_result_->writeString(std::string(getString(loop->label)));
+
+            current_result_->writeByte(0);
+
+            PsqlLoopContext ctx;
+            ctx.loop_start = current_result_->currentOffset();
+            ctx.loop_end_patch = loop_end_patch;
+            ctx.label = loop->label;
+            psql_loop_stack_.push_back(ctx);
+
+            generatePsqlStatement(loop->body);
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(0xFE);  // END LOOP marker
+
+            auto loop_ctx = psql_loop_stack_.back();
+            psql_loop_stack_.pop_back();
+            size_t loop_end = current_result_->currentOffset();
+            current_result_->patchInt32(loop_ctx.loop_end_patch,
+                                        static_cast<uint32_t>(loop_end));
+            for (size_t patch : loop_ctx.break_patches) {
+                current_result_->patchInt32(patch, static_cast<uint32_t>(loop_end));
+            }
+            for (size_t patch : loop_ctx.continue_patches) {
+                current_result_->patchInt32(patch, static_cast<uint32_t>(loop_ctx.loop_start));
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::LEAVE: {
+            auto* leave = static_cast<ResolvedPsqlLeave*>(stmt);
+            if (psql_loop_stack_.empty()) {
+                current_result_->addError("LEAVE used outside loop");
+                break;
+            }
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_JUMP));
+            size_t patch = current_result_->currentOffset();
+            current_result_->writeInt32(0);
+            psql_loop_stack_.back().break_patches.push_back(patch);
+            (void)leave;
+            break;
+        }
+        case ResolvedPsqlStmtKind::CONTINUE: {
+            if (psql_loop_stack_.empty()) {
+                current_result_->addError("CONTINUE used outside loop");
+                break;
+            }
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_JUMP));
+            size_t patch = current_result_->currentOffset();
+            current_result_->writeInt32(0);
+            psql_loop_stack_.back().continue_patches.push_back(patch);
+            break;
+        }
+        case ResolvedPsqlStmtKind::EXIT: {
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_EXIT));
+            current_result_->writeString(std::string());
+            current_result_->writeByte(0);
+            break;
+        }
+        case ResolvedPsqlStmtKind::RETURN: {
+            auto* ret = static_cast<ResolvedPsqlReturn*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RETURN));
+            current_result_->writeByte(ret->has_value ? 1 : 0);
+            if (ret->has_value) {
+                generatePsqlExpressionPayload(ret->value);
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::SUSPEND: {
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUSPEND));
+            break;
+        }
+        case ResolvedPsqlStmtKind::RAISE: {
+            auto* raise = static_cast<ResolvedPsqlRaise*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RAISE));
+            current_result_->writeByte(0);
+            if (raise->exception_name != StringPool::INVALID_ID) {
+                current_result_->writeString(std::string(getString(raise->exception_name)));
+            } else {
+                current_result_->writeString(std::string());
+            }
+            if (raise->message) {
+                current_result_->writeByte(1);
+                generatePsqlExpressionPayload(raise->message);
+            } else {
+                current_result_->writeByte(0);
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::DECLARE_CURSOR: {
+            auto* decl = static_cast<ResolvedPsqlDeclareCursor*>(stmt);
+            BytecodeResultV2 cursor_bytecode;
+            if (auto* sql_stmt = decl->select_stmt) {
+                BytecodeResultV2 saved;
+                BytecodeResultV2* saved_result = current_result_;
+                current_result_ = &cursor_bytecode;
+                generateStatement(sql_stmt);
+                current_result_ = saved_result;
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_DECLARE));
+            writeStringId(decl->cursor_name);
+            current_result_->writeInt32(static_cast<uint32_t>(cursor_bytecode.bytecode().size()));
+            for (auto byte : cursor_bytecode.bytecode()) {
+                current_result_->writeByte(byte);
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::OPEN_CURSOR: {
+            auto* open = static_cast<ResolvedPsqlOpenCursor*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_OPEN));
+            writeStringId(open->cursor_name);
+            break;
+        }
+        case ResolvedPsqlStmtKind::FETCH_CURSOR: {
+            auto* fetch = static_cast<ResolvedPsqlFetchCursor*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_FETCH));
+            writeStringId(fetch->cursor_name);
+            current_result_->writeInt32(static_cast<uint32_t>(fetch->into_variables.size()));
+            for (auto id : fetch->into_variables) {
+                writeStringId(id);
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::CLOSE_CURSOR: {
+            auto* close = static_cast<ResolvedPsqlCloseCursor*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_CLOSE));
+            writeStringId(close->cursor_name);
+            break;
+        }
+        case ResolvedPsqlStmtKind::FOR_SELECT: {
+            auto* for_stmt = static_cast<ResolvedPsqlForSelect*>(stmt);
+            std::string cursor_name = "__psql_for_cursor_" +
+                                      std::to_string(current_result_->currentOffset());
+
+            BytecodeResultV2 cursor_bytecode;
+            if (auto* sql_stmt = for_stmt->select_stmt) {
+                BytecodeResultV2* saved_result = current_result_;
+                current_result_ = &cursor_bytecode;
+                generateStatement(sql_stmt);
+                current_result_ = saved_result;
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_DECLARE));
+            current_result_->writeString(cursor_name);
+            current_result_->writeInt32(static_cast<uint32_t>(cursor_bytecode.bytecode().size()));
+            for (auto byte : cursor_bytecode.bytecode()) {
+                current_result_->writeByte(byte);
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_OPEN));
+            current_result_->writeString(cursor_name);
+
+            size_t loop_start = current_result_->currentOffset();
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_FETCH));
+            current_result_->writeString(cursor_name);
+            current_result_->writeInt32(static_cast<uint32_t>(for_stmt->into_variables.size()));
+            for (auto id : for_stmt->into_variables) {
+                writeStringId(id);
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_JUMP_IF_FALSE));
+            size_t loop_end_patch = current_result_->currentOffset();
+            current_result_->writeInt32(0);
+
+            generatePsqlStatement(for_stmt->body);
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_JUMP));
+            current_result_->writeInt32(static_cast<uint32_t>(loop_start));
+
+            current_result_->patchInt32(loop_end_patch,
+                                        static_cast<uint32_t>(current_result_->currentOffset()));
+
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CURSOR_CLOSE));
+            current_result_->writeString(cursor_name);
+            break;
+        }
+        case ResolvedPsqlStmtKind::FOR_EXECUTE: {
+            auto* for_stmt = static_cast<ResolvedPsqlForExecute*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_EXECUTE_STMT));
+            generatePsqlExpressionPayload(for_stmt->sql);
+            current_result_->writeInt32(static_cast<uint32_t>(for_stmt->parameters.size()));
+            for (auto* param : for_stmt->parameters) {
+                generatePsqlExpressionPayload(param);
+            }
+            current_result_->writeInt32(static_cast<uint32_t>(for_stmt->into_variables.size()));
+            for (auto id : for_stmt->into_variables) {
+                writeStringId(id);
+            }
+            generatePsqlStatement(for_stmt->body);
+            break;
+        }
+        case ResolvedPsqlStmtKind::EXECUTE_PROCEDURE: {
+            auto* exec = static_cast<ResolvedPsqlExecuteProcedure*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CALL));
+            current_result_->writeString(schemaPathToString(exec->procedure_path, string_pool_));
+            current_result_->writeInt32(static_cast<uint32_t>(exec->arguments.size()));
+            for (auto* arg : exec->arguments) {
+                generatePsqlExpressionPayload(arg);
+            }
+            current_result_->writeInt32(static_cast<uint32_t>(exec->returning_variables.size()));
+            for (auto id : exec->returning_variables) {
+                writeStringId(id);
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::EXECUTE_STATEMENT: {
+            auto* exec = static_cast<ResolvedPsqlExecuteStatement*>(stmt);
+            current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+            current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_EXECUTE_STMT));
+            generatePsqlExpressionPayload(exec->sql);
+            current_result_->writeInt32(static_cast<uint32_t>(exec->parameters.size()));
+            for (auto* param : exec->parameters) {
+                generatePsqlExpressionPayload(param);
+            }
+            current_result_->writeInt32(static_cast<uint32_t>(exec->into_variables.size()));
+            for (auto id : exec->into_variables) {
+                writeStringId(id);
+            }
+            break;
+        }
+        case ResolvedPsqlStmtKind::SQL_STATEMENT: {
+            auto* sql_stmt = static_cast<ResolvedPsqlSqlStatement*>(stmt);
+            generateStatement(sql_stmt->statement);
+            break;
+        }
+        default:
+            current_result_->addError("Unsupported PSQL statement in bytecode generation (kind=" +
+                                      std::to_string(static_cast<int>(stmt->kind)) + ")");
+            break;
+    }
 }
 
 void BytecodeGeneratorV2::generateCreatePackage(ResolvedCreatePackageStmt* stmt) {
@@ -2091,6 +2834,9 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
     if (stmt->has_quality) {
         flags |= 0x10;
     }
+    if (stmt->has_comment) {
+        flags |= 0x20;
+    }
     current_result_->writeByte(flags);
 
     current_result_->writeByte(static_cast<uint8_t>(stmt->domain_kind));
@@ -2125,6 +2871,70 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
             for (const auto& type_ref : stmt->variant_allowed_types) {
                 writeTypeRef(type_ref);
             }
+            break;
+        case DomainKind::RANGE:
+            writeTypeRef(stmt->range_options.subtype);
+            current_result_->writeString(stmt->range_options.has_subtype_collation
+                                             ? stmt->range_options.subtype_collation
+                                             : std::string());
+            current_result_->writeString(stmt->range_options.has_subtype_opclass
+                                             ? stmt->range_options.subtype_opclass
+                                             : std::string());
+            current_result_->writeString(stmt->range_options.has_canonical
+                                             ? stmt->range_options.canonical
+                                             : std::string());
+            current_result_->writeString(stmt->range_options.has_subtype_diff
+                                             ? stmt->range_options.subtype_diff
+                                             : std::string());
+            current_result_->writeByte(stmt->range_options.has_multirange
+                                           ? (stmt->range_options.multirange ? 1 : 0)
+                                           : 0);
+            break;
+        case DomainKind::BASE:
+            current_result_->writeByte(stmt->base_options.has_storage ? 1 : 0);
+            if (stmt->base_options.has_storage) {
+                writeTypeRef(stmt->base_options.storage);
+            }
+            current_result_->writeString(stmt->base_options.input_function);
+            current_result_->writeString(stmt->base_options.output_function);
+            current_result_->writeByte(stmt->base_options.has_receive ? 1 : 0);
+            if (stmt->base_options.has_receive) {
+                current_result_->writeString(stmt->base_options.receive_function);
+            }
+            current_result_->writeByte(stmt->base_options.has_send ? 1 : 0);
+            if (stmt->base_options.has_send) {
+                current_result_->writeString(stmt->base_options.send_function);
+            }
+            current_result_->writeByte(stmt->base_options.has_typmod_in ? 1 : 0);
+            if (stmt->base_options.has_typmod_in) {
+                current_result_->writeString(stmt->base_options.typmod_in_function);
+            }
+            current_result_->writeByte(stmt->base_options.has_typmod_out ? 1 : 0);
+            if (stmt->base_options.has_typmod_out) {
+                current_result_->writeString(stmt->base_options.typmod_out_function);
+            }
+            current_result_->writeByte(stmt->base_options.has_analyze ? 1 : 0);
+            if (stmt->base_options.has_analyze) {
+                current_result_->writeString(stmt->base_options.analyze_function);
+            }
+            current_result_->writeByte(stmt->base_options.has_alignment ? 1 : 0);
+            if (stmt->base_options.has_alignment) {
+                current_result_->writeString(baseTypeAlignmentToString(stmt->base_options.alignment));
+            }
+            current_result_->writeByte(stmt->base_options.has_storage_mode ? 1 : 0);
+            if (stmt->base_options.has_storage_mode) {
+                current_result_->writeString(baseTypeStorageModeToString(stmt->base_options.storage_mode));
+            }
+            current_result_->writeByte(stmt->base_options.has_category ? 1 : 0);
+            if (stmt->base_options.has_category) {
+                current_result_->writeByte(static_cast<uint8_t>(stmt->base_options.category));
+            }
+            current_result_->writeByte(stmt->base_options.has_preferred ? 1 : 0);
+            if (stmt->base_options.has_preferred) {
+                current_result_->writeByte(stmt->base_options.preferred ? 1 : 0);
+            }
+            break;
+        case DomainKind::SHELL:
             break;
     }
 
@@ -2211,6 +3021,10 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
             current_result_->writeString(stmt->quality.enrich_function);
         }
     }
+
+    if (stmt->has_comment) {
+        current_result_->writeString(stmt->comment);
+    }
 }
 
 void BytecodeGeneratorV2::generateDropDatabase(ResolvedDropDatabaseStmt* stmt) {
@@ -2256,12 +3070,149 @@ void BytecodeGeneratorV2::generateAlterDomain(ResolvedAlterDomainStmt* stmt) {
     }
 }
 
+void BytecodeGeneratorV2::generateAlterType(ResolvedAlterTypeStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DOMAIN));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->action));
+    current_result_->writeString(schemaPathToString(stmt->type_path, string_pool_));
+
+    switch (stmt->action) {
+        case AlterTypeAction::RENAME_TO:
+            if (stmt->new_name != StringPool::INVALID_ID) {
+                writeStringId(stmt->new_name);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterTypeAction::SET_SCHEMA:
+            if (stmt->new_schema != StringPool::INVALID_ID) {
+                writeStringId(stmt->new_schema);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterTypeAction::ADD_VALUE: {
+            if (stmt->value_label != StringPool::INVALID_ID) {
+                writeStringId(stmt->value_label);
+            } else {
+                current_result_->writeString("");
+            }
+            uint8_t flags = 0;
+            if (stmt->has_before) flags |= 0x01;
+            if (stmt->has_after) flags |= 0x02;
+            current_result_->writeByte(flags);
+            if (stmt->has_before && stmt->before_label != StringPool::INVALID_ID) {
+                writeStringId(stmt->before_label);
+            }
+            if (stmt->has_after && stmt->after_label != StringPool::INVALID_ID) {
+                writeStringId(stmt->after_label);
+            }
+            break;
+        }
+        case AlterTypeAction::RENAME_VALUE:
+            if (stmt->old_label != StringPool::INVALID_ID) {
+                writeStringId(stmt->old_label);
+            } else {
+                current_result_->writeString("");
+            }
+            if (stmt->new_label != StringPool::INVALID_ID) {
+                writeStringId(stmt->new_label);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterTypeAction::SET_OPTIONS: {
+            uint8_t mode = 0;
+            if (stmt->is_range_options) mode = 1;
+            if (stmt->is_base_options) mode = 2;
+            current_result_->writeByte(mode);
+            if (stmt->is_range_options) {
+                writeTypeRef(stmt->range_options.subtype);
+                current_result_->writeString(stmt->range_options.has_subtype_collation
+                                                 ? stmt->range_options.subtype_collation
+                                                 : std::string());
+                current_result_->writeString(stmt->range_options.has_subtype_opclass
+                                                 ? stmt->range_options.subtype_opclass
+                                                 : std::string());
+                current_result_->writeString(stmt->range_options.has_canonical
+                                                 ? stmt->range_options.canonical
+                                                 : std::string());
+                current_result_->writeString(stmt->range_options.has_subtype_diff
+                                                 ? stmt->range_options.subtype_diff
+                                                 : std::string());
+                current_result_->writeByte(stmt->range_options.has_multirange
+                                               ? (stmt->range_options.multirange ? 1 : 0)
+                                               : 0);
+            } else if (stmt->is_base_options) {
+                current_result_->writeByte(stmt->base_options.has_storage ? 1 : 0);
+                if (stmt->base_options.has_storage) {
+                    writeTypeRef(stmt->base_options.storage);
+                }
+                current_result_->writeString(stmt->base_options.input_function);
+                current_result_->writeString(stmt->base_options.output_function);
+                current_result_->writeByte(stmt->base_options.has_receive ? 1 : 0);
+                if (stmt->base_options.has_receive) {
+                    current_result_->writeString(stmt->base_options.receive_function);
+                }
+                current_result_->writeByte(stmt->base_options.has_send ? 1 : 0);
+                if (stmt->base_options.has_send) {
+                    current_result_->writeString(stmt->base_options.send_function);
+                }
+                current_result_->writeByte(stmt->base_options.has_typmod_in ? 1 : 0);
+                if (stmt->base_options.has_typmod_in) {
+                    current_result_->writeString(stmt->base_options.typmod_in_function);
+                }
+                current_result_->writeByte(stmt->base_options.has_typmod_out ? 1 : 0);
+                if (stmt->base_options.has_typmod_out) {
+                    current_result_->writeString(stmt->base_options.typmod_out_function);
+                }
+                current_result_->writeByte(stmt->base_options.has_analyze ? 1 : 0);
+                if (stmt->base_options.has_analyze) {
+                    current_result_->writeString(stmt->base_options.analyze_function);
+                }
+                current_result_->writeByte(stmt->base_options.has_alignment ? 1 : 0);
+                if (stmt->base_options.has_alignment) {
+                    current_result_->writeString(baseTypeAlignmentToString(stmt->base_options.alignment));
+                }
+                current_result_->writeByte(stmt->base_options.has_storage_mode ? 1 : 0);
+                if (stmt->base_options.has_storage_mode) {
+                    current_result_->writeString(baseTypeStorageModeToString(stmt->base_options.storage_mode));
+                }
+                current_result_->writeByte(stmt->base_options.has_category ? 1 : 0);
+                if (stmt->base_options.has_category) {
+                    current_result_->writeByte(static_cast<uint8_t>(stmt->base_options.category));
+                }
+                current_result_->writeByte(stmt->base_options.has_preferred ? 1 : 0);
+                if (stmt->base_options.has_preferred) {
+                    current_result_->writeByte(stmt->base_options.preferred ? 1 : 0);
+                }
+            }
+            break;
+        }
+        case AlterTypeAction::FINALIZE:
+            break;
+    }
+}
+
 void BytecodeGeneratorV2::generateDropDomain(ResolvedDropDomainStmt* stmt) {
     uint8_t flags = 0;
     if (stmt->if_exists) flags |= 0x01;
     if (stmt->restrict) flags |= 0x02;
 
     for (const auto& path : stmt->domains) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DOMAIN));
+        current_result_->writeByte(flags);
+        current_result_->writeString(schemaPathToString(path, string_pool_));
+    }
+}
+
+void BytecodeGeneratorV2::generateDropType(ResolvedDropTypeStmt* stmt) {
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->restrict) flags |= 0x02;
+
+    for (const auto& path : stmt->types) {
         current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
         current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DOMAIN));
         current_result_->writeByte(flags);
@@ -3512,6 +4463,9 @@ void BytecodeGeneratorV2::generateExpression(ResolvedExpression* expr) {
 
     if (auto* lit = dynamic_cast<ResolvedLiteral*>(expr)) {
         generateLiteral(lit);
+    } else if (auto* var = dynamic_cast<ResolvedVariableExpr*>(expr)) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_VAR_LOAD);
+        writeStringId(var->name);
     } else if (auto* col = dynamic_cast<ResolvedColumnRefExpr*>(expr)) {
         generateColumnRef(col);
     } else if (auto* binary = dynamic_cast<ResolvedBinaryExpr*>(expr)) {

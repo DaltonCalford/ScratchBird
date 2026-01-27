@@ -34,6 +34,7 @@ ScratchBird implements a unique multi-dialect SQL parser that supports native Sc
 ### Procedural Language
 
 - **[05_PSQL_PROCEDURAL_LANGUAGE.md](05_PSQL_PROCEDURAL_LANGUAGE.md)** - PSQL procedural language specification
+- **[PSQL_CURSOR_HANDLES.md](PSQL_CURSOR_HANDLES.md)** - Cursor handle passing and lifetime rules
 
 ## Key Concepts
 

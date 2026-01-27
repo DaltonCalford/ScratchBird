@@ -782,6 +782,8 @@ namespace scratchbird
                 size_t loop_end_pc;        // PC after loop end
                 std::string label;         // Optional label for EXIT statement
                 bool exit_requested;       // Set by EXIT statement
+                bool has_condition = false;
+                std::vector<uint8_t> condition_bytecode;
 
                 LoopState(size_t start, size_t end, const std::string& lbl = "")
                     : loop_start_pc(start), loop_end_pc(end), label(lbl), exit_requested(false) {}
@@ -818,6 +820,9 @@ namespace scratchbird
             std::vector<LoopState> loop_stack_;
             std::vector<ExceptionFrame> exception_stack_;
             std::unordered_map<std::string, CursorState> cursors_;  // Active cursors
+            std::vector<std::string> psql_output_vars_;
+            std::vector<core::DataType> psql_output_types_;
+            bool psql_output_active_ = false;
             bool return_requested_ = false;
             Value return_value_;
 
@@ -829,14 +834,18 @@ namespace scratchbird
             void executeFunction();          // Execute CREATE FUNCTION
             void executeProcedure();         // Execute CREATE PROCEDURE
             void executeBlock();             // Execute BEGIN...END block
-            void executeVarDeclaration();    // Execute variable declaration
+            void executeVarDeclaration(std::string* out_name = nullptr,
+                                       core::DataType* out_type = nullptr);    // Execute variable declaration
             void executeAssignment();        // Execute variable assignment
             void executeIfStatement();       // Execute IF statement
             void executeLoopStatement();     // Execute LOOP statement
             void executeWhileStatement();    // Execute WHILE statement
             void executeExitStatement();     // Execute EXIT statement
             void executeReturnStatement();   // Execute RETURN statement
+            void executeSuspendStatement();  // Execute SUSPEND statement
             void executeRaiseStatement();    // Execute RAISE exception
+            void executeLoopEnd();           // Execute loop end marker
+            void executeExecuteStatement();  // Execute EXECUTE STATEMENT (dynamic SQL)
             void executeTryStatement();      // Execute TRY block with exception handlers
             void executeExceptHandler();     // Execute EXCEPT handler block
 
@@ -848,6 +857,8 @@ namespace scratchbird
             void executeJump();              // Unconditional jump
             void executeJumpIfTrue();        // Jump if stack top is true
             void executeJumpIfFalse();       // Jump if stack top is false
+
+            Value evaluateExpressionFromBuffer(const std::vector<uint8_t>& buffer);
 
             // PSQL cursor operations
             void executeCursorDeclare();     // DECLARE cursor_name CURSOR FOR select_statement

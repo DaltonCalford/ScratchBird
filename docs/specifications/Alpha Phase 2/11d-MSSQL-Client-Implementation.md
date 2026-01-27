@@ -1,6 +1,7 @@
 # MS SQL Server Client Implementation
 
-**Scope Note:** MSSQL/TDS adapter work is deferred until after the project goes gold. This document is retained for future compatibility work.
+**Scope Note:** MSSQL/TDS adapter work is a Beta requirement. This document
+defines the native TDS client implementation.
 
 MS SQL Server (TDS protocol) client adapter for Remote Database UDR.
 
@@ -10,10 +11,11 @@ MS SQL Server (TDS protocol) client adapter for Remote Database UDR.
 
 ## Overview
 
-Implements TDS (Tabular Data Stream) protocol client using FreeTDS library.
+Implements TDS (Tabular Data Stream) protocol client directly (no external
+client libraries required).
 
 **Protocol**: TDS 7.0 - 7.4  
-**Library**: FreeTDS (open-source TDS implementation)  
+**Library**: None (ScratchBird native client)  
 **Supported Versions**: SQL Server 2016 - 2022, Azure SQL Database
 
 ---
@@ -44,17 +46,14 @@ RemoteTableMetadata* get_mssql_table_metadata(void* handle, const char* schema, 
 
 ## Implementation Notes
 
-**Connection String Format:**
-```
-DRIVER={FreeTDS};
-SERVER=hostname;
-PORT=1433;
-DATABASE=database;
-UID=username;
-PWD=password;
-TDS_Version=7.4;
-Encrypt=yes;
-```
+**Connection Parameters:**
+- host
+- port
+- database
+- username
+- password
+- tds_version (default 7.4)
+- encrypt (true/false)
 
 **Type Mapping:**
 | SQL Server Type | Internal Type |
@@ -76,11 +75,7 @@ Encrypt=yes;
 - Windows Authentication (Kerberos)
 - Azure AD Authentication
 
-**Build Requirements:**
-```
-freetds-dev (Debian/Ubuntu)
-freetds-devel (RHEL/CentOS)
-```
+**Build Requirements:** None (protocol client is bundled with the UDR).
 
 **Special Considerations:**
 - Unicode handling (NVARCHAR vs VARCHAR)

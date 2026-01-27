@@ -118,11 +118,12 @@ namespace sblr {
         static QueryHash computeHash(const std::vector<uint8_t>& bytecode);
 
         /**
-         * Look up cached result by hash
+         * Look up cached result by hash and copy it out.
          * @param hash Query hash
-         * @return Pointer to cached result (owned by cache), or nullptr if not found
+         * @param out Filled with cached result when found
+         * @return True if found, false otherwise
          */
-        CachedResultSet* get(const QueryHash& hash);
+        bool get(const QueryHash& hash, CachedResultSet& out);
 
         /**
          * Insert result into cache

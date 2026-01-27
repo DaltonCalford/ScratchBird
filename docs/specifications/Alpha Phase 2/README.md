@@ -10,10 +10,10 @@
 
 ## Overview
 
-This directory contains Alpha Phase 2 technical specifications for a distributed, multi-dialect SQL database engine. The system provides wire protocol compatibility with PostgreSQL, MySQL, and Firebird (MSSQL/TDS post-gold) while implementing a modern three-tier architecture for optimal OLTP and OLAP performance.
+This directory contains Alpha Phase 2 technical specifications for a distributed, multi-dialect SQL database engine. The system provides wire protocol compatibility with PostgreSQL, MySQL, Firebird, and MSSQL (Beta scope) while implementing a modern three-tier architecture for optimal OLTP and OLAP performance.
 
 **Note:** These specifications represent an alternative architectural approach to distributed operation. The primary cluster architecture for Beta is documented in [Cluster Specification Work](../Cluster%20Specification%20Work/).
-**Scope Note:** MSSQL/TDS support is deferred until after the project goes gold; mentions here are forward-looking.
+**Scope Note:** MSSQL/TDS support is part of Beta scope; mentions here are aligned with that requirement.
 
 ---
 
@@ -37,7 +37,7 @@ Complete MVCC implementation using UUID v7 versioning, transaction lifecycle, co
 Asynchronous replication from TX engines to Ingestion tier, change data capture format, conflict detection/resolution, and OLAP batch building. Essential for multi-tier data flow.
 
 **[05-Wire-Protocol-Integration-Specification.md](./05-Wire-Protocol-Integration-Specification.md)**  
-Wire protocol handlers for PostgreSQL, MySQL, and Firebird (MSSQL/TDS post-gold). Parser plugin API, authentication integration, system catalog virtualization, and session management.
+Wire protocol handlers for PostgreSQL, MySQL, Firebird, and MSSQL/TDS (Beta scope). Parser plugin API, authentication integration, system catalog virtualization, and session management.
 
 ### Data Tier Components
 
@@ -61,14 +61,18 @@ Prometheus metrics by component, alerting rules (latency, lag, conflicts, clock 
 UDR (User Defined Routine) plugin architecture inspired by Firebird, plugin lifecycle management, function/procedure/trigger support, message buffers and type system, memory management and safety, security sandboxing, and example implementations.
 
 **[11-Remote-Database-UDR-Specification.md](./11-Remote-Database-UDR-Specification.md)** *(NEW)*  
-Remote database connection plugin for zero-downtime migration, foreign table support (Foreign Data Wrapper pattern), protocol adapters (PostgreSQL, MySQL, Firebird clients; MSSQL post-gold), connection pool management, query pushdown optimization, schema introspection, and hybrid query execution.
+**[11h-Live-Migration-Emulated-Listener.md](./11h-Live-Migration-Emulated-Listener.md)** *(NEW)*  
+**[11i-ScratchBird-Client-Implementation.md](./11i-ScratchBird-Client-Implementation.md)** *(NEW)*  
+Remote database connection plugin for zero-downtime migration, foreign table support (Foreign Data Wrapper pattern), protocol adapters (PostgreSQL, MySQL, Firebird, MSSQL) plus ODBC/JDBC connectors, connection pool management, query pushdown optimization, schema introspection, and hybrid query execution.
 
 **Protocol Adapter Implementations:**
 - [11a-Connection-Pool-Implementation.md](./11a-Connection-Pool-Implementation.md) - Connection pooling system
-- [11b-PostgreSQL-Client-Implementation.md](./11b-PostgreSQL-Client-Implementation.md) - PostgreSQL adapter (libpq)
-- [11c-MySQL-Client-Implementation.md](./11c-MySQL-Client-Implementation.md) - MySQL adapter (libmysqlclient)
-- [11d-MSSQL-Client-Implementation.md](./11d-MSSQL-Client-Implementation.md) - MSSQL adapter (FreeTDS, post-gold)
-- [11e-Firebird-Client-Implementation.md](./11e-Firebird-Client-Implementation.md) - Firebird adapter (fbclient)
+- [11b-PostgreSQL-Client-Implementation.md](./11b-PostgreSQL-Client-Implementation.md) - PostgreSQL adapter (native protocol)
+- [11c-MySQL-Client-Implementation.md](./11c-MySQL-Client-Implementation.md) - MySQL adapter (native protocol)
+- [11d-MSSQL-Client-Implementation.md](./11d-MSSQL-Client-Implementation.md) - MSSQL adapter (native TDS)
+- [11e-Firebird-Client-Implementation.md](./11e-Firebird-Client-Implementation.md) - Firebird adapter (native protocol)
+- [11f-ODBC-Client-Implementation.md](./11f-ODBC-Client-Implementation.md) - ODBC connector (embedded drivers)
+- [11g-JDBC-Client-Implementation.md](./11g-JDBC-Client-Implementation.md) - JDBC connector (embedded drivers)
 
 ---
 
@@ -80,7 +84,7 @@ Remote database connection plugin for zero-downtime migration, foreign table sup
 2. [Architecture Overview](./01-Architecture-Overview.md) - System Overview, Deployment Topologies
 
 **Key takeaways:**
-- Drop-in replacement for major databases (PostgreSQL, MySQL, Firebird; MSSQL post-gold)
+- Drop-in replacement for major databases (PostgreSQL, MySQL, Firebird, MSSQL)
 - Three-tier architecture separates OLTP and OLAP workloads
 - 12-month implementation timeline in 4 phases
 - Scales horizontally to 100+ nodes
@@ -142,7 +146,7 @@ Remote database connection plugin for zero-downtime migration, foreign table sup
 **Implementation focus:**
 - PostgreSQL wire protocol (startup, auth, query flow)
 - MySQL wire protocol (handshake, COM_QUERY, prepared statements)
-- MSSQL TDS protocol (LOGIN7, SQL Batch, post-gold)
+- MSSQL TDS protocol (LOGIN7, SQL Batch, Beta)
 - Firebird protocol (op_connect, op_execute)
 - Parser plugin API and hot-swapping
 
@@ -230,7 +234,7 @@ Each protocol runs in a dedicated process with its own parser:
 ```
 PostgreSQL (5432) → Parser Plugin → Bytecode → Engine
 MySQL (3306)      → Parser Plugin → Bytecode → Engine
-MSSQL (1433, post-gold) → Parser Plugin → Bytecode → Engine
+MSSQL (1433, Beta) → Parser Plugin → Bytecode → Engine
 Firebird (3050)   → Parser Plugin → Bytecode → Engine
 ```
 
@@ -449,9 +453,9 @@ storage:
 - Performance regression
 
 **Protocol Compliance:**
-- PostgreSQL (psycopg2, libpq)
+- PostgreSQL (native protocol clients)
 - MySQL (mysql-connector)
-- MSSQL (pymssql, post-gold)
+- MSSQL (pymssql, Beta)
 - Firebird (fdb)
 
 **Performance Benchmarks:**
@@ -558,7 +562,9 @@ security@[domain] (private reporting)
 ## Related Specifications
 
 - [Cluster Specification Work](../Cluster%20Specification%20Work/) - Primary Beta cluster architecture
-- [Remote Database UDR](../remote_database_udr/) - Remote database adapter specifications
+- [Remote Database UDR](./11-Remote-Database-UDR-Specification.md) - Remote database adapter specification
+- [Live Migration (Emulated Listener)](./11h-Live-Migration-Emulated-Listener.md) - End-to-end migration flow for legacy apps
+- [ScratchBird UDR Client](./11i-ScratchBird-Client-Implementation.md) - SBWP client connector (untrusted)
 - [UDR System](../udr/) - UDR system specification
 - [Wire Protocols](../wire_protocols/) - Wire protocol implementations
 - [Replication](../beta_requirements/replication/) - Beta replication specifications

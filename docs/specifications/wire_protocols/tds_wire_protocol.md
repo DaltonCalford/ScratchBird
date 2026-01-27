@@ -4,7 +4,8 @@
 
 ## Overview
 
-**Scope Note:** TDS/MSSQL support is deferred until after the project goes gold. This document is retained for future compatibility work and does not represent current implementation.
+**Scope Note:** TDS/MSSQL support is Beta scope (UDR connector). There is no
+listener/compatibility surface in Alpha.
 
 TDS (Tabular Data Stream) is Microsoft's proprietary protocol for SQL Server and Sybase databases. It operates over TCP/IP on port 1433 by default. The protocol is packet-based with a maximum packet size of 65,536 bytes.
 
@@ -728,6 +729,90 @@ Server → Client:
 D1 [Row token]
 D1 [Row token]
 FD [Done token]
+```
+
+## Worked Hex Flow (Minimal SQL Auth)
+
+### 1) Pre-Login (Client → Server)
+```
+12 01 00 2F 00 00 01 00  // Header: PRELOGIN, EOM, length=0x2F
+00 00 15 00 06           // VERSION at 0x15, len 6
+01 00 1B 00 01           // ENCRYPTION at 0x1B, len 1
+02 00 1C 00 01           // INSTOPT at 0x1C, len 1
+03 00 1D 00 04           // THREADID at 0x1D, len 4
+04 00 21 00 01           // MARS at 0x21, len 1
+FF                       // Terminator
+0E 00 0F A0 00 00        // Version 14.0.4000.0
+00                       // Encryption: ENCRYPT_OFF
+00                       // Instance
+00 00 00 00              // Thread ID
+00                       // MARS: disabled
+```
+
+### 2) Pre-Login Response (Server → Client)
+```
+04 01 00 2F 00 00 01 00  // Header: TABULAR, EOM, length=0x2F
+00 00 15 00 06           // VERSION
+01 00 1B 00 01           // ENCRYPTION
+02 00 1C 00 01           // INSTOPT
+03 00 1D 00 04           // THREADID
+04 00 21 00 01           // MARS
+FF
+0E 00 0F A0 00 00        // Version 14.0.4000.0
+01                       // Encryption: ENCRYPT_ON (server requires TLS)
+00
+00 00 00 00
+00
+```
+
+### 3) Login7 (Client → Server, SQL Auth, empty password)
+```
+10 01 00 AA 00 00 01 00  // Header: LOGIN7, EOM, length=0x00AA
+A2 00 00 00              // Login length = 0x00A2 (162)
+04 00 00 74              // TDS version 7.4
+00 10 00 00              // Packet size 4096
+00 00 00 00              // Client prog version
+34 12 00 00              // Client PID
+00 00 00 00              // Connection ID
+00 00 00 00              // Option flags 1/2/type/3
+00 00 00 00              // Client timezone
+09 04 00 00              // Client LCID (en-US)
+5E 00 06 00              // Hostname offset/len ("client")
+6A 00 02 00              // Username offset/len ("sa")
+6E 00 00 00              // Password offset/len (empty)
+6E 00 08 00              // Appname offset/len ("sbclient")
+7E 00 06 00              // Servername offset/len ("server")
+8A 00 00 00              // Extension offset/len (empty)
+8A 00 06 00              // Interface offset/len ("db-lib")
+96 00 00 00              // Language offset/len (empty)
+96 00 06 00              // Database offset/len ("master")
+00 00 00 00 00 00        // Client MAC
+00 00 00 00              // SSPI offset/len
+00 00 00 00              // Atch DB offset/len
+00 00 00 00              // Change password offset/len
+00 00 00 00              // SSPI long
+63 00 6C 00 69 00 65 00 6E 00 74 00  // "client"
+73 00 61 00              // "sa"
+73 00 62 00 63 00 6C 00 69 00 65 00 6E 00 74 00  // "sbclient"
+73 00 65 00 72 00 76 00 65 00 72 00  // "server"
+64 00 62 00 2D 00 6C 00 69 00 62 00  // "db-lib"
+6D 00 61 00 73 00 74 00 65 00 72 00  // "master"
+```
+
+Note: non-empty passwords are obfuscated by swapping nibbles and XOR with 0xA5.
+
+### 4) SQL Batch (Client → Server, `SELECT 1`)
+```
+01 01 00 18 00 00 01 00  // Header: SQL_BATCH, EOM, length=0x0018
+53 00 45 00 4C 00 45 00 43 00 54 00 20 00 31 00  // "SELECT 1"
+```
+
+### 5) Result Tokens (Server → Client, single int column)
+```
+04 01 00 25 00 00 01 00  // Header: TABULAR, EOM, length=0x0025
+81 01 00 00 00 00 00 38 01 31 00  // COLMETADATA (1 column, INT4, name "1")
+D1 01 00 00 00                    // ROW (value = 1)
+FD 00 00 00 00 01 00 00 00 00 00 00 00  // DONE (rowcount = 1)
 ```
 
 ## Protocol State Machine

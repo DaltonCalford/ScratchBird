@@ -1,38 +1,46 @@
 # Implementation Status Dashboard
 
-**Last updated:** 2026-01-20  
+**Last updated:** 2026-01-27  
 **Tests (last run 2026-01-20):** `ctest --test-dir build --output-on-failure` → 2,286 passed, 0 failed, 18 skipped (skip list: FirebirdAdapterBridge, TCP/Unix socket integration, SweepMechanism parsing, ProtocolSession, JSONFunction).
 
-## Phase Summary (history + todo)
-- **Alpha 1 – Engine/Core**  
-  - [x] Storage engine, MGA transactions, catalog, indexes, sequences  
-  - [x] Bootstrap parser, basic DDL/DML, core tests  
-- **Alpha 2 – Parser V2 & Dialects**  
-  - [x] Parser v2 (context-aware), ScratchBird dialect  
-  - [x] Firebird/MySQL/PostgreSQL dialect parsers  
-  - [x] Semantic analyzer v2, SBLR bytecode v2  
-- **Alpha 3 – Network & Service** *(current)*  
-  - [x] Core network stack + IPC  
-  - [x] Listener binaries + parser pools per dialect  
-  - [x] Wire adapters (FB/MySQL/PG/native), pooling, FDW/UDR  
-  - [ ] Driver adapters (ODBC/JDBC) readiness and integration  
-  - [ ] Server auth wiring (HBA/SCRAM/TLS/MFA hooks)  
-- **Alpha (Completion) – Parser Alignment & Audit Repairs**  
-  - [x] MySQL/PostgreSQL DML bytecode alignment (SBLR v2 format)  
-  - [x] Firebird DDL/DML alignment (via v2 → SBLR v2 or executor extensions)  
-  - [x] Parser critical findings remediation complete (Phases 0–6)  
-  - [x] Full build + full test suite pass (gated network tests only)  
+## Alpha Status (current)
 
-## Outstanding Detail (Alpha 3 blockers)
-1) Server auth path wiring (HBA/SCRAM/TLS/MFA) and protocol handshake integration.  
-2) Driver adapter readiness (ODBC/JDBC) and client integration work.  
-3) Dialect‑specific adapter e2e coverage (Firebird → MySQL → PostgreSQL).  
+### Core Engine
+- **Completed:** storage engine, MGA transactions, scheduler/jobs, constraint enforcement,
+  security enforcement wiring, cache/buffer plan.
+- **Completed:** tablespace routing defaults + root page allocation; index migration safety
+  for SPGIST/BITMAP/COLUMNSTORE/LSM.
+- **In Progress:** monitoring parity;
+  backup/restore parity across tablespaces/catalogs.
+- **Open:** expression/partial index root allocation still uses primary tablespace.
+- **Open:** restore uses only first tablespace file path (multi‑file tablespace).
+- **Open:** timezones/charsets/collations resource loading + catalog persistence.
+
+### Parser + PSQL
+- **Completed:** V2 parser base, dialect parsers, semantic analyzer v2, baseline bytecode.
+- **In Progress:** V2 parser completeness (DDL/DML/utility/PSQL surface).
+- **Open:** PSQL bytecode emission + executor parity (FOR/CASE/SUSPEND/etc).
+
+### Network & Service
+- **Completed:** listener/pool/parser/server process and wire adapters (FB/MySQL/PG/native).
+- **In Progress:** dialect parity test suites and remaining auth/config wiring (if any).
+
+## Outstanding Detail (Alpha blockers)
+1) Tablespace routing defaults + root page allocation (tablespace‑aware).  
+2) Index migration safety for SPGIST/BITMAP/COLUMNSTORE/LSM.  
+3) Monitoring parity (remaining MON$ placeholders).  
+4) Backup/restore parity across tablespaces/catalogs.  
+5) V2 parser completeness + PSQL bytecode/executor parity.  
+6) Timezone/charset/collation resource loaders + catalog persistence.  
+7) IVF/Zone Maps/inverted GC index gaps and GPID/TID checks.  
 
 ## Plan Progress (Active)
-- Plan 02 (UUID Resolution/Rename/Move): complete (resolver cache/view, rename/move across object types, resolver rebuild + test coverage).
-- Plan 04 (Emulated parser alignment): complete (see `docs/archive/2026-01-09/planning/PLAN_04_PARSER_BYTECODE_ALIGNMENT_PROGRESS.md`).
-- Parser Critical Findings Remediation: complete (`docs/planning/PLAN_ALPHA_PARSER_CRITICAL_FINDINGS_REMEDIATION.md`; full ctest pass 2026-01-20).
-- Plan 06–08 (ISQL clients, protocol conformance, test automation): pending; listener work unblocked, next after auth + driver wiring.
+- **Alpha Completion Master Plan:** in progress (`planning/ALPHA_COMPLETION_MASTER_PLAN.md`).
+- **Engine Core Alpha Completion:** in progress (`planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`).
+- **V2 Parser Completion:** in progress (`planning/PLAN_V2_PARSER_COMPLETION.md`).
+- **Resources I18N/Timezone:** open (`planning/RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN.md`).
+- **Index Spec Gap Tracker:** open (`planning/TRACKER_INDEX_SPEC_GAPS.md`).
+- **Cache/Buffer Remediation:** done (`planning/CACHE_AND_BUFFER_REMEDIATION_PLAN.md`).
 
 ## Known Alpha Limitations (Explicit Warnings/Errors)
 - TRUNCATE `CASCADE` / `RESTART IDENTITY`: warning + proceed without cascade/restart.
@@ -42,7 +50,9 @@
 - Dialect guardrails: MySQL partition clauses and `LOCK/UNLOCK TABLES` are explicit errors; non‑dialect DDL rejected by allowlists.
 
 ## Links
-- Roadmap: `OFFICIAL_ROADMAP.md`  
-- Current context: `PROJECT_CONTEXT.md`  
-- Planning: `docs/planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md` and `docs/archive/2026-01-09/planning/`  
-- Specs: `docs/specifications/`
+- Roadmap: `../OFFICIAL_ROADMAP.md`
+- Alpha/Beta scope: `findings/ALPHA_BETA_SCOPE_STATUS.md`
+- Alpha plan: `planning/ALPHA_COMPLETION_MASTER_PLAN.md`
+- Current context: `../PROJECT_CONTEXT.md`
+- Planning: `planning/`
+- Specs: `specifications/`

@@ -4,6 +4,10 @@
 
 A trigger is a special type of stored procedure that automatically executes when a specific event occurs in the database. Triggers can be attached to tables to respond to Data Manipulation Language (DML) events (INSERT, UPDATE, DELETE) or to the database itself to respond to Data Definition Language (DDL) or session events (CREATE TABLE, ON CONNECT).
 
+Triggers may declare and use cursor handles inside the trigger body, but they
+cannot accept cursor parameters or return cursor handles. See:
+`ScratchBird/docs/specifications/parser/PSQL_CURSOR_HANDLES.md`
+
 ## **CREATE TRIGGER**
 
 Defines a new trigger.

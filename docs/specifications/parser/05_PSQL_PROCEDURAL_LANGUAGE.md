@@ -190,6 +190,14 @@ BEGIN
     ...  
 END;
 
+### **4.5. Cursor Handle Passing**
+
+PSQL supports passing live cursor handles into and out of procedures and
+functions without copying result data. This enables shared cursor state
+between routines (same snapshot and position).
+
+See: `ScratchBird/docs/specifications/parser/PSQL_CURSOR_HANDLES.md`
+
 ## **5\. Structured Exception Handling**
 
 PSQL uses a modern TRY/EXCEPT block for robust error handling.

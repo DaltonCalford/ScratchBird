@@ -160,3 +160,4 @@ Acceptance: tests cover core cache behaviors; benchmarks show reduced scan pollu
 - 2026-02-02: Added cache/buffer scan-resistance benchmark and enabled benchmark sources in test suite.
 - 2026-02-02: Enabled scan-resistant ring buffers for sequential, vacuum/GC, and bulk-write access strategies.
 - 2026-02-02: Full rebuild + sequential `ctest` pass completed (2396 tests, 0 failures).
+- 2026-02-02: Fixed result cache retrieval to avoid cache lifetime UAF; full rebuild + sequential `ctest` pass completed (2406 tests, 0 failures).

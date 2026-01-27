@@ -4,10 +4,12 @@
 
 The Remote Database UDR (User Defined Routine) plugin enables your database engine to connect to external databases using native wire protocol client implementations. This transforms your existing wire protocol expertise into a powerful migration and integration tool.
 
-**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+**Scope Note:** MSSQL/TDS adapter support is in Beta scope. All listed connectors
+ship as separate UDR packages.
 
 **Strategic Benefits:**
-- **Bidirectional Protocol Support**: Your PostgreSQL/MySQL/Firebird server code becomes client code (MSSQL post-gold)
+- **Bidirectional Protocol Support**: Your PostgreSQL/MySQL/Firebird/MSSQL server
+  code becomes client code (wire-protocol clients).
 - **Zero-Downtime Migration**: Migrate data from legacy systems incrementally
 - **Foreign Data Wrapper Pattern**: Query remote data transparently
 - **Hybrid Query Execution**: JOIN local and remote tables seamlessly
@@ -18,10 +20,26 @@ The Remote Database UDR (User Defined Routine) plugin enables your database engi
 - Connection pooling: [11a-Connection-Pool-Implementation.md](11a-Connection-Pool-Implementation.md)
 - PostgreSQL client: [11b-PostgreSQL-Client-Implementation.md](11b-PostgreSQL-Client-Implementation.md)
 - MySQL client: [11c-MySQL-Client-Implementation.md](11c-MySQL-Client-Implementation.md)
-- MSSQL client: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md) (post-gold)
+- MSSQL client: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md)
 - Firebird client: [11e-Firebird-Client-Implementation.md](11e-Firebird-Client-Implementation.md)
+- ODBC connector: [11f-ODBC-Client-Implementation.md](11f-ODBC-Client-Implementation.md)
+- JDBC connector: [11g-JDBC-Client-Implementation.md](11g-JDBC-Client-Implementation.md)
+- Live migration with emulated listener: [11h-Live-Migration-Emulated-Listener.md](11h-Live-Migration-Emulated-Listener.md)
+- ScratchBird connector (untrusted): [11i-ScratchBird-Client-Implementation.md](11i-ScratchBird-Client-Implementation.md)
 
 ---
+
+## Connector Packaging and Isolation
+
+- Each protocol connector ships as a **separate UDR module**.
+- PostgreSQL/MySQL/Firebird/MSSQL/ScratchBird connectors implement the **native
+  wire protocols directly** (no external client libraries).
+- ODBC/JDBC connectors include a **bundled driver manager + drivers** inside
+  the UDR package to avoid system-level client library installs.
+- ScratchBird connector is **untrusted** (non-cluster) and must not negotiate
+  `FEATURE_FEDERATION` or use cluster PKI.
+- All connectors are subject to the UDR signing/verification policy and
+  per‑server allowlists.
 
 ## Architecture
 
@@ -58,23 +76,27 @@ The Remote Database UDR (User Defined Routine) plugin enables your database engi
 │  ┌────────────▼───────────────────────────────────┐    │
 │  │  Protocol Adapters                              │    │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐       │    │
-│  │  │PostgreSQL│ │  MySQL   │ │ MSSQL*  │       │    │
+│  │  │PostgreSQL│ │  MySQL   │ │ MSSQL   │       │    │
 │  │  └──────────┘ └──────────┘ └──────────┘       │    │
-│  │  ┌──────────┐                                  │    │
-│  │  │ Firebird │                                  │    │
-│  │  └──────────┘                                  │    │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐       │    │
+│  │  │ Firebird │ │  ODBC    │ │  JDBC    │       │    │
+│  │  └──────────┘ └──────────┘ └──────────┘       │    │
+│  │  ┌──────────┐                                   │    │
+│  │  │ScratchBird│                                  │    │
+│  │  └──────────┘                                   │    │
 │  └────────────┬───────────────────────────────────┘    │
 └───────────────┼──────────────────────────────────────────┘
                 │ Wire Protocols
 ┌───────────────▼──────────────────────────────────────────┐
 │  Remote/Legacy Databases                                │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│  │PostgreSQL│ │  MySQL   │ │ MSSQL*  │ │ Firebird │  │
+│  │PostgreSQL│ │  MySQL   │ │ MSSQL   │ │ Firebird │  │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘  │
+│  ┌──────────┐                                       │
+│  │ScratchBird│                                       │
+│  └──────────┘                                       │
 └──────────────────────────────────────────────────────────┘
 ```
-
-* MSSQL adapter is post-gold and not part of current scope.
 
 ---
 
@@ -119,6 +141,59 @@ FROM users_new;
 
 -- Step 6: Cutover (after full migration)
 DROP FOREIGN TABLE users_old;
+```
+
+---
+
+## End-to-End Workflow (UDR → Server → User Mapping → Use)
+
+Short lifecycle for connecting and using a remote database:
+
+1. **Install + verify UDR** (admin) — makes the connector available.
+2. **Create FDW** — registers handler/validator.
+3. **Create SERVER** — defines remote endpoint + policy (allow_ddl/dml/psql/passthrough).
+4. **Create USER MAPPING** — multiple credentials per local user/role.
+5. **Use** — pass-through queries, foreign tables, or migration.
+
+### Diagram (End-to-End)
+
+```
+┌─────────────────────────┐
+│ Admin: UDR install       │
+│ sb_admin udr install     │
+└──────────────┬──────────┘
+               │
+               ▼
+┌─────────────────────────┐
+│ SQL: CREATE FDW         │
+│ + CREATE SERVER         │
+└──────────────┬──────────┘
+               │
+               ▼
+┌─────────────────────────┐
+│ SQL: CREATE USER MAPPING│
+│ (per local user/role)   │
+└──────────────┬──────────┘
+               │
+               ▼
+┌─────────────────────────┐
+│ Use cases:              │
+│ - sys.remote_*          │
+│ - FOREIGN TABLE         │
+│ - migration workflow    │
+└─────────────────────────┘
+```
+
+### Multi-User Mapping Example
+
+```sql
+CREATE USER MAPPING FOR analyst
+    SERVER legacy_pg
+    OPTIONS (user 'readonly_user', password '***');
+
+CREATE USER MAPPING FOR migrator
+    SERVER legacy_pg
+    OPTIONS (user 'migration_user', password '***');
 ```
 
 ### 2. Hybrid Queries
@@ -229,7 +304,7 @@ Before creating foreign tables, register the remote database:
 
 ```sql
 REGISTER REMOTE DATABASE <name> WITH (
-    protocol = 'postgresql' | 'mysql' | 'mssql' | 'firebird',
+    protocol = 'postgresql' | 'mysql' | 'mssql' | 'firebird' | 'odbc' | 'jdbc' | 'scratchbird',
     host = 'hostname',
     port = port_number,
     database = 'database_name',
@@ -330,7 +405,7 @@ DATETIME   → TIMESTAMP
 BLOB       → BYTES
 ```
 
-**MSSQL (post-gold) → Internal:**
+**MSSQL → Internal:**
 ```
 INT        → INT32
 BIGINT     → INT64
@@ -350,6 +425,11 @@ TIMESTAMP  → TIMESTAMP
 BLOB       → BYTES
 ```
 
+**ODBC/JDBC → Internal:**
+```
+Use driver metadata (SQL type codes / java.sql.Types) with per-driver overrides.
+```
+
 ---
 
 ## SQL Syntax Reference
@@ -359,7 +439,7 @@ BLOB       → BYTES
 ```sql
 REGISTER REMOTE DATABASE remote_db_name WITH (
     -- Required
-    protocol = 'postgresql' | 'mysql' | 'mssql' | 'firebird',
+    protocol = 'postgresql' | 'mysql' | 'mssql' | 'firebird' | 'odbc' | 'jdbc' | 'scratchbird',
     host = 'hostname',
     port = port_number,
     database = 'database_name',
@@ -459,7 +539,56 @@ SHOW FOREIGN TABLES;
 
 ---
 
+## Required Metadata Coverage (Introspection)
+
+Each connector must be able to analyze the remote database and return the
+minimum metadata needed to mount schemas and generate compatible local
+definitions. The following categories are required for all connectors (where
+the remote engine supports them):
+
+- Databases/catalogs, schemas, and tables
+- Columns (type, nullability, default, identity/sequence info)
+- Primary keys and unique constraints
+- Foreign keys
+- Indexes and index expressions
+- Views (including definitions, when available)
+- Stored procedures/functions (names, params, return types)
+- Triggers (name, timing, event)
+- Sequences/identity sources
+
+When a concept does not exist on the remote engine, report it as `not_supported`
+and continue discovery.
+
+---
+
+## Schema Mounting and Namespace Mapping
+
+Remote schemas are mounted into a dedicated namespace so local objects are not
+polluted and permissions can be scoped cleanly.
+
+Default mount rules:
+- `legacy_<server>`: imported foreign schemas (read-only by default)
+- `emulated_<server>`: translated local copies for migration/cutover
+
+Optional overrides (server options):
+- `mount_root`: override `legacy_<server>` schema name
+- `emulated_root`: override `emulated_<server>` schema name
+- `schema_prefix`: prefix applied to imported schemas
+
+Engine-specific mapping rules:
+- PostgreSQL: database -> server, schema -> schema.
+- MySQL/MariaDB: database -> schema (no separate schema layer).
+- MSSQL: database -> catalog, schema -> schema (default `dbo`).
+- Firebird: no schema layer; map all objects under a single schema (default
+  `public`) inside `legacy_<server>`.
+
+---
+
 ## Migration Workflow
+
+Live migration is optional and must be explicitly enabled per remote server.
+If disabled, the connector operates in read-only discovery or pass-through
+mode only.
 
 ### Complete Migration Process
 
@@ -662,18 +791,34 @@ The Remote Database UDR is implemented as a standard UDR plugin. See [10-UDR-Sys
 
 ### Plugin Structure
 
+Each connector is a separate UDR module, with shared code compiled into a
+common library or copied as needed.
+
 ```
-remote_database_udr/
-├── plugin.c                  # UDR entry point
-├── connection_pool.c         # Connection pooling (see 11a)
-├── protocol_adapters/
-│   ├── postgresql.c          # PostgreSQL client (see 11b)
-│   ├── mysql.c               # MySQL client (see 11c)
-│   ├── mssql.c               # MSSQL client (post-gold; see 11d)
-│   └── firebird.c            # Firebird client (see 11e)
-├── query_executor.c          # Query execution layer
-├── schema_introspection.c    # Schema discovery
-└── type_mapping.c            # Type conversion
+udr_connectors/
+├── common/
+│   ├── connection_pool.c         # Connection pooling (see 11a)
+│   ├── query_executor.c          # Query execution layer
+│   ├── schema_introspection.c    # Schema discovery
+│   └── type_mapping.c            # Type conversion
+├── postgresql_udr/
+│   ├── plugin.c                  # UDR entry point
+│   └── protocol_client.c         # PostgreSQL client (see 11b)
+├── mysql_udr/
+│   ├── plugin.c
+│   └── protocol_client.c         # MySQL client (see 11c)
+├── mssql_udr/
+│   ├── plugin.c
+│   └── protocol_client.c         # MSSQL client (see 11d)
+├── firebird_udr/
+│   ├── plugin.c
+│   └── protocol_client.c         # Firebird client (see 11e)
+├── odbc_udr/
+│   ├── plugin.c
+│   └── odbc_manager.c            # Embedded ODBC stack (see 11f)
+└── jdbc_udr/
+    ├── plugin.c
+    └── jdbc_runtime.c            # Embedded JDBC stack (see 11g)
 ```
 
 ### UDR Functions Exposed
@@ -1027,8 +1172,10 @@ SELECT COUNT(*), AVG(price) FROM foreign_table;
 - [ ] Implement connection pool (see 11a)
 - [ ] Implement PostgreSQL adapter (see 11b)
 - [ ] Implement MySQL adapter (see 11c)
-- [ ] Implement MSSQL adapter (post-gold; see 11d)
+- [ ] Implement MSSQL adapter (Beta; see 11d)
 - [ ] Implement Firebird adapter (see 11e)
+- [ ] Implement ODBC connector (see 11f)
+- [ ] Implement JDBC connector (see 11g)
 - [ ] Implement query executor
 - [ ] Implement schema introspection
 - [ ] Implement type mapping
@@ -1048,7 +1195,7 @@ SELECT COUNT(*), AVG(price) FROM foreign_table;
 - **Connection Pooling**: [11a-Connection-Pool-Implementation.md](11a-Connection-Pool-Implementation.md)
 - **PostgreSQL Client**: [11b-PostgreSQL-Client-Implementation.md](11b-PostgreSQL-Client-Implementation.md)
 - **MySQL Client**: [11c-MySQL-Client-Implementation.md](11c-MySQL-Client-Implementation.md)
-- **MSSQL Client (post-gold)**: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md)
+- **MSSQL Client (Beta)**: [11d-MSSQL-Client-Implementation.md](11d-MSSQL-Client-Implementation.md)
 - **Firebird Client**: [11e-Firebird-Client-Implementation.md](11e-Firebird-Client-Implementation.md)
 
 ---

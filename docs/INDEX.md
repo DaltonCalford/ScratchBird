@@ -42,6 +42,7 @@ Current implementation status and completion reports:
 Implementation plans and gap analysis:
 
 - **[Consolidated Findings Remediation Plan](planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md)** - Canonical remediation plan
+- **[Alpha Completion Master Plan](planning/ALPHA_COMPLETION_MASTER_PLAN.md)** - Primary Alpha tracker
 - **[Cache and Buffer Remediation Plan](planning/CACHE_AND_BUFFER_REMEDIATION_PLAN.md)** - Cache/buffer Alpha remediation plan
 - **[Planning Archive (2026-01-09)](archive/2026-01-09/planning/)** - Plans moved from `docs/planning/`
 - **[Legacy Planning Archives](Alpha_Phase_1_Archive/planning_archive/)** - Alpha Phase 1 planning history

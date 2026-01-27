@@ -12,7 +12,7 @@
 
 This directory contains comprehensive specifications for all drivers, integrations, and tools that ScratchBird must support to achieve broad market adoption in Beta release. These specifications ensure compatibility with the most popular programming languages, ORMs, tools, cloud platforms, and applications.
 
-**Total Specifications:** 140+ documents across 10 major categories
+**Total Specifications:** 140+ documents across 11 major categories
 **Status:** ✅ Specifications complete, implementation in progress
 
 ## Quick Start
@@ -65,6 +65,20 @@ See [orms-frameworks/README.md](orms-frameworks/README.md) for complete list.
 - [Vector APIs](ai-ml/vector-apis/) - Vector similarity search
 - [LangChain](ai-ml/langchain/) - LLM application framework
 - [Haystack](ai-ml/haystack/) - NLP framework
+
+### NoSQL and Multi-Model
+
+**[nosql/](nosql/)** - NoSQL storage structures and Beta catalog/index specs
+
+- [NOSQL_STORAGE_STRUCTURES_REPORT.md](nosql/NOSQL_STORAGE_STRUCTURES_REPORT.md) - Model-by-model storage gaps
+- [NOSQL_CATALOG_MODEL_SPEC.md](nosql/NOSQL_CATALOG_MODEL_SPEC.md) - Catalog objects and wiring
+- [JSONPathIndex.md](../indexes/JSONPathIndex.md) - JSON path index design (canonical index spec)
+
+### Index Specifications (Pointers)
+
+**[indexes/](indexes/)** - Beta index work tracked by the canonical index specs
+
+- [indexes/README.md](indexes/README.md) - Beta index pointers
 
 ### Database Tools
 

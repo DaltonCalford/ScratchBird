@@ -8,10 +8,11 @@ Firebird wire protocol client adapter for Remote Database UDR.
 
 ## Overview
 
-Implements Firebird wire protocol client using fbclient library.
+Implements Firebird wire protocol client directly (no external client
+libraries required).
 
 **Protocol**: Firebird Wire Protocol  
-**Library**: fbclient (Firebird client library)  
+**Library**: None (ScratchBird native client)  
 **Supported Versions**: Firebird 2.5, 3.0, 4.0, 5.0
 
 ---
@@ -72,11 +73,7 @@ server.internal/3050:/data/production.fdb
 - SRPA authentication (FB 3.0+)
 - Win_Sspi (Windows)
 
-**Build Requirements:**
-```
-firebird-dev (Debian/Ubuntu)
-firebird-devel (RHEL/CentOS)
-```
+**Build Requirements:** None (protocol client is bundled with the UDR).
 
 **Special Considerations:**
 - Dialect handling (Dialect 3 recommended)

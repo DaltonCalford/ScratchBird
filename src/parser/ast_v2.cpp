@@ -32,7 +32,10 @@ void CreateUserStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -261,6 +264,8 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateExceptionStmt: return "CreateExceptionStmt";
         case ASTKind::CreateTypeStmt: return "CreateTypeStmt";
         case ASTKind::CreateDomainStmt: return "CreateDomainStmt";
+        case ASTKind::AlterTypeStmt: return "AlterTypeStmt";
+        case ASTKind::DropTypeStmt: return "DropTypeStmt";
         case ASTKind::AlterTableStmt: return "AlterTableStmt";
         case ASTKind::AlterIndexStmt: return "AlterIndexStmt";
         case ASTKind::RenameObjectStmt: return "RenameObjectStmt";

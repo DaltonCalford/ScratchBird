@@ -190,17 +190,17 @@ ScratchBird Database
 │  ├─ Page 3-N: Catalog tables, system data
 │  └─ Pages N+1...: Default tablespace data
 │
-├─ Tablespace 1 (ts_hot.sbts)
+├─ Tablespace 2 (ts_hot.sbts)
 │  ├─ Page 0: TablespaceHeader
 │  ├─ Page 1: Tablespace Free Space Map
 │  └─ Pages 2+: User data
 │
-├─ Tablespace 2 (ts_archive_2024.sbts)
+├─ Tablespace 3 (ts_archive_2024.sbts)
 │  ├─ Page 0: TablespaceHeader
 │  ├─ Page 1: Tablespace Free Space Map
 │  └─ Pages 2+: User data (e.g., 2024 archived data)
 │
-└─ Tablespace 3 (ts_cold.sbts)
+└─ Tablespace 4 (ts_cold.sbts)
    ├─ Page 0: TablespaceHeader
    ├─ Page 1: Tablespace Free Space Map
    └─ Pages 2+: User data
@@ -1028,9 +1028,9 @@ SELECT COUNT(*) FROM invoices_2024;
 CREATE TABLE orders (id INT PRIMARY KEY, ...) TABLESPACE ts_data;
 CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 ```
-- Heap tuples: `ts_data` (tablespace_id=1)
-- Index entries: `ts_index` (tablespace_id=2)
-- Index stores TIDs like `(gpid=0x0001000000001234, slot=5)` → points to ts_data
+- Heap tuples: `ts_data` (tablespace_id=2)
+- Index entries: `ts_index` (tablespace_id=3)
+- Index stores TIDs like `(gpid=0x0002000000001234, slot=5)` → points to ts_data
 
 ### 9.4 Backup and Recovery
 

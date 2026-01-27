@@ -140,6 +140,7 @@ Before working on type system implementation:
 2. **MUST READ:** [../../../IMPLEMENTATION_STANDARDS.md](../../../IMPLEMENTATION_STANDARDS.md) - Implementation standards
 3. **READ IN ORDER:**
    - [03_TYPES_AND_DOMAINS.md](03_TYPES_AND_DOMAINS.md) - Type system overview
+   - [../ddl/DDL_TYPES.md](../ddl/DDL_TYPES.md) - CREATE/ALTER/DROP TYPE
    - [DDL_DOMAINS_COMPREHENSIVE.md](DDL_DOMAINS_COMPREHENSIVE.md) - Domain specification
    - [DATA_TYPE_PERSISTENCE_AND_CASTS.md](DATA_TYPE_PERSISTENCE_AND_CASTS.md) - Storage and casts
 

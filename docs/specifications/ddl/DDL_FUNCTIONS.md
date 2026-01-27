@@ -4,6 +4,10 @@
 
 A function is a reusable subprogram that performs a specific calculation or operation and **must return a value**. Functions are essential for encapsulating business logic, simplifying complex queries, and promoting code reuse. They can be called from SQL statements (SELECT, WHERE, etc.) or from within other procedural code.
 
+Cursor handle returns are supported for PSQL invocation contexts only. For
+details on cursor handle semantics and limits, see:
+`ScratchBird/docs/specifications/parser/PSQL_CURSOR_HANDLES.md`
+
 ## **CREATE FUNCTION**
 
 Defines a new function.
@@ -36,6 +40,9 @@ $$;
 * LANGUAGE: The implementation language (e.g., plpgsql, sql, python). Default is plpgsql.  
 * IMMUTABLE | STABLE | VOLATILE: Hints for the query planner. IMMUTABLE always returns the same result for the same inputs. STABLE results are constant within a single scan. VOLATILE (default) results can change at any time.  
 * SECURITY DEFINER | INVOKER: DEFINER (default) runs the function with the permissions of the user who created it. INVOKER runs it with the permissions of the calling user.
+* RETURNS CURSOR: Allowed only for PSQL invocation (EXECUTE/CALL). It is not
+  valid inside SQL expressions; use RETURNS SETOF/TABLE for SQL-facing
+  set-returning functions.
 
 ### **Examples**
 

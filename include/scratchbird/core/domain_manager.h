@@ -36,7 +36,10 @@ namespace scratchbird::core
         RECORD = 1,   // RECORD/ROW type with named fields
         ENUM = 2,     // ENUM type with ordered values
         SET = 3,      // SET type with unique unordered values
-        VARIANT = 4   // VARIANT type (runtime polymorphic)
+        VARIANT = 4,  // VARIANT type (runtime polymorphic)
+        RANGE = 5,    // RANGE type (bounded intervals)
+        BASE = 6,     // BASE type (custom base type with I/O)
+        SHELL = 7     // SHELL type (placeholder)
     };
 
     /**
@@ -94,6 +97,33 @@ struct DomainTypeRef
     bool with_time_zone = false;
     ID domain_id{};  // Non-zero when referencing another domain
 };
+
+    struct RangeTypeInfo
+    {
+        DomainTypeRef subtype;
+        std::string subtype_collation;
+        std::string subtype_opclass;
+        std::string canonical_function;
+        std::string subtype_diff_function;
+        bool multirange = false;
+    };
+
+    struct BaseTypeInfo
+    {
+        DomainTypeRef storage;
+        std::string input_function;
+        std::string output_function;
+        std::string receive_function;
+        std::string send_function;
+        std::string typmod_in_function;
+        std::string typmod_out_function;
+        std::string analyze_function;
+        std::string alignment;
+        std::string storage_mode;
+        char category = '\0';
+        bool preferred = false;
+        bool has_preferred = false;
+    };
 
     /**
      * ENUM value definition
@@ -191,6 +221,9 @@ struct DomainInfo
 
         // For VARIANT domains
         std::vector<DomainTypeRef> variant_allowed_types;  // Allowed types for VARIANT
+        RangeTypeInfo range_info;
+        BaseTypeInfo base_info;
+        bool shell_finalized = false;
 
         // Constraints
         std::vector<DomainConstraint> constraints;
@@ -505,6 +538,53 @@ struct DomainInfo
                                 const std::vector<DataType>& allowed_types,
                                 ID& domain_id,
                                 ErrorContext* ctx = nullptr) -> Status;
+
+        // ====================
+        // Phase 6b: RANGE/BASE/SHELL Types
+        // ====================
+
+        auto createRangeDomain(const ID& schema_id,
+                              const std::string& domain_name,
+                              const RangeTypeInfo& range_info,
+                              const DomainCreateOptions& options,
+                              ID& domain_id,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto createBaseDomain(const ID& schema_id,
+                             const std::string& domain_name,
+                             const BaseTypeInfo& base_info,
+                             const DomainCreateOptions& options,
+                             ID& domain_id,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto createShellDomain(const ID& schema_id,
+                              const std::string& domain_name,
+                              const DomainCreateOptions& options,
+                              ID& domain_id,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto addEnumValue(const ID& domain_id,
+                          const std::string& label,
+                          const std::optional<std::string>& before_label,
+                          const std::optional<std::string>& after_label,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto renameEnumValue(const ID& domain_id,
+                             const std::string& old_label,
+                             const std::string& new_label,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateRangeOptions(const ID& domain_id,
+                                const RangeTypeInfo& range_info,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateBaseOptions(const ID& domain_id,
+                               const BaseTypeInfo& base_info,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto finalizeShellType(const ID& domain_id,
+                               const BaseTypeInfo& base_info,
+                               ErrorContext* ctx = nullptr) -> Status;
 
         // Extract datatype from variant (EXTRACT(DATATYPE FROM value))
         auto extractDataType(const TypedValue& variant_value,

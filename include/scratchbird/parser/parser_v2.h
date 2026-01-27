@@ -81,6 +81,11 @@ public:
     ParseResult parseStatement();
 
     /**
+     * Parse a PSQL body (DECLARE...BEGIN...END or single PSQL statement)
+     */
+    ParseResult parsePsqlBody();
+
+    /**
      * Parse multiple statements (semicolon-separated)
      */
     std::vector<ParseResult> parseStatements();
@@ -140,6 +145,9 @@ private:
     CreateFunctionStmt* parseCreateFunction(bool or_replace = false);
     CreateProcedureStmt* parseCreateProcedure(bool or_replace = false);
     CreateTriggerStmt* parseCreateTrigger(bool or_replace = false);
+    CreatePackageStmt* parseCreatePackage(bool or_replace = false);
+    CreateExceptionStmt* parseCreateException(bool or_replace = false);
+    CreateTypeStmt* parseCreateType(bool or_replace = false);
     CreateUserStmt* parseCreateUser();
     CreateRoleStmt* parseCreateRole();
     CreateJobStmt* parseCreateJob(bool or_alter = false, bool recreate = false);
@@ -148,6 +156,7 @@ private:
     AlterTableStmt* parseAlterTable();
     AlterSchemaStmt* parseAlterSchema();
     AlterDatabaseStmt* parseAlterDatabase();
+    AlterTypeStmt* parseAlterType();
     AlterDomainStmt* parseAlterDomain();
     AlterJobStmt* parseAlterJob();
     AlterSystemStmt* parseAlterSystem();
@@ -165,6 +174,8 @@ private:
     DropPackageStmt* parseDropPackage();
     DropRoleStmt* parseDropRole();
     DropExceptionStmt* parseDropException();
+    DropSequenceStmt* parseDropSequence();
+    DropTypeStmt* parseDropType();
     DropJobStmt* parseDropJob();
 
     // TRUNCATE statement

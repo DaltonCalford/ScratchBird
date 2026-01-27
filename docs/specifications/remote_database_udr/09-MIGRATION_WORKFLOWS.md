@@ -1,5 +1,9 @@
 # Remote Database UDR - Migration Workflows
 
+> Reference-only: Canonical UDR and live-migration behavior now lives in
+> `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
+> and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
+
 ## 1. Overview
 
 This document describes common migration patterns and workflows using the Remote Database UDR plugin to migrate from legacy databases to ScratchBird.

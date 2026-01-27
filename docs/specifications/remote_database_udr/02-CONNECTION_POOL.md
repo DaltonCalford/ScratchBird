@@ -1,5 +1,9 @@
 # Remote Database UDR - Connection Pool
 
+> Reference-only: Canonical UDR and live-migration behavior now lives in
+> `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
+> and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
+
 ## 1. Overview
 
 The Remote Connection Pool manages connections to external databases, providing:

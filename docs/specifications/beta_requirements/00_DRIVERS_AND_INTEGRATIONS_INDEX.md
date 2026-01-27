@@ -358,6 +358,10 @@ cases.
 | **PostgreSQL** | `postgresql_udr/` | PostgreSQL wire protocol client UDR | P0 |
 | **MySQL/MariaDB** | `mysql_udr/` | MySQL wire protocol client UDR | P0 |
 | **Firebird** | `firebird_udr/` | Firebird wire protocol client UDR | P0 |
+| **MSSQL** | `mssql_udr/` | MSSQL/TDS wire protocol client UDR | P0 |
+| **ODBC** | `odbc_udr/` | Embedded ODBC manager + bundled drivers | P0 |
+| **JDBC** | `jdbc_udr/` | Embedded JDBC runtime + bundled drivers | P0 |
+| **ScratchBird** | `scratchbird_udr/` | ScratchBird SBWP client UDR (untrusted) | P0 |
 
 ---
 

@@ -8,13 +8,13 @@
 
 ## Overview
 
-This document specifies how the database engine provides drop-in compatibility with PostgreSQL, MySQL, and Firebird wire protocols. MSSQL/TDS compatibility is post-gold and described here for future work.
+This document specifies how the database engine provides drop-in compatibility with PostgreSQL, MySQL, Firebird, and MSSQL wire protocols. MSSQL/TDS is Beta scope.
 
 ---
 
 ## Design Goals
 
-1. **Wire Compatibility**: Support native client libraries (libpq, MySQL Connector, Firebird client; TDS post-gold)
+1. **Wire Compatibility**: Support native wire protocols directly (no external client libraries required)
 2. **Parser Isolation**: Each protocol has dedicated parser plugin
 3. **Hot-Swappable**: Update parsers without engine downtime
 4. **System Catalog Virtualization**: Emulate protocol-specific system tables

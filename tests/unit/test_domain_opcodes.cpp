@@ -101,12 +101,16 @@ std::vector<uint8_t> buildSelectBytecode(
 
 std::vector<uint8_t> buildConstantReturnFunction(const std::string& value)
 {
+    std::vector<uint8_t> expr;
+    appendLiteralString(expr, value);
+
     std::vector<uint8_t> bytecode;
     appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
     appendByte(bytecode, SBLR_VERSION);
     appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
     appendByte(bytecode, 1);
-    appendLiteralString(bytecode, value);
+    appendInt32(bytecode, static_cast<uint32_t>(expr.size()));
+    bytecode.insert(bytecode.end(), expr.begin(), expr.end());
     appendByte(bytecode, static_cast<uint8_t>(Opcode::END));
     return bytecode;
 }
@@ -114,16 +118,20 @@ std::vector<uint8_t> buildConstantReturnFunction(const std::string& value)
 std::vector<uint8_t> buildBooleanReturnFunction(const std::string& param_name,
                                                 bool return_true)
 {
+    std::vector<uint8_t> expr;
+    appendExtendedOpcode(expr, ExtendedOpcode::EXT_VAR_LOAD);
+    appendString(expr, param_name);
+    appendExtendedOpcode(expr, ExtendedOpcode::EXT_VAR_LOAD);
+    appendString(expr, param_name);
+    appendByte(expr, static_cast<uint8_t>(return_true ? Opcode::EXPR_EQ : Opcode::EXPR_NE));
+
     std::vector<uint8_t> bytecode;
     appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
     appendByte(bytecode, SBLR_VERSION);
-    appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_VAR_LOAD);
-    appendString(bytecode, param_name);
-    appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_VAR_LOAD);
-    appendString(bytecode, param_name);
     appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
     appendByte(bytecode, 1);
-    appendByte(bytecode, static_cast<uint8_t>(return_true ? Opcode::EXPR_EQ : Opcode::EXPR_NE));
+    appendInt32(bytecode, static_cast<uint32_t>(expr.size()));
+    bytecode.insert(bytecode.end(), expr.begin(), expr.end());
     appendByte(bytecode, static_cast<uint8_t>(Opcode::END));
     return bytecode;
 }

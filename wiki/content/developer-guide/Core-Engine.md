@@ -265,9 +265,10 @@ ScratchBird supports 11+ index types:
 | GIN | Full-text, arrays, JSON | Alpha |
 | GIST | Spatial data | Alpha |
 | SP-GIST | Partitioned spatial | Alpha |
-| BRIN | Large sequential tables | Planned |
-| Bloom | Probabilistic membership | Planned |
-| UUID v7 optimized | Time-sorted UUIDs | Planned |
+| BRIN | Large sequential tables | Alpha |
+| Bloom | Probabilistic membership | Alpha |
+| HNSW | Vector similarity search | Alpha |
+| UUID v7 optimized | Time-sorted UUIDs | Alpha |
 
 **Key Files:**
 - `include/scratchbird/core/bitmap_index.h`

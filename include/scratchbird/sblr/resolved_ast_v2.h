@@ -220,6 +220,175 @@ struct ResolvedColumnRefExpr : public ResolvedExpression {
 };
 
 /**
+ * Resolved variable reference (PSQL)
+ */
+struct ResolvedVariableExpr : public ResolvedExpression {
+    StringPool::StringId name = StringPool::INVALID_ID;
+};
+
+// =============================================================================
+// PSQL Resolved Statements
+// =============================================================================
+
+enum class ResolvedPsqlStmtKind : uint8_t {
+    BLOCK,
+    DECLARE_VAR,
+    ASSIGN,
+    IF,
+    WHILE_LOOP,
+    LOOP,
+    LEAVE,
+    CONTINUE,
+    EXIT,
+    RETURN,
+    SUSPEND,
+    RAISE,
+    DECLARE_CURSOR,
+    OPEN_CURSOR,
+    FETCH_CURSOR,
+    CLOSE_CURSOR,
+    FOR_SELECT,
+    FOR_EXECUTE,
+    EXECUTE_PROCEDURE,
+    EXECUTE_STATEMENT,
+    SQL_STATEMENT
+};
+
+struct ResolvedPsqlStatement {
+    virtual ~ResolvedPsqlStatement() = default;
+    ResolvedPsqlStmtKind kind = ResolvedPsqlStmtKind::SQL_STATEMENT;
+    SourceSpan span;
+};
+
+struct ResolvedPsqlVariable {
+    StringPool::StringId name = StringPool::INVALID_ID;
+    ResolvedType type;
+    bool has_default = false;
+    bool not_null = false;
+    ResolvedExpression* default_value = nullptr;
+};
+
+struct ResolvedPsqlExceptionHandler {
+    parser::v2::WhenExceptionStmt::ExceptionType type =
+        parser::v2::WhenExceptionStmt::ExceptionType::ANY;
+    int32_t sqlcode = 0;
+    StringPool::StringId gdscode = StringPool::INVALID_ID;
+    StringPool::StringId exception_name = StringPool::INVALID_ID;
+    ResolvedPsqlStatement* handler = nullptr;
+};
+
+struct ResolvedPsqlBlock : public ResolvedPsqlStatement {
+    std::vector<ResolvedPsqlVariable> variables;
+    std::vector<ResolvedPsqlStatement*> statements;
+    std::vector<ResolvedPsqlExceptionHandler> exception_handlers;
+};
+
+struct ResolvedPsqlDeclareVar : public ResolvedPsqlStatement {
+    StringPool::StringId name = StringPool::INVALID_ID;
+    ResolvedType type;
+    bool has_default = false;
+    bool not_null = false;
+    ResolvedExpression* default_value = nullptr;
+};
+
+struct ResolvedPsqlAssign : public ResolvedPsqlStatement {
+    StringPool::StringId variable = StringPool::INVALID_ID;
+    ResolvedExpression* value = nullptr;
+};
+
+struct ResolvedPsqlIf : public ResolvedPsqlStatement {
+    ResolvedExpression* condition = nullptr;
+    ResolvedPsqlStatement* then_branch = nullptr;
+    ResolvedPsqlStatement* else_branch = nullptr;
+};
+
+struct ResolvedPsqlWhile : public ResolvedPsqlStatement {
+    ResolvedExpression* condition = nullptr;
+    ResolvedPsqlStatement* body = nullptr;
+    StringPool::StringId label = StringPool::INVALID_ID;
+};
+
+struct ResolvedPsqlLoop : public ResolvedPsqlStatement {
+    ResolvedPsqlStatement* body = nullptr;
+    StringPool::StringId label = StringPool::INVALID_ID;
+};
+
+struct ResolvedPsqlLeave : public ResolvedPsqlStatement {
+    StringPool::StringId label = StringPool::INVALID_ID;
+};
+
+struct ResolvedPsqlContinue : public ResolvedPsqlStatement {
+    StringPool::StringId label = StringPool::INVALID_ID;
+};
+
+struct ResolvedPsqlExit : public ResolvedPsqlStatement {
+};
+
+struct ResolvedPsqlReturn : public ResolvedPsqlStatement {
+    bool has_value = false;
+    ResolvedExpression* value = nullptr;
+};
+
+struct ResolvedPsqlSuspend : public ResolvedPsqlStatement {
+};
+
+struct ResolvedPsqlRaise : public ResolvedPsqlStatement {
+    StringPool::StringId exception_name = StringPool::INVALID_ID;
+    ResolvedExpression* message = nullptr;
+};
+
+struct ResolvedPsqlDeclareCursor : public ResolvedPsqlStatement {
+    StringPool::StringId cursor_name = StringPool::INVALID_ID;
+    ResolvedStatement* select_stmt = nullptr;
+    bool scroll = false;
+};
+
+struct ResolvedPsqlOpenCursor : public ResolvedPsqlStatement {
+    StringPool::StringId cursor_name = StringPool::INVALID_ID;
+};
+
+struct ResolvedPsqlFetchCursor : public ResolvedPsqlStatement {
+    StringPool::StringId cursor_name = StringPool::INVALID_ID;
+    parser::v2::FetchCursorStmt::Direction direction =
+        parser::v2::FetchCursorStmt::Direction::NEXT;
+    ResolvedExpression* offset = nullptr;
+    std::vector<StringPool::StringId> into_variables;
+};
+
+struct ResolvedPsqlCloseCursor : public ResolvedPsqlStatement {
+    StringPool::StringId cursor_name = StringPool::INVALID_ID;
+};
+
+struct ResolvedPsqlForSelect : public ResolvedPsqlStatement {
+    ResolvedStatement* select_stmt = nullptr;
+    std::vector<StringPool::StringId> into_variables;
+    ResolvedPsqlStatement* body = nullptr;
+};
+
+struct ResolvedPsqlForExecute : public ResolvedPsqlStatement {
+    ResolvedExpression* sql = nullptr;
+    std::vector<ResolvedExpression*> parameters;
+    std::vector<StringPool::StringId> into_variables;
+    ResolvedPsqlStatement* body = nullptr;
+};
+
+struct ResolvedPsqlExecuteProcedure : public ResolvedPsqlStatement {
+    SchemaPath procedure_path;
+    std::vector<ResolvedExpression*> arguments;
+    std::vector<StringPool::StringId> returning_variables;
+};
+
+struct ResolvedPsqlExecuteStatement : public ResolvedPsqlStatement {
+    ResolvedExpression* sql = nullptr;
+    std::vector<ResolvedExpression*> parameters;
+    std::vector<StringPool::StringId> into_variables;
+};
+
+struct ResolvedPsqlSqlStatement : public ResolvedPsqlStatement {
+    ResolvedStatement* statement = nullptr;
+};
+
+/**
  * Resolved binary expression
  */
 struct ResolvedBinaryExpr : public ResolvedExpression {
@@ -605,6 +774,38 @@ struct ResolvedDeleteStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved MERGE statement
+ */
+struct ResolvedMergeStmt : public ResolvedStatement {
+    SchemaPath target_table;
+    StringPool::StringId target_alias = StringPool::INVALID_ID;
+    SchemaPath source_table;
+    StringPool::StringId source_alias = StringPool::INVALID_ID;
+    ResolvedExpression* on_condition = nullptr;
+
+    struct WhenMatched {
+        ResolvedExpression* and_condition = nullptr;
+        std::vector<std::pair<StringPool::StringId, ResolvedExpression*>> assignments;
+        bool is_delete = false;
+    };
+    std::vector<WhenMatched> when_matched;
+
+    struct WhenNotMatched {
+        ResolvedExpression* and_condition = nullptr;
+        std::vector<StringPool::StringId> columns;
+        std::vector<ResolvedExpression*> values;
+    };
+    std::vector<WhenNotMatched> when_not_matched;
+
+    struct WhenNotMatchedBySource {
+        ResolvedExpression* and_condition = nullptr;
+        std::vector<std::pair<StringPool::StringId, ResolvedExpression*>> assignments;
+        bool is_delete = false;
+    };
+    std::vector<WhenNotMatchedBySource> when_not_matched_by_source;
+};
+
+/**
  * Resolved COPY statement
  */
 struct ResolvedCopyOptions {
@@ -731,6 +932,46 @@ struct ResolvedDomainEnumValue {
     int32_t position = 0;
 };
 
+struct ResolvedRangeOptions {
+    ResolvedType subtype;
+    bool has_subtype = false;
+    bool has_subtype_collation = false;
+    std::string subtype_collation;
+    bool has_subtype_opclass = false;
+    std::string subtype_opclass;
+    bool has_canonical = false;
+    std::string canonical;
+    bool has_subtype_diff = false;
+    std::string subtype_diff;
+    bool has_multirange = false;
+    bool multirange = false;
+};
+
+struct ResolvedBaseOptions {
+    ResolvedType storage;
+    bool has_storage = false;
+    std::string input_function;
+    std::string output_function;
+    bool has_receive = false;
+    std::string receive_function;
+    bool has_send = false;
+    std::string send_function;
+    bool has_typmod_in = false;
+    std::string typmod_in_function;
+    bool has_typmod_out = false;
+    std::string typmod_out_function;
+    bool has_analyze = false;
+    std::string analyze_function;
+    bool has_alignment = false;
+    BaseTypeAlignment alignment = BaseTypeAlignment::INT;
+    bool has_storage_mode = false;
+    BaseTypeStorageMode storage_mode = BaseTypeStorageMode::PLAIN;
+    bool has_category = false;
+    char category = '\0';
+    bool has_preferred = false;
+    bool preferred = false;
+};
+
 /**
  * Resolved CREATE TABLE statement
  */
@@ -832,6 +1073,7 @@ struct ResolvedCreateFunctionStmt : public ResolvedStatement {
     std::vector<ResolvedRoutineParam> params;
     ResolvedType return_type;
     std::string body;
+    std::vector<uint8_t> psql_bytecode;
 };
 
 /**
@@ -844,6 +1086,7 @@ struct ResolvedCreateProcedureStmt : public ResolvedStatement {
     RoutineSqlSecurity sql_security = RoutineSqlSecurity::INVOKER;
     std::vector<ResolvedRoutineParam> params;
     std::string body;
+    std::vector<uint8_t> psql_bytecode;
 };
 
 /**
@@ -857,6 +1100,34 @@ struct ResolvedCreateTriggerStmt : public ResolvedStatement {
     uint8_t event_mask = 1u << static_cast<uint8_t>(TriggerEvent::INSERT);
     TriggerGranularity granularity = TriggerGranularity::FOR_EACH_ROW;
     std::string body;
+    std::vector<uint8_t> psql_bytecode;
+};
+
+/**
+ * Resolved EXECUTE BLOCK statement
+ */
+struct ResolvedExecuteBlockStmt : public ResolvedStatement {
+    std::vector<ResolvedPsqlVariable> input_params;
+    std::vector<ResolvedPsqlVariable> output_params;
+    ResolvedPsqlBlock* body = nullptr;
+};
+
+/**
+ * Resolved EXECUTE PROCEDURE statement
+ */
+struct ResolvedExecuteProcedureStmt : public ResolvedStatement {
+    SchemaPath procedure_path;
+    std::vector<ResolvedExpression*> arguments;
+    std::vector<StringPool::StringId> returning_variables;
+};
+
+/**
+ * Resolved EXECUTE STATEMENT (dynamic SQL) statement
+ */
+struct ResolvedExecuteStatementStmt : public ResolvedStatement {
+    ResolvedExpression* sql = nullptr;
+    std::vector<ResolvedExpression*> parameters;
+    std::vector<StringPool::StringId> into_variables;
 };
 
 /**
@@ -1064,6 +1335,9 @@ struct ResolvedCreateDomainStmt : public ResolvedStatement {
     std::vector<ResolvedDomainEnumValue> enum_values;
     ResolvedType set_element_type;
     std::vector<ResolvedType> variant_allowed_types;
+    ResolvedRangeOptions range_options;
+    ResolvedBaseOptions base_options;
+    bool is_shell = false;
     bool nullable = true;
     std::string default_value;
     std::vector<ResolvedDomainConstraint> constraints;
@@ -1084,6 +1358,39 @@ struct ResolvedCreateDomainStmt : public ResolvedStatement {
     DomainValidationOptions validation;
     bool has_quality = false;
     DomainQualityOptions quality;
+    bool has_comment = false;
+    std::string comment;
+};
+
+/**
+ * Resolved ALTER TYPE statement
+ */
+struct ResolvedAlterTypeStmt : public ResolvedStatement {
+    AlterTypeAction action = AlterTypeAction::RENAME_TO;
+    SchemaPath type_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+    StringPool::StringId new_schema = StringPool::INVALID_ID;
+    StringPool::StringId value_label = StringPool::INVALID_ID;
+    bool has_before = false;
+    StringPool::StringId before_label = StringPool::INVALID_ID;
+    bool has_after = false;
+    StringPool::StringId after_label = StringPool::INVALID_ID;
+    StringPool::StringId old_label = StringPool::INVALID_ID;
+    StringPool::StringId new_label = StringPool::INVALID_ID;
+    bool is_range_options = false;
+    bool is_base_options = false;
+    ResolvedRangeOptions range_options;
+    ResolvedBaseOptions base_options;
+};
+
+/**
+ * Resolved DROP TYPE statement
+ */
+struct ResolvedDropTypeStmt : public ResolvedStatement {
+    bool if_exists = false;
+    std::vector<SchemaPath> types;
+    bool cascade = false;
+    bool restrict = false;
 };
 
 /**

@@ -1,16 +1,32 @@
 # UDR Connector Baseline Specification
 
 Status: Draft (Target). This document defines the shared requirements for all
-connector UDRs (local files, local scripts, PostgreSQL, MySQL, Firebird).
+connector UDRs shipped in the first Beta (ODBC, JDBC, PostgreSQL, MySQL,
+FirebirdSQL, MSSQL, ScratchBird) plus local file/script connectors.
 
 ## Scope
 - UDRs are separate plugin modules that expose external resources through the
   ScratchBird UDR system and SQL/MED (FDW) surfaces.
-- No vendor-provided client drivers are used. All network connectors must
-  implement wire protocols from the ScratchBird wire protocol specifications.
+- No vendor-provided client drivers are used for wire-protocol connectors.
+  PostgreSQL/MySQL/Firebird/MSSQL UDRs must implement the native wire protocols
+  directly from ScratchBird specifications.
+- ODBC and JDBC UDRs are packaged with an embedded driver manager and any
+  required drivers inside the UDR bundle so the host OS does not need external
+  client libraries installed.
+- All connectors must provide schema discovery and mounting support to map
+  remote objects into `legacy_<server>` and `emulated_<server>` namespaces.
 - UDRs do not create or maintain connections on load. Connections are created
   only after explicit ADMIN + SQL configuration.
 - Pass-through DDL/DML/PSQL is supported and permissioned by configuration.
+
+### Required Beta Connector Set
+- `postgresql_udr` (PostgreSQL wire protocol)
+- `mysql_udr` (MySQL wire protocol)
+- `firebird_udr` (Firebird wire protocol)
+- `mssql_udr` (TDS wire protocol)
+- `scratchbird_udr` (SBWP wire protocol, untrusted)
+- `odbc_udr` (embedded driver manager + bundled drivers)
+- `jdbc_udr` (embedded driver manager + bundled drivers)
 
 ## Non-goals
 - This does not define language client drivers or protocol emulation listeners.
@@ -21,7 +37,7 @@ connector UDRs (local files, local scripts, PostgreSQL, MySQL, Firebird).
 ## References
 - 10-UDR-System-Specification.md
 - 09_DDL_FOREIGN_DATA.md
-- remote_database_udr/*
+- Alpha Phase 2/11-Remote-Database-UDR-Specification.md
 - wire_protocols/*
 
 ## Connector Packaging and Signing

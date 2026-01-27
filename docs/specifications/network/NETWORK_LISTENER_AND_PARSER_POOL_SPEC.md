@@ -25,7 +25,7 @@ In scope:
 Out of scope:
 - Cluster listener coordination (Beta).
 - TDS/MSSQL listener (post-gold).
-- Remote database UDR connection pools (see remote_database_udr specs).
+- Remote database UDR connection pools (see `Alpha Phase 2/11-Remote-Database-UDR-Specification.md`).
 - Legacy Y-Valve router implementation (superseded; see core/Y_VALVE_ARCHITECTURE.md).
 
 ## Terminology

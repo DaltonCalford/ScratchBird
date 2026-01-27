@@ -22,6 +22,7 @@ DDL statements define the structure of database objects including databases, sch
 - **[DDL_VIEWS.md](DDL_VIEWS.md)** - CREATE/ALTER/DROP VIEW
 - **[DDL_INDEXES.md](DDL_INDEXES.md)** - CREATE/DROP INDEX
 - **[DDL_SEQUENCES.md](DDL_SEQUENCES.md)** - CREATE/ALTER/DROP SEQUENCE
+- **[DDL_TYPES.md](DDL_TYPES.md)** - CREATE/ALTER/DROP TYPE
 
 ### Advanced Table Features
 

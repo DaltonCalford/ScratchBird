@@ -1,5 +1,9 @@
 # Remote Database UDR - MySQL Adapter
 
+> Reference-only: Canonical UDR and live-migration behavior now lives in
+> `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
+> and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
+
 ## 1. Overview
 
 The MySQL adapter implements the `IProtocolAdapter` interface for connecting to MySQL 5.7+ and MariaDB 10+ servers.

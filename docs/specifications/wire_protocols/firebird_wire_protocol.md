@@ -446,6 +446,49 @@ Server `op_accept` (P_ACPT):
 00 00 00 05  // ptype_lazy_send
 ```
 
+### 2.2 Worked Flow (Connect + Attach + Exec Immediate)
+
+Client `op_attach` with DPB (SYSDBA/masterkey, dialect 3):
+```
+00 00 00 13  // op_attach
+00 00 00 00  // p_atch_database (0)
+00 00 00 08  // p_atch_file length
+74 65 73 74 2e 66 64 62  // "test.fdb"
+00 00 00 17  // p_atch_dpb length (23)
+01 1c 06 53 59 53 44 42 41 1d 09 6d 61 73 74 65 72 6b 65 79 3f 01 03 00
+```
+
+Server `op_response` (db handle = 1):
+```
+00 00 00 09  // op_response
+00 00 00 01  // p_resp_object (db handle)
+00 00 00 00 00 00 00 00  // p_resp_blob_id
+00 00 00 00  // p_resp_data length
+00 00 00 00  // status vector (isc_arg_end)
+```
+
+Client `op_exec_immediate` (SQL: `SELECT 1 FROM RDB$DATABASE`):
+```
+00 00 00 40  // op_exec_immediate
+00 00 00 01  // p_sqlst_transaction
+00 00 00 00  // p_sqlst_statement (0 for immediate)
+00 00 00 03  // p_sqlst_SQL_dialect
+00 00 00 1a  // SQL length
+53 45 4c 45 43 54 20 31 20 46 52 4f 4d 20 52 44 42 24 44 41 54 41 42 41 53 45
+00 00        // Padding (XDR)
+00 00 00 00  // p_sqlst_items length
+00 00 00 00  // p_sqlst_buffer_length
+```
+
+Server `op_response` success:
+```
+00 00 00 09  // op_response
+00 00 00 00  // p_resp_object
+00 00 00 00 00 00 00 00  // p_resp_blob_id
+00 00 00 00  // p_resp_data length
+00 00 00 00  // isc_arg_end
+```
+
 ### 3. Database Attachment
 
 ```c

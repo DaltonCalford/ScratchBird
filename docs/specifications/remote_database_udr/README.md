@@ -1,5 +1,9 @@
 # Remote Database UDR - Comprehensive Implementation Specification
 
+> Reference-only: Canonical UDR and live-migration behavior now lives in
+> `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
+> and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
+
 ## Executive Summary
 
 The Remote Database UDR (User Defined Routine) plugin transforms ScratchBird into a migration powerhouse by leveraging existing wire protocol implementations. This plugin enables:
