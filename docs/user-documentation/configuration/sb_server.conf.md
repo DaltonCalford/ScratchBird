@@ -625,6 +625,19 @@ copy_require_superuser = true
 
 Require superuser role for server-side `COPY FROM/TO` file access.
 
+### tablespace_recovery_mode
+
+```ini
+tablespace_recovery_mode = strict
+```
+
+Controls startup and restore behavior when tablespace files are missing.
+
+| Value | Description |
+|-------|-------------|
+| `strict` | Fail startup/restore if any tablespace files are missing |
+| `allow_missing` | Allow startup/restore to proceed if tablespace files are missing |
+
 ---
 
 ## Complete Example
@@ -701,6 +714,7 @@ copy_allowed_paths =
 copy_allow_absolute_paths = false
 copy_allow_relative_paths = true
 copy_require_superuser = true
+tablespace_recovery_mode = strict
 ```
 
 ---

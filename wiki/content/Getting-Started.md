@@ -1,7 +1,6 @@
 # Getting Started
 
-**Status:** Alpha documentation
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -161,7 +160,7 @@ Expected output:
 ```
                   version
 --------------------------------------------
- ScratchBird 1.0.0 on Linux x86_64
+ ScratchBird Alpha on Linux x86_64
 (1 row)
 ```
 

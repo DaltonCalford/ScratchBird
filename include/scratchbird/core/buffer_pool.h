@@ -10,6 +10,8 @@
 #include <thread>
 #include <atomic>
 #include <condition_variable>
+#include <string>
+#include <cstdio>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
@@ -311,6 +313,10 @@ namespace scratchbird::core
             return snapshot;
         }
 
+        // Stats debug logging (tests/diagnostics only)
+        auto enableStatsDebug(const std::string &path, ErrorContext *ctx = nullptr) -> bool;
+        void disableStatsDebug();
+
         // Increment page size mismatch counter (called by HeapPage when corruption detected)
         void incrementPageSizeMismatchCount()
         {
@@ -399,6 +405,8 @@ namespace scratchbird::core
             }
         };
 
+        void logStatsEvent(const char *event, GPID gpid);
+
         // ISSUE 3.10 FIX: Internal Stats structure with atomic types for thread-safe updates
         struct Stats
         {
@@ -453,6 +461,11 @@ namespace scratchbird::core
 
         Stats stats_;                                       // Statistics (atomic counters)
         mutable std::mutex mutex_;                          // Global mutex for frame allocation/eviction
+
+        std::mutex stats_debug_mutex_;
+        FILE *stats_debug_fp_ = nullptr;
+        bool stats_debug_enabled_ = false;
+        uint64_t stats_debug_seq_ = 0;
 
         // Clock Sweep algorithm state
         uint32_t clock_hand_ = 0;                           // Current position of clock hand

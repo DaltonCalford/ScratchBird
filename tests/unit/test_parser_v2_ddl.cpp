@@ -92,6 +92,33 @@ TEST_F(ParserV2DDLTest, CreateTable_Temporary) {
     EXPECT_EQ(stmt->temp_type, TempTableType::SESSION);
 }
 
+TEST_F(ParserV2DDLTest, CreateTable_TablespaceClause) {
+    Parser parser("CREATE TABLE users (id INT) TABLESPACE ts_data");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
+    auto* stmt = dynamic_cast<CreateTableStmt*>(result.statement());
+
+    ASSERT_TRUE(stmt->has_tablespace);
+    EXPECT_EQ(getPathString(parser, stmt->tablespace), "ts_data");
+}
+
+TEST_F(ParserV2DDLTest, AlterTablespaceAttachValidateForce) {
+    Parser parser("ALTER TABLESPACE ts_data ATTACH LOCATION '/tmp/ts_data.sbts' VALIDATE FORCE");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success())
+        << "Errors: " << (result.errors().empty() ? "none" : result.errors()[0].message);
+    auto* stmt = dynamic_cast<AttachTablespaceStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(getString(parser, stmt->tablespace_name), "ts_data");
+    EXPECT_EQ(stmt->location, "/tmp/ts_data.sbts");
+    EXPECT_TRUE(stmt->validate);
+    EXPECT_TRUE(stmt->allow_mismatch);
+}
+
 // =============================================================================
 // CREATE TABLE - Column Types
 // =============================================================================

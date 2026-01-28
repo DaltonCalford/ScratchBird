@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's testing infrastructure, audit framework, and quality assurance processes.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -43,25 +43,33 @@ ScratchBird maintains rigorous testing and audit practices to ensure code qualit
 
 ```
 tests/
-├── unit/                      # Unit tests
-│   ├── test_parser_v2.cpp
-│   ├── test_parser_dml_v2.cpp
-│   ├── test_parser_psql_v2.cpp
-│   ├── test_bytecode_generator_v2.cpp
-│   ├── test_firebird_parser.cpp
-│   ├── test_ipc_server.cpp
-│   ├── test_mga_debug.cpp
-│   ├── test_storage_engine_mga_crosspage.cpp
-│   └── test_storage_stress.cpp
-├── integration/               # Integration tests
-│   ├── test_bitmap_dml.cpp
-│   ├── test_bit_manipulation.cpp
+├── unit/                      # Unit tests (100+ test files)
+│   ├── test_parser_v2*.cpp    # Parser tests
+│   ├── test_bytecode_*.cpp    # Bytecode generation tests
+│   ├── test_btree_*.cpp       # B-tree index tests (compression, GC, MGA, vacuum, etc.)
+│   ├── test_bitmap_*.cpp      # Bitmap index tests
+│   ├── test_brin_*.cpp        # BRIN index tests
+│   ├── test_catalog_*.cpp     # Catalog manager tests
+│   ├── test_buffer_*.cpp      # Buffer pool tests
+│   ├── test_cache_*.cpp       # Cache tests
+│   ├── test_audit_logger.cpp  # Audit logging tests
+│   ├── gin/                   # GIN index test suite
+│   ├── domains/               # Domain validation tests
+│   └── ...
+├── integration/               # Integration tests (50+ test files)
+│   ├── test_bitmap_dml.cpp    # Bitmap DML integration
+│   ├── test_brin_*.cpp        # BRIN DML, GC, MVCC
+│   ├── test_columnstore_*.cpp # Columnstore end-to-end tests
+│   ├── test_domain_*.cpp      # Domain validation E2E
+│   ├── test_concurrent_*.cpp  # Concurrency tests
+│   ├── test_cte_basic.cpp     # CTE tests
 │   ├── test_check_constraints.cpp
-│   ├── test_concurrent_page_access.cpp
-│   ├── test_firebird_adapter_ipc.cpp
-│   ├── test_index_bytecode_generation.cpp
-│   ├── test_query_plan_security.cpp
-│   └── test_range_types_integration.cpp
+│   └── ...
+├── stress/                    # Stress tests
+│   ├── test_columnstore_load*.cpp
+│   ├── test_lsm_tree_stress.cpp
+│   ├── test_multithreaded_stress.cpp
+│   └── test_toast_concurrency.cpp
 ├── compatibility/             # Database compatibility tests
 │   ├── README.md
 │   └── firebird/

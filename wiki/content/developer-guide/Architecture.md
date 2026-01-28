@@ -2,7 +2,7 @@
 
 **Purpose:** Defines ScratchBird's architectural layers, component boundaries, trust model, and where different types of work belong.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -39,9 +39,9 @@ Native Protocol:
 Server Core (Dialect-Agnostic):
    ├─ Executor interprets SBLR opcodes
    ├─ Retrieves current_user from session context → 'postgres'
-   ├─ Calls scratchbird_version() function → 'ScratchBird 1.0'
+   ├─ Calls scratchbird_version() function → 'ScratchBird Alpha'
    └─ Returns native result set:
-      { columns: [STRING, STRING], rows: [['postgres', 'ScratchBird 1.0']] }
+      { columns: [STRING, STRING], rows: [['postgres', 'ScratchBird Alpha']] }
 
 ═══════════════════════════════ RESPONSE PATH ══════════════════════════════
 
@@ -88,7 +88,7 @@ Client (psql):
 
 **Responsibility:** Marshal/unmarshal messages for specific protocols
 
-**Location:** `src/network/wire_protocol/`
+**Location:** `src/protocol/` (wire protocol) and `src/protocol/adapters/` (dialect adapters)
 
 **Supported Protocols:**
 | Protocol | Port | Status |
@@ -107,13 +107,14 @@ Client (psql):
 
 **Responsibility:** Accept connections, authenticate, route to parser
 
-**Location:** `src/network/connection/`
+**Location:** `src/network/` and `src/security/`
 
 **Components:**
 - Port listeners (5432, 3306, 3050, 3092)
-- Connection pool management
-- Authentication (SASL, MD5, cleartext, etc.)
-- Session management
+- Connection handler, event loop, thread pool
+- Authentication: SCRAM-SHA-256, Kerberos/GSSAPI, LDAP, OAuth 2.0, SAML, MFA, TLS client certificates
+- Session management and connection context
+- Login attempt tracking and password policy enforcement
 
 ---
 
@@ -142,15 +143,38 @@ This layer handles BOTH directions:
 ```
 src/parser/
 ├── parser_v2.cpp              # V2 unified parser (native ScratchBird)
-├── firebird/                  # Firebird parser & API surface
+├── lexer_v2.cpp               # V2 lexer
+├── ast_v2.cpp                 # V2 AST nodes
+├── parser_state_v2.cpp        # V2 parser state management
+├── schema_path_v2.cpp         # Schema path resolution
+├── sb_parser_main.cpp         # Parser entry point
+├── firebird/                  # Firebird emulated parser
 │   ├── firebird_parser.cpp    # Firebird SQL parsing
-│   └── rdb_tables.cpp         # RDB$* system tables
-├── postgresql/                # PostgreSQL parser & API surface
+│   └── firebird_lexer.cpp     # Firebird lexer
+├── postgresql/                # PostgreSQL emulated parser
 │   ├── pg_parser.cpp          # PostgreSQL SQL parsing
-│   └── pg_catalog.cpp         # pg_catalog.* functions
-└── mysql/                     # MySQL parser & API surface
+│   ├── pg_parser_ddl.cpp      # PostgreSQL DDL statements
+│   ├── pg_parser_dml.cpp      # PostgreSQL DML statements
+│   ├── pg_parser_expr.cpp     # PostgreSQL expressions
+│   ├── pg_parser_misc.cpp     # PostgreSQL misc statements
+│   └── pg_lexer.cpp           # PostgreSQL lexer
+└── mysql/                     # MySQL emulated parser
     ├── mysql_parser.cpp       # MySQL SQL parsing
-    └── show_commands.cpp      # SHOW command handling
+    └── mysql_lexer.cpp        # MySQL lexer
+
+src/sblr/
+├── executor.cpp               # SBLR bytecode interpreter
+├── bytecode_generator_v2.cpp  # Bytecode generation from V2 AST
+├── bytecode_validator.cpp     # SBLR validation
+├── semantic_analyzer_v2.cpp   # Semantic analysis
+├── query_compiler_v2.cpp      # Native query compilation
+├── expression_evaluator.cpp   # Expression evaluation
+├── firebird_query_compiler.cpp  # Firebird dialect query compilation
+├── postgresql_query_compiler.cpp # PostgreSQL dialect query compilation
+├── mysql_query_compiler.cpp   # MySQL dialect query compilation
+├── gin_extractors.cpp         # GIN index key extraction
+├── index_cache.cpp            # Index operation cache
+└── query_result_cache.cpp     # Result caching
 ```
 
 **Critical Rules:**
@@ -187,7 +211,7 @@ src/parser/
 - **Executor** (`src/sblr/executor.cpp`) - SBLR bytecode interpreter
 - **Transaction Manager** - MGA transaction system
 - **Storage Engine** (`src/core/storage_engine.cpp`) - Page management
-- **Index Subsystem** (`src/core/`) - 11+ index types
+- **Index Subsystem** (`src/core/`) - 14 index types (B-tree, Hash, GiST, GIN, SP-GiST, BRIN, R-tree, Bitmap, LSM-Tree, HNSW, Columnstore, Full-text, Inverted, expression)
 - **Catalog System** (`src/core/catalog_manager.cpp`) - System catalog tables
 
 **Critical Rule:** Server Core is **100% dialect-agnostic**. It only understands SBLR.
@@ -233,8 +257,8 @@ src/parser/
 | Add new SBLR opcode | SBLR | `include/scratchbird/sblr/opcodes.h` |
 | Implement new index type | Core | `src/core/` |
 | Add MGA transaction feature | Core | `src/core/` |
-| Support new wire protocol | Network | `src/network/wire_protocol/` |
-| Add connection pool tuning | Network | `src/network/connection/` |
+| Support new wire protocol | Network | `src/protocol/` and `src/protocol/adapters/` |
+| Add connection pool tuning | Network | `src/network/` |
 | Implement storage compression | Core | `src/core/` |
 
 ---

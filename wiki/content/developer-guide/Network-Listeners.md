@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's network listener architecture - how connections are accepted, routed to parsers, and managed.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -334,6 +334,19 @@ tls:
 | Server main | `src/server/sb_server_main.cpp` |
 | Service controller | `src/server/service_controller.cpp` |
 | IPC common | `src/server/ipc_common.cpp` |
+| Connection handler | `src/network/connection_handler.cpp` |
+| Event loop | `src/network/event_loop.cpp` |
+| Thread pool | `src/network/thread_pool.cpp` |
+| Socket | `src/network/socket.cpp`, `src/network/socket_types.cpp` |
+| Control plane | `src/network/control_plane.cpp` |
+| Listener main | `src/network/sb_listener_main.cpp` |
+| Wire protocol | `src/protocol/wire_protocol.cpp` |
+| Translation cache | `src/protocol/translation_cache.cpp` |
+| Native adapter | `src/protocol/adapters/native_adapter.cpp` |
+| PostgreSQL adapter | `src/protocol/adapters/postgresql_adapter.cpp` |
+| MySQL adapter | `src/protocol/adapters/mysql_adapter.cpp` |
+| Firebird adapter | `src/protocol/adapters/firebird_adapter.cpp` |
+| Protocol adapter base | `src/protocol/adapters/protocol_adapter.cpp` |
 
 ---
 

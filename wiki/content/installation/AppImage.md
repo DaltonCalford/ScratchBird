@@ -1,7 +1,6 @@
 # AppImage Installation
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 Use the AppImage when you want a single-file Linux build without system-wide
 installation.

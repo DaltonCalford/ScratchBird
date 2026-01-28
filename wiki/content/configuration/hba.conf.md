@@ -1,7 +1,6 @@
 # hba.conf
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-09
+**Last Updated:** 2026-01-28
 
 Host-based authentication is enforced by the engine. This page will document
 configuration rules and examples.

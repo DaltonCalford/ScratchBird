@@ -1596,7 +1596,11 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
     }
 
     // Write tablespace name (empty string if none)
-    current_result_->writeString("");  // No tablespace support in v2 yet
+    if (stmt->tablespace_name != StringPool::INVALID_ID) {
+        writeStringId(stmt->tablespace_name);
+    } else {
+        current_result_->writeString("");
+    }
 }
 
 void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
@@ -2088,6 +2092,8 @@ void BytecodeGeneratorV2::generateAttachTablespace(ResolvedAttachTablespaceStmt*
     current_result_->writeOpcode(sblr::Opcode::ATTACH_TABLESPACE);
     current_result_->writeString(stmt->location);
     current_result_->writeString(std::string(getString(stmt->tablespace_name)));
+    current_result_->writeByte(stmt->validate ? 1 : 0);
+    current_result_->writeByte(stmt->allow_mismatch ? 1 : 0);
 }
 
 void BytecodeGeneratorV2::generateDetachTablespace(ResolvedDetachTablespaceStmt* stmt) {

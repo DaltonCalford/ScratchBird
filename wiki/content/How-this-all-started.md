@@ -5,14 +5,18 @@ This page explains why ScratchBird exists and how I ended up making the choices 
 ---
 
 > **Timeline (high level)**
+> 
 > - **1995** - Interbase ships with Delphi and Borland tools; I start using it daily.
-> - **AI breakthrough era** - Layoff + new AI coding tools; I use them to learn Python.
+> - **2000** - Between 1999 to Now - Interbase becomes FirebirdSQL and is open source
+> - **2025**- Market changes resulted in my layoff 
+> - **AI breakthrough era** - Free Time from Layoff + new AI coding tools; I use them to learn Python.
 > - **Firebird 6 deep dive** - I ask AI to map the codebase and compare code vs comments.
 > - **ScratchBird born** - One-week migration to a renamed project; clean compile.
 > - **First feature win** - Linux trusted authentication based on the Windows code.
 > - **Guardrails moment** - A risky remote-query experiment proves AI needs strict constraints.
-> - **Dec 2025** - Codex joins Claude, Gemini-cli, and Ollama in the verification loop.
 > - **Reset and rebuild** - Old work archived; specs-first development becomes the rule.
+> - **Dec 2025** - Codex joins Claude, Gemini-cli, and Ollama in the verification loop.
+> - **Jan 2026** - Kimi K2.5 enters the mix for use with management software (ScratchRobin)
 
 ## The long relationship with Firebird
 

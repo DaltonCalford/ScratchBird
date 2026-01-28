@@ -1,7 +1,6 @@
 # Debug Guide
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 ## Run in Foreground
 

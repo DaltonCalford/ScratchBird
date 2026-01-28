@@ -440,8 +440,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t security_policy_epoch_page; // Page containing security policy epoch table
 
         ID policy_toast_table_id;     // UUID for policy expression TOAST storage
+        uint32_t column_permissions_page; // Page containing column permissions table
+        uint32_t object_permissions_page; // Page containing object permissions table
+        uint32_t policies_page;       // Page containing row-level security policies table
 
-        uint8_t reserved[3788];       // Padding for 4KB page (308 bytes used)
+        uint8_t reserved[3760];       // Padding for 4KB page (336 bytes used)
     };
 
     // Schema record on disk
@@ -1781,6 +1784,32 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
+        // Security Phase 3.1: Allocate and initialize object permissions page
+        status = pm->allocatePage(object_permissions_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        heap->header.page_id = object_permissions_table_page_;
+        status = db_->write_page(object_permissions_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Security Phase 3.4: Allocate and initialize policies page
+        status = pm->allocatePage(policies_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        heap->header.page_id = policies_table_page_;
+        status = db_->write_page(policies_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Allocate and initialize statistics page
         status = pm->allocatePage(statistics_table_page_, ctx);
         if (status != Status::OK)
@@ -2506,6 +2535,21 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 {
                     return status;
                 }
+                status = backfill_catalog_page(column_permissions_table_page_, "column_permissions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(object_permissions_table_page_, "object_permissions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(policies_table_page_, "policies");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
                 status = backfill_catalog_page(statistics_table_page_, "statistics");
                 if (status != Status::OK)
                 {
@@ -2966,6 +3010,86 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 if (status != Status::OK)
                 {
                     return status;
+                }
+
+                const auto recovery_mode =
+                    Config::getInstance().getString("storage", "tablespace_recovery_mode", "strict");
+                std::string recovery_mode_lower = recovery_mode;
+                std::transform(recovery_mode_lower.begin(), recovery_mode_lower.end(),
+                               recovery_mode_lower.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                bool allow_missing_tablespaces = (recovery_mode_lower == "allow_missing");
+
+                for (const auto &[tablespace_id, tablespace_info] : tablespace_cache_)
+                {
+                    if (tablespace_id == PRIMARY_TABLESPACE_ID)
+                    {
+                        continue;
+                    }
+
+                    if (tablespace_info.file_paths.empty())
+                    {
+                        if (allow_missing_tablespaces)
+                        {
+                            LOG_WARNING(CATALOG, "Tablespace %u has no files; skipping due to recovery mode",
+                                        tablespace_id);
+                            continue;
+                        }
+                        SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND,
+                                         ("Missing tablespace file paths for tablespace " +
+                                          std::to_string(tablespace_id)).c_str());
+                        return Status::FILE_NOT_FOUND;
+                    }
+
+                    if (tablespace_info.file_paths.size() > 1)
+                    {
+                        LOG_WARNING(CATALOG,
+                                    "Tablespace %u has multiple files; opening primary file only",
+                                    tablespace_id);
+                    }
+
+                    const std::string &path = tablespace_info.file_paths.front();
+                    if (path.empty())
+                    {
+                        if (allow_missing_tablespaces)
+                        {
+                            LOG_WARNING(CATALOG, "Tablespace %u path empty; skipping due to recovery mode",
+                                        tablespace_id);
+                            continue;
+                        }
+                        SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND,
+                                         ("Missing tablespace file path for tablespace " +
+                                          std::to_string(tablespace_id)).c_str());
+                        return Status::FILE_NOT_FOUND;
+                    }
+
+                    if (!std::filesystem::exists(path))
+                    {
+                        if (allow_missing_tablespaces)
+                        {
+                            LOG_WARNING(CATALOG,
+                                        "Tablespace %u file '%s' missing; skipping due to recovery mode",
+                                        tablespace_id, path.c_str());
+                            continue;
+                        }
+                        SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND,
+                                         ("Missing tablespace file: " + path).c_str());
+                        return Status::FILE_NOT_FOUND;
+                    }
+
+                    Status open_status =
+                        db_->page_manager()->openTablespace(tablespace_id, path, false, ctx);
+                    if (open_status != Status::OK)
+                    {
+                        if (allow_missing_tablespaces)
+                        {
+                            LOG_WARNING(CATALOG,
+                                        "Failed to open tablespace %u at '%s'; skipping due to recovery mode",
+                                        tablespace_id, path.c_str());
+                            continue;
+                        }
+                        return open_status;
+                    }
                 }
 
                 // Load sequences
@@ -7788,6 +7912,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->views_page = views_table_page_;
         root->triggers_page = triggers_table_page_;
         root->permissions_page = permissions_table_page_;
+        root->column_permissions_page = column_permissions_table_page_;
+        root->object_permissions_page = object_permissions_table_page_;
+        root->policies_page = policies_table_page_;
         root->statistics_page = statistics_table_page_;
         root->collations_page = collations_table_page_;
         root->timezones_page = timezones_table_page_;
@@ -7890,6 +8017,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         views_table_page_ = root->views_page;
         triggers_table_page_ = root->triggers_page;
         permissions_table_page_ = root->permissions_page;
+        column_permissions_table_page_ = root->column_permissions_page;
+        object_permissions_table_page_ = root->object_permissions_page;
+        policies_table_page_ = root->policies_page;
         statistics_table_page_ = root->statistics_page;
         collations_table_page_ = root->collations_page;
         timezones_table_page_ = root->timezones_page;
@@ -11086,6 +11216,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
      */
     Status CatalogManager::attachTablespace(const std::string &file_path,
                                             const std::string &tablespace_name,
+                                            bool validate,
+                                            bool allow_uuid_mismatch,
                                             uint16_t &tablespace_id_out,
                                             ErrorContext *ctx)
     {
@@ -11155,7 +11287,23 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::INVALID_ARGUMENT;
         }
 
-        // ===== STEP 4: Determine tablespace name (handle name conflicts) =====
+        // ===== STEP 4: Optional database UUID validation =====
+
+        if (validate)
+        {
+            const ID &db_uuid = db_->uuid();
+            bool uuid_mismatch = (header->database_uuid != db_uuid);
+            if (uuid_mismatch && !allow_uuid_mismatch)
+            {
+                ::close(fd);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                 ("Tablespace database_uuid mismatch for " + file_path +
+                                  ". Use ATTACH TABLESPACE ... FORCE or ALLOW_MISMATCH to override.").c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        // ===== STEP 5: Determine tablespace name (handle name conflicts) =====
 
         std::string final_name;
         if (!tablespace_name.empty())
@@ -11183,7 +11331,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
-        // ===== STEP 5: Allocate new tablespace_id =====
+        // ===== STEP 6: Allocate new tablespace_id =====
 
         uint16_t new_ts_id = 0;
         for (uint16_t candidate = 2; candidate < 65535; ++candidate)
@@ -11205,7 +11353,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         LOG_INFO(CATALOG, "Allocated tablespace_id %u for '%s'", new_ts_id, final_name.c_str());
 
-        // ===== STEP 6: Register file descriptor in Database =====
+        // ===== STEP 7: Register file descriptor in Database =====
 
         Status status = db_->registerTablespaceFile(new_ts_id, fd, ctx);
         if (status != Status::OK)
@@ -11215,9 +11363,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
-        // ===== STEP 7: Load FSM into memory =====
+        // ===== STEP 8: Load FSM into memory =====
 
-        status = db_->page_manager()->openTablespace(new_ts_id, file_path, ctx);
+        status = db_->page_manager()->openTablespace(new_ts_id, file_path, allow_uuid_mismatch, ctx);
         if (status != Status::OK)
         {
             db_->unregisterTablespaceFile(new_ts_id, ctx);
@@ -11225,7 +11373,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
-        // ===== STEP 8: Create TablespaceInfo and add to catalog =====
+        // ===== STEP 9: Create TablespaceInfo and add to catalog =====
 
         TablespaceInfo ts_info;
         ts_info.tablespace_id = new_ts_id;
@@ -11270,7 +11418,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
-        // ===== STEP 9: Write to sb_tablespace catalog =====
+        // ===== STEP 10: Write to sb_tablespace catalog =====
 
         status = writeTablespaceRecord(ts_info, ctx);
         if (status != Status::OK)
@@ -11294,7 +11442,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
-        // ===== STEP 10: Update cache =====
+        // ===== STEP 11: Update cache =====
 
         tablespace_cache_[new_ts_id] = ts_info;
         tablespace_id_out = new_ts_id;

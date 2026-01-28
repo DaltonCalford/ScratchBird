@@ -93,6 +93,32 @@
 
 ---
 
+### 🛡️ Administration
+- [Overview](admin/README)
+- [Backup & Restore](admin/backup-restore)
+- [Monitoring](admin/monitoring)
+- [Security](admin/security)
+- [User Management](admin/user-management)
+- [Troubleshooting](admin/troubleshooting)
+
+---
+
+### ⚙️ Configuration
+- [sb_server.conf](configuration/sb_server.conf)
+- [hba.conf](configuration/hba.conf)
+
+---
+
+### 🌐 Connectivity
+- [PostgreSQL Clients](connectivity/postgresql-clients)
+
+---
+
+### 📱 Applications
+- [WordPress](applications/WordPress)
+
+---
+
 ### 🎓 Tutorials
 - [First Application](tutorials/First-Application)
 - [Python Flask App](tutorials/Web-App-Python-Flask)

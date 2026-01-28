@@ -2,7 +2,7 @@
 
 **Purpose:** Documents the ScratchBird core engine - the sole authority for SBLR validation, security enforcement, and query execution.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -116,12 +116,24 @@ Converts the resolved AST into SBLR bytecode:
 
 Implements Firebird-style MGA (Multi-Generational Architecture). See [Transactions](Transactions.md) for detailed documentation.
 
+**Key Components:**
+- `transaction_manager.cpp` - Transaction lifecycle (begin, commit, rollback)
+- `clog.cpp` - Commit Log for transaction state tracking
+- `tip_compaction.cpp` - TIP (Transaction Inventory Page) compaction
+- `proc_array.cpp` - Active transaction tracking (ProcArray)
+- `sweep_manager.cpp` - Automatic garbage collection of old record versions
+- `garbage_collector.cpp` - Index and data garbage collection
+- `vacuum.cpp` - Space reclamation
+- `long_transaction_monitor.cpp` - Detection of long-running transactions
+- `lock_manager.cpp` - Lock management
+
 **Key Responsibilities:**
 - Transaction lifecycle (begin, commit, rollback)
-- TIP (Transaction Inventory Page) management
+- TIP management and compaction
 - Visibility determination via TIP lookups (NOT snapshots)
 - OIT/OAT/OST marker management
-- Sweep coordination
+- Sweep coordination and garbage collection
+- Long transaction monitoring
 
 ---
 
@@ -132,10 +144,13 @@ Implements Firebird-style MGA (Multi-Generational Architecture). See [Transactio
 Manages data storage with MGA-first design. See [Storage](Storage.md) for detailed documentation.
 
 **Key Responsibilities:**
-- Buffer pool management
-- Heap page operations
+- Buffer pool management (`buffer_pool.cpp`, `buffer_pool_guard.h`)
+- Page management (`page_manager.cpp`, `heap_page.cpp`)
+- Compressed page management (`compressed_page_manager.cpp`, `compression_lz4.cpp`)
 - Back-versioning for MGA
-- Index coordination
+- Index coordination via index factory
+- TOAST large object storage (`toast.cpp`, `toast_visibility.cpp`)
+- Tablespace management (`tablespace.h`)
 
 ---
 
@@ -255,26 +270,34 @@ Database Lock (exclusive for DDL)
 
 ## Index Subsystem
 
-ScratchBird supports 11+ index types:
+ScratchBird implements 14 index types, all managed through the index factory (`src/core/index_factory.cpp`):
 
-| Index Type | Use Case | Status |
-|------------|----------|--------|
-| B-Tree | General purpose, range queries | Alpha |
-| Hash | Equality-only lookups | Alpha |
-| Bitmap | Low-cardinality columns | Alpha |
-| GIN | Full-text, arrays, JSON | Alpha |
-| GIST | Spatial data | Alpha |
-| SP-GIST | Partitioned spatial | Alpha |
-| BRIN | Large sequential tables | Alpha |
-| Bloom | Probabilistic membership | Alpha |
-| HNSW | Vector similarity search | Alpha |
-| UUID v7 optimized | Time-sorted UUIDs | Alpha |
+| Index Type | Use Case | Key Files |
+|------------|----------|-----------|
+| B-tree | General purpose, range queries, ordered access | `btree.cpp`, `btree_page.cpp`, `btree_iterator.cpp`, `btree_compression.cpp`, `btree_vacuum.cpp` |
+| Hash | Equality-only lookups | `hash_index.cpp` |
+| GiST | Spatial data, range types, custom operators | `gist_index.cpp`, `gist_box_ops.h` |
+| GIN | Full-text search, arrays, JSONB | `gin_index.cpp`, `gin_compression.cpp`, `gin_tsvector_ops.cpp` |
+| SP-GiST | Space-partitioned indexing, quad-trees, radix trees | `spgist_index.cpp`, `spgist_quad_ops.h`, `spgist_text_ops.h` |
+| BRIN | Block range indexes for large sequential tables | `brin_index.cpp`, `brin_minmax_ops.h` |
+| R-tree | Spatial indexing with node operations | `rtree.cpp`, `rtree_index.cpp`, `rtree_node.cpp` |
+| Bitmap | Low-cardinality columns | `bitmap_index.cpp` |
+| LSM-Tree | Write-optimized workloads | `lsm_tree_index.cpp`, `lsm_tree.cpp`, `lsm_tree_components.cpp`, `lsm_compaction_manager.cpp`, `lsm_block_cache.cpp`, `lsm_bloom_filter.cpp`, `lsm_compression.cpp`, `lsm_thread_pool.cpp` |
+| HNSW | Vector similarity search | `hnsw_index.cpp` |
+| Columnstore | Columnar storage for analytical queries | `columnstore.cpp`, `columnstore_index.cpp` |
+| Full-text | Dedicated full-text search | `fulltext_index.cpp` |
+| Inverted | General-purpose inverted indexing | `inverted_index.cpp` |
+| Expression | Index on computed expressions | Handled by index factory with expression serialization |
 
-**Key Files:**
-- `include/scratchbird/core/bitmap_index.h`
-- `src/core/bitmap_index.cpp`
-- `src/core/index_factory.cpp`
-- `src/core/spgist_index.cpp`
+**Bloom Filters:** Attachable to B-tree, Hash, and GIN indexes via `IndexParams`. Managed through `bloom_filter.cpp` with configurable false-positive rates.
+
+**Index GC:** All index types integrate with the garbage collector via `index_gc_interface.h`.
+
+**Key Infrastructure Files:**
+- `src/core/index_factory.cpp` - Index creation and loading
+- `src/core/index_params.cpp` - Index parameter parsing (Bloom filter config, etc.)
+- `src/core/index_key_extractor.cpp` - Key extraction for indexing
+- `src/core/global_uniqueness_index.cpp` - Cross-partition uniqueness
 
 ---
 

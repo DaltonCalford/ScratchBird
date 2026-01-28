@@ -1,7 +1,6 @@
 # Transactions
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 ScratchBird uses a Firebird-style Multi-Generational Architecture (MGA/MVCC). Each
 row can have multiple versions, and visibility is decided by transaction IDs

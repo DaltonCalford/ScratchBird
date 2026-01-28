@@ -26,6 +26,7 @@
 #include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/gpid.h"
 #include <chrono>
+#include <functional>
 #include <thread>
 #include <algorithm>
 #include <cmath>
@@ -155,7 +156,9 @@ namespace scratchbird::core
 
         background_thread_ = std::thread(&GarbageCollector::backgroundGCLoop, this);
 
-        LOG_INFO(VACUUM, "Background GC thread started");
+        uint64_t tid = std::hash<std::thread::id>{}(background_thread_.get_id());
+        LOG_INFO(VACUUM, "Background GC thread started (tid=%lu)",
+                 static_cast<unsigned long>(tid));
         return Status::OK;
     }
 

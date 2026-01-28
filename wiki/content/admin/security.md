@@ -1,7 +1,6 @@
 # Security Administration
 
-**Status:** Alpha documentation
-**Last Updated:** 2026-01-19
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -26,10 +25,14 @@ ScratchBird supports multiple authentication methods:
 
 | Method | Description | Use Case |
 |--------|-------------|----------|
-| `password` | MD5 or SCRAM-SHA-256 hashed password | Default, most common |
-| `scram-sha-256` | SCRAM-SHA-256 (recommended) | High security |
-| `cert` | Client certificate | Certificate-based auth |
-| `ldap` | LDAP/Active Directory | Enterprise SSO |
+| `scram-sha-256` | SCRAM-SHA-256 (recommended) | Default, high security |
+| `password` | MD5 or SCRAM-SHA-256 hashed password | Legacy compatibility |
+| `cert` | TLS client certificate | Certificate-based auth |
+| `ldap` | LDAP/Active Directory | Enterprise directory auth |
+| `kerberos` | Kerberos/GSSAPI | Enterprise SSO |
+| `oauth` | OAuth 2.0 | Token-based auth |
+| `saml` | SAML federation | Federated identity |
+| `mfa` | Multi-factor authentication | Two-factor auth |
 | `trust` | No authentication | Local development only |
 | `reject` | Reject all connections | Blocking specific hosts |
 

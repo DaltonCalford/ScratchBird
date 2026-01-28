@@ -1,7 +1,6 @@
 # RPM Package Installation
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 Install ScratchBird on Fedora/RHEL/CentOS using the `.rpm` package.
 

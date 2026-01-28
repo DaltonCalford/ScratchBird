@@ -30,6 +30,11 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <string>
+#include <chrono>
+#include <cctype>
+#include <cstdlib>
+#include <unistd.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -56,11 +61,33 @@ protected:
 
         page_mgr_ = db_->page_manager();
         ASSERT_NE(page_mgr_, nullptr);
+
+        const auto *info = ::testing::UnitTest::GetInstance()->current_test_info();
+        std::string test_name = info ? std::string(info->test_suite_name()) + "_" +
+                                            std::string(info->name())
+                                      : "unknown";
+        for (char &ch : test_name) {
+            if (!std::isalnum(static_cast<unsigned char>(ch))) {
+                ch = '_';
+            }
+        }
+        stats_log_path_ = "/tmp/sb_stats_accuracy_" + std::to_string(getpid()) +
+                          "_" + test_name + ".log";
+
+        ErrorContext debug_ctx;
+        if (!pool_->enableStatsDebug(stats_log_path_, &debug_ctx)) {
+            std::cout << "Stats debug not enabled: " << debug_ctx.message << "\n";
+        }
     }
 
     void TearDown() override {
         if (db_) {
             db_->close();
+        }
+        if (!HasFailure() && std::getenv("SB_STATS_DEBUG_KEEP") == nullptr) {
+            std::remove(stats_log_path_.c_str());
+        } else if (!stats_log_path_.empty()) {
+            std::cout << "Stats debug log: " << stats_log_path_ << "\n";
         }
         std::remove(test_db_path_);
     }
@@ -69,6 +96,7 @@ protected:
     std::unique_ptr<Database> db_;
     BufferPool* pool_;
     PageManager* page_mgr_;
+    std::string stats_log_path_;
 };
 
 /**
@@ -94,6 +122,15 @@ TEST_F(StatisticsAccuracyTest, SingleThreadedAccuracy) {
 
     // Get initial stats AFTER allocation, BEFORE our test accesses
     auto initial_stats = pool_->getStats();
+
+    auto quiet_start = pool_->getStats();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    auto quiet_end = pool_->getStats();
+    if (quiet_start.hits != quiet_end.hits || quiet_start.misses != quiet_end.misses) {
+        std::cout << "Background buffer activity detected before test ops: hits "
+                  << (quiet_end.hits - quiet_start.hits) << ", misses "
+                  << (quiet_end.misses - quiet_start.misses) << "\n";
+    }
 
     // First access: should be misses (pages not in buffer pool yet)
     int expected_misses = 0;

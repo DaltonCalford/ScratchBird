@@ -55,6 +55,14 @@ Copy the patterns, not the code.
 
 The SBLR bytecode format is the SAME regardless of which parser generated it.
 
+### Rule 4: Tablespace DDL is Rejected in Emulated Parsers
+Emulated parsers must reject tablespace DDL and TABLESPACE clauses. ScratchBird V2 is the
+only parser that can create or attach on-disk tablespace files.
+
+- Reject `CREATE/ALTER/DROP/ATTACH/DETACH TABLESPACE`
+- Reject `TABLESPACE` clauses in `CREATE TABLE`, `CREATE INDEX`, and `CREATE DATABASE`
+- Emit a parser error that explains tablespaces are only supported by ScratchBird SQL
+
 ---
 
 ## Architecture Overview

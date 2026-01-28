@@ -8,8 +8,6 @@ key precedence. This aligns runtime parsing with the Git integration spec.
 
 ## Constraints
 
-- ScratchBird source is currently read-only; parser changes must wait until code
-  edits are allowed.
 - Documentation updates are complete in
   `ScratchBird/docs/specifications/core/GIT_METADATA_INTEGRATION_SPECIFICATION.md`.
 

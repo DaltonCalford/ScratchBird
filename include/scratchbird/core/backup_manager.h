@@ -27,6 +27,7 @@
 #include <mutex>
 #include <thread>
 #include <functional>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace scratchbird::core {
@@ -71,6 +72,7 @@ struct RestoreConfig {
     std::string target_lsn;             // Target LSN for PITR (empty = latest)
     bool partial_restore = false;       // Allow partial restore on errors
     bool allow_tablespace_create = false; // Create missing tablespace files when restoring
+    std::unordered_map<uint16_t, std::vector<std::string>> tablespace_path_overrides; // Optional relocation
 };
 
 // Backup manifest header (stored at beginning of backup file)

@@ -1,7 +1,7 @@
 # ScratchBird System Catalog Structure
 ## Complete Schema Layout and Metadata Tables
 
-**Last Updated**: January 9, 2026
+**Last Updated**: January 28, 2026
 **Status**: Current Implementation
 
 ---
@@ -118,10 +118,14 @@ struct CatalogRootPage {
     uint32_t charsets_page;
     uint32_t collation_defs_page;
 
-    // Dependencies, comments, DDL definitions
+    // Dependencies, comments, DDL definitions + scheduler
     uint32_t dependencies_page;
     uint32_t comments_page;
     uint32_t object_definitions_page;
+    uint32_t jobs_page;
+    uint32_t job_runs_page;
+    uint32_t job_dependencies_page;
+    uint32_t job_secrets_page;
 
     // Security tables
     uint32_t users_page;
@@ -146,28 +150,9 @@ struct CatalogRootPage {
 
     // Tablespaces and extensions
     uint32_t tablespaces_page;
+    uint32_t tablespace_files_page;
     uint32_t extensions_page;
     uint32_t foreign_keys_page;
-
-    // Beta: NoSQL catalog tables
-    uint32_t nosql_collections_page;
-    uint32_t nosql_buckets_page;
-    uint32_t nosql_column_families_page;
-    uint32_t graphs_page;
-    uint32_t graph_vertex_labels_page;
-    uint32_t graph_edge_labels_page;
-    uint32_t graph_properties_page;
-
-    // Beta: NoSQL extensions (RDF, search, time-series, vector)
-    uint32_t rdf_graphs_page;
-    uint32_t rdf_prefixes_page;
-    uint32_t search_analyzers_page;
-    uint32_t search_fields_page;
-    uint32_t timeseries_measurements_page;
-    uint32_t timeseries_tags_page;
-    uint32_t timeseries_retention_policies_page;
-    uint32_t vector_collections_page;
-    uint32_t vector_indexes_page;
 
     // Phase B: Synonyms, FDW, registry, UDR engines/modules
     uint32_t synonyms_page;
@@ -191,8 +176,11 @@ struct CatalogRootPage {
     uint32_t security_policy_epoch_page;
 
     ID policy_toast_table_id;     // UUID for policy expression TOAST storage
+    uint32_t column_permissions_page;
+    uint32_t object_permissions_page;
+    uint32_t policies_page;
 
-    uint8_t reserved[3808];       // Padding for 4KB page (288 bytes used)
+    uint8_t reserved[3760];       // Padding for 4KB page (336 bytes used)
 };
 ```
 

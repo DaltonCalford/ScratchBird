@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's transaction system using Firebird-style Multi-Generational Architecture (MGA) - NOT PostgreSQL MVCC.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -414,6 +414,22 @@ If you see ALL of these, the code is CORRECT:
 | Parameter type | `Snapshot*` | `TransactionId` |
 
 **ONE uses snapshots, ONE uses TIP. ScratchBird uses TIP (Firebird MGA).**
+
+---
+
+## Source Code Reference
+
+| Component | Implementation |
+|-----------|----------------|
+| Transaction Manager | `src/core/transaction_manager.cpp` |
+| Commit Log (CLOG) | `src/core/clog.cpp` |
+| TIP Compaction | `src/core/tip_compaction.cpp` |
+| ProcArray (Active Txns) | `src/core/proc_array.cpp` |
+| Sweep Manager | `src/core/sweep_manager.cpp` |
+| Garbage Collector | `src/core/garbage_collector.cpp` |
+| Vacuum | `src/core/vacuum.cpp` |
+| Long Transaction Monitor | `src/core/long_transaction_monitor.cpp` |
+| Lock Manager | `src/core/lock_manager.cpp` |
 
 ---
 

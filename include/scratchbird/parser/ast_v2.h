@@ -1312,6 +1312,7 @@ public:
     StringPool::StringId tablespace_name = StringPool::INVALID_ID;
     std::string location;
     bool validate = false;
+    bool allow_mismatch = false;
 };
 
 /**

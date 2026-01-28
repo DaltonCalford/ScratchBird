@@ -1,7 +1,6 @@
 # sb_server.conf
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-09
+**Last Updated:** 2026-01-28
 
 This page will document the server configuration file. For now, use:
 - `docs/specifications/deployment/SYSTEMD_SERVICE_SPECIFICATION.md`

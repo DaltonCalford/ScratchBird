@@ -1,7 +1,6 @@
 # Vector Search
 
-**Status:** Alpha documentation
-**Last Updated:** 2026-01-19
+**Last Updated:** 2026-01-28
 
 ---
 

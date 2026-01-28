@@ -1,7 +1,6 @@
 # Procedures
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 Procedures are stored routines that execute with database privileges and may
 perform multiple statements, including DML and transaction control. They are

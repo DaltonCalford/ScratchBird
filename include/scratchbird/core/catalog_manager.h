@@ -3299,6 +3299,7 @@ public:
          * Phase 6 Task 6.1.2
          */
         auto attachTablespace(const std::string &file_path, const std::string &tablespace_name,
+                              bool validate, bool allow_uuid_mismatch,
                               uint16_t &tablespace_id_out, ErrorContext *ctx = nullptr) -> Status;
 
         /**

@@ -51,6 +51,7 @@ namespace scratchbird::core
          *
          * @param tablespace_id Tablespace ID (0 = primary, 1-65535 = custom)
          * @param gpid_out Output GPID of allocated page
+         * @param allow_uuid_mismatch If true, skip database_uuid mismatch failure
          * @param ctx Error context
          * @return Status::OK on success, error status otherwise
          *
@@ -115,7 +116,7 @@ namespace scratchbird::core
          * Performs:
          * 1. Opens .sbts file at specified path
          * 2. Reads and validates TablespaceHeader (page 0)
-         * 3. Validates database_uuid matches current database (warns if mismatch)
+         * 3. Validates database_uuid matches current database (fails unless allow_uuid_mismatch)
          * 4. Validates page_size matches (errors if mismatch)
          * 5. Loads tablespace FSM into memory (page 1)
          * 6. Registers file descriptor in Database::tablespace_fds_
@@ -123,6 +124,7 @@ namespace scratchbird::core
          * Thread-safe: Acquires Database::tablespace_mutex_ during registration.
          */
         auto openTablespace(uint16_t tablespace_id, const std::string &path,
+                           bool allow_uuid_mismatch,
                            ErrorContext *ctx = nullptr) -> Status;
 
         /**

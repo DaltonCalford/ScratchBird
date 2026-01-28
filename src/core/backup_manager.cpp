@@ -15,9 +15,11 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/tablespace.h"
+#include "scratchbird/core/config.h"
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#include <cctype>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -710,6 +712,14 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
         return Status::IO_ERROR;
     }
 
+    const auto recovery_mode =
+        Config::getInstance().getString("storage", "tablespace_recovery_mode", "strict");
+    std::string recovery_mode_lower = recovery_mode;
+    std::transform(recovery_mode_lower.begin(), recovery_mode_lower.end(),
+                   recovery_mode_lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    bool allow_missing_tablespaces = (recovery_mode_lower == "allow_missing");
+
     struct TablespaceFileRange
     {
         uint64_t start_page = 0;
@@ -727,7 +737,24 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
             continue;
         }
 
-        if (tablespace.file_paths.empty())
+        const auto override_it = config.tablespace_path_overrides.find(tablespace.tablespace_id);
+        const std::vector<std::string>* file_paths = &tablespace.file_paths;
+        if (override_it != config.tablespace_path_overrides.end() &&
+            !override_it->second.empty())
+        {
+            if (!tablespace.file_paths.empty() &&
+                override_it->second.size() != tablespace.file_paths.size())
+            {
+                ::close(backup_fd);
+                ::close(target_fd);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Tablespace relocation path count mismatch");
+                return Status::INVALID_ARGUMENT;
+            }
+            file_paths = &override_it->second;
+        }
+
+        if (file_paths->empty())
         {
             ::close(backup_fd);
             ::close(target_fd);
@@ -737,20 +764,27 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
 
         uint64_t next_start = 0;
         std::vector<TablespaceFileRange> ranges;
-        ranges.reserve(tablespace.file_paths.size());
+        ranges.reserve(file_paths->size());
 
-        for (size_t i = 0; i < tablespace.file_paths.size(); ++i)
+        for (size_t i = 0; i < file_paths->size(); ++i)
         {
-            const auto &path = tablespace.file_paths[i];
+            const auto &path = (*file_paths)[i];
             struct stat st;
             bool exists = (stat(path.c_str(), &st) == 0);
-            if (!exists && !config.allow_tablespace_create)
+            bool can_create = config.allow_tablespace_create || allow_missing_tablespaces;
+            if (!exists && !can_create)
             {
                 ::close(backup_fd);
                 ::close(target_fd);
                 SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND,
                                   ("Missing tablespace file: " + path).c_str());
                 return Status::FILE_NOT_FOUND;
+            }
+            if (!exists && allow_missing_tablespaces)
+            {
+                LOG_WARNING(GENERAL,
+                            "Missing tablespace file '%s'; creating due to recovery mode",
+                            path.c_str());
             }
 
             int ts_fd = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
@@ -881,6 +915,15 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
             }
         }
 
+        if (entry.original_size >= sizeof(PageHeader))
+        {
+            auto *page_header = reinterpret_cast<PageHeader *>(
+                const_cast<uint8_t *>(page_data));
+            page_header->checksum =
+                calculatePageChecksum(reinterpret_cast<uint8_t *>(page_header),
+                                      entry.original_size);
+        }
+
         // Write to target database
         uint16_t tablespace_id = getTablespaceID(entry.gpid);
         uint32_t page_id = static_cast<uint32_t>(getPageNumber(entry.gpid));
@@ -975,6 +1018,55 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
     }
 
     LOG_INFO(GENERAL, "Restore completed: %lu pages", header.total_pages);
+
+    if (!config.tablespace_path_overrides.empty())
+    {
+        Database restored_db;
+        Status open_status = restored_db.open(target_path, ctx);
+        if (open_status != Status::OK)
+        {
+            return open_status;
+        }
+
+        auto *catalog = restored_db.catalog_manager();
+        if (!catalog)
+        {
+            restored_db.close();
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager unavailable");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        for (const auto &override_entry : config.tablespace_path_overrides)
+        {
+            TablespaceInfo info;
+            Status status = catalog->getTablespace(override_entry.first, info, ctx);
+            if (status != Status::OK)
+            {
+                restored_db.close();
+                return status;
+            }
+            info.file_paths = override_entry.second;
+            status = catalog->writeTablespaceRecord(info, ctx);
+            if (status != Status::OK)
+            {
+                restored_db.close();
+                return status;
+            }
+            status = catalog->writeTablespaceFileRecords(info, ctx);
+            if (status != Status::OK)
+            {
+                restored_db.close();
+                return status;
+            }
+        }
+
+        Status sync_status = restored_db.sync(ctx);
+        restored_db.close();
+        if (sync_status != Status::OK)
+        {
+            return sync_status;
+        }
+    }
 
     return Status::OK;
 }

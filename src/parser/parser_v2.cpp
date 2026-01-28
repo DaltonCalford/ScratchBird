@@ -2843,8 +2843,18 @@ AttachTablespaceStmt* Parser::parseAttachTablespace(const StringPool::StringId t
         error("Expected string literal for ATTACH TABLESPACE location");
     }
 
-    if (matchContextual("VALIDATE")) {
-        stmt->validate = true;
+    bool options_remaining = true;
+    while (options_remaining) {
+        if (matchContextual("VALIDATE")) {
+            stmt->validate = true;
+        } else if (matchContextual("FORCE") || matchContextual("ALLOW_MISMATCH")) {
+            stmt->allow_mismatch = true;
+            if (!stmt->validate) {
+                stmt->validate = true;
+            }
+        } else {
+            options_remaining = false;
+        }
     }
 
     stmt->span = makeSpan(start);

@@ -2,7 +2,7 @@
 
 **Purpose:** Comprehensive guide to ScratchBird's internal architecture, design principles, and implementation details for contributors and maintainers.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -64,7 +64,7 @@ ScratchBird is a database engine built on three fundamental principles:
 │    • Query Executor (SBLR interpreter)                          │
 │    • Transaction Manager (MGA)                                  │
 │    • Storage Engine                                             │
-│    • Index Subsystem (11+ index types)                          │
+│    • Index Subsystem (14 index types)                           │
 │    • Catalog System                                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -114,16 +114,24 @@ Before implementing features, read these documents:
 ```
 src/
 ├── cli/                 # Command-line tools (sb-isql, sb-server, etc.)
-├── core/                # Server core (storage, catalog, buffer pool)
-├── network/             # Wire protocols and connection handling
+├── core/                # Server core (storage, catalog, buffer pool, indexes, types)
+├── network/             # Connection handling, event loop, thread pool
+├── protocol/            # Wire protocol and dialect adapters
+│   ├── wire_protocol.cpp
+│   └── adapters/        # Native, PostgreSQL, MySQL, Firebird adapters
 ├── parser/              # SQL parsers (V2 native + emulated dialects)
 │   ├── parser_v2.cpp    # Native V2 parser
 │   ├── firebird/        # Firebird SQL emulation
 │   ├── postgresql/      # PostgreSQL emulation
 │   └── mysql/           # MySQL emulation
-├── sblr/                # SBLR bytecode (semantic analyzer, generator, executor)
+├── sblr/                # SBLR bytecode (semantic analyzer, generator, executor, query compilers)
+├── security/            # Authentication methods (SCRAM, Kerberos, LDAP, OAuth, SAML, MFA, TLS)
+├── executor/            # Parallel query executor
 ├── optimizer/           # Query planner and cost model
-└── server/              # Server main and IPC
+├── spatial/             # GEOS wrapper, WKB/WKT parsing
+├── geo/                 # Geodetic operations, PROJ wrapper, SRID
+├── server/              # Server main and IPC
+└── testing/             # Test infrastructure
 ```
 
 ---

@@ -64,6 +64,8 @@ namespace scratchbird::core
 
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
         db_header->tip_root_page = tip_root_page_;
+        db_header->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), db_->page_size());
 
         // Mark header page as dirty
         buffer_pool_->unpinPage(0, true, ctx);
@@ -354,6 +356,8 @@ namespace scratchbird::core
             {
                 auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
                 db_header->next_transaction_id = current_next_xid_for_header;
+                db_header->page_header.checksum =
+                    calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), db_->page_size());
                 buffer_pool_->unpinPage(0, true, ctx);
             }
             // Ignore errors - this is just an optimization
@@ -1134,6 +1138,8 @@ namespace scratchbird::core
 
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
         db_header->oldest_transaction_id = oldest_xid_;
+        db_header->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), db_->page_size());
 
         buffer_pool_->unpinPage(0, true, ctx);
 
@@ -1337,6 +1343,8 @@ namespace scratchbird::core
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
         db_header->oldest_active_xid = oldest_active_xid_;
         db_header->oldest_snapshot = oldest_snapshot_;
+        db_header->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), db_->page_size());
 
         buffer_pool_->unpinPage(0, true, ctx);
 

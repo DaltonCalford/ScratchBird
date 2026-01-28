@@ -1,7 +1,6 @@
 # Security
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 ScratchBird enforces security in the engine. Parsers and listeners are treated as
 untrusted and cannot bypass authentication, authorization, or auditing.
@@ -22,20 +21,26 @@ Summary highlights:
 In strict mode, direct SQL access to sys.* is denied; use engine-owned virtual
 views and SHOW/DESCRIBE commands instead.
 
-## Authentication (native vs external)
+## Authentication
 
-Native (local) authentication is implemented in Alpha:
+ScratchBird implements multiple authentication methods in the Alpha codebase:
 
-- Local password authentication with BCrypt.
-- Host-based authentication (HBA) rules.
-- Account lockout and policy enforcement by security level.
+**Password-based:**
+- SCRAM-SHA-256 (PostgreSQL-compatible)
+- Local password authentication with hashing
+- Host-based authentication (HBA) rules
+- Account lockout and password policy enforcement
 
-External authentication is Beta-targeted. The infrastructure exists, but external
-providers are not yet wired:
+**External authentication:**
+- LDAP / Active Directory (`ldap_auth.cpp`)
+- Kerberos / GSSAPI (`kerberos_auth.cpp`)
+- OAuth 2.0 (`oauth_auth.cpp`)
+- SAML (`saml_auth.cpp`)
 
-- LDAP / Active Directory (Beta)
-- Kerberos / GSSAPI (Beta)
-- OAuth2 / OIDC (Beta)
+**Additional methods:**
+- Multi-factor authentication / MFA (`mfa_auth.cpp`)
+- TLS client certificate authentication (`cert_auth.cpp`)
+- Login attempt tracking for brute-force protection (`login_attempt_tracker.cpp`)
 
 ## Authorization model
 

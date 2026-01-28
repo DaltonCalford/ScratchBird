@@ -4157,6 +4157,9 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTable(CreateTableStmt* stmt)
     resolved->temp_type = stmt->temp_type;
     resolved->on_commit = stmt->on_commit;
     resolved->unlogged = stmt->unlogged;
+    if (stmt->has_tablespace) {
+        resolved->tablespace_name = internString(schemaPathToString(stmt->tablespace, string_pool_));
+    }
 
     if (resolved->temp_type == TempTableType::NONE &&
         resolved->on_commit != TempOnCommitAction::NONE)
@@ -4725,6 +4728,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAttachTablespace(AttachTablespaceS
     resolved->tablespace_name = stmt->tablespace_name;
     resolved->location = stmt->location;
     resolved->validate = stmt->validate;
+    resolved->allow_mismatch = stmt->allow_mismatch;
     return resolved;
 }
 

@@ -12,6 +12,7 @@ replication/PITR only.
 - v1.2.0 - Stage 1.1: Added compression support with LZ4 baseline
 - v1.3.0 - Stage 1.1: Added TOAST/LOB storage for large attributes
 - v1.4.0 - Stage 1.1: Added table_id to PageHeader (80 bytes total)
+- v1.5.0 - Stage 1.2: Tablespace header v2 and root_gpid catalog fields
 
 ---
 
@@ -179,6 +180,63 @@ bool validate_database_header(const DatabaseHeader* header) {
     return validate_page_checksum((uint8_t*)header, header->block_size);
 }
 ```
+
+---
+
+## Tablespace Files (.sbts)
+
+Each tablespace file begins with a tablespace header on page 0. The header version is stored
+in the PageHeader `version` field. Tablespace header v2 expands the name to 63 characters
+and preserves the v1 layout for remaining fields.
+
+### Tablespace Header (Page 0)
+
+```c
+#pragma pack(push, 1)
+typedef struct TablespaceHeaderV2 {
+    PageHeader page_header;       // Standard 80-byte header
+
+    // Identification (96 bytes)
+    char     tablespace_name[64]; // Null-terminated, max 63 chars
+    uint8_t  tablespace_uuid[16]; // UUID v7 for tablespace
+    uint8_t  database_uuid[16];   // UUID v7 for owning database
+
+    // Configuration (64 bytes)
+    uint32_t tablespace_id;       // 0=primary, 1=reserved, 2..65535 custom
+    uint32_t page_size;           // Must match database page_size
+    uint64_t creation_time;       // Unix timestamp (microseconds)
+    uint64_t last_checkpoint;     // Last checkpoint timestamp (microseconds)
+    uint32_t autoextend_enabled;  // 1=enabled, 0=disabled
+    uint32_t autoextend_size_mb;  // Extend by N MB
+    uint64_t max_size_mb;         // 0 = unlimited
+    uint64_t reserved1[3];        // Reserved
+
+    // File layout (32 bytes)
+    uint64_t total_pages;         // Total pages in file
+    uint64_t free_pages;          // Free pages tracked by FSM
+    uint64_t next_page_number;    // Allocation hint
+    uint64_t fsm_root_page;       // FSM root page (usually 1)
+
+    // Transaction info (32 bytes)
+    uint64_t oldest_transaction_id;
+    uint64_t latest_completed_xid;
+    uint64_t reserved2[2];
+} TablespaceHeaderV2;
+#pragma pack(pop)
+```
+
+### Tablespace Header Validation Rules
+
+- `page_header.magic` must equal `0x53425244` (`SBRD`)
+- `tablespace_id` must match the catalog entry for this tablespace
+- `page_size` must match the database page size
+- `database_uuid` must match the database UUID unless attach override is used
+
+### Root Page Identifiers
+
+Catalog records store root page identifiers as **root_gpid** instead of root_page. A root_gpid
+is a 64-bit Global Page ID: upper 16 bits = tablespace_id, lower 48 bits = page number.
+All storage code must use GPIDs for root pages and DML TIDs.
 
 ---
 

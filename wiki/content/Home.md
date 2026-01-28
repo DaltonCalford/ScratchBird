@@ -2,8 +2,8 @@
 
 # Welcome to ScratchBird Wiki
 
-**Version:** Alpha (documentation in progress)
-**Last Updated:** 2026-01-18
+**Version:** Alpha
+**Last Updated:** 2026-01-28
 
 > 🎯 **ScratchBird** is a high-performance database that implements **Firebird's Multi-Generational Architecture (MGA)** transaction model with modern features including vector search, advanced indexing, and comprehensive SQL support.
 
@@ -56,45 +56,80 @@ ScratchBird is a **modern relational database** that combines:
 - **Automatic Garbage Collection** - Reclaim space from old record versions
 
 ### ⚡ Modern Performance Features
-- **Vector Search** - Native pgvector-compatible vector operations
-- **Advanced Indexing** - B-tree, Hash, GiST, GIN, Bloom filters, LSM
-- **TOAST/LOB Storage** - Efficient large object handling
-- **Zone Maps** - Fast data pruning for analytical queries
+- **Vector Search** - Native pgvector-compatible vector operations with HNSW indexing
+- **Advanced Indexing** - B-tree, Hash, GiST, GIN, SP-GiST, BRIN, R-tree, Bitmap, LSM-Tree, HNSW, Columnstore, Full-text, Inverted
+- **Bloom Filters** - Attachable to B-tree, Hash, and GIN indexes for accelerated lookups
+- **TOAST/LOB Storage** - Efficient large object handling with visibility tracking
+- **Zone Maps (BRIN)** - Fast data pruning for analytical queries
+- **Columnstore** - Columnar storage for analytical workloads
 
 ### 🌐 Broad Compatibility
 - **SQL-92/SQL-99** compliance
 - **PostgreSQL wire protocol** compatibility
-- **MySQL dialect** support
-- **Firebird migration** path
+- **Firebird SQL dialect** support via emulated parser
+- **MySQL dialect** support via emulated parser
+- **Native ScratchBird SQL** with SBLR bytecode compilation
 
 ---
 
 ## Key Features
 
 ### Transaction Management
-- **Firebird MGA** - Multi-generational architecture
+- **Firebird MGA** - Multi-generational architecture with record versioning
 - **ACID Compliance** - Full transaction guarantees
 - **Isolation Levels** - READ COMMITTED, REPEATABLE READ, SERIALIZABLE
 - **Savepoints** - Partial rollback support
 - **Two-Phase Commit** - Distributed transaction support
+- **Commit Log (CLOG)** - Transaction state tracking
+- **TIP Compaction** - Transaction Inventory Page management
+- **Sweep Manager** - Automatic garbage collection of old record versions
+- **Long Transaction Monitor** - Detection and management of long-running transactions
+- **ProcArray** - Active transaction tracking for snapshot isolation
+
+### Authentication and Security
+- **SCRAM-SHA-256** - PostgreSQL-compatible password authentication
+- **Kerberos/GSSAPI** - Enterprise single sign-on
+- **LDAP** - Directory service authentication
+- **OAuth 2.0** - Token-based authentication
+- **SAML** - Federated identity
+- **MFA** - Multi-factor authentication
+- **Certificate** - TLS client certificate authentication
+- **Password Policy** - Configurable password strength and expiration rules
+- **Login Attempt Tracking** - Brute-force protection
+- **Security Quorum** - Multi-party authorization for sensitive operations
 
 ### Data Types
-- **Numeric** - INTEGER, BIGINT, DECIMAL, NUMERIC, REAL, DOUBLE
+- **Numeric** - INT8/16/32/64/128, UINT8/16/32/64/128, FLOAT32, FLOAT64, DECIMAL, MONEY
 - **String** - CHAR, VARCHAR, TEXT with UTF-8 support
-- **Binary** - BYTEA, BLOB
-- **Date/Time** - DATE, TIME, TIMESTAMP with timezone support
-- **JSON** - JSONB for structured data
-- **Vector** - Native vector type for AI/ML
-- **Spatial** - PostGIS-compatible geometry types
-- **Domain** - Custom types with validation
+- **Binary** - BINARY, VARBINARY, BLOB, BYTEA
+- **Date/Time** - DATE, TIME, TIMESTAMP (with/without timezone), INTERVAL
+- **Boolean** - Native boolean type
+- **JSON** - JSON (validated text) and JSONB (binary optimized)
+- **XML** - Native XML document type
+- **UUID** - RFC 4122 UUID (UUIDv7 generation supported)
+- **Vector** - Variable-dimension vector embeddings for AI/ML similarity search
+- **Spatial** - POINT, LINESTRING, POLYGON, MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, GEOMETRYCOLLECTION with SRID support
+- **Text Search** - TSVECTOR and TSQUERY for full-text search
+- **Range** - INT4RANGE, INT8RANGE, NUMRANGE, TSRANGE, TSTZRANGE, DATERANGE
+- **Network** - INET, CIDR, MACADDR, MACADDR8
+- **Composite** - ARRAY (homogeneous), COMPOSITE (heterogeneous record types)
+- **Domain** - Custom types with constraints and validation
+- **VARIANT** - Tagged union for polymorphic columns
 
 ### Indexing
-- **B-tree** - General-purpose indexing
-- **Hash** - Equality lookups
-- **GiST/GIN** - Full-text search, arrays, JSON
-- **Bloom Filters** - Space-efficient membership testing
-- **LSM Trees** - Write-optimized indexing
-- **Vector Indexes** - HNSW for similarity search
+- **B-tree** - General-purpose ordered indexing with optional Bloom filter
+- **Hash** - Equality lookups with optional Bloom filter
+- **GiST** - Generalized Search Trees for spatial, range, and custom types
+- **GIN** - Generalized Inverted Index for full-text search, arrays, JSONB with optional Bloom filter and compression
+- **SP-GiST** - Space-partitioned GiST for quad-trees, radix trees, text operations
+- **BRIN** - Block Range Indexes for large sequential datasets
+- **R-tree** - Spatial indexing with node-level operations
+- **Bitmap** - Bitmap indexes for low-cardinality columns
+- **LSM-Tree** - Write-optimized indexing with compaction, block cache, and Bloom filters
+- **HNSW** - Hierarchical Navigable Small World graphs for vector similarity search
+- **Columnstore** - Columnar indexes for analytical queries
+- **Full-text** - Dedicated full-text search index with tsvector/tsquery
+- **Inverted** - General-purpose inverted indexes
 - **Expression Indexes** - Index on computed columns
 
 ### Advanced Features
@@ -104,7 +139,12 @@ ScratchBird is a **modern relational database** that combines:
 - **Triggers** - BEFORE/AFTER row and statement level
 - **Stored Procedures** - SBLR bytecode language
 - **Row-Level Security** - Fine-grained access control
-- **Domains** - Custom types with constraints
+- **Domains** - Custom types with constraints and validation
+- **Data Encryption** - Transparent data encryption with key management
+- **Data Masking** - Column-level data masking
+- **Audit Logging** - Structured audit trail
+- **Parallel Execution** - Parallel query executor
+- **Job Scheduler** - Background job scheduling
 
 ---
 
@@ -193,13 +233,13 @@ ScratchBird supports all major programming languages:
 
 | Language | Driver | ORM Support | Status |
 |----------|--------|-------------|--------|
-| **Python** | [scratchbird](drivers/Python.md) | SQLAlchemy, Django | ✅ Beta |
-| **Node.js** | [scratchbird](drivers/NodeJS-TypeScript.md) | Prisma, TypeORM | ✅ Beta |
-| **Java** | [JDBC](drivers/Java-JDBC.md) | Hibernate, JPA | ✅ Beta |
-| **C#/.NET** | [ADO.NET](drivers/CSharp-DotNet.md) | EF Core | ✅ Beta |
-| **Go** | [database/sql](drivers/Go.md) | GORM, sqlx | ✅ Beta |
-| **PHP** | [PDO](drivers/PHP.md) | Laravel, WordPress | ✅ Beta |
-| **Pascal/Delphi** | [FireDAC](drivers/Pascal-Delphi.md) | IBX, Zeos | ✅ Beta |
+| **Python** | [scratchbird](drivers/Python.md) | SQLAlchemy, Django | 🚧 Planned |
+| **Node.js** | [scratchbird](drivers/NodeJS-TypeScript.md) | Prisma, TypeORM | 🚧 Planned |
+| **Java** | [JDBC](drivers/Java-JDBC.md) | Hibernate, JPA | 🚧 Planned |
+| **C#/.NET** | [ADO.NET](drivers/CSharp-DotNet.md) | EF Core | 🚧 Planned |
+| **Go** | [database/sql](drivers/Go.md) | GORM, sqlx | 🚧 Planned |
+| **PHP** | [PDO](drivers/PHP.md) | Laravel, WordPress | 🚧 Planned |
+| **Pascal/Delphi** | [FireDAC](drivers/Pascal-Delphi.md) | IBX, Zeos | 🚧 Planned |
 
 ---
 
@@ -248,19 +288,35 @@ ScratchBird supports all major programming languages:
 
 ## Roadmap
 
-### Beta (Current)
-- ✅ Core database engine with MGA
-- ✅ All 7 P0 language drivers
-- ✅ Vector search support
-- ✅ Advanced indexing (B-tree, Hash, GiST, GIN, LSM)
+### Alpha (Current)
+- ✅ Core database engine with Firebird MGA transaction model
+- ✅ Comprehensive indexing (B-tree, Hash, GiST, GIN, SP-GiST, BRIN, R-tree, Bitmap, LSM-Tree, HNSW, Columnstore, Full-text, Inverted)
+- ✅ Vector search support with HNSW indexing
 - ✅ PostgreSQL wire protocol
+- ✅ V2 parser with native SQL dialect
+- ✅ Emulated parsers for Firebird, PostgreSQL, and MySQL dialects
+- ✅ SBLR bytecode compilation and execution
+- ✅ Authentication (SCRAM, Kerberos, LDAP, OAuth, SAML, MFA, Certificate)
+- ✅ Data encryption, data masking, audit logging
+- ✅ Backup and restore management
+- ✅ Full-text search with tsvector/tsquery
+- ✅ Spatial types with GEOS and PROJ integration
+- ✅ TOAST large object storage with visibility
+- ✅ Garbage collection and sweep management
+- ✅ Buffer pool, page management, compressed pages
+- ✅ Job scheduler for background tasks
+- 🚧 Language drivers (Python, Node.js, Java, C#, Go, PHP, Pascal)
 - 🚧 BI tool integration (ODBC, Tableau, Power BI)
 - 🚧 Kubernetes operator
-- 🚧 Streaming (Kafka, Spark connectors)
 
-### 1.0 Release (Q2 2026)
-- Production-ready stability
+### Beta
+- Production stability hardening
+- Complete language driver suite
+- Streaming connectors (Kafka, Spark)
 - Performance optimization
+
+### 1.0 Release
+- Production-ready stability
 - Complete documentation
 - Enterprise features
 - Support and training
@@ -282,14 +338,14 @@ ScratchBird is open-source software licensed under [LICENSE_TYPE].
 
 ## Status
 
-> ⚠️ **Beta Software**
+> ⚠️ **Alpha Software**
 >
-> ScratchBird is currently in **Beta**. While functional and tested, the API may change before 1.0 release.
-> Use in production at your own risk. We recommend thorough testing before production deployment.
+> ScratchBird is currently in **Alpha**. The core engine, indexing, transaction model, and parser infrastructure are implemented and tested, but the API may change before 1.0 release.
+> Not recommended for production use. We recommend thorough testing and expect breaking changes.
 >
-> **Stability:** Beta quality, breaking changes possible
+> **Stability:** Alpha quality, breaking changes expected
 > **Support:** Community support via Discord and GitHub
-> **Production Ready:** Not recommended for critical production workloads yet
+> **Production Ready:** Not recommended for production workloads
 
 ---
 
@@ -297,4 +353,4 @@ ScratchBird is open-source software licensed under [LICENSE_TYPE].
 
 ---
 
-*Last updated: 2026-01-03 | Wiki version synced with codebase*
+*Last updated: 2026-01-28 | Wiki version synced with codebase*

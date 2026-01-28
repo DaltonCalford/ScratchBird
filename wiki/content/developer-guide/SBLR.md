@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's internal bytecode format (SBLR) - the universal language that all SQL dialects compile to.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 

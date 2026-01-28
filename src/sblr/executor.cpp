@@ -12268,11 +12268,28 @@ namespace scratchbird
             // Read optional tablespace name
             std::string tablespace_name = readString();
 
+            bool validate = false;
+            bool allow_mismatch = false;
+            if (pc_ < bytecode_size_)
+            {
+                validate = (readByte() != 0);
+            }
+            if (pc_ < bytecode_size_)
+            {
+                allow_mismatch = (readByte() != 0);
+            }
+
+            if (!validate)
+            {
+                validate = true;
+            }
+
             // Attach tablespace via CatalogManager
             core::ErrorContext err_ctx;
             uint16_t tablespace_id_out;
             core::Status status =
-                db_->catalog_manager()->attachTablespace(file_path, tablespace_name, tablespace_id_out, &err_ctx);
+                db_->catalog_manager()->attachTablespace(file_path, tablespace_name, validate,
+                                                         allow_mismatch, tablespace_id_out, &err_ctx);
 
             if (status != core::Status::OK)
             {

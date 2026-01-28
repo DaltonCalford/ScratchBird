@@ -1,7 +1,6 @@
 # Indexes
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 ScratchBird supports multiple index types, all designed to respect MGA visibility
 (xmin/xmax + TIP checks) and stable tuple identifiers (TIDs). This page focuses
@@ -165,16 +164,18 @@ Use instead of B-tree when:
 Notes:
 - Not a primary index; can return false positives but no false negatives.
 
-### IVF (Inverted File) vector index
+### Full-text index
 
 How it works:
-- Partitions vectors into coarse clusters and searches within candidate lists.
+- Dedicated full-text search index using tsvector and tsquery types.
+- Integrates with GIN for posting list storage and fast lookups.
 
 Use instead of B-tree when:
-- You need large-scale vector similarity search.
+- You need ranked full-text search with tsvector/tsquery operations.
 
 Notes:
-- Approximate; accuracy depends on nlist/quantizer and search probes.
+- Works with the text search configuration system (`ts_config`).
+- Implementation: `fulltext_index.cpp`, `tsvector.cpp`, `tsquery.cpp`, `ts_operations.cpp`.
 
 ### HNSW (Hierarchical Navigable Small World)
 
@@ -202,14 +203,17 @@ Notes:
 
 All index types are required to:
 
-- Track xmin/xmax on entries to support MGA visibility.
 - Use TIP-based visibility checks (no snapshot-based visibility).
-- Support logical deletion and cooperative garbage collection.
+- Reference stable TIDs (indexes only update when indexed columns change).
+- Support logical deletion and cooperative garbage collection via `index_gc_interface.h`.
+- Bloom filters can be attached to B-tree, Hash, and GIN indexes for accelerated negative lookups.
 
-## Implementation status notes
+## Implementation
 
-Index availability and DML integration vary by type. Use the implementation
-spec and audit trackers to confirm current behavior for your build.
+All index types listed above are implemented in the Alpha codebase. The index factory
+(`src/core/index_factory.cpp`) handles creation and loading. Key infrastructure includes
+`index_params.cpp` for parameter parsing, `index_key_extractor.cpp` for key extraction,
+and `global_uniqueness_index.cpp` for cross-partition uniqueness enforcement.
 
 ## References
 

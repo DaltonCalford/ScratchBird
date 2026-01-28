@@ -1950,6 +1950,8 @@ namespace scratchbird::core
 
             auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
             db_header->total_pages = total_pages;
+            db_header->page_header.checksum =
+                calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), page_size_);
 
             // Unpin as dirty
             buffer_pool_->unpinPage(0, true, ctx);
@@ -1995,6 +1997,8 @@ namespace scratchbird::core
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
         db_header->max_backends = max_backends;
         db_header->proc_array_initialized = 1;
+        db_header->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), page_size_);
 
         buffer_pool_->unpinPage(0, true, ctx);
 
@@ -2074,6 +2078,8 @@ namespace scratchbird::core
             auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
             db_header->next_page_id = header_->next_page_id;
             db_header->total_pages = header_->total_pages;
+            db_header->page_header.checksum =
+                calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), page_size_);
 
             // Unpin as dirty
             buffer_pool_->unpinPage(0, true, ctx);

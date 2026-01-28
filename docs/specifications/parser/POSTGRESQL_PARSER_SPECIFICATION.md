@@ -814,6 +814,9 @@ when_clause:
 
 ## PostgreSQL 16 DDL Syntax
 
+**Emulation Note:** ScratchBird emulated PostgreSQL parsing rejects tablespace DDL and
+TABLESPACE clauses. Tablespace creation/attachment is only supported by ScratchBird SQL.
+
 ### CREATE DATABASE
 
 ```sql

@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's storage engine - MGA-first design, buffer pool, heap pages, and indexing architecture.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -228,14 +228,22 @@ INDEXES UNCHANGED - still point to Page 5, Line 3
 
 ### Supported Index Types
 
-| Index Type | Implementation | Status |
-|------------|----------------|--------|
-| B-Tree | `src/core/btree_index.cpp` | Alpha |
-| Hash | `src/core/hash_index.cpp` | Alpha |
-| Bitmap | `src/core/bitmap_index.cpp` | Alpha |
-| GIN | `src/core/gin_index.cpp` | Alpha |
-| GIST | `src/core/gist_index.cpp` | Alpha |
-| SP-GIST | `src/core/spgist_index.cpp` | Alpha |
+| Index Type | Implementation |
+|------------|----------------|
+| B-tree | `btree.cpp`, `btree_page.cpp`, `btree_iterator.cpp`, `btree_compression.cpp`, `btree_vacuum.cpp` |
+| Hash | `hash_index.cpp` |
+| GiST | `gist_index.cpp` |
+| GIN | `gin_index.cpp`, `gin_compression.cpp`, `gin_tsvector_ops.cpp` |
+| SP-GiST | `spgist_index.cpp` |
+| BRIN | `brin_index.cpp` |
+| R-tree | `rtree.cpp`, `rtree_index.cpp`, `rtree_node.cpp` |
+| Bitmap | `bitmap_index.cpp` |
+| LSM-Tree | `lsm_tree_index.cpp`, `lsm_tree.cpp`, `lsm_tree_components.cpp`, `lsm_compaction_manager.cpp`, `lsm_block_cache.cpp`, `lsm_bloom_filter.cpp` |
+| HNSW | `hnsw_index.cpp` |
+| Columnstore | `columnstore.cpp`, `columnstore_index.cpp` |
+| Full-text | `fulltext_index.cpp` |
+| Inverted | `inverted_index.cpp` |
+| Bloom filter | Attachable to B-tree, Hash, GIN via `bloom_filter.cpp` |
 
 ### Index Factory
 
@@ -300,7 +308,9 @@ Tracks pages where all tuples are visible to all transactions:
 
 ## Large Objects (LOB/TOAST)
 
-Records larger than ~2000 bytes are stored out-of-line:
+**Location:** `src/core/toast.cpp`, `src/core/toast_visibility.cpp`
+
+Records larger than ~2000 bytes are stored out-of-line. TOAST includes MGA visibility tracking so that large object chunks are garbage-collected correctly when their parent record versions become obsolete.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -418,11 +428,19 @@ void sweep_table(Table* table, TransactionId oit) {
 | Component | Header | Implementation |
 |-----------|--------|----------------|
 | Storage Engine | `include/scratchbird/core/storage_engine.h` | `src/core/storage_engine.cpp` |
-| Buffer Pool | | `src/core/buffer_pool.cpp` |
+| Buffer Pool | `include/scratchbird/core/buffer_pool.h` | `src/core/buffer_pool.cpp` |
+| Buffer Pool Guard | `include/scratchbird/core/buffer_pool_guard.h` | |
 | Heap Page | `include/scratchbird/core/heap_page.h` | `src/core/heap_page.cpp` |
-| Bitmap Index | `include/scratchbird/core/bitmap_index.h` | `src/core/bitmap_index.cpp` |
-| Index Factory | | `src/core/index_factory.cpp` |
-| SP-GIST Index | | `src/core/spgist_index.cpp` |
+| Page Manager | `include/scratchbird/core/page_manager.h` | `src/core/page_manager.cpp` |
+| Compressed Pages | `include/scratchbird/core/compressed_page_manager.h` | `src/core/compressed_page_manager.cpp` |
+| LZ4 Compression | `include/scratchbird/core/compression.h` | `src/core/compression_lz4.cpp` |
+| TOAST | `include/scratchbird/core/toast.h` | `src/core/toast.cpp` |
+| TOAST Visibility | | `src/core/toast_visibility.cpp` |
+| Index Factory | `include/scratchbird/core/index_factory.h` | `src/core/index_factory.cpp` |
+| Index GC Interface | `include/scratchbird/core/index_gc_interface.h` | |
+| Tablespace | `include/scratchbird/core/tablespace.h` | |
+| On-Disk Format | `include/scratchbird/core/ondisk.h` | |
+| CRC32C | | `src/core/crc32c.cpp` |
 
 ---
 

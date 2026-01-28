@@ -1,7 +1,6 @@
 # Data Types
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 ScratchBird provides a rich type system including domains, arrays, spatial, JSON,
 vector, and temporal types. The canonical on-disk encoding for heap storage is

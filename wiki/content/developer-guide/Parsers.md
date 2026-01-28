@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's SQL parser architecture - how each dialect is handled by its own parser that generates SBLR bytecode.
 
-**Status:** Alpha documentation (in progress)
+**Last Updated:** 2026-01-28
 
 ---
 
@@ -114,7 +114,12 @@ Handles PostgreSQL-specific syntax and pg_catalog functions.
 **Key Files:**
 - `pg_parser.cpp` - Main PostgreSQL parser
 - `pg_parser_ddl.cpp` - DDL statements
-- `pg_catalog.cpp` - pg_catalog.* functions
+- `pg_parser_dml.cpp` - DML statements
+- `pg_parser_expr.cpp` - Expression parsing
+- `pg_parser_misc.cpp` - Miscellaneous statements
+- `pg_lexer.cpp` - PostgreSQL lexer
+
+**Query Compiler:** `src/sblr/postgresql_query_compiler.cpp`
 
 **Supported Features:**
 - PostgreSQL-style casts (`::type`)
@@ -142,7 +147,9 @@ Handles MySQL-specific syntax and SHOW commands.
 
 **Key Files:**
 - `mysql_parser.cpp` - Main MySQL parser
-- `show_commands.cpp` - SHOW statement handling
+- `mysql_lexer.cpp` - MySQL lexer
+
+**Query Compiler:** `src/sblr/mysql_query_compiler.cpp`
 
 **Supported Features:**
 - Backtick identifiers (`` `table` ``)
@@ -173,6 +180,9 @@ Handles Firebird-specific syntax and RDB$ system tables.
 
 **Key Files:**
 - `firebird_parser.cpp` - Main Firebird parser
+- `firebird_lexer.cpp` - Firebird lexer
+
+**Query Compiler:** `src/sblr/firebird_query_compiler.cpp`
 
 **Supported Features:**
 - RDB$* system table queries
@@ -229,14 +239,30 @@ PostgreSQL clients expect results with type OIDs:
 ```
 src/parser/
 ├── parser_v2.cpp              # Native V2 parser
-├── ast_v2.cpp                 # AST implementation
+├── lexer_v2.cpp               # V2 lexer
+├── ast_v2.cpp                 # AST node implementation
+├── parser_state_v2.cpp        # V2 parser state management
+├── schema_path_v2.cpp         # Schema path resolution
+├── sb_parser_main.cpp         # Parser entry point
 ├── firebird/
-│   └── firebird_parser.cpp    # Firebird parser
+│   ├── firebird_parser.cpp    # Firebird parser
+│   └── firebird_lexer.cpp     # Firebird lexer
 ├── postgresql/
 │   ├── pg_parser.cpp          # PostgreSQL parser main
-│   └── pg_parser_ddl.cpp      # PostgreSQL DDL
+│   ├── pg_parser_ddl.cpp      # PostgreSQL DDL
+│   ├── pg_parser_dml.cpp      # PostgreSQL DML
+│   ├── pg_parser_expr.cpp     # PostgreSQL expressions
+│   ├── pg_parser_misc.cpp     # PostgreSQL misc statements
+│   └── pg_lexer.cpp           # PostgreSQL lexer
 └── mysql/
-    └── mysql_parser.cpp       # MySQL parser
+    ├── mysql_parser.cpp       # MySQL parser
+    └── mysql_lexer.cpp        # MySQL lexer
+
+src/sblr/  (query compilation per dialect)
+├── query_compiler_v2.cpp              # Native query compiler
+├── firebird_query_compiler.cpp        # Firebird dialect compilation
+├── postgresql_query_compiler.cpp      # PostgreSQL dialect compilation
+└── mysql_query_compiler.cpp           # MySQL dialect compilation
 ```
 
 ---

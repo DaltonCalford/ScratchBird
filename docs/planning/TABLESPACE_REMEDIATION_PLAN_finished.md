@@ -26,27 +26,32 @@ Implement full tablespace functionality per Alpha decisions and close all gaps l
 
 **TS-P0-01** Update tablespace spec to match decisions (ID policy, header v2, multi-file model, DDL).
 
+- Status: Complete
 - Files: `ScratchBird/docs/specifications/storage/TABLESPACE_SPECIFICATION.md`
 
 **TS-P0-02** Update on-disk format spec for header v2 and root_gpid.
 
-- Files: `ScratchBird/docs/specifications/ON_DISK_FORMAT.md`
+- Status: Complete
+- Files: `ScratchBird/docs/specifications/storage/ON_DISK_FORMAT.md`
 
 **TS-P0-03** Update catalog and DDL specs for root_gpid, default tablespace precedence, DDL syntax.
 
+- Status: Complete
 - Files: `ScratchBird/docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`,
   `ScratchBird/docs/specifications/ddl/DDL_TABLES.md`,
   `ScratchBird/docs/specifications/ddl/DDL_INDEXES.md`
 
 **TS-P0-04** Update parser specs for V2 tablespace DDL; emulated parsers reject.
 
+- Status: Complete
 - Files: `ScratchBird/docs/specifications/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md`,
   `ScratchBird/docs/specifications/parser/POSTGRESQL_PARSER_SPECIFICATION.md`,
   `ScratchBird/docs/specifications/parser/MYSQL_PARSER_SPECIFICATION.md`,
-  `ScratchBird/docs/specifications/parser/FIREBIRD_PARSER_SPECIFICATION.md`
+  `ScratchBird/docs/specifications/parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md`
 
 **TS-P0-05** Update backup/restore spec for multi-file tablespaces.
 
+- Status: Complete
 - Files: `ScratchBird/docs/specifications/BACKUP_AND_RESTORE.md`
 
 Acceptance: specs reflect decisions and no longer contradict implementation intent.
@@ -87,21 +92,20 @@ Acceptance: catalog records and on-disk headers are consistent with new format; 
 
 **TS-P2-01** V2 parser: CREATE/ALTER/DROP/ATTACH/DETACH TABLESPACE; ADD FILE/DATAFILE.
 
+- Status: Complete
 - Files: `ScratchBird/src/parser/parser_v2.cpp`
-  - Status: Complete
 
 **TS-P2-02** V2 bytecode: emit tablespace DDL opcodes and TABLESPACE clause for CREATE TABLE.
 
-- Files: `ScratchBird/src/sblr/bytecode_generator_v2.cpp`
-  - Status: Complete
+- Status: Complete
+- Files: `ScratchBird/src/sblr/bytecode_generator_v2.cpp:1598`
 
 **TS-P2-03** Emulated parsers accept only dialect-supported tablespace DDL and route to emulation
 catalog (no on-disk file creation; ScratchBird parser is the only path that creates files).
 
+- Status: Complete
 - Files: `ScratchBird/src/parser/postgresql/pg_parser_ddl.cpp`,
-  `ScratchBird/src/parser/mysql/mysql_parser.cpp`,
-  Firebird parser implementation file
-  - Status: Pending (emulated parsers accept TABLESPACE clauses but do not implement DDL routing)
+  `ScratchBird/src/parser/mysql/mysql_parser.cpp`
 
 Acceptance: V2 can execute tablespace DDL; emulated parsers reject per parity.
 
@@ -132,6 +136,7 @@ Acceptance: V2 can execute tablespace DDL; emulated parsers reject per parity.
 
 **TS-P3-05** Fix GiST index cache cleanup (remove deliberate leak once types are fully integrated).
 
+- Status: Complete
 - Files: `ScratchBird/src/sblr/index_cache.cpp`
 
 Acceptance: standard DML works on tables outside primary tablespace.
@@ -140,15 +145,18 @@ Acceptance: standard DML works on tables outside primary tablespace.
 
 **TS-P4-01** Open all tablespaces at startup; strict by default.
 
+- Status: Complete
 - Files: `ScratchBird/src/core/database.cpp`, `ScratchBird/src/core/catalog_manager.cpp`
 
 **TS-P4-02** Add recovery mode config (storage.tablespace_recovery_mode = strict|allow_missing).
 
-- Files: config handling + `ScratchBird/docs/specifications/configuration/sb_server.conf.md`
+- Status: Complete
+- Files: config handling + `ScratchBird/docs/user-documentation/configuration/sb_server.conf.md`
 
 **TS-P4-03** Implement ATTACH ... FORCE / ALLOW_MISMATCH semantics (UUID validation override).
 
-- Files: `ScratchBird/src/core/catalog_manager.cpp`, `ScratchBird/src/sblr/executor.cpp`
+- Status: Complete
+- Files: `ScratchBird/src/core/catalog_manager.cpp`, `ScratchBird/src/core/page_manager.cpp`, `ScratchBird/src/sblr/executor.cpp`
 
 Acceptance: missing tablespaces block startup unless recovery mode is enabled; attach override works.
 
@@ -156,18 +164,37 @@ Acceptance: missing tablespaces block startup unless recovery mode is enabled; a
 
 **TS-P5-01** Include all tablespace datafiles in backup/restore and verify maps.
 
-- Files: `ScratchBird/src/core/backup_manager.cpp`, `ScratchBird/docs/specifications/BACKUP_AND_RESTORE.md`
-  - Status: Partial (backup manifest covers all files; restore still uses first path)
+- Status: Complete
+- Files: `ScratchBird/src/core/backup_manager.cpp`, `ScratchBird/include/scratchbird/core/backup_manager.h`,
+  `ScratchBird/docs/specifications/BACKUP_AND_RESTORE.md`
 
 Acceptance: backups include all datafiles; restore refuses missing datafiles unless recovery mode.
 
 ## Phase 6: Tests + Validation
 
 **TS-P6-01** Unit tests: header v2 read/write, ID allocation, multi-file allocation.
+
+- Status: Complete
+- Files: `ScratchBird/tests/unit/test_tablespace_autoextend.cpp`,
+  `ScratchBird/tests/unit/test_backup_tablespace_manifest.cpp`,
+  `ScratchBird/tests/unit/test_tablespace_header_and_files.cpp`
+
 **TS-P6-02** Integration tests: create tablespace, add datafile, create table/index in tablespace,
              DML on tablespace object, backup/restore coverage.
+
+- Status: Complete
+- Files: `ScratchBird/tests/integration/test_tablespace_flow.cpp`
+
 **TS-P6-03** Negative tests: missing tablespace strict mode, attach mismatch without FORCE.
+
+- Status: Complete
+- Files: `ScratchBird/tests/unit/test_tablespace_recovery.cpp`
+
 **TS-P6-04** Parser tests: V2 DDL parse; emulated parser rejection.
+
+- Status: Complete
+- Files: `ScratchBird/tests/unit/test_parser_v2_ddl.cpp`,
+  `ScratchBird/tests/unit/test_postgresql_parser.cpp`
 
 Acceptance: test suite covers core tablespace flows and failure modes.
 
@@ -179,3 +206,5 @@ Acceptance: test suite covers core tablespace flows and failure modes.
   limited to primary tablespace (see F-TS-003).
 - 2026-01-21: Heap scans now iterate GPID-based pages for custom tablespaces and emit correct TIDs.
 - 2026-01-21: deleteTuple legacy path honors tablespace ID overrides from TIDs.
+- 2026-01-22: Wired tablespace startup open/recovery mode, ATTACH FORCE/ALLOW_MISMATCH,
+  CREATE TABLE tablespace bytecode, and added parser/negative/integration tablespace tests.

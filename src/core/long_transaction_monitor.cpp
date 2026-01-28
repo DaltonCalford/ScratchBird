@@ -5,6 +5,7 @@
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/logger.h"
 #include <chrono>
+#include <functional>
 
 namespace scratchbird::core
 {
@@ -137,7 +138,9 @@ namespace scratchbird::core
 
         monitor_thread_ = std::thread(&LongTransactionMonitor::monitoringLoop, this);
 
-        LOG_INFO(TRANSACTION, "Long transaction monitor thread started");
+        uint64_t tid = std::hash<std::thread::id>{}(monitor_thread_.get_id());
+        LOG_INFO(TRANSACTION, "Long transaction monitor thread started (tid=%lu)",
+                 static_cast<unsigned long>(tid));
         return Status::OK;
     }
 

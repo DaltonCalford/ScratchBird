@@ -1008,6 +1008,7 @@ struct ResolvedCreateTableStmt : public ResolvedStatement {
 
     // Storage options
     uint16_t tablespace_id = 0;
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
 };
 
 /**
@@ -1389,6 +1390,7 @@ struct ResolvedAttachTablespaceStmt : public ResolvedStatement {
     StringPool::StringId tablespace_name = StringPool::INVALID_ID;
     std::string location;
     bool validate = false;
+    bool allow_mismatch = false;
 };
 
 /**

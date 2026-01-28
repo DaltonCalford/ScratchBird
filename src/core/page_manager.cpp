@@ -1008,10 +1008,10 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        if (name.length() >= 32)
+        if (name.length() > 63)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                             ("Tablespace name too long: max 31 chars, got " +
+                             ("Tablespace name too long: max 63 chars, got " +
                               std::to_string(name.length())).c_str());
             return Status::INVALID_ARGUMENT;
         }
@@ -1258,7 +1258,7 @@ namespace scratchbird::core
     // ========================================================================
 
     Status PageManager::openTablespace(uint16_t tablespace_id, const std::string &path,
-                                      ErrorContext *ctx)
+                                      bool allow_uuid_mismatch, ErrorContext *ctx)
     {
         // Step 1: Validate inputs
         if (tablespace_id == PRIMARY_TABLESPACE_ID)
@@ -1346,19 +1346,26 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Step 7: Check database_uuid matches (warn if mismatch, don't fail)
+        // Step 7: Check database_uuid matches
         // Get database UUID from Database instance
         const ID &db_uuid = db_->uuid();
         bool uuid_mismatch = (header->database_uuid != db_uuid);
 
         if (uuid_mismatch)
         {
+            if (!allow_uuid_mismatch)
+            {
+                ::close(fd);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                 ("Tablespace database_uuid mismatch for " + path +
+                                  ". Use ATTACH TABLESPACE ... FORCE or ALLOW_MISMATCH to override.").c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+
             LOG_WARNING(STORAGE,
-                    "Tablespace %u (%s) has different database_uuid than current database. "
-                    "This may indicate the tablespace was created for a different database. "
-                    "Proceeding with caution.",
-                    tablespace_id, path.c_str());
-            // Don't fail - allow cross-database tablespace attachment for data migration
+                        "Tablespace %u (%s) has different database_uuid than current database. "
+                        "Override accepted via ATTACH TABLESPACE FORCE/ALLOW_MISMATCH.",
+                        tablespace_id, path.c_str());
         }
 
         // Step 8: Log tablespace information

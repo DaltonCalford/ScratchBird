@@ -493,6 +493,8 @@ void Parser::parseCreateTable() {
     // TABLESPACE
     if (matchKeyword(TokenType::KW_TABLESPACE)) {
         tablespace_name = parseIdentifier();
+        error("TABLESPACE clauses are not supported in emulated parsers");
+        tablespace_name.clear();
     }
 
     for (const auto& fk : pending_fks) {
@@ -1039,6 +1041,8 @@ void Parser::parseCreateIndex() {
     std::string tablespace_name;
     if (matchKeyword(TokenType::KW_TABLESPACE)) {
         tablespace_name = parseIdentifier();
+        error("TABLESPACE clauses are not supported in emulated parsers");
+        tablespace_name.clear();
     }
 
     if (has_expressions) {
@@ -1435,7 +1439,7 @@ void Parser::parseCreateDatabase() {
             } else if (matchKeyword(TokenType::KW_TABLESPACE)) {
                 match(TokenType::EQUAL);
                 std::string value = parseIdentifier();
-                options.emplace_back("tablespace", value);
+                error("TABLESPACE options are not supported in emulated parsers");
             } else {
                 break;
             }

@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <cassert>
 #include <iterator>
+#include <chrono>
+#include <functional>
+#include <unistd.h>
 
 namespace scratchbird::core
 {
@@ -126,7 +129,80 @@ namespace scratchbird::core
             page_table_partitions_[i].table.clear();
         }
 
+        disableStatsDebug();
+
         return status;
+    }
+
+    auto BufferPool::enableStatsDebug(const std::string &path, ErrorContext *ctx) -> bool
+    {
+        std::lock_guard<std::mutex> lock(stats_debug_mutex_);
+        if (stats_debug_fp_ != nullptr)
+        {
+            std::fclose(stats_debug_fp_);
+            stats_debug_fp_ = nullptr;
+        }
+
+        stats_debug_fp_ = std::fopen(path.c_str(), "a");
+        if (!stats_debug_fp_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open stats debug log");
+            return false;
+        }
+
+        std::setvbuf(stats_debug_fp_, nullptr, _IOLBF, 0);
+        stats_debug_enabled_ = true;
+        stats_debug_seq_ = 0;
+        std::fprintf(stats_debug_fp_, "seq,ts_us,tid,event,ctx,gpid,tablespace,page,hits,misses\n");
+        return true;
+    }
+
+    void BufferPool::disableStatsDebug()
+    {
+        std::lock_guard<std::mutex> lock(stats_debug_mutex_);
+        stats_debug_enabled_ = false;
+        if (stats_debug_fp_)
+        {
+            std::fclose(stats_debug_fp_);
+            stats_debug_fp_ = nullptr;
+        }
+    }
+
+    void BufferPool::logStatsEvent(const char *event, GPID gpid)
+    {
+        if (!stats_debug_enabled_)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(stats_debug_mutex_);
+        if (!stats_debug_fp_)
+        {
+            return;
+        }
+
+        auto now = std::chrono::system_clock::now();
+        auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                          now.time_since_epoch())
+                          .count();
+        uint64_t tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
+        uint16_t tablespace_id = getTablespaceID(gpid);
+        uint64_t page_number = getPageNumber(gpid);
+        uint64_t hits = stats_.hits.load(std::memory_order_relaxed);
+        uint64_t misses = stats_.misses.load(std::memory_order_relaxed);
+
+        const char *ctx_label = ConnectionContext::getCurrent() ? "conn" : "sys";
+        std::fprintf(stats_debug_fp_, "%lu,%ld,%lu,%s,%s,%lu,%u,%lu,%lu,%lu\n",
+                     static_cast<unsigned long>(stats_debug_seq_++),
+                     static_cast<long>(micros),
+                     static_cast<unsigned long>(tid),
+                     event,
+                     ctx_label,
+                     static_cast<unsigned long>(gpid),
+                     static_cast<unsigned int>(tablespace_id),
+                     static_cast<unsigned long>(page_number),
+                     static_cast<unsigned long>(hits),
+                     static_cast<unsigned long>(misses));
     }
 
     // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call pinPageGlobal
@@ -231,6 +307,7 @@ namespace scratchbird::core
 
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                logStatsEvent("HIT", gpid);
                 if (metrics_ && metrics_->buffer_pool_hits_total)
                 {
                     metrics_->buffer_pool_hits_total->inc();
@@ -253,6 +330,7 @@ namespace scratchbird::core
 
         // MEDIUM-1 FIX: Use relaxed atomic increment for stats
         stats_.misses.fetch_add(1, std::memory_order_relaxed);
+        logStatsEvent("MISS", gpid);
         if (metrics_ && metrics_->buffer_pool_misses_total)
         {
             metrics_->buffer_pool_misses_total->inc();
@@ -280,6 +358,7 @@ namespace scratchbird::core
                     updateLru(frame_index);
                 }
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                logStatsEvent("HIT", gpid);
                 if (auto* conn_ctx = ConnectionContext::getCurrent())
                 {
                     conn_ctx->recordPageFetch();
@@ -1283,6 +1362,9 @@ namespace scratchbird::core
 
         bgwriter_shutdown_.store(false, std::memory_order_release);
         bgwriter_thread_ = std::make_unique<std::thread>(&BufferPool::backgroundWriterMain, this);
+        uint64_t tid = std::hash<std::thread::id>{}(bgwriter_thread_->get_id());
+        LOG_INFO(GENERAL, "Background writer thread started (tid=%lu)",
+                 static_cast<unsigned long>(tid));
     }
 
     void BufferPool::stopBackgroundWriter()

@@ -1,7 +1,6 @@
 # Glossary
 
-**Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-28
 
 Database and ScratchBird terminology reference.
 
@@ -55,6 +54,12 @@ Database and ScratchBird terminology reference.
 
 **Column**
 : A vertical field in a table, representing a single attribute.
+
+**CLOG**
+: Commit Log - tracks transaction states (committed, aborted) for efficient lookups.
+
+**Columnstore**
+: Columnar storage format for analytical queries, storing data column-by-column with per-segment compression and statistics.
 
 **Commit**
 : Finalize a transaction, making changes permanent.
@@ -130,6 +135,9 @@ Database and ScratchBird terminology reference.
 **Hash Index**
 : Index type optimized for equality comparisons only.
 
+**HNSW**
+: Hierarchical Navigable Small World - a graph-based index for approximate nearest neighbor vector search. Used for AI/ML similarity queries.
+
 **HBA**
 : Host-Based Authentication - configuration controlling which hosts can connect.
 
@@ -178,6 +186,9 @@ Database and ScratchBird terminology reference.
 
 **Log**
 : Record of database operations for recovery and auditing.
+
+**LSM-Tree**
+: Log-Structured Merge Tree - a write-optimized index structure that buffers writes in a memtable and flushes to sorted SSTables with background compaction.
 
 ---
 
@@ -282,6 +293,9 @@ Database and ScratchBird terminology reference.
 **SBLR**
 : ScratchBird Language Representation - the internal bytecode format that all SQL dialects compile to. Similar to Firebird's BLR but extended with 500+ opcodes.
 
+**SP-GiST**
+: Space-Partitioned Generalized Search Tree - index for partitioned key spaces (quad-trees, radix trees, text operations).
+
 **Schema**
 : A namespace for organizing database objects.
 
@@ -318,6 +332,12 @@ Database and ScratchBird terminology reference.
 
 **Tablespace**
 : Storage location for database files.
+
+**TOAST**
+: The Oversized-Attribute Storage Technique - mechanism for storing large values (> ~2000 bytes) out-of-line. In ScratchBird, includes MGA visibility tracking for proper garbage collection.
+
+**TSVECTOR/TSQUERY**
+: Text search data types. TSVECTOR stores a sorted list of lexemes; TSQUERY represents a text search query. Used with full-text and GIN indexes.
 
 **TID**
 : Tuple Identifier - the location of a row (page number + line number).
