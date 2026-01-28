@@ -76,6 +76,28 @@ struct TID
 // Invalid TID constant
 constexpr TID INVALID_TID{INVALID_GPID, 0};
 
+// Packed on-disk TID (GPID + slot) for index entry storage.
+#pragma pack(push, 1)
+struct OnDiskTID
+{
+    GPID gpid;
+    uint16_t slot;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(OnDiskTID) == (sizeof(GPID) + sizeof(uint16_t)),
+              "OnDiskTID must be packed (10 bytes)");
+
+inline OnDiskTID toOnDiskTID(const TID &tid)
+{
+    return OnDiskTID{tid.gpid, tid.slot};
+}
+
+inline TID fromOnDiskTID(const OnDiskTID &tid)
+{
+    return TID{tid.gpid, tid.slot};
+}
+
 /**
  * makeTID - Create a TID from GPID and slot
  *

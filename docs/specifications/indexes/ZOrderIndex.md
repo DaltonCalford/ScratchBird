@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -167,7 +168,7 @@ struct SBZOrderIndexMetaPage {
 ```
 ZOrderKey {
     uint8_t morton_key[8 or 16];
-    uint64 tid;                   // TID tie-breaker
+    TID tid;                      // TID tie-breaker
 }
 ```
 
@@ -206,8 +207,8 @@ size_t zorder_cover_bbox(const SBZOrderIndexMetaPage* meta,
                          size_t max_ranges);
 
 // Index operations
-Status zorder_insert(UUID index_uuid, const Morton128* key, uint64 tid);
-Status zorder_delete(UUID index_uuid, const Morton128* key, uint64 tid);
+Status zorder_insert(UUID index_uuid, const Morton128* key, TID tid);
+Status zorder_delete(UUID index_uuid, const Morton128* key, TID tid);
 IndexScan zorder_range_scan(UUID index_uuid, const MortonRange* ranges, size_t count);
 ```
 
@@ -218,6 +219,24 @@ IndexScan zorder_range_scan(UUID index_uuid, const MortonRange* ranges, size_t c
 - INSERT: compute Morton key from coordinate columns and insert into B-tree
 - UPDATE: if any indexed dimension changes, delete old key and insert new key
 - DELETE: insert tombstone for key + TID
+
+---
+
+## Garbage Collection
+
+Z-order indexes are implemented as computed-key B-tree indexes and use the
+standard GC contract:
+
+TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+not permitted in v2 on-disk formats.
+
+- `removeDeadEntries()` scans leaf pages and removes entries whose TID
+  is dead.
+- If tombstones are used, GC drops tombstones with `xmax < OIT`.
+- Leaf-level cleanup may trigger page merge/rebalance following the
+  B-tree GC rules.
+
+See `INDEX_GC_PROTOCOL.md` for the shared behavior.
 
 ---
 

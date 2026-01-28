@@ -1282,3 +1282,17 @@ These four index types address distinct performance bottlenecks in modern databa
 - Integration: Tight coupling with query optimizer for automatic usage
 
 These specifications provide production-ready building blocks for high-performance database systems handling modern workloads at scale.
+
+---
+
+## ScratchBird GC Integration
+
+All advanced indexes must comply with `INDEX_GC_PROTOCOL.md`:
+
+- Indexes that store per-row TIDs (inverted, zone map, IVF) implement
+  `IndexGCInterface::removeDeadEntries()` and filter dead TIDs during sweep.
+- Immutable segment indexes (inverted, FST) perform GC during segment merges.
+- Probabilistic auxiliary indexes (Bloom, HLL, CMS) trigger rebuilds rather
+  than per-row deletions.
+
+Each ScratchBird-specific index spec defines its GC behavior in detail.

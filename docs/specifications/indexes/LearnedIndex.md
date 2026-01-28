@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -151,7 +152,7 @@ struct SBLearnedModelPage {
 ```cpp
 Status learned_build(UUID index_uuid, LearnedBuilder* builder);
 LearnedResult learned_lookup(UUID index_uuid, const void* key, size_t key_len);
-Status learned_insert_delta(UUID index_uuid, const void* key, size_t key_len, uint64 tid);
+Status learned_insert_delta(UUID index_uuid, const void* key, size_t key_len, TID tid);
 ```
 
 ---
@@ -162,6 +163,28 @@ Status learned_insert_delta(UUID index_uuid, const void* key, size_t key_len, ui
 - UPDATE: update delta B-tree
 - DELETE: mark in delta B-tree
 - Periodic rebuild merges delta into base and retrains models
+
+---
+
+## Garbage Collection
+
+Learned indexes use a **base array + delta index** model. GC is enforced
+by rebuild:
+
+TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+not permitted in v2 on-disk formats.
+
+- `removeDeadEntries()` marks dead TIDs in the delta index and schedules
+  a rebuild when:
+  - dead ratio exceeds `rebuild_threshold`, or
+  - OIT advances and delta size is non-trivial.
+- Rebuild merges base + delta, removes dead TIDs, and retrains models.
+- New model pages and key arrays are swapped atomically with an epoch bump.
+
+This guarantees no TID movement; dead entries are removed only during the
+swap boundary.
+
+See `INDEX_GC_PROTOCOL.md` for the GC contract.
 
 ---
 

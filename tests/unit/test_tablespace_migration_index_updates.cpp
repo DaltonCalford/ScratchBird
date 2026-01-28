@@ -218,7 +218,8 @@ TEST_F(TablespaceMigrationIndexUpdateTest, BitmapIndexUpdatesTidsAfterMigration)
     EXPECT_EQ(results[0].gpid, tid.gpid);
 
     GPID new_gpid = makeGPID(7, 500);
-    std::unordered_map<uint64_t, uint64_t> mapping{{tid.gpid, new_gpid}};
+    TID new_tid{new_gpid, tid.slot};
+    std::unordered_map<TID, TID> mapping{{tid, new_tid}};
     uint64_t tids_updated = 0;
     uint64_t pages_modified = 0;
     ASSERT_EQ(index->updateTIDsAfterMigration(mapping, &tids_updated, &pages_modified, &ctx), Status::OK)
@@ -269,7 +270,8 @@ TEST_F(TablespaceMigrationIndexUpdateTest, SpGiSTIndexUpdatesTidsAfterMigration)
     EXPECT_EQ(results[0].gpid, tid.gpid);
 
     GPID new_gpid = makeGPID(9, 777);
-    std::unordered_map<uint64_t, uint64_t> mapping{{tid.gpid, new_gpid}};
+    TID new_tid{new_gpid, tid.slot};
+    std::unordered_map<TID, TID> mapping{{tid, new_tid}};
     uint64_t tids_updated = 0;
     uint64_t pages_modified = 0;
     ASSERT_EQ(index->updateTIDsAfterMigration(mapping, &tids_updated, &pages_modified, &ctx), Status::OK)
@@ -320,7 +322,7 @@ TEST_F(TablespaceMigrationIndexUpdateTest, ColumnstoreUpdatesSegmentTidsAfterMig
 
     int32_t value = 42;
     TID tid(makeGPID(2, 333), 1);
-    ASSERT_EQ(index->insert(column_id, tid.gpid, &value, sizeof(value), false, &ctx), Status::OK)
+    ASSERT_EQ(index->insert(column_id, tid, &value, sizeof(value), false, &ctx), Status::OK)
         << ctx.message;
 
     SBColumnstoreMetadataPage *meta = nullptr;
@@ -334,11 +336,13 @@ TEST_F(TablespaceMigrationIndexUpdateTest, ColumnstoreUpdatesSegmentTidsAfterMig
     SBColumnstorePage *segment = nullptr;
     ASSERT_EQ(buffer_pool->pinPageGlobal(segment_gpid, reinterpret_cast<void **>(&segment), &ctx), Status::OK)
         << ctx.message;
-    EXPECT_EQ(segment->cs_first_tid, tid.gpid);
+    EXPECT_EQ(segment->cs_first_tid.gpid, tid.gpid);
+    EXPECT_EQ(segment->cs_first_tid.slot, tid.slot);
     buffer_pool->unpinPageGlobal(segment_gpid, false, &ctx);
 
     GPID new_gpid = makeGPID(6, 444);
-    std::unordered_map<uint64_t, uint64_t> mapping{{tid.gpid, new_gpid}};
+    TID new_tid{new_gpid, tid.slot};
+    std::unordered_map<TID, TID> mapping{{tid, new_tid}};
     uint64_t tids_updated = 0;
     uint64_t pages_modified = 0;
     ASSERT_EQ(index->updateTIDsAfterMigration(mapping, &tids_updated, &pages_modified, &ctx), Status::OK)
@@ -347,7 +351,8 @@ TEST_F(TablespaceMigrationIndexUpdateTest, ColumnstoreUpdatesSegmentTidsAfterMig
 
     ASSERT_EQ(buffer_pool->pinPageGlobal(segment_gpid, reinterpret_cast<void **>(&segment), &ctx), Status::OK)
         << ctx.message;
-    EXPECT_EQ(segment->cs_first_tid, new_gpid);
+    EXPECT_EQ(segment->cs_first_tid.gpid, new_gpid);
+    EXPECT_EQ(segment->cs_first_tid.slot, tid.slot);
     buffer_pool->unpinPageGlobal(segment_gpid, false, &ctx);
 }
 
@@ -375,7 +380,8 @@ TEST_F(TablespaceMigrationIndexUpdateTest, LsmIndexUpdatesValuesAfterMigration)
     ASSERT_EQ(lsm.flush(&ctx), Status::OK) << ctx.message;
 
     GPID new_gpid = makeGPID(8, 707);
-    std::unordered_map<uint64_t, uint64_t> mapping{{tid.gpid, new_gpid}};
+    TID new_tid{new_gpid, tid.slot};
+    std::unordered_map<TID, TID> mapping{{tid, new_tid}};
     uint64_t tids_updated = 0;
     uint64_t files_modified = 0;
     ASSERT_EQ(lsm.updateTIDsAfterMigration(mapping, &tids_updated, &files_modified, &ctx), Status::OK)

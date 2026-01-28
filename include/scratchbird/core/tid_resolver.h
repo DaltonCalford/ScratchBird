@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <cstring>
+#include <functional>
 
 namespace scratchbird::core
 {
@@ -198,7 +199,7 @@ public:
      * @param ctx Error context
      * @return Map of source TID → target TID
      */
-    std::unordered_map<uint64_t, uint64_t> getAllMappings(
+    std::unordered_map<TID, TID> getAllMappings(
         const ID &table_id,
         ErrorContext *ctx = nullptr);
 
@@ -225,7 +226,7 @@ private:
     {
         ID table_id;
     std::unique_ptr<TIDBloomFilter> bloom;  // Fast "has TID been migrated?" check
-        std::unordered_map<uint64_t, uint64_t> tid_mapping;  // Exact source TID → target TID
+        std::unordered_map<TID, TID> tid_mapping;  // Exact source TID → target TID
     };
 
     // Per-table migration data
@@ -237,11 +238,10 @@ private:
     mutable uint64_t bloom_true_negatives_ = 0;
     mutable uint64_t bloom_true_positives_ = 0;
 
-    // Convert TID to legacy uint64_t format for bloom filter and mapping
-    static uint64_t convertTIDtoLegacy(const TID &tid)
+    // Hash TID to uint64 for bloom filter checks
+    static uint64_t hashTID(const TID &tid)
     {
-        uint64_t page_num = getPageNumber(tid.gpid);
-        return (page_num << 32) | tid.slot;
+        return static_cast<uint64_t>(std::hash<TID>{}(tid));
     }
 };
 

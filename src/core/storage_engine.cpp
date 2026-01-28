@@ -160,6 +160,13 @@ namespace scratchbird::core
                     return brin->insert(key, block_number, ctx);
                 }
 
+                case CatalogManager::IndexType::ZONEMAP:
+                {
+                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid.gpid));
+                    return brin->insert(key, block_number, ctx);
+                }
+
                 case CatalogManager::IndexType::SPGIST:
                 {
                     auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
@@ -178,6 +185,23 @@ namespace scratchbird::core
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                           "Invalid vector encoding for HNSW index");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    return hnsw->insert(*decoded, tid, ctx);
+                }
+
+                case CatalogManager::IndexType::IVF:
+                {
+                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+                    if (key.empty())
+                    {
+                        return Status::OK;
+                    }
+                    auto decoded = Vector::decode(key);
+                    if (!decoded)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Invalid vector encoding for IVF index");
                         return Status::INVALID_ARGUMENT;
                     }
                     return hnsw->insert(*decoded, tid, ctx);
@@ -305,6 +329,13 @@ namespace scratchbird::core
                     return brin->remove(key, block_number, ctx);
                 }
 
+                case CatalogManager::IndexType::ZONEMAP:
+                {
+                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid.gpid));
+                    return brin->remove(key, block_number, ctx);
+                }
+
                 case CatalogManager::IndexType::SPGIST:
                 {
                     auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
@@ -312,6 +343,12 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::HNSW:
+                {
+                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+                    return hnsw->remove(tid, ctx);
+                }
+
+                case CatalogManager::IndexType::IVF:
                 {
                     auto *hnsw = static_cast<HnswIndex*>(index_ptr);
                     return hnsw->remove(tid, ctx);
@@ -677,10 +714,10 @@ namespace scratchbird::core
 
                                 // STOR-M1: Row-level OLTP insert into columnstore
                                 // Buffers individual rows and auto-flushes when threshold reached
-                                // Use gpid as the TID representation (64-bit global page id)
+                                // Use full TID (GPID + slot) for columnstore tracking
                                 Status insert_status = columnstore->insert(
                                     col_id,
-                                    tid.gpid,
+                                    tid,
                                     col_value,
                                     col_value_len,
                                     is_null,
@@ -2140,10 +2177,10 @@ namespace scratchbird::core
                                 // STOR-M1: Row-level OLTP insert into columnstore (append-only)
                                 // Old values are already marked with xmax in heap (visibility filtering)
                                 // New values are appended to columnstore buffer
-                                // Use gpid as the TID representation (64-bit global page id)
+                                // Use full TID (GPID + slot) for columnstore tracking
                                 Status insert_status = columnstore->insert(
                                     col_id,
-                                    tid.gpid,
+                                    tid,
                                     col_value,
                                     col_value_len,
                                     is_null,

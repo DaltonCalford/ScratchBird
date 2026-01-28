@@ -403,6 +403,10 @@ TEST_F(ParserV2DDLTest, CreateIndex_UsingAdditionalTypes) {
         {"BITMAP", IndexType::BITMAP},
         {"COLUMNSTORE", IndexType::COLUMNSTORE},
         {"LSM", IndexType::LSM},
+        {"FULLTEXT", IndexType::FULLTEXT},
+        {"INVERTED", IndexType::FULLTEXT},
+        {"IVF", IndexType::IVF},
+        {"ZONEMAP", IndexType::ZONEMAP},
     };
 
     for (const auto& test_case : cases) {

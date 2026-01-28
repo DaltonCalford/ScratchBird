@@ -23,12 +23,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -141,7 +142,7 @@ struct SBLSMSegmentFooter {
 ## Core API
 
 ```cpp
-Status lsm_ttl_insert(UUID index_uuid, const Key* key, const Value* value, uint64 tid);
+Status lsm_ttl_insert(UUID index_uuid, const Key* key, const Value* value, TID tid);
 Status lsm_ttl_compact(UUID index_uuid);
 Status lsm_ttl_drop_expired(UUID index_uuid, uint64 now_ts);
 ```
@@ -153,6 +154,33 @@ Status lsm_ttl_drop_expired(UUID index_uuid, uint64 now_ts);
 - INSERT: write to memtable with timestamp key
 - UPDATE: insert new version; old version expires by TTL
 - DELETE: optional tombstone with short retention
+
+---
+
+## Garbage Collection
+
+LSM-TTL GC is performed during compaction:
+
+TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+not permitted in v2 on-disk formats.
+
+- Dead TIDs supplied by heap sweep are filtered during merge.
+- Tombstones with `xmax < OIT` are dropped when no shadowed versions remain.
+- Fully expired SSTables (by `seg_expire_ts`) are dropped when OIT allows.
+- Partially expired segments are rewritten with only live rows.
+
+GC scheduling:
+
+- Regular compaction handles both TTL and dead TID removal.
+- GC compaction can be forced when delete volume exceeds a threshold.
+
+Metrics:
+
+- `lsm_ttl_gc_entries_removed`
+- `lsm_ttl_gc_segments_dropped`
+- `lsm_ttl_gc_bytes_reclaimed`
+
+See `INDEX_GC_PROTOCOL.md` for the shared GC contract.
 
 ---
 

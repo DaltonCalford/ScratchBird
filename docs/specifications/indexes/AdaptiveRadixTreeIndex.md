@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -167,8 +168,8 @@ Leaf stores key suffix and TID. Variable-length keys store a pointer to an overf
 ## Core API
 
 ```cpp
-Status art_insert(UUID index_uuid, const void* key, size_t key_len, uint64 tid);
-Status art_delete(UUID index_uuid, const void* key, size_t key_len, uint64 tid);
+Status art_insert(UUID index_uuid, const void* key, size_t key_len, TID tid);
+Status art_delete(UUID index_uuid, const void* key, size_t key_len, TID tid);
 ARTResult art_lookup(UUID index_uuid, const void* key, size_t key_len);
 ARTIterator art_prefix_scan(UUID index_uuid, const void* prefix, size_t prefix_len);
 ```
@@ -180,6 +181,37 @@ ARTIterator art_prefix_scan(UUID index_uuid, const void* prefix, size_t prefix_l
 - INSERT: insert key and TID
 - UPDATE: delete old key and insert new key if changed
 - DELETE: mark or remove leaf (MGA rules)
+
+---
+
+## Garbage Collection
+
+ART implements `IndexGCInterface` and removes dead TIDs by scanning leaf
+entries. Each leaf can store multiple TIDs per key (duplicates or
+multi-version rows).
+
+TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+not permitted in v2 on-disk formats.
+
+GC behavior:
+
+- Build a hash set of dead TIDs from the heap sweep.
+- Walk all leaves and remove any TID in the dead set.
+- If a leaf has no remaining TIDs, remove the leaf and prune the parent path.
+- If node fanout drops below the lower threshold, shrink node type
+  (Node256 -> Node48 -> Node16 -> Node4).
+
+Concurrency:
+
+- Readers use shared locks; GC uses write locks on modified nodes only.
+- GC never moves live TIDs; it only removes dead references.
+
+Persistence:
+
+- After GC, emit a new snapshot root and increment `art_snapshot_epoch`.
+- Old snapshot pages remain valid until the next safe reclaim boundary.
+
+See `INDEX_GC_PROTOCOL.md` for contract requirements.
 
 ---
 

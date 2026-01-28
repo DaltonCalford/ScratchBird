@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/buffer_pool.h"
 #include <cstdint>
@@ -183,8 +184,8 @@ struct SBColumnstorePage
     int64_t cs_max_value;  // Maximum value (for integers)
 
     // TID mapping
-    uint64_t cs_first_tid;  // First TID in this segment
-    uint64_t cs_last_tid;   // Last TID in this segment
+    OnDiskTID cs_first_tid;  // First TID in this segment
+    OnDiskTID cs_last_tid;   // Last TID in this segment
 
     // MGA compliance
     uint64_t cs_xmin; // Segment creation transaction
@@ -225,10 +226,16 @@ struct ColumnSegment
     uint32_t row_count;
     uint32_t null_count;
     std::vector<bool> null_bitmap;  // NULL indicators
-    uint64_t first_tid;
-    uint64_t last_tid;
+    TID first_tid;
+    TID last_tid;
+    uint64_t xmin;
+    uint64_t xmax;
+    std::vector<TID> tid_map;
+    std::vector<uint8_t> visibility_bitmap;
     int64_t min_value;
     int64_t max_value;
+    uint32_t page_count;
+    uint32_t next_segment_page;
 };
 
 /**
@@ -307,7 +314,7 @@ struct SBColumnstoreIndex
  */
 struct ColumnScanBatch
 {
-    std::vector<uint64_t> tids;      // Tuple IDs
+    std::vector<TID> tids;           // Tuple IDs
     std::vector<uint8_t> values;     // Decompressed values
     std::vector<bool> null_flags;    // NULL indicators
     uint32_t count;                  // Number of values in batch
@@ -364,7 +371,7 @@ struct ColumnScanIterator
 /**
  * Columnstore Index Implementation
  */
-class ColumnstoreIndex
+class ColumnstoreIndex : public IndexGCInterface
 {
 public:
     ColumnstoreIndex(Database *db, SBColumnstoreIndex index_info);
@@ -406,7 +413,7 @@ public:
      * @param ctx Error context
      */
     Status insert(const ID &column_uuid,
-                 uint64_t tid,
+                 const TID &tid,
                  const void *value,
                  size_t value_len,
                  bool is_null,
@@ -498,10 +505,17 @@ public:
     Status getStats(ColumnstoreStats *stats_out, ErrorContext *ctx = nullptr);
 
     // Update TIDs after tablespace migration (GPID remap)
-    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+    Status updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                     uint64_t *tids_updated_out = nullptr,
                                     uint64_t *pages_modified_out = nullptr,
                                     ErrorContext *ctx = nullptr);
+
+    // IndexGCInterface
+    Status removeDeadEntries(const std::vector<TID> &dead_tids,
+                             uint64_t *entries_removed_out = nullptr,
+                             uint64_t *pages_modified_out = nullptr,
+                             ErrorContext *ctx = nullptr) override;
+    const char *indexTypeName() const override { return "COLUMNSTORE"; }
 
     // Compression methods (public for testing)
 
@@ -618,7 +632,7 @@ private:
     {
         std::vector<uint8_t> data;
         bool is_null;
-        uint64_t tid;
+        TID tid;
         uint64_t xmin;
     };
     std::unordered_map<ID, std::vector<BufferedValue>> column_buffers_;
@@ -630,7 +644,7 @@ private:
      * Find segment containing TID
      */
     Status findSegment(const ID &column_uuid,
-                      uint64_t tid,
+                      const TID &tid,
                       uint32_t *segment_page_out,
                       ErrorContext *ctx);
 

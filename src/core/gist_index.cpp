@@ -1343,7 +1343,7 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
     return Status::OK;
 }
 
-Status GiSTIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+Status GiSTIndex::updateTIDsAfterMigration(const std::unordered_map<TID, TID>& tid_mapping,
                                            uint64_t* tids_updated_out,
                                            uint64_t* pages_modified_out,
                                            ErrorContext* ctx)
@@ -1393,10 +1393,11 @@ Status GiSTIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, ui
 
             if (is_leaf)
             {
-                auto it = tid_mapping.find(entry->entry_row_id.gpid);
+                TID old_tid = entry->entry_row_id;
+                auto it = tid_mapping.find(old_tid);
                 if (it != tid_mapping.end())
                 {
-                    entry->entry_row_id.gpid = it->second;
+                    entry->entry_row_id = it->second;
                     page_dirty = true;
                     ++tids_updated;
                 }

@@ -1717,7 +1717,7 @@ uint16_t HnswIndex::get_max_layer() const
 // ==================================================================
 
 Status HnswIndex::updateTIDsAfterMigration(
-    const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+    const std::unordered_map<TID, TID> &tid_mapping,
     uint64_t *tids_updated_out,
     uint64_t *pages_modified_out,
     ErrorContext *ctx)
@@ -1866,19 +1866,16 @@ Status HnswIndex::updateTIDsAfterMigration(
             {
                 auto *node = reinterpret_cast<SBHnswNode *>(page_bytes + node_offset);
 
-                GPID old_gpid = node->getTID().gpid;
-                auto it = tid_mapping.find(old_gpid);
+                TID old_tid = node->getTID();
+                auto it = tid_mapping.find(old_tid);
                 if (it != tid_mapping.end())
                 {
-                    GPID new_gpid = it->second;
-                    TID updated = node->getTID();
-                    updated.gpid = new_gpid;
-                    node->setTID(updated);
+                    node->setTID(it->second);
                     total_tids_updated++;
                     page_modified = true;
 
-                    LOG_DEBUG(STORAGE, "Updated HNSW node GPID: %lu -> %lu (layer %u, page %lu)",
-                             old_gpid, new_gpid, layer, page_num);
+                    LOG_DEBUG(STORAGE, "Updated HNSW node TID (layer %u, page %lu)",
+                             layer, page_num);
                 }
 
                 size_t node_size = sizeof(SBHnswNode);

@@ -1796,7 +1796,7 @@ namespace scratchbird
          * @return Status::OK on success, error status otherwise
          */
         Status HashIndex::updateTIDsAfterMigration(
-            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            const std::unordered_map<TID, TID> &tid_mapping,
             uint64_t *tids_updated_out,
             uint64_t *pages_modified_out,
             ErrorContext *ctx)
@@ -1922,16 +1922,14 @@ namespace scratchbird
                             continue;
                         }
 
-                        // Extract GPID from entry
-                        GPID old_gpid = entry.he_gpid;
+                        TID old_tid = entry.getTID();
 
-                        // Check if this GPID was migrated
-                        auto it = tid_mapping.find(old_gpid);
+                        // Check if this TID was migrated
+                        auto it = tid_mapping.find(old_tid);
                         if (it != tid_mapping.end())
                         {
-                            // Found! Update GPID (keep same slot)
-                            GPID new_gpid = it->second;
-                            entry.he_gpid = new_gpid;
+                            // Found! Update TID
+                            entry.setTID(it->second);
                             tids_updated_this_page++;
                             page_modified = true;
                         }

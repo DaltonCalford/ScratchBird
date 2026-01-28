@@ -81,7 +81,8 @@ void testCompleteWorkflow()
     for (int32_t i = 0; i < 250; ++i)
     {
         int32_t value = i * 10;  // 0, 10, 20, ..., 2490
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 
@@ -169,7 +170,8 @@ void testMGAIsolation()
     for (int32_t i = 0; i < 50; ++i)
     {
         int32_t value = i;
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
     status = txn_mgr->commitTransaction(PROC_ID, xid1, &ctx);
@@ -190,7 +192,8 @@ void testMGAIsolation()
     for (int32_t i = 50; i < 100; ++i)
     {
         int32_t value = i;
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
     status = txn_mgr->commitTransaction(PROC_ID + 1, xid3, &ctx);
@@ -284,7 +287,8 @@ void testAllPredicates()
     for (int32_t i = 0; i < 200; ++i)
     {
         int32_t value = i;
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 
@@ -431,7 +435,8 @@ void testAllCompressionTypes()
         for (int32_t i = 0; i < 200; ++i)
         {
             int32_t value = 42;  // All same value
-            status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+            TID tid{0, static_cast<uint64_t>(i), 0};
+            status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
             assert(status == Status::OK);
         }
 
@@ -473,7 +478,8 @@ void testAllCompressionTypes()
         for (int32_t i = 0; i < 200; ++i)
         {
             int32_t value = dist(rng);
-            status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+            TID tid{0, static_cast<uint64_t>(i), 0};
+            status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
             assert(status == Status::OK);
         }
 
@@ -523,7 +529,8 @@ void testLargeDataset()
     for (uint32_t i = 0; i < TOTAL_ROWS; ++i)
     {
         int32_t value = static_cast<int32_t>(i % 100);
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 
@@ -605,7 +612,8 @@ void testErrorHandling()
     std::cout << "  Testing insert to non-existent column...\n";
     {
         int32_t value = 42;
-        status = index->insert(wrong_column_uuid, 0, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, 0, 0};
+        status = index->insert(wrong_column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         std::cout << "    ✓ Got expected error: " << ctx.message << "\n";
         assert(status != Status::OK);  // Should fail
     }

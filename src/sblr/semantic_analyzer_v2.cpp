@@ -4294,6 +4294,9 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
         case IndexType::BITMAP: resolved->index_method = internString("bitmap"); break;
         case IndexType::COLUMNSTORE: resolved->index_method = internString("columnstore"); break;
         case IndexType::LSM: resolved->index_method = internString("lsm"); break;
+        case IndexType::FULLTEXT: resolved->index_method = internString("fulltext"); break;
+        case IndexType::IVF: resolved->index_method = internString("ivf"); break;
+        case IndexType::ZONEMAP: resolved->index_method = internString("zonemap"); break;
     }
 
     // Resolve index columns/expressions

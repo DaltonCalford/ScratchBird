@@ -44,6 +44,19 @@ static inline size_t getDataTypeSize(DataType type)
     }
 }
 
+static inline unsigned __int128 linearizeTID(const TID &tid)
+{
+    return (static_cast<unsigned __int128>(tid.gpid) << 16) |
+           static_cast<unsigned __int128>(tid.slot);
+}
+
+static inline TID delinearizeTID(unsigned __int128 value)
+{
+    GPID gpid = static_cast<GPID>(value >> 16);
+    uint16_t slot = static_cast<uint16_t>(value & 0xFFFF);
+    return TID{gpid, slot};
+}
+
 // ============================================================================
 // ColumnstoreIndex Implementation
 // ============================================================================
@@ -189,7 +202,7 @@ Status ColumnstoreIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorCont
 // ============================================================================
 
 Status ColumnstoreIndex::insert(const ID &column_uuid,
-                                uint64_t tid,
+                                const TID &tid,
                                 const void *value,
                                 size_t value_len,
                                 bool is_null,
@@ -202,7 +215,12 @@ Status ColumnstoreIndex::insert(const ID &column_uuid,
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Transaction manager not available");
         return Status::INVALID_ARGUMENT;
     }
-
+    PageManager *page_mgr = db_->page_manager();
+    if (!page_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
     uint64_t xmin = txn_mgr->getCurrentXid();
 
     // Buffer the value
@@ -422,7 +440,8 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
                 }
 
                 // Add to batch (TID is derived from segment range)
-                uint64_t tid = segment.first_tid + i;
+                unsigned __int128 first_val = linearizeTID(segment.first_tid);
+                TID tid = delinearizeTID(first_val + i);
                 batch_out->tids.push_back(tid);
 
                 // Copy value data
@@ -644,7 +663,7 @@ Status ColumnstoreIndex::getStats(ColumnstoreStats *stats_out, ErrorContext *ctx
 }
 
 Status ColumnstoreIndex::updateTIDsAfterMigration(
-    const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+    const std::unordered_map<TID, TID> &tid_mapping,
     uint64_t *tids_updated_out,
     uint64_t *pages_modified_out,
     ErrorContext *ctx)
@@ -686,12 +705,12 @@ Status ColumnstoreIndex::updateTIDsAfterMigration(
         bool modified = false;
         if (!is_continuation)
         {
-            uint64_t old_first_tid = page->cs_first_tid;
-            uint64_t old_last_tid = page->cs_last_tid;
+            TID old_first_tid = fromOnDiskTID(page->cs_first_tid);
+            TID old_last_tid = fromOnDiskTID(page->cs_last_tid);
             auto first_it = tid_mapping.find(old_first_tid);
             if (first_it != tid_mapping.end())
             {
-                page->cs_first_tid = first_it->second;
+                page->cs_first_tid = toOnDiskTID(first_it->second);
                 modified = true;
                 tids_updated++;
             }
@@ -699,7 +718,7 @@ Status ColumnstoreIndex::updateTIDsAfterMigration(
             auto last_it = tid_mapping.find(old_last_tid);
             if (last_it != tid_mapping.end())
             {
-                page->cs_last_tid = last_it->second;
+                page->cs_last_tid = toOnDiskTID(last_it->second);
                 modified = true;
                 if (old_last_tid != old_first_tid || first_it == tid_mapping.end())
                 {
@@ -723,6 +742,366 @@ Status ColumnstoreIndex::updateTIDsAfterMigration(
     if (tids_updated_out != nullptr)
     {
         *tids_updated_out = tids_updated;
+    }
+    if (pages_modified_out != nullptr)
+    {
+        *pages_modified_out = pages_modified;
+    }
+
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
+                                           uint64_t *entries_removed_out,
+                                           uint64_t *pages_modified_out,
+                                           ErrorContext *ctx)
+{
+    if (entries_removed_out != nullptr)
+    {
+        *entries_removed_out = 0;
+    }
+    if (pages_modified_out != nullptr)
+    {
+        *pages_modified_out = 0;
+    }
+
+    if (dead_tids.empty() || index_info_.idx_root_page == 0)
+    {
+        return Status::OK;
+    }
+
+    std::unordered_set<TID> dead_set;
+    dead_set.reserve(dead_tids.size());
+    for (const auto &tid : dead_tids)
+    {
+        dead_set.insert(tid);
+    }
+
+    if (dead_set.empty())
+    {
+        return Status::OK;
+    }
+
+    TransactionManager *txn_mgr = db_->transaction_manager();
+    if (!txn_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Transaction manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+    PageManager *page_mgr = db_->page_manager();
+    if (!page_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page manager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t entries_removed = 0;
+    uint64_t pages_modified = 0;
+    const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
+    const size_t PAGE_SIZE = db_->page_size();
+    const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
+
+    uint32_t current_page = index_info_.idx_root_page;
+    uint32_t segments_scanned = 0;
+
+    while (current_page != 0 && segments_scanned < 100000)
+    {
+        void *page_buffer = nullptr;
+        Status pin_status = pinIndexPage(current_page, &page_buffer, ctx,
+                                         BufferPool::AccessStrategy::Sequential);
+        if (pin_status != Status::OK)
+        {
+            return pin_status;
+        }
+
+        auto *page = static_cast<SBColumnstorePage *>(page_buffer);
+        bool is_continuation =
+            (page->cs_flags & static_cast<uint16_t>(ColumnstoreFlags::CONTINUATION)) != 0;
+        if (is_continuation)
+        {
+            uint32_t next_page = static_cast<uint32_t>(page->cs_next_segment);
+            unpinIndexPage(current_page, false, ctx);
+            current_page = next_page;
+            segments_scanned++;
+            continue;
+        }
+
+        uint32_t total_pages = 1;
+        std::memcpy(&total_pages, page->cs_padding, sizeof(uint32_t));
+        if (total_pages == 0 || total_pages > 1000)
+        {
+            total_pages = 1;
+        }
+
+        uint32_t segment_row_count = page->cs_row_count;
+        uint32_t compressed_size = page->cs_compressed_size;
+        TID first_tid = fromOnDiskTID(page->cs_first_tid);
+        TID last_tid = fromOnDiskTID(page->cs_last_tid);
+        uint32_t tid_map_bytes = 0;
+        uint32_t visibility_bytes = 0;
+        std::memcpy(&tid_map_bytes, page->cs_padding + sizeof(uint32_t), sizeof(uint32_t));
+        std::memcpy(&visibility_bytes, page->cs_padding + (sizeof(uint32_t) * 2), sizeof(uint32_t));
+        uint32_t prev_segment = static_cast<uint32_t>(page->cs_prev_segment);
+
+        unpinIndexPage(current_page, false, ctx);
+
+        std::vector<uint32_t> segment_pages;
+        segment_pages.reserve(total_pages);
+        segment_pages.push_back(current_page);
+
+        uint32_t cursor = current_page;
+        for (uint32_t i = 1; i < total_pages; ++i)
+        {
+            void *segment_buffer = nullptr;
+            Status seg_pin = pinIndexPage(cursor, &segment_buffer, ctx,
+                                          BufferPool::AccessStrategy::Sequential);
+            if (seg_pin != Status::OK)
+            {
+                return seg_pin;
+            }
+            auto *segment_page = static_cast<const SBColumnstorePage *>(segment_buffer);
+            uint32_t next_page = static_cast<uint32_t>(segment_page->cs_next_segment);
+            unpinIndexPage(cursor, false, ctx);
+
+            if (next_page == 0)
+            {
+                break;
+            }
+            segment_pages.push_back(next_page);
+            cursor = next_page;
+        }
+
+        uint32_t last_page = segment_pages.back();
+        void *last_buffer = nullptr;
+        Status last_pin = pinIndexPage(last_page, &last_buffer, ctx,
+                                       BufferPool::AccessStrategy::Sequential);
+        if (last_pin != Status::OK)
+        {
+            return last_pin;
+        }
+        auto *last_page_ptr = static_cast<const SBColumnstorePage *>(last_buffer);
+        uint32_t next_segment = static_cast<uint32_t>(last_page_ptr->cs_next_segment);
+        unpinIndexPage(last_page, false, ctx);
+
+        auto updateVisibilityBitmap = [&](const std::vector<uint8_t> &visibility) -> Status
+        {
+            if (visibility_bytes == 0)
+            {
+                return Status::OK;
+            }
+
+            size_t payload_size = static_cast<size_t>(compressed_size) + tid_map_bytes + visibility_bytes;
+            size_t visibility_offset = static_cast<size_t>(compressed_size) + tid_map_bytes;
+
+            for (size_t page_idx = 0; page_idx < segment_pages.size(); ++page_idx)
+            {
+                size_t page_payload_start = page_idx * MAX_DATA_SIZE;
+                size_t page_payload_end = std::min(page_payload_start + MAX_DATA_SIZE, payload_size);
+                size_t overlap_start = std::max(page_payload_start, visibility_offset);
+                size_t overlap_end = std::min(page_payload_end, visibility_offset + visibility_bytes);
+                if (overlap_end <= overlap_start)
+                {
+                    continue;
+                }
+
+                size_t page_offset = overlap_start - page_payload_start;
+                size_t visibility_offset_in_map = overlap_start - visibility_offset;
+                size_t bytes_to_copy = overlap_end - overlap_start;
+
+                void *segment_buffer = nullptr;
+                Status pin_status = pinIndexPage(segment_pages[page_idx], &segment_buffer, ctx,
+                                                 BufferPool::AccessStrategy::BulkWrite);
+                if (pin_status != Status::OK)
+                {
+                    return pin_status;
+                }
+
+                uint8_t *segment_bytes = static_cast<uint8_t *>(segment_buffer);
+                std::memcpy(segment_bytes + HEADER_SIZE + page_offset,
+                            visibility.data() + visibility_offset_in_map,
+                            bytes_to_copy);
+                unpinIndexPage(segment_pages[page_idx], true, ctx);
+                pages_modified++;
+            }
+
+            return Status::OK;
+        };
+
+        bool segment_dead = false;
+        bool segment_has_garbage = false;
+        bool used_tid_map = false;
+
+        if (segment_row_count > 0 && tid_map_bytes > 0)
+        {
+            ColumnSegment segment;
+            Status read_status = readSegment(current_page, &segment, ctx);
+            if (read_status == Status::OK && !segment.tid_map.empty())
+            {
+                used_tid_map = true;
+                uint64_t dead_count = 0;
+                std::vector<uint8_t> updated_visibility = segment.visibility_bitmap;
+
+                for (size_t i = 0; i < segment.tid_map.size(); ++i)
+                {
+                    if (dead_set.find(segment.tid_map[i]) != dead_set.end())
+                    {
+                        dead_count++;
+                        if (!updated_visibility.empty())
+                        {
+                            size_t byte_idx = i / 8;
+                            uint8_t mask = static_cast<uint8_t>(1u << (i % 8));
+                            if (byte_idx < updated_visibility.size())
+                            {
+                                updated_visibility[byte_idx] &= static_cast<uint8_t>(~mask);
+                            }
+                        }
+                    }
+                }
+
+                segment_dead = (dead_count == segment_row_count);
+                if (!segment_dead && dead_count > 0)
+                {
+                    double dead_ratio = static_cast<double>(dead_count) /
+                                        static_cast<double>(segment_row_count);
+                    if (dead_ratio >= 0.25)
+                    {
+                        segment_has_garbage = true;
+                    }
+                    if (!updated_visibility.empty())
+                    {
+                        Status vis_status = updateVisibilityBitmap(updated_visibility);
+                        if (vis_status != Status::OK)
+                        {
+                            return vis_status;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!used_tid_map && segment_row_count > 0 && first_tid.isValid() && last_tid.isValid() &&
+            !(last_tid < first_tid))
+        {
+            unsigned __int128 first_val = linearizeTID(first_tid);
+            unsigned __int128 last_val = linearizeTID(last_tid);
+            unsigned __int128 expected_count = (last_val - first_val + 1);
+            if (expected_count == segment_row_count)
+            {
+                uint64_t dead_count = 0;
+                for (uint64_t offset = 0; offset < segment_row_count; ++offset)
+                {
+                    TID candidate = delinearizeTID(first_val + offset);
+                    if (dead_set.find(candidate) != dead_set.end())
+                    {
+                        dead_count++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                segment_dead = (dead_count == segment_row_count);
+            }
+        }
+
+        if (!segment_dead && segment_has_garbage)
+        {
+            void *page_buffer = nullptr;
+            Status pin_status = pinIndexPage(current_page, &page_buffer, ctx,
+                                             BufferPool::AccessStrategy::BulkWrite);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+            auto *page = static_cast<SBColumnstorePage *>(page_buffer);
+            page->cs_flags |= static_cast<uint16_t>(ColumnstoreFlags::HAS_GARBAGE);
+            unpinIndexPage(current_page, true, ctx);
+            pages_modified++;
+        }
+
+        if (segment_dead)
+        {
+            uint64_t gc_xid = txn_mgr->getOldestXid();
+
+            if (prev_segment != 0)
+            {
+                void *prev_buffer = nullptr;
+                Status prev_pin = pinIndexPage(prev_segment, &prev_buffer, ctx,
+                                               BufferPool::AccessStrategy::BulkWrite);
+                if (prev_pin != Status::OK)
+                {
+                    return prev_pin;
+                }
+                auto *prev_page = static_cast<SBColumnstorePage *>(prev_buffer);
+                prev_page->cs_next_segment = next_segment;
+                unpinIndexPage(prev_segment, true, ctx);
+                pages_modified++;
+            }
+
+            if (next_segment != 0)
+            {
+                void *next_buffer = nullptr;
+                Status next_pin = pinIndexPage(next_segment, &next_buffer, ctx,
+                                               BufferPool::AccessStrategy::BulkWrite);
+                if (next_pin != Status::OK)
+                {
+                    return next_pin;
+                }
+                auto *next_page = static_cast<SBColumnstorePage *>(next_buffer);
+                next_page->cs_prev_segment = prev_segment;
+                unpinIndexPage(next_segment, true, ctx);
+                pages_modified++;
+            }
+
+            if (index_info_.idx_root_page == current_page)
+            {
+                index_info_.idx_root_page = next_segment;
+            }
+            if (last_segment_page_ == last_page)
+            {
+                last_segment_page_ = prev_segment;
+            }
+
+            for (uint32_t seg_page : segment_pages)
+            {
+                void *seg_buffer = nullptr;
+                Status seg_pin = pinIndexPage(seg_page, &seg_buffer, ctx,
+                                              BufferPool::AccessStrategy::BulkWrite);
+                if (seg_pin != Status::OK)
+                {
+                    return seg_pin;
+                }
+                auto *seg_page_ptr = static_cast<SBColumnstorePage *>(seg_buffer);
+                seg_page_ptr->cs_xmax = gc_xid;
+                unpinIndexPage(seg_page, true, ctx);
+                pages_modified++;
+
+                page_mgr->freePageGlobal(indexGPID(seg_page), ctx);
+            }
+
+            index_info_.idx_total_segments =
+                (index_info_.idx_total_segments > 0) ? index_info_.idx_total_segments - 1 : 0;
+            if (index_info_.idx_total_rows >= segment_row_count)
+            {
+                index_info_.idx_total_rows -= segment_row_count;
+            }
+
+            entries_removed += segment_row_count;
+        }
+
+        current_page = next_segment;
+        segments_scanned++;
+    }
+
+    Status meta_status = updateMetadataPage(ctx);
+    if (meta_status != Status::OK)
+    {
+        return meta_status;
+    }
+
+    if (entries_removed_out != nullptr)
+    {
+        *entries_removed_out = entries_removed;
     }
     if (pages_modified_out != nullptr)
     {
@@ -2286,7 +2665,7 @@ Status ColumnstoreIndex::applyPredicate(const ColumnSegment &segment,
 // ============================================================================
 
 Status ColumnstoreIndex::findSegment(const ID &column_uuid,
-                                     uint64_t tid,
+                                     const TID &tid,
                                      uint32_t *segment_page_out,
                                      ErrorContext *ctx)
 {
@@ -2318,12 +2697,20 @@ Status ColumnstoreIndex::findSegment(const ID &column_uuid,
         auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
 
         // Check if TID is in this segment's range
-        if (tid >= page->cs_first_tid && tid <= page->cs_last_tid)
+        TID first_tid = fromOnDiskTID(page->cs_first_tid);
+        TID last_tid = fromOnDiskTID(page->cs_last_tid);
+        if (first_tid.isValid() && last_tid.isValid())
         {
-            // Found the segment!
-            *segment_page_out = current_page;
-            unpinIndexPage(current_page, false, ctx);
-            return Status::OK;
+            unsigned __int128 tid_val = linearizeTID(tid);
+            unsigned __int128 first_val = linearizeTID(first_tid);
+            unsigned __int128 last_val = linearizeTID(last_tid);
+            if (tid_val >= first_val && tid_val <= last_val)
+            {
+                // Found the segment!
+                *segment_page_out = current_page;
+                unpinIndexPage(current_page, false, ctx);
+                return Status::OK;
+            }
         }
 
         // Move to next segment
@@ -2436,14 +2823,28 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         return Status::INVALID_ARGUMENT;
     }
 
+    size_t tid_map_bytes = segment.tid_map.size() * sizeof(OnDiskTID);
+    size_t visibility_bytes = segment.visibility_bitmap.size();
+    size_t payload_size = compressed.size() + tid_map_bytes + visibility_bytes;
+
+    std::vector<uint8_t> payload;
+    payload.reserve(payload_size);
+    payload.insert(payload.end(), compressed.begin(), compressed.end());
+    for (const TID &tid : segment.tid_map)
+    {
+        OnDiskTID on_disk = toOnDiskTID(tid);
+        const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&on_disk);
+        payload.insert(payload.end(), bytes, bytes + sizeof(OnDiskTID));
+    }
+    payload.insert(payload.end(), segment.visibility_bitmap.begin(), segment.visibility_bitmap.end());
+
     // Step 2: Determine if multi-page segment is needed
     const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
     const size_t PAGE_SIZE = db_->page_size();
     const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
 
-    const bool is_multipage = (compressed.size() > MAX_DATA_SIZE);
-    const size_t total_pages = is_multipage
-        ? ((compressed.size() + MAX_DATA_SIZE - 1) / MAX_DATA_SIZE)
+    const size_t total_pages = (payload_size > 0)
+        ? ((payload_size + MAX_DATA_SIZE - 1) / MAX_DATA_SIZE)
         : 1;
 
     // Step 3: Allocate pages (first page + continuation pages if needed)
@@ -2496,7 +2897,7 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
 
         // Calculate data chunk for this page
         size_t data_offset = page_idx * MAX_DATA_SIZE;
-        size_t data_chunk_size = std::min(MAX_DATA_SIZE, compressed.size() - data_offset);
+        size_t data_chunk_size = std::min(MAX_DATA_SIZE, payload_size - data_offset);
 
         // Step 5: Initialize page header (for all pages)
         page->cs_header.magic = K_MAGIC_SBRD;
@@ -2535,17 +2936,21 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
             page->cs_max_value = segment.max_value;
 
             // Set TID range
-            page->cs_first_tid = segment.first_tid;
-            page->cs_last_tid = segment.last_tid;
+            page->cs_first_tid = toOnDiskTID(segment.first_tid);
+            page->cs_last_tid = toOnDiskTID(segment.last_tid);
 
             // MGA fields
-            page->cs_xmin = txn_mgr->getCurrentXid();
-            page->cs_xmax = 0;  // Active
+            page->cs_xmin = segment.xmin;
+            page->cs_xmax = segment.xmax;  // Active unless set otherwise
             page->cs_lsn = 0;
 
-            // Store page count in padding (first 4 bytes)
+            // Store page count + payload metadata in padding
             uint32_t page_count = static_cast<uint32_t>(total_pages);
+            uint32_t tid_map_bytes_u32 = static_cast<uint32_t>(tid_map_bytes);
+            uint32_t visibility_bytes_u32 = static_cast<uint32_t>(visibility_bytes);
             std::memcpy(page->cs_padding, &page_count, sizeof(uint32_t));
+            std::memcpy(page->cs_padding + sizeof(uint32_t), &tid_map_bytes_u32, sizeof(uint32_t));
+            std::memcpy(page->cs_padding + (sizeof(uint32_t) * 2), &visibility_bytes_u32, sizeof(uint32_t));
         }
         else
         {
@@ -2560,11 +2965,11 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
 
             page->cs_min_value = 0;
             page->cs_max_value = 0;
-            page->cs_first_tid = 0;
-            page->cs_last_tid = 0;
+            page->cs_first_tid = toOnDiskTID(INVALID_TID);
+            page->cs_last_tid = toOnDiskTID(INVALID_TID);
 
-            page->cs_xmin = txn_mgr->getCurrentXid();
-            page->cs_xmax = 0;
+            page->cs_xmin = segment.xmin;
+            page->cs_xmax = segment.xmax;
             page->cs_lsn = 0;
         }
 
@@ -2574,7 +2979,7 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
 
         // Write data chunk to page
         uint8_t *data_area = reinterpret_cast<uint8_t *>(page) + HEADER_SIZE;
-        std::memcpy(data_area, compressed.data() + data_offset, data_chunk_size);
+        std::memcpy(data_area, payload.data() + data_offset, data_chunk_size);
 
         // Unpin page (mark dirty)
         unpinIndexPage(current_page, true, ctx);
@@ -2617,73 +3022,107 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
     segment_out->row_count = page->cs_row_count;
     segment_out->null_count = page->cs_null_count;
     segment_out->compression = static_cast<CompressionType>(page->cs_compression_type);
-    segment_out->first_tid = page->cs_first_tid;
-    segment_out->last_tid = page->cs_last_tid;
+    segment_out->first_tid = fromOnDiskTID(page->cs_first_tid);
+    segment_out->last_tid = fromOnDiskTID(page->cs_last_tid);
+    segment_out->xmin = page->cs_xmin;
+    segment_out->xmax = page->cs_xmax;
     segment_out->min_value = page->cs_min_value;
     segment_out->max_value = page->cs_max_value;
+    segment_out->page_count = 1;
+    segment_out->next_segment_page = 0;
 
     // Check if this is a multi-page segment (read page count from padding)
     uint32_t total_pages = 1;
     std::memcpy(&total_pages, page->cs_padding, sizeof(uint32_t));
+    uint32_t tid_map_bytes = 0;
+    uint32_t visibility_bytes = 0;
+    std::memcpy(&tid_map_bytes, page->cs_padding + sizeof(uint32_t), sizeof(uint32_t));
+    std::memcpy(&visibility_bytes, page->cs_padding + (sizeof(uint32_t) * 2), sizeof(uint32_t));
 
     // If page count is 0 or unreasonable, assume single page
     if (total_pages == 0 || total_pages > 1000)
         total_pages = 1;
+    segment_out->page_count = total_pages;
 
     const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
     const size_t PAGE_SIZE = db_->page_size();
     const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
 
-    std::vector<uint8_t> compressed;
-    compressed.reserve(page->cs_compressed_size);
+    size_t compressed_size = page->cs_compressed_size;
+    size_t payload_size = compressed_size + tid_map_bytes + visibility_bytes;
+    std::vector<uint8_t> payload;
+    payload.reserve(payload_size);
 
     // Read compressed data from all pages
     uint32_t current_page = segment_page;
     for (uint32_t page_idx = 0; page_idx < total_pages; ++page_idx)
     {
-        // For pages after the first, pin the next page
-        if (page_idx > 0)
-        {
-            unpinIndexPage(current_page, false, ctx);
-
-            // Get next page from previous page's cs_next_segment
-            void *prev_page_buffer = nullptr;
-            Status pin_status = pinIndexPage(current_page, &prev_page_buffer, ctx,
-                                             BufferPool::AccessStrategy::Sequential);
-            if (pin_status != Status::OK)
-                return pin_status;
-
-            auto *prev_page = static_cast<const SBColumnstorePage *>(prev_page_buffer);
-            current_page = static_cast<uint32_t>(prev_page->cs_next_segment);
-            unpinIndexPage(current_page, false, ctx);
-
-            if (current_page == 0)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
-                               "Multi-page segment chain broken");
-                return Status::COMPRESSION_ERROR;
-            }
-
-            // Pin next page
-            pin_status = pinIndexPage(current_page, &page_buffer, ctx,
-                                      BufferPool::AccessStrategy::Sequential);
-            if (pin_status != Status::OK)
-                return pin_status;
-
-            page = static_cast<const SBColumnstorePage *>(page_buffer);
-        }
-
         // Read data chunk from this page
         const uint8_t *chunk_data = reinterpret_cast<const uint8_t *>(page) + HEADER_SIZE;
-        size_t chunk_size = (page_idx == 0)
-            ? std::min(MAX_DATA_SIZE, static_cast<size_t>(page->cs_compressed_size))
-            : page->cs_compressed_size;
+        size_t data_offset = static_cast<size_t>(page_idx) * MAX_DATA_SIZE;
+        size_t chunk_size = 0;
+        if (payload_size > data_offset)
+        {
+            chunk_size = std::min(MAX_DATA_SIZE, payload_size - data_offset);
+        }
+        payload.insert(payload.end(), chunk_data, chunk_data + chunk_size);
 
-        compressed.insert(compressed.end(), chunk_data, chunk_data + chunk_size);
+        uint32_t next_page = static_cast<uint32_t>(page->cs_next_segment);
+        if (page_idx + 1 == total_pages)
+        {
+            segment_out->next_segment_page = next_page;
+        }
+
+        unpinIndexPage(current_page, false, ctx);
+
+        if (page_idx + 1 == total_pages)
+        {
+            break;
+        }
+
+        if (next_page == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                              "Multi-page segment chain broken");
+            return Status::COMPRESSION_ERROR;
+        }
+
+        current_page = next_page;
+        Status pin_status = pinIndexPage(current_page, &page_buffer, ctx,
+                                         BufferPool::AccessStrategy::Sequential);
+        if (pin_status != Status::OK)
+            return pin_status;
+        page = static_cast<const SBColumnstorePage *>(page_buffer);
     }
 
-    // Unpin last page
-    unpinIndexPage(current_page, false, ctx);
+    std::vector<uint8_t> compressed;
+    compressed.reserve(compressed_size);
+    if (compressed_size > 0 && compressed_size <= payload.size())
+    {
+        compressed.insert(compressed.end(), payload.begin(), payload.begin() + compressed_size);
+    }
+
+    segment_out->tid_map.clear();
+    segment_out->visibility_bitmap.clear();
+    if (tid_map_bytes > 0 && compressed_size + tid_map_bytes <= payload.size())
+    {
+        size_t tid_count = tid_map_bytes / sizeof(OnDiskTID);
+        const uint8_t *tid_bytes = payload.data() + compressed_size;
+        segment_out->tid_map.reserve(tid_count);
+        for (size_t i = 0; i < tid_count; ++i)
+        {
+            const auto *disk_tid = reinterpret_cast<const OnDiskTID *>(tid_bytes + (i * sizeof(OnDiskTID)));
+            segment_out->tid_map.push_back(fromOnDiskTID(*disk_tid));
+        }
+    }
+    if (visibility_bytes > 0 &&
+        compressed_size + tid_map_bytes + visibility_bytes <= payload.size())
+    {
+        size_t vis_offset = compressed_size + tid_map_bytes;
+        segment_out->visibility_bitmap.insert(segment_out->visibility_bitmap.end(),
+                                              payload.begin() + vis_offset,
+                                              payload.begin() + vis_offset + visibility_bytes);
+    }
 
     // Decompress based on compression type
     switch (segment_out->compression)
@@ -3142,6 +3581,11 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
     segment.null_count = 0;
     segment.first_tid = buffer.front().tid;
     segment.last_tid = buffer.back().tid;
+    segment.xmin = UINT64_MAX;
+    segment.xmax = 0;
+    segment.tid_map.reserve(buffer.size());
+    size_t visibility_bytes = (buffer.size() + 7) / 8;
+    segment.visibility_bitmap.assign(visibility_bytes, 0xFF);
 
     int64_t min_val = INT64_MAX;
     int64_t max_val = INT64_MIN;
@@ -3150,6 +3594,7 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
     for (size_t i = 0; i < buffer.size(); ++i)
     {
         const BufferedValue &bv = buffer[i];
+        segment.tid_map.push_back(bv.tid);
 
         // Set NULL flag
         segment.null_bitmap[i] = bv.is_null;
@@ -3173,10 +3618,30 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
                 if (val > max_val) max_val = val;
             }
         }
+
+        if (bv.xmin < segment.xmin)
+        {
+            segment.xmin = bv.xmin;
+        }
     }
 
     segment.min_value = min_val;
     segment.max_value = max_val;
+
+    if (segment.xmin == UINT64_MAX)
+    {
+        segment.xmin = 0;
+    }
+
+    if (!segment.visibility_bitmap.empty())
+    {
+        size_t extra_bits = segment.visibility_bitmap.size() * 8 - buffer.size();
+        if (extra_bits > 0)
+        {
+            uint8_t mask = static_cast<uint8_t>(0xFFu >> extra_bits);
+            segment.visibility_bitmap.back() &= mask;
+        }
+    }
 
     // Create segment page and write compressed data to disk
     uint32_t new_segment_page = 0;
@@ -3391,19 +3856,10 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         ColumnSegment &segment = iterator->cached_segment;
 
         // Check MGA visibility for this segment
-        if (!isValueVisible(segment.first_tid, 0, iterator->current_xid, ctx))
+        if (!isValueVisible(segment.xmin, segment.xmax, iterator->current_xid, ctx))
         {
             // Entire segment is invisible, skip to next
-            void *page_buffer = nullptr;
-            uint32_t old_page = iterator->current_segment_page;
-            Status status = pinIndexPage(old_page, &page_buffer, ctx,
-                                         BufferPool::AccessStrategy::Sequential);
-            if (status != Status::OK)
-                return status;
-
-            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
-            iterator->current_segment_page = page->cs_next_segment;
-            unpinIndexPage(old_page, false, ctx);
+            iterator->current_segment_page = segment.next_segment_page;
 
             iterator->segment_cached = false;
             segments_processed++;
@@ -3415,16 +3871,7 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             canSkipSegment(segment.min_value, segment.max_value, iterator->predicate))
         {
             // Skip this segment entirely
-            void *page_buffer = nullptr;
-            uint32_t old_page = iterator->current_segment_page;
-            Status status = pinIndexPage(old_page, &page_buffer, ctx,
-                                         BufferPool::AccessStrategy::Sequential);
-            if (status != Status::OK)
-                return status;
-
-            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
-            iterator->current_segment_page = page->cs_next_segment;
-            unpinIndexPage(old_page, false, ctx);
+            iterator->current_segment_page = segment.next_segment_page;
 
             iterator->segment_cached = false;
             segments_processed++;
@@ -3488,7 +3935,9 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             if (matches)
             {
                 // Add to batch
-                uint64_t tid = segment.first_tid + i;
+                TID tid = (i < segment.tid_map.size())
+                              ? segment.tid_map[i]
+                              : delinearizeTID(linearizeTID(segment.first_tid) + i);
                 batch_out->tids.push_back(tid);
 
                 // Copy value data
@@ -3514,16 +3963,7 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         if (iterator->offset_in_segment >= segment.row_count)
         {
             // Move to next segment
-            void *page_buffer = nullptr;
-            uint32_t old_page = iterator->current_segment_page;
-            Status status = pinIndexPage(old_page, &page_buffer, ctx,
-                                         BufferPool::AccessStrategy::Sequential);
-            if (status != Status::OK)
-                return status;
-
-            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
-            iterator->current_segment_page = page->cs_next_segment;
-            unpinIndexPage(old_page, false, ctx);
+            iterator->current_segment_page = segment.next_segment_page;
 
             iterator->segment_cached = false;
             iterator->offset_in_segment = 0;

@@ -91,7 +91,8 @@ void testInsert100K()
     for (uint32_t i = 0; i < TOTAL_ROWS; ++i)
     {
         int32_t value = static_cast<int32_t>(i % 100);  // Repeating pattern for compression
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
 
         if ((i + 1) % 10000 == 0)
@@ -178,7 +179,8 @@ void testScan100K()
     for (uint32_t i = 0; i < TOTAL_ROWS; ++i)
     {
         int32_t value = dist(rng);
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 
@@ -285,7 +287,8 @@ void testCompressionScale()
     for (uint32_t i = 0; i < TOTAL_ROWS; ++i)
     {
         int32_t value = static_cast<int32_t>(i % 10);  // Only 10 distinct values
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
 
         if ((i + 1) % 100000 == 0)
@@ -369,19 +372,20 @@ void testMultiColumnLoad()
 
     for (uint32_t i = 0; i < TOTAL_ROWS; ++i)
     {
+        TID tid{0, static_cast<uint64_t>(i), 0};
         // Column 1: Sequential IDs
         int32_t value1 = static_cast<int32_t>(i);
-        status = index->insert(column1_uuid, i, &value1, sizeof(int32_t), false, &ctx);
+        status = index->insert(column1_uuid, tid, &value1, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
 
         // Column 2: Repeating pattern
         int32_t value2 = static_cast<int32_t>(i % 10);
-        status = index->insert(column2_uuid, i, &value2, sizeof(int32_t), false, &ctx);
+        status = index->insert(column2_uuid, tid, &value2, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
 
         // Column 3: Random values
         int32_t value3 = static_cast<int32_t>((i * 7919) % 1000);  // Pseudo-random
-        status = index->insert(column3_uuid, i, &value3, sizeof(int32_t), false, &ctx);
+        status = index->insert(column3_uuid, tid, &value3, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 

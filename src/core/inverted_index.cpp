@@ -13,6 +13,7 @@
 #include <dlfcn.h>
 #endif
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <algorithm>
 
@@ -3783,7 +3784,6 @@ Status InvertedIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
                                         uint64_t* pages_modified_out,
                                         ErrorContext* ctx)
 {
-    (void)dead_tids;
     if (entries_removed_out)
     {
         *entries_removed_out = 0;
@@ -3792,8 +3792,312 @@ Status InvertedIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
     {
         *pages_modified_out = 0;
     }
-    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "InvertedIndex::removeDeadEntries not implemented");
-    return Status::NOT_IMPLEMENTED;
+    if (dead_tids.empty())
+    {
+        return Status::OK;
+    }
+
+    struct TIDHash
+    {
+        size_t operator()(const TID& tid) const
+        {
+            uint64_t h1 = std::hash<uint64_t>{}(tid.gpid);
+            uint64_t h2 = std::hash<uint16_t>{}(tid.slot);
+            return static_cast<size_t>(h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2)));
+        }
+    };
+
+    std::unordered_set<TID, TIDHash> dead_set;
+    dead_set.reserve(dead_tids.size());
+    for (const auto& tid : dead_tids)
+    {
+        dead_set.insert(tid);
+    }
+
+    SBInvertedIndexMetaPage meta{};
+    Status status = loadMeta(&meta, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::vector<uint32_t> segments;
+    segments.reserve(meta.ii_num_segments);
+    for (uint32_t i = 0; i < meta.ii_num_segments; ++i)
+    {
+        SBInvertedIndexSegmentMeta seg{};
+        GPID seg_gpid = 0;
+        status = loadSegmentMeta(i, &seg_gpid, &seg, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if ((seg.seg_flags & SEG_FLAG_MERGED) != 0)
+        {
+            continue;
+        }
+        segments.push_back(i);
+    }
+
+    if (doc_lengths_.empty())
+    {
+        bool clear_existing = true;
+        for (uint32_t segment_id : segments)
+        {
+            status = loadDocStatsMap(segment_id, clear_existing, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            clear_existing = false;
+        }
+    }
+
+    uint64_t total_removed = 0;
+    uint64_t pages_modified = 0;
+    uint64_t removed_docs = 0;
+    uint64_t removed_tokens = 0;
+
+    BufferPool* buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing buffer pool");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    bool store_positions = (config_.features & II_FEATURE_POSITIONS) != 0;
+
+    for (uint32_t segment_id : segments)
+    {
+        SBInvertedIndexSegmentMeta seg{};
+        GPID seg_gpid = 0;
+        status = loadSegmentMeta(segment_id, &seg_gpid, &seg, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (seg.seg_dict_first_page == 0)
+        {
+            continue;
+        }
+
+        std::unordered_set<TID, TIDHash> segment_removed;
+
+        GPID current = seg.seg_dict_first_page;
+        while (current != 0)
+        {
+            uint8_t* page_data = nullptr;
+            status = buffer_pool->pinPageGlobal(current, reinterpret_cast<void**>(&page_data), ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            auto* page = reinterpret_cast<SBTermDictionaryPage*>(page_data);
+            auto* entries = reinterpret_cast<TermDictionaryEntry*>(page->dict_entries);
+            uint16_t count = page->dict_num_entries;
+            bool page_dirty = false;
+
+            for (uint16_t i = 0; i < count; ++i)
+            {
+                TermDictionaryEntry entry = entries[i];
+                if (entry.posting_length == 0 || entry.doc_frequency == 0)
+                {
+                    continue;
+                }
+
+                uint64_t removed_here = 0;
+                uint64_t new_total_freq = 0;
+                uint64_t new_offset = 0;
+                uint32_t new_length = 0;
+
+                if (store_positions)
+                {
+                    std::vector<PostingWithPositions> postings;
+                    status = readPostingListWithPositions(segment_id, entry.posting_offset,
+                                                          entry.posting_length, &postings, ctx);
+                    if (status != Status::OK)
+                    {
+                        buffer_pool->unpinPageGlobal(current, false, ctx);
+                        return status;
+                    }
+                    std::vector<PostingWithPositions> filtered;
+                    filtered.reserve(postings.size());
+                    for (const auto& post : postings)
+                    {
+                        if (dead_set.find(post.tid) != dead_set.end())
+                        {
+                            removed_here += 1;
+                            segment_removed.insert(post.tid);
+                            continue;
+                        }
+                        new_total_freq += post.positions.size();
+                        filtered.push_back(post);
+                    }
+
+                    if (removed_here > 0)
+                    {
+                        if (!filtered.empty())
+                        {
+                            status = writePostingListWithPositions(segment_id, filtered,
+                                                                  &new_offset, &new_length, ctx);
+                            if (status != Status::OK)
+                            {
+                                buffer_pool->unpinPageGlobal(current, false, ctx);
+                                return status;
+                            }
+                            entry.posting_offset = new_offset;
+                            entry.posting_length = new_length;
+                            entry.doc_frequency = static_cast<uint32_t>(filtered.size());
+                            entry.total_frequency = new_total_freq;
+                        }
+                        else
+                        {
+                            entry.doc_frequency = 0;
+                            entry.total_frequency = 0;
+                            entry.posting_offset = 0;
+                            entry.posting_length = 0;
+                        }
+                        entries[i] = entry;
+                        page_dirty = true;
+                    }
+                }
+                else
+                {
+                    std::vector<TID> tids;
+                    status = readPostingList(segment_id, entry.posting_offset,
+                                             entry.posting_length, &tids, ctx);
+                    if (status != Status::OK)
+                    {
+                        buffer_pool->unpinPageGlobal(current, false, ctx);
+                        return status;
+                    }
+                    std::vector<TID> filtered;
+                    filtered.reserve(tids.size());
+                    for (const auto& tid : tids)
+                    {
+                        if (dead_set.find(tid) != dead_set.end())
+                        {
+                            removed_here += 1;
+                            segment_removed.insert(tid);
+                            continue;
+                        }
+                        filtered.push_back(tid);
+                    }
+
+                    if (removed_here > 0)
+                    {
+                        if (!filtered.empty())
+                        {
+                            status = writePostingList(segment_id, filtered, &new_offset, &new_length, ctx);
+                            if (status != Status::OK)
+                            {
+                                buffer_pool->unpinPageGlobal(current, false, ctx);
+                                return status;
+                            }
+                            entry.posting_offset = new_offset;
+                            entry.posting_length = new_length;
+                            entry.doc_frequency = static_cast<uint32_t>(filtered.size());
+                            if (entry.total_frequency >= removed_here)
+                            {
+                                entry.total_frequency -= removed_here;
+                            }
+                            else
+                            {
+                                entry.total_frequency = 0;
+                            }
+                        }
+                        else
+                        {
+                            entry.doc_frequency = 0;
+                            entry.total_frequency = 0;
+                            entry.posting_offset = 0;
+                            entry.posting_length = 0;
+                        }
+                        entries[i] = entry;
+                        page_dirty = true;
+                    }
+                }
+
+                if (removed_here > 0)
+                {
+                    total_removed += removed_here;
+                    pages_modified += 1;
+                }
+            }
+
+            GPID next = page->dict_next_page;
+            buffer_pool->unpinPageGlobal(current, page_dirty, ctx);
+            current = next;
+        }
+
+        for (const auto& tid : segment_removed)
+        {
+            status = updateDocStats(segment_id, tid, 0, 0, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+    }
+
+    for (const auto& tid : dead_set)
+    {
+        auto it = doc_lengths_.find(tid);
+        if (it != doc_lengths_.end())
+        {
+            removed_docs += 1;
+            removed_tokens += it->second;
+            doc_lengths_.erase(it);
+        }
+    }
+
+    if (removed_docs > 0)
+    {
+        if (meta.ii_total_documents >= removed_docs)
+        {
+            meta.ii_total_documents -= removed_docs;
+        }
+        else
+        {
+            meta.ii_total_documents = 0;
+        }
+
+        if (meta.ii_total_tokens >= removed_tokens)
+        {
+            meta.ii_total_tokens -= removed_tokens;
+        }
+        else
+        {
+            meta.ii_total_tokens = 0;
+        }
+
+        if (meta.ii_total_documents > 0)
+        {
+            meta.ii_avg_doc_length =
+                static_cast<uint32_t>(meta.ii_total_tokens / meta.ii_total_documents);
+        }
+        else
+        {
+            meta.ii_avg_doc_length = 0;
+        }
+
+        status = updateMeta(meta, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    if (entries_removed_out)
+    {
+        *entries_removed_out = total_removed;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = pages_modified;
+    }
+
+    return Status::OK;
 }
 
 } // namespace scratchbird::core

@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -172,6 +173,22 @@ FSTIterator fst_prefix_scan(UUID index_uuid, const char* prefix);
 - INSERT: tokenize value and append to current segment builder
 - UPDATE: delete old terms, add new terms
 - DELETE: mark term occurrences as deleted in postings
+
+---
+
+## Garbage Collection
+
+FST segments are immutable. GC is implemented via **segment merge**:
+
+- `removeDeadEntries()` does not edit existing FST nodes in place.
+- During merge, posting lists are filtered against dead TIDs.
+- Terms whose posting lists become empty are dropped from the merged FST.
+- The merged FST replaces older segments atomically.
+
+For prefix-only FSTs (term -> row list), GC removes dead TIDs from row lists
+and drops empty term entries during merge.
+
+See `INDEX_GC_PROTOCOL.md` for the GC contract.
 
 ---
 

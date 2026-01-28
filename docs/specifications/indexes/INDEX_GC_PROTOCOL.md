@@ -23,6 +23,8 @@ This document defines the protocol for garbage collection of dead index entries 
 7. [Error Handling](#error-handling)
 8. [Performance Considerations](#performance-considerations)
 9. [Testing Requirements](#testing-requirements)
+10. [Columnstore Index GC (Full Design)](#columnstore-index-gc-full-design)
+11. [LSM-Tree Index GC (Full Design)](#lsm-tree-index-gc-full-design)
 
 ---
 
@@ -134,14 +136,21 @@ bool is_dead = (tuple.xmax != INVALID_XID) &&    // Tuple was deleted/updated
 
 ### TID Format
 
-**TID (Tuple Identifier)**: 64-bit stable pointer
-```cpp
-TID = (page_id << 32) | item_id
+**TID (Tuple Identifier)**: stable tuple address stored as `(GPID, slot)`.
 
-// Extract components:
-uint32_t page_id = tid >> 32;
-uint16_t item_id = tid & 0xFFFF;
+```cpp
+struct TID {
+    GPID gpid;      // tablespace_id + page_number
+    uint16_t slot;  // item slot within page
+};
 ```
+
+**Ordering**: compare by `gpid`, then `slot` (matches heap allocation order).
+
+**Index storage note**:
+- Indexes that persist TIDs on disk must store both `gpid` and `slot`.
+- Legacy 64-bit packed TIDs are not permitted in v2 formats; on-disk
+  formats must be updated to preserve full `GPID` precision.
 
 **Stability**: In Firebird MGA, TIDs NEVER change:
 - UPDATEs happen in-place at primary location
@@ -200,6 +209,10 @@ public:
 - No need to re-verify tuple liveness
 - TIDs may not exist in index (duplicate cleanup calls OK)
 - Empty vector is valid (no-op)
+
+**Note**: The API uses `TID` (GPID + slot). Pseudocode snippets may use
+scalar TID values for readability, but implementations must preserve full
+`GPID` precision.
 
 ---
 
@@ -336,6 +349,10 @@ void GarbageCollector::cleanIndexes(uint32_t page_id,
 ## Implementation Guidelines
 
 ### Per-Index Implementation Strategy
+
+Note: In the examples below, `tid` refers to `TID { gpid, slot }`. Any
+page_id/item_id extraction shown is legacy pseudocode and must be replaced
+with GPID+slot handling in v2 implementations.
 
 #### B-Tree Index
 
@@ -590,6 +607,143 @@ while (!shutdown)
 
 ---
 
+## Columnstore Index GC (Full Design)
+
+### Scope
+
+Applies to the full columnstore implementation (`ColumnstoreIndex`) and
+supersedes any legacy 64-bit TID assumptions. Columnstore GC must:
+
+- Preserve stable TIDs (no row movement)
+- Support MGA visibility via heap sweep (dead TIDs provided by GC)
+- Avoid blocking analytic scans
+- Enable segment rewrite when garbage density is high
+
+### On-Disk Format Additions
+
+Each column segment must persist a TID map and visibility state:
+
+- **TID map pages**: array of `(GPID, slot)` for each row in the segment
+- **Visibility bitmap**: live/dead bit per row (separate from NULL bitmap)
+- **Garbage counters**: live_count, dead_count, null_count
+
+Recommended page-level fields:
+
+- `cs_tid_map_page` (first page of TID map chain)
+- `cs_live_count`, `cs_dead_count`
+- `cs_tid_min_gpid`, `cs_tid_min_slot`
+- `cs_tid_max_gpid`, `cs_tid_max_slot`
+
+TID map pages store:
+
+```
+[header][tid_count][tid_entries...][checksum]
+tid_entries = { uint64_t gpid, uint16_t slot } repeated
+```
+
+### GC Algorithm
+
+1. **Build a hash set** of dead TIDs from heap sweep.
+2. **Segment prefilter**:
+   - Skip segments if dead TIDs do not overlap min/max TID range.
+3. **Load TID map + visibility bitmap** for candidate segments.
+4. **Mark dead rows**:
+   - For each TID in the segment, if in dead set:
+     - Clear visibility bit
+     - Increment dead_count, decrement live_count
+     - Set `HAS_GARBAGE` flag
+5. **Persist bitmap + counters** and update segment header.
+
+### Segment Rewrite (Compaction)
+
+Segments with `dead_ratio >= columnstore.gc_rewrite_threshold` are rewritten:
+
+- Allocate new segment pages.
+- Copy only live rows into new segment.
+- Write new TID map and visibility bitmap (all live).
+- Swap segment links atomically (update prev/next pointers).
+- Mark old segment as obsolete (`cs_xmax = current_xid`) and queue pages
+  for reclamation after readers drain.
+
+### Concurrency and Safety
+
+- Use page-level locks for segment updates.
+- Rewrite is copy-on-write: readers continue on old segment until swap.
+- Buffer pool pin count or epoch-based tracking gates final page reuse.
+
+### Metrics
+
+- `columnstore_gc_entries_removed`
+- `columnstore_gc_segments_scanned`
+- `columnstore_gc_segments_rewritten`
+- `columnstore_gc_bytes_reclaimed`
+- `columnstore_gc_dead_ratio`
+
+---
+
+## LSM-Tree Index GC (Full Design)
+
+### Scope
+
+Applies to the disk-based `LSMTreeIndex`. GC must:
+
+- Remove entries whose TIDs are dead (heap sweep driven)
+- Drop tombstones with `xmax < OIT`
+- Preserve newest visible version per key
+- Operate via compaction to avoid blocking readers
+
+### GC Entry Semantics
+
+LSM entries contain:
+
+- `key`
+- `value` (encodes TID)
+- `entry_type` (INSERT or DELETE)
+- `xmin`, `xmax`, `sequence_number`
+
+Visibility is determined by `TransactionManager` (TIP + OIT).
+
+### GC Pipeline
+
+1. **Memtable purge**:
+   - Remove entries with dead TIDs.
+   - Remove tombstones with `xmax < OIT` if no older visible versions remain.
+2. **SSTable filtering** (compaction-based):
+   - Add a `dead_tid_filter` to compaction tasks.
+   - Merge iterators drop:
+     - INSERT entries whose value TID is dead.
+     - DELETE entries whose `xmax < OIT` and no shadowed versions exist.
+3. **Manifest swap**:
+   - Replace compacted SSTables atomically.
+   - Delete old SSTables after swap succeeds.
+
+### SSTable Metadata for Efficient GC
+
+To avoid full scans on every GC pass, each SSTable must store:
+
+- `tid_bloom_filter` (Bloom filter over value TIDs)
+- `tid_count`
+- `tid_min` / `tid_max` (for coarse overlap checks)
+
+Compaction skips SSTables whose `tid_bloom_filter` shows no overlap with
+the dead TID set.
+
+### Concurrency and Scheduling
+
+- GC compactions run in `LSMThreadPool`.
+- Range conflicts are avoided using existing active-range tracking.
+- Normal compactions and GC compactions may coalesce.
+
+### Metrics
+
+- `lsm_gc_entries_removed`
+- `lsm_gc_tombstones_dropped`
+- `lsm_gc_sstables_rewritten`
+- `lsm_gc_bytes_reclaimed`
+- `lsm_gc_compactions`
+
+---
+
 ## Summary
 
 ### Protocol Overview
@@ -617,6 +771,35 @@ while (!shutdown)
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: October 18, 2025
+## Appendix A: Implementation Checklist
+
+### Columnstore GC
+
+- [ ] Extend on-disk segment metadata to store TID map pointer and live/dead counters.
+- [ ] Add TID map page format (GPID+slot entries) and checksum handling.
+- [ ] Add visibility bitmap separate from NULL bitmap.
+- [ ] Implement segment prefilter using min/max TID bounds.
+- [ ] Implement `ColumnstoreIndex::removeDeadEntries()` using TID map + bitmap.
+- [ ] Implement segment rewrite (copy-on-write) when dead_ratio exceeds threshold.
+- [ ] Add GC metrics counters for columnstore.
+
+### LSM-Tree GC
+
+- [ ] Extend SSTable metadata with TID bloom, min/max TID, and count.
+- [ ] Add dead TID filter plumbing to compaction tasks.
+- [ ] Filter INSERT entries whose value TID is dead during merge.
+- [ ] Drop tombstones with `xmax < OIT` when no shadowed versions remain.
+- [ ] Implement `LSMTreeIndex::removeDeadEntries()` to trigger GC compaction.
+- [ ] Add GC metrics counters for LSM.
+
+### GC Integration
+
+- [ ] Ensure GC uses `TID` (GPID+slot) throughout, no legacy packing.
+- [ ] Verify GC logging includes index type + entries removed.
+- [ ] Add integration tests for columnstore/LSM GC with dead TIDs.
+
+---
+
+**Document Version**: 1.1
+**Last Updated**: 2026-01-27
 **Status**: Protocol Defined - Ready for Implementation

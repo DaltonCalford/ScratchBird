@@ -16,6 +16,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/tid.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/types.h"
@@ -622,7 +623,9 @@ public:
             SPGIST = 8,       // Space-Partitioned GiST
             BITMAP = 9,       // Bitmap index
             COLUMNSTORE = 10, // Columnstore index
-            LSM = 11          // LSM-Tree (Log-Structured Merge-Tree)
+            LSM = 11,         // LSM-Tree (Log-Structured Merge-Tree)
+            IVF = 12,         // IVF (Inverted File) vector index
+            ZONEMAP = 13      // Zone map (min/max) index
         };
 
         // Plan 01 Task E: Index states for shadow rebuild + versioning
@@ -4162,8 +4165,8 @@ public:
         // tid_mapping: Map of old GPID -> new GPID for heap pages
         // Returns Status::OK on success, error status otherwise
         auto updateIndexTIDs(const ID &table_id,
-                            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
-                            ErrorContext *ctx = nullptr) -> Status;
+                             const std::unordered_map<TID, TID> &tid_mapping,
+                             ErrorContext *ctx = nullptr) -> Status;
 
 
         // Page copying with TID remapping helper (Phase 5 Task 5.1.2)
@@ -4172,19 +4175,20 @@ public:
         // Recalculates page checksum after modifications
         // Returns Status::OK on success, error status otherwise
         auto copyPageWithTIDRemapping(const void *source_buffer,
-                                     void *target_buffer,
-                                     GPID source_gpid,
-                                     GPID target_gpid,
-                                     const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
-                                     ErrorContext *ctx = nullptr) -> Status;
+                                      void *target_buffer,
+                                      GPID source_gpid,
+                                      GPID target_gpid,
+                                      const std::unordered_map<GPID, GPID> &page_mapping,
+                                      std::unordered_map<TID, TID> *tid_mapping_out,
+                                      ErrorContext *ctx = nullptr) -> Status;
 
         // Rollback page migration helper (Phase 5 Task 5.1.4)
         // Deallocates all target pages that were allocated during a failed migration
         // Iterates tid_mapping and frees all new_gpid pages using freePageGlobal()
         // Continues freeing even if some pages fail (logs orphaned pages)
         // Returns Status::OK if all pages freed, Status::IO_ERROR if some failed
-        auto rollbackPageMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
-                                  ErrorContext *ctx = nullptr) -> Status;
+        auto rollbackPageMigration(const std::unordered_map<GPID, GPID> &page_mapping,
+                                    ErrorContext *ctx = nullptr) -> Status;
 
         // Catalog page layout - use higher page numbers (page 1 reserved for FSM).
         static constexpr uint32_t CATALOG_ROOT_PAGE = 3;

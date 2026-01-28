@@ -1656,6 +1656,12 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
             index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::COLUMNSTORE);
         } else if (lower == "lsm") {
             index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::LSM);
+        } else if (lower == "fulltext" || lower == "inverted") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::FULLTEXT);
+        } else if (lower == "ivf") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::IVF);
+        } else if (lower == "zonemap" || lower == "zone_map") {
+            index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::ZONEMAP);
         }
     }
 

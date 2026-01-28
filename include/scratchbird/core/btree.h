@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 namespace scratchbird
 {
@@ -270,10 +271,10 @@ namespace scratchbird
             // PHASE 5 TASK 5.2: Update TIDs during tablespace migration
             // Traverses leaf nodes and updates TIDs based on old GPID -> new GPID mapping
             // Used when migrating tables to different tablespaces
-            Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
-                                           uint64_t *tids_updated_out = nullptr,
-                                           uint64_t *pages_modified_out = nullptr,
-                                           ErrorContext *ctx = nullptr);
+            Status updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
+                                            uint64_t *tids_updated_out = nullptr,
+                                            uint64_t *pages_modified_out = nullptr,
+                                            ErrorContext *ctx = nullptr);
 
         private:
             Database *db_;

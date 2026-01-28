@@ -235,7 +235,7 @@ namespace core {
     // STOR-M1: Row-Level OLTP Insert
     // ========================================================================
 
-    Status ColumnstoreIndexSimple::insertRow(uint16_t column_id, uint64_t tid,
+    Status ColumnstoreIndexSimple::insertRow(uint16_t column_id, const TID &tid,
                                              const void *value, size_t value_len,
                                              bool is_null, ErrorContext *ctx)
     {
@@ -449,15 +449,11 @@ namespace core {
             return Status::OK;
         }
 
-        std::unordered_set<uint64_t> dead_set;
+        std::unordered_set<TID> dead_set;
         dead_set.reserve(dead_tids.size());
         for (const auto &tid : dead_tids)
         {
-            uint64_t legacy_tid = convertTIDtoLegacy(tid);
-            if (legacy_tid != 0)
-            {
-                dead_set.insert(legacy_tid);
-            }
+            dead_set.insert(tid);
         }
 
         if (dead_set.empty())

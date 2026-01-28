@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -148,6 +149,28 @@ uint64 cms_estimate(UUID index_uuid, const void* key, size_t key_len);
 - INSERT: update CMS with increment 1
 - DELETE: optional decrement if negative counters enabled; otherwise ignore and rebuild periodically
 - UPDATE: decrement old value and increment new value if enabled
+
+---
+
+## Garbage Collection
+
+Count-Min Sketch does not store per-row TIDs and cannot remove dead entries
+precisely during sweep. GC is implemented as a **rebuild**:
+
+- `removeDeadEntries()` triggers a background rebuild when:
+  - delete/update volume exceeds a configured threshold, or
+  - GC runs after OIT advances.
+- Rebuild scans the base table under a consistent snapshot and regenerates
+  the counter matrix from live rows only.
+- The rebuilt matrix replaces the old one atomically by swapping the
+  meta root pointer and incrementing `cms_epoch`.
+
+Optional accuracy controls:
+
+- Maintain per-transaction deltas and merge on commit.
+- Track delete/update counts to schedule rebuilds before error grows.
+
+See `INDEX_GC_PROTOCOL.md` for the GC contract.
 
 ---
 

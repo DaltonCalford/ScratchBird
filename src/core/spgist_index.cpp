@@ -1080,7 +1080,7 @@ Status SPGiSTIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
     return status;
 }
 
-Status SPGiSTIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+Status SPGiSTIndex::updateTIDsAfterMigration(const std::unordered_map<TID, TID>& tid_mapping,
                                              uint64_t* tids_updated_out,
                                              uint64_t* pages_modified_out,
                                              ErrorContext* ctx)
@@ -1123,7 +1123,7 @@ Status SPGiSTIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, 
 
 Status SPGiSTIndex::updateTIDsAfterMigrationRecursive(
     uint64_t page_num,
-    const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+    const std::unordered_map<TID, TID>& tid_mapping,
     uint64_t* tids_updated,
     uint64_t* pages_modified,
     ErrorContext* ctx)
@@ -1145,10 +1145,11 @@ Status SPGiSTIndex::updateTIDsAfterMigrationRecursive(
         for (uint16_t i = 0; i < page->spgist_count; ++i)
         {
             SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(entry_ptr);
-            auto it = tid_mapping.find(leaf->leaf_tid.gpid);
+            TID old_tid = leaf->leaf_tid;
+            auto it = tid_mapping.find(old_tid);
             if (it != tid_mapping.end())
             {
-                leaf->leaf_tid.gpid = it->second;
+                leaf->leaf_tid = it->second;
                 modified = true;
                 if (tids_updated)
                 {

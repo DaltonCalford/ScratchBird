@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -144,7 +145,7 @@ struct SBQuadNodeInternal {
 struct SBQuadLeafEntry {
     double min_bounds[3];
     double max_bounds[3];
-    uint64 tid;
+    TID tid;
 };
 
 struct SBQuadNodeLeaf {
@@ -184,8 +185,8 @@ struct SBQuadNodeLeaf {
 ## Core API
 
 ```cpp
-Status qt_insert(UUID index_uuid, const BoundingBox* box, uint64 tid);
-Status qt_delete(UUID index_uuid, const BoundingBox* box, uint64 tid);
+Status qt_insert(UUID index_uuid, const BoundingBox* box, TID tid);
+Status qt_delete(UUID index_uuid, const BoundingBox* box, TID tid);
 IndexScan qt_intersect_scan(UUID index_uuid, const BoundingBox* query);
 ```
 
@@ -196,6 +197,28 @@ IndexScan qt_intersect_scan(UUID index_uuid, const BoundingBox* query);
 - INSERT: compute bounding box from geometry and insert
 - UPDATE: if geometry changes, delete and reinsert
 - DELETE: remove or tombstone entry
+
+---
+
+## Garbage Collection
+
+Quadtree/Octree indexes implement `IndexGCInterface`:
+
+TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+not permitted in v2 on-disk formats.
+
+- `removeDeadEntries()` scans leaf node entry lists and removes any entry
+  whose TID is dead.
+- After removal, leaf nodes that drop below the merge threshold are merged
+  with siblings when possible.
+- Internal node bounding boxes are recalculated as children shrink.
+
+Concurrency:
+
+- GC holds write locks on modified nodes; readers use shared locks.
+- No movement of live TIDs; only removal and optional node merge.
+
+See `INDEX_GC_PROTOCOL.md` for the shared GC contract.
 
 ---
 

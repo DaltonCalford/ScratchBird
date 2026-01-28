@@ -180,10 +180,10 @@ namespace scratchbird
             // PHASE 5 TASK 5.3.1: Update TIDs during tablespace migration
             // Scans all buckets and updates TIDs based on old GPID -> new GPID mapping
             // Used when migrating tables to different tablespaces
-            Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
-                                           uint64_t *tids_updated_out = nullptr,
-                                           uint64_t *pages_modified_out = nullptr,
-                                           ErrorContext *ctx = nullptr);
+            Status updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
+                                            uint64_t *tids_updated_out = nullptr,
+                                            uint64_t *pages_modified_out = nullptr,
+                                            ErrorContext *ctx = nullptr);
 
             Status attachBloomFilter(const BloomFilterConfig &config,
                                      uint64_t estimated_keys,

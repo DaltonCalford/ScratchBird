@@ -37,7 +37,7 @@ namespace scratchbird
             // Compression support
             static Status get_node(const uint8_t *page_data, uint32_t page_size,
                                    uint16_t node_index, std::vector<uint8_t> &key_out,
-                                   std::vector<uint64_t> &tuple_ids_out);
+                                   std::vector<TID> &tuple_ids_out);
 
             void enableCompression(const std::vector<uint8_t> &page_prefix);
             bool isCompressionEnabled() const;

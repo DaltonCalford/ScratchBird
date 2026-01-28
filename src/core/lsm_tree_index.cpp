@@ -24,6 +24,8 @@
 #include <queue>
 #include <cstring>
 #include <filesystem>
+#include <unordered_set>
+#include <cstdio>
 
 namespace scratchbird
 {
@@ -31,7 +33,7 @@ namespace core
 {
 
 namespace {
-bool updateLsmValueForMapping(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+bool updateLsmValueForMapping(const std::unordered_map<TID, TID> &tid_mapping,
                               std::vector<uint8_t> *value)
 {
     if (!value || value->size() != (sizeof(uint64_t) + sizeof(uint16_t)))
@@ -45,18 +47,46 @@ bool updateLsmValueForMapping(const std::unordered_map<uint64_t, uint64_t> &tid_
         gpid |= (static_cast<uint64_t>((*value)[i]) << (i * 8));
     }
 
-    auto it = tid_mapping.find(gpid);
+    uint16_t slot = 0;
+    slot |= static_cast<uint16_t>((*value)[sizeof(uint64_t)]);
+    slot |= static_cast<uint16_t>((*value)[sizeof(uint64_t) + 1]) << 8;
+
+    TID old_tid{gpid, slot};
+    auto it = tid_mapping.find(old_tid);
     if (it == tid_mapping.end())
     {
         return false;
     }
 
-    uint64_t new_gpid = it->second;
+    TID new_tid = it->second;
     for (size_t i = 0; i < sizeof(uint64_t); ++i)
     {
-        (*value)[i] = static_cast<uint8_t>((new_gpid >> (i * 8)) & 0xFF);
+        (*value)[i] = static_cast<uint8_t>((new_tid.gpid >> (i * 8)) & 0xFF);
+    }
+    (*value)[sizeof(uint64_t)] = static_cast<uint8_t>(new_tid.slot & 0xFF);
+    (*value)[sizeof(uint64_t) + 1] = static_cast<uint8_t>((new_tid.slot >> 8) & 0xFF);
+
+    return true;
+}
+
+bool decodeLsmValue(const std::vector<uint8_t> &value, TID *tid_out)
+{
+    if (!tid_out || value.size() != (sizeof(uint64_t) + sizeof(uint16_t)))
+    {
+        return false;
     }
 
+    uint64_t gpid = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); ++i)
+    {
+        gpid |= (static_cast<uint64_t>(value[i]) << (i * 8));
+    }
+
+    uint16_t slot = 0;
+    slot |= static_cast<uint16_t>(value[sizeof(uint64_t)]);
+    slot |= static_cast<uint16_t>(value[sizeof(uint64_t) + 1]) << 8;
+
+    *tid_out = TID{gpid, slot};
     return true;
 }
 } // namespace
@@ -74,7 +104,8 @@ LSMTreeIndex::LSMTreeIndex(Database *db,
       txn_mgr_(txn_mgr),
       memtable_max_size_(memtable_size_mb * 1024 * 1024),
       block_size_(db ? db->page_size() : 4096),  // Use DB page size, fallback to 4KB
-      compaction_shutdown_(false)
+      compaction_shutdown_(false),
+      gc_in_progress_(false)
 {
     // Initialize 4 levels
     sstables_.resize(4);
@@ -771,6 +802,12 @@ void LSMTreeIndex::compactionThreadFunc()
 {
     while (!compaction_shutdown_.load())
     {
+        if (gc_in_progress_.load())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
         // Check if compaction is needed
         if (compaction_mgr_->needsCompaction())
         {
@@ -923,7 +960,7 @@ Status LSMTreeIndex::getStatistics(Statistics *stats_out, ErrorContext *ctx)
     return Status::OK;
 }
 
-Status LSMTreeIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+Status LSMTreeIndex::updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                               uint64_t *tids_updated_out,
                                               uint64_t *files_modified_out,
                                               ErrorContext *ctx)
@@ -1073,6 +1110,212 @@ Status LSMTreeIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t,
     if (files_modified_out != nullptr)
     {
         *files_modified_out = total_files_modified;
+    }
+
+    return Status::OK;
+}
+
+Status LSMTreeIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
+                                       uint64_t *entries_removed_out,
+                                       uint64_t *pages_modified_out,
+                                       ErrorContext *ctx)
+{
+    if (entries_removed_out)
+    {
+        *entries_removed_out = 0;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = 0;
+    }
+
+    if (dead_tids.empty())
+    {
+        return Status::OK;
+    }
+
+    std::unordered_set<TID> dead_set;
+    dead_set.reserve(dead_tids.size());
+    for (const auto &tid : dead_tids)
+    {
+        if (tid.isValid())
+        {
+            dead_set.insert(tid);
+        }
+    }
+
+    if (dead_set.empty())
+    {
+        return Status::OK;
+    }
+
+    struct GcGuard
+    {
+        std::atomic<bool> &flag;
+        ~GcGuard() { flag.store(false); }
+    } gc_guard{gc_in_progress_};
+    gc_in_progress_.store(true);
+
+    uint64_t entries_removed = 0;
+    uint64_t files_modified = 0;
+
+    auto should_remove = [&](const MemtableEntry &entry) -> bool
+    {
+        if (entry.entry_type != ENTRY_TYPE_INSERT)
+        {
+            return false;
+        }
+
+        TID tid;
+        if (!decodeLsmValue(entry.value, &tid))
+        {
+            return false;
+        }
+
+        return dead_set.find(tid) != dead_set.end();
+    };
+
+    {
+        std::lock_guard<std::mutex> lock(memtable_mutex_);
+        if (active_memtable_)
+        {
+            uint64_t removed = 0;
+            Status status = active_memtable_->removeEntriesIf(should_remove, &removed, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            entries_removed += removed;
+        }
+        if (immutable_memtable_)
+        {
+            uint64_t removed = 0;
+            Status status = immutable_memtable_->removeEntriesIf(should_remove, &removed, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            entries_removed += removed;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(sstables_mutex_);
+        for (auto &level : sstables_)
+        {
+            for (auto &reader : level)
+            {
+                if (!reader)
+                {
+                    continue;
+                }
+
+                if (!reader->isOpen())
+                {
+                    Status status = reader->open(ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                }
+
+                auto iter = reader->createIterator();
+                if (!iter)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to create SSTable iterator");
+                    return Status::IO_ERROR;
+                }
+
+                std::string src_path = reader->getFilePath();
+                std::string tmp_path = src_path + ".gc";
+
+                SSTableWriter writer(tmp_path, block_size_, reader->compressionType());
+                Status status = writer.open(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                bool file_updated = false;
+                for (; iter->isValid(); iter->next())
+                {
+                    bool drop_entry = false;
+                    if (iter->entryType() == ENTRY_TYPE_INSERT)
+                    {
+                        TID tid;
+                        if (decodeLsmValue(iter->value(), &tid) &&
+                            dead_set.find(tid) != dead_set.end())
+                        {
+                            drop_entry = true;
+                        }
+                    }
+
+                    if (drop_entry)
+                    {
+                        entries_removed++;
+                        file_updated = true;
+                        continue;
+                    }
+
+                    Status add_status = writer.addEntry(iter->key(), iter->value(),
+                                                        iter->sequenceNumber(),
+                                                        iter->entryType(),
+                                                        iter->xmin(),
+                                                        iter->xmax(),
+                                                        ctx);
+                    if (add_status != Status::OK)
+                    {
+                        writer.close(nullptr);
+                        return add_status;
+                    }
+                }
+
+                Status finish_status = writer.finish(ctx);
+                if (finish_status != Status::OK)
+                {
+                    writer.close(nullptr);
+                    return finish_status;
+                }
+                writer.close(nullptr);
+
+                if (!file_updated)
+                {
+                    std::filesystem::remove(tmp_path);
+                    continue;
+                }
+
+                reader->close(nullptr);
+
+                std::error_code ec;
+                std::filesystem::rename(tmp_path, src_path, ec);
+                if (ec)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                     ("Failed to replace SSTable: " + src_path).c_str());
+                    return Status::IO_ERROR;
+                }
+
+                auto new_reader = std::make_unique<SSTableReader>(src_path, block_size_);
+                status = new_reader->open(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                reader = std::move(new_reader);
+                files_modified++;
+            }
+        }
+    }
+
+    compaction_mgr_->recalculateLevelSizes();
+
+    if (entries_removed_out)
+    {
+        *entries_removed_out = entries_removed;
+    }
+    if (pages_modified_out)
+    {
+        *pages_modified_out = files_modified;
     }
 
     return Status::OK;

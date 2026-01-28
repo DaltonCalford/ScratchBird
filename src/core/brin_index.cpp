@@ -778,7 +778,7 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
     return Status::OK;
 }
 
-Status BrinIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+Status BrinIndex::updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                            uint64_t *ranges_updated_out,
                                            uint64_t *pages_modified_out,
                                            ErrorContext *ctx)
@@ -797,7 +797,14 @@ Status BrinIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, ui
         return Status::OK;
     }
 
-    uint16_t source_tablespace_id = getTablespaceID(tid_mapping.begin()->first);
+    std::unordered_map<GPID, GPID> gpid_mapping;
+    gpid_mapping.reserve(tid_mapping.size());
+    for (const auto &pair : tid_mapping)
+    {
+        gpid_mapping.emplace(pair.first.gpid, pair.second.gpid);
+    }
+
+    uint16_t source_tablespace_id = getTablespaceID(tid_mapping.begin()->first.gpid);
     uint64_t ranges_updated = 0;
     uint64_t pages_modified = 0;
 
@@ -826,15 +833,15 @@ Status BrinIndex::updateTIDsAfterMigration(const std::unordered_map<uint64_t, ui
             GPID old_start_gpid = makeGPID(source_tablespace_id, range->brn_start_block);
             GPID old_end_gpid = makeGPID(source_tablespace_id, range->brn_end_block);
 
-            auto start_it = tid_mapping.find(old_start_gpid);
-            if (start_it != tid_mapping.end())
+            auto start_it = gpid_mapping.find(old_start_gpid);
+            if (start_it != gpid_mapping.end())
             {
                 range->brn_start_block = static_cast<uint32_t>(getPageNumber(start_it->second));
                 range_dirty = true;
             }
 
-            auto end_it = tid_mapping.find(old_end_gpid);
-            if (end_it != tid_mapping.end())
+            auto end_it = gpid_mapping.find(old_end_gpid);
+            if (end_it != gpid_mapping.end())
             {
                 range->brn_end_block = static_cast<uint32_t>(getPageNumber(end_it->second));
                 range_dirty = true;

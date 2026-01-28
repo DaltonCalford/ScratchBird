@@ -3,6 +3,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -12,6 +13,7 @@
 #include <thread>
 #include <atomic>
 #include <unordered_map>
+#include <functional>
 
 namespace scratchbird
 {
@@ -91,9 +93,14 @@ public:
                         ErrorContext *ctx = nullptr);
 
     // Update TIDs after tablespace migration (GPID remap)
-    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+    Status updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                     uint64_t *entries_updated_out = nullptr,
                                     ErrorContext *ctx = nullptr);
+
+    // Remove entries that match predicate (used by GC)
+    Status removeEntriesIf(const std::function<bool(const MemtableEntry &)> &predicate,
+                           uint64_t *entries_removed_out = nullptr,
+                           ErrorContext *ctx = nullptr);
 
     // Check if memtable is full
     bool isFull() const { return current_size_ >= max_size_; }
@@ -164,6 +171,12 @@ private:
     // Bloom filter for read optimization
     std::unique_ptr<LSMBloomFilter> bloom_filter_;
 
+    // TID metadata for GC targeting
+    TID min_tid_{INVALID_TID};
+    TID max_tid_{INVALID_TID};
+    uint64_t tid_entries_ = 0;
+    std::unique_ptr<LSMBloomFilter> tid_bloom_filter_;
+
     // Compression
     CompressionType compression_type_;
     std::unique_ptr<Compressor> compressor_;
@@ -219,6 +232,10 @@ public:
     // Get min/max keys
     std::vector<uint8_t> getMinKey() const { return min_key_; }
     std::vector<uint8_t> getMaxKey() const { return max_key_; }
+    bool hasTidMetadata() const { return has_tid_metadata_; }
+    TID getMinTid() const { return min_tid_; }
+    TID getMaxTid() const { return max_tid_; }
+    uint64_t getTidCount() const { return tid_count_; }
 
     // Get file size
     uint64_t getFileSize() const { return file_size_; }
@@ -251,6 +268,13 @@ private:
 
     // Bloom filter for read optimization (loaded from SSTable footer)
     std::unique_ptr<LSMBloomFilter> bloom_filter_;
+
+    // TID metadata for GC targeting
+    bool has_tid_metadata_ = false;
+    TID min_tid_{INVALID_TID};
+    TID max_tid_{INVALID_TID};
+    uint64_t tid_count_ = 0;
+    std::unique_ptr<LSMBloomFilter> tid_bloom_filter_;
 
     // Compression (loaded from SSTable footer)
     CompressionType compression_type_;
@@ -328,6 +352,9 @@ public:
     // Configuration setters
     void setIndexPath(const std::string &path) { index_path_ = path; }
     void setBlockSize(size_t block_size) { block_size_ = block_size; }
+
+    // Recalculate level sizes from current SSTable paths (post-rewrite GC)
+    void recalculateLevelSizes();
 
 private:
     TransactionManager *txn_mgr_;
@@ -410,7 +437,7 @@ struct Statistics
  * - Uses TransactionManager for TIP-based visibility checks
  * - Garbage collection based on OIT (Oldest Interesting Transaction)
  */
-class LSMTreeIndex
+class LSMTreeIndex : public IndexGCInterface
 {
 public:
     /**
@@ -527,10 +554,17 @@ public:
                         ErrorContext *ctx = nullptr);
 
     // Update TIDs after tablespace migration (GPID remap)
-    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+    Status updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                     uint64_t *tids_updated_out = nullptr,
                                     uint64_t *files_modified_out = nullptr,
                                     ErrorContext *ctx = nullptr);
+
+    // IndexGCInterface
+    Status removeDeadEntries(const std::vector<TID> &dead_tids,
+                             uint64_t *entries_removed_out = nullptr,
+                             uint64_t *pages_modified_out = nullptr,
+                             ErrorContext *ctx = nullptr) override;
+    const char *indexTypeName() const override { return "LSM"; }
 
 private:
     // Index configuration
@@ -553,6 +587,7 @@ private:
     std::unique_ptr<LSMCompactionManager> compaction_mgr_;
     std::thread compaction_thread_;
     std::atomic<bool> compaction_shutdown_;
+    std::atomic<bool> gc_in_progress_;
 
     // Helper methods
     Status flushImmutableMemtable(ErrorContext *ctx);

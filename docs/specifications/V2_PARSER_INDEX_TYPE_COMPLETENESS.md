@@ -2,14 +2,14 @@
 
 **Document Version:** 1.1
 **Date:** January 22, 2026
-**Status:** Mostly complete (FULLTEXT missing from V2 parser)
+**Status:** Complete (FULLTEXT/IVF/ZONEMAP supported in V2 parser)
 **Priority:** MEDIUM - Alpha polish
 
 ---
 
 ## Executive Summary
 
-The V2 parser now accepts **11 core index types**: BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM. The remaining core gap is **FULLTEXT** (CatalogManager::IndexType::FULLTEXT), which is defined in the catalog/opcodes and used by the MySQL parser, but **not exposed in V2 AST/parser/semantic/bytecode**. Optional/advanced index types (IVF, ZONEMAP, ZORDER, JSON_PATH, etc.) are intentionally absent from V2.
+The V2 parser now accepts **14 core index types**: BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM, FULLTEXT, IVF, ZONEMAP. Optional/advanced index types (ZORDER, JSON_PATH, etc.) are intentionally absent from V2.
 
 ---
 
@@ -32,11 +32,14 @@ enum class IndexType : uint8_t {
     BITMAP,
     COLUMNSTORE,
     LSM,
+    FULLTEXT,
+    IVF,
+    ZONEMAP,
 };
 ```
 
-**Supported:** 11 index types
-**Missing:** FULLTEXT
+**Supported:** 14 index types
+**Missing:** none
 
 ---
 
@@ -57,12 +60,17 @@ if (match(TokenType::KW_USING)) {
     else if (matchContextual("BITMAP")) stmt->index_type = IndexType::BITMAP;
     else if (matchContextual("COLUMNSTORE")) stmt->index_type = IndexType::COLUMNSTORE;
     else if (matchContextual("LSM")) stmt->index_type = IndexType::LSM;
+    else if (matchContextual("IVF")) stmt->index_type = IndexType::IVF;
+    else if (matchContextual("ZONEMAP") || matchContextual("ZONE_MAP"))
+        stmt->index_type = IndexType::ZONEMAP;
+    else if (matchContextual("FULLTEXT") || matchContextual("INVERTED"))
+        stmt->index_type = IndexType::FULLTEXT;
     else error("Unknown index type");
 }
 ```
 
-**Supported:** 11 index types
-**Missing:** FULLTEXT (and INVERTED alias)
+**Supported:** 14 index types
+**Missing:** none (FULLTEXT + INVERTED alias supported)
 
 ---
 
@@ -83,11 +91,14 @@ switch (stmt->index_type) {
     case IndexType::BITMAP: resolved->index_method = internString("bitmap"); break;
     case IndexType::COLUMNSTORE: resolved->index_method = internString("columnstore"); break;
     case IndexType::LSM: resolved->index_method = internString("lsm"); break;
+    case IndexType::FULLTEXT: resolved->index_method = internString("fulltext"); break;
+    case IndexType::IVF: resolved->index_method = internString("ivf"); break;
+    case IndexType::ZONEMAP: resolved->index_method = internString("zonemap"); break;
 }
 ```
 
-**Supported:** 11 index types
-**Missing:** FULLTEXT
+**Supported:** 14 index types
+**Missing:** none
 
 ---
 
@@ -118,11 +129,17 @@ if (lower == "btree") {
     index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::COLUMNSTORE);
 } else if (lower == "lsm") {
     index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::LSM);
+} else if (lower == "fulltext" || lower == "inverted") {
+    index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::FULLTEXT);
+} else if (lower == "ivf") {
+    index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::IVF);
+} else if (lower == "zonemap" || lower == "zone_map") {
+    index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::ZONEMAP);
 }
 ```
 
-**Supported:** 11 index types
-**Missing:** FULLTEXT
+**Supported:** 14 index types
+**Missing:** none
 
 ---
 
@@ -205,13 +222,13 @@ enum class IndexType : uint8_t
 | BITMAP | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | COMPLETE |
 | COLUMNSTORE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | COMPLETE |
 | LSM | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | COMPLETE |
-| FULLTEXT | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | PARSER GAP |
+| FULLTEXT | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | COMPLETE |
 
 ---
 
 ## Doc-Only Plan: Add FULLTEXT (INVERTED alias) to V2 Stack
 
-### Phase A: Parser Surface (AST + Parser)
+### Phase A: Parser Surface (AST + Parser) - Done
 
 1. **AST update** (`include/scratchbird/parser/ast_v2.h`)
    - Add `FULLTEXT` to `enum class IndexType`.
@@ -222,7 +239,7 @@ enum class IndexType : uint8_t
    - Map both to `IndexType::FULLTEXT`.
    - Keep existing types unchanged.
 
-### Phase B: Semantic + Bytecode Mapping
+### Phase B: Semantic + Bytecode Mapping - Done
 
 3. **Semantic analyzer** (`src/sblr/semantic_analyzer_v2.cpp`)
    - Map `IndexType::FULLTEXT` to `index_method = "fulltext"`.

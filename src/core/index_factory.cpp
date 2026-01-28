@@ -487,6 +487,52 @@ Status IndexFactory::createIndex(
             return Status::OK;
         }
 
+        case CatalogManager::IndexType::IVF:
+        {
+            // IVF currently uses the HNSW backend for vector search.
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "IVF index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint32_t dimensions = 0;
+            Status status = getVectorDimensions(db, index_info.table_id, index_info.column_ids[0], &dimensions, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            status = HnswIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                dimensions,
+                DistanceMetric::EUCLIDEAN,  // Default distance metric
+                16,    // Default m (max connections)
+                200,   // Default ef_construction
+                100,   // Default ef_search
+                index_info.root_gpid,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
+            if (!hnsw)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created IVF index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = hnsw.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::BRIN:
         {
             // BRIN requires value_type (DataType enum) from indexed column
@@ -524,6 +570,49 @@ Status IndexFactory::createIndex(
             if (!brin)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created BRIN index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = brin.release();
+            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::ZONEMAP:
+        {
+            // Zone map uses BRIN-style range summaries under the hood.
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ZONEMAP index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint16_t value_type = 0;
+            Status status = getColumnDataType(db, index_info.table_id, index_info.column_ids[0], &value_type, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            status = BrinIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                static_cast<uint8_t>(value_type),
+                64,  // Default extent size for zone maps
+                index_info.root_gpid,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
+            if (!brin)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created ZONEMAP index");
                 return Status::IO_ERROR;
             }
 
@@ -816,6 +905,20 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
+        case CatalogManager::IndexType::IVF:
+        {
+            // IVF currently uses the HNSW backend.
+            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
+            if (!hnsw)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open IVF index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = hnsw.release();
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::BRIN:
         {
             // BRIN open is simple but creation requires value_type
@@ -823,6 +926,20 @@ Status IndexFactory::openIndex(
             if (!brin)
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open BRIN index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = brin.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::ZONEMAP:
+        {
+            // ZONEMAP currently uses the BRIN backend.
+            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
+            if (!brin)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open ZONEMAP index");
                 return Status::IO_ERROR;
             }
 
@@ -946,6 +1063,13 @@ Status IndexFactory::closeIndex(
             return Status::OK;
         }
 
+        case CatalogManager::IndexType::IVF:
+        {
+            auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+            delete hnsw;
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::GIN:
         {
             auto *gin = static_cast<GinIndex*>(index_ptr);
@@ -954,6 +1078,13 @@ Status IndexFactory::closeIndex(
         }
 
         case CatalogManager::IndexType::BRIN:
+        {
+            auto *brin = static_cast<BrinIndex*>(index_ptr);
+            delete brin;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::ZONEMAP:
         {
             auto *brin = static_cast<BrinIndex*>(index_ptr);
             delete brin;

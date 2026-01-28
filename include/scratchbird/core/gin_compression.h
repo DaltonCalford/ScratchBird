@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include "scratchbird/core/tid.h"
 
 namespace scratchbird
 {
@@ -121,6 +122,14 @@ namespace scratchbird
          * @return true if compression recommended, false otherwise
          */
         bool should_compress(const uint64_t *tids, uint16_t count);
+
+        // TID-aware compression (GPID + slot packed into 80-bit values)
+        size_t compress_posting_list_tid(const TID *tids, uint16_t count,
+                                         uint8_t *compressed_out, size_t max_bytes);
+        size_t decompress_posting_list_tid(const uint8_t *compressed, size_t compressed_bytes,
+                                           TID *tids_out, uint16_t max_tids);
+        size_t estimate_compressed_size_tid(const TID *tids, uint16_t count);
+        bool should_compress_tid(const TID *tids, uint16_t count);
 
     } // namespace core
 } // namespace scratchbird

@@ -101,7 +101,8 @@ int main()
     for (uint32_t i = 0; i < TOTAL_ROWS; ++i)
     {
         int32_t value = static_cast<int32_t>(i % 100);  // Repeating pattern for compression
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         if (status != Status::OK)
         {
             std::cerr << "Insert failed at i=" << i << ": " << ctx.message << std::endl;

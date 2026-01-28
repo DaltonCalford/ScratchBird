@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -147,6 +148,26 @@ Status hll_merge(UUID index_uuid, const SBHLLBuffer* delta);
 - INSERT: add value to HLL
 - DELETE: no decrement; rebuild if exact accuracy needed
 - UPDATE: add new value; optional full rebuild for accuracy
+
+---
+
+## Garbage Collection
+
+HLL does not support precise deletions. GC is handled by **rebuild**:
+
+- `removeDeadEntries()` triggers a rebuild when delete volume or sweep
+  frequency exceeds a threshold.
+- Rebuild scans the base table under a consistent snapshot and recomputes
+  registers from live rows only.
+- The rebuilt register array replaces the old one atomically via
+  `hll_epoch` and meta root swap.
+
+Optional accuracy controls:
+
+- Maintain per-transaction delta registers and merge on commit.
+- Track delete/update counts to schedule rebuilds before error grows.
+
+See `INDEX_GC_PROTOCOL.md` for GC contract expectations.
 
 ---
 

@@ -628,6 +628,9 @@ enum class IndexType : uint8_t {
     BITMAP,
     COLUMNSTORE,
     LSM,
+    FULLTEXT,
+    IVF,
+    ZONEMAP,
 };
 
 /**

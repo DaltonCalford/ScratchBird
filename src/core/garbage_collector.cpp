@@ -15,6 +15,13 @@
 #include "scratchbird/core/gin_index.h"
 #include "scratchbird/core/brin_index.h"
 #include "scratchbird/core/hnsw_index.h"
+#include "scratchbird/core/gist_index.h"
+#include "scratchbird/core/spgist_index.h"
+#include "scratchbird/core/rtree_index.h"
+#include "scratchbird/core/bitmap_index.h"
+#include "scratchbird/core/fulltext_index.h"
+#include "scratchbird/core/columnstore.h"
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/toast.h" // Phase 4: TOAST GC
 #include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/gpid.h"
@@ -22,9 +29,25 @@
 #include <thread>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        bool isZeroId(const ID &id)
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     GarbageCollector::GarbageCollector(Database *db)
         : db_(db), txn_manager_(nullptr), storage_engine_(nullptr), policy_(GCPolicy::COMBINED),
           enabled_(true), background_interval_ms_(5000), cooperative_rate_(100),
@@ -388,15 +411,6 @@ namespace scratchbird::core
             // Continue with pruning even if collection failed
         }
 
-        // PHASE 2 TASK 2.6: Clean indexes before pruning heap
-        uint64_t index_entries_removed = 0;
-        if (!dead_tids.empty())
-        {
-            index_entries_removed = cleanIndexes(page_id, dead_tids, ctx);
-            LOG_DEBUG(VACUUM, "Page %u: removed %lu index entries for %zu dead tuples",
-                     page_id, index_entries_removed, dead_tids.size());
-        }
-
         // Prune garbage tuples and defragment page
         Status prune_status = heap_page.prunePage(oit, &tuples_pruned, &space_reclaimed, ctx);
 
@@ -409,8 +423,20 @@ namespace scratchbird::core
                      tuples_pruned, space_reclaimed, oit);
         }
 
+        ID table_id;
+        std::memcpy(table_id.bytes.data(), page_header->table_id, sizeof(page_header->table_id));
+
         // Unpin page (mark as dirty if we modified it)
         db_->buffer_pool()->unpinPage(page_id, page_modified, ctx);
+
+        // PHASE 2 TASK 2.6: Clean indexes after pruning heap
+        uint64_t index_entries_removed = 0;
+        if (!dead_tids.empty())
+        {
+            index_entries_removed = cleanIndexes(page_id, table_id, dead_tids, ctx);
+            LOG_DEBUG(VACUUM, "Page %u: removed %lu index entries for %zu dead tuples",
+                     page_id, index_entries_removed, dead_tids.size());
+        }
 
         uint64_t garbage_tuples_found = tuples_pruned;
 
@@ -783,7 +809,7 @@ namespace scratchbird::core
 
     // PHASE 2 TASK 2.6: Clean indexes for dead tuples
     // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
-    uint64_t GarbageCollector::cleanIndexes(uint32_t page_id,
+    uint64_t GarbageCollector::cleanIndexes(uint32_t page_id, const ID &table_id,
                                             const std::vector<TID> &dead_tids,
                                             ErrorContext *ctx)
     {
@@ -808,36 +834,44 @@ namespace scratchbird::core
             return 0;
         }
 
-        // Get all tables from catalog and find which one owns this page
-        // Note: For a production system, we would cache this mapping or store
-        // table_id in the page header. For now, this linear scan is acceptable
-        // since tables are typically small in number and GC is not time-critical.
-
-        // First, get all schemas
-        std::vector<CatalogManager::SchemaInfo> schemas;
-        Status status = catalog->listSchemas(schemas, ctx);
-        if (status != Status::OK)
-        {
-            LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: failed to list schemas (status %d)",
-                       page_id, static_cast<int>(status));
-            return 0;
-        }
-
-        // Collect tables from all schemas
         std::vector<CatalogManager::TableInfo> tables;
-        for (const auto &schema : schemas)
+        Status status = Status::OK;
+
+        if (!isZeroId(table_id))
         {
-            std::vector<CatalogManager::TableInfo> schema_tables;
-            status = catalog->listTables(schema.schema_id, schema_tables, ctx);
-            if (status == Status::OK)
+            CatalogManager::TableInfo table_info;
+            status = catalog->getTable(table_id, table_info, ctx);
+            if (status != Status::OK)
             {
-                tables.insert(tables.end(), schema_tables.begin(), schema_tables.end());
+                LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: failed to resolve table ID %s (status %d)",
+                           page_id, table_id.toString().c_str(), static_cast<int>(status));
+                return 0;
+            }
+            tables.push_back(table_info);
+        }
+        else
+        {
+            // Fallback: scan all tables when table_id isn't populated on the page.
+            std::vector<CatalogManager::SchemaInfo> schemas;
+            status = catalog->listSchemas(schemas, ctx);
+            if (status != Status::OK)
+            {
+                LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: failed to list schemas (status %d)",
+                           page_id, static_cast<int>(status));
+                return 0;
+            }
+
+            for (const auto &schema : schemas)
+            {
+                std::vector<CatalogManager::TableInfo> schema_tables;
+                status = catalog->listTables(schema.schema_id, schema_tables, ctx);
+                if (status == Status::OK)
+                {
+                    tables.insert(tables.end(), schema_tables.begin(), schema_tables.end());
+                }
             }
         }
 
-        // Find the table that owns this page
-        // We check if the page is in the valid range for each table
-        ID owning_table_id;
         bool found_owner = false;
 
         for (const auto &table : tables)
@@ -874,6 +908,13 @@ namespace scratchbird::core
                 std::unique_ptr<GinIndex> gin_index;
                 std::unique_ptr<BrinIndex> brin_index;
                 std::unique_ptr<HnswIndex> hnsw_index;
+                std::unique_ptr<GiSTIndex> gist_index;
+                std::unique_ptr<SPGiSTIndex> spgist_index;
+                std::unique_ptr<RTreeIndex> rtree_index;
+                std::unique_ptr<BitmapIndex> bitmap_index;
+                std::unique_ptr<FullTextIndex> fulltext_index;
+                std::unique_ptr<ColumnstoreIndex> columnstore_index;
+                std::unique_ptr<LSMTreeIndex> lsm_index;
 
                 switch (index_info.index_type)
                 {
@@ -910,12 +951,93 @@ namespace scratchbird::core
                     }
                     break;
 
+                case CatalogManager::IndexType::ZONEMAP:
+                    // ZONEMAP uses BRIN backend
+                    brin_index = BrinIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (brin_index)
+                    {
+                        index = brin_index.get();
+                    }
+                    break;
+
                 case CatalogManager::IndexType::VECTOR:
                     // PHASE 4A.2.6: HNSW (vector similarity) index support
                     hnsw_index = HnswIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
                     if (hnsw_index)
                     {
                         index = hnsw_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::IVF:
+                    // IVF uses HNSW backend
+                    hnsw_index = HnswIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (hnsw_index)
+                    {
+                        index = hnsw_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::GIST:
+                    gist_index = GiSTIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (gist_index)
+                    {
+                        index = gist_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::SPGIST:
+                    spgist_index = SPGiSTIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (spgist_index)
+                    {
+                        index = spgist_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::RTREE:
+                    rtree_index = RTreeIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (rtree_index)
+                    {
+                        index = rtree_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::BITMAP:
+                    bitmap_index = BitmapIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
+                    if (bitmap_index)
+                    {
+                        index = bitmap_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::FULLTEXT:
+                    fulltext_index = FullTextIndex::open(db_, index_info.index_id,
+                                                         index_info.table_id,
+                                                         index_info.column_ids,
+                                                         index_info.root_gpid,
+                                                         ctx);
+                    if (fulltext_index)
+                    {
+                        index = fulltext_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::COLUMNSTORE:
+                    columnstore_index = ColumnstoreIndex::open(db_, index_info.index_id,
+                                                              index_info.root_gpid, 1024, ctx);
+                    if (columnstore_index)
+                    {
+                        index = columnstore_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::LSM:
+                    lsm_index = LSMTreeIndex::open(db_, index_info.index_id,
+                                                   static_cast<uint32_t>(getPageNumber(index_info.root_gpid)),
+                                                   ctx);
+                    if (lsm_index)
+                    {
+                        index = lsm_index.get();
                     }
                     break;
 

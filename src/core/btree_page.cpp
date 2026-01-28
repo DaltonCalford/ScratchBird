@@ -58,7 +58,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        uint32_t node_size = sizeof(SBBTreeNode) + key.size() + sizeof(value.tid);
+        uint32_t node_size = sizeof(SBBTreeNode) + key.size() + sizeof(OnDiskTID);
         if (!has_sufficient_space(node_size))
         {
             return Status::PAGE_FULL;
@@ -82,9 +82,8 @@ namespace scratchbird::core
         // Copy key and tuple ID
         uint8_t *key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);
         memcpy(key_location, key.data(), key.size());
-        auto *tid_location = reinterpret_cast<uint64_t *>(key_location + key.size());
-        // PHASE 1.5: Convert TID struct to legacy format for on-disk storage
-        *tid_location = convertTIDtoLegacy(value.tid);
+        auto *tid_location = reinterpret_cast<OnDiskTID *>(key_location + key.size());
+        *tid_location = toOnDiskTID(value.tid);
 
         // Insert the node into the sorted position in the offsets array
         auto *offsets = reinterpret_cast<uint16_t *>(page_data_ + sizeof(SBBTreePage));
@@ -162,7 +161,7 @@ namespace scratchbird::core
         uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
         if (is_leaf())
         {
-            node_size += node->btn_tuple_count * sizeof(uint64_t);
+            node_size += node->btn_tuple_count * sizeof(OnDiskTID);
         }
         else
         {
@@ -230,7 +229,7 @@ namespace scratchbird::core
             uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
             if (is_leaf())
             {
-                node_size += node->btn_tuple_count * sizeof(uint64_t);
+                node_size += node->btn_tuple_count * sizeof(OnDiskTID);
             }
             else
             {
@@ -252,7 +251,7 @@ namespace scratchbird::core
             uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
             if (is_leaf())
             {
-                node_size += node->btn_tuple_count * sizeof(uint64_t);
+                node_size += node->btn_tuple_count * sizeof(OnDiskTID);
             }
             else
             {
@@ -284,7 +283,7 @@ namespace scratchbird::core
 
     // Static method to get node with decompression support
     auto BTreePage::get_node(const uint8_t *page_data, uint32_t page_size, uint16_t node_index,
-                             std::vector<uint8_t> &key_out, std::vector<uint64_t> &tuple_ids_out)
+                             std::vector<uint8_t> &key_out, std::vector<TID> &tuple_ids_out)
         -> Status
     {
         if (!page_data)
@@ -332,13 +331,13 @@ namespace scratchbird::core
         {
             // Leaf node: Extract tuple IDs from after the key data
             const uint8_t *tuple_data = key_data + node->btn_key_len;
-            auto *tuple_ids = reinterpret_cast<const uint64_t *>(tuple_data);
+            auto *tuple_ids = reinterpret_cast<const OnDiskTID *>(tuple_data);
 
             tuple_ids_out.reserve(node->btn_tuple_count);
 
             for (uint32_t i = 0; i < node->btn_tuple_count; i++)
             {
-                tuple_ids_out.push_back(tuple_ids[i]);
+                tuple_ids_out.push_back(fromOnDiskTID(tuple_ids[i]));
             }
         }
         else
@@ -346,7 +345,7 @@ namespace scratchbird::core
             // Internal node: Extract child page pointer from node header
             // For internal nodes, btn_child_page contains the child pointer
             // There's only one child pointer per node (not stored after key)
-            tuple_ids_out.push_back(node->btn_child_page);
+            tuple_ids_out.push_back(TID{node->btn_child_page, 0});
         }
 
         return Status::OK;

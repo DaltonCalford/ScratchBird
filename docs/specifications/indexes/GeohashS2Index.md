@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -138,7 +139,7 @@ struct SBGeoIndexMetaPage {
 ```
 GeoKey {
     uint64 cell_id;    // Packed geohash or S2 cell ID
-    uint64 tid;        // TID tie-breaker
+    TID tid;           // TID tie-breaker
 }
 ```
 
@@ -171,8 +172,8 @@ size_t geo_cover_bbox(const SBGeoIndexMetaPage* meta,
                       uint64* out_cell_ids,
                       size_t max_cells);
 
-Status geo_insert(UUID index_uuid, uint64 cell_id, uint64 tid);
-Status geo_delete(UUID index_uuid, uint64 cell_id, uint64 tid);
+Status geo_insert(UUID index_uuid, uint64 cell_id, TID tid);
+Status geo_delete(UUID index_uuid, uint64 cell_id, TID tid);
 IndexScan geo_scan_cells(UUID index_uuid, const uint64* cells, size_t count);
 ```
 
@@ -183,6 +184,21 @@ IndexScan geo_scan_cells(UUID index_uuid, const uint64* cells, size_t count);
 - INSERT: compute cell ID and insert
 - UPDATE: recompute on lat/lon change
 - DELETE: tombstone entry
+
+---
+
+## Garbage Collection
+
+Geohash/S2 indexes implement `IndexGCInterface`:
+
+- `removeDeadEntries()` scans cell posting lists and removes dead TIDs.
+- Tombstones with `xmax < OIT` are removed during GC.
+- Empty cell lists are dropped to keep the index compact.
+
+TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+not permitted in v2 on-disk formats.
+
+See `INDEX_GC_PROTOCOL.md` for the shared GC contract.
 
 ---
 

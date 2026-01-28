@@ -345,7 +345,7 @@ namespace scratchbird
 
             // Update TIDs after tablespace migration (GPID remap)
             Status updateTIDsAfterMigration(
-                const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                const std::unordered_map<TID, TID> &tid_mapping,
                 uint64_t *tids_updated_out = nullptr,
                 uint64_t *pages_modified_out = nullptr,
                 ErrorContext *ctx = nullptr);
@@ -440,7 +440,7 @@ namespace scratchbird
 
             // Update TIDs after tablespace migration (GPID remap)
             Status updateTIDsAfterMigration(
-                const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                const std::unordered_map<TID, TID> &tid_mapping,
                 uint64_t *tids_updated_out = nullptr,
                 uint64_t *pages_modified_out = nullptr,
                 ErrorContext *ctx = nullptr);

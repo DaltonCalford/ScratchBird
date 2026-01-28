@@ -1853,6 +1853,13 @@ CreateIndexStmt* Parser::parseCreateIndex() {
         else if (matchContextual("BITMAP")) stmt->index_type = IndexType::BITMAP;
         else if (matchContextual("COLUMNSTORE")) stmt->index_type = IndexType::COLUMNSTORE;
         else if (matchContextual("LSM")) stmt->index_type = IndexType::LSM;
+        else if (matchContextual("IVF")) stmt->index_type = IndexType::IVF;
+        else if (matchContextual("ZONEMAP") || matchContextual("ZONE_MAP"))
+            stmt->index_type = IndexType::ZONEMAP;
+        else if (matchContextual("FULLTEXT") || matchContextual("INVERTED"))
+        {
+            stmt->index_type = IndexType::FULLTEXT;
+        }
         else error("Unknown index type");
     }
 

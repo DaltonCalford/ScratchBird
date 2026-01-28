@@ -218,10 +218,10 @@ namespace scratchbird::core
 
         // PHASE 2 TASK 2.6: Clean indexes for dead tuples
         // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
-        // Called after collectDeadTuples but before prunePage
+        // Called after prunePage and unpinPage (post-heap cleanup)
         // Returns number of index entries removed
-        uint64_t cleanIndexes(uint32_t page_id, const std::vector<TID> &dead_tids,
-                              ErrorContext *ctx);
+        uint64_t cleanIndexes(uint32_t page_id, const ID &table_id,
+                              const std::vector<TID> &dead_tids, ErrorContext *ctx);
 
         // Statistics helpers
         void updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned,

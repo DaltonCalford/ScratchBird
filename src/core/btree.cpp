@@ -1,6 +1,7 @@
 #include <utility>
 #include <cstring>
 #include <set>
+#include <unordered_set>
 #include <algorithm>  // for std::sort
 
 #include "scratchbird/core/btree.h"
@@ -574,14 +575,12 @@ namespace scratchbird::core
                 return false; // Entry exists but not visible to this transaction
             }
 
-            // PHASE 1.5: Convert stored uint64_t to TID struct
             const auto *tuple_ids_ptr =
-                reinterpret_cast<const uint64_t *>(node_key_data + node->btn_key_len);
+                reinterpret_cast<const OnDiskTID *>(node_key_data + node->btn_key_len);
 
             for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
             {
-                TID tid = convertLegacyTID(tuple_ids_ptr[j]);
-                tids_out->push_back(tid);
+                tids_out->push_back(fromOnDiskTID(tuple_ids_ptr[j]));
             }
             return true;
         }
@@ -960,16 +959,13 @@ namespace scratchbird::core
             int cmp = compare_keys(key, full_key.data(), full_key.size());
             if (cmp == 0)
             {
-                // PHASE 1.5: Convert TID to legacy format for comparison
-                uint64_t legacy_tid = convertTIDtoLegacy(tid);
-
                 // Check if the tid matches
                 const auto *tuple_ids_ptr =
-                    reinterpret_cast<const uint64_t *>(node_key_data + node->btn_key_len);
+                    reinterpret_cast<const OnDiskTID *>(node_key_data + node->btn_key_len);
 
                 for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
                 {
-                    if (tuple_ids_ptr[j] == legacy_tid)
+                    if (fromOnDiskTID(tuple_ids_ptr[j]) == tid)
                     {
                         found = true;
                         node_to_remove = i;
@@ -1090,11 +1086,11 @@ namespace scratchbird::core
             {
                 // Key matches - check if TID matches
                 uint8_t *tid_data = node_key_data + node->btn_key_len;
-                auto *tids = reinterpret_cast<uint64_t *>(tid_data);
+                auto *tids = reinterpret_cast<OnDiskTID *>(tid_data);
 
                 for (uint32_t j = 0; j < node->btn_tuple_count; j++)
                 {
-                    TID node_tid = convertLegacyTID(tids[j]);
+                    TID node_tid = fromOnDiskTID(tids[j]);
                     if (node_tid == tid)
                     {
                         // Found it! Set btn_xmax to mark as deleted
@@ -1249,14 +1245,13 @@ namespace scratchbird::core
 
                 // Extract tuple IDs
                 const auto *tuple_ids_ptr =
-                    reinterpret_cast<const uint64_t *>(node_key_data + node->btn_key_len);
+                    reinterpret_cast<const OnDiskTID *>(node_key_data + node->btn_key_len);
 
                 // Add each tuple to right page
                 for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
                 {
                     Tuple tuple;
-                    // PHASE 1.5: Convert legacy uint64_t from disk to TID struct
-                    tuple.tid = convertLegacyTID(tuple_ids_ptr[j]);
+                    tuple.tid = fromOnDiskTID(tuple_ids_ptr[j]);
                     tuple.data = nullptr;
                     tuple.data_size = 0;
 
@@ -1282,7 +1277,7 @@ namespace scratchbird::core
                 const auto *node = reinterpret_cast<const SBBTreeNode *>(
                     reinterpret_cast<uint8_t *>(left_page_data_ptr) + left_offsets[i]);
                 uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len +
-                                     (node->btn_tuple_count * sizeof(uint64_t));
+                                     (node->btn_tuple_count * sizeof(OnDiskTID));
                 left_used_space += node_size;
             }
             left_page->btr_free_space = page_size - left_used_space;
@@ -2116,7 +2111,7 @@ namespace scratchbird::core
                 if (page->btr_level == 0)
                 {
                     // Leaf node: has tuple IDs
-                    node_size += node->btn_tuple_count * sizeof(uint64_t);
+                    node_size += node->btn_tuple_count * sizeof(OnDiskTID);
                 }
                 else
                 {
@@ -2134,7 +2129,7 @@ namespace scratchbird::core
             if (page->btr_level == 0)
             {
                 // Leaf node
-                node_size += node->btn_tuple_count * sizeof(uint64_t);
+                node_size += node->btn_tuple_count * sizeof(OnDiskTID);
             }
 
             // Allocate space from end of temp page
@@ -2251,7 +2246,7 @@ namespace scratchbird::core
             if (right_page->btr_level == 0)
             {
                 // Leaf node
-                node_size += node->btn_tuple_count * sizeof(uint64_t);
+                node_size += node->btn_tuple_count * sizeof(OnDiskTID);
             }
 
             // Check if there's enough space
@@ -2430,16 +2425,10 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // PHASE 1.5: Convert TID structs to legacy format for lookup
-        // On-disk format still stores uint64_t, so we build a set of legacy TIDs
-        std::set<uint64_t> dead_set;
+        std::unordered_set<TID> dead_set;
         for (const TID &tid : dead_tids)
         {
-            uint64_t legacy = convertTIDtoLegacy(tid);
-            if (legacy != 0)
-            {
-                dead_set.insert(legacy);
-            }
+            dead_set.insert(tid);
         }
 
         BufferPool *bp = db_->buffer_pool();
@@ -2546,7 +2535,7 @@ namespace scratchbird::core
                     uint16_t key_len = node->btn_key_len;
                     uint32_t tuple_count = node->btn_tuple_count;
                     current_offset += sizeof(SBBTreeNode) + key_len +
-                                      (tuple_count * sizeof(uint64_t));
+                                      (tuple_count * sizeof(OnDiskTID));
                     continue;
                 }
 
@@ -2554,13 +2543,13 @@ namespace scratchbird::core
                 uint16_t key_len = node->btn_key_len;
                 uint32_t tuple_count = node->btn_tuple_count;
                 uint8_t *tuple_ids_ptr = current_offset + sizeof(SBBTreeNode) + key_len;
-                auto *tuple_ids = reinterpret_cast<uint64_t *>(tuple_ids_ptr);
+                auto *tuple_ids = reinterpret_cast<OnDiskTID *>(tuple_ids_ptr);
 
                 // Check if any of this entry's tuple IDs are in the dead set
                 bool has_dead_tuples = false;
                 for (uint32_t i = 0; i < tuple_count; i++)
                 {
-                    if (dead_set.find(tuple_ids[i]) != dead_set.end())
+                    if (dead_set.find(fromOnDiskTID(tuple_ids[i])) != dead_set.end())
                     {
                         has_dead_tuples = true;
                         break;
@@ -2577,7 +2566,7 @@ namespace scratchbird::core
 
                 // Move to next node
                 current_offset += sizeof(SBBTreeNode) + key_len +
-                                  (tuple_count * sizeof(uint64_t));
+                                  (tuple_count * sizeof(OnDiskTID));
             }
 
             // If we modified this page, set the HAS_GARBAGE flag
@@ -2645,25 +2634,22 @@ namespace scratchbird::core
      * 2. Scan all leaf pages left-to-right using sibling pointers
      * 3. For each leaf page:
      *    a. Scan all index entries (nodes)
-     *    b. For each entry, scan all tuple IDs (TIDs stored as uint64_t)
-     *    c. Extract GPID from TID (upper 64 bits of legacy format)
-     *    d. Check if GPID is in tid_mapping (old GPID -> new GPID)
-     *    e. If found, update TID with new GPID
+     *    b. For each entry, scan all tuple IDs (OnDiskTID format)
+     *    c. Check if TID is in tid_mapping (old TID -> new TID)
+     *    d. If found, update TID with new GPID/slot
      *    f. Mark page as dirty if any TIDs updated
      * 4. Continue to next leaf via btr_right_sibling pointer
      * 5. Return total TIDs updated and pages modified
      *
-     * Note: TIDs are stored on-disk as uint64_t in legacy format:
-     *       (32-bit page_id << 32) | (16-bit item_id << 16)
-     *       The tid_mapping maps GPIDs (full 64-bit GPID values)
+     * Note: TIDs are stored on-disk as packed (GPID + slot) and updated in-place.
      *
-     * @param tid_mapping Map of old GPID -> new GPID for migrated pages
+     * @param tid_mapping Map of old TID -> new TID for migrated tuples
      * @param tids_updated_out Output: Total number of TIDs updated
      * @param pages_modified_out Output: Total number of leaf pages modified
      * @param ctx Error context
      * @return Status::OK on success, error status otherwise
      */
-    Status BTree::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+    Status BTree::updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                           uint64_t *tids_updated_out,
                                           uint64_t *pages_modified_out,
                                           ErrorContext *ctx)
@@ -2797,47 +2783,19 @@ namespace scratchbird::core
                 // Tuple IDs are stored right after the key data
                 uint8_t *tuple_ids_ptr = reinterpret_cast<uint8_t *>(node) +
                                         sizeof(SBBTreeNode) + key_len;
-                auto *tuple_ids = reinterpret_cast<uint64_t *>(tuple_ids_ptr);
+                auto *tuple_ids = reinterpret_cast<OnDiskTID *>(tuple_ids_ptr);
 
-                // ===== STEP 4: Update each tuple ID if its GPID is in tid_mapping =====
+                // ===== STEP 4: Update each tuple ID if it is in tid_mapping =====
                 for (uint32_t i = 0; i < tuple_count; i++)
                 {
-                    uint64_t legacy_tid = tuple_ids[i];
+                    TID old_tid = fromOnDiskTID(tuple_ids[i]);
 
-                    // Extract GPID from legacy TID format
-                    // Legacy format: (32-bit page_id << 32) | (16-bit item_id << 16)
-                    // GPID is the upper 64 bits when interpreted as full TID
-                    // For legacy format, GPID = makeGPID(0, page_id)
-                    uint32_t page_id = static_cast<uint32_t>(legacy_tid >> 32);
-                    uint16_t item_id = static_cast<uint16_t>((legacy_tid >> 16) & 0xFFFF);
-                    uint16_t tablespace_id = static_cast<uint16_t>(legacy_tid & 0xFFFF);
-                    GPID old_gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_id));
-
-                    // Check if this GPID was migrated
-                    auto it = tid_mapping.find(old_gpid);
+                    // Check if this TID was migrated
+                    auto it = tid_mapping.find(old_tid);
                     if (it != tid_mapping.end())
                     {
-                        // Found! Update TID with new GPID
-                        GPID new_gpid = it->second;
-
-                        uint64_t new_page_number = getPageNumber(TID(new_gpid, 0));
-                        if (new_page_number > 0xFFFFFFFFULL)
-                        {
-                            had_errors = true;
-                            LOG_WARNING(STORAGE, "BTree migration: new page number exceeds legacy TID encoding: %lu",
-                                       new_page_number);
-                            continue;
-                        }
-
-                        uint32_t new_page_id = static_cast<uint32_t>(new_page_number);
-                        uint16_t new_tablespace_id = getTablespaceID(new_gpid);
-
-                        uint64_t new_legacy_tid = (static_cast<uint64_t>(new_page_id) << 32) |
-                                                 (static_cast<uint64_t>(item_id) << 16) |
-                                                 static_cast<uint64_t>(new_tablespace_id);
-
                         // Update the TID in-place
-                        tuple_ids[i] = new_legacy_tid;
+                        tuple_ids[i] = toOnDiskTID(it->second);
                         tids_updated_this_page++;
                         page_modified = true;
                     }

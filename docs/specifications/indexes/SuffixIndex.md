@@ -19,12 +19,13 @@
 6. [MGA Compliance](#mga-compliance)
 7. [Core API](#core-api)
 8. [DML Integration](#dml-integration)
-9. [Query Planner Integration](#query-planner-integration)
-10. [DDL and Catalog](#ddl-and-catalog)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+9. [Garbage Collection](#garbage-collection)
+10. [Query Planner Integration](#query-planner-integration)
+11. [DDL and Catalog](#ddl-and-catalog)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -62,7 +63,7 @@ Each suffix references a document row and an offset within that row.
 
 ```
 SuffixRef {
-    uint64 tid;
+    TID tid;
     uint32 offset;     // byte offset in UTF-8
 }
 ```
@@ -107,7 +108,7 @@ struct SBSuffixIndexMetaPage {
 #pragma pack(push, 1)
 
 struct SBSuffixArrayEntry {
-    uint64 tid;
+    TID tid;
     uint32 offset;
     uint32 reserved;
 };
@@ -170,6 +171,21 @@ SuffixIterator suffix_scan(UUID index_uuid, const char* pattern);
 - INSERT: add text to current segment builder
 - UPDATE: add new suffixes; old suffixes remain until sweep
 - DELETE: mark TID deleted; suffix entries filtered by visibility
+
+---
+
+## Garbage Collection
+
+Suffix segments are immutable. GC is performed during **segment merge**:
+
+- `removeDeadEntries()` filters suffix entries whose TID is dead.
+- If a suffix entry list becomes empty, it is removed from the merged segment.
+- LCP arrays are rebuilt during merge to remain consistent.
+
+TID storage must use `TID` (GPID + slot). Legacy packed TIDs are not
+permitted in v2 on-disk formats.
+
+See `INDEX_GC_PROTOCOL.md` for the GC contract.
 
 ---
 

@@ -49,9 +49,9 @@ namespace scratchbird
 
             // Insert single row (STOR-M1: Row-Level OLTP)
             // Buffers individual row inserts and auto-flushes when threshold reached
-            Status insertRow(uint16_t column_id, uint64_t tid,
-                            const void *value, size_t value_len,
-                            bool is_null, ErrorContext *ctx = nullptr);
+            Status insertRow(uint16_t column_id, const TID &tid,
+                             const void *value, size_t value_len,
+                             bool is_null, ErrorContext *ctx = nullptr);
 
             // Flush any buffered rows to column segments
             Status flushRowBuffer(ErrorContext *ctx = nullptr);
@@ -124,7 +124,7 @@ namespace scratchbird
 
             // STOR-M1: Row-level OLTP buffering
             struct BufferedRow {
-                uint64_t tid;
+                TID tid;
                 std::vector<uint8_t> data;
                 bool is_null;
             };

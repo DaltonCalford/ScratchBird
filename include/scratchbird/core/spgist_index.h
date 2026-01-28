@@ -443,7 +443,7 @@ public:
     const char* indexTypeName() const override { return "SP-GiST"; }
 
     // Update TIDs after tablespace migration (GPID remap)
-    Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+    Status updateTIDsAfterMigration(const std::unordered_map<TID, TID>& tid_mapping,
                                     uint64_t* tids_updated_out = nullptr,
                                     uint64_t* pages_modified_out = nullptr,
                                     ErrorContext* ctx = nullptr);
@@ -496,7 +496,7 @@ private:
                                      ErrorContext* ctx);
 
     Status updateTIDsAfterMigrationRecursive(uint64_t page_num,
-                                             const std::unordered_map<uint64_t, uint64_t>& tid_mapping,
+                                             const std::unordered_map<TID, TID>& tid_mapping,
                                              uint64_t* tids_updated,
                                              uint64_t* pages_modified,
                                              ErrorContext* ctx);

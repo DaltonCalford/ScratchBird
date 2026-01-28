@@ -324,7 +324,7 @@ namespace scratchbird
              *
              * Maps range start/end blocks using the provided old->new GPID mapping.
              */
-            Status updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            Status updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                             uint64_t *ranges_updated_out = nullptr,
                                             uint64_t *pages_modified_out = nullptr,
                                             ErrorContext *ctx = nullptr);

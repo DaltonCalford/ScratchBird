@@ -194,23 +194,53 @@ namespace scratchbird
                 return Status::COMPRESSION_ERROR;
             }
 
-            std::vector<uint64_t> legacy_tids(tid_count);
-            size_t decoded = decompress_posting_list(
-                list_page->getCompressedData(),
-                list_page->gpl_compressed_bytes,
-                legacy_tids.data(),
-                tid_count);
-            if (decoded != tid_count)
+            if (list_page->gpl_is_compressed == 1)
+            {
+                std::vector<uint64_t> legacy_tids(tid_count);
+                size_t decoded = decompress_posting_list(
+                    list_page->getCompressedData(),
+                    list_page->gpl_compressed_bytes,
+                    legacy_tids.data(),
+                    tid_count);
+                if (decoded != tid_count)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                                      "Failed to decompress posting list");
+                    return Status::COMPRESSION_ERROR;
+                }
+
+                tids_out->reserve(tids_out->size() + tid_count);
+                for (uint16_t i = 0; i < tid_count; i++)
+                {
+                    tids_out->push_back(convertLegacyTID(legacy_tids[i]));
+                }
+            }
+            else if (list_page->gpl_is_compressed == 2)
+            {
+                std::vector<TID> decoded_tids(tid_count);
+                size_t decoded = decompress_posting_list_tid(
+                    list_page->getCompressedData(),
+                    list_page->gpl_compressed_bytes,
+                    decoded_tids.data(),
+                    tid_count);
+                if (decoded != tid_count)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                                      "Failed to decompress posting list");
+                    return Status::COMPRESSION_ERROR;
+                }
+
+                tids_out->reserve(tids_out->size() + tid_count);
+                for (uint16_t i = 0; i < tid_count; i++)
+                {
+                    tids_out->push_back(decoded_tids[i]);
+                }
+            }
+            else
             {
                 SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
-                                  "Failed to decompress posting list");
+                                  "Unknown posting list compression format");
                 return Status::COMPRESSION_ERROR;
-            }
-
-            tids_out->reserve(tids_out->size() + tid_count);
-            for (uint16_t i = 0; i < tid_count; i++)
-            {
-                tids_out->push_back(convertLegacyTID(legacy_tids[i]));
             }
 
             return Status::OK;
@@ -225,28 +255,16 @@ namespace scratchbird
                 return false;
             }
 
-            std::vector<uint64_t> legacy_tids;
-            legacy_tids.reserve(tids.size());
-            for (const TID &tid : tids)
-            {
-                uint64_t legacy = convertTIDtoLegacy(tid);
-                if (legacy == 0)
-                {
-                    return false;
-                }
-                legacy_tids.push_back(legacy);
-            }
-
-            if (!should_compress(legacy_tids.data(), static_cast<uint16_t>(legacy_tids.size())))
+            if (!should_compress_tid(tids.data(), static_cast<uint16_t>(tids.size())))
             {
                 return false;
             }
 
             uint32_t max_bytes = page_size - GinSettings::POSTING_PAGE_HEADER;
             std::vector<uint8_t> compressed(max_bytes);
-            size_t compressed_bytes = compress_posting_list(
-                legacy_tids.data(),
-                static_cast<uint16_t>(legacy_tids.size()),
+            size_t compressed_bytes = compress_posting_list_tid(
+                tids.data(),
+                static_cast<uint16_t>(tids.size()),
                 compressed.data(),
                 max_bytes);
             if (compressed_bytes == 0)
@@ -254,7 +272,7 @@ namespace scratchbird
                 return false;
             }
 
-            list_page->gpl_is_compressed = 1;
+            list_page->gpl_is_compressed = 2;
             list_page->gpl_compressed_bytes = static_cast<uint16_t>(compressed_bytes);
             std::memcpy(list_page->getCompressedData(), compressed.data(), compressed_bytes);
             return true;
@@ -4888,7 +4906,7 @@ namespace scratchbird
         // ==================================================================
 
         Status GinIndex::updateTIDsAfterMigration(
-            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            const std::unordered_map<TID, TID> &tid_mapping,
             uint64_t *tids_updated_out,
             uint64_t *pages_modified_out,
             ErrorContext *ctx)
@@ -4962,11 +4980,10 @@ namespace scratchbird
                 {
                     GinPendingEntry &entry = pending_page->gpp_entries[i];
 
-                    // Convert GPID to legacy for lookup
-                    uint64_t old_tid = convertTIDtoLegacy(entry.getTID());
+                    TID old_tid = entry.getTID();
 
-                    // Skip deleted entries (tid == 0)
-                    if (old_tid == 0)
+                    // Skip deleted entries
+                    if (!old_tid.isValid())
                     {
                         continue;
                     }
@@ -4976,14 +4993,13 @@ namespace scratchbird
                     if (it != tid_mapping.end())
                     {
                         // Found mapping - update TID
-                        uint64_t new_tid = it->second;
-                        entry.setTID(convertLegacyTID(new_tid));
+                        entry.setTID(it->second);
 
                         total_tids_updated++;
                         page_modified = true;
 
-                        LOG_DEBUG(STORAGE, "Updated GIN pending entry TID: %lu -> %lu (page %lu)",
-                                 it->first, new_tid, current_page);
+                        LOG_DEBUG(STORAGE, "Updated GIN pending entry TID (page %lu)",
+                                 current_page);
                     }
                 }
 
@@ -5151,20 +5167,17 @@ namespace scratchbird
 
                             for (uint16_t i = 0; i < tid_count && i < getMaxPostingTreeLeafTids(); i++)
                             {
-                                GPID old_gpid = leaf->gpt_tids[i].getTID().gpid;
-                                auto it = tid_mapping.find(old_gpid);
+                                TID old_tid = leaf->gpt_tids[i].getTID();
+                                auto it = tid_mapping.find(old_tid);
                                 if (it != tid_mapping.end())
                                 {
-                                    GPID new_gpid = it->second;
-                                    TID updated = leaf->gpt_tids[i].getTID();
-                                    updated.gpid = new_gpid;
-                                    leaf->gpt_tids[i].setTID(updated);
+                                    leaf->gpt_tids[i].setTID(it->second);
 
                                     total_tids_updated++;
                                     tree_page_modified = true;
 
-                                    LOG_DEBUG(STORAGE, "Updated GIN posting tree GPID: %lu -> %lu (page %u)",
-                                             old_gpid, new_gpid, tree_page_num);
+                                    LOG_DEBUG(STORAGE, "Updated GIN posting tree TID (page %u)",
+                                             tree_page_num);
                                 }
                             }
                         }
@@ -5215,10 +5228,10 @@ namespace scratchbird
                         bool compressed_modified = false;
                         for (TID &tid : tids)
                         {
-                            auto it = tid_mapping.find(tid.gpid);
+                            auto it = tid_mapping.find(tid);
                             if (it != tid_mapping.end())
                             {
-                                tid.gpid = it->second;
+                                tid = it->second;
                                 total_tids_updated++;
                                 compressed_modified = true;
                             }
@@ -5250,20 +5263,17 @@ namespace scratchbird
 
                     for (uint16_t i = 0; i < entry_count && i < getMaxPostingEntriesPerPage(); i++)
                     {
-                        GPID old_gpid = posting_page->getEntries()[i].getTID().gpid;
-                        auto it = tid_mapping.find(old_gpid);
+                        TID old_tid = posting_page->getEntries()[i].getTID();
+                        auto it = tid_mapping.find(old_tid);
                         if (it != tid_mapping.end())
                         {
-                            GPID new_gpid = it->second;
-                            TID updated = posting_page->getEntries()[i].getTID();
-                            updated.gpid = new_gpid;
-                            posting_page->getEntries()[i].setTID(updated);
+                            posting_page->getEntries()[i].setTID(it->second);
 
                             total_tids_updated++;
                             page_modified = true;
 
-                            LOG_DEBUG(STORAGE, "Updated GIN posting list GPID: %lu -> %lu (page %lu)",
-                                     old_gpid, new_gpid, posting_page_num);
+                            LOG_DEBUG(STORAGE, "Updated GIN posting list TID (page %lu)",
+                                     posting_page_num);
                         }
                     }
 

@@ -13,6 +13,8 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/tablespace.h"
 #include <fstream>
 #include <algorithm>
 #include <cstring>
@@ -25,17 +27,74 @@ namespace scratchbird::core {
 
 // Magic number for backup files
 static constexpr char BACKUP_MAGIC[8] = {'S', 'B', 'K', 'P', '0', '0', '0', '1'};
-static constexpr uint64_t BACKUP_VERSION = 2;
+static constexpr uint64_t BACKUP_VERSION = 3;
 
 struct BackupTablespaceInfo
 {
     uint16_t tablespace_id = 0;
     uint64_t total_pages = 0;
     std::vector<std::string> file_paths;
+    std::vector<uint64_t> file_start_pages;
+    std::vector<uint64_t> file_page_counts;
 };
+
+static Status readTablespaceFilePageCount(const std::string& path,
+                                          uint32_t page_size,
+                                          uint64_t* pages_out,
+                                          ErrorContext* ctx)
+{
+    if (!pages_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing pages_out");
+        return Status::INVALID_ARGUMENT;
+    }
+    *pages_out = 0;
+
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, ("Failed to open tablespace file: " + path).c_str());
+        return Status::IO_ERROR;
+    }
+
+    std::vector<uint8_t> buffer(page_size, 0);
+    ssize_t bytes_read = ::pread(fd, buffer.data(), page_size, 0);
+    ::close(fd);
+    if (bytes_read != static_cast<ssize_t>(page_size))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, ("Failed to read tablespace header: " + path).c_str());
+        return Status::IO_ERROR;
+    }
+
+    const auto* page_header = reinterpret_cast<const PageHeader*>(buffer.data());
+    if (page_header->magic != K_MAGIC_SBRD)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          ("Invalid tablespace file (bad magic): " + path).c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (page_header->version == TABLESPACE_HEADER_VERSION_V1)
+    {
+        const auto* legacy = reinterpret_cast<const TablespaceHeaderV1*>(buffer.data());
+        *pages_out = legacy->total_pages;
+        return Status::OK;
+    }
+    if (page_header->version == TABLESPACE_HEADER_VERSION_V2)
+    {
+        const auto* header = reinterpret_cast<const TablespaceHeader*>(buffer.data());
+        *pages_out = header->total_pages;
+        return Status::OK;
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                      ("Unsupported tablespace header version in: " + path).c_str());
+    return Status::INVALID_ARGUMENT;
+}
 
 Status writeTablespaceManifest(int fd,
                                const std::vector<BackupTablespaceInfo> &tablespaces,
+                               bool include_file_ranges,
                                uint64_t *offset_out,
                                uint64_t *size_out,
                                ErrorContext *ctx)
@@ -83,8 +142,9 @@ Status writeTablespaceManifest(int fd,
             return Status::IO_ERROR;
         }
 
-        for (const auto &path : tablespace.file_paths)
+        for (size_t i = 0; i < tablespace.file_paths.size(); ++i)
         {
+            const auto &path = tablespace.file_paths[i];
             uint32_t path_len = static_cast<uint32_t>(path.size());
             written = ::write(fd, &path_len, sizeof(path_len));
             if (written != static_cast<ssize_t>(sizeof(path_len)))
@@ -98,6 +158,32 @@ Status writeTablespaceManifest(int fd,
                 if (written != static_cast<ssize_t>(path_len))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write tablespace path");
+                    return Status::IO_ERROR;
+                }
+            }
+
+            if (include_file_ranges)
+            {
+                uint64_t start_page = 0;
+                uint64_t page_count = 0;
+                if (i < tablespace.file_start_pages.size())
+                {
+                    start_page = tablespace.file_start_pages[i];
+                }
+                if (i < tablespace.file_page_counts.size())
+                {
+                    page_count = tablespace.file_page_counts[i];
+                }
+                written = ::write(fd, &start_page, sizeof(start_page));
+                if (written != static_cast<ssize_t>(sizeof(start_page)))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write tablespace start page");
+                    return Status::IO_ERROR;
+                }
+                written = ::write(fd, &page_count, sizeof(page_count));
+                if (written != static_cast<ssize_t>(sizeof(page_count)))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write tablespace page count");
                     return Status::IO_ERROR;
                 }
             }
@@ -126,6 +212,7 @@ Status writeTablespaceManifest(int fd,
 Status readTablespaceManifest(int fd,
                               uint64_t offset,
                               uint64_t size,
+                              uint64_t backup_version,
                               std::vector<BackupTablespaceInfo> *tablespaces_out,
                               ErrorContext *ctx)
 {
@@ -193,6 +280,26 @@ Status readTablespaceManifest(int fd,
                 }
             }
             info.file_paths.push_back(std::move(path));
+
+            if (backup_version >= 3)
+            {
+                uint64_t start_page = 0;
+                uint64_t page_count = 0;
+                read_bytes = ::read(fd, &start_page, sizeof(start_page));
+                if (read_bytes != static_cast<ssize_t>(sizeof(start_page)))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read tablespace start page");
+                    return Status::IO_ERROR;
+                }
+                read_bytes = ::read(fd, &page_count, sizeof(page_count));
+                if (read_bytes != static_cast<ssize_t>(sizeof(page_count)))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read tablespace page count");
+                    return Status::IO_ERROR;
+                }
+                info.file_start_pages.push_back(start_page);
+                info.file_page_counts.push_back(page_count);
+            }
         }
 
         tablespaces_out->push_back(std::move(info));
@@ -315,6 +422,38 @@ Status BackupManager::createBackup(const std::string& backup_path,
             }
             info.total_pages = total_pages;
         }
+
+        if (!info.file_paths.empty())
+        {
+            info.file_start_pages.clear();
+            info.file_page_counts.clear();
+            info.file_start_pages.reserve(info.file_paths.size());
+            info.file_page_counts.reserve(info.file_paths.size());
+
+            uint64_t start_page = 0;
+            for (const auto &path : info.file_paths)
+            {
+                uint64_t page_count = 0;
+                if (info.tablespace_id == PRIMARY_TABLESPACE_ID)
+                {
+                    page_count = info.total_pages;
+                }
+                else
+                {
+                    Status count_status = readTablespaceFilePageCount(path, db_->page_size(),
+                                                                      &page_count, ctx);
+                    if (count_status != Status::OK)
+                    {
+                        ::close(backup_fd);
+                        return count_status;
+                    }
+                }
+                info.file_start_pages.push_back(start_page);
+                info.file_page_counts.push_back(page_count);
+                start_page += page_count;
+            }
+        }
+
         tablespace_manifest.push_back(std::move(info));
     }
 
@@ -327,7 +466,8 @@ Status BackupManager::createBackup(const std::string& backup_path,
         tablespace_manifest.push_back(std::move(primary));
     }
 
-    status = writeTablespaceManifest(backup_fd, tablespace_manifest,
+    bool include_file_ranges = (header.version >= 3);
+    status = writeTablespaceManifest(backup_fd, tablespace_manifest, include_file_ranges,
                                      &header.tablespace_info_offset,
                                      &header.tablespace_info_size,
                                      ctx);
@@ -544,7 +684,8 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
     if (header.tablespace_info_size > 0)
     {
         status = readTablespaceManifest(backup_fd, header.tablespace_info_offset,
-                                        header.tablespace_info_size, &tablespaces, ctx);
+                                        header.tablespace_info_size, header.version,
+                                        &tablespaces, ctx);
         if (status != Status::OK)
         {
             ::close(backup_fd);
@@ -569,8 +710,15 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
         return Status::IO_ERROR;
     }
 
-    std::unordered_map<uint16_t, int> tablespace_fds;
-    tablespace_fds[PRIMARY_TABLESPACE_ID] = target_fd;
+    struct TablespaceFileRange
+    {
+        uint64_t start_page = 0;
+        uint64_t page_count = 0;
+        int fd = -1;
+    };
+
+    std::unordered_map<uint16_t, std::vector<TablespaceFileRange>> tablespace_files;
+    tablespace_files[PRIMARY_TABLESPACE_ID] = {TablespaceFileRange{0, header.total_pages, target_fd}};
 
     for (const auto &tablespace : tablespaces)
     {
@@ -587,41 +735,71 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
             return Status::INVALID_ARGUMENT;
         }
 
-        const auto &path = tablespace.file_paths[0];
-        struct stat st;
-        bool exists = (stat(path.c_str(), &st) == 0);
-        if (!exists && !config.allow_tablespace_create)
-        {
-            ::close(backup_fd);
-            ::close(target_fd);
-            SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND,
-                              ("Missing tablespace file: " + path).c_str());
-            return Status::FILE_NOT_FOUND;
-        }
+        uint64_t next_start = 0;
+        std::vector<TablespaceFileRange> ranges;
+        ranges.reserve(tablespace.file_paths.size());
 
-        int ts_fd = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
-        if (ts_fd < 0)
+        for (size_t i = 0; i < tablespace.file_paths.size(); ++i)
         {
-            ::close(backup_fd);
-            ::close(target_fd);
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open tablespace file");
-            return Status::IO_ERROR;
-        }
-
-        if (tablespace.total_pages > 0)
-        {
-            off_t size = static_cast<off_t>(tablespace.total_pages) * header.page_size;
-            if (::ftruncate(ts_fd, size) != 0)
+            const auto &path = tablespace.file_paths[i];
+            struct stat st;
+            bool exists = (stat(path.c_str(), &st) == 0);
+            if (!exists && !config.allow_tablespace_create)
             {
-                ::close(ts_fd);
                 ::close(backup_fd);
                 ::close(target_fd);
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to size tablespace file");
+                SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND,
+                                  ("Missing tablespace file: " + path).c_str());
+                return Status::FILE_NOT_FOUND;
+            }
+
+            int ts_fd = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
+            if (ts_fd < 0)
+            {
+                ::close(backup_fd);
+                ::close(target_fd);
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open tablespace file");
                 return Status::IO_ERROR;
             }
+
+            uint64_t start_page = 0;
+            uint64_t page_count = 0;
+            if (!tablespace.file_start_pages.empty() && i < tablespace.file_start_pages.size())
+            {
+                start_page = tablespace.file_start_pages[i];
+            }
+            else
+            {
+                start_page = next_start;
+            }
+
+            if (!tablespace.file_page_counts.empty() && i < tablespace.file_page_counts.size())
+            {
+                page_count = tablespace.file_page_counts[i];
+            }
+            else if (i == 0)
+            {
+                page_count = tablespace.total_pages;
+            }
+
+            if (page_count > 0)
+            {
+                off_t size = static_cast<off_t>(page_count) * header.page_size;
+                if (::ftruncate(ts_fd, size) != 0)
+                {
+                    ::close(ts_fd);
+                    ::close(backup_fd);
+                    ::close(target_fd);
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to size tablespace file");
+                    return Status::IO_ERROR;
+                }
+            }
+
+            ranges.push_back(TablespaceFileRange{start_page, page_count, ts_fd});
+            next_start = start_page + page_count;
         }
 
-        tablespace_fds[tablespace.tablespace_id] = ts_fd;
+        tablespace_files[tablespace.tablespace_id] = std::move(ranges);
     }
 
     // Read page index
@@ -706,8 +884,8 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
         // Write to target database
         uint16_t tablespace_id = getTablespaceID(entry.gpid);
         uint32_t page_id = static_cast<uint32_t>(getPageNumber(entry.gpid));
-        auto it = tablespace_fds.find(tablespace_id);
-        if (it == tablespace_fds.end())
+        auto it = tablespace_files.find(tablespace_id);
+        if (it == tablespace_files.end())
         {
             if (!config.partial_restore)
             {
@@ -721,9 +899,43 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
             continue;
         }
 
-        off_t offset = static_cast<off_t>(page_id) * header.page_size;
-        ::lseek(it->second, offset, SEEK_SET);
-        ssize_t written = ::write(it->second, page_data, entry.original_size);
+        bool found_file = false;
+        int fd = -1;
+        uint64_t local_page = page_id;
+        for (const auto &range : it->second)
+        {
+            uint64_t start = range.start_page;
+            uint64_t end = start + range.page_count;
+            if (range.page_count == 0)
+            {
+                continue;
+            }
+            if (page_id >= start && page_id < end)
+            {
+                fd = range.fd;
+                local_page = page_id - start;
+                found_file = true;
+                break;
+            }
+        }
+
+        if (!found_file)
+        {
+            if (!config.partial_restore)
+            {
+                ::close(backup_fd);
+                ::close(target_fd);
+                SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND, "Tablespace page not mapped to file");
+                return Status::FILE_NOT_FOUND;
+            }
+            LOG_ERROR(GENERAL, "No tablespace file range for page %u in tablespace %u",
+                      page_id, tablespace_id);
+            continue;
+        }
+
+        off_t offset = static_cast<off_t>(local_page) * header.page_size;
+        ::lseek(fd, offset, SEEK_SET);
+        ssize_t written = ::write(fd, page_data, entry.original_size);
         if (written != static_cast<ssize_t>(entry.original_size)) {
             if (!config.partial_restore) {
                 ::close(backup_fd);
@@ -741,12 +953,18 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
         }
     }
 
-    for (const auto &entry : tablespace_fds)
+    for (const auto &entry : tablespace_files)
     {
-        ::fsync(entry.second);
-        if (entry.first != PRIMARY_TABLESPACE_ID)
+        for (const auto &range : entry.second)
         {
-            ::close(entry.second);
+            if (range.fd >= 0)
+            {
+                ::fsync(range.fd);
+                if (entry.first != PRIMARY_TABLESPACE_ID)
+                {
+                    ::close(range.fd);
+                }
+            }
         }
     }
     ::close(backup_fd);

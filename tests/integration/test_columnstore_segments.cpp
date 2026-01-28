@@ -79,7 +79,8 @@ void testMultiSegmentInsert()
     for (int32_t i = 0; i < 250; ++i)
     {
         int32_t value = i;
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 
@@ -137,7 +138,8 @@ void testMultiSegmentScan()
     for (int32_t i = 0; i < 150; ++i)
     {
         int32_t value = i * 2;  // Even numbers 0, 2, 4, ..., 298
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 
@@ -154,7 +156,7 @@ void testMultiSegmentScan()
     assert(status == Status::OK);
 
     uint32_t total_matches = 0;
-    std::vector<uint64_t> all_tids;
+    std::vector<TID> all_tids;
 
     while (!iter.scan_complete)
     {
@@ -217,7 +219,8 @@ void testCompressionRatio()
     for (int32_t i = 0; i < 300; ++i)
     {
         int32_t value = 42;  // Same value for all rows
-        status = index->insert(column_uuid, i, &value, sizeof(int32_t), false, &ctx);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
         assert(status == Status::OK);
     }
 

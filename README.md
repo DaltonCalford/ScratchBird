@@ -56,17 +56,17 @@ ScratchBird has been split into multiple repositories for parallel development:
 
 Active work tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
 
-| Workstream                  | Status         | Description                                                 |
-| --------------------------- | -------------- | ----------------------------------------------------------- |
-| WS-1 Catalog Bootstrap      | Done           | Root paths updated; migration/repair pass added             |
-| WS-2 Tablespace Routing     | Done           | GPID wiring, tablespace header v2, file catalog integration |
-| WS-3 Index Migration Safety | Done           | TID updates for all index types                             |
-| WS-4 Scheduler/Job System   | Done           | Secure job runner, cron scheduling, dependency management   |
-| WS-5 Constraint Enforcement | Done           | PK/FK/UNIQUE/CHECK/NOT NULL enforcement                     |
-| WS-6 Security Enforcement   | In Progress    | View definer checks, RLS SELECT enforcement                 |
-| WS-7 Monitoring Parity      | TODO           | sys.* views and MON$ sources                                |
-| WS-8 Backup/Restore         | TODO           | Multi-tablespace coverage validation                        |
-| WS-9 Cache/Buffer Plan      | In Progress    | Cache and buffer remediation                                |
+| Workstream                  | Status | Description                                                 |
+| --------------------------- | ------ | ----------------------------------------------------------- |
+| WS-1 Catalog Bootstrap      | Done   | Root paths updated; migration/repair pass added             |
+| WS-2 Tablespace Routing     | Done   | GPID wiring, tablespace header v2, file catalog integration |
+| WS-3 Index Migration Safety | Done   | TID updates for all index types                             |
+| WS-4 Scheduler/Job System   | Done   | Secure job runner, cron scheduling, dependency management   |
+| WS-5 Constraint Enforcement | Done   | PK/FK/UNIQUE/CHECK/NOT NULL enforcement                     |
+| WS-6 Security Enforcement   | Done   | View definer checks, RLS SELECT enforcement                 |
+| WS-7 Monitoring Parity      | Done   | sys.* views and MON$ sources                                |
+| WS-8 Backup/Restore         | Done   | Multi-tablespace coverage validation                        |
+| WS-9 Cache/Buffer Plan      | Done   | Cache and buffer remediation                                |
 
 Latest full test run: 2396 tests, 0 failures (2026-02-02).
 
@@ -205,21 +205,21 @@ Recent full suite: 2396 tests, 0 failures (2026-02-02).
 
 ### Test Results (January 25, 2026)
 
-| Metric       | Value |
-| ------------ | ----- |
-| Tests run    | 2,347 |
-| Failures     | 0     |
-| Skips        | 0     |
+| Metric    | Value |
+| --------- | ----- |
+| Tests run | 2,347 |
+| Failures  | 0     |
+| Skips     | 0     |
 
 ### Test File Breakdown
 
-| Category            | Files |
-| ------------------- | ----- |
-| Unit tests          | 234   |
-| Integration tests   | 69    |
-| Stress tests        | 6     |
-| Benchmarks          | 2     |
-| SQL compatibility   | 12,483 |
+| Category            | Files   |
+| ------------------- | ------- |
+| Unit tests          | 234     |
+| Integration tests   | 69      |
+| Stress tests        | 6       |
+| Benchmarks          | 2       |
+| SQL compatibility   | 12,483  |
 | **Total C++ tests** | **337** |
 
 Compatibility suites exist for PostgreSQL, MySQL, Firebird, and ScratchBird native; see `tests/compatibility/`.
@@ -333,10 +333,10 @@ ScratchBird/
 - ✅ WS-3: Index migration safety (all 11 index types)
 - ✅ WS-4: Scheduler/job system
 - ✅ WS-5: Constraint enforcement (PK/FK/UNIQUE/CHECK/NOT NULL)
-- 🚧 WS-9: Cache/buffer remediation
-- 📋 WS-6: Security enforcement (view definer, RLS SELECT)
-- 📋 WS-7: Monitoring parity (sys.* views, MON$ sources)
-- 📋 WS-8: Backup/restore multi-tablespace validation
+- ✅ WS-9: Cache/buffer remediation
+- ✅ WS-6: Security enforcement (view definer, RLS SELECT)
+- ✅ WS-7: Monitoring parity (sys.* views, MON$ sources)
+- ✅ WS-8: Backup/restore multi-tablespace validation
 
 See `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` for detailed tracking.
 
@@ -376,18 +376,18 @@ Licensed under the [Initial Developer's Public License Version 1.0 (IPL 1.0)](ht
 
 **Quick Stats (snapshot as of January 25, 2026):**
 
-| Metric                  | Value   |
-| ----------------------- | ------- |
-| Production source files | 499     |
-| Production LOC          | 424,686 |
-| Test C++ files          | 337     |
-| Test LOC                | 121,824 |
-| SQL compatibility files | 12,483  |
-| Total LOC (all C++)     | 546,510 |
-| Documentation files     | 1,652   |
-| Wiki pages              | 168     |
-| Git commits             | 1,618   |
-| Commits (last 30 days)  | 111     |
+| Metric                  | Value                             |
+| ----------------------- | --------------------------------- |
+| Production source files | 499                               |
+| Production LOC          | 424,686                           |
+| Test C++ files          | 337                               |
+| Test LOC                | 121,824                           |
+| SQL compatibility files | 12,483                            |
+| Total LOC (all C++)     | 546,510                           |
+| Documentation files     | 1,652                             |
+| Wiki pages              | 168                               |
+| Git commits             | 1,618                             |
+| Commits (last 30 days)  | 111                               |
 | CTest results           | 2,347 passed, 0 failed, 0 skipped |
 
 Run `./scripts/generate-all-stats.sh` to regenerate `PROJECT_STATS.md` and related reports.

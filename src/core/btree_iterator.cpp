@@ -126,7 +126,7 @@ namespace scratchbird::core
 
         // Get current entry using BTreePage helper
         std::vector<uint8_t> key;
-        std::vector<uint64_t> tuple_ids;
+        std::vector<TID> tuple_ids;
         status = BTreePage::get_node(page_data, db_->page_size(), current_slot_, key, tuple_ids);
 
         btree_->unpinIndexPage(current_page_, false, ctx);
@@ -168,9 +168,7 @@ namespace scratchbird::core
             }
             if (tid_out)
             {
-                // PHASE 1.5: Convert stored uint64_t to TID struct
-                uint64_t legacy_tid = tuple_ids[current_tuple_index_];
-                *tid_out = convertLegacyTID(legacy_tid);
+                *tid_out = tuple_ids[current_tuple_index_];
             }
 
             scanned_count_++;
@@ -213,7 +211,7 @@ namespace scratchbird::core
         auto *page_data = static_cast<uint8_t *>(page_buffer);
 
         std::vector<uint8_t> key;
-        std::vector<uint64_t> tuple_ids;
+        std::vector<TID> tuple_ids;
         status = BTreePage::get_node(page_data, db_->page_size(), current_slot_, key, tuple_ids);
 
         btree_->unpinIndexPage(current_page_, false, ctx);
@@ -260,13 +258,13 @@ namespace scratchbird::core
                 {
                     // Internal node - follow first child
                     std::vector<uint8_t> first_key;
-                    std::vector<uint64_t> child_pages;
+                    std::vector<TID> child_pages;
                     Status get_status =
                         BTreePage::get_node(static_cast<uint8_t *>(page_buffer), db_->page_size(),
                                             0, first_key, child_pages);
 
                     uint64_t next_page = (get_status == Status::OK && !child_pages.empty())
-                                             ? child_pages[0]
+                                             ? child_pages[0].gpid
                                              : page->btr_left_sibling;
 
                     btree_->unpinIndexPage(leaf_page, false, ctx);
@@ -310,11 +308,11 @@ namespace scratchbird::core
             {
                 // Get first child page
                 std::vector<uint8_t> first_key;
-                std::vector<uint64_t> child_pages;
+                std::vector<TID> child_pages;
                 BTreePage::get_node(static_cast<uint8_t *>(page_buffer), db_->page_size(), 0,
                                     first_key, child_pages);
 
-                uint64_t next_page = (!child_pages.empty()) ? child_pages[0] : 0;
+                uint64_t next_page = (!child_pages.empty()) ? child_pages[0].gpid : 0;
                 btree_->unpinIndexPage(current_page_, false, ctx);
 
                 if (next_page == 0)
@@ -369,7 +367,7 @@ namespace scratchbird::core
                 }
 
                 std::vector<uint8_t> key;
-                std::vector<uint64_t> tuple_ids;
+                std::vector<TID> tuple_ids;
                 status = BTreePage::get_node(static_cast<uint8_t *>(page_buffer), db_->page_size(),
                                              current_slot_, key, tuple_ids);
 

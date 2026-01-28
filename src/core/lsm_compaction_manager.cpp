@@ -396,6 +396,25 @@ void LSMCompactionManager::getStatistics(uint64_t *total_sstables_out,
     }
 }
 
+void LSMCompactionManager::recalculateLevelSizes()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (auto &level : levels_)
+    {
+        uint64_t level_size = 0;
+        for (const auto &path : level.sstable_paths)
+        {
+            struct stat st;
+            if (stat(path.c_str(), &st) == 0)
+            {
+                level_size += static_cast<uint64_t>(st.st_size);
+            }
+        }
+        level.size_bytes = level_size;
+    }
+}
+
 // ============================================================================
 // Helper Methods (Private)
 // ============================================================================

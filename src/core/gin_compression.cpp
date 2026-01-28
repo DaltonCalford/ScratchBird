@@ -5,6 +5,76 @@ namespace scratchbird
 {
     namespace core
     {
+        namespace
+        {
+            using U128 = unsigned __int128;
+
+            inline U128 tidToU128(const TID &tid)
+            {
+                return (static_cast<U128>(tid.gpid) << 16) | static_cast<U128>(tid.slot);
+            }
+
+            inline TID u128ToTid(U128 value)
+            {
+                GPID gpid = static_cast<GPID>(value >> 16);
+                uint16_t slot = static_cast<uint16_t>(value & 0xFFFF);
+                return TID{gpid, slot};
+            }
+
+            size_t encode_varbyte_u128(U128 value, uint8_t *output)
+            {
+                size_t count = 0;
+                do
+                {
+                    uint8_t byte = static_cast<uint8_t>(value & 0x7F);
+                    value >>= 7;
+                    if (value != 0)
+                    {
+                        byte |= 0x80;
+                    }
+                    output[count++] = byte;
+                } while (value != 0);
+                return count;
+            }
+
+            size_t decode_varbyte_u128(const uint8_t *input, size_t max_bytes, U128 *value_out)
+            {
+                if (!value_out)
+                {
+                    return 0;
+                }
+
+                U128 value = 0;
+                uint32_t shift = 0;
+                size_t i = 0;
+
+                while (i < max_bytes && shift < 128)
+                {
+                    uint8_t byte = input[i];
+                    value |= (static_cast<U128>(byte & 0x7F) << shift);
+                    i++;
+                    if ((byte & 0x80) == 0)
+                    {
+                        *value_out = value;
+                        return i;
+                    }
+                    shift += 7;
+                }
+                return 0;
+            }
+
+            size_t encoded_size_u128(U128 value)
+            {
+                size_t count = 1;
+                while (value >= 0x80)
+                {
+                    value >>= 7;
+                    count++;
+                }
+                return count;
+            }
+        } // namespace
+
         size_t encode_varbyte(uint64_t value, uint8_t *output)
         {
             if (value <= VARBYTE_1_BYTE_MAX)
@@ -331,6 +401,104 @@ namespace scratchbird
             size_t compressed_size = estimate_compressed_size(tids, count);
 
             // Compress if we save at least 10% space
+            return (compressed_size * 10) < (uncompressed_size * 9);
+        }
+
+        size_t compress_posting_list_tid(const TID *tids, uint16_t count,
+                                         uint8_t *compressed_out, size_t max_bytes)
+        {
+            if (!tids || count == 0)
+            {
+                return 0;
+            }
+
+            size_t bytes_written = 0;
+            U128 prev_value = 0;
+
+            for (uint16_t i = 0; i < count; i++)
+            {
+                U128 current = tidToU128(tids[i]);
+                U128 delta = (i == 0) ? current : (current - prev_value);
+
+                size_t encoded_size = encoded_size_u128(delta);
+                if (bytes_written + encoded_size > max_bytes)
+                {
+                    return 0;
+                }
+
+                size_t encoded = encode_varbyte_u128(delta, compressed_out + bytes_written);
+                bytes_written += encoded;
+                prev_value = current;
+            }
+
+            return bytes_written;
+        }
+
+        size_t decompress_posting_list_tid(const uint8_t *compressed, size_t compressed_bytes,
+                                           TID *tids_out, uint16_t max_tids)
+        {
+            if (!compressed || !tids_out)
+            {
+                return 0;
+            }
+
+            size_t bytes_read = 0;
+            uint16_t tid_count = 0;
+            U128 current = 0;
+
+            while (bytes_read < compressed_bytes && tid_count < max_tids)
+            {
+                U128 delta = 0;
+                size_t decoded = decode_varbyte_u128(compressed + bytes_read,
+                                                     compressed_bytes - bytes_read,
+                                                     &delta);
+                if (decoded == 0)
+                {
+                    break;
+                }
+
+                bytes_read += decoded;
+                current += delta;
+                tids_out[tid_count++] = u128ToTid(current);
+            }
+
+            return tid_count;
+        }
+
+        size_t estimate_compressed_size_tid(const TID *tids, uint16_t count)
+        {
+            if (!tids || count == 0)
+            {
+                return 0;
+            }
+
+            size_t size = 0;
+            U128 prev = 0;
+            for (uint16_t i = 0; i < count; i++)
+            {
+                U128 current = tidToU128(tids[i]);
+                U128 delta = (i == 0) ? current : (current - prev);
+                size += encoded_size_u128(delta);
+                prev = current;
+            }
+            return size;
+        }
+
+        bool should_compress_tid(const TID *tids, uint16_t count)
+        {
+            if (!tids || count == 0)
+            {
+                return false;
+            }
+
+            if (count < 10)
+            {
+                return false;
+            }
+
+            size_t uncompressed_size = count * sizeof(OnDiskTID);
+            size_t compressed_size = estimate_compressed_size_tid(tids, count);
+
             return (compressed_size * 10) < (uncompressed_size * 9);
         }
 

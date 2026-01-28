@@ -193,15 +193,13 @@ Status TIDResolver::recordMigration(
 
     TableMigrationData &data = it->second;
 
-    // Convert TIDs to legacy format
-    uint64_t source_tid_legacy = convertTIDtoLegacy(source_tid);
-    uint64_t target_tid_legacy = convertTIDtoLegacy(target_tid);
+    uint64_t source_hash = hashTID(source_tid);
 
     // Insert into bloom filter
-    data.bloom->insert(source_tid_legacy);
+    data.bloom->insert(source_hash);
 
     // Store exact mapping
-    data.tid_mapping[source_tid_legacy] = target_tid_legacy;
+    data.tid_mapping[source_tid] = target_tid;
 
     return Status::OK;
 }
@@ -240,11 +238,10 @@ uint16_t TIDResolver::resolveTablespace(
 
     TableMigrationData &data = it->second;
 
-    // Convert TID to legacy format
-    uint64_t legacy_tid = convertTIDtoLegacy(tid);
+    uint64_t tid_hash = hashTID(tid);
 
     // Step 1: Bloom filter check (very fast, ~1-2 ns)
-    if (!data.bloom->contains(legacy_tid)) {
+    if (!data.bloom->contains(tid_hash)) {
         // Definitely NOT migrated → source tablespace
         bloom_true_negatives_++;
         uint16_t result = table_info.tablespace_id; // Source
@@ -255,7 +252,7 @@ uint16_t TIDResolver::resolveTablespace(
     }
 
     // Step 2: Bloom says "probably migrated" → check exact mapping
-    auto mapping_it = data.tid_mapping.find(legacy_tid);
+    auto mapping_it = data.tid_mapping.find(tid);
     if (mapping_it != data.tid_mapping.end()) {
         // Confirmed migrated → target tablespace
         bloom_true_positives_++;
@@ -275,7 +272,7 @@ uint16_t TIDResolver::resolveTablespace(
     return result;
 }
 
-std::unordered_map<uint64_t, uint64_t> TIDResolver::getAllMappings(
+std::unordered_map<TID, TID> TIDResolver::getAllMappings(
     const ID &table_id,
     ErrorContext *ctx)
 {

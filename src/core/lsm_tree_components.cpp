@@ -219,7 +219,7 @@ Status Memtable::getAllEntries(std::vector<MemtableEntry> *entries_out,
     return Status::OK;
 }
 
-Status Memtable::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+Status Memtable::updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,
                                           uint64_t *entries_updated_out,
                                           ErrorContext *ctx)
 {
@@ -257,14 +257,22 @@ Status Memtable::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uin
                 gpid |= (static_cast<uint64_t>(entry.value[i]) << (i * 8));
             }
 
-            auto it = tid_mapping.find(gpid);
+            uint16_t slot = 0;
+            slot |= static_cast<uint16_t>(entry.value[sizeof(uint64_t)]);
+            slot |= static_cast<uint16_t>(entry.value[sizeof(uint64_t) + 1]) << 8;
+
+            TID old_tid{gpid, slot};
+
+            auto it = tid_mapping.find(old_tid);
             if (it != tid_mapping.end())
             {
-                uint64_t new_gpid = it->second;
+                TID new_tid = it->second;
                 for (size_t i = 0; i < sizeof(uint64_t); ++i)
                 {
-                    entry.value[i] = static_cast<uint8_t>((new_gpid >> (i * 8)) & 0xFF);
+                    entry.value[i] = static_cast<uint8_t>((new_tid.gpid >> (i * 8)) & 0xFF);
                 }
+                entry.value[sizeof(uint64_t)] = static_cast<uint8_t>(new_tid.slot & 0xFF);
+                entry.value[sizeof(uint64_t) + 1] = static_cast<uint8_t>((new_tid.slot >> 8) & 0xFF);
                 updated++;
             }
         }
@@ -273,6 +281,49 @@ Status Memtable::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uin
     if (entries_updated_out != nullptr)
     {
         *entries_updated_out = updated;
+    }
+
+    return Status::OK;
+}
+
+Status Memtable::removeEntriesIf(const std::function<bool(const MemtableEntry &)> &predicate,
+                                 uint64_t *entries_removed_out,
+                                 ErrorContext *ctx)
+{
+    if (entries_removed_out)
+    {
+        *entries_removed_out = 0;
+    }
+
+    if (!predicate)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "predicate is empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    uint64_t removed = 0;
+    for (auto it = entries_.begin(); it != entries_.end(); )
+    {
+        auto &versions = it->second;
+        size_t before = versions.size();
+        versions.erase(std::remove_if(versions.begin(), versions.end(), predicate), versions.end());
+        removed += static_cast<uint64_t>(before - versions.size());
+
+        if (versions.empty())
+        {
+            it = entries_.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (entries_removed_out)
+    {
+        *entries_removed_out = removed;
     }
 
     return Status::OK;
@@ -322,6 +373,10 @@ Status SSTableWriter::open(ErrorContext *ctx)
     // Initialize Bloom filter (estimate ~10K keys, 1% false positive rate)
     // This will be resized dynamically if needed
     bloom_filter_ = std::make_unique<LSMBloomFilter>(10000, 0.01);
+    tid_bloom_filter_ = std::make_unique<LSMBloomFilter>(10000, 0.01);
+    min_tid_ = INVALID_TID;
+    max_tid_ = INVALID_TID;
+    tid_entries_ = 0;
 
     return Status::OK;
 }
@@ -344,6 +399,46 @@ Status SSTableWriter::addEntry(const std::vector<uint8_t> &key,
     if (bloom_filter_)
     {
         bloom_filter_->add(key);
+    }
+
+    if (value.size() == (sizeof(uint64_t) + sizeof(uint16_t)))
+    {
+        uint64_t gpid = 0;
+        for (size_t i = 0; i < sizeof(uint64_t); ++i)
+        {
+            gpid |= (static_cast<uint64_t>(value[i]) << (i * 8));
+        }
+        uint16_t slot = 0;
+        slot |= static_cast<uint16_t>(value[sizeof(uint64_t)]);
+        slot |= static_cast<uint16_t>(value[sizeof(uint64_t) + 1]) << 8;
+
+        TID tid{gpid, slot};
+        if (!min_tid_.isValid())
+        {
+            min_tid_ = tid;
+            max_tid_ = tid;
+        }
+        else
+        {
+            if (tid < min_tid_)
+            {
+                min_tid_ = tid;
+            }
+            if (max_tid_ < tid)
+            {
+                max_tid_ = tid;
+            }
+        }
+
+        if (tid_bloom_filter_)
+        {
+            OnDiskTID on_disk = toOnDiskTID(tid);
+            std::vector<uint8_t> tid_bytes(sizeof(OnDiskTID));
+            std::memcpy(tid_bytes.data(), &on_disk, sizeof(OnDiskTID));
+            tid_bloom_filter_->add(tid_bytes);
+        }
+
+        tid_entries_++;
     }
 
     // Update min/max keys
@@ -450,6 +545,32 @@ Status SSTableWriter::finish(ErrorContext *ctx)
     uint8_t compression_byte = static_cast<uint8_t>(compression_type_);
     footer.push_back(compression_byte);
 
+    // TID metadata (optional)
+    uint8_t tid_meta_present = (tid_entries_ > 0 && tid_bloom_filter_) ? 1 : 0;
+    footer.push_back(tid_meta_present);
+    if (tid_meta_present)
+    {
+        OnDiskTID min_tid_disk = toOnDiskTID(min_tid_);
+        OnDiskTID max_tid_disk = toOnDiskTID(max_tid_);
+        footer.insert(footer.end(),
+                      reinterpret_cast<uint8_t *>(&min_tid_disk),
+                      reinterpret_cast<uint8_t *>(&min_tid_disk) + sizeof(OnDiskTID));
+        footer.insert(footer.end(),
+                      reinterpret_cast<uint8_t *>(&max_tid_disk),
+                      reinterpret_cast<uint8_t *>(&max_tid_disk) + sizeof(OnDiskTID));
+        footer.insert(footer.end(),
+                      reinterpret_cast<uint8_t *>(&tid_entries_),
+                      reinterpret_cast<uint8_t *>(&tid_entries_) + sizeof(tid_entries_));
+
+        std::vector<uint8_t> tid_bloom_data;
+        tid_bloom_filter_->serialize(&tid_bloom_data);
+        uint32_t tid_bloom_size = static_cast<uint32_t>(tid_bloom_data.size());
+        footer.insert(footer.end(),
+                      reinterpret_cast<uint8_t *>(&tid_bloom_size),
+                      reinterpret_cast<uint8_t *>(&tid_bloom_size) + sizeof(tid_bloom_size));
+        footer.insert(footer.end(), tid_bloom_data.begin(), tid_bloom_data.end());
+    }
+
     // Footer magic number (to verify footer integrity)
     const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL" in hex
     footer.insert(footer.end(), (uint8_t *)&FOOTER_MAGIC, (uint8_t *)&FOOTER_MAGIC + sizeof(FOOTER_MAGIC));
@@ -545,6 +666,11 @@ Status SSTableReader::open(ErrorContext *ctx)
         return Status::IO_ERROR;
     }
     file_size_ = size;
+    has_tid_metadata_ = false;
+    min_tid_ = INVALID_TID;
+    max_tid_ = INVALID_TID;
+    tid_count_ = 0;
+    tid_bloom_filter_.reset();
 
     // Footer format: [min_key][max_key][num_entries][index][bloom_filter_size][bloom_data][magic]
     // Trailer (new): [footer_size(uint32)][magic(uint32)] to locate variable-sized footer.
@@ -737,6 +863,51 @@ Status SSTableReader::open(ErrorContext *ctx)
         // Older SSTable without compression info - assume no compression
         compression_type_ = CompressionType::NONE;
         compressor_ = CompressionFactory::create(CompressionType::NONE);
+    }
+
+    size_t remaining = (pos <= footer.size()) ? (footer.size() - pos) : 0;
+    if (remaining > sizeof(uint32_t))
+    {
+        uint8_t tid_meta_present = footer[pos];
+        pos += sizeof(uint8_t);
+        remaining = (pos <= footer.size()) ? (footer.size() - pos) : 0;
+
+        if (tid_meta_present != 0)
+        {
+            if (remaining < (sizeof(OnDiskTID) * 2 + sizeof(uint64_t) + sizeof(uint32_t)))
+            {
+                ::close(fd_);
+                fd_ = -1;
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "SSTable TID metadata incomplete");
+                return Status::PAGE_CORRUPT;
+            }
+
+            OnDiskTID min_tid_disk{};
+            OnDiskTID max_tid_disk{};
+            std::memcpy(&min_tid_disk, footer.data() + pos, sizeof(OnDiskTID));
+            pos += sizeof(OnDiskTID);
+            std::memcpy(&max_tid_disk, footer.data() + pos, sizeof(OnDiskTID));
+            pos += sizeof(OnDiskTID);
+
+            std::memcpy(&tid_count_, footer.data() + pos, sizeof(tid_count_));
+            pos += sizeof(tid_count_);
+
+            uint32_t tid_bloom_size = 0;
+            std::memcpy(&tid_bloom_size, footer.data() + pos, sizeof(tid_bloom_size));
+            pos += sizeof(tid_bloom_size);
+
+            if (tid_bloom_size > 0 && pos + tid_bloom_size <= footer.size())
+            {
+                std::vector<uint8_t> tid_bloom_data(footer.begin() + pos,
+                                                    footer.begin() + pos + tid_bloom_size);
+                tid_bloom_filter_.reset(LSMBloomFilter::deserialize(tid_bloom_data));
+                pos += tid_bloom_size;
+            }
+
+            min_tid_ = fromOnDiskTID(min_tid_disk);
+            max_tid_ = fromOnDiskTID(max_tid_disk);
+            has_tid_metadata_ = true;
+        }
     }
 
     // Footer magic (optional verification)

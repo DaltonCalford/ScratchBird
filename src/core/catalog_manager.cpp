@@ -1531,10 +1531,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             {"HASH", CatalogManager::IndexType::HASH},
             {"HNSW", CatalogManager::IndexType::HNSW},
             {"VECTOR", CatalogManager::IndexType::HNSW},  // Alias
+            {"IVF", CatalogManager::IndexType::IVF},
             {"FULLTEXT", CatalogManager::IndexType::FULLTEXT},
             {"GIN", CatalogManager::IndexType::GIN},
             {"GIST", CatalogManager::IndexType::GIST},
             {"BRIN", CatalogManager::IndexType::BRIN},
+            {"ZONEMAP", CatalogManager::IndexType::ZONEMAP},
+            {"ZONE_MAP", CatalogManager::IndexType::ZONEMAP},
             {"RTREE", CatalogManager::IndexType::RTREE},
             {"R-TREE", CatalogManager::IndexType::RTREE},  // Alias
             {"SPGIST", CatalogManager::IndexType::SPGIST},
@@ -1565,10 +1568,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             case CatalogManager::IndexType::BTREE: return "BTREE";
             case CatalogManager::IndexType::HASH: return "HASH";
             case CatalogManager::IndexType::HNSW: return "HNSW";
+            case CatalogManager::IndexType::IVF: return "IVF";
             case CatalogManager::IndexType::FULLTEXT: return "FULLTEXT";
             case CatalogManager::IndexType::GIN: return "GIN";
             case CatalogManager::IndexType::GIST: return "GIST";
             case CatalogManager::IndexType::BRIN: return "BRIN";
+            case CatalogManager::IndexType::ZONEMAP: return "ZONEMAP";
             case CatalogManager::IndexType::RTREE: return "RTREE";
             case CatalogManager::IndexType::SPGIST: return "SPGIST";
             case CatalogManager::IndexType::BITMAP: return "BITMAP";
@@ -11553,7 +11558,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
      * after the table has been migrated to a different tablespace.
      *
      * @param table_id Table ID whose indexes need updating
-     * @param tid_mapping Map of old GPID -> new GPID for heap pages
+     * @param page_mapping Map of old GPID -> new GPID for heap pages
+     * @param tid_mapping_out Map of old TID -> new TID for tuples (optional)
      * @param ctx Error context
      * @return Status::OK on success, error status otherwise
      */
@@ -11670,7 +11676,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                                     void *target_buffer,
                                                     GPID source_gpid,
                                                     GPID target_gpid,
-                                                    const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                                    const std::unordered_map<GPID, GPID> &page_mapping,
+                                                    std::unordered_map<TID, TID> *tid_mapping_out,
                                                     ErrorContext *ctx)
     {
         // ===== STEP 1: Validate source page =====
@@ -11756,6 +11763,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
             tuples_updated++;
 
+            if (tid_mapping_out)
+            {
+                tid_mapping_out->emplace(TID{source_gpid, slot}, TID{target_gpid, slot});
+            }
+
             // Update back_version_gpid if it references a migrated page
             if (target_tuple_header->back_version_gpid != INVALID_GPID &&
                 target_tuple_header->back_version_gpid != 0)
@@ -11763,8 +11775,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 GPID old_back_gpid = target_tuple_header->back_version_gpid;
 
                 // Check if this GPID was migrated
-                auto it = tid_mapping.find(old_back_gpid);
-                if (it != tid_mapping.end())
+                auto it = page_mapping.find(old_back_gpid);
+                if (it != page_mapping.end())
                 {
                     // Update to new GPID
                     GPID new_back_gpid = it->second;
@@ -11802,7 +11814,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
      * pages that were allocated in the target tablespace to prevent disk space leaks.
      *
      * Algorithm:
-     * 1. Iterate all entries in tid_mapping (old_gpid → new_gpid)
+     * 1. Iterate all entries in page_mapping (old_gpid → new_gpid)
      * 2. Extract new_gpid (target page allocated during migration)
      * 3. Free the target page using PageManager::freePageGlobal()
      * 4. Continue freeing even if some pages fail (log orphaned pages)
@@ -11810,29 +11822,29 @@ std::string makeUDRModuleNameKey(const std::string& name) {
      *
      * Note: This does NOT deallocate source pages - they remain in the source tablespace.
      *
-     * @param tid_mapping Map of old GPID → new GPID from migration
+     * @param page_mapping Map of old GPID → new GPID from migration
      * @param ctx Error context for detailed error reporting
      * @return Status::OK if all pages freed, Status::IO_ERROR if some failed
      */
     Status CatalogManager::rollbackPageMigration(
-        const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+        const std::unordered_map<GPID, GPID> &page_mapping,
         ErrorContext *ctx)
     {
-        if (tid_mapping.empty())
+        if (page_mapping.empty())
         {
-            LOG_INFO(CATALOG, "rollbackPageMigration: No pages to rollback (tid_mapping empty)");
+            LOG_INFO(CATALOG, "rollbackPageMigration: No pages to rollback (page_mapping empty)");
             return Status::OK;
         }
 
         LOG_WARNING(CATALOG, "rollbackPageMigration: Rolling back %zu migrated pages",
-                   tid_mapping.size());
+                   page_mapping.size());
 
         uint32_t pages_freed = 0;
         uint32_t pages_failed = 0;
         std::vector<GPID> orphaned_pages; // Track pages that failed to free
 
         // Iterate all target pages and free them
-        for (const auto &[old_gpid, new_gpid] : tid_mapping)
+        for (const auto &[old_gpid, new_gpid] : page_mapping)
         {
             // Free the target page (new_gpid)
             Status free_status = db_->page_manager()->freePageGlobal(new_gpid, ctx);
@@ -11845,7 +11857,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 if (pages_freed % 1000 == 0)
                 {
                     LOG_INFO(CATALOG, "Rollback progress: %u / %zu pages freed",
-                            pages_freed, tid_mapping.size());
+                            pages_freed, page_mapping.size());
                 }
             }
             else
@@ -11895,7 +11907,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     // === PHASE 4, TASK 4.1.5: Index TID Updates ===
 
     Status CatalogManager::updateIndexTIDs(const ID &table_id,
-                                           const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                           const std::unordered_map<TID, TID> &tid_mapping,
                                            ErrorContext *ctx)
     {
         LOG_INFO(CATALOG, "updateIndexTIDs: Starting index TID update for table");
@@ -11936,8 +11948,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // 1. Open the index structure (B-Tree, Hash, etc.)
             // 2. Scan all index entries
             // 3. For each entry containing a TID (GPID):
-            //    a. Check if TID is in tid_mapping (old GPID)
-            //    b. If yes, replace with new GPID from mapping
+            //    a. Check if TID is in tid_mapping (old TID)
+            //    b. If yes, replace with new TID from mapping
             //    c. Write updated entry back to index
             // 4. Close index structure
 
@@ -12067,6 +12079,45 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                         SET_ERROR_CONTEXT(ctx, update_status,
                                         "Failed to update TIDs in HNSW index");
                         LOG_ERROR(CATALOG, "HNSW TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu TIDs across %lu pages",
+                            index_info.index_name.c_str(), tids_updated, pages_modified);
+                    total_tids_updated += tids_updated;
+                    total_pages_modified += pages_modified;
+                }
+                break;
+
+            case IndexType::IVF:
+                {
+                    LOG_INFO(CATALOG, "Index '%s': IVF index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<HnswIndex> hnsw_index = HnswIndex::open(db_, index_info.index_id,
+                                                                            index_info.root_gpid, ctx);
+                    if (!hnsw_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open IVF index");
+                        LOG_ERROR(CATALOG, "Failed to open IVF index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t tids_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = hnsw_index->updateTIDsAfterMigration(tid_mapping,
+                                                                                &tids_updated,
+                                                                                &pages_modified,
+                                                                                ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in IVF index");
+                        LOG_ERROR(CATALOG, "IVF TID update failed for index '%s': %d",
                                  index_info.index_name.c_str(),
                                  static_cast<int>(update_status));
                         return update_status;
@@ -12223,6 +12274,44 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                         SET_ERROR_CONTEXT(ctx, update_status,
                                         "Failed to update TIDs in BRIN index");
                         LOG_ERROR(CATALOG, "BRIN TID update failed for index '%s': %d",
+                                 index_info.index_name.c_str(),
+                                 static_cast<int>(update_status));
+                        return update_status;
+                    }
+
+                    LOG_INFO(CATALOG, "Index '%s': Updated %lu ranges across %lu pages",
+                            index_info.index_name.c_str(), ranges_updated, pages_modified);
+                    total_pages_modified += pages_modified;
+                }
+                break;
+
+            case IndexType::ZONEMAP:
+                {
+                    LOG_INFO(CATALOG, "Index '%s': ZONEMAP index - updating TIDs",
+                            index_info.index_name.c_str());
+
+                    std::unique_ptr<BrinIndex> brin_index = BrinIndex::open(db_, index_info.index_id,
+                                                                            index_info.root_gpid, ctx);
+                    if (!brin_index)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        "Failed to open ZONEMAP index");
+                        LOG_ERROR(CATALOG, "Failed to open ZONEMAP index '%s' (root page %u)",
+                                 index_info.index_name.c_str(), root_page);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t ranges_updated = 0;
+                    uint64_t pages_modified = 0;
+                    Status update_status = brin_index->updateTIDsAfterMigration(tid_mapping,
+                                                                                &ranges_updated,
+                                                                                &pages_modified,
+                                                                                ctx);
+                    if (update_status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, update_status,
+                                        "Failed to update TIDs in ZONEMAP index");
+                        LOG_ERROR(CATALOG, "ZONEMAP TID update failed for index '%s': %d",
                                  index_info.index_name.c_str(),
                                  static_cast<int>(update_status));
                         return update_status;
@@ -12597,9 +12686,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         LOG_INFO(CATALOG, "Table '%s': %u heap pages to migrate",
                 table_info.table_name.c_str(), total_pages);
 
-        // Initialize TID mapping for tracking old GPID -> new GPID
-        // This will be populated during page migration (if table is non-empty)
-        std::unordered_map<uint64_t, uint64_t> tid_mapping;
+        // Track page migration (old GPID -> new GPID) for rollback/free operations.
+        std::unordered_map<GPID, GPID> page_mapping;
+        // Track tuple migration (old TID -> new TID) for index updates.
+        std::unordered_map<TID, TID> tid_mapping;
 
         // Handle non-empty tables - perform batch processing
         if (total_pages > 0)
@@ -12687,7 +12777,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // Memory tracking (Phase 4 Task 4.1.4)
             // Estimate memory usage for this batch:
             // - Heap pages: this_batch_size * 8KB
-            // - TID mapping: this_batch_size * 32 bytes (old GPID -> new GPID)
+            // - Page mapping: this_batch_size * 32 bytes (old GPID -> new GPID)
             // - Overhead: ~5% for data structures
             size_t heap_memory_kb = this_batch_size * 8;
             size_t tid_mapping_kb = (this_batch_size * 32) / 1024;
@@ -12721,7 +12811,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     LOG_ERROR(CATALOG, "Failed to pin source page GPID=%016lx at index %u (batch %u/%u)",
                              source_gpid, pages_copied, current_batch, total_batches);
                     // Rollback: Deallocate all target pages allocated so far
-                    rollbackPageMigration(tid_mapping, ctx);
+                    rollbackPageMigration(page_mapping, ctx);
                     return pin_status;
                 }
 
@@ -12735,7 +12825,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     LOG_ERROR(CATALOG, "Failed to allocate page in tablespace %u at index %u (batch %u/%u)",
                              target_tablespace_id, pages_copied, current_batch, total_batches);
                     // Rollback: Deallocate all target pages allocated so far
-                    rollbackPageMigration(tid_mapping, ctx);
+                    rollbackPageMigration(page_mapping, ctx);
                     return alloc_status;
                 }
 
@@ -12751,14 +12841,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     LOG_ERROR(CATALOG, "Failed to pin target page GPID=%016lx at index %u (batch %u/%u)",
                              target_gpid, pages_copied, current_batch, total_batches);
                     // Rollback: Deallocate all previously copied pages
-                    rollbackPageMigration(tid_mapping, ctx);
+                    rollbackPageMigration(page_mapping, ctx);
                     return pin_status;
                 }
 
                 // Step 4: Copy page with TID remapping
                 Status copy_status = copyPageWithTIDRemapping(source_buffer, target_buffer,
                                                              source_gpid, target_gpid,
-                                                             tid_mapping, ctx);
+                                                             page_mapping, &tid_mapping, ctx);
                 if (copy_status != Status::OK)
                 {
                     db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
@@ -12769,7 +12859,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     LOG_ERROR(CATALOG, "Failed to copy page %016lx -> %016lx at index %u (batch %u/%u)",
                              source_gpid, target_gpid, pages_copied, current_batch, total_batches);
                     // Rollback: Deallocate all previously copied pages
-                    rollbackPageMigration(tid_mapping, ctx);
+                    rollbackPageMigration(page_mapping, ctx);
                     return copy_status;
                 }
 
@@ -12778,8 +12868,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx); // Source not modified
                 db_->buffer_pool()->unpinPageGlobal(target_gpid, true, ctx);  // Target is dirty
 
-                // Step 7: Update TID mapping (old GPID -> new GPID)
-                tid_mapping[source_gpid] = target_gpid;
+                // Step 7: Update page mapping (old GPID -> new GPID)
+                page_mapping[source_gpid] = target_gpid;
 
                 pages_copied++;
 
@@ -12805,7 +12895,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                         LOG_WARNING(CATALOG, "Migration cancelled by progress callback at page %u/%u (batch %u/%u)",
                                   pages_copied, total_pages, current_batch, total_batches);
                         // Rollback: Deallocate all copied pages
-                        rollbackPageMigration(tid_mapping, ctx);
+                        rollbackPageMigration(page_mapping, ctx);
                         return Status::CANCELLED;
                     }
                 }
@@ -12832,7 +12922,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // TOAST pointers are stored in tuple data and need to be updated to point to
         // the migrated TOAST chunks (if TOAST table was migrated)
 
-        if (table_info.has_toast && !is_zero_uuid(table_info.toast_table_id) && !tid_mapping.empty())
+        if (table_info.has_toast && !is_zero_uuid(table_info.toast_table_id) && !page_mapping.empty())
         {
             LOG_INFO(CATALOG, "Updating TOAST pointers in migrated table pages");
 
@@ -12841,7 +12931,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             uint64_t pages_with_toast = 0;
 
             // Scan all migrated pages (target pages) to find and update TOAST pointers
-            for (const auto &[old_gpid, new_gpid] : tid_mapping)
+            for (const auto &[old_gpid, new_gpid] : page_mapping)
             {
                 void *page_buffer = nullptr;
                 Status pin_status = db_->buffer_pool()->pinPageGlobal(new_gpid, &page_buffer, ctx);
@@ -12934,7 +13024,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             SET_ERROR_CONTEXT(ctx, index_status, "Failed to update index TIDs");
             LOG_ERROR(CATALOG, "Index TID update failed, migration aborted");
             // Rollback: Deallocate all copied pages
-            rollbackPageMigration(tid_mapping, ctx);
+            rollbackPageMigration(page_mapping, ctx);
             return index_status;
         }
 
@@ -12965,15 +13055,15 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // ===== STEP 8: Deallocate source pages (Phase 5 Task 5.1.4) =====
         // After successful migration, free the source pages to reclaim disk space
-        if (!tid_mapping.empty())
+        if (!page_mapping.empty())
         {
             LOG_INFO(CATALOG, "Deallocating %zu source pages from tablespace %u",
-                    tid_mapping.size(), source_tablespace_id);
+                    page_mapping.size(), source_tablespace_id);
 
             uint32_t pages_freed = 0;
             uint32_t pages_failed = 0;
 
-            for (const auto &[old_gpid, new_gpid] : tid_mapping)
+            for (const auto &[old_gpid, new_gpid] : page_mapping)
             {
                 // Free the source page (old_gpid)
                 Status free_status = db_->page_manager()->freePageGlobal(old_gpid, ctx);
@@ -12986,7 +13076,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     if (pages_freed % 1000 == 0)
                     {
                         LOG_INFO(CATALOG, "Source page deallocation progress: %u / %zu pages freed",
-                                pages_freed, tid_mapping.size());
+                                pages_freed, page_mapping.size());
                     }
                 }
                 else
@@ -13664,8 +13754,8 @@ Status CatalogManager::executeOnlineMigrationCopyingPhase(
     state.pages_copied = 0;
     lock.unlock();
 
-    // ===== STEP 3: TID mapping and progress tracking =====
-    std::unordered_map<uint64_t, uint64_t> tid_mapping;
+    // ===== STEP 3: Page mapping and progress tracking =====
+    std::unordered_map<GPID, GPID> page_mapping;
     uint32_t pages_copied = 0;
     uint64_t bytes_copied = 0;
     auto last_log_time = std::chrono::steady_clock::now();
@@ -13709,7 +13799,7 @@ Status CatalogManager::executeOnlineMigrationCopyingPhase(
         // Copy page with TID remapping
         status = copyPageWithTIDRemapping(source_buffer, target_buffer,
                                          source_gpid, target_gpid,
-                                         tid_mapping, ctx);
+                                         page_mapping, nullptr, ctx);
         if (status != Status::OK)
         {
             db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
@@ -13724,6 +13814,8 @@ Status CatalogManager::executeOnlineMigrationCopyingPhase(
         // Unpin pages
         db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);  // Source not modified
         db_->buffer_pool()->unpinPageGlobal(target_gpid, true, ctx);   // Target is dirty
+
+        page_mapping[source_gpid] = target_gpid;
 
         // Record TID mappings in TIDResolver
         // Assume max 256 slots per page (conservative estimate)
@@ -13822,8 +13914,8 @@ Status CatalogManager::executeOnlineMigrationCatchUpPhase(
     // Release lock for long-running operations
     lock.unlock();
 
-    // ===== STEP 2: TID mapping =====
-    std::unordered_map<uint64_t, uint64_t> tid_mapping;
+    // ===== STEP 2: Page mapping =====
+    std::unordered_map<GPID, GPID> page_mapping;
 
     // ===== STEP 3: Iterative catch-up loop =====
     uint32_t iteration = 0;
@@ -13891,7 +13983,7 @@ Status CatalogManager::executeOnlineMigrationCatchUpPhase(
             // Copy page with TID remapping
             status = copyPageWithTIDRemapping(source_buffer, target_buffer,
                                              source_gpid, target_gpid,
-                                             tid_mapping, ctx);
+                                             page_mapping, nullptr, ctx);
             if (status != Status::OK)
             {
                 db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
@@ -13906,6 +13998,8 @@ Status CatalogManager::executeOnlineMigrationCatchUpPhase(
             // Unpin pages
             db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
             db_->buffer_pool()->unpinPageGlobal(target_gpid, true, ctx);
+
+            page_mapping[source_gpid] = target_gpid;
 
             // Update TID mappings in TIDResolver
             for (uint16_t slot = 0; slot < 256; slot++)
@@ -14013,7 +14107,7 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     lock.unlock();
 
     // ===== STEP 2: Get TID mappings from TIDResolver =====
-    std::unordered_map<uint64_t, uint64_t> tid_mapping =
+    std::unordered_map<TID, TID> tid_mapping =
         db_->tid_resolver()->getAllMappings(table_id, ctx);
 
     LOG_INFO(CATALOG, "Retrieved %zu TID mappings from TIDResolver",

@@ -1039,7 +1039,7 @@ namespace scratchbird
         }
 
         Status BitmapIndex::updateTIDsAfterMigration(
-            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            const std::unordered_map<TID, TID> &tid_mapping,
             uint64_t *tids_updated_out,
             uint64_t *pages_modified_out,
             ErrorContext *ctx)
@@ -1503,7 +1503,7 @@ namespace scratchbird
         }
 
         Status RoaringBitmap::updateTIDsAfterMigration(
-            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            const std::unordered_map<TID, TID> &tid_mapping,
             uint64_t *tids_updated_out,
             uint64_t *pages_modified_out,
             ErrorContext *ctx)
@@ -1523,6 +1523,13 @@ namespace scratchbird
                 return Status::OK;
             }
 
+            std::unordered_map<uint64_t, uint64_t> gpid_mapping;
+            gpid_mapping.reserve(tid_mapping.size());
+            for (const auto &pair : tid_mapping)
+            {
+                gpid_mapping.emplace(pair.first.gpid, pair.second.gpid);
+            }
+
             struct BuildContainer
             {
                 uint64_t key = 0;
@@ -1537,8 +1544,8 @@ namespace scratchbird
             {
                 uint64_t old_key = container.key;
                 uint64_t new_key = old_key;
-                auto map_it = tid_mapping.find(old_key);
-                if (map_it != tid_mapping.end())
+                auto map_it = gpid_mapping.find(old_key);
+                if (map_it != gpid_mapping.end())
                 {
                     new_key = map_it->second;
                 }
