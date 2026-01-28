@@ -25,7 +25,7 @@ Out of scope:
 ## Work Breakdown
 
 ### 1) SBLR Opcode Definitions
-- [ ] Add planned opcodes to `ScratchBird/include/scratchbird/sblr/opcodes.h`.
+- [x] Add planned opcodes to `ScratchBird/include/scratchbird/sblr/opcodes.h`.
   - EXT_EXPR_DIV_INT
   - EXT_PRED_STARTING_WITH
   - EXT_PRED_CONTAINING
@@ -40,30 +40,30 @@ Out of scope:
   - EXT_FUNC_TO_TIMESTAMP
   - EXT_FUNC_LEAST
   - EXT_FUNC_GREATEST
-- [ ] Keep `ScratchBird/docs/specifications/sblr/SBLR_OPCODE_REGISTRY.md` in sync.
+- [x] Keep `ScratchBird/docs/specifications/sblr/SBLR_OPCODE_REGISTRY.md` in sync.
 
 ### 2) Parser (V2)
-- [ ] Lexer: add keywords `DIV`, `STARTING`, `CONTAINING`.
+- [x] Lexer: add keywords `DIV`, `STARTING`, `CONTAINING`.
   - File: `ScratchBird/src/parser/lexer_v2.cpp`.
-- [ ] Parser expressions:
-  - [ ] `expr DIV expr` -> EXT_EXPR_DIV_INT.
-  - [ ] `expr [NOT] STARTING WITH expr` -> EXT_PRED_STARTING_WITH.
-  - [ ] `expr [NOT] CONTAINING expr` -> EXT_PRED_CONTAINING.
+- [x] Parser expressions:
+  - [x] `expr DIV expr` -> EXT_EXPR_DIV_INT.
+  - [x] `expr [NOT] STARTING WITH expr` -> EXT_PRED_STARTING_WITH.
+  - [x] `expr [NOT] CONTAINING expr` -> EXT_PRED_CONTAINING.
   - Files: `ScratchBird/src/parser/parser_v2.cpp`, `ScratchBird/src/parser/ast_v2.cpp`.
-- [ ] Function recognition:
+- [x] Function recognition:
   - Map REPLACE/ENDS_WITH/ARRAY_POSITION/ARRAY_SLICE/JSON_EXISTS/JSON_HAS_KEY/
     TO_CHAR/TO_DATE/TO_TIMESTAMP/LEAST/GREATEST to new opcodes.
   - Files: `ScratchBird/src/parser/parser_v2.cpp`, `ScratchBird/src/parser/parser_state_v2.cpp`.
-- [ ] Array slice syntax `expr[lo:hi]` -> EXT_ARRAY_SLICE
+- [x] Array slice syntax `expr[lo:hi]` -> EXT_ARRAY_SLICE
   - File: `ScratchBird/src/parser/ast_v2.cpp` (ensure AST node supports slice).
 
 ### 3) Bytecode Generator
-- [ ] Emit new opcodes for the added operators/functions.
-- [ ] Map `expr[lo:hi]` to EXT_ARRAY_SLICE payload.
+- [x] Emit new opcodes for the added operators/functions.
+- [x] Map `expr[lo:hi]` to EXT_ARRAY_SLICE payload.
   - File: `ScratchBird/src/sblr/bytecode_generator_v2.cpp`.
 
 ### 4) Executor
-- [ ] Implement new extended opcodes in `ScratchBird/src/sblr/executor.cpp`.
+- [x] Implement new extended opcodes in `ScratchBird/src/sblr/executor.cpp`.
   - DIV: integer division (truncate toward zero; division-by-zero error).
   - STARTING WITH: prefix match using collation-aware comparison.
   - CONTAINING: substring match with case-insensitive semantics per collation.
@@ -75,15 +75,15 @@ Out of scope:
   - TO_CHAR/TO_DATE/TO_TIMESTAMP: format parse/format using a Firebird-style format
     token set defined in spec.
   - LEAST/GREATEST: type promotion, ignore NULLs unless all NULL.
-- [ ] Native UNNEST:
+- [x] Native UNNEST:
   - Implement `Opcode::UNNEST` table-returning behavior (expand to rows) instead of
     returning arrays.
   - Consolidate existing `STRING_TO_TABLE` and `REGEXP_SPLIT_TO_TABLE` to follow the
     same table-returning execution path.
 
 ### 5) Tests
-- [ ] Unit tests for each new opcode in `ScratchBird/tests/unit`.
-- [ ] SQL parsing tests in `ScratchBird/tests/sql`.
+- [x] Unit tests for new opcodes in `ScratchBird/tests/unit`.
+- [x] SQL parsing tests in `ScratchBird/tests/sql`.
 - [ ] End-to-end tests (SELECT/WHERE predicates, array slices, JSON_EXISTS).
 
 ## Validation Checklist

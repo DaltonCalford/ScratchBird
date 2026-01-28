@@ -5644,6 +5644,15 @@ SelectItem* Parser::parseSelectItem() {
 
     // Check for table.* (qualified star)
     if (isIdentifier()) {
+        if (checkContextual("ARRAY")) {
+            Token next = state_.lexer().peekToken();
+            if (next.type == TokenType::LEFT_BRACKET) {
+                item->item_type = SelectItem::Type::EXPRESSION;
+                item->expr = parseExpression();
+                item->span = makeSpan(start);
+                return item;
+            }
+        }
         SchemaPath path = parseSchemaPath(state_);
         bool saw_trailing_dot = (previous().type == TokenType::DOT);
 
@@ -6845,6 +6854,21 @@ Expression* Parser::parseComparisonExpr() {
                 likeExpr->match_kind = LikeMatchKind::LIKE;
             }
             return expr;
+        } else if (match(TokenType::KW_STARTING)) {
+            expect(TokenType::KW_WITH, "Expected WITH after STARTING");
+            auto* expr = parseLikeExpr(left);
+            if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+                likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::STARTING;
+            }
+            return expr;
+        } else if (match(TokenType::KW_CONTAINING)) {
+            auto* expr = parseLikeExpr(left);
+            if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+                likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::CONTAINING;
+            }
+            return expr;
         } else if (matchContextual("ILIKE")) {
             auto* expr = parseLikeExpr(left);
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
@@ -6863,7 +6887,7 @@ Expression* Parser::parseComparisonExpr() {
             }
             return expr;
         }
-        error("Expected IN, BETWEEN, LIKE, ILIKE, or SIMILAR after NOT");
+        error("Expected IN, BETWEEN, LIKE, STARTING, CONTAINING, ILIKE, or SIMILAR after NOT");
         return left;
     }
 
@@ -6882,6 +6906,23 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = parseLikeExpr(left);
         if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
             likeExpr->match_kind = LikeMatchKind::LIKE;
+        }
+        return expr;
+    }
+
+    if (match(TokenType::KW_STARTING)) {
+        expect(TokenType::KW_WITH, "Expected WITH after STARTING");
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::STARTING;
+        }
+        return expr;
+    }
+
+    if (match(TokenType::KW_CONTAINING)) {
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::CONTAINING;
         }
         return expr;
     }
@@ -7020,6 +7061,21 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
                 likeExpr->match_kind = LikeMatchKind::LIKE;
             }
             return expr;
+        } else if (match(TokenType::KW_STARTING)) {
+            expect(TokenType::KW_WITH, "Expected WITH after STARTING");
+            auto* expr = parseLikeExpr(left);
+            if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+                likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::STARTING;
+            }
+            return expr;
+        } else if (match(TokenType::KW_CONTAINING)) {
+            auto* expr = parseLikeExpr(left);
+            if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+                likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::CONTAINING;
+            }
+            return expr;
         } else if (matchContextual("ILIKE")) {
             auto* expr = parseLikeExpr(left);
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
@@ -7037,7 +7093,7 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
             }
             return expr;
         }
-        error("Expected IN, BETWEEN, LIKE, ILIKE, or SIMILAR after NOT");
+        error("Expected IN, BETWEEN, LIKE, STARTING, CONTAINING, ILIKE, or SIMILAR after NOT");
         return left;
     }
 
@@ -7053,6 +7109,23 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
         auto* expr = parseLikeExpr(left);
         if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
             likeExpr->match_kind = LikeMatchKind::LIKE;
+        }
+        return expr;
+    }
+
+    if (match(TokenType::KW_STARTING)) {
+        expect(TokenType::KW_WITH, "Expected WITH after STARTING");
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::STARTING;
+        }
+        return expr;
+    }
+
+    if (match(TokenType::KW_CONTAINING)) {
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::CONTAINING;
         }
         return expr;
     }
@@ -7172,6 +7245,7 @@ Expression* Parser::parseMulExpr() {
         BinaryOp op;
         if (match(TokenType::STAR)) op = BinaryOp::MUL;
         else if (match(TokenType::SLASH)) op = BinaryOp::DIV;
+        else if (match(TokenType::KW_DIV)) op = BinaryOp::DIV_INT;
         else if (match(TokenType::PERCENT)) op = BinaryOp::MOD;
         else if (match(TokenType::ARROW)) op = BinaryOp::JSON_EXTRACT;
         else if (match(TokenType::DOUBLE_ARROW)) op = BinaryOp::JSON_EXTRACT_TEXT;
@@ -7194,6 +7268,7 @@ Expression* Parser::parseMulExprWithLeft(Expression* left) {
         BinaryOp op;
         if (match(TokenType::STAR)) op = BinaryOp::MUL;
         else if (match(TokenType::SLASH)) op = BinaryOp::DIV;
+        else if (match(TokenType::KW_DIV)) op = BinaryOp::DIV_INT;
         else if (match(TokenType::PERCENT)) op = BinaryOp::MOD;
         else if (match(TokenType::ARROW)) op = BinaryOp::JSON_EXTRACT;
         else if (match(TokenType::DOUBLE_ARROW)) op = BinaryOp::JSON_EXTRACT_TEXT;
@@ -7223,82 +7298,138 @@ Expression* Parser::parseUnaryExpr() {
 }
 
 Expression* Parser::parsePrimaryExpr() {
+    Expression* expr = nullptr;
+
     // Literals
     if (check(TokenType::INTEGER_LITERAL) || check(TokenType::FLOAT_LITERAL) ||
         check(TokenType::STRING_LITERAL) || check(TokenType::BLOB_LITERAL) ||
         check(TokenType::KW_TRUE) || check(TokenType::KW_FALSE) ||
         check(TokenType::KW_NULL)) {
-        return parseLiteral();
+        expr = parseLiteral();
     }
 
-    if (matchContextual("EXTRACT")) {
-        return parseExtractExpr();
+    if (!expr && matchContextual("EXTRACT")) {
+        expr = parseExtractExpr();
     }
 
-    if (matchContextual("ALTER_ELEMENT")) {
-        return parseAlterElementExpr();
+    if (!expr && matchContextual("ALTER_ELEMENT")) {
+        expr = parseAlterElementExpr();
     }
 
     // CAST expression
-    if (match(TokenType::KW_CAST)) {
-        return parseCastExpr();
+    if (!expr && match(TokenType::KW_CAST)) {
+        expr = parseCastExpr();
     }
 
     // CASE expression
-    if (match(TokenType::KW_CASE)) {
-        return parseCaseExpr();
+    if (!expr && match(TokenType::KW_CASE)) {
+        expr = parseCaseExpr();
     }
 
     // EXISTS expression
-    if (match(TokenType::KW_EXISTS)) {
-        return parseExistsExpr();
+    if (!expr && match(TokenType::KW_EXISTS)) {
+        expr = parseExistsExpr();
     }
 
     // ARRAY expression
-    if (matchContextual("ARRAY")) {
-        return parseArrayExpr();
+    if (!expr && matchContextual("ARRAY")) {
+        expr = parseArrayExpr();
     }
 
     // Parenthesized expression or subquery
-    if (check(TokenType::LEFT_PAREN)) {
+    if (!expr && check(TokenType::LEFT_PAREN)) {
         advance();
         if (check(TokenType::KW_SELECT) || check(TokenType::KW_WITH)) {
             // Scalar subquery
             auto* subq = arena_.create<SubqueryExpr>();
             subq->subquery = parseSelectWithClause();
             expect(TokenType::RIGHT_PAREN, "Expected ')' after subquery");
-            return subq;
+            expr = subq;
+        } else {
+            // Regular parenthesized expression
+            Expression* inner = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')'");
+            expr = inner;
         }
-        // Regular parenthesized expression
-        Expression* expr = parseExpression();
-        expect(TokenType::RIGHT_PAREN, "Expected ')'");
-        return expr;
     }
 
     // Column reference or function call
-    if (isIdentifier() || check(TokenType::DOT) || check(TokenType::DOUBLE_DOT)) {
+    if (!expr && (isIdentifier() || check(TokenType::DOT) || check(TokenType::DOUBLE_DOT))) {
         SchemaPath path = parseSchemaPath(state_);
 
         // Check for function call
         if (check(TokenType::LEFT_PAREN)) {
-            return parseFunctionCall(std::move(path));
-        }
-
-        // Column reference
-        auto* expr = arena_.create<ColumnRefExpr>();
-        if (path.components.size() == 1) {
-            expr->column.column_name = path.components[0];
+            expr = parseFunctionCall(std::move(path));
         } else {
-            expr->column.column_name = path.objectName();
-            expr->column.has_table_qualifier = true;
-            expr->column.table_path.type = path.type;
-            expr->column.table_path.components = path.schemaComponents();
+            // Column reference
+            auto* col = arena_.create<ColumnRefExpr>();
+            if (path.components.size() == 1) {
+                col->column.column_name = path.components[0];
+            } else {
+                col->column.column_name = path.objectName();
+                col->column.has_table_qualifier = true;
+                col->column.table_path.type = path.type;
+                col->column.table_path.components = path.schemaComponents();
+            }
+            expr = col;
         }
-        return expr;
     }
 
-    error("Expected expression");
-    return nullptr;
+    if (!expr) {
+        error("Expected expression");
+        return nullptr;
+    }
+
+    auto makeFunctionCall = [&](std::string_view name, std::vector<Expression*> args) -> FunctionCallExpr* {
+        auto* fn = arena_.create<FunctionCallExpr>();
+        fn->function_path.components.push_back(stringPool().intern(name));
+        fn->arguments = std::move(args);
+        return fn;
+    };
+
+    auto makeNullLiteral = [&]() -> LiteralExpr* {
+        auto* null_lit = arena_.create<LiteralExpr>();
+        null_lit->literal_type = LiteralType::NULL_VALUE;
+        return null_lit;
+    };
+
+    while (match(TokenType::LEFT_BRACKET)) {
+        Expression* lower = nullptr;
+        Expression* upper = nullptr;
+        bool is_slice = false;
+
+        if (!check(TokenType::COLON) && !check(TokenType::RIGHT_BRACKET)) {
+            lower = parseExpression();
+        }
+
+        if (match(TokenType::COLON)) {
+            is_slice = true;
+            if (!check(TokenType::RIGHT_BRACKET)) {
+                upper = parseExpression();
+            }
+        }
+
+        expect(TokenType::RIGHT_BRACKET, "Expected ']' after array subscript");
+
+        if (is_slice) {
+            std::vector<Expression*> args;
+            args.push_back(expr);
+            args.push_back(lower ? lower : makeNullLiteral());
+            args.push_back(upper ? upper : makeNullLiteral());
+            expr = makeFunctionCall("ARRAY_SLICE", std::move(args));
+        } else {
+            if (!lower) {
+                error("Expected array subscript expression");
+                return expr;
+            }
+            std::vector<Expression*> args;
+            args.push_back(expr);
+            args.push_back(lower);
+            expr = makeFunctionCall("ARRAY_SUBSCRIPT", std::move(args));
+        }
+    }
+
+    return expr;
 }
 
 Expression* Parser::parseLiteral() {

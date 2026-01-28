@@ -454,8 +454,7 @@ CREATE TABLESPACE ts_hot
 
 ### Status
 
-**NOT IMPLEMENTED IN V2 PARSER** - executor supports the opcode, but SQL parsing
-is not wired yet.
+**Implemented in V2 Parser** - `parseCreateTablespace()` handles CREATE TABLESPACE with LOCATION, AUTOEXTEND, AUTOEXTEND_SIZE, and MAXSIZE options.
 
 ---
 
@@ -486,8 +485,7 @@ ALTER TABLESPACE ts_archive RENAME TO ts_archive_readonly;
 
 ### Status
 
-**PARTIAL:** `ALTER TABLESPACE ... RENAME TO` (and `SET SCHEMA`) are parsed via
-the generic rename/move handler. Other ALTER TABLESPACE options are not parsed.
+**Implemented in V2 Parser** - `parseAlterTablespace()` supports AUTOEXTEND ON/OFF, AUTOEXTEND_SIZE, MAXSIZE, RENAME TO, SET SCHEMA, ATTACH, and DETACH operations.
 
 ---
 
@@ -513,7 +511,7 @@ DROP TABLESPACE ts_archive FORCE;
 
 ### Status
 
-**NOT IMPLEMENTED IN V2 PARSER** - SQL parsing not wired yet.
+**Implemented in V2 Parser** - `parseDropTablespace()` supports DROP TABLESPACE with optional FORCE flag and IF EXISTS.
 
 ---
 

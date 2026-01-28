@@ -1334,6 +1334,24 @@ namespace scratchbird
             EXT_SAVEPOINT_BEGIN = 0x0212,  // Savepoint scope begin (blr_start_savepoint)
             EXT_SAVEPOINT_END = 0x0213,  // Savepoint scope end (blr_end_savepoint)
             EXT_INSERTED_COLUMN_REF = 0x0214,  // INSERTED column reference (MySQL VALUES(col))
+
+            // Python parity operators/predicates
+            EXT_EXPR_DIV_INT = 0x0215,  // DIV integer division operator
+            EXT_PRED_STARTING_WITH = 0x0216,  // STARTING WITH predicate
+            EXT_PRED_CONTAINING = 0x0217,  // CONTAINING predicate
+
+            // Python parity functions
+            EXT_FUNC_REPLACE = 0x0320,  // REPLACE(str, search, replacement)
+            EXT_FUNC_ENDS_WITH = 0x0321,  // ENDS_WITH(str, suffix)
+            EXT_FUNC_ARRAY_POSITION = 0x0322,  // ARRAY_POSITION(array, value)
+            EXT_ARRAY_SLICE = 0x0323,  // ARRAY_SLICE(array, lower, upper)
+            EXT_FUNC_JSON_EXISTS = 0x0324,  // JSON_EXISTS(json, path)
+            EXT_FUNC_JSON_HAS_KEY = 0x0325,  // JSON_HAS_KEY(json, key)
+            EXT_FUNC_TO_CHAR = 0x0326,  // TO_CHAR(value, format)
+            EXT_FUNC_TO_DATE = 0x0327,  // TO_DATE(text, format)
+            EXT_FUNC_TO_TIMESTAMP = 0x0328,  // TO_TIMESTAMP(text, format)
+            EXT_FUNC_LEAST = 0x0329,  // LEAST(a, b, ...)
+            EXT_FUNC_GREATEST = 0x032A  // GREATEST(a, b, ...)
         };
 
         enum class AlterSchemaAction : uint8_t

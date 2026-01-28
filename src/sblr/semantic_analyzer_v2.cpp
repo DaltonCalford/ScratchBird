@@ -2973,7 +2973,8 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     }
 
     if (func_name == "upper" || func_name == "lower" || func_name == "trim" ||
-        func_name == "ltrim" || func_name == "rtrim" || func_name == "substring") {
+        func_name == "ltrim" || func_name == "rtrim" || func_name == "substring" ||
+        func_name == "replace") {
         ret_type->data_type = DataType::VARCHAR;
         ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
         ref.return_type = ret_type;
@@ -2983,6 +2984,13 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     if (func_name == "concat" || func_name == "concat_ws") {
         ret_type->data_type = DataType::VARCHAR;
         ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "ends_with") {
+        ret_type->data_type = DataType::BOOLEAN;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
         ref.return_type = ret_type;
         return ref;
     }
@@ -3000,6 +3008,27 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         ret_type->data_type = DataType::TIMESTAMP;
         ret_type->with_time_zone = true;
         ret_type->is_nullable = false;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "to_char") {
+        ret_type->data_type = DataType::VARCHAR;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "to_date") {
+        ret_type->data_type = DataType::DATE;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "to_timestamp") {
+        ret_type->data_type = DataType::TIMESTAMP;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
         ref.return_type = ret_type;
         return ref;
     }
@@ -3272,10 +3301,38 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
+    if (func_name == "json_exists" || func_name == "json_has_key") {
+        ret_type->data_type = DataType::BOOLEAN;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "array_position") {
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "array_slice") {
+        ret_type->data_type = DataType::JSON;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "array_subscript") {
+        ret_type->data_type = DataType::UNKNOWN;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
     // Coalesce/nullif
-    if (func_name == "coalesce") {
+    if (func_name == "coalesce" || func_name == "least" || func_name == "greatest") {
         if (arg_types.empty()) {
-            error(span, "COALESCE requires at least one argument");
+            error(span, "Function requires at least one argument");
             return std::nullopt;
         }
         *ret_type = arg_types[0];
@@ -3430,10 +3487,16 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
         case BinaryOp::SUB:
         case BinaryOp::MUL:
         case BinaryOp::DIV:
+        case BinaryOp::DIV_INT:
         case BinaryOp::MOD:
             if (left.isNumeric() && right.isNumeric()) {
                 ResolvedType result;
                 result.is_nullable = left.is_nullable || right.is_nullable;
+
+                if (op == BinaryOp::DIV_INT) {
+                    result.data_type = DataType::INT64;
+                    return result;
+                }
 
                 if (left.data_type == DataType::FLOAT64 || right.data_type == DataType::FLOAT64) {
                     result.data_type = DataType::FLOAT64;
@@ -8181,7 +8244,7 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeBinaryExpr(BinaryExpr* expr) {
     if (!common_type) {
         if (expr->op == BinaryOp::ADD || expr->op == BinaryOp::SUB ||
             expr->op == BinaryOp::MUL || expr->op == BinaryOp::DIV ||
-            expr->op == BinaryOp::MOD) {
+            expr->op == BinaryOp::DIV_INT || expr->op == BinaryOp::MOD) {
             warning(expr->span,
                     "Incompatible types for arithmetic operator; deferring type checking");
             auto* resolved = arena_.create<ResolvedBinaryExpr>();
@@ -8767,17 +8830,7 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeLike(LikeExpr* expr) {
         return nullptr;
     }
 
-    ResolvedExpression* pattern_expr = pattern;
-    if (expr->match_kind == LikeMatchKind::CONTAINING) {
-        auto* prefix = make_string_literal("%");
-        auto* suffix = make_string_literal("%");
-        pattern_expr = make_concat(make_concat(prefix, pattern), suffix);
-    } else if (expr->match_kind == LikeMatchKind::STARTING) {
-        auto* suffix = make_string_literal("%");
-        pattern_expr = make_concat(pattern, suffix);
-    }
-
-    resolved->pattern = pattern_expr;
+    resolved->pattern = pattern;
     resolved->type.data_type = DataType::BOOLEAN;
     resolved->type.is_nullable = operand->type.is_nullable || pattern->type.is_nullable;
 

@@ -2498,7 +2498,7 @@ public:
  */
 enum class BinaryOp : uint8_t {
     // Arithmetic
-    ADD, SUB, MUL, DIV, MOD, POWER,
+    ADD, SUB, MUL, DIV, DIV_INT, MOD, POWER,
     // Comparison
     EQ, NE, LT, LE, GT, GE,
     // Logical

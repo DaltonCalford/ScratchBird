@@ -59,9 +59,12 @@ Description: Standalone ANALYZE is not parsed; use EXPLAIN ANALYZE.
 Status: Missing.
 Spec delta: Implement ANALYZE if required by compatibility specs.
 
-## DESCRIBE / SHOW CREATE DATABASE
-Description: DESCRIBE is executor-supported but not emitted by V2; SHOW CREATE
-DATABASE is spec-only.
+## DESCRIBE / DESC
+Description: Describes database objects (tables, columns, etc.).
 
-Status: Missing.
-Spec delta: Add parser support if needed for MySQL-like tooling.
+```sql
+DESCRIBE <object_name>
+DESC <object_name>
+```
+
+Status: **Implemented in V2 Parser** - `parseDescribe()` handles both DESCRIBE and DESC keywords.

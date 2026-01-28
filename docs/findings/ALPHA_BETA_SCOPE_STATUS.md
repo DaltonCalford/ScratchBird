@@ -16,19 +16,21 @@ Status legend: Open | In Progress | Done
 | --- | --- | --- | --- |
 | Engine core | Tablespace routing defaults (table root pages + default tablespace resolution) | Done | `ScratchBird/docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` (WS‑2) |
 | Engine core | Index migration safety for SPGIST/BITMAP/COLUMNSTORE/LSM (TID/GPID update paths) | Done | `ScratchBird/docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` (WS‑3) |
-| Engine core | Expression/partial index root allocation still uses primary tablespace | Open | Code: `ScratchBird/src/core/catalog_manager.cpp:7513` |
-| Engine core | Monitoring parity: remaining MON$ placeholders wired to sys.* | In Progress | `ScratchBird/docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` (WS‑7) |
-| Engine core | Backup/restore parity across tablespaces + catalogs | In Progress | `ScratchBird/docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` (WS‑8) |
-| Engine core | Restore uses only first tablespace file path (multi‑file tablespace not restored) | Open | Code: `ScratchBird/src/core/backup_manager.cpp:590` |
-| Parser/PSQL | V2 parser completeness (DDL/DML/utility/PSQL) | In Progress | `ScratchBird/docs/planning/PLAN_V2_PARSER_COMPLETION.md` |
-| PSQL runtime | PSQL bytecode emission + executor parity (FOR/CASE/SUSPEND/etc) | Open | `ScratchBird/docs/findings/V2_PARSER_DDL_DML_PSQL_AUDIT.md` |
+| Engine core | Expression/partial index root allocation still uses primary tablespace | Open | Code: `ScratchBird/src/core/catalog_manager.cpp:7642` |
+| Engine core | Monitoring parity: remaining MON$ placeholders wired to sys.* | Done | Code: `ScratchBird/src/catalog/sys_catalog.cpp:173` |
+| Engine core | Backup/restore parity across tablespaces + catalogs | Done | Code: `ScratchBird/src/core/backup_manager.cpp:723` |
+| Parser/PSQL | V2 parser completeness (DDL/DML/utility/PSQL) | Done | `ScratchBird/docs/planning/PLAN_V2_PARSER_COMPLETION.md` |
+| PSQL runtime | PSQL bytecode emission + executor parity (FOR/CASE/SUSPEND/etc) | Done | `ScratchBird/docs/planning/PLAN_V2_PARSER_COMPLETION.md` |
 | Resources | Timezones/Charsets/Collations data + loaders + catalog persistence | Open | `ScratchBird/docs/planning/RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN.md` |
-| Indexes | Inverted GC purge, IVF, Zone Maps, GPID/TID format checks | Open | `ScratchBird/docs/planning/TRACKER_INDEX_SPEC_GAPS.md` |
+| Indexes | Inverted GC purge, IVF, Zone Maps, GPID/TID format checks | Done | `ScratchBird/docs/planning/TRACKER_INDEX_SPEC_GAPS.md` |
 
 ### Resolved Since Last Sync
 
 - Tablespace routing defaults now tablespace‑aware (table root pages + schema default selection).
 - Index migration safety now covers SPGIST/BITMAP/COLUMNSTORE/LSM update paths.
+- Monitoring parity now implemented via sys catalog tables (sessions/transactions/locks/statements/performance).
+- Backup/restore now honors multi‑file tablespace ranges during restore.
+- Index GC wiring includes IVF/ZONEMAP/COLUMNSTORE/LSM/FULLTEXT.
 
 ---
 

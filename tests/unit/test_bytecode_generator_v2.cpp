@@ -486,6 +486,13 @@ TEST_F(BytecodeGeneratorV2Test, Division) {
                 hasOpcode(result.bytecode(), Opcode::EXPR_DIVIDE));
 }
 
+TEST_F(BytecodeGeneratorV2Test, IntegerDivisionKeyword) {
+    auto result = generateBytecode("SELECT 9 DIV 2");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_EXPR_DIV_INT));
+}
+
 // =============================================================================
 // Comparison Expression Tests
 // =============================================================================
@@ -588,11 +595,39 @@ TEST_F(BytecodeGeneratorV2Test, LikeExpression) {
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::EXPR_LIKE));
 }
 
+TEST_F(BytecodeGeneratorV2Test, StartingWithExpression) {
+    auto result = generateBytecode("SELECT 'hello' STARTING WITH 'h'");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_PRED_STARTING_WITH));
+}
+
+TEST_F(BytecodeGeneratorV2Test, ContainingExpression) {
+    auto result = generateBytecode("SELECT 'hello' CONTAINING 'ell'");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_PRED_CONTAINING));
+}
+
 TEST_F(BytecodeGeneratorV2Test, LikeEscapeExpression) {
     auto result = generateBytecode("SELECT 'hello' LIKE 'h!%' ESCAPE '!'");
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
 
     EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
+}
+
+TEST_F(BytecodeGeneratorV2Test, ArraySliceExpression) {
+    auto result = generateBytecode("SELECT ARRAY[1,2,3][2:3]");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_ARRAY_SLICE));
+}
+
+TEST_F(BytecodeGeneratorV2Test, ReplaceFunction) {
+    auto result = generateBytecode("SELECT REPLACE('abc', 'b', 'x')");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_FUNC_REPLACE));
 }
 
 // =============================================================================

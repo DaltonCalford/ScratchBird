@@ -1735,6 +1735,7 @@ void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
                 case BinaryOp::SUB: op = core::BinaryOp::SUBTRACT; break;
                 case BinaryOp::MUL: op = core::BinaryOp::MULTIPLY; break;
                 case BinaryOp::DIV: op = core::BinaryOp::DIVIDE; break;
+                case BinaryOp::DIV_INT: op = core::BinaryOp::DIVIDE; break;
                 case BinaryOp::MOD: op = core::BinaryOp::MODULO; break;
                 case BinaryOp::EQ: op = core::BinaryOp::EQ; break;
                 case BinaryOp::NE: op = core::BinaryOp::NE; break;
@@ -4847,6 +4848,11 @@ void BytecodeGeneratorV2::generateBinaryExpr(ResolvedBinaryExpr* expr) {
         return;
     }
 
+    if (expr->op == BinaryOp::DIV_INT) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_EXPR_DIV_INT);
+        return;
+    }
+
     if (expr->op == BinaryOp::REGEX_MATCH) {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_REGEX_MATCH);
         return;
@@ -5044,6 +5050,12 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     } else if (func_name == "CONCAT_WS") {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_CONCAT_WS);
         write_arg_count();
+    } else if (func_name == "REPLACE") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_REPLACE);
+        write_arg_count();
+    } else if (func_name == "ENDS_WITH") {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_ENDS_WITH);
+        write_arg_count();
     } else if (func_name == "ASCII") {
         if (arg_count != 1) {
             current_result_->addError("ASCII expects 1 argument");
@@ -5083,6 +5095,18 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     } else if (func_name == "CURRENT_TIME") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_CURRENT_TIME);
+        write_arg_count();
+    } else if (func_name == "TO_CHAR") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_TO_CHAR);
+        write_arg_count();
+    } else if (func_name == "TO_DATE") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_TO_DATE);
+        write_arg_count();
+    } else if (func_name == "TO_TIMESTAMP") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_TO_TIMESTAMP);
         write_arg_count();
     } else if (func_name == "GROUPING") {
         if (arg_count != 1) {
@@ -5331,6 +5355,28 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     } else if (func_name == "JSONB_SET") {
         current_result_->writeOpcode(sblr::Opcode::JSONB_SET);
         write_arg_count();
+    } else if (func_name == "JSON_EXISTS") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_JSON_EXISTS);
+        write_arg_count();
+    } else if (func_name == "JSON_HAS_KEY") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_JSON_HAS_KEY);
+        write_arg_count();
+    }
+    // Array functions
+    else if (func_name == "ARRAY_POSITION") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ARRAY_POSITION);
+        write_arg_count();
+    } else if (func_name == "ARRAY_SLICE") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_ARRAY_SLICE);
+        write_arg_count();
+    } else if (func_name == "ARRAY_SUBSCRIPT") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_ARRAY_SUBSCRIPT);
+        write_arg_count();
     }
     // Null handling
     else if (func_name == "COALESCE") {
@@ -5338,6 +5384,14 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         write_arg_count();
     } else if (func_name == "NULLIF") {
         current_result_->writeOpcode(sblr::Opcode::NULLIF);
+    } else if (func_name == "LEAST") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_LEAST);
+        write_arg_count();
+    } else if (func_name == "GREATEST") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_GREATEST);
+        write_arg_count();
     }
     // Generic function call
     else {
@@ -5645,6 +5699,28 @@ void BytecodeGeneratorV2::generateBetween(ResolvedBetweenExpr* expr) {
 }
 
 void BytecodeGeneratorV2::generateLike(ResolvedLikeExpr* expr) {
+    if (expr->match_kind == LikeMatchKind::STARTING ||
+        expr->match_kind == LikeMatchKind::CONTAINING) {
+        generateExpression(expr->expr);
+        generateExpression(expr->pattern);
+
+        if (expr->escape) {
+            current_result_->addWarning("STARTING/CONTAINING do not support ESCAPE; ignoring ESCAPE clause");
+        }
+
+        current_result_->writeExtendedOpcode(
+            expr->match_kind == LikeMatchKind::STARTING ?
+                sblr::ExtendedOpcode::EXT_PRED_STARTING_WITH :
+                sblr::ExtendedOpcode::EXT_PRED_CONTAINING);
+
+        if (expr->negated) {
+            current_result_->writeOpcode(sblr::Opcode::LITERAL_INT32);
+            current_result_->writeInt32(0);
+            current_result_->writeOpcode(sblr::Opcode::EXPR_EQ);
+        }
+        return;
+    }
+
     if (expr->match_kind == LikeMatchKind::SIMILAR) {
         generateExpression(expr->expr);
         generateExpression(expr->pattern);
@@ -6129,6 +6205,7 @@ sblr::Opcode BytecodeGeneratorV2::binaryOpToOpcode(BinaryOp op) {
         case BinaryOp::SUB: return sblr::Opcode::EXPR_SUBTRACT;
         case BinaryOp::MUL: return sblr::Opcode::EXPR_MULTIPLY;
         case BinaryOp::DIV: return sblr::Opcode::EXPR_DIVIDE;
+        case BinaryOp::DIV_INT: return sblr::Opcode::EXPR_DIVIDE;
         case BinaryOp::MOD: return sblr::Opcode::EXPR_MODULO;
         case BinaryOp::EQ: return sblr::Opcode::EXPR_EQ;
         case BinaryOp::NE: return sblr::Opcode::EXPR_NE;

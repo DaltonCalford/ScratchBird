@@ -225,6 +225,9 @@ static const GatekeeperEntry GATEKEEPER_KEYWORDS[] = {
     {"IN", TokenType::KW_IN},
     {"BETWEEN", TokenType::KW_BETWEEN},
     {"LIKE", TokenType::KW_LIKE},
+    {"DIV", TokenType::KW_DIV},
+    {"STARTING", TokenType::KW_STARTING},
+    {"CONTAINING", TokenType::KW_CONTAINING},
     {"CASE", TokenType::KW_CASE},
     {"WHEN", TokenType::KW_WHEN},
     {"THEN", TokenType::KW_THEN},
@@ -1039,6 +1042,9 @@ const char* tokenTypeToString(TokenType type) {
         case TokenType::KW_IN: return "KW_IN";
         case TokenType::KW_BETWEEN: return "KW_BETWEEN";
         case TokenType::KW_LIKE: return "KW_LIKE";
+        case TokenType::KW_DIV: return "KW_DIV";
+        case TokenType::KW_STARTING: return "KW_STARTING";
+        case TokenType::KW_CONTAINING: return "KW_CONTAINING";
         case TokenType::KW_CASE: return "KW_CASE";
         case TokenType::KW_WHEN: return "KW_WHEN";
         case TokenType::KW_THEN: return "KW_THEN";

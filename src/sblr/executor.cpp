@@ -8,6 +8,7 @@
 #include <cstring>
 #include <exception>
 #include <functional>
+#include <iomanip>
 #include <optional>
 #include <iostream>
 #include <sstream>
@@ -1118,6 +1119,145 @@ namespace scratchbird
             return matchSqlLike(lower_str, lower_pattern, esc);
         }
 
+        static std::string toLowerAscii(std::string input) {
+            for (char& c : input) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return input;
+        }
+
+        static std::string padInt(int32_t value, int width) {
+            std::ostringstream out;
+            out << std::setw(width) << std::setfill('0') << value;
+            return out.str();
+        }
+
+        static std::string formatDateTimeWithFormat(int32_t year, int32_t month, int32_t day,
+                                                    int32_t hour, int32_t minute, int32_t second,
+                                                    const std::string& format) {
+            std::string output;
+            output.reserve(format.size() + 16);
+
+            for (size_t i = 0; i < format.size();) {
+                if (format.compare(i, 4, "YYYY") == 0) {
+                    output += padInt(year, 4);
+                    i += 4;
+                } else if (format.compare(i, 2, "MM") == 0) {
+                    output += padInt(month, 2);
+                    i += 2;
+                } else if (format.compare(i, 2, "DD") == 0) {
+                    output += padInt(day, 2);
+                    i += 2;
+                } else if (format.compare(i, 4, "HH24") == 0) {
+                    output += padInt(hour, 2);
+                    i += 4;
+                } else if (format.compare(i, 2, "MI") == 0) {
+                    output += padInt(minute, 2);
+                    i += 2;
+                } else if (format.compare(i, 2, "SS") == 0) {
+                    output += padInt(second, 2);
+                    i += 2;
+                } else {
+                    output.push_back(format[i]);
+                    ++i;
+                }
+            }
+
+            return output;
+        }
+
+        static bool readDigits(const std::string& text, size_t& pos, size_t width, int32_t& out) {
+            if (pos + width > text.size()) {
+                return false;
+            }
+            int32_t value = 0;
+            for (size_t i = 0; i < width; ++i) {
+                char c = text[pos + i];
+                if (c < '0' || c > '9') {
+                    return false;
+                }
+                value = value * 10 + (c - '0');
+            }
+            pos += width;
+            out = value;
+            return true;
+        }
+
+        static bool parseDateTimeWithFormat(const std::string& text, const std::string& format,
+                                            int32_t& year, int32_t& month, int32_t& day,
+                                            int32_t& hour, int32_t& minute, int32_t& second) {
+            bool has_year = false;
+            bool has_month = false;
+            bool has_day = false;
+
+            year = 1970;
+            month = 1;
+            day = 1;
+            hour = 0;
+            minute = 0;
+            second = 0;
+
+            size_t ti = 0;
+            for (size_t fi = 0; fi < format.size();) {
+                if (format.compare(fi, 4, "YYYY") == 0) {
+                    if (!readDigits(text, ti, 4, year)) {
+                        return false;
+                    }
+                    fi += 4;
+                    has_year = true;
+                } else if (format.compare(fi, 2, "MM") == 0) {
+                    if (!readDigits(text, ti, 2, month)) {
+                        return false;
+                    }
+                    fi += 2;
+                    has_month = true;
+                } else if (format.compare(fi, 2, "DD") == 0) {
+                    if (!readDigits(text, ti, 2, day)) {
+                        return false;
+                    }
+                    fi += 2;
+                    has_day = true;
+                } else if (format.compare(fi, 4, "HH24") == 0) {
+                    if (!readDigits(text, ti, 2, hour)) {
+                        return false;
+                    }
+                    fi += 4;
+                } else if (format.compare(fi, 2, "MI") == 0) {
+                    if (!readDigits(text, ti, 2, minute)) {
+                        return false;
+                    }
+                    fi += 2;
+                } else if (format.compare(fi, 2, "SS") == 0) {
+                    if (!readDigits(text, ti, 2, second)) {
+                        return false;
+                    }
+                    fi += 2;
+                } else {
+                    if (ti >= text.size() || text[ti] != format[fi]) {
+                        return false;
+                    }
+                    ++ti;
+                    ++fi;
+                }
+            }
+
+            if (ti != text.size()) {
+                return false;
+            }
+
+            if (!has_year || !has_month || !has_day) {
+                return false;
+            }
+
+            if (month < 1 || month > 12 || day < 1 || day > 31 ||
+                hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+                second < 0 || second > 59) {
+                return false;
+            }
+
+            return true;
+        }
+
         // ===== JSON Helper Functions =====
 
         // Parse JSONPath expression ($.field.subfield[0].nested)
@@ -1197,6 +1337,30 @@ namespace scratchbird
             }
 
             return current;
+        }
+
+        static bool jsonPathExists(const json& j, const std::vector<std::string>& path) {
+            json current = j;
+
+            for (const auto& component : path) {
+                try {
+                    size_t idx = std::stoull(component);
+                    if (current.is_array() && idx < current.size()) {
+                        current = current[idx];
+                        continue;
+                    }
+                } catch (...) {
+                    // Not a number, treat as object key
+                }
+
+                if (current.is_object() && current.contains(component)) {
+                    current = current[component];
+                } else {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         static OrderedJson canonicalizeJson(const json& input) {
@@ -3808,6 +3972,9 @@ namespace scratchbird
                             case ExtendedOpcode::EXT_NULL_SAFE_EQ:
                             case ExtendedOpcode::EXT_EXPR_NOT:
                             case ExtendedOpcode::EXT_EXPR_IS_NULL:
+                            case ExtendedOpcode::EXT_EXPR_DIV_INT:
+                            case ExtendedOpcode::EXT_PRED_STARTING_WITH:
+                            case ExtendedOpcode::EXT_PRED_CONTAINING:
                             case ExtendedOpcode::EXT_LIKE_ESCAPE:
                             case ExtendedOpcode::EXT_ILIKE_ESCAPE:
                             case ExtendedOpcode::EXT_REGEX_MATCH:
@@ -26228,6 +26395,26 @@ namespace scratchbird
                         Value operand = pop();
                         push(Value::makeBoolean(operand.isNull()));
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_DIV_INT))
+                    {
+                        Value right = pop();
+                        Value left = pop();
+
+                        if (left.isNull() || right.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            int64_t rhs = right.toInt64();
+                            if (rhs == 0)
+                            {
+                                error("DIV by zero");
+                            }
+                            int64_t lhs = left.toInt64();
+                            push(Value::makeInt64(lhs / rhs));
+                        }
+                    }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_INSERTED_COLUMN_REF))
                     {
                         std::string col_name = readString();
@@ -26271,6 +26458,36 @@ namespace scratchbird
                                 (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE));
                             bool matches = matchSqlLikeCase(text.toString(), pattern.toString(),
                                                             escape_char, case_insensitive);
+                            push(Value::makeBoolean(matches));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PRED_STARTING_WITH) ||
+                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PRED_CONTAINING))
+                    {
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string haystack = text.toString();
+                            std::string needle = pattern.toString();
+                            bool matches = false;
+
+                            if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PRED_STARTING_WITH))
+                            {
+                                matches = haystack.rfind(needle, 0) == 0;
+                            }
+                            else
+                            {
+                                std::string lower_haystack = toLowerAscii(haystack);
+                                std::string lower_needle = toLowerAscii(needle);
+                                matches = lower_haystack.find(lower_needle) != std::string::npos;
+                            }
+
                             push(Value::makeBoolean(matches));
                         }
                     }
@@ -27076,6 +27293,117 @@ namespace scratchbird
                                         ? core::DataType::JSONB
                                         : core::DataType::JSON;
                                 push(jsonToValue(elem, output_type));
+                            }
+                            catch (const json::exception& e)
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ARRAY_POSITION))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ARRAY_POSITION expects 2 arguments (array, value)");
+                        }
+
+                        Value element = pop();
+                        Value array = pop();
+
+                        if (array.isNull() || element.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try
+                            {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                json elem_json = valueToJSON(element);
+                                int64_t pos = 1;
+                                bool found = false;
+                                for (const auto& entry : j_array)
+                                {
+                                    if (entry == elem_json)
+                                    {
+                                        found = true;
+                                        break;
+                                    }
+                                    ++pos;
+                                }
+
+                                if (found)
+                                {
+                                    push(Value::makeInt64(pos));
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            }
+                            catch (const json::exception& e)
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_SLICE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("ARRAY_SLICE expects 3 arguments (array, lower, upper)");
+                        }
+
+                        Value upper_val = pop();
+                        Value lower_val = pop();
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try
+                            {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                int64_t lower = lower_val.isNull() ? 1 : lower_val.toInt64();
+                                int64_t upper =
+                                    upper_val.isNull() ? static_cast<int64_t>(j_array.size())
+                                                       : upper_val.toInt64();
+
+                                if (lower < 1) lower = 1;
+                                if (upper > static_cast<int64_t>(j_array.size()))
+                                {
+                                    upper = static_cast<int64_t>(j_array.size());
+                                }
+
+                                if (upper < lower)
+                                {
+                                    push(Value::makeJSON(json::array().dump()));
+                                    break;
+                                }
+
+                                json slice = json::array();
+                                for (int64_t idx = lower; idx <= upper; ++idx)
+                                {
+                                    slice.push_back(j_array[static_cast<size_t>(idx - 1)]);
+                                }
+                                push(Value::makeJSON(slice.dump()));
                             }
                             catch (const json::exception& e)
                             {
@@ -29761,6 +30089,72 @@ namespace scratchbird
                             }
                         }
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_JSON_EXISTS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("JSON_EXISTS expects 2 arguments (json, path)");
+                        }
+
+                        Value path = pop();
+                        Value json_data = pop();
+
+                        if (json_data.isNull() || path.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try
+                            {
+                                json j = json::parse(json_data.toString());
+                                std::vector<std::string> path_components = parseJSONPath(path.toString());
+                                bool exists = jsonPathExists(j, path_components);
+                                push(Value::makeBoolean(exists));
+                            }
+                            catch (const json::exception& e)
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_JSON_HAS_KEY))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("JSON_HAS_KEY expects 2 arguments (json, key)");
+                        }
+
+                        Value key = pop();
+                        Value json_data = pop();
+
+                        if (json_data.isNull() || key.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try
+                            {
+                                json j = json::parse(json_data.toString());
+                                if (!j.is_object())
+                                {
+                                    push(Value::makeBoolean(false));
+                                }
+                                else
+                                {
+                                    bool exists = j.contains(key.toString());
+                                    push(Value::makeBoolean(exists));
+                                }
+                            }
+                            catch (const json::exception& e)
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SPLIT_PART))
                     {
                         // SPLIT_PART(str, delimiter, field)
@@ -30246,6 +30640,66 @@ namespace scratchbird
                             push(Value::makeVarchar(result));
                         }
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_REPLACE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("REPLACE expects 3 arguments");
+                        }
+
+                        Value replacement = pop();
+                        Value search = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || search.isNull() || replacement.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string result = text.toString();
+                            std::string needle = search.toString();
+                            std::string repl = replacement.toString();
+
+                            if (!needle.empty())
+                            {
+                                size_t pos = 0;
+                                while ((pos = result.find(needle, pos)) != std::string::npos)
+                                {
+                                    result.replace(pos, needle.length(), repl);
+                                    pos += repl.length();
+                                }
+                            }
+
+                            push(Value::makeVarchar(result));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ENDS_WITH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ENDS_WITH expects 2 arguments");
+                        }
+
+                        Value suffix = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || suffix.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string haystack = text.toString();
+                            std::string needle = suffix.toString();
+                            bool matches = haystack.size() >= needle.size() &&
+                                           haystack.compare(haystack.size() - needle.size(),
+                                                            needle.size(), needle) == 0;
+                            push(Value::makeBoolean(matches));
+                        }
+                    }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_TIME))
                     {
                         uint8_t arg_count = readByte();
@@ -30271,6 +30725,258 @@ namespace scratchbird
                             utc_time_micros += micros_per_day;
                         }
                         push(Value::makeTime(utc_time_micros, offset_seconds));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_CHAR))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("TO_CHAR expects 1 or 2 arguments");
+                        }
+
+                        Value format_val;
+                        if (arg_count == 2)
+                        {
+                            format_val = pop();
+                        }
+                        Value value = pop();
+
+                        if (value.isNull() || (arg_count == 2 && format_val.isNull()))
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string format = (arg_count == 2) ? format_val.toString() : "";
+                            if (format.empty())
+                            {
+                                push(Value::makeVarchar(value.toString()));
+                            }
+                            else
+                            {
+                                int32_t year = 1970;
+                                int32_t month = 1;
+                                int32_t day = 1;
+                                int32_t hour = 0;
+                                int32_t minute = 0;
+                                int32_t second = 0;
+
+                                if (value.type() == core::DataType::DATE)
+                                {
+                                    int64_t days = value.getDate();
+                                    year = core::TypeExtractor::extractYear(days);
+                                    month = core::TypeExtractor::extractMonth(days);
+                                    day = core::TypeExtractor::extractDay(days);
+                                }
+                                else if (value.type() == core::DataType::TIME)
+                                {
+                                    int64_t micros = value.getTime();
+                                    hour = core::TypeExtractor::extractHour(micros);
+                                    minute = core::TypeExtractor::extractMinute(micros);
+                                    second = core::TypeExtractor::extractSecond(micros);
+                                }
+                                else if (value.type() == core::DataType::TIMESTAMP)
+                                {
+                                    int64_t micros = value.getTimestamp();
+                                    year = core::TypeExtractor::extractTimestampYear(micros);
+                                    month = core::TypeExtractor::extractTimestampMonth(micros);
+                                    day = core::TypeExtractor::extractTimestampDay(micros);
+                                    hour = core::TypeExtractor::extractTimestampHour(micros);
+                                    minute = core::TypeExtractor::extractTimestampMinute(micros);
+                                    second = core::TypeExtractor::extractTimestampSecond(micros);
+                                }
+                                else
+                                {
+                                    push(Value::makeVarchar(value.toString()));
+                                    break;
+                                }
+
+                                push(Value::makeVarchar(
+                                    formatDateTimeWithFormat(year, month, day, hour, minute, second, format)));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_DATE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("TO_DATE expects 2 arguments");
+                        }
+
+                        Value format_val = pop();
+                        Value text_val = pop();
+
+                        if (text_val.isNull() || format_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            int32_t year = 0;
+                            int32_t month = 0;
+                            int32_t day = 0;
+                            int32_t hour = 0;
+                            int32_t minute = 0;
+                            int32_t second = 0;
+
+                            bool ok = parseDateTimeWithFormat(text_val.toString(),
+                                                              format_val.toString(),
+                                                              year, month, day,
+                                                              hour, minute, second);
+                            if (!ok)
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                int64_t days = core::TypeExtractor::ymdToDays(year, month, day);
+                                push(Value::makeDate(days));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_TIMESTAMP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("TO_TIMESTAMP expects 2 arguments");
+                        }
+
+                        Value format_val = pop();
+                        Value text_val = pop();
+
+                        if (text_val.isNull() || format_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            int32_t year = 0;
+                            int32_t month = 0;
+                            int32_t day = 0;
+                            int32_t hour = 0;
+                            int32_t minute = 0;
+                            int32_t second = 0;
+
+                            bool ok = parseDateTimeWithFormat(text_val.toString(),
+                                                              format_val.toString(),
+                                                              year, month, day,
+                                                              hour, minute, second);
+                            if (!ok)
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                int64_t days = core::TypeExtractor::ymdToDays(year, month, day);
+                                int64_t micros_per_day =
+                                    static_cast<int64_t>(core::FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+                                int64_t micros = days * micros_per_day +
+                                                 (static_cast<int64_t>(hour) * 3600 +
+                                                  static_cast<int64_t>(minute) * 60 +
+                                                  static_cast<int64_t>(second)) * 1000000;
+                                push(Value::makeTimestamp(micros));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LEAST) ||
+                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_GREATEST))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count == 0)
+                        {
+                            error("LEAST/GREATEST expects at least 1 argument");
+                        }
+
+                        std::vector<Value> args;
+                        args.reserve(arg_count);
+                        for (uint8_t i = 0; i < arg_count; ++i)
+                        {
+                            args.push_back(pop());
+                        }
+                        std::reverse(args.begin(), args.end());
+
+                        bool all_null = true;
+                        Value best;
+
+                        auto compareValues = [&](const Value& lhs, const Value& rhs) -> int {
+                            if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                            {
+                                double a = coerceToDouble(lhs);
+                                double b = coerceToDouble(rhs);
+                                if (a < b) return -1;
+                                if (a > b) return 1;
+                                return 0;
+                            }
+                            if (lhs.type() == core::DataType::DATE &&
+                                rhs.type() == core::DataType::DATE)
+                            {
+                                if (lhs.getDate() < rhs.getDate()) return -1;
+                                if (lhs.getDate() > rhs.getDate()) return 1;
+                                return 0;
+                            }
+                            if (lhs.type() == core::DataType::TIME &&
+                                rhs.type() == core::DataType::TIME)
+                            {
+                                if (lhs.getTime() < rhs.getTime()) return -1;
+                                if (lhs.getTime() > rhs.getTime()) return 1;
+                                return 0;
+                            }
+                            if (lhs.type() == core::DataType::TIMESTAMP &&
+                                rhs.type() == core::DataType::TIMESTAMP)
+                            {
+                                if (lhs.getTimestamp() < rhs.getTimestamp()) return -1;
+                                if (lhs.getTimestamp() > rhs.getTimestamp()) return 1;
+                                return 0;
+                            }
+
+                            std::string a = lhs.toString();
+                            std::string b = rhs.toString();
+                            if (a < b) return -1;
+                            if (a > b) return 1;
+                            return 0;
+                        };
+
+                        for (const auto& val : args)
+                        {
+                            if (val.isNull())
+                            {
+                                continue;
+                            }
+
+                            if (all_null)
+                            {
+                                best = val;
+                                all_null = false;
+                                continue;
+                            }
+
+                            int cmp = compareValues(val, best);
+                            if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LEAST))
+                            {
+                                if (cmp < 0)
+                                {
+                                    best = val;
+                                }
+                            }
+                            else
+                            {
+                                if (cmp > 0)
+                                {
+                                    best = val;
+                                }
+                            }
+                        }
+
+                        if (all_null)
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            push(best);
+                        }
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LPAD))
                     {
@@ -32476,7 +33182,9 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_REMOVE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_REPLACE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_SUBSCRIPT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_SLICE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_UPPER),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ARRAY_POSITION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ASCII),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_AUDIT_DOMAIN_ACCESS),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_AND),
@@ -32522,15 +33230,22 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COSH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_TIME),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ENDS_WITH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_REPLACE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_CHAR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_DATE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_TIMESTAMP),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_DEGREES),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_EXP),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_FORMAT_TYPE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_FLOOR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_GREATEST),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LN),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG10),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG2),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LTRIM),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LEAST),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_MOD),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_OBJ_DESCRIPTION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_PI),
@@ -32547,6 +33262,7 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TANH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TRUNC),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_FUNCTION_CALL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_DIV_INT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_GET_BIT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_GET_BYTE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_GIN_INSERT),
@@ -32562,6 +33278,8 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_IN_LIST),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_NOT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_EXPR_IS_NULL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_PRED_CONTAINING),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_PRED_STARTING_WITH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_NULL_SAFE_EQ),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_LIKE_ESCAPE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE),
@@ -32586,6 +33304,8 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_REPEAT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_REVERSE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_RPAD),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_JSON_EXISTS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_JSON_HAS_KEY),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_SET_BIT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_SET_BYTE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_SHA1),

@@ -706,9 +706,10 @@ SELECT SETVAL('user_id_seq', 1000, false); -- Next NEXTVAL returns 1000
 - Spec reference: `/docs/specifications/indexes/INDEX_IMPLEMENTATION_SPEC.md`
 
 **Index Type Support in V2 Parser:**
-All 11 index types are parsed in the V2 parser via CREATE INDEX ... USING:
-- BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM
-- FULLTEXT / INVERTED index types are not yet parsed
+All 14 index types are parsed in the V2 parser via CREATE INDEX ... USING:
+- BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM, FULLTEXT, IVF, ZONEMAP
+- FULLTEXT and INVERTED are aliases (both map to FULLTEXT)
+- ZONEMAP and ZONE_MAP are aliases
 - Spec reference: `/docs/specifications/V2_PARSER_INDEX_TYPE_COMPLETENESS.md`
 
 **Advanced Index Features:**

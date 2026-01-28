@@ -76,9 +76,9 @@ These values are reserved for the Alpha parity additions below. They are not yet
 `include/scratchbird/sblr/opcodes.h` and MUST be added there before implementation.
 
 Operators and predicates:
-- EXT_EXPR_DIV_INT         = 0x0214  (DIV integer division operator)
-- EXT_PRED_STARTING_WITH   = 0x0215  (STARTING WITH predicate)
-- EXT_PRED_CONTAINING      = 0x0216  (CONTAINING predicate)
+- EXT_EXPR_DIV_INT         = 0x0215  (DIV integer division operator)
+- EXT_PRED_STARTING_WITH   = 0x0216  (STARTING WITH predicate)
+- EXT_PRED_CONTAINING      = 0x0217  (CONTAINING predicate)
 
 Functions:
 - EXT_FUNC_REPLACE         = 0x0320  (REPLACE(str, search, replacement))

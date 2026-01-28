@@ -489,7 +489,7 @@ EXCEPTION exception_name 'message';
 ### Remaining Gaps
 
 - **Procedural body runtime execution**: Function/procedure/trigger bodies are stored as source text. Complex procedural control flow (IF, WHILE, FOR, SUSPEND, exception handling) within bodies is not yet wired for runtime interpretation. Simple single-statement bodies work through the standard execution path.
-- **CALL syntax**: Standard SQL CALL statement not yet an alias for EXECUTE PROCEDURE
+- **CALL syntax**: Implemented in V2 parser via `parseCall()`
 
 ### Spec References
 
