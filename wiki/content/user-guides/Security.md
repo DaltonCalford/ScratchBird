@@ -30,12 +30,12 @@ Native (local) authentication is implemented in Alpha:
 - Host-based authentication (HBA) rules.
 - Account lockout and policy enforcement by security level.
 
-External authentication is Beta-targeted. The infrastructure exists, but providers
-are stubbed until Beta:
+External authentication is Beta-targeted. The infrastructure exists, but external
+providers are not yet wired:
 
-- LDAP / Active Directory
-- Kerberos / GSSAPI
-- OAuth2 / OIDC
+- LDAP / Active Directory (Beta)
+- Kerberos / GSSAPI (Beta)
+- OAuth2 / OIDC (Beta)
 
 ## Authorization model
 

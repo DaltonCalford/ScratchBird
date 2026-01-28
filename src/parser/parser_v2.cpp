@@ -241,9 +241,11 @@ Statement* Parser::parseStatementInternal() {
     if (match(TokenType::KW_SET))       return parseSet();
     if (match(TokenType::KW_SHOW))      return parseShow();
     if (matchContextual("RESET"))       return parseReset();
+    if (matchContextual("DESCRIBE") || matchContextual("DESC")) return parseDescribe();
 
     // Utility statements
     if (match(TokenType::KW_EXPLAIN))   return parseExplain();
+    if (match(TokenType::KW_ANALYZE))   return parseAnalyze();
     if (matchContextual("SWEEP"))       return parseSweep();
     if (matchContextual("CANCEL")) {
         if (matchContextual("JOB")) {
@@ -258,6 +260,9 @@ Statement* Parser::parseStatementInternal() {
             return parseExecuteJob();
         }
         return parseExecuteStatement();
+    }
+    if (match(TokenType::KW_CALL) || matchContextual("CALL")) {
+        return parseCall();
     }
 
     // DCL statements
@@ -351,6 +356,13 @@ Statement* Parser::parseCreate() {
             error("CREATE OR ALTER is only supported for JOB");
         }
         return parseCreateDatabase();
+    }
+
+    if (matchContextual("TABLESPACE")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateTablespace();
     }
 
     if (matchContextual("DOMAIN")) {
@@ -447,6 +459,9 @@ Statement* Parser::parseCreate() {
         if (or_alter) {
             error("CREATE OR ALTER is only supported for JOB");
         }
+        if (matchContextual("MAPPING")) {
+            return parseCreateUserMapping();
+        }
         return parseCreateUser();
     }
     if (matchContextual("ROLE")) {
@@ -454,6 +469,55 @@ Statement* Parser::parseCreate() {
             error("CREATE OR ALTER is only supported for JOB");
         }
         return parseCreateRole();
+    }
+    if (matchContextual("GROUP")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateGroup();
+    }
+    if (matchContextual("SERVER")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateForeignServer();
+    }
+    if (matchContextual("FOREIGN")) {
+        if (matchContextual("TABLE")) {
+            if (or_alter) {
+                error("CREATE OR ALTER is only supported for JOB");
+            }
+            return parseCreateForeignTable();
+        }
+        if (matchContextual("DATA")) {
+            expectContextual("WRAPPER", "Expected WRAPPER after FOREIGN DATA");
+            error("CREATE FOREIGN DATA WRAPPER is not implemented");
+            return nullptr;
+        }
+        error("Expected TABLE or DATA WRAPPER after FOREIGN");
+        return nullptr;
+    }
+    if (matchContextual("PUBLIC")) {
+        if (matchContextual("SYNONYM")) {
+            if (or_alter) {
+                error("CREATE OR ALTER is only supported for JOB");
+            }
+            return parseCreateSynonym(true);
+        }
+        error("Expected SYNONYM after PUBLIC");
+        return nullptr;
+    }
+    if (matchContextual("SYNONYM")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateSynonym(false);
+    }
+    if (matchContextual("UDR")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreateUdr();
     }
     if (matchContextual("JOB")) {
         if (or_replace) {
@@ -2614,6 +2678,570 @@ CreateDomainStmt* Parser::parseCreateDomain() {
     return stmt;
 }
 
+CreateTablespaceStmt* Parser::parseCreateTablespace() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateTablespaceStmt>();
+    stmt->tablespace_name = expectIdentifier("Expected tablespace name");
+
+    if (!matchContextual("LOCATION")) {
+        error("Expected LOCATION for CREATE TABLESPACE");
+    } else if (check(TokenType::STRING_LITERAL)) {
+        stmt->location = std::string(stringPool().get(current().value.string_id));
+        advance();
+    } else {
+        error("Expected string literal after LOCATION");
+    }
+
+    while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
+        if (matchContextual("AUTOEXTEND")) {
+            stmt->has_autoextend = true;
+            if (matchContextual("ON") || matchContextual("TRUE")) {
+                stmt->autoextend_enabled = true;
+            } else if (matchContextual("OFF") || matchContextual("FALSE")) {
+                stmt->autoextend_enabled = false;
+            } else {
+                error("Expected ON or OFF after AUTOEXTEND");
+            }
+        } else if (matchContextual("AUTOEXTEND_SIZE")) {
+            stmt->has_autoextend_size = true;
+            if (check(TokenType::INTEGER_LITERAL)) {
+                stmt->autoextend_size_mb = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            } else {
+                error("Expected integer for AUTOEXTEND_SIZE");
+            }
+        } else if (matchContextual("MAXSIZE")) {
+            stmt->has_maxsize = true;
+            if (matchContextual("UNLIMITED")) {
+                stmt->maxsize_unlimited = true;
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                stmt->maxsize_mb = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            } else {
+                error("Expected integer or UNLIMITED for MAXSIZE");
+            }
+        } else if (matchContextual("PREALLOC")) {
+            stmt->has_prealloc = true;
+            if (check(TokenType::INTEGER_LITERAL)) {
+                stmt->prealloc_mb = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            } else {
+                error("Expected integer for PREALLOC");
+            }
+        } else {
+            break;
+        }
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterTablespace() {
+    SourceLocation start = currentLocation();
+
+    auto tablespace_name = expectIdentifier("Expected tablespace name");
+
+    if (matchContextual("DETACH")) {
+        return parseDetachTablespace(tablespace_name);
+    }
+
+    if (matchContextual("ATTACH")) {
+        return parseAttachTablespace(tablespace_name);
+    }
+
+    auto* stmt = arena_.create<AlterTablespaceStmt>();
+    stmt->tablespace_name = tablespace_name;
+
+    while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
+        if (matchContextual("AUTOEXTEND")) {
+            TablespaceAlteration alt;
+            alt.action = TablespaceAlterAction::SET_AUTOEXTEND;
+            if (matchContextual("ON") || matchContextual("TRUE")) {
+                alt.autoextend_enabled = true;
+            } else if (matchContextual("OFF") || matchContextual("FALSE")) {
+                alt.autoextend_enabled = false;
+            } else {
+                error("Expected ON or OFF after AUTOEXTEND");
+            }
+            stmt->alterations.push_back(std::move(alt));
+        } else if (matchContextual("AUTOEXTEND_SIZE")) {
+            TablespaceAlteration alt;
+            alt.action = TablespaceAlterAction::SET_AUTOEXTEND_SIZE;
+            if (check(TokenType::INTEGER_LITERAL)) {
+                alt.size_mb = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            } else {
+                error("Expected integer for AUTOEXTEND_SIZE");
+            }
+            stmt->alterations.push_back(std::move(alt));
+        } else if (matchContextual("MAXSIZE")) {
+            TablespaceAlteration alt;
+            alt.action = TablespaceAlterAction::SET_MAXSIZE;
+            if (matchContextual("UNLIMITED")) {
+                alt.size_mb = 0;
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                alt.size_mb = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            } else {
+                error("Expected integer or UNLIMITED for MAXSIZE");
+            }
+            stmt->alterations.push_back(std::move(alt));
+        } else if (matchContextual("RENAME")) {
+            TablespaceAlteration alt;
+            alt.action = TablespaceAlterAction::RENAME_TO;
+            expectContextual("TO", "Expected TO after RENAME");
+            alt.new_name = expectIdentifier("Expected new tablespace name");
+            stmt->alterations.push_back(std::move(alt));
+        } else {
+            break;
+        }
+    }
+
+    if (stmt->alterations.empty()) {
+        error("Expected ALTER TABLESPACE action");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropTablespaceStmt* Parser::parseDropTablespace() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropTablespaceStmt>();
+    stmt->tablespace_name = expectIdentifier("Expected tablespace name");
+    if (matchContextual("FORCE")) {
+        stmt->force = true;
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AttachTablespaceStmt* Parser::parseAttachTablespace(const StringPool::StringId tablespace_name) {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AttachTablespaceStmt>();
+    stmt->tablespace_name = tablespace_name;
+
+    if (matchContextual("LOCATION")) {
+        // LOCATION keyword consumed
+    }
+
+    if (check(TokenType::STRING_LITERAL)) {
+        stmt->location = std::string(stringPool().get(current().value.string_id));
+        advance();
+    } else {
+        error("Expected string literal for ATTACH TABLESPACE location");
+    }
+
+    if (matchContextual("VALIDATE")) {
+        stmt->validate = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DetachTablespaceStmt* Parser::parseDetachTablespace(const StringPool::StringId tablespace_name) {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DetachTablespaceStmt>();
+    stmt->tablespace_name = tablespace_name;
+    if (matchContextual("FORCE")) {
+        stmt->force = true;
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateGroupStmt* Parser::parseCreateGroup() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateGroupStmt>();
+    stmt->group_name = expectIdentifier("Expected group name");
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateForeignServerStmt* Parser::parseCreateForeignServer() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateForeignServerStmt>();
+    stmt->server_name = expectIdentifier("Expected server name");
+
+    auto parse_option_list = [&]() -> std::vector<OptionPair> {
+        std::vector<OptionPair> options;
+        if (!expect(TokenType::LEFT_PAREN, "Expected '(' after OPTIONS")) {
+            return options;
+        }
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            if (!isIdentifier()) {
+                error("Expected option name");
+                break;
+            }
+            std::string key = std::string(stringPool().get(current().value.string_id));
+            advance();
+
+            std::string value;
+            if (check(TokenType::STRING_LITERAL)) {
+                value = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                value = std::to_string(current().value.int_value);
+                advance();
+            } else if (check(TokenType::FLOAT_LITERAL)) {
+                value = std::to_string(current().value.float_value);
+                advance();
+            } else if (isIdentifier()) {
+                value = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else {
+                error("Expected option value");
+            }
+
+            options.push_back({key, value});
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after OPTIONS");
+        return options;
+    };
+
+    if (matchContextual("TYPE")) {
+        stmt->has_server_type = true;
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->server_type = std::string(stringPool().get(current().value.string_id));
+            advance();
+        } else if (isIdentifier()) {
+            stmt->server_type = std::string(stringPool().get(current().value.string_id));
+            advance();
+        } else {
+            error("Expected server type");
+        }
+    }
+
+    if (matchContextual("VERSION")) {
+        stmt->has_server_version = true;
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->server_version = std::string(stringPool().get(current().value.string_id));
+            advance();
+        } else if (isIdentifier()) {
+            stmt->server_version = std::string(stringPool().get(current().value.string_id));
+            advance();
+        } else {
+            error("Expected server version");
+        }
+    }
+
+    expectContextual("FOREIGN", "Expected FOREIGN");
+    expectContextual("DATA", "Expected DATA");
+    expectContextual("WRAPPER", "Expected WRAPPER");
+    stmt->fdw_name = expectIdentifier("Expected foreign data wrapper name");
+
+    if (matchContextual("OPTIONS")) {
+        stmt->options = parse_option_list();
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateForeignTableStmt* Parser::parseCreateForeignTable() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateForeignTableStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        stmt->if_not_exists = true;
+    }
+
+    stmt->table_path = parseSchemaPath(state_);
+    if (stmt->table_path.isEmpty()) {
+        error("Expected foreign table name");
+    }
+
+    if (!expect(TokenType::LEFT_PAREN, "Expected '(' after foreign table name")) {
+        return stmt;
+    }
+
+    auto parse_option_list = [&]() -> std::vector<OptionPair> {
+        std::vector<OptionPair> options;
+        if (!expect(TokenType::LEFT_PAREN, "Expected '(' after OPTIONS")) {
+            return options;
+        }
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            if (!isIdentifier()) {
+                error("Expected option name");
+                break;
+            }
+            std::string key = std::string(stringPool().get(current().value.string_id));
+            advance();
+
+            std::string value;
+            if (check(TokenType::STRING_LITERAL)) {
+                value = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                value = std::to_string(current().value.int_value);
+                advance();
+            } else if (check(TokenType::FLOAT_LITERAL)) {
+                value = std::to_string(current().value.float_value);
+                advance();
+            } else if (isIdentifier()) {
+                value = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else {
+                error("Expected option value");
+            }
+
+            options.push_back({key, value});
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after OPTIONS");
+        return options;
+    };
+
+    auto extract_type_text = [&](const TypeName& type) -> std::string {
+        std::string_view text = state_.lexer().getTokenText(type.span);
+        size_t start_pos = text.find_first_not_of(" \t\r\n");
+        if (start_pos == std::string_view::npos) {
+            return {};
+        }
+        size_t end_pos = text.find_last_not_of(" \t\r\n");
+        return std::string(text.substr(start_pos, end_pos - start_pos + 1));
+    };
+
+    bool first = true;
+    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+        if (!first) {
+            expect(TokenType::COMMA, "Expected ',' between column definitions");
+        }
+        first = false;
+
+        if (checkContextual("CONSTRAINT") ||
+            checkContextual("PRIMARY") ||
+            checkContextual("UNIQUE") ||
+            checkContextual("FOREIGN") ||
+            checkContextual("CHECK")) {
+            parseTableConstraint();
+            continue;
+        }
+
+        ForeignColumnDef col;
+        col.name = expectIdentifier("Expected column name");
+        col.type = parseTypeName();
+        col.type_text = extract_type_text(col.type);
+
+        if (matchContextual("OPTIONS")) {
+            col.options = parse_option_list();
+        }
+
+        (void)parseColumnConstraints();
+        stmt->columns.push_back(std::move(col));
+    }
+
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after column definitions");
+
+    expectContextual("SERVER", "Expected SERVER after column definitions");
+    stmt->server_name = expectIdentifier("Expected foreign server name");
+
+    if (matchContextual("OPTIONS")) {
+        stmt->options = parse_option_list();
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateUserMappingStmt* Parser::parseCreateUserMapping() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateUserMappingStmt>();
+
+    expectContextual("FOR", "Expected FOR after CREATE USER MAPPING");
+
+    if (matchContextual("CURRENT_USER")) {
+        stmt->target = UserMappingTarget::CURRENT_USER;
+    } else if (matchContextual("CURRENT")) {
+        expectContextual("USER", "Expected USER after CURRENT");
+        stmt->target = UserMappingTarget::CURRENT_USER;
+    } else if (matchContextual("SESSION_USER")) {
+        stmt->target = UserMappingTarget::SESSION_USER;
+    } else if (matchContextual("SESSION")) {
+        expectContextual("USER", "Expected USER after SESSION");
+        stmt->target = UserMappingTarget::SESSION_USER;
+    } else if (matchContextual("PUBLIC")) {
+        stmt->target = UserMappingTarget::PUBLIC_ROLE;
+    } else if (matchContextual("USER")) {
+        if (isIdentifier()) {
+            stmt->target = UserMappingTarget::USER_NAME;
+            stmt->user_name = expectIdentifier("Expected user name");
+        } else {
+            stmt->target = UserMappingTarget::CURRENT_USER;
+        }
+    } else {
+        stmt->target = UserMappingTarget::USER_NAME;
+        stmt->user_name = expectIdentifier("Expected user name");
+    }
+
+    expectContextual("SERVER", "Expected SERVER after user mapping target");
+    stmt->server_name = expectIdentifier("Expected server name");
+
+    if (matchContextual("OPTIONS")) {
+        auto parse_option_list = [&]() -> std::vector<OptionPair> {
+            std::vector<OptionPair> options;
+            if (!expect(TokenType::LEFT_PAREN, "Expected '(' after OPTIONS")) {
+                return options;
+            }
+            while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+                if (!isIdentifier()) {
+                    error("Expected option name");
+                    break;
+                }
+                std::string key = std::string(stringPool().get(current().value.string_id));
+                advance();
+
+                std::string value;
+                if (check(TokenType::STRING_LITERAL)) {
+                    value = std::string(stringPool().get(current().value.string_id));
+                    advance();
+                } else if (check(TokenType::INTEGER_LITERAL)) {
+                    value = std::to_string(current().value.int_value);
+                    advance();
+                } else if (check(TokenType::FLOAT_LITERAL)) {
+                    value = std::to_string(current().value.float_value);
+                    advance();
+                } else if (isIdentifier()) {
+                    value = std::string(stringPool().get(current().value.string_id));
+                    advance();
+                } else {
+                    error("Expected option value");
+                }
+
+                options.push_back({key, value});
+
+                if (!match(TokenType::COMMA)) {
+                    break;
+                }
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after OPTIONS");
+            return options;
+        };
+
+        stmt->options = parse_option_list();
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateSynonymStmt* Parser::parseCreateSynonym(bool is_public) {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateSynonymStmt>();
+    stmt->is_public = is_public;
+    stmt->synonym_path = parseSchemaPath(state_);
+    if (stmt->synonym_path.isEmpty()) {
+        error("Expected synonym name");
+    }
+
+    expectContextual("FOR", "Expected FOR after synonym name");
+
+    if (matchContextual("TABLE")) {
+        stmt->target_type = DdlObjectType::TABLE;
+    } else if (matchContextual("VIEW")) {
+        stmt->target_type = DdlObjectType::VIEW;
+    } else if (matchContextual("SEQUENCE")) {
+        stmt->target_type = DdlObjectType::SEQUENCE;
+    } else if (matchContextual("FUNCTION")) {
+        stmt->target_type = DdlObjectType::FUNCTION;
+    } else if (matchContextual("PROCEDURE")) {
+        stmt->target_type = DdlObjectType::PROCEDURE;
+    } else if (matchContextual("DOMAIN")) {
+        stmt->target_type = DdlObjectType::DOMAIN;
+    } else if (matchContextual("TYPE")) {
+        stmt->target_type = DdlObjectType::COMPOSITE_TYPE;
+    } else if (matchContextual("PACKAGE")) {
+        stmt->target_type = DdlObjectType::PACKAGE;
+    } else if (matchContextual("SCHEMA")) {
+        stmt->target_type = DdlObjectType::SCHEMA;
+    } else if (matchContextual("DATABASE")) {
+        stmt->target_type = DdlObjectType::DATABASE;
+    } else if (matchContextual("UDR")) {
+        stmt->target_type = DdlObjectType::UDR;
+    } else if (matchContextual("FOREIGN")) {
+        expectContextual("TABLE", "Expected TABLE after FOREIGN");
+        stmt->target_type = DdlObjectType::FOREIGN_TABLE;
+    } else {
+        error("Expected target object type after FOR");
+    }
+
+    stmt->target_path = parseSchemaPath(state_);
+    if (stmt->target_path.isEmpty()) {
+        error("Expected target object name for synonym");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateUdrStmt* Parser::parseCreateUdr() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateUdrStmt>();
+
+    if (matchContextual("FUNCTION")) {
+        stmt->udr_type = UdrObjectType::FUNCTION;
+    } else if (matchContextual("PROCEDURE")) {
+        stmt->udr_type = UdrObjectType::PROCEDURE;
+    } else if (matchContextual("TRIGGER")) {
+        stmt->udr_type = UdrObjectType::TRIGGER;
+    }
+
+    stmt->udr_path = parseSchemaPath(state_);
+    if (stmt->udr_path.isEmpty()) {
+        error("Expected UDR name");
+    }
+
+    expectContextual("AS", "Expected AS after UDR name");
+    if (check(TokenType::STRING_LITERAL)) {
+        stmt->library_path = std::string(stringPool().get(current().value.string_id));
+        advance();
+    } else {
+        error("Expected library path string literal");
+    }
+
+    expectContextual("ENTRY", "Expected ENTRY after library path");
+    if (check(TokenType::STRING_LITERAL)) {
+        stmt->entry_point = std::string(stringPool().get(current().value.string_id));
+        advance();
+    } else {
+        error("Expected entry point string literal");
+    }
+
+    if (matchContextual("SIGNATURE")) {
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->signature = std::string(stringPool().get(current().value.string_id));
+            stmt->has_signature = true;
+            advance();
+        } else {
+            error("Expected signature string literal");
+        }
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 CreateFunctionStmt* Parser::parseCreateFunction(bool or_replace) {
     auto* stmt = arena_.create<CreateFunctionStmt>();
     stmt->or_replace = or_replace;
@@ -3166,6 +3794,7 @@ Statement* Parser::parseAlter() {
     if (matchContextual("TABLE")) return parseAlterTable();
     if (matchContextual("SCHEMA")) return parseAlterSchema();
     if (matchContextual("DATABASE")) return parseAlterDatabase();
+    if (matchContextual("TABLESPACE")) return parseAlterTablespace();
     if (matchContextual("TYPE")) return parseAlterType();
     if (matchContextual("DOMAIN")) return parseAlterDomain();
     if (matchContextual("JOB")) return parseAlterJob();
@@ -3335,6 +3964,12 @@ Statement* Parser::parseAlter() {
     if (matchContextual("ROLE")) return parse_rename_move(DdlObjectType::ROLE);
     if (matchContextual("USER")) return parse_rename_move(DdlObjectType::USER);
     if (matchContextual("GROUP")) return parse_rename_move(DdlObjectType::GROUP);
+    if (matchContextual("SYNONYM")) return parse_rename_move(DdlObjectType::SYNONYM);
+    if (matchContextual("SERVER")) return parse_rename_move(DdlObjectType::FOREIGN_SERVER);
+    if (matchContextual("FOREIGN")) {
+        expectContextual("TABLE", "Expected TABLE after FOREIGN");
+        return parse_rename_move(DdlObjectType::FOREIGN_TABLE);
+    }
 
     error("Expected object type after ALTER");
     return nullptr;
@@ -4185,6 +4820,7 @@ Statement* Parser::parseDrop() {
 
     if (matchContextual("SCHEMA")) return parseDropSchema();
     if (matchContextual("DATABASE")) return parseDropDatabase();
+    if (matchContextual("TABLESPACE")) return parseDropTablespace();
     if (matchContextual("TABLE")) return parseDropTable();
     if (matchContextual("INDEX")) return parseDropIndex();
     if (matchContextual("VIEW")) return parseDropView();
@@ -4196,8 +4832,23 @@ Statement* Parser::parseDrop() {
     if (matchContextual("TRIGGER")) return parseDropTrigger();
     if (matchContextual("PACKAGE")) return parseDropPackage();
     if (matchContextual("ROLE")) return parseDropRole();
+    if (matchContextual("GROUP")) return parseDropGroup();
     if (matchContextual("EXCEPTION")) return parseDropException();
     if (matchContextual("SEQUENCE")) return parseDropSequence();
+    if (matchContextual("SYNONYM")) return parseDropSynonym();
+    if (matchContextual("UDR")) return parseDropUdr();
+    if (matchContextual("SERVER")) return parseDropForeignServer();
+    if (matchContextual("USER")) {
+        if (matchContextual("MAPPING")) {
+            return parseDropUserMapping();
+        }
+        error("Expected MAPPING after DROP USER");
+        return nullptr;
+    }
+    if (matchContextual("FOREIGN")) {
+        expectContextual("TABLE", "Expected TABLE after FOREIGN");
+        return parseDropForeignTable();
+    }
     if (matchContextual("MATERIALIZED")) {
         expectContextual("VIEW", "Expected VIEW after MATERIALIZED");
         auto* stmt = parseDropView();
@@ -4479,6 +5130,28 @@ DropRoleStmt* Parser::parseDropRole() {
     return stmt;
 }
 
+DropGroupStmt* Parser::parseDropGroup() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropGroupStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->groups.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 DropExceptionStmt* Parser::parseDropException() {
     SourceLocation start = currentLocation();
 
@@ -4492,6 +5165,131 @@ DropExceptionStmt* Parser::parseDropException() {
     do {
         stmt->exceptions.push_back(parseSchemaPath(state_));
     } while (match(TokenType::COMMA));
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropForeignServerStmt* Parser::parseDropForeignServer() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropForeignServerStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    stmt->server_name = expectIdentifier("Expected server name");
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropForeignTableStmt* Parser::parseDropForeignTable() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropForeignTableStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->tables.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropUserMappingStmt* Parser::parseDropUserMapping() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropUserMappingStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    expectContextual("FOR", "Expected FOR after DROP USER MAPPING");
+
+    if (matchContextual("CURRENT_USER")) {
+        stmt->target = UserMappingTarget::CURRENT_USER;
+    } else if (matchContextual("CURRENT")) {
+        expectContextual("USER", "Expected USER after CURRENT");
+        stmt->target = UserMappingTarget::CURRENT_USER;
+    } else if (matchContextual("SESSION_USER")) {
+        stmt->target = UserMappingTarget::SESSION_USER;
+    } else if (matchContextual("SESSION")) {
+        expectContextual("USER", "Expected USER after SESSION");
+        stmt->target = UserMappingTarget::SESSION_USER;
+    } else if (matchContextual("PUBLIC")) {
+        stmt->target = UserMappingTarget::PUBLIC_ROLE;
+    } else if (matchContextual("USER")) {
+        if (isIdentifier()) {
+            stmt->target = UserMappingTarget::USER_NAME;
+            stmt->user_name = expectIdentifier("Expected user name");
+        } else {
+            stmt->target = UserMappingTarget::CURRENT_USER;
+        }
+    } else {
+        stmt->target = UserMappingTarget::USER_NAME;
+        stmt->user_name = expectIdentifier("Expected user name");
+    }
+
+    expectContextual("SERVER", "Expected SERVER after user mapping target");
+    stmt->server_name = expectIdentifier("Expected server name");
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropSynonymStmt* Parser::parseDropSynonym() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropSynonymStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->synonyms.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropUdrStmt* Parser::parseDropUdr() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropUdrStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->udrs.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    }
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -5674,6 +6472,38 @@ CopyStmt* Parser::parseCopy() {
                 }
                 stmt->options.encoding = id;
                 stmt->options.encoding_set = true;
+            } else if (matchContextual("BATCH_SIZE")) {
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("Expected integer literal for COPY BATCH_SIZE");
+                    break;
+                }
+                stmt->options.batch_size = current().value.int_value;
+                stmt->options.batch_size_set = true;
+                advance();
+            } else if (matchContextual("MAX_ERRORS")) {
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("Expected integer literal for COPY MAX_ERRORS");
+                    break;
+                }
+                stmt->options.max_errors = current().value.int_value;
+                stmt->options.max_errors_set = true;
+                advance();
+            } else if (matchContextual("ON_ERROR")) {
+                auto id = read_option_value();
+                if (id == StringPool::INVALID_ID) {
+                    error("Expected COPY ON_ERROR value");
+                    break;
+                }
+                auto text = stringPool().get(id);
+                if (caseInsensitiveEquals(text, "ABORT")) {
+                    stmt->options.on_error = CopyOptions::OnError::ABORT;
+                } else if (caseInsensitiveEquals(text, "SKIP")) {
+                    stmt->options.on_error = CopyOptions::OnError::SKIP;
+                } else {
+                    error("Unsupported COPY ON_ERROR value");
+                    break;
+                }
+                stmt->options.on_error_set = true;
             } else if (matchContextual("CSV") ||
                        matchContextual("TEXT") ||
                        matchContextual("BINARY")) {
@@ -7507,6 +8337,14 @@ ResetStmt* Parser::parseReset() {
     // RESET ALL
     if (matchContextual("ALL")) {
         stmt->reset_all = true;
+    } else if (matchContextual("SESSION")) {
+        expectContextual("AUTHORIZATION", "Expected AUTHORIZATION after RESET SESSION");
+        stmt->name = stringPool().intern("SESSION_AUTHORIZATION");
+    } else if (matchContextual("ROLE")) {
+        stmt->name = stringPool().intern("ROLE");
+    } else if (matchContextual("TIME")) {
+        expectContextual("ZONE", "Expected ZONE after RESET TIME");
+        stmt->name = stringPool().intern("TIME_ZONE");
     } else {
         stmt->name = expectIdentifier("Expected variable name or ALL");
     }
@@ -7725,6 +8563,12 @@ ShowStmt* Parser::parseShow() {
         expectContextual("DIALECT", "Expected DIALECT after SQL");
         stmt->show_type = ShowStmt::ShowType::SQL_DIALECT;
     }
+    // SHOW TIME ZONE
+    else if (matchContextual("TIME")) {
+        expectContextual("ZONE", "Expected ZONE after TIME");
+        stmt->show_type = ShowStmt::ShowType::VARIABLE;
+        stmt->name = stringPool().intern("TIME_ZONE");
+    }
     // SHOW VERSION
     else if (matchContextual("VERSION")) {
         stmt->show_type = ShowStmt::ShowType::VERSION;
@@ -7751,6 +8595,33 @@ ShowStmt* Parser::parseShow() {
     else {
         stmt->show_type = ShowStmt::ShowType::VARIABLE;
         stmt->name = expectIdentifier("Expected variable name or SHOW keyword");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+ShowStmt* Parser::parseDescribe() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<ShowStmt>();
+    stmt->show_type = ShowStmt::ShowType::COLUMNS;
+
+    if (check(TokenType::STRING_LITERAL)) {
+        stmt->from_name = current().value.string_id;
+        advance();
+    } else if (check(TokenType::IDENTIFIER)) {
+        stmt->from_name = expectIdentifier("Expected table name after DESCRIBE");
+    } else {
+        error("Expected table name after DESCRIBE");
+    }
+
+    if (check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL)) {
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->like_pattern = current().value.string_id;
+            advance();
+        } else {
+            stmt->like_pattern = expectIdentifier("Expected column name after DESCRIBE");
+        }
     }
 
     stmt->span = makeSpan(start);
@@ -7829,6 +8700,79 @@ ExplainStmt* Parser::parseExplain() {
     } else {
         error("Expected SELECT, INSERT, UPDATE, or DELETE after EXPLAIN");
         return nullptr;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
+// ANALYZE Statement
+// =============================================================================
+
+AnalyzeStmt* Parser::parseAnalyze() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AnalyzeStmt>();
+
+    if (matchContextual("VERBOSE")) {
+        stmt->verbose = true;
+    }
+
+    stmt->table_path = parseSchemaPath(state_);
+    if (stmt->table_path.isEmpty()) {
+        error("Expected table name after ANALYZE");
+    }
+
+    bool parsed_paren = false;
+    while (!isAtEnd()) {
+        if (check(TokenType::LEFT_PAREN)) {
+            if (parsed_paren || stmt->has_column) {
+                error("ANALYZE supports only one column");
+                break;
+            }
+            parsed_paren = true;
+            advance();
+            if (!check(TokenType::RIGHT_PAREN)) {
+                stmt->column_name = expectIdentifier("Expected column name");
+                stmt->has_column = true;
+                if (match(TokenType::COMMA)) {
+                    error("ANALYZE supports only one column");
+                    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+                        advance();
+                    }
+                }
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after column list");
+            continue;
+        }
+
+        if (matchContextual("COLUMN")) {
+            if (stmt->has_column) {
+                error("ANALYZE supports only one column");
+            }
+            stmt->column_name = expectIdentifier("Expected column name after COLUMN");
+            stmt->has_column = true;
+            continue;
+        }
+
+        if (matchContextual("SAMPLE")) {
+            if (stmt->has_sample) {
+                error("SAMPLE specified more than once");
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                stmt->sample_rate = static_cast<double>(current().value.int_value);
+                advance();
+            } else if (check(TokenType::FLOAT_LITERAL)) {
+                stmt->sample_rate = current().value.float_value;
+                advance();
+            } else {
+                error("Expected numeric sample rate after SAMPLE");
+            }
+            stmt->has_sample = true;
+            continue;
+        }
+
+        break;
     }
 
     stmt->span = makeSpan(start);
@@ -8138,12 +9082,39 @@ CommentStmt* Parser::parseComment() {
     } else if (matchContextual("FUNCTION")) {
         stmt->object_type = CommentObjectType::FUNCTION;
         stmt->object_path = parseSchemaPath(state_);
+        if (match(TokenType::LEFT_PAREN)) {
+            int depth = 1;
+            while (!isAtEnd() && depth > 0) {
+                if (match(TokenType::LEFT_PAREN)) {
+                    depth++;
+                } else if (match(TokenType::RIGHT_PAREN)) {
+                    depth--;
+                } else {
+                    advance();
+                }
+            }
+        }
     } else if (matchContextual("PROCEDURE")) {
         stmt->object_type = CommentObjectType::PROCEDURE;
         stmt->object_path = parseSchemaPath(state_);
+        if (match(TokenType::LEFT_PAREN)) {
+            int depth = 1;
+            while (!isAtEnd() && depth > 0) {
+                if (match(TokenType::LEFT_PAREN)) {
+                    depth++;
+                } else if (match(TokenType::RIGHT_PAREN)) {
+                    depth--;
+                } else {
+                    advance();
+                }
+            }
+        }
     } else if (matchContextual("TRIGGER")) {
         stmt->object_type = CommentObjectType::TRIGGER;
         stmt->object_path = parseSchemaPath(state_);
+        if (matchContextual("ON")) {
+            parseSchemaPath(state_);
+        }
     } else if (matchContextual("SCHEMA")) {
         stmt->object_type = CommentObjectType::SCHEMA;
         stmt->object_path = parseSchemaPath(state_);
@@ -8156,6 +9127,9 @@ CommentStmt* Parser::parseComment() {
     } else if (matchContextual("CONSTRAINT")) {
         stmt->object_type = CommentObjectType::CONSTRAINT;
         stmt->object_path = parseSchemaPath(state_);
+        if (matchContextual("ON")) {
+            parseSchemaPath(state_);
+        }
     } else {
         error("Expected object type after COMMENT ON");
         return nullptr;
@@ -8328,6 +9302,10 @@ Statement* Parser::parsePSQLStatement() {
         advance();
         return parseIfStatement();
     }
+    if (check(TokenType::KW_CASE)) {
+        advance();
+        return parseCaseStatement();
+    }
     if (checkContextual("WHILE")) {
         advance();
         return parseWhileStatement();
@@ -8499,6 +9477,91 @@ Statement* Parser::parseWhileStatement() {
     }
 
     return stmt;
+}
+
+Statement* Parser::parseCaseStatement() {
+    Expression* case_expr = nullptr;
+    bool simple_case = false;
+
+    if (!check(TokenType::KW_WHEN)) {
+        case_expr = parseExpression();
+        simple_case = true;
+    }
+
+    struct CaseBranch {
+        Expression* condition = nullptr;
+        Statement* body = nullptr;
+    };
+
+    std::vector<CaseBranch> branches;
+    Statement* else_branch = nullptr;
+
+    auto parseBranchBody = [&]() -> Statement* {
+        auto* block = arena_.create<CompoundStmt>();
+        while (!isAtEnd()) {
+            if (check(TokenType::KW_WHEN) || check(TokenType::KW_ELSE) || check(TokenType::KW_END)) {
+                break;
+            }
+            size_t start_offset = current().span.start.offset;
+            Statement* inner = parsePSQLStatement();
+            if (inner) {
+                block->statements.push_back(inner);
+            } else {
+                if (!isAtEnd() && current().span.start.offset == start_offset) {
+                    synchronize();
+                }
+            }
+            match(TokenType::SEMICOLON);
+        }
+        if (block->statements.empty()) {
+            error("Expected statement after THEN");
+            return block;
+        }
+        if (block->statements.size() == 1) {
+            return block->statements[0];
+        }
+        return block;
+    };
+
+    while (match(TokenType::KW_WHEN)) {
+        Expression* when_expr = parseExpression();
+        if (simple_case) {
+            auto* cond = arena_.create<BinaryExpr>();
+            cond->op = BinaryOp::EQ;
+            cond->left = case_expr;
+            cond->right = when_expr;
+            when_expr = cond;
+        }
+
+        expect(TokenType::KW_THEN, "Expected THEN after WHEN");
+        Statement* body = parseBranchBody();
+        branches.push_back({when_expr, body});
+    }
+
+    if (match(TokenType::KW_ELSE)) {
+        else_branch = parseBranchBody();
+    }
+
+    expect(TokenType::KW_END, "Expected END CASE");
+    if (!matchContextual("CASE")) {
+        error("Expected CASE after END");
+    }
+
+    if (branches.empty()) {
+        error("CASE requires at least one WHEN clause");
+        return else_branch;
+    }
+
+    Statement* current = else_branch;
+    for (auto it = branches.rbegin(); it != branches.rend(); ++it) {
+        auto* stmt = arena_.create<IfStmt>();
+        stmt->condition = it->condition;
+        stmt->then_branch = it->body;
+        stmt->else_branch = current;
+        current = stmt;
+    }
+
+    return current;
 }
 
 Statement* Parser::parseForStatement() {
@@ -8858,6 +9921,10 @@ ExecuteStatementStmt* Parser::parseExecuteDynamicStatement() {
     }
 
     return stmt;
+}
+
+ExecuteProcedureStmt* Parser::parseCall() {
+    return parseExecuteProcedure();
 }
 
 DeclareCursorStmt* Parser::parseDeclareCursor() {

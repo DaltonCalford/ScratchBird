@@ -333,6 +333,11 @@ private:
     ResolvedStatement* analyzeDropSchema(DropSchemaStmt* stmt);
     ResolvedStatement* analyzeAlterSchema(AlterSchemaStmt* stmt);
     ResolvedStatement* analyzeCreateDatabase(CreateDatabaseStmt* stmt);
+    ResolvedStatement* analyzeCreateTablespace(CreateTablespaceStmt* stmt);
+    ResolvedStatement* analyzeAlterTablespace(AlterTablespaceStmt* stmt);
+    ResolvedStatement* analyzeDropTablespace(DropTablespaceStmt* stmt);
+    ResolvedStatement* analyzeAttachTablespace(AttachTablespaceStmt* stmt);
+    ResolvedStatement* analyzeDetachTablespace(DetachTablespaceStmt* stmt);
     ResolvedStatement* analyzeCreateFunction(CreateFunctionStmt* stmt);
     ResolvedStatement* analyzeCreateProcedure(CreateProcedureStmt* stmt);
     ResolvedStatement* analyzeCreateTrigger(CreateTriggerStmt* stmt);
@@ -342,10 +347,16 @@ private:
     ResolvedStatement* analyzeCreatePackage(CreatePackageStmt* stmt);
     ResolvedStatement* analyzeCreateUser(CreateUserStmt* stmt);
     ResolvedStatement* analyzeCreateRole(CreateRoleStmt* stmt);
+    ResolvedStatement* analyzeCreateGroup(CreateGroupStmt* stmt);
     ResolvedStatement* analyzeCreateJob(CreateJobStmt* stmt);
     ResolvedStatement* analyzeCreateException(CreateExceptionStmt* stmt);
     ResolvedStatement* analyzeCreateType(CreateTypeStmt* stmt);
     ResolvedStatement* analyzeCreateDomain(CreateDomainStmt* stmt);
+    ResolvedStatement* analyzeCreateForeignServer(CreateForeignServerStmt* stmt);
+    ResolvedStatement* analyzeCreateForeignTable(CreateForeignTableStmt* stmt);
+    ResolvedStatement* analyzeCreateUserMapping(CreateUserMappingStmt* stmt);
+    ResolvedStatement* analyzeCreateSynonym(CreateSynonymStmt* stmt);
+    ResolvedStatement* analyzeCreateUdr(CreateUdrStmt* stmt);
     ResolvedStatement* analyzeDropDatabase(DropDatabaseStmt* stmt);
     ResolvedStatement* analyzeAlterDatabase(AlterDatabaseStmt* stmt);
     ResolvedStatement* analyzeAlterType(AlterTypeStmt* stmt);
@@ -364,8 +375,14 @@ private:
     ResolvedStatement* analyzeDropTrigger(DropTriggerStmt* stmt);
     ResolvedStatement* analyzeDropPackage(DropPackageStmt* stmt);
     ResolvedStatement* analyzeDropRole(DropRoleStmt* stmt);
+    ResolvedStatement* analyzeDropGroup(DropGroupStmt* stmt);
     ResolvedStatement* analyzeDropJob(DropJobStmt* stmt);
     ResolvedStatement* analyzeDropException(DropExceptionStmt* stmt);
+    ResolvedStatement* analyzeDropForeignServer(DropForeignServerStmt* stmt);
+    ResolvedStatement* analyzeDropForeignTable(DropForeignTableStmt* stmt);
+    ResolvedStatement* analyzeDropUserMapping(DropUserMappingStmt* stmt);
+    ResolvedStatement* analyzeDropSynonym(DropSynonymStmt* stmt);
+    ResolvedStatement* analyzeDropUdr(DropUdrStmt* stmt);
     ResolvedStatement* analyzeDropType(DropTypeStmt* stmt);
     ResolvedStatement* analyzeAlterJob(AlterJobStmt* stmt);
     ResolvedStatement* analyzeExecuteJob(ExecuteJobStmt* stmt);
@@ -379,6 +396,7 @@ private:
     ResolvedStatement* analyzeDelete(DeleteStmt* stmt);
     ResolvedStatement* analyzeMerge(MergeStmt* stmt);
     ResolvedStatement* analyzeCopy(CopyStmt* stmt);
+    ResolvedStatement* analyzeComment(CommentStmt* stmt);
 
     // Transaction/Session
     ResolvedStatement* analyzeStartTransaction(StartTransactionStmt* stmt);
@@ -390,9 +408,11 @@ private:
     ResolvedStatement* analyzeConnect(ConnectStmt* stmt);
     ResolvedStatement* analyzeDisconnect(DisconnectStmt* stmt);
     ResolvedStatement* analyzeSet(SetStmt* stmt);
+    ResolvedStatement* analyzeReset(ResetStmt* stmt);
     ResolvedStatement* analyzeAlterSystem(AlterSystemStmt* stmt);
     ResolvedStatement* analyzeShow(ShowStmt* stmt);
     ResolvedStatement* analyzeExplain(ExplainStmt* stmt);
+    ResolvedStatement* analyzeAnalyze(AnalyzeStmt* stmt);
     ResolvedStatement* analyzeSweepDatabase(SweepDatabaseStmt* stmt);
 
     // DCL

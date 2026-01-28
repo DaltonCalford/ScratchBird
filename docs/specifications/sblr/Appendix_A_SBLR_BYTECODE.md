@@ -419,6 +419,9 @@ Unless noted, `value_stack_offset` is counted from the top of the execution stac
   [quote:string]               // single-character string
   [escape:string]              // single-character string
   [encoding:string]
+  [batch_size:int32]
+  [max_errors:int32]
+  [on_error:uint8]             // 0=ABORT,1=SKIP
   if table_path == "":
     [query_len:UVARINT]
     [query_bytes:byte[query_len]]
@@ -428,6 +431,16 @@ Unless noted, `value_stack_offset` is counted from the top of the execution stac
   - The embedded query must begin with SELECT.
   - COPY (SELECT ...) only supports TO and does not allow a column list.
   - `format`/`delimiter`/`null_string`/`header` are honored by the executor; BINARY is rejected in Alpha.
+
+### 7.6 Utility Extended Opcodes (selected)
+
+- EXT_COMMENT (0x0094)
+  ```
+  [object_type:uint8]          // parser::v2::CommentObjectType
+  [object_id:uuid]
+  [is_null:uint8]              // 1 = remove comment, 0 = set comment
+  [comment_text:string]
+  ```
 
 ## 8. Transaction Opcodes (v2)
 
@@ -471,6 +484,12 @@ Identical payload to START_TRANSACTION. No in-place modification occurs.
   [mode:uint8]            // 0=OFF,1=ON
   [conflict_action:uint8]
   [conflict_error_code:int32]  // only if conflict_action == ERROR
+  ```
+
+- EXT_RELEASE_SAVEPOINT (0x0059)
+  ```
+  [EXT_RELEASE_SAVEPOINT]
+  [savepoint_name:string]
   ```
 - EXT_PREPARE_TRANSACTION (0x0105) -> [gid:string]
 - EXT_COMMIT_PREPARED (0x0106) -> [gid:string]

@@ -158,6 +158,17 @@ struct CatalogRootPage {
     uint32_t graph_edge_labels_page;
     uint32_t graph_properties_page;
 
+    // Beta: NoSQL extensions (RDF, search, time-series, vector)
+    uint32_t rdf_graphs_page;
+    uint32_t rdf_prefixes_page;
+    uint32_t search_analyzers_page;
+    uint32_t search_fields_page;
+    uint32_t timeseries_measurements_page;
+    uint32_t timeseries_tags_page;
+    uint32_t timeseries_retention_policies_page;
+    uint32_t vector_collections_page;
+    uint32_t vector_indexes_page;
+
     // Phase B: Synonyms, FDW, registry, UDR engines/modules
     uint32_t synonyms_page;
     uint32_t foreign_servers_page;

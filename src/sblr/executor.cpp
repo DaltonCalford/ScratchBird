@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <optional>
@@ -2629,6 +2631,56 @@ namespace scratchbird
                             executeDropGroup();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FOREIGN_SERVER))
+                        {
+                            executeCreateForeignServer();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_FOREIGN_SERVER))
+                        {
+                            executeDropForeignServer();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FOREIGN_TABLE))
+                        {
+                            executeCreateForeignTable();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_FOREIGN_TABLE))
+                        {
+                            executeDropForeignTable();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_USER_MAPPING))
+                        {
+                            executeCreateUserMapping();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_USER_MAPPING))
+                        {
+                            executeDropUserMapping();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_SYNONYM))
+                        {
+                            executeCreateSynonym();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_SYNONYM))
+                        {
+                            executeDropSynonym();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_UDR))
+                        {
+                            executeCreateUdr();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_UDR))
+                        {
+                            executeDropUdr();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_GRANT_PRIVILEGE))
                         {
                             executeGrantPrivilege();
@@ -2717,6 +2769,11 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DOMAIN))
                         {
                             executeCreateDomain();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COMMENT))
+                        {
+                            executeComment();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_DOMAIN))
@@ -9169,6 +9226,7 @@ namespace scratchbird
             bool has_validation = (flags & 0x08) != 0;
             bool has_quality = (flags & 0x10) != 0;
             bool has_comment = (flags & 0x20) != 0;
+            bool is_type = (flags & 0x40) != 0;
 
             uint8_t domain_kind = readByte();
             std::string domain_path = readString();
@@ -9712,7 +9770,138 @@ namespace scratchbird
                 }
             }
 
-            recordObjectDefinition(core::CatalogManager::ObjectType::DOMAIN, domain_id);
+            recordObjectDefinition(is_type ? core::CatalogManager::ObjectType::COMPOSITE_TYPE
+                                            : core::CatalogManager::ObjectType::DOMAIN,
+                                   domain_id);
+        }
+
+        void Executor::executeComment()
+        {
+            uint8_t object_type_raw = readByte();
+            core::ID object_id = readId();
+            bool is_null = readByte() != 0;
+            std::string comment_text = readString();
+
+            auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+            if (!catalog)
+            {
+                error("Catalog manager not available");
+            }
+
+            auto map_object_type = [](parser::v2::CommentObjectType type) -> core::CatalogManager::ObjectType {
+                switch (type)
+                {
+                    case parser::v2::CommentObjectType::TABLE:
+                        return core::CatalogManager::ObjectType::TABLE;
+                    case parser::v2::CommentObjectType::COLUMN:
+                        return core::CatalogManager::ObjectType::COLUMN;
+                    case parser::v2::CommentObjectType::INDEX:
+                        return core::CatalogManager::ObjectType::INDEX;
+                    case parser::v2::CommentObjectType::VIEW:
+                        return core::CatalogManager::ObjectType::VIEW;
+                    case parser::v2::CommentObjectType::SEQUENCE:
+                        return core::CatalogManager::ObjectType::SEQUENCE;
+                    case parser::v2::CommentObjectType::FUNCTION:
+                        return core::CatalogManager::ObjectType::FUNCTION;
+                    case parser::v2::CommentObjectType::PROCEDURE:
+                        return core::CatalogManager::ObjectType::PROCEDURE;
+                    case parser::v2::CommentObjectType::TRIGGER:
+                        return core::CatalogManager::ObjectType::TRIGGER;
+                    case parser::v2::CommentObjectType::SCHEMA:
+                        return core::CatalogManager::ObjectType::SCHEMA;
+                    case parser::v2::CommentObjectType::DATABASE:
+                        return core::CatalogManager::ObjectType::DATABASE;
+                    case parser::v2::CommentObjectType::ROLE:
+                        return core::CatalogManager::ObjectType::ROLE;
+                    case parser::v2::CommentObjectType::CONSTRAINT:
+                        return core::CatalogManager::ObjectType::CONSTRAINT;
+                    default:
+                        return core::CatalogManager::ObjectType::UNKNOWN;
+                }
+            };
+
+            auto map_permission_type = [](core::CatalogManager::ObjectType type,
+                                          core::CatalogManager::PermissionObjectType& out) -> bool {
+                switch (type)
+                {
+                    case core::CatalogManager::ObjectType::TABLE:
+                        out = core::CatalogManager::PermissionObjectType::TABLE;
+                        return true;
+                    case core::CatalogManager::ObjectType::VIEW:
+                        out = core::CatalogManager::PermissionObjectType::VIEW;
+                        return true;
+                    case core::CatalogManager::ObjectType::SEQUENCE:
+                        out = core::CatalogManager::PermissionObjectType::SEQUENCE;
+                        return true;
+                    case core::CatalogManager::ObjectType::PROCEDURE:
+                        out = core::CatalogManager::PermissionObjectType::PROCEDURE;
+                        return true;
+                    case core::CatalogManager::ObjectType::FUNCTION:
+                        out = core::CatalogManager::PermissionObjectType::FUNCTION;
+                        return true;
+                    case core::CatalogManager::ObjectType::DOMAIN:
+                        out = core::CatalogManager::PermissionObjectType::DOMAIN;
+                        return true;
+                    case core::CatalogManager::ObjectType::DATABASE:
+                        out = core::CatalogManager::PermissionObjectType::DATABASE;
+                        return true;
+                    case core::CatalogManager::ObjectType::SCHEMA:
+                        out = core::CatalogManager::PermissionObjectType::SCHEMA;
+                        return true;
+                    default:
+                        return false;
+                }
+            };
+
+            auto comment_object_type = static_cast<parser::v2::CommentObjectType>(object_type_raw);
+            core::CatalogManager::ObjectType object_type = map_object_type(comment_object_type);
+            if (object_type == core::CatalogManager::ObjectType::UNKNOWN)
+            {
+                error("Unsupported COMMENT object type");
+            }
+
+            if (conn_ctx_ && !isEffectiveSuperuser())
+            {
+                core::CatalogManager::PermissionObjectType perm_type;
+                if (map_permission_type(object_type, perm_type))
+                {
+                    if (!checkPermission(object_id,
+                                         perm_type,
+                                         static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE),
+                                         core::PermissionCheckMode::VERIFIED))
+                    {
+                        error("Permission denied: COMMENT requires CREATE privilege");
+                    }
+                }
+            }
+
+            core::ErrorContext ctx;
+            if (is_null)
+            {
+                auto status = catalog->deleteComment(object_id, &ctx);
+                if (status != core::Status::OK && status != core::Status::INVALID_ARGUMENT)
+                {
+                    std::string err_msg = "COMMENT delete failed";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+            else
+            {
+                auto status = catalog->setComment(object_id, object_type, comment_text, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "COMMENT failed";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
         }
 
         void Executor::executeAlterDomain()
@@ -10095,7 +10284,9 @@ namespace scratchbird
                 }
             }
 
-            recordObjectDefinition(core::CatalogManager::ObjectType::DOMAIN,
+            bool is_type = action >= static_cast<uint8_t>(parser::v2::AlterTypeAction::RENAME_TO);
+            recordObjectDefinition(is_type ? core::CatalogManager::ObjectType::COMPOSITE_TYPE
+                                            : core::CatalogManager::ObjectType::DOMAIN,
                                    domain_info.domain_id);
         }
 
@@ -10103,7 +10294,7 @@ namespace scratchbird
         {
             uint8_t flags = readByte();
             bool if_exists = (flags & 0x01) != 0;
-            (void)flags;
+            bool is_type = (flags & 0x40) != 0;
 
             std::string domain_path = readString();
 
@@ -10174,7 +10365,8 @@ namespace scratchbird
                 error(err_msg);
             }
 
-            deleteObjectDefinition(core::CatalogManager::ObjectType::DOMAIN,
+            deleteObjectDefinition(is_type ? core::CatalogManager::ObjectType::COMPOSITE_TYPE
+                                            : core::CatalogManager::ObjectType::DOMAIN,
                                    domain_info.domain_id);
         }
 
@@ -37301,6 +37493,522 @@ namespace scratchbird
             db_->permission_cache()->invalidateAll();
         }
 
+        void Executor::executeCreateForeignServer()
+        {
+            std::string server_name = readString();
+            std::string server_type = readString();
+            std::string host = readString();
+            uint32_t port_value = readInt32();
+            std::string options_json = readString();
+
+            if (port_value > std::numeric_limits<uint16_t>::max())
+            {
+                error("Invalid port for CREATE SERVER");
+            }
+
+            core::ErrorContext err_ctx;
+            core::ID server_id;
+            auto status = db_->catalog_manager()->createForeignServer(
+                server_name, server_type, host, static_cast<uint16_t>(port_value),
+                options_json, server_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE SERVER failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            recordObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_SERVER, server_id);
+        }
+
+        void Executor::executeDropForeignServer()
+        {
+            std::string server_name = readString();
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            bool cascade = flags & 0x02;
+
+            core::CatalogManager::ForeignServerInfo server_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getForeignServerByName(server_name, server_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                error("Foreign server not found: " + server_name);
+            }
+
+            status = db_->catalog_manager()->dropForeignServer(server_info.server_id, cascade, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DROP SERVER failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            deleteObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_SERVER, server_info.server_id);
+        }
+
+        void Executor::executeCreateForeignTable()
+        {
+            uint8_t flags = readByte();
+            bool if_not_exists = flags & 0x01;
+            std::string table_name = readString();
+            std::string server_name = readString();
+            std::string remote_schema = readString();
+            std::string remote_table = readString();
+            std::string column_mapping = readString();
+
+            auto components = splitSchemaComponents(table_name);
+            std::string schema_name;
+            std::string local_name = table_name;
+            if (components.size() >= 2)
+            {
+                std::vector<std::string> schema_components(components.begin(), components.end() - 1);
+                schema_name = joinSchemaComponents(schema_components, 0);
+                local_name = components.back();
+            }
+
+            core::ID schema_id{};
+            if (!schema_name.empty())
+            {
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext err_ctx;
+                auto status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Schema not found for CREATE FOREIGN TABLE");
+                }
+                schema_id = schema_info.schema_id;
+            }
+            else if (conn_ctx_)
+            {
+                schema_id = conn_ctx_->getCurrentSchemaId();
+            }
+
+            core::CatalogManager::ForeignServerInfo server_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getForeignServerByName(server_name, server_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Foreign server not found: " + server_name);
+            }
+
+            core::ID foreign_table_id;
+            status = db_->catalog_manager()->createForeignTable(
+                schema_id, local_name, server_info.server_id, remote_schema,
+                remote_table, column_mapping, foreign_table_id, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::FILE_EXISTS && if_not_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "CREATE FOREIGN TABLE failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            recordObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_TABLE, foreign_table_id);
+        }
+
+        void Executor::executeDropForeignTable()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            std::string table_name = readString();
+
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            core::ErrorContext err_ctx;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::FOREIGN_TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::NOT_FOUND && if_exists)
+                {
+                    return;
+                }
+                error("Foreign table not found: " + table_name);
+            }
+
+            status = db_->catalog_manager()->dropForeignTable(table_id, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DROP FOREIGN TABLE failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            deleteObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_TABLE, table_id);
+        }
+
+        void Executor::executeCreateUserMapping()
+        {
+            auto target = static_cast<parser::v2::UserMappingTarget>(readByte());
+            std::string user_name = readString();
+            std::string server_name = readString();
+            std::string remote_user = readString();
+            std::string remote_credentials = readString();
+
+            core::ID user_id{};
+            core::ErrorContext err_ctx;
+
+            if (target == parser::v2::UserMappingTarget::CURRENT_USER)
+            {
+                user_id = conn_ctx_ ? conn_ctx_->getCurrentUserId() : core::ID{};
+            }
+            else if (target == parser::v2::UserMappingTarget::SESSION_USER)
+            {
+                user_id = conn_ctx_ ? conn_ctx_->getSessionUserId() : core::ID{};
+            }
+            else if (target == parser::v2::UserMappingTarget::PUBLIC_ROLE)
+            {
+                core::CatalogManager::RoleInfo role_info;
+                auto status = db_->catalog_manager()->getRoleByName("PUBLIC", role_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Role not found: PUBLIC");
+                }
+                user_id = role_info.role_id;
+            }
+            else
+            {
+                core::CatalogManager::UserInfo user_info;
+                auto status = db_->catalog_manager()->getUserByName(user_name, user_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("User not found: " + user_name);
+                }
+                user_id = user_info.user_id;
+            }
+
+            core::CatalogManager::ForeignServerInfo server_info;
+            auto status = db_->catalog_manager()->getForeignServerByName(server_name, server_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Foreign server not found: " + server_name);
+            }
+
+            core::ID mapping_id;
+            status = db_->catalog_manager()->createUserMapping(
+                user_id, server_info.server_id, remote_user, remote_credentials, mapping_id, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE USER MAPPING failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            recordObjectDefinition(core::CatalogManager::ObjectType::USER_MAPPING, mapping_id);
+        }
+
+        void Executor::executeDropUserMapping()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            auto target = static_cast<parser::v2::UserMappingTarget>(readByte());
+            std::string user_name = readString();
+            std::string server_name = readString();
+
+            core::ID user_id{};
+            core::ErrorContext err_ctx;
+
+            if (target == parser::v2::UserMappingTarget::CURRENT_USER)
+            {
+                user_id = conn_ctx_ ? conn_ctx_->getCurrentUserId() : core::ID{};
+            }
+            else if (target == parser::v2::UserMappingTarget::SESSION_USER)
+            {
+                user_id = conn_ctx_ ? conn_ctx_->getSessionUserId() : core::ID{};
+            }
+            else if (target == parser::v2::UserMappingTarget::PUBLIC_ROLE)
+            {
+                core::CatalogManager::RoleInfo role_info;
+                auto status = db_->catalog_manager()->getRoleByName("PUBLIC", role_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    if (if_exists)
+                    {
+                        return;
+                    }
+                    error("Role not found: PUBLIC");
+                }
+                user_id = role_info.role_id;
+            }
+            else
+            {
+                core::CatalogManager::UserInfo user_info;
+                auto status = db_->catalog_manager()->getUserByName(user_name, user_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    if (if_exists)
+                    {
+                        return;
+                    }
+                    error("User not found: " + user_name);
+                }
+                user_id = user_info.user_id;
+            }
+
+            core::CatalogManager::ForeignServerInfo server_info;
+            auto status = db_->catalog_manager()->getForeignServerByName(server_name, server_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                error("Foreign server not found: " + server_name);
+            }
+
+            core::CatalogManager::UserMappingInfo mapping_info;
+            status = db_->catalog_manager()->getUserMapping(user_id, server_info.server_id,
+                                                            mapping_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                error("User mapping not found");
+            }
+
+            status = db_->catalog_manager()->dropUserMapping(mapping_info.mapping_id, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DROP USER MAPPING failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            deleteObjectDefinition(core::CatalogManager::ObjectType::USER_MAPPING, mapping_info.mapping_id);
+        }
+
+        void Executor::executeCreateSynonym()
+        {
+            bool is_public = readByte() != 0;
+            auto target_type = static_cast<core::CatalogManager::ObjectType>(readByte());
+            std::string synonym_name = readString();
+            std::string target_path = readString();
+
+            auto components = splitSchemaComponents(synonym_name);
+            std::string schema_name;
+            std::string local_name = synonym_name;
+            if (components.size() >= 2)
+            {
+                std::vector<std::string> schema_components(components.begin(), components.end() - 1);
+                schema_name = joinSchemaComponents(schema_components, 0);
+                local_name = components.back();
+            }
+
+            core::ID schema_id{};
+            core::ErrorContext err_ctx;
+            if (!schema_name.empty())
+            {
+                core::CatalogManager::SchemaInfo schema_info;
+                auto status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Schema not found for CREATE SYNONYM");
+                }
+                schema_id = schema_info.schema_id;
+            }
+            else if (conn_ctx_)
+            {
+                schema_id = conn_ctx_->getCurrentSchemaId();
+            }
+
+            core::ID synonym_id;
+            auto status = db_->catalog_manager()->createSynonym(
+                schema_id, local_name, target_path, target_type, is_public, synonym_id, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE SYNONYM failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            recordObjectDefinition(core::CatalogManager::ObjectType::SYNONYM, synonym_id);
+        }
+
+        void Executor::executeDropSynonym()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            std::string synonym_name = readString();
+
+            auto components = splitSchemaComponents(synonym_name);
+            std::string schema_name;
+            std::string local_name = synonym_name;
+            if (components.size() >= 2)
+            {
+                std::vector<std::string> schema_components(components.begin(), components.end() - 1);
+                schema_name = joinSchemaComponents(schema_components, 0);
+                local_name = components.back();
+            }
+
+            core::ID schema_id{};
+            core::ErrorContext err_ctx;
+            if (!schema_name.empty())
+            {
+                core::CatalogManager::SchemaInfo schema_info;
+                auto status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    if (if_exists)
+                    {
+                        return;
+                    }
+                    error("Schema not found for DROP SYNONYM");
+                }
+                schema_id = schema_info.schema_id;
+            }
+            else if (conn_ctx_)
+            {
+                schema_id = conn_ctx_->getCurrentSchemaId();
+            }
+
+            core::CatalogManager::SynonymInfo synonym_info;
+            auto status = db_->catalog_manager()->getSynonymByName(schema_id, local_name, synonym_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                error("Synonym not found: " + synonym_name);
+            }
+
+            status = db_->catalog_manager()->dropSynonym(synonym_info.synonym_id, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DROP SYNONYM failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            deleteObjectDefinition(core::CatalogManager::ObjectType::SYNONYM, synonym_info.synonym_id);
+        }
+
+        void Executor::executeCreateUdr()
+        {
+            auto udr_type = static_cast<core::CatalogManager::UDRType>(readByte());
+            std::string udr_name = readString();
+            std::string library_path = readString();
+            std::string entry_point = readString();
+            bool has_signature = readByte() != 0;
+            std::string signature = readString();
+
+            auto components = splitSchemaComponents(udr_name);
+            std::string schema_name;
+            std::string local_name = udr_name;
+            if (components.size() >= 2)
+            {
+                std::vector<std::string> schema_components(components.begin(), components.end() - 1);
+                schema_name = joinSchemaComponents(schema_components, 0);
+                local_name = components.back();
+            }
+
+            core::ID schema_id{};
+            core::ErrorContext err_ctx;
+            if (!schema_name.empty())
+            {
+                core::CatalogManager::SchemaInfo schema_info;
+                auto status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Schema not found for CREATE UDR");
+                }
+                schema_id = schema_info.schema_id;
+            }
+            else if (conn_ctx_)
+            {
+                schema_id = conn_ctx_->getCurrentSchemaId();
+            }
+
+            core::ID udr_id;
+            auto status = db_->catalog_manager()->createUDR(
+                schema_id, local_name, library_path, entry_point, udr_type,
+                has_signature ? signature : std::string(), udr_id, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE UDR failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            recordObjectDefinition(core::CatalogManager::ObjectType::UDR, udr_id);
+        }
+
+        void Executor::executeDropUdr()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            bool cascade = flags & 0x02;
+            std::string udr_name = readString();
+
+            core::ID udr_id;
+            core::CatalogManager::ObjectType resolved_type;
+            core::ErrorContext err_ctx;
+            auto status = resolveObjectIdForQualifiedName(
+                udr_name, core::CatalogManager::ObjectType::UDR,
+                udr_id, resolved_type, nullptr, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::NOT_FOUND && if_exists)
+                {
+                    return;
+                }
+                error("UDR not found: " + udr_name);
+            }
+
+            status = db_->catalog_manager()->dropUDR(udr_id, cascade, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DROP UDR failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            deleteObjectDefinition(core::CatalogManager::ObjectType::UDR, udr_id);
+        }
+
         void Executor::executeGrantPrivilege()
         {
             // Decode bytecode
@@ -38293,6 +39001,13 @@ namespace scratchbird
         {
             std::string var_name = readString();
             std::string normalized = scratchbird::core::IdentifierUtils::toUpper(var_name);
+            bool local_scope = false;
+            constexpr const char* kLocalPrefix = "LOCAL_";
+            if (normalized.rfind(kLocalPrefix, 0) == 0)
+            {
+                local_scope = true;
+                normalized = normalized.substr(std::strlen(kLocalPrefix));
+            }
 
             auto readSingleStringValue = [&](bool& default_requested) -> std::string {
                 if (pc_ >= bytecode_size_)
@@ -38354,8 +39069,190 @@ namespace scratchbird
                 return v.toString();
             };
 
+            auto readOptionalValue = [&]() -> std::optional<Value> {
+                if (pc_ >= bytecode_size_)
+                {
+                    error("Missing SET variable payload");
+                }
+                uint8_t next = bytecode_[pc_];
+                if (next == 0 || next == 1)
+                {
+                    uint8_t marker = readByte();
+                    if (marker == 0)
+                    {
+                        return std::nullopt;
+                    }
+                    evaluateExpression();
+                    return pop();
+                }
+                if (next == static_cast<uint8_t>(Opcode::LITERAL_NULL))
+                {
+                    readByte();
+                    return std::nullopt;
+                }
+                if (next == static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                {
+                    error("SET variable does not accept list values");
+                }
+                evaluateExpression();
+                return pop();
+            };
+
+            auto parseDurationMillis = [&](const std::string& raw,
+                                           uint64_t& millis) -> bool {
+                std::string s = raw;
+                size_t start = s.find_first_not_of(" \t");
+                size_t end = s.find_last_not_of(" \t");
+                if (start == std::string::npos)
+                {
+                    return false;
+                }
+                s = s.substr(start, end - start + 1);
+                if (s.empty())
+                {
+                    return false;
+                }
+
+                char* parse_end = nullptr;
+                double value = std::strtod(s.c_str(), &parse_end);
+                if (parse_end == s.c_str())
+                {
+                    return false;
+                }
+
+                std::string unit = parse_end;
+                start = unit.find_first_not_of(" \t");
+                if (start != std::string::npos)
+                {
+                    unit = unit.substr(start);
+                }
+                std::transform(unit.begin(), unit.end(), unit.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+                if (value < 0)
+                {
+                    return false;
+                }
+
+                uint64_t multiplier = 1;
+                if (unit.empty() || unit == "ms")
+                {
+                    multiplier = 1;
+                }
+                else if (unit == "s" || unit == "sec" || unit == "second" || unit == "seconds")
+                {
+                    multiplier = 1000;
+                }
+                else if (unit == "m" || unit == "min" || unit == "minute" || unit == "minutes")
+                {
+                    multiplier = 1000 * 60;
+                }
+                else if (unit == "h" || unit == "hr" || unit == "hour" || unit == "hours")
+                {
+                    multiplier = 1000 * 60 * 60;
+                }
+                else if (unit == "d" || unit == "day" || unit == "days")
+                {
+                    multiplier = 1000 * 60 * 60 * 24;
+                }
+                else
+                {
+                    return false;
+                }
+
+                millis = static_cast<uint64_t>(value * multiplier);
+                return true;
+            };
+
+            auto durationToSeconds = [&](const std::string& raw,
+                                         uint32_t& seconds) -> bool {
+                uint64_t millis = 0;
+                if (!parseDurationMillis(raw, millis))
+                {
+                    return false;
+                }
+                if (millis == 0)
+                {
+                    seconds = 0;
+                    return true;
+                }
+                seconds = static_cast<uint32_t>((millis + 999) / 1000);
+                return true;
+            };
+
+            auto findTimezoneByOffset = [&](int32_t offset_minutes,
+                                            uint16_t& tz_id) -> bool {
+                auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                if (catalog)
+                {
+                    std::vector<core::CatalogManager::TimezoneInfo> timezones;
+                    core::ErrorContext tz_ctx;
+                    if (catalog->listTimezones(timezones, &tz_ctx) == core::Status::OK)
+                    {
+                        for (const auto& tz : timezones)
+                        {
+                            if (tz.std_offset_minutes == offset_minutes)
+                            {
+                                tz_id = tz.timezone_id;
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                switch (offset_minutes)
+                {
+                    case 0:
+                        tz_id = core::TimezoneManager::TZ_UTC;
+                        return true;
+                    case -300:
+                        tz_id = core::TimezoneManager::TZ_EST;
+                        return true;
+                    case -480:
+                        tz_id = core::TimezoneManager::TZ_PST;
+                        return true;
+                    case -360:
+                        tz_id = core::TimezoneManager::TZ_CST;
+                        return true;
+                    case -420:
+                        tz_id = core::TimezoneManager::TZ_MST;
+                        return true;
+                    default:
+                        return false;
+                }
+            };
+
+            if (normalized == "ALL")
+            {
+                if (local_scope)
+                {
+                    error("SET LOCAL ALL is not supported");
+                }
+                bool default_requested = false;
+                readSingleStringValue(default_requested);
+
+                if (!conn_ctx_)
+                {
+                    error("RESET ALL requires connection context");
+                }
+
+                conn_ctx_->clearSessionVariables();
+                conn_ctx_->set_dialect_tag("SCRATCHBIRD");
+                std::string schema = conn_ctx_->current_schema();
+                if (schema.empty())
+                {
+                    schema = "public";
+                }
+                conn_ctx_->set_search_path({schema});
+                return;
+            }
+
             if (normalized == "PARSER")
             {
+                if (local_scope)
+                {
+                    error("SET LOCAL PARSER is not supported");
+                }
                 if (!conn_ctx_)
                 {
                     error("SET parser requires connection context");
@@ -38395,6 +39292,160 @@ namespace scratchbird
 
                 conn_ctx_->set_dialect_tag(parser_tag);
                 return;
+            }
+
+            if (normalized == "STATEMENT_TIMEOUT")
+            {
+                if (!conn_ctx_)
+                {
+                    error("SET statement_timeout requires connection context");
+                }
+
+                auto value_opt = readOptionalValue();
+                if (!value_opt.has_value() || value_opt->isNull())
+                {
+                    if (local_scope)
+                    {
+                        conn_ctx_->reset_statement_timeout_local();
+                    }
+                    else
+                    {
+                        conn_ctx_->set_statement_timeout(0);
+                    }
+                    return;
+                }
+
+                std::string raw = value_opt->toString();
+                uint32_t seconds = 0;
+                if (!durationToSeconds(raw, seconds))
+                {
+                    error("statement_timeout must be a duration");
+                }
+
+                if (local_scope)
+                {
+                    conn_ctx_->set_statement_timeout_local(seconds);
+                }
+                else
+                {
+                    conn_ctx_->set_statement_timeout(seconds);
+                }
+                return;
+            }
+
+            if (normalized == "TIME_ZONE" || normalized == "TIMEZONE")
+            {
+                if (!db_)
+                {
+                    error("SET TIME ZONE requires database context");
+                }
+
+                auto value_opt = readOptionalValue();
+                bool default_requested = !value_opt.has_value() || value_opt->isNull();
+
+                if (!default_requested)
+                {
+                    std::string raw = value_opt->toString();
+                    std::string trimmed = raw;
+                    size_t start = trimmed.find_first_not_of(" \t");
+                    size_t end = trimmed.find_last_not_of(" \t");
+                    if (start == std::string::npos)
+                    {
+                        default_requested = true;
+                    }
+                    else
+                    {
+                        trimmed = trimmed.substr(start, end - start + 1);
+                        std::string upper = scratchbird::core::IdentifierUtils::toUpper(trimmed);
+                        if (upper == "LOCAL" || upper == "DEFAULT")
+                        {
+                            default_requested = true;
+                        }
+                        else
+                        {
+                            uint16_t tz_id = 0;
+                            bool resolved = false;
+
+                            char* num_end = nullptr;
+                            double numeric = std::strtod(trimmed.c_str(), &num_end);
+                            if (num_end != trimmed.c_str())
+                            {
+                                std::string remaining(num_end);
+                                size_t rem_start = remaining.find_first_not_of(" \t");
+                                if (rem_start != std::string::npos)
+                                {
+                                    remaining = remaining.substr(rem_start);
+                                }
+                                if (remaining.empty())
+                                {
+                                    int32_t offset_minutes = static_cast<int32_t>(
+                                        std::llround(numeric * 60.0));
+                                    if (offset_minutes < -720 || offset_minutes > 840)
+                                    {
+                                        error("TIME ZONE offset out of range");
+                                    }
+                                    resolved = findTimezoneByOffset(offset_minutes, tz_id);
+                                }
+                            }
+
+                            if (!resolved)
+                            {
+                                if (trimmed.find(':') != std::string::npos ||
+                                    (trimmed.size() == 5 &&
+                                     (trimmed[0] == '+' || trimmed[0] == '-')))
+                                {
+                                    core::ErrorContext tz_ctx;
+                                    auto offset = core::TimezoneOffset::fromString(trimmed, &tz_ctx);
+                                    if (offset)
+                                    {
+                                        resolved = findTimezoneByOffset(offset->offset_minutes, tz_id);
+                                    }
+                                }
+                            }
+
+                            if (!resolved)
+                            {
+                                tz_id = timezone_manager_.getTimezoneByName(trimmed);
+                                if (tz_id == 0)
+                                {
+                                    tz_id = timezone_manager_.getTimezoneByAbbreviation(trimmed);
+                                }
+                                if (tz_id == 0)
+                                {
+                                    auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                                    if (catalog)
+                                    {
+                                        core::CatalogManager::TimezoneInfo info;
+                                        core::ErrorContext tz_ctx;
+                                        if (catalog->getTimezoneByName(trimmed, info, &tz_ctx) ==
+                                            core::Status::OK)
+                                        {
+                                            tz_id = info.timezone_id;
+                                        }
+                                    }
+                                }
+                                resolved = tz_id != 0;
+                            }
+
+                            if (!resolved)
+                            {
+                                error("Unknown TIME ZONE: " + trimmed);
+                            }
+
+                            db_->setConnectionTimezone(tz_id);
+                            return;
+                        }
+                    }
+                }
+
+                uint16_t tz_id = db_->getDatabaseTimezone();
+                db_->setConnectionTimezone(tz_id);
+                return;
+            }
+
+            if (local_scope)
+            {
+                error("SET LOCAL is only supported for statement_timeout");
             }
 
             if (normalized != "SEARCH_PATH")
@@ -43809,7 +44860,7 @@ namespace scratchbird
             // Set statement timeout in connection context
             if (conn_ctx_)
             {
-                conn_ctx_->set_statement_timeout(timeout_seconds);
+                conn_ctx_->set_statement_timeout_local(timeout_seconds);
             }
         }
 
@@ -52540,6 +53591,12 @@ namespace scratchbird
                     BINARY = 3
                 };
 
+                enum class OnError : uint8_t
+                {
+                    ABORT = 0,
+                    SKIP = 1
+                };
+
                 Format format = Format::TEXT;
                 char delimiter = '\t';
                 std::string null_string = "\\N";
@@ -52547,6 +53604,9 @@ namespace scratchbird
                 char quote = '"';
                 char escape = '\\';
                 std::string encoding;
+                uint32_t batch_size = 10000;
+                uint32_t max_errors = 0;
+                OnError on_error = OnError::ABORT;
             };
 
             auto to_upper = [](const std::string& input) {
@@ -52622,6 +53682,39 @@ namespace scratchbird
                     error("COPY ENCODING supports only UTF8/UTF-8 in Alpha");
                 }
                 options.encoding = (enc_upper == "UTF-8") ? "UTF8" : enc_upper;
+            }
+
+            int32_t batch_size_raw = readInt32();
+            if (batch_size_raw <= 0)
+            {
+                error("COPY BATCH_SIZE must be greater than 0");
+            }
+            options.batch_size = static_cast<uint32_t>(batch_size_raw);
+
+            int32_t max_errors_raw = readInt32();
+            if (max_errors_raw < 0)
+            {
+                error("COPY MAX_ERRORS must be non-negative");
+            }
+            options.max_errors = static_cast<uint32_t>(max_errors_raw);
+
+            uint8_t on_error_raw = readByte();
+            if (on_error_raw == static_cast<uint8_t>(CopyOptions::OnError::ABORT))
+            {
+                options.on_error = CopyOptions::OnError::ABORT;
+            }
+            else if (on_error_raw == static_cast<uint8_t>(CopyOptions::OnError::SKIP))
+            {
+                options.on_error = CopyOptions::OnError::SKIP;
+            }
+            else
+            {
+                error("Unsupported COPY ON_ERROR value");
+            }
+
+            if (options.on_error == CopyOptions::OnError::SKIP && options.max_errors == 0)
+            {
+                error("COPY ON_ERROR SKIP requires MAX_ERRORS > 0");
             }
 
             auto escape_text_field = [&](const std::string& value) {
@@ -54015,6 +55108,7 @@ namespace scratchbird
                 std::string line;
                 int affected_count = 0;
                 uint64_t bytes_total = 0;
+                uint32_t error_count = 0;
                 bool skipped_header = false;
                 ScopedBulkWriteMode bulk_scope(core::ConnectionContext::getCurrent());
                 while (std::getline(*in, line))
@@ -54031,43 +55125,82 @@ namespace scratchbird
                         continue;
                     }
 
-                    std::vector<ParsedField> fields;
-                    std::string parse_error;
-                    if (options.format == CopyOptions::Format::CSV)
+                    try
                     {
-                        if (!parse_csv_line(line, fields, parse_error))
+                        std::vector<ParsedField> fields;
+                        std::string parse_error;
+                        if (options.format == CopyOptions::Format::CSV)
                         {
-                            error(parse_error.empty() ? "COPY CSV parse error" : parse_error);
-                        }
-                    }
-                    else
-                    {
-                        parse_text_line(line, fields);
-                    }
-
-                    if (fields.size() != col_indices.size())
-                    {
-                        error("COPY row has " + std::to_string(fields.size()) +
-                              " columns; expected " + std::to_string(col_indices.size()));
-                    }
-
-                    std::vector<Value> input_values;
-                    input_values.reserve(fields.size());
-                    for (const auto& field : fields)
-                    {
-                        if (field.is_null)
-                        {
-                            input_values.push_back(Value::makeNull());
+                            if (!parse_csv_line(line, fields, parse_error))
+                            {
+                                error(parse_error.empty() ? "COPY CSV parse error" : parse_error);
+                            }
                         }
                         else
                         {
-                            input_values.push_back(Value::makeVarchar(field.value));
+                            parse_text_line(line, fields);
+                        }
+
+                        if (fields.size() != col_indices.size())
+                        {
+                            error("COPY row has " + std::to_string(fields.size()) +
+                                  " columns; expected " + std::to_string(col_indices.size()));
+                        }
+
+                        std::vector<Value> input_values;
+                        input_values.reserve(fields.size());
+                        for (const auto& field : fields)
+                        {
+                            if (field.is_null)
+                            {
+                                input_values.push_back(Value::makeNull());
+                            }
+                            else
+                            {
+                                input_values.push_back(Value::makeVarchar(field.value));
+                            }
+                        }
+
+                        if (process_copy_row(input_values))
+                        {
+                            affected_count++;
+                            if (options.batch_size > 0 &&
+                                (affected_count % static_cast<int>(options.batch_size) == 0))
+                            {
+                                auto* page_mgr = db_ ? db_->page_manager() : nullptr;
+                                if (page_mgr)
+                                {
+                                    core::ErrorContext flush_ctx;
+                                    auto flush_status = page_mgr->flush(&flush_ctx);
+                                    if (flush_status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "COPY batch flush failed";
+                                        if (!flush_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + flush_ctx.message;
+                                        }
+                                        error(err_msg);
+                                    }
+                                }
+                            }
                         }
                     }
-
-                    if (process_copy_row(input_values))
+                    catch (const std::exception& ex)
                     {
-                        affected_count++;
+                        if (options.on_error == CopyOptions::OnError::SKIP)
+                        {
+                            error_count++;
+                            if (copy_metrics.errors)
+                            {
+                                copy_metrics.errors->inc(1.0);
+                            }
+                            if (options.max_errors > 0 && error_count > options.max_errors)
+                            {
+                                error("COPY MAX_ERRORS exceeded: " + std::string(ex.what()));
+                            }
+                            continue;
+                        }
+                        throw;
                     }
                 }
 

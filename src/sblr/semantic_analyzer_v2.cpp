@@ -17,6 +17,7 @@
 #include <array>
 #include <cassert>
 #include <cctype>
+#include <cstdio>
 #include <unordered_set>
 
 namespace scratchbird::parser::v2 {
@@ -3562,6 +3563,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeAlterSchema(static_cast<AlterSchemaStmt*>(stmt));
         case ASTKind::CreateDatabaseStmt:
             return analyzeCreateDatabase(static_cast<CreateDatabaseStmt*>(stmt));
+        case ASTKind::CreateTablespaceStmt:
+            return analyzeCreateTablespace(static_cast<CreateTablespaceStmt*>(stmt));
+        case ASTKind::AlterTablespaceStmt:
+            return analyzeAlterTablespace(static_cast<AlterTablespaceStmt*>(stmt));
+        case ASTKind::DropTablespaceStmt:
+            return analyzeDropTablespace(static_cast<DropTablespaceStmt*>(stmt));
+        case ASTKind::AttachTablespaceStmt:
+            return analyzeAttachTablespace(static_cast<AttachTablespaceStmt*>(stmt));
+        case ASTKind::DetachTablespaceStmt:
+            return analyzeDetachTablespace(static_cast<DetachTablespaceStmt*>(stmt));
         case ASTKind::CreateFunctionStmt:
             return analyzeCreateFunction(static_cast<CreateFunctionStmt*>(stmt));
         case ASTKind::CreateProcedureStmt:
@@ -3580,6 +3591,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateUser(static_cast<CreateUserStmt*>(stmt));
         case ASTKind::CreateRoleStmt:
             return analyzeCreateRole(static_cast<CreateRoleStmt*>(stmt));
+        case ASTKind::CreateGroupStmt:
+            return analyzeCreateGroup(static_cast<CreateGroupStmt*>(stmt));
         case ASTKind::CreateJobStmt:
             return analyzeCreateJob(static_cast<CreateJobStmt*>(stmt));
         case ASTKind::CreateExceptionStmt:
@@ -3588,6 +3601,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateType(static_cast<CreateTypeStmt*>(stmt));
         case ASTKind::CreateDomainStmt:
             return analyzeCreateDomain(static_cast<CreateDomainStmt*>(stmt));
+        case ASTKind::CreateForeignServerStmt:
+            return analyzeCreateForeignServer(static_cast<CreateForeignServerStmt*>(stmt));
+        case ASTKind::CreateForeignTableStmt:
+            return analyzeCreateForeignTable(static_cast<CreateForeignTableStmt*>(stmt));
+        case ASTKind::CreateUserMappingStmt:
+            return analyzeCreateUserMapping(static_cast<CreateUserMappingStmt*>(stmt));
+        case ASTKind::CreateSynonymStmt:
+            return analyzeCreateSynonym(static_cast<CreateSynonymStmt*>(stmt));
+        case ASTKind::CreateUdrStmt:
+            return analyzeCreateUdr(static_cast<CreateUdrStmt*>(stmt));
         case ASTKind::AlterTypeStmt:
             return analyzeAlterType(static_cast<AlterTypeStmt*>(stmt));
         case ASTKind::AlterDomainStmt:
@@ -3626,10 +3649,22 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeDropPackage(static_cast<DropPackageStmt*>(stmt));
         case ASTKind::DropRoleStmt:
             return analyzeDropRole(static_cast<DropRoleStmt*>(stmt));
+        case ASTKind::DropGroupStmt:
+            return analyzeDropGroup(static_cast<DropGroupStmt*>(stmt));
         case ASTKind::DropJobStmt:
             return analyzeDropJob(static_cast<DropJobStmt*>(stmt));
         case ASTKind::DropExceptionStmt:
             return analyzeDropException(static_cast<DropExceptionStmt*>(stmt));
+        case ASTKind::DropForeignServerStmt:
+            return analyzeDropForeignServer(static_cast<DropForeignServerStmt*>(stmt));
+        case ASTKind::DropForeignTableStmt:
+            return analyzeDropForeignTable(static_cast<DropForeignTableStmt*>(stmt));
+        case ASTKind::DropUserMappingStmt:
+            return analyzeDropUserMapping(static_cast<DropUserMappingStmt*>(stmt));
+        case ASTKind::DropSynonymStmt:
+            return analyzeDropSynonym(static_cast<DropSynonymStmt*>(stmt));
+        case ASTKind::DropUdrStmt:
+            return analyzeDropUdr(static_cast<DropUdrStmt*>(stmt));
         case ASTKind::AlterJobStmt:
             return analyzeAlterJob(static_cast<AlterJobStmt*>(stmt));
         case ASTKind::ExecuteJobStmt:
@@ -3652,6 +3687,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeMerge(static_cast<MergeStmt*>(stmt));
         case ASTKind::CopyStmt:
             return analyzeCopy(static_cast<CopyStmt*>(stmt));
+        case ASTKind::CommentStmt:
+            return analyzeComment(static_cast<CommentStmt*>(stmt));
 
         // Transaction
         case ASTKind::StartTransactionStmt:
@@ -3674,12 +3711,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
         // Session
         case ASTKind::SetStmt:
             return analyzeSet(static_cast<SetStmt*>(stmt));
+        case ASTKind::ResetStmt:
+            return analyzeReset(static_cast<ResetStmt*>(stmt));
         case ASTKind::AlterSystemStmt:
             return analyzeAlterSystem(static_cast<AlterSystemStmt*>(stmt));
         case ASTKind::ShowStmt:
             return analyzeShow(static_cast<ShowStmt*>(stmt));
         case ASTKind::ExplainStmt:
             return analyzeExplain(static_cast<ExplainStmt*>(stmt));
+        case ASTKind::AnalyzeStmt:
+            return analyzeAnalyze(static_cast<AnalyzeStmt*>(stmt));
         case ASTKind::SweepDatabaseStmt:
             return analyzeSweepDatabase(static_cast<SweepDatabaseStmt*>(stmt));
 
@@ -3762,7 +3803,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeSavepoint(SavepointStmt* stmt) {
 }
 
 ResolvedStatement* SemanticAnalyzerV2::analyzeReleaseSavepoint(ReleaseSavepointStmt* stmt) {
-    auto* resolved = arena_.create<ResolvedSavepointStmt>();
+    auto* resolved = arena_.create<ResolvedReleaseSavepointStmt>();
     resolved->span = stmt->span;
     resolved->name = stmt->name;
     return resolved;
@@ -3829,6 +3870,57 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeSet(SetStmt* stmt) {
     resolved->sql_dialect = stmt->sql_dialect;
     resolved->local_timeout_seconds = stmt->local_timeout_seconds;
 
+    if (stmt->set_type == SetStmt::SetType::TIME_ZONE)
+    {
+        resolved->variable_name = string_pool_.intern("TIME_ZONE");
+    }
+
+    if (stmt->set_type == SetStmt::SetType::VARIABLE && stmt->scope == SetStmt::Scope::LOCAL &&
+        stmt->name != StringPool::INVALID_ID)
+    {
+        std::string prefixed = "LOCAL_";
+        prefixed += std::string(string_pool_.get(stmt->name));
+        resolved->variable_name = string_pool_.intern(prefixed);
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeReset(ResetStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedSetStmt>();
+    resolved->span = stmt->span;
+    resolved->set_type = SetStmt::SetType::VARIABLE;
+    resolved->scope = SetStmt::Scope::SESSION;
+    resolved->is_default = true;
+
+    if (stmt->reset_all) {
+        resolved->variable_name = string_pool_.intern("ALL");
+        return resolved;
+    }
+
+    if (stmt->name == StringPool::INVALID_ID) {
+        error(stmt->span, "RESET requires a variable name or ALL");
+        return nullptr;
+    }
+
+    std::string_view name = string_pool_.get(stmt->name);
+    if (caseInsensitiveEquals(name, "ROLE")) {
+        resolved->set_type = SetStmt::SetType::ROLE;
+        resolved->variable_name = StringPool::INVALID_ID;
+        return resolved;
+    }
+
+    if (caseInsensitiveEquals(name, "SESSION_AUTHORIZATION")) {
+        resolved->set_type = SetStmt::SetType::SESSION_AUTHORIZATION;
+        resolved->variable_name = StringPool::INVALID_ID;
+        return resolved;
+    }
+
+    resolved->variable_name = stmt->name;
     return resolved;
 }
 
@@ -4011,6 +4103,29 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeExplain(ExplainStmt* stmt) {
     } else {
         error(stmt->span, "EXPLAIN requires a query to explain");
         return nullptr;
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAnalyze(AnalyzeStmt* stmt) {
+    auto* resolved = arena_.create<ResolvedAnalyzeStmt>();
+    resolved->span = stmt->span;
+    resolved->table_path = stmt->table_path;
+    resolved->column_name = stmt->column_name;
+    resolved->has_column = stmt->has_column;
+    resolved->has_sample = stmt->has_sample;
+    resolved->sample_rate = stmt->sample_rate;
+    resolved->verbose = stmt->verbose;
+
+    if (resolved->table_path.isEmpty()) {
+        error(stmt->span, "ANALYZE requires a table name");
+    }
+
+    if (resolved->has_sample) {
+        if (resolved->sample_rate < 0.0 || resolved->sample_rate > 1.0) {
+            error(stmt->span, "ANALYZE sample rate must be between 0 and 1");
+        }
     }
 
     return resolved;
@@ -4456,6 +4571,409 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDatabase(CreateDatabaseStmt*
     return resolved;
 }
 
+static std::string toLowerCopy(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char ch : value) {
+        out.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return out;
+}
+
+static std::string escapeJsonString(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (unsigned char ch : input) {
+        switch (ch) {
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                if (ch < 0x20) {
+                    char buf[7];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
+                    out += buf;
+                } else {
+                    out.push_back(static_cast<char>(ch));
+                }
+                break;
+        }
+    }
+    return out;
+}
+
+static std::string buildOptionsJson(const std::vector<OptionPair>& options) {
+    std::string json = "{";
+    bool first = true;
+    for (const auto& opt : options) {
+        if (!first) {
+            json += ",";
+        }
+        first = false;
+        json += "\"";
+        json += escapeJsonString(opt.key);
+        json += "\":\"";
+        json += escapeJsonString(opt.value);
+        json += "\"";
+    }
+    json += "}";
+    return json;
+}
+
+static std::string buildColumnMappingJson(const std::vector<ForeignColumnDef>& columns,
+                                          const StringPool& pool) {
+    std::string json = "{\"columns\":[";
+    bool first = true;
+    for (const auto& col : columns) {
+        if (!first) {
+            json += ",";
+        }
+        first = false;
+        json += "{\"name\":\"";
+        if (col.name != StringPool::INVALID_ID) {
+            json += escapeJsonString(std::string(pool.get(col.name)));
+        }
+        json += "\"";
+        json += ",\"type\":\"";
+        json += escapeJsonString(col.type_text);
+        json += "\"";
+        if (!col.options.empty()) {
+            json += ",\"options\":";
+            json += buildOptionsJson(col.options);
+        }
+        json += "}";
+    }
+    json += "]}";
+    return json;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTablespace(CreateTablespaceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateTablespaceStmt>();
+    resolved->span = stmt->span;
+    resolved->tablespace_name = stmt->tablespace_name;
+    resolved->location = stmt->location;
+    resolved->has_autoextend = stmt->has_autoextend;
+    resolved->autoextend_enabled = stmt->autoextend_enabled;
+    resolved->has_autoextend_size = stmt->has_autoextend_size;
+    resolved->autoextend_size_mb = stmt->autoextend_size_mb;
+    resolved->has_maxsize = stmt->has_maxsize;
+    resolved->maxsize_unlimited = stmt->maxsize_unlimited;
+    resolved->maxsize_mb = stmt->maxsize_mb;
+    resolved->has_prealloc = stmt->has_prealloc;
+    resolved->prealloc_mb = stmt->prealloc_mb;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTablespace(AlterTablespaceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterTablespaceStmt>();
+    resolved->span = stmt->span;
+    resolved->tablespace_name = stmt->tablespace_name;
+    resolved->alterations.reserve(stmt->alterations.size());
+    for (const auto& alt : stmt->alterations) {
+        ResolvedTablespaceAlteration resolved_alt;
+        resolved_alt.action = alt.action;
+        resolved_alt.autoextend_enabled = alt.autoextend_enabled;
+        resolved_alt.size_mb = alt.size_mb;
+        resolved_alt.new_name = alt.new_name;
+        resolved->alterations.push_back(std::move(resolved_alt));
+    }
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropTablespace(DropTablespaceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropTablespaceStmt>();
+    resolved->span = stmt->span;
+    resolved->tablespace_name = stmt->tablespace_name;
+    resolved->force = stmt->force;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAttachTablespace(AttachTablespaceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAttachTablespaceStmt>();
+    resolved->span = stmt->span;
+    resolved->tablespace_name = stmt->tablespace_name;
+    resolved->location = stmt->location;
+    resolved->validate = stmt->validate;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDetachTablespace(DetachTablespaceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDetachTablespaceStmt>();
+    resolved->span = stmt->span;
+    resolved->tablespace_name = stmt->tablespace_name;
+    resolved->force = stmt->force;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateGroup(CreateGroupStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateGroupStmt>();
+    resolved->span = stmt->span;
+    resolved->group_name = stmt->group_name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropGroup(DropGroupStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropGroupStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = stmt->cascade;
+    resolved->groups = stmt->groups;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateForeignServer(CreateForeignServerStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateForeignServerStmt>();
+    resolved->span = stmt->span;
+    resolved->server_name = stmt->server_name;
+
+    if (stmt->has_server_type) {
+        resolved->server_type = stmt->server_type;
+    } else if (stmt->fdw_name != StringPool::INVALID_ID) {
+        resolved->server_type = std::string(string_pool_.get(stmt->fdw_name));
+    }
+
+    std::vector<OptionPair> opts = stmt->options;
+    if (stmt->fdw_name != StringPool::INVALID_ID) {
+        opts.push_back({"fdw", std::string(string_pool_.get(stmt->fdw_name))});
+    }
+    if (stmt->has_server_version) {
+        opts.push_back({"version", stmt->server_version});
+    }
+
+    for (const auto& opt : opts) {
+        std::string key = toLowerCopy(opt.key);
+        if (key == "host") {
+            resolved->host = opt.value;
+        } else if (key == "port") {
+            try {
+                resolved->port = static_cast<uint16_t>(std::stoi(opt.value));
+            } catch (...) {
+                error(stmt->span, "Invalid port value for foreign server");
+            }
+        }
+    }
+
+    resolved->options_json = buildOptionsJson(opts);
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropForeignServer(DropForeignServerStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropForeignServerStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = stmt->cascade;
+    resolved->server_name = stmt->server_name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateForeignTable(CreateForeignTableStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateForeignTableStmt>();
+    resolved->span = stmt->span;
+    resolved->if_not_exists = stmt->if_not_exists;
+    resolved->server_name = stmt->server_name;
+
+    if (stmt->table_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->table_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->table_path.components[0];
+        }
+        resolved->table_name = stmt->table_path.components[1];
+    } else if (stmt->table_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->table_name = stmt->table_path.components[0];
+    }
+
+    for (const auto& opt : stmt->options) {
+        std::string key = toLowerCopy(opt.key);
+        if (key == "schema_name") {
+            resolved->remote_schema = opt.value;
+        } else if (key == "table_name") {
+            resolved->remote_table = opt.value;
+        }
+    }
+    if (resolved->remote_table.empty() && resolved->table_name != StringPool::INVALID_ID) {
+        resolved->remote_table = std::string(string_pool_.get(resolved->table_name));
+    }
+
+    resolved->column_mapping_json = buildColumnMappingJson(stmt->columns, string_pool_);
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropForeignTable(DropForeignTableStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropForeignTableStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = stmt->cascade;
+    resolved->tables = stmt->tables;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateUserMapping(CreateUserMappingStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateUserMappingStmt>();
+    resolved->span = stmt->span;
+    resolved->target = stmt->target;
+    resolved->user_name = stmt->user_name;
+    resolved->server_name = stmt->server_name;
+
+    std::vector<OptionPair> credential_opts;
+    for (const auto& opt : stmt->options) {
+        std::string key = toLowerCopy(opt.key);
+        if (key == "user") {
+            resolved->remote_user = opt.value;
+        } else {
+            credential_opts.push_back(opt);
+        }
+    }
+    if (!credential_opts.empty()) {
+        resolved->remote_credentials = buildOptionsJson(credential_opts);
+    }
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropUserMapping(DropUserMappingStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropUserMappingStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->target = stmt->target;
+    resolved->user_name = stmt->user_name;
+    resolved->server_name = stmt->server_name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateSynonym(CreateSynonymStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateSynonymStmt>();
+    resolved->span = stmt->span;
+    resolved->is_public = stmt->is_public;
+    resolved->synonym_path = stmt->synonym_path;
+    resolved->target_type = stmt->target_type;
+    resolved->target_path = stmt->target_path;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropSynonym(DropSynonymStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropSynonymStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->synonyms = stmt->synonyms;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateUdr(CreateUdrStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateUdrStmt>();
+    resolved->span = stmt->span;
+    resolved->udr_type = stmt->udr_type;
+    resolved->library_path = stmt->library_path;
+    resolved->entry_point = stmt->entry_point;
+    resolved->signature = stmt->signature;
+    resolved->has_signature = stmt->has_signature;
+
+    if (stmt->udr_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->udr_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->udr_path.components[0];
+        }
+        resolved->udr_name = stmt->udr_path.components[1];
+    } else if (stmt->udr_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->udr_name = stmt->udr_path.components[0];
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropUdr(DropUdrStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropUdrStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = stmt->cascade;
+    resolved->udrs = stmt->udrs;
+    return resolved;
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeCreateFunction(CreateFunctionStmt* stmt) {
     if (!stmt) {
         return nullptr;
@@ -4788,6 +5306,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateType(CreateTypeStmt* stmt) {
     auto* resolved = arena_.create<ResolvedCreateDomainStmt>();
     resolved->span = stmt->span;
     resolved->if_not_exists = stmt->if_not_exists;
+    resolved->is_type = true;
     resolved->domain_path = stmt->type_path;
     resolved->has_dialect = stmt->has_dialect;
     resolved->dialect_tag = stmt->dialect_tag;
@@ -7346,7 +7865,158 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCopy(CopyStmt* stmt) {
             error(stmt->span, "COPY FORMAT BINARY is not supported");
         }
 
+        if (stmt->options.batch_size_set) {
+            if (stmt->options.batch_size <= 0) {
+                error(stmt->span, "COPY BATCH_SIZE must be greater than 0");
+            } else {
+                opts.batch_size = static_cast<uint32_t>(stmt->options.batch_size);
+            }
+        }
+
+        if (stmt->options.max_errors_set) {
+            if (stmt->options.max_errors < 0) {
+                error(stmt->span, "COPY MAX_ERRORS must be non-negative");
+            } else {
+                opts.max_errors = static_cast<uint32_t>(stmt->options.max_errors);
+            }
+        }
+
+        if (stmt->options.on_error_set) {
+            opts.on_error = (stmt->options.on_error == CopyOptions::OnError::SKIP)
+                ? ResolvedCopyOptions::OnError::SKIP
+                : ResolvedCopyOptions::OnError::ABORT;
+        }
+
+        if (opts.on_error == ResolvedCopyOptions::OnError::SKIP && opts.max_errors == 0) {
+            error(stmt->span, "COPY ON_ERROR SKIP requires MAX_ERRORS > 0");
+        }
+
         resolved->options = std::move(opts);
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeComment(CommentStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCommentStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = stmt->object_type;
+    resolved->is_null = stmt->is_null;
+    if (!stmt->is_null && stmt->comment_text != StringPool::INVALID_ID) {
+        resolved->comment_text = std::string(string_pool_.get(stmt->comment_text));
+    }
+
+    auto resolve_simple_object = [&](core::CatalogManager::ObjectType type,
+                                     const SchemaPath& path,
+                                     ID& object_id) -> Status {
+        core::ObjectPath obj_path = buildObjectPath(path, string_pool_);
+        core::CatalogManager::ResolveOptions opts;
+        opts.allow_search_path = !path.no_search_path;
+        core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+        core::ErrorContext ctx;
+        auto status = catalog_.resolveObjectPath(obj_path, type, opts, object_id, resolved_type, &ctx);
+        if (status != Status::OK) {
+            std::string msg = ctx.message.empty() ? "Object not found" : ctx.message;
+            error(path.span, msg);
+            return status;
+        }
+        return status;
+    };
+
+    switch (stmt->object_type) {
+        case CommentObjectType::TABLE:
+            resolve_simple_object(core::CatalogManager::ObjectType::TABLE, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::INDEX:
+            resolve_simple_object(core::CatalogManager::ObjectType::INDEX, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::VIEW:
+            resolve_simple_object(core::CatalogManager::ObjectType::VIEW, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::SEQUENCE:
+            resolve_simple_object(core::CatalogManager::ObjectType::SEQUENCE, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::FUNCTION:
+            resolve_simple_object(core::CatalogManager::ObjectType::FUNCTION, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::PROCEDURE:
+            resolve_simple_object(core::CatalogManager::ObjectType::PROCEDURE, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::TRIGGER:
+            resolve_simple_object(core::CatalogManager::ObjectType::TRIGGER, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::SCHEMA:
+            resolve_simple_object(core::CatalogManager::ObjectType::SCHEMA, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::DATABASE:
+            resolve_simple_object(core::CatalogManager::ObjectType::DATABASE, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::ROLE:
+            resolve_simple_object(core::CatalogManager::ObjectType::ROLE, stmt->object_path, resolved->object_id);
+            break;
+        case CommentObjectType::CONSTRAINT: {
+            auto constraint_id = stmt->object_path.objectName();
+            if (constraint_id == StringPool::INVALID_ID) {
+                error(stmt->span, "Expected constraint name");
+                return nullptr;
+            }
+            std::string constraint_name = std::string(string_pool_.get(constraint_id));
+            core::CatalogManager::ConstraintInfo constraint;
+            core::ErrorContext ctx;
+            auto status = catalog_.findConstraintByNameGlobal(constraint_name, constraint, &ctx);
+            if (status != Status::OK) {
+                std::string msg = ctx.message.empty() ? "Constraint not found" : ctx.message;
+                error(stmt->span, msg);
+                return nullptr;
+            }
+            resolved->object_id = constraint.constraint_id;
+            break;
+        }
+        case CommentObjectType::COLUMN: {
+            if (stmt->object_path.components.size() < 2) {
+                error(stmt->span, "COMMENT ON COLUMN requires table.column");
+                return nullptr;
+            }
+
+            SchemaPath table_path = stmt->object_path;
+            StringPool::StringId column_name_id = table_path.components.back();
+            table_path.components.pop_back();
+
+            ID table_id{};
+            resolve_simple_object(core::CatalogManager::ObjectType::TABLE, table_path, table_id);
+
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            core::ErrorContext ctx;
+            auto status = catalog_.getColumns(table_id, columns, &ctx);
+            if (status != Status::OK) {
+                std::string msg = ctx.message.empty() ? "Failed to resolve columns" : ctx.message;
+                error(stmt->span, msg);
+                return nullptr;
+            }
+
+            std::string column_name = std::string(string_pool_.get(column_name_id));
+            std::string column_name_upper = core::IdentifierUtils::toUpper(column_name);
+            bool found = false;
+            for (const auto& col : columns) {
+                if (core::IdentifierUtils::toUpper(col.column_name) == column_name_upper) {
+                    resolved->object_id = col.column_id;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                error(stmt->span, "Column not found: " + column_name);
+                return nullptr;
+            }
+            break;
+        }
+        default:
+            error(stmt->span, "Unsupported COMMENT object type");
+            return nullptr;
     }
 
     return resolved;

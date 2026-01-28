@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The V2 parser now accepts **11 core index types**: BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM. The remaining core gap is **FULLTEXT** (CatalogManager::IndexType::FULLTEXT), which is defined in the catalog/opcodes and used by the MySQL parser, but **not exposed in V2 AST/parser/semantic/bytecode**. Optional/advanced index types (IVF, ZONEMAP, ZORDER, etc.) are intentionally absent from V2.
+The V2 parser now accepts **11 core index types**: BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM. The remaining core gap is **FULLTEXT** (CatalogManager::IndexType::FULLTEXT), which is defined in the catalog/opcodes and used by the MySQL parser, but **not exposed in V2 AST/parser/semantic/bytecode**. Optional/advanced index types (IVF, ZONEMAP, ZORDER, JSON_PATH, etc.) are intentionally absent from V2.
 
 ---
 
@@ -253,4 +253,4 @@ enum class IndexType : uint8_t
 
 The following advanced index types are intentionally out of scope for V2 parser today:
 IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE,
-COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL.
+COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL, JSON_PATH.

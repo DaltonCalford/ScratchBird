@@ -141,6 +141,7 @@ private:
     CreateSequenceStmt* parseCreateSequence();
     CreateSchemaStmt* parseCreateSchema();
     CreateDatabaseStmt* parseCreateDatabase();
+    CreateTablespaceStmt* parseCreateTablespace();
     CreateDomainStmt* parseCreateDomain();
     CreateFunctionStmt* parseCreateFunction(bool or_replace = false);
     CreateProcedureStmt* parseCreateProcedure(bool or_replace = false);
@@ -150,12 +151,19 @@ private:
     CreateTypeStmt* parseCreateType(bool or_replace = false);
     CreateUserStmt* parseCreateUser();
     CreateRoleStmt* parseCreateRole();
+    CreateGroupStmt* parseCreateGroup();
+    CreateForeignServerStmt* parseCreateForeignServer();
+    CreateForeignTableStmt* parseCreateForeignTable();
+    CreateUserMappingStmt* parseCreateUserMapping();
+    CreateSynonymStmt* parseCreateSynonym(bool is_public = false);
+    CreateUdrStmt* parseCreateUdr();
     CreateJobStmt* parseCreateJob(bool or_alter = false, bool recreate = false);
 
     // ALTER statements
     AlterTableStmt* parseAlterTable();
     AlterSchemaStmt* parseAlterSchema();
     AlterDatabaseStmt* parseAlterDatabase();
+    Statement* parseAlterTablespace();
     AlterTypeStmt* parseAlterType();
     AlterDomainStmt* parseAlterDomain();
     AlterJobStmt* parseAlterJob();
@@ -167,16 +175,25 @@ private:
     DropViewStmt* parseDropView();
     DropSchemaStmt* parseDropSchema();
     DropDatabaseStmt* parseDropDatabase();
+    DropTablespaceStmt* parseDropTablespace();
+    AttachTablespaceStmt* parseAttachTablespace(const StringPool::StringId tablespace_name);
+    DetachTablespaceStmt* parseDetachTablespace(const StringPool::StringId tablespace_name);
     DropDomainStmt* parseDropDomain();
     DropFunctionStmt* parseDropFunction();
     DropProcedureStmt* parseDropProcedure();
     DropTriggerStmt* parseDropTrigger();
     DropPackageStmt* parseDropPackage();
     DropRoleStmt* parseDropRole();
+    DropGroupStmt* parseDropGroup();
     DropExceptionStmt* parseDropException();
     DropSequenceStmt* parseDropSequence();
     DropTypeStmt* parseDropType();
     DropJobStmt* parseDropJob();
+    DropForeignServerStmt* parseDropForeignServer();
+    DropForeignTableStmt* parseDropForeignTable();
+    DropUserMappingStmt* parseDropUserMapping();
+    DropSynonymStmt* parseDropSynonym();
+    DropUdrStmt* parseDropUdr();
 
     // TRUNCATE statement
     TruncateTableStmt* parseTruncateTable();
@@ -243,10 +260,13 @@ private:
     SetStmt* parseSet();
     ResetStmt* parseReset();
     ShowStmt* parseShow();
+    ShowStmt* parseDescribe();
     ExplainStmt* parseExplain();
+    AnalyzeStmt* parseAnalyze();
     SweepDatabaseStmt* parseSweep();
     ExecuteJobStmt* parseExecuteJob();
     CancelJobRunStmt* parseCancelJobRun();
+    ExecuteProcedureStmt* parseCall();
 
     // ==========================================================================
     // DCL Statements (Data Control Language)
@@ -287,6 +307,7 @@ private:
     Statement* parseLeaveStatement();
     Statement* parseContinueStatement();
     Statement* parseExitStatement();
+    Statement* parseCaseStatement();
     Statement* parseSuspendStatement();
     Statement* parseReturnStatement();
     Statement* parseExceptionStatement();

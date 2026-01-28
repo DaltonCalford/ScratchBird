@@ -97,7 +97,7 @@ END
 - V2 parser: Parses CREATE [OR REPLACE] FUNCTION with full parameter list, RETURNS, DETERMINISTIC, SQL SECURITY, and body capture
 - Bytecode generator: Emits `EXT_CREATE_FUNCTION_STMT` opcode with all metadata
 - Executor: Registers function in catalog via `registerFunction()` with schema resolution, ownership, and dependency tracking
-- **Limitation:** Function bodies are stored as source text in the catalog. Procedural body interpretation (IF/WHILE/FOR control flow within the body) is not yet wired for runtime invocation.
+- Runtime execution: Functions can be invoked at runtime via `executeFunction()` (executor.cpp:33441). Security context (DEFINER/INVOKER) is enforced during execution.
 
 ---
 

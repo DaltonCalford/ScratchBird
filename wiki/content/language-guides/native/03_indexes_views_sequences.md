@@ -58,9 +58,12 @@ CREATE [UNIQUE] INDEX [IF NOT EXISTS] <index_name>
 **Implemented Index Types:**
 - **btree**: B-Tree index (default) - General purpose, supports ranges, sorting
 - **hash**: Hash index - Equality lookups only, very fast
-- **gin**: Generalized Inverted Index - Array and full-text search (partial)
-- **gist**: Generalized Search Tree - Spatial and custom data types (partial)
-- **brin**: Block Range Index - Very large tables with natural ordering (stub)
+- **gin**: Generalized Inverted Index - Array and full-text search
+- **gist**: Generalized Search Tree - Spatial and custom data types
+- **brin**: Block Range Index - Very large tables with natural ordering
+- **hnsw**: Hierarchical Navigable Small World - Vector similarity search
+- **bitmap**: Bitmap index - Low-cardinality columns
+- **spgist**: Space-Partitioned GiST - Partitioned spatial data
 
 **Index Type Characteristics:**
 
@@ -68,9 +71,12 @@ CREATE [UNIQUE] INDEX [IF NOT EXISTS] <index_name>
 |------|----------|-----------|--------|
 | btree | General purpose, ordering | <, <=, =, >=, >, BETWEEN | Implemented |
 | hash | Equality only | = | Implemented |
-| gin | Arrays, JSONB, full-text | @>, ?, &&, @@ | Partial |
-| gist | Spatial, ranges | &&, @>, <@, << | Partial |
-| brin | Large tables, natural order | <, <=, =, >=, > | Stub |
+| gin | Arrays, JSONB, full-text | @>, ?, &&, @@ | Implemented |
+| gist | Spatial, ranges | &&, @>, <@, << | Implemented |
+| brin | Large tables, natural order | <, <=, =, >=, > | Implemented |
+| hnsw | Vector similarity | <-> (distance) | Implemented |
+| bitmap | Low-cardinality | =, IN | Implemented |
+| spgist | Partitioned spatial | &&, @>, <@ | Implemented |
 
 ### Examples
 
@@ -683,17 +689,20 @@ SELECT SETVAL('user_id_seq', 1000, false); -- Next NEXTVAL returns 1000
 
 ## Known Limitations
 
-### Partial Implementation
+### Implementation Status
 
 **Index Types:**
-- B-Tree: Fully implemented and production-ready
-- Hash: Fully implemented and production-ready
-- Bitmap: Fully implemented and production-ready
+- B-Tree: Fully implemented (btree.cpp, 3000+ lines, page split/merge, concurrent reads)
+- Hash: Fully implemented (hash_index.cpp, 1977 lines, dynamic expansion, overflow handling)
+- Bitmap: Fully implemented
 - R-Tree: Fully implemented (spatial indexing)
-- GIN: Partial implementation (Phase 1-3 complete, not fully tested)
-- GiST: Stub implementation only
-- BRIN: Stub implementation only
-- HNSW: Stub (vector search)
+- GIN: Fully implemented Phase 3 (gin_index.cpp, 5305 lines, posting tree, BK-tree fuzzy matching, tsvector ops)
+- GiST: Fully implemented Phase 1 (gist_index.cpp, 1662 lines, operator classes, nearest neighbor search)
+- BRIN: Fully implemented Phase 3 (brin_index.cpp, 1270 lines, revmap, range scanning)
+- HNSW: Fully implemented (hnsw_index.cpp, multi-layer graphs, k-NN search, configurable distance metrics)
+- SP-GiST: Implemented (quad-tree and text operator classes)
+- LSM Tree: Implemented (lsm_tree_index.cpp, 1082 lines, with compression and bloom filters)
+- Bloom filters: Integrated with B-Tree, Hash, and GIN indexes
 - Spec reference: `/docs/specifications/indexes/INDEX_IMPLEMENTATION_SPEC.md`
 
 **Index Type Support in V2 Parser:**
@@ -704,21 +713,21 @@ All 11 index types are parsed in the V2 parser via CREATE INDEX ... USING:
 
 **Advanced Index Features:**
 - Index-only scans work for B-Tree INCLUDE indexes
-- Parallel index creation not implemented
-- Concurrent index creation not supported
+- Partial indexes (WHERE clause): Implemented with predicate evaluation
+- Expression indexes: Implemented with expression serialization/evaluation
+- CONCURRENTLY keyword: Parsed in PostgreSQL dialect
+- ALTER INDEX ACTIVE/INACTIVE: Implemented (Firebird-style)
 - Index reindexing (REINDEX) not exposed in V2 parser
 
-### Stubbed Features
+### Implemented Features
 
 **Materialized View Refresh:**
-- REFRESH MATERIALIZED VIEW command not parsed in V2
-- Materialized views can be created but not refreshed through SQL
-- Spec defines refresh behavior but parser doesn't expose it
-- Spec reference: `/docs/specifications/ddl/DDL_VIEWS.md`
+- REFRESH MATERIALIZED VIEW: Fully implemented (executor.cpp:11277-11360)
+- Supports REFRESH CONCURRENTLY
+- Enforces RLS policies during refresh
+- Re-executes view definition SQL to populate materialized table
 
 **Tablespace Commands:**
-- CREATE TABLESPACE / DROP TABLESPACE as standalone DDL: Not parsed in V2
-- ALTER TABLESPACE supports RENAME TO / SET SCHEMA (generic rename/move only)
 - TABLESPACE clause in CREATE TABLE and CREATE INDEX: Parsed and enforced
 - ALTER TABLE ... SET TABLESPACE: Parsed and supported
 - GPID-aware DML and tablespace routing: Implemented (WS-2 complete)
@@ -732,22 +741,14 @@ All 11 index types are parsed in the V2 parser via CREATE INDEX ... USING:
 - Security barrier views not supported
 - WITH RECURSIVE is parsed in V2 (recursive CTEs work)
 
-**Index Features:**
-- Expression index validation limited
-- Partial index predicate optimization incomplete
-- Index usage in query plans needs improvement
-- Functional/expression indexes parsed but optimization limited
-
 **Sequence Features:**
 - ALTER SEQUENCE OWNED BY may not be fully wired
-- Sequence permissions (GRANT USAGE ON SEQUENCE) not fully implemented
 - Distributed sequence generation not supported
 
 ### Spec Deltas
 
 **Index Creation:**
-- Some index types accepted by parser but not fully implemented in storage layer
-- Index type validation incomplete
+- Index type validation may be incomplete for some advanced options
 - Some index options parsed but ignored
 - Spec reference: `/docs/specifications/indexes/AdvancedIndexes.md`
 

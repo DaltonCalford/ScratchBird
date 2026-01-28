@@ -24,16 +24,27 @@ void CreateSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateTablespaceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterTablespaceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropTablespaceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AttachTablespaceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DetachTablespaceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateFunctionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateTriggerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreatePackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateUserStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateGroupStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateForeignServerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateForeignTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateUserMappingStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateSynonymStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateUdrStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -53,7 +64,13 @@ void DropProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropTriggerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropPackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropGroupStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropForeignServerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropForeignTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropUserMappingStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropSynonymStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropUdrStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void TruncateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -84,6 +101,7 @@ void AlterSystemStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ResetStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ShowStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ExplainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AnalyzeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void SweepDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // DCL statements

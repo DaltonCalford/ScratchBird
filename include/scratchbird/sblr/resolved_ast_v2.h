@@ -815,6 +815,11 @@ struct ResolvedCopyOptions {
         BINARY = 2
     };
 
+    enum class OnError : uint8_t {
+        ABORT = 0,
+        SKIP = 1
+    };
+
     Format format = Format::TEXT;
     char delimiter = '\t';
     std::string null_string = "\\N";
@@ -823,6 +828,10 @@ struct ResolvedCopyOptions {
     char quote = '"';
     char escape = '\\';
     std::string encoding;
+
+    uint32_t batch_size = 10000;
+    uint32_t max_errors = 0;
+    OnError on_error = OnError::ABORT;
 };
 
 struct ResolvedCopyStmt : public ResolvedStatement {
@@ -845,6 +854,16 @@ struct ResolvedCopyStmt : public ResolvedStatement {
     StringPool::StringId target = StringPool::INVALID_ID;  // File path when not STDIN/STDOUT
 
     ResolvedCopyOptions options;
+};
+
+/**
+ * Resolved COMMENT ON statement
+ */
+struct ResolvedCommentStmt : public ResolvedStatement {
+    CommentObjectType object_type = CommentObjectType::TABLE;
+    ID object_id{};
+    bool is_null = false;
+    std::string comment_text;
 };
 
 // =============================================================================
@@ -1323,11 +1342,188 @@ struct ResolvedCreateDatabaseStmt : public ResolvedStatement {
     std::vector<std::string> aliases;
 };
 
+struct ResolvedTablespaceAlteration {
+    TablespaceAlterAction action = TablespaceAlterAction::SET_AUTOEXTEND;
+    bool autoextend_enabled = false;
+    uint32_t size_mb = 0;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved CREATE TABLESPACE statement
+ */
+struct ResolvedCreateTablespaceStmt : public ResolvedStatement {
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    std::string location;
+    bool has_autoextend = false;
+    bool autoextend_enabled = false;
+    bool has_autoextend_size = false;
+    uint32_t autoextend_size_mb = 0;
+    bool has_maxsize = false;
+    bool maxsize_unlimited = false;
+    uint32_t maxsize_mb = 0;
+    bool has_prealloc = false;
+    uint32_t prealloc_mb = 0;
+};
+
+/**
+ * Resolved ALTER TABLESPACE statement
+ */
+struct ResolvedAlterTablespaceStmt : public ResolvedStatement {
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    std::vector<ResolvedTablespaceAlteration> alterations;
+};
+
+/**
+ * Resolved DROP TABLESPACE statement
+ */
+struct ResolvedDropTablespaceStmt : public ResolvedStatement {
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    bool force = false;
+};
+
+/**
+ * Resolved ATTACH TABLESPACE statement
+ */
+struct ResolvedAttachTablespaceStmt : public ResolvedStatement {
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    std::string location;
+    bool validate = false;
+};
+
+/**
+ * Resolved DETACH TABLESPACE statement
+ */
+struct ResolvedDetachTablespaceStmt : public ResolvedStatement {
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    bool force = false;
+};
+
+/**
+ * Resolved CREATE GROUP statement
+ */
+struct ResolvedCreateGroupStmt : public ResolvedStatement {
+    StringPool::StringId group_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved DROP GROUP statement
+ */
+struct ResolvedDropGroupStmt : public ResolvedStatement {
+    bool if_exists = false;
+    bool cascade = false;
+    std::vector<SchemaPath> groups;
+};
+
+/**
+ * Resolved CREATE FOREIGN SERVER statement
+ */
+struct ResolvedCreateForeignServerStmt : public ResolvedStatement {
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+    std::string server_type;
+    std::string host;
+    uint16_t port = 0;
+    std::string options_json;
+};
+
+/**
+ * Resolved DROP FOREIGN SERVER statement
+ */
+struct ResolvedDropForeignServerStmt : public ResolvedStatement {
+    bool if_exists = false;
+    bool cascade = false;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved CREATE FOREIGN TABLE statement
+ */
+struct ResolvedCreateForeignTableStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId table_name = StringPool::INVALID_ID;
+    bool if_not_exists = false;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+    std::string remote_schema;
+    std::string remote_table;
+    std::string column_mapping_json;
+};
+
+/**
+ * Resolved DROP FOREIGN TABLE statement
+ */
+struct ResolvedDropForeignTableStmt : public ResolvedStatement {
+    bool if_exists = false;
+    bool cascade = false;
+    std::vector<SchemaPath> tables;
+};
+
+/**
+ * Resolved CREATE USER MAPPING statement
+ */
+struct ResolvedCreateUserMappingStmt : public ResolvedStatement {
+    UserMappingTarget target = UserMappingTarget::USER_NAME;
+    StringPool::StringId user_name = StringPool::INVALID_ID;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+    std::string remote_user;
+    std::string remote_credentials;
+};
+
+/**
+ * Resolved DROP USER MAPPING statement
+ */
+struct ResolvedDropUserMappingStmt : public ResolvedStatement {
+    bool if_exists = false;
+    UserMappingTarget target = UserMappingTarget::USER_NAME;
+    StringPool::StringId user_name = StringPool::INVALID_ID;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved CREATE SYNONYM statement
+ */
+struct ResolvedCreateSynonymStmt : public ResolvedStatement {
+    bool is_public = false;
+    SchemaPath synonym_path;
+    DdlObjectType target_type = DdlObjectType::TABLE;
+    SchemaPath target_path;
+};
+
+/**
+ * Resolved DROP SYNONYM statement
+ */
+struct ResolvedDropSynonymStmt : public ResolvedStatement {
+    bool if_exists = false;
+    std::vector<SchemaPath> synonyms;
+};
+
+/**
+ * Resolved CREATE UDR statement
+ */
+struct ResolvedCreateUdrStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId udr_name = StringPool::INVALID_ID;
+    UdrObjectType udr_type = UdrObjectType::FUNCTION;
+    std::string library_path;
+    std::string entry_point;
+    std::string signature;
+    bool has_signature = false;
+};
+
+/**
+ * Resolved DROP UDR statement
+ */
+struct ResolvedDropUdrStmt : public ResolvedStatement {
+    bool if_exists = false;
+    bool cascade = false;
+    std::vector<SchemaPath> udrs;
+};
+
 /**
  * Resolved CREATE DOMAIN statement
  */
 struct ResolvedCreateDomainStmt : public ResolvedStatement {
     bool if_not_exists = false;
+    bool is_type = false;
     SchemaPath domain_path;
     DomainKind domain_kind = DomainKind::BASIC;
     ResolvedType base_type;
@@ -1566,6 +1762,18 @@ struct ResolvedExplainStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved ANALYZE statement
+ */
+struct ResolvedAnalyzeStmt : public ResolvedStatement {
+    SchemaPath table_path;
+    StringPool::StringId column_name = StringPool::INVALID_ID;
+    bool has_column = false;
+    bool has_sample = false;
+    double sample_rate = 0.0;
+    bool verbose = false;
+};
+
+/**
  * Resolved SWEEP DATABASE statement
  */
 struct ResolvedSweepDatabaseStmt : public ResolvedStatement {
@@ -1638,6 +1846,13 @@ struct ResolvedRollbackStmt : public ResolvedStatement {
  * Resolved SAVEPOINT
  */
 struct ResolvedSavepointStmt : public ResolvedStatement {
+    StringPool::StringId name;
+};
+
+/**
+ * Resolved RELEASE SAVEPOINT
+ */
+struct ResolvedReleaseSavepointStmt : public ResolvedStatement {
     StringPool::StringId name;
 };
 
@@ -1756,21 +1971,6 @@ struct ResolvedRevokeStmt : public ResolvedStatement {
     bool grant_option_for = false;
     bool cascade = false;
     bool is_public = false;
-};
-
-/**
- * Resolved ANALYZE statement
- * V2 MIGRATION: Added for optimizer V2 compatibility
- */
-struct ResolvedAnalyzeStmt : public ResolvedStatement {
-    // Table to analyze (optional - if empty, analyze all tables)
-    ResolvedTableRef* table = nullptr;
-
-    // Specific columns to analyze (optional - if empty, analyze all columns)
-    std::vector<StringPool::StringId> columns;
-
-    // VERBOSE option
-    bool verbose = false;
 };
 
 // =============================================================================

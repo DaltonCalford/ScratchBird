@@ -59,6 +59,11 @@ enum class ASTKind : uint16_t {
     DropSchemaStmt,
     AlterSchemaStmt,
     CreateDatabaseStmt,
+    CreateTablespaceStmt,
+    AlterTablespaceStmt,
+    DropTablespaceStmt,
+    AttachTablespaceStmt,
+    DetachTablespaceStmt,
     DropDatabaseStmt,
     AlterDatabaseStmt,
     CreateFunctionStmt,
@@ -67,10 +72,16 @@ enum class ASTKind : uint16_t {
     CreatePackageStmt,
     CreateUserStmt,
     CreateRoleStmt,
+    CreateGroupStmt,
     CreateExceptionStmt,
     CreateJobStmt,
     CreateTypeStmt,
     CreateDomainStmt,
+    CreateForeignServerStmt,
+    CreateForeignTableStmt,
+    CreateUserMappingStmt,
+    CreateSynonymStmt,
+    CreateUdrStmt,
     AlterTypeStmt,
     DropTypeStmt,
     AlterDomainStmt,
@@ -88,7 +99,13 @@ enum class ASTKind : uint16_t {
     DropTriggerStmt,
     DropPackageStmt,
     DropRoleStmt,
+    DropGroupStmt,
     DropExceptionStmt,
+    DropForeignServerStmt,
+    DropForeignTableStmt,
+    DropUserMappingStmt,
+    DropSynonymStmt,
+    DropUdrStmt,
     DropJobStmt,
     TruncateTableStmt,
 
@@ -116,6 +133,7 @@ enum class ASTKind : uint16_t {
     ResetStmt,
     ShowStmt,
     ExplainStmt,
+    AnalyzeStmt,
     SweepDatabaseStmt,
     AlterJobStmt,
     ExecuteJobStmt,
@@ -857,6 +875,149 @@ public:
 };
 
 /**
+ * CREATE GROUP statement
+ */
+class CreateGroupStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateGroupStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId group_name = StringPool::INVALID_ID;
+};
+
+struct OptionPair {
+    std::string key;
+    std::string value;
+};
+
+struct ForeignColumnDef {
+    StringPool::StringId name = StringPool::INVALID_ID;
+    TypeName type;
+    std::string type_text;
+    std::vector<OptionPair> options;
+};
+
+/**
+ * CREATE SERVER statement (FDW)
+ */
+class CreateForeignServerStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateForeignServerStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+    bool has_server_type = false;
+    std::string server_type;
+    bool has_server_version = false;
+    std::string server_version;
+    StringPool::StringId fdw_name = StringPool::INVALID_ID;
+    std::vector<OptionPair> options;
+};
+
+/**
+ * CREATE FOREIGN TABLE statement
+ */
+class CreateForeignTableStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateForeignTableStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_not_exists = false;
+    SchemaPath table_path;
+    std::vector<ForeignColumnDef> columns;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+    std::vector<OptionPair> options;
+};
+
+/**
+ * CREATE USER MAPPING statement
+ */
+enum class UserMappingTarget : uint8_t {
+    USER_NAME = 0,
+    CURRENT_USER = 1,
+    SESSION_USER = 2,
+    PUBLIC_ROLE = 3,
+};
+
+class CreateUserMappingStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateUserMappingStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    UserMappingTarget target = UserMappingTarget::USER_NAME;
+    StringPool::StringId user_name = StringPool::INVALID_ID;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+    std::vector<OptionPair> options;
+};
+
+/**
+ * CREATE SYNONYM statement
+ */
+/**
+ * DDL object types for rename/move statements.
+ * Values align with core::CatalogManager::ObjectType.
+ */
+enum class DdlObjectType : uint8_t {
+    SCHEMA = 0,
+    TABLE = 1,
+    COLUMN = 2,
+    INDEX = 3,
+    VIEW = 4,
+    SEQUENCE = 5,
+    CONSTRAINT = 6,
+    TRIGGER = 7,
+    PROCEDURE = 8,
+    FUNCTION = 9,
+    DOMAIN = 10,
+    COMPOSITE_TYPE = 11,
+    ROLE = 12,
+    USER = 13,
+    GROUP = 14,
+    TABLESPACE = 15,
+    DATABASE = 16,
+    PACKAGE = 22,
+    UDR = 23,
+    EXCEPTION = 24,
+    FOREIGN_SERVER = 31,
+    FOREIGN_TABLE = 32,
+    USER_MAPPING = 33,
+    SYNONYM = 38,
+};
+
+class CreateSynonymStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateSynonymStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool is_public = false;
+    SchemaPath synonym_path;
+    DdlObjectType target_type = DdlObjectType::TABLE;
+    SchemaPath target_path;
+};
+
+/**
+ * CREATE UDR statement
+ */
+enum class UdrObjectType : uint8_t {
+    FUNCTION = 0,
+    PROCEDURE = 1,
+    TRIGGER = 2,
+};
+
+class CreateUdrStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateUdrStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    SchemaPath udr_path;
+    UdrObjectType udr_type = UdrObjectType::FUNCTION;
+    std::string library_path;
+    std::string entry_point;
+    std::string signature;
+    bool has_signature = false;
+};
+
+/**
  * CREATE EXCEPTION statement
  */
 class CreateExceptionStmt : public Statement {
@@ -1079,6 +1240,90 @@ public:
 };
 
 /**
+ * CREATE TABLESPACE statement
+ */
+class CreateTablespaceStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateTablespaceStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    std::string location;
+    bool has_autoextend = false;
+    bool autoextend_enabled = false;
+    bool has_autoextend_size = false;
+    uint32_t autoextend_size_mb = 0;
+    bool has_maxsize = false;
+    bool maxsize_unlimited = false;
+    uint32_t maxsize_mb = 0;
+    bool has_prealloc = false;
+    uint32_t prealloc_mb = 0;
+};
+
+enum class TablespaceAlterAction : uint8_t {
+    SET_AUTOEXTEND = 0,
+    SET_AUTOEXTEND_SIZE = 1,
+    SET_MAXSIZE = 2,
+    RENAME_TO = 3,
+};
+
+struct TablespaceAlteration {
+    TablespaceAlterAction action = TablespaceAlterAction::SET_AUTOEXTEND;
+    bool autoextend_enabled = false;
+    uint32_t size_mb = 0;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+};
+
+/**
+ * ALTER TABLESPACE statement
+ */
+class AlterTablespaceStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterTablespaceStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    std::vector<TablespaceAlteration> alterations;
+};
+
+/**
+ * DROP TABLESPACE statement
+ */
+class DropTablespaceStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropTablespaceStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    bool force = false;
+};
+
+/**
+ * ALTER TABLESPACE ... ATTACH statement
+ */
+class AttachTablespaceStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AttachTablespaceStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    std::string location;
+    bool validate = false;
+};
+
+/**
+ * ALTER TABLESPACE ... DETACH statement
+ */
+class DetachTablespaceStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DetachTablespaceStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    bool force = false;
+};
+
+/**
  * CREATE DOMAIN statement (basic domains)
  */
 class CreateDomainStmt : public Statement {
@@ -1287,34 +1532,6 @@ public:
     StringPool::StringId new_name = StringPool::INVALID_ID;
     StringPool::StringId owner = StringPool::INVALID_ID;
     StringPool::StringId alias = StringPool::INVALID_ID;
-};
-
-/**
- * DDL object types for rename/move statements.
- * Values align with core::CatalogManager::ObjectType.
- */
-enum class DdlObjectType : uint8_t {
-    SCHEMA = 0,
-    TABLE = 1,
-    COLUMN = 2,
-    INDEX = 3,
-    VIEW = 4,
-    SEQUENCE = 5,
-    CONSTRAINT = 6,
-    TRIGGER = 7,
-    PROCEDURE = 8,
-    FUNCTION = 9,
-    DOMAIN = 10,
-    ROLE = 12,
-    USER = 13,
-    GROUP = 14,
-    TABLESPACE = 15,
-    DATABASE = 16,
-    PACKAGE = 22,
-    UDR = 23,
-    EXCEPTION = 24,
-    FOREIGN_TABLE = 32,
-    SYNONYM = 38,
 };
 
 /**
@@ -1539,6 +1756,84 @@ public:
 };
 
 /**
+ * DROP GROUP statement
+ */
+class DropGroupStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropGroupStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    bool cascade = false;
+    std::vector<SchemaPath> groups;
+};
+
+/**
+ * DROP SERVER statement (FDW)
+ */
+class DropForeignServerStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropForeignServerStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    bool cascade = false;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+};
+
+/**
+ * DROP FOREIGN TABLE statement
+ */
+class DropForeignTableStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropForeignTableStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    bool cascade = false;
+    std::vector<SchemaPath> tables;
+};
+
+/**
+ * DROP USER MAPPING statement
+ */
+class DropUserMappingStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropUserMappingStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    UserMappingTarget target = UserMappingTarget::USER_NAME;
+    StringPool::StringId user_name = StringPool::INVALID_ID;
+    StringPool::StringId server_name = StringPool::INVALID_ID;
+};
+
+/**
+ * DROP SYNONYM statement
+ */
+class DropSynonymStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropSynonymStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> synonyms;
+};
+
+/**
+ * DROP UDR statement
+ */
+class DropUdrStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropUdrStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    bool cascade = false;
+    std::vector<SchemaPath> udrs;
+};
+
+/**
  * DROP EXCEPTION statement
  */
 class DropExceptionStmt : public Statement {
@@ -1588,6 +1883,26 @@ public:
     bool format_json = false;    // JSON output format
     bool format_xml = false;     // XML output format
     bool format_yaml = false;    // YAML output format
+};
+
+/**
+ * ANALYZE statement
+ *
+ * Supports:
+ * - ANALYZE [VERBOSE] table_name [COLUMN column_name] [SAMPLE sample_rate]
+ * - ANALYZE [VERBOSE] table_name [(column_name)]
+ */
+class AnalyzeStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AnalyzeStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    SchemaPath table_path;
+    StringPool::StringId column_name = StringPool::INVALID_ID;
+    bool has_column = false;
+    bool has_sample = false;
+    double sample_rate = 0.0;
+    bool verbose = false;
 };
 
 /**
@@ -2669,6 +2984,11 @@ struct CopyOptions {
         BINARY = 2
     };
 
+    enum class OnError : uint8_t {
+        ABORT = 0,
+        SKIP = 1
+    };
+
     bool format_set = false;
     Format format = Format::TEXT;
 
@@ -2689,6 +3009,15 @@ struct CopyOptions {
 
     bool encoding_set = false;
     StringPool::StringId encoding = StringPool::INVALID_ID;
+
+    bool batch_size_set = false;
+    int64_t batch_size = 0;
+
+    bool max_errors_set = false;
+    int64_t max_errors = 0;
+
+    bool on_error_set = false;
+    OnError on_error = OnError::ABORT;
 };
 
 class CopyStmt : public Statement {
@@ -3267,16 +3596,27 @@ public:
     virtual void visit(DropSchemaStmt* stmt) = 0;
     virtual void visit(AlterSchemaStmt* stmt) = 0;
     virtual void visit(CreateDatabaseStmt* stmt) = 0;
+    virtual void visit(CreateTablespaceStmt* stmt) = 0;
+    virtual void visit(AlterTablespaceStmt* stmt) = 0;
+    virtual void visit(DropTablespaceStmt* stmt) = 0;
+    virtual void visit(AttachTablespaceStmt* stmt) = 0;
+    virtual void visit(DetachTablespaceStmt* stmt) = 0;
     virtual void visit(CreateFunctionStmt* stmt) = 0;
     virtual void visit(CreateProcedureStmt* stmt) = 0;
     virtual void visit(CreateTriggerStmt* stmt) = 0;
     virtual void visit(CreatePackageStmt* stmt) = 0;
     virtual void visit(CreateUserStmt* stmt) = 0;
     virtual void visit(CreateRoleStmt* stmt) = 0;
+    virtual void visit(CreateGroupStmt* stmt) = 0;
     virtual void visit(CreateExceptionStmt* stmt) = 0;
     virtual void visit(CreateJobStmt* stmt) = 0;
     virtual void visit(CreateTypeStmt* stmt) = 0;
     virtual void visit(CreateDomainStmt* stmt) = 0;
+    virtual void visit(CreateForeignServerStmt* stmt) = 0;
+    virtual void visit(CreateForeignTableStmt* stmt) = 0;
+    virtual void visit(CreateUserMappingStmt* stmt) = 0;
+    virtual void visit(CreateSynonymStmt* stmt) = 0;
+    virtual void visit(CreateUdrStmt* stmt) = 0;
     virtual void visit(AlterTypeStmt* stmt) = 0;
     virtual void visit(DropTypeStmt* stmt) = 0;
     virtual void visit(AlterDomainStmt* stmt) = 0;
@@ -3296,7 +3636,13 @@ public:
     virtual void visit(DropTriggerStmt* stmt) = 0;
     virtual void visit(DropPackageStmt* stmt) = 0;
     virtual void visit(DropRoleStmt* stmt) = 0;
+    virtual void visit(DropGroupStmt* stmt) = 0;
     virtual void visit(DropExceptionStmt* stmt) = 0;
+    virtual void visit(DropForeignServerStmt* stmt) = 0;
+    virtual void visit(DropForeignTableStmt* stmt) = 0;
+    virtual void visit(DropUserMappingStmt* stmt) = 0;
+    virtual void visit(DropSynonymStmt* stmt) = 0;
+    virtual void visit(DropUdrStmt* stmt) = 0;
     virtual void visit(DropJobStmt* stmt) = 0;
     virtual void visit(TruncateTableStmt* stmt) = 0;
     virtual void visit(AlterJobStmt* stmt) = 0;
@@ -3327,6 +3673,7 @@ public:
     virtual void visit(ResetStmt* stmt) = 0;
     virtual void visit(ShowStmt* stmt) = 0;
     virtual void visit(ExplainStmt* stmt) = 0;
+    virtual void visit(AnalyzeStmt* stmt) = 0;
     virtual void visit(SweepDatabaseStmt* stmt) = 0;
 
     // DCL statements

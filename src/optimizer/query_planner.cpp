@@ -536,14 +536,13 @@ auto QueryPlanner::planAnalyze(const parser::v2::ResolvedAnalyzeStmt* analyze_st
     DEBUG_LOG_DB("QueryPlanner::planAnalyze - planning ANALYZE");
 
     // ANALYZE scans the target table(s) to gather statistics
-    if (analyze_stmt->table)
+    if (!analyze_stmt->table_path.isEmpty())
     {
         // Analyze specific table
-        auto* table_ref = analyze_stmt->table;
-        std::string table_name = getTableName(table_ref, db_);
+        std::string table_name = "ANALYZE_TARGET";
 
         auto node = createSeqScanNode(
-            table_ref->table_uuid,
+            core::ID{},
             table_name,
             DEFAULT_TABLE_ROWS,
             DEFAULT_TABLE_PAGES

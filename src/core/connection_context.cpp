@@ -407,6 +407,8 @@ namespace scratchbird::core
           sql_dialect_(other.sql_dialect_),
           charset_(std::move(other.charset_)),
           statement_timeout_seconds_(other.statement_timeout_seconds_),
+          default_statement_timeout_seconds_(other.default_statement_timeout_seconds_),
+          statement_timeout_local_override_(other.statement_timeout_local_override_),
           last_statement_text_(std::move(other.last_statement_text_)),
           last_statement_hash_(other.last_statement_hash_),
           last_statement_query_type_(std::move(other.last_statement_query_type_)),
@@ -484,6 +486,9 @@ namespace scratchbird::core
         other.last_error_code_ = 0;
         other.last_sqlstate_.clear();
         other.last_activity_time_ = 0;
+        other.statement_timeout_seconds_ = 0;
+        other.default_statement_timeout_seconds_ = 0;
+        other.statement_timeout_local_override_ = false;
         other.connection_io_stats_.reset();
         other.transaction_io_stats_.reset();
         other.statement_io_stats_.reset();
@@ -563,6 +568,8 @@ namespace scratchbird::core
             sql_dialect_ = other.sql_dialect_;
             charset_ = std::move(other.charset_);
             statement_timeout_seconds_ = other.statement_timeout_seconds_;
+            default_statement_timeout_seconds_ = other.default_statement_timeout_seconds_;
+            statement_timeout_local_override_ = other.statement_timeout_local_override_;
             last_statement_text_ = std::move(other.last_statement_text_);
             last_statement_hash_ = other.last_statement_hash_;
             last_statement_query_type_ = std::move(other.last_statement_query_type_);
@@ -640,6 +647,9 @@ namespace scratchbird::core
             other.last_error_code_ = 0;
             other.last_sqlstate_.clear();
             other.last_activity_time_ = 0;
+            other.statement_timeout_seconds_ = 0;
+            other.default_statement_timeout_seconds_ = 0;
+            other.statement_timeout_local_override_ = false;
             other.connection_io_stats_.reset();
             other.transaction_io_stats_.reset();
             other.statement_io_stats_.reset();
@@ -1948,6 +1958,12 @@ namespace scratchbird::core
                       "Applied staged settings: isolation=%d, read_only=%d, wait=%d, lock_timeout=%u, rc_mode=%d",
                       static_cast<int>(isolation_level_), is_read_only_, wait_for_locks_,
                       lock_timeout_seconds_, static_cast<int>(read_committed_mode_));
+        }
+
+        if (statement_timeout_local_override_)
+        {
+            statement_timeout_seconds_ = default_statement_timeout_seconds_;
+            statement_timeout_local_override_ = false;
         }
 
         applyStagedSecurityContext();

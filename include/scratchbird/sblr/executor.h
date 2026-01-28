@@ -879,6 +879,17 @@ namespace scratchbird
             void executeCancelJobRun();      // Execute CANCEL JOB RUN
             void executeCreateGroup();       // Execute CREATE GROUP
             void executeDropGroup();         // Execute DROP GROUP
+            void executeCreateForeignServer(); // Execute CREATE SERVER (FDW)
+            void executeDropForeignServer();   // Execute DROP SERVER (FDW)
+            void executeCreateForeignTable();  // Execute CREATE FOREIGN TABLE
+            void executeDropForeignTable();    // Execute DROP FOREIGN TABLE
+            void executeCreateUserMapping();   // Execute CREATE USER MAPPING
+            void executeDropUserMapping();     // Execute DROP USER MAPPING
+            void executeCreateSynonym();       // Execute CREATE SYNONYM
+            void executeDropSynonym();         // Execute DROP SYNONYM
+            void executeCreateUdr();           // Execute CREATE UDR
+            void executeDropUdr();             // Execute DROP UDR
+            void executeComment();             // Execute COMMENT
             void executeGrantPrivilege();    // Execute GRANT privilege
             void executeRevokePrivilege();   // Execute REVOKE privilege
             void executeGrantRole();         // Execute GRANT role

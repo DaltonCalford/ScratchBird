@@ -123,6 +123,7 @@ Flags:
 - `0x04` WITH SECURITY
 - `0x08` WITH VALIDATION
 - `0x10` WITH QUALITY
+- `0x40` TYPE (CREATE TYPE payload)
 
 Security flags:
 - `0x01` MASKING present

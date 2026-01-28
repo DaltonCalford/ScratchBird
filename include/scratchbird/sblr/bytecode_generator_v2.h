@@ -181,6 +181,7 @@ private:
     void generateDelete(ResolvedDeleteStmt* stmt);
     void generateMerge(ResolvedMergeStmt* stmt);
     void generateCopy(ResolvedCopyStmt* stmt);
+    void generateComment(ResolvedCommentStmt* stmt);
     void generateWithClause(ResolvedWithClause* with);
 
     // DDL
@@ -192,6 +193,11 @@ private:
     void generateDropSchema(ResolvedDropSchemaStmt* stmt);
     void generateAlterSchema(ResolvedAlterSchemaStmt* stmt);
     void generateCreateDatabase(ResolvedCreateDatabaseStmt* stmt);
+    void generateCreateTablespace(ResolvedCreateTablespaceStmt* stmt);
+    void generateAlterTablespace(ResolvedAlterTablespaceStmt* stmt);
+    void generateDropTablespace(ResolvedDropTablespaceStmt* stmt);
+    void generateAttachTablespace(ResolvedAttachTablespaceStmt* stmt);
+    void generateDetachTablespace(ResolvedDetachTablespaceStmt* stmt);
     void generateCreateFunction(ResolvedCreateFunctionStmt* stmt);
     void generateCreateProcedure(ResolvedCreateProcedureStmt* stmt);
     void generateCreateTrigger(ResolvedCreateTriggerStmt* stmt);
@@ -201,14 +207,25 @@ private:
     void generateCreatePackage(ResolvedCreatePackageStmt* stmt);
     void generateCreateUser(ResolvedCreateUserStmt* stmt);
     void generateCreateRole(ResolvedCreateRoleStmt* stmt);
+    void generateCreateGroup(ResolvedCreateGroupStmt* stmt);
     void generateCreateJob(ResolvedCreateJobStmt* stmt);
     void generateCreateException(ResolvedCreateExceptionStmt* stmt);
     void generateCreateDomain(ResolvedCreateDomainStmt* stmt);
+    void generateCreateForeignServer(ResolvedCreateForeignServerStmt* stmt);
+    void generateCreateForeignTable(ResolvedCreateForeignTableStmt* stmt);
+    void generateCreateUserMapping(ResolvedCreateUserMappingStmt* stmt);
+    void generateCreateSynonym(ResolvedCreateSynonymStmt* stmt);
+    void generateCreateUdr(ResolvedCreateUdrStmt* stmt);
     void generateAlterType(ResolvedAlterTypeStmt* stmt);
     void generateDropDatabase(ResolvedDropDatabaseStmt* stmt);
     void generateAlterDomain(ResolvedAlterDomainStmt* stmt);
     void generateDropType(ResolvedDropTypeStmt* stmt);
     void generateDropDomain(ResolvedDropDomainStmt* stmt);
+    void generateDropForeignServer(ResolvedDropForeignServerStmt* stmt);
+    void generateDropForeignTable(ResolvedDropForeignTableStmt* stmt);
+    void generateDropUserMapping(ResolvedDropUserMappingStmt* stmt);
+    void generateDropSynonym(ResolvedDropSynonymStmt* stmt);
+    void generateDropUdr(ResolvedDropUdrStmt* stmt);
     void generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt);
     void generateAlterTable(ResolvedAlterTableStmt* stmt);
     void generateAlterIndex(ResolvedAlterIndexStmt* stmt);
@@ -217,6 +234,7 @@ private:
     void generateMoveObject(ResolvedMoveObjectStmt* stmt);
     void generateDrop(ResolvedDropStmt* stmt);
     void generateDropJob(ResolvedDropJobStmt* stmt);
+    void generateDropGroup(ResolvedDropGroupStmt* stmt);
     void generateExecuteJob(ResolvedExecuteJobStmt* stmt);
     void generateCancelJobRun(ResolvedCancelJobRunStmt* stmt);
 
@@ -226,11 +244,13 @@ private:
     void generateCommit(ResolvedCommitStmt* stmt);
     void generateRollback(ResolvedRollbackStmt* stmt);
     void generateSavepoint(ResolvedSavepointStmt* stmt);
+    void generateReleaseSavepoint(ResolvedReleaseSavepointStmt* stmt);
     void generateConnect(ResolvedConnectStmt* stmt);
     void generateDisconnect(ResolvedDisconnectStmt* stmt);
     void generateSet(ResolvedSetStmt* stmt);
     void generateAlterSystem(ResolvedAlterSystemStmt* stmt);
     void generateShow(ResolvedShowStmt* stmt);
+    void generateAnalyze(ResolvedAnalyzeStmt* stmt);
     void generateSweepDatabase(ResolvedSweepDatabaseStmt* stmt);
     void generateGrant(ResolvedGrantStmt* stmt);
     void generateRevoke(ResolvedRevokeStmt* stmt);

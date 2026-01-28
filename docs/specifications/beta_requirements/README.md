@@ -12,7 +12,7 @@
 
 This directory contains comprehensive specifications for all drivers, integrations, and tools that ScratchBird must support to achieve broad market adoption in Beta release. These specifications ensure compatibility with the most popular programming languages, ORMs, tools, cloud platforms, and applications.
 
-**Total Specifications:** 140+ documents across 11 major categories
+**Total Specifications:** 140+ documents across 12 major categories
 **Status:** ✅ Specifications complete, implementation in progress
 
 ## Quick Start

@@ -36,6 +36,14 @@ ScratchBird implements a unique multi-dialect SQL parser that supports native Sc
 - **[05_PSQL_PROCEDURAL_LANGUAGE.md](05_PSQL_PROCEDURAL_LANGUAGE.md)** - PSQL procedural language specification
 - **[PSQL_CURSOR_HANDLES.md](PSQL_CURSOR_HANDLES.md)** - Cursor handle passing and lifetime rules
 
+### Unified NoSQL Extensions (Beta)
+
+- **[SCRATCHBIRD_UNIFIED_NOSQL_EXTENSIONS.md](SCRATCHBIRD_UNIFIED_NOSQL_EXTENSIONS.md)** - Unified NoSQL language extensions mapped to SBLR
+
+### ScratchBird SQL Core (Alpha)
+
+- **[SCRATCHBIRD_SQL_CORE_LANGUAGE.md](SCRATCHBIRD_SQL_CORE_LANGUAGE.md)** - Core SQL surface and canonical references
+
 ## Key Concepts
 
 ### Multi-Dialect Architecture

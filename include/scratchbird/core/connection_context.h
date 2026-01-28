@@ -386,10 +386,30 @@ namespace scratchbird::core
         void set_statement_timeout(uint32_t timeout_seconds)
         {
             statement_timeout_seconds_ = timeout_seconds;
+            default_statement_timeout_seconds_ = timeout_seconds;
+            statement_timeout_local_override_ = false;
         }
         uint32_t statement_timeout() const
         {
             return statement_timeout_seconds_;
+        }
+        void set_statement_timeout_local(uint32_t timeout_seconds)
+        {
+            statement_timeout_seconds_ = timeout_seconds;
+            statement_timeout_local_override_ = true;
+        }
+        void reset_statement_timeout_local()
+        {
+            statement_timeout_seconds_ = default_statement_timeout_seconds_;
+            statement_timeout_local_override_ = false;
+        }
+        uint32_t default_statement_timeout() const
+        {
+            return default_statement_timeout_seconds_;
+        }
+        bool statement_timeout_local_override() const
+        {
+            return statement_timeout_local_override_;
         }
 
         void setReadCommittedMode(ReadCommittedMode mode)
@@ -483,6 +503,8 @@ namespace scratchbird::core
         uint8_t sql_dialect_ = 3;             // SQL dialect (1, 2, or 3) - default 3 (modern)
         std::string charset_ = "UTF8";        // Connection character set
         uint32_t statement_timeout_seconds_ = 0;  // Statement timeout (0 = no limit)
+        uint32_t default_statement_timeout_seconds_ = 0; // Session default timeout
+        bool statement_timeout_local_override_ = false;
 
         // Last statement tracking (for dormant reattach inspection)
         std::string last_statement_text_;

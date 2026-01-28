@@ -588,6 +588,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateExecuteStatement(exec_stmt);
     } else if (auto* copy = dynamic_cast<ResolvedCopyStmt*>(stmt)) {
         generateCopy(copy);
+    } else if (auto* comment = dynamic_cast<ResolvedCommentStmt*>(stmt)) {
+        generateComment(comment);
     } else if (auto* create_table = dynamic_cast<ResolvedCreateTableStmt*>(stmt)) {
         generateCreateTable(create_table);
     } else if (auto* create_index = dynamic_cast<ResolvedCreateIndexStmt*>(stmt)) {
@@ -604,6 +606,16 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateAlterSchema(alter_schema);
     } else if (auto* create_database = dynamic_cast<ResolvedCreateDatabaseStmt*>(stmt)) {
         generateCreateDatabase(create_database);
+    } else if (auto* create_tablespace = dynamic_cast<ResolvedCreateTablespaceStmt*>(stmt)) {
+        generateCreateTablespace(create_tablespace);
+    } else if (auto* alter_tablespace = dynamic_cast<ResolvedAlterTablespaceStmt*>(stmt)) {
+        generateAlterTablespace(alter_tablespace);
+    } else if (auto* drop_tablespace = dynamic_cast<ResolvedDropTablespaceStmt*>(stmt)) {
+        generateDropTablespace(drop_tablespace);
+    } else if (auto* attach_tablespace = dynamic_cast<ResolvedAttachTablespaceStmt*>(stmt)) {
+        generateAttachTablespace(attach_tablespace);
+    } else if (auto* detach_tablespace = dynamic_cast<ResolvedDetachTablespaceStmt*>(stmt)) {
+        generateDetachTablespace(detach_tablespace);
     } else if (auto* create_function = dynamic_cast<ResolvedCreateFunctionStmt*>(stmt)) {
         generateCreateFunction(create_function);
     } else if (auto* create_procedure = dynamic_cast<ResolvedCreateProcedureStmt*>(stmt)) {
@@ -616,12 +628,24 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateUser(create_user);
     } else if (auto* create_role = dynamic_cast<ResolvedCreateRoleStmt*>(stmt)) {
         generateCreateRole(create_role);
+    } else if (auto* create_group = dynamic_cast<ResolvedCreateGroupStmt*>(stmt)) {
+        generateCreateGroup(create_group);
     } else if (auto* create_job = dynamic_cast<ResolvedCreateJobStmt*>(stmt)) {
         generateCreateJob(create_job);
     } else if (auto* create_exception = dynamic_cast<ResolvedCreateExceptionStmt*>(stmt)) {
         generateCreateException(create_exception);
     } else if (auto* create_domain = dynamic_cast<ResolvedCreateDomainStmt*>(stmt)) {
         generateCreateDomain(create_domain);
+    } else if (auto* create_foreign_server = dynamic_cast<ResolvedCreateForeignServerStmt*>(stmt)) {
+        generateCreateForeignServer(create_foreign_server);
+    } else if (auto* create_foreign_table = dynamic_cast<ResolvedCreateForeignTableStmt*>(stmt)) {
+        generateCreateForeignTable(create_foreign_table);
+    } else if (auto* create_user_mapping = dynamic_cast<ResolvedCreateUserMappingStmt*>(stmt)) {
+        generateCreateUserMapping(create_user_mapping);
+    } else if (auto* create_synonym = dynamic_cast<ResolvedCreateSynonymStmt*>(stmt)) {
+        generateCreateSynonym(create_synonym);
+    } else if (auto* create_udr = dynamic_cast<ResolvedCreateUdrStmt*>(stmt)) {
+        generateCreateUdr(create_udr);
     } else if (auto* alter_type = dynamic_cast<ResolvedAlterTypeStmt*>(stmt)) {
         generateAlterType(alter_type);
     } else if (auto* alter_domain = dynamic_cast<ResolvedAlterDomainStmt*>(stmt)) {
@@ -648,6 +672,18 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateDrop(drop);
     } else if (auto* drop_job = dynamic_cast<ResolvedDropJobStmt*>(stmt)) {
         generateDropJob(drop_job);
+    } else if (auto* drop_group = dynamic_cast<ResolvedDropGroupStmt*>(stmt)) {
+        generateDropGroup(drop_group);
+    } else if (auto* drop_foreign_server = dynamic_cast<ResolvedDropForeignServerStmt*>(stmt)) {
+        generateDropForeignServer(drop_foreign_server);
+    } else if (auto* drop_foreign_table = dynamic_cast<ResolvedDropForeignTableStmt*>(stmt)) {
+        generateDropForeignTable(drop_foreign_table);
+    } else if (auto* drop_user_mapping = dynamic_cast<ResolvedDropUserMappingStmt*>(stmt)) {
+        generateDropUserMapping(drop_user_mapping);
+    } else if (auto* drop_synonym = dynamic_cast<ResolvedDropSynonymStmt*>(stmt)) {
+        generateDropSynonym(drop_synonym);
+    } else if (auto* drop_udr = dynamic_cast<ResolvedDropUdrStmt*>(stmt)) {
+        generateDropUdr(drop_udr);
     } else if (auto* start_tx = dynamic_cast<ResolvedStartTransactionStmt*>(stmt)) {
         generateStartTransaction(start_tx);
     } else if (auto* prepare_tx = dynamic_cast<ResolvedPrepareTransactionStmt*>(stmt)) {
@@ -658,6 +694,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateRollback(rollback);
     } else if (auto* savepoint = dynamic_cast<ResolvedSavepointStmt*>(stmt)) {
         generateSavepoint(savepoint);
+    } else if (auto* release_savepoint = dynamic_cast<ResolvedReleaseSavepointStmt*>(stmt)) {
+        generateReleaseSavepoint(release_savepoint);
     } else if (auto* connect = dynamic_cast<ResolvedConnectStmt*>(stmt)) {
         generateConnect(connect);
     } else if (auto* disconnect = dynamic_cast<ResolvedDisconnectStmt*>(stmt)) {
@@ -668,6 +706,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateAlterSystem(alter_system);
     } else if (auto* show = dynamic_cast<ResolvedShowStmt*>(stmt)) {
         generateShow(show);
+    } else if (auto* analyze = dynamic_cast<ResolvedAnalyzeStmt*>(stmt)) {
+        generateAnalyze(analyze);
     } else if (auto* sweep = dynamic_cast<ResolvedSweepDatabaseStmt*>(stmt)) {
         generateSweepDatabase(sweep);
     } else if (auto* grant = dynamic_cast<ResolvedGrantStmt*>(stmt)) {
@@ -1264,6 +1304,9 @@ void BytecodeGeneratorV2::generateCopy(ResolvedCopyStmt* stmt) {
     current_result_->writeString(std::string(1, stmt->options.quote));
     current_result_->writeString(std::string(1, stmt->options.escape));
     current_result_->writeString(stmt->options.encoding);
+    current_result_->writeInt32(static_cast<int32_t>(stmt->options.batch_size));
+    current_result_->writeInt32(static_cast<int32_t>(stmt->options.max_errors));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->options.on_error));
 
     if (has_query) {
         if (direction != 2) {
@@ -1288,6 +1331,14 @@ void BytecodeGeneratorV2::generateCopy(ResolvedCopyStmt* stmt) {
             current_result_->writeByte(byte);
         }
     }
+}
+
+void BytecodeGeneratorV2::generateComment(ResolvedCommentStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_COMMENT);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->object_type));
+    current_result_->writeUUID(stmt->object_id);
+    current_result_->writeByte(stmt->is_null ? 1 : 0);
+    current_result_->writeString(stmt->is_null ? std::string() : stmt->comment_text);
 }
 
 // =============================================================================
@@ -1979,6 +2030,207 @@ void BytecodeGeneratorV2::generateCreateDatabase(ResolvedCreateDatabaseStmt* stm
     current_result_->writeInt32(static_cast<uint32_t>(stmt->aliases.size()));
     for (const auto& alias : stmt->aliases) {
         current_result_->writeString(alias);
+    }
+}
+
+void BytecodeGeneratorV2::generateCreateTablespace(ResolvedCreateTablespaceStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::CREATE_TABLESPACE);
+    current_result_->writeString(std::string(getString(stmt->tablespace_name)));
+    current_result_->writeString(stmt->location);
+    current_result_->writeByte(stmt->autoextend_enabled ? 1 : 0);
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->has_autoextend_size ? stmt->autoextend_size_mb : 0));
+    if (stmt->has_maxsize) {
+        uint32_t max_size = stmt->maxsize_unlimited ? 0 : stmt->maxsize_mb;
+        current_result_->writeInt32(max_size);
+    } else {
+        current_result_->writeInt32(0);
+    }
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->has_prealloc ? stmt->prealloc_mb : 0));
+}
+
+void BytecodeGeneratorV2::generateAlterTablespace(ResolvedAlterTablespaceStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::ALTER_TABLESPACE);
+    current_result_->writeString(std::string(getString(stmt->tablespace_name)));
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->alterations.size()));
+    for (const auto& alt : stmt->alterations) {
+        current_result_->writeByte(static_cast<uint8_t>(alt.action));
+        switch (alt.action) {
+            case TablespaceAlterAction::SET_AUTOEXTEND:
+                current_result_->writeByte(alt.autoextend_enabled ? 1 : 0);
+                break;
+            case TablespaceAlterAction::SET_AUTOEXTEND_SIZE:
+            case TablespaceAlterAction::SET_MAXSIZE:
+                current_result_->writeInt32(static_cast<uint32_t>(alt.size_mb));
+                break;
+            case TablespaceAlterAction::RENAME_TO:
+                current_result_->writeString(std::string(getString(alt.new_name)));
+                break;
+            default:
+                current_result_->addError("Unknown ALTER TABLESPACE action");
+                break;
+        }
+    }
+}
+
+void BytecodeGeneratorV2::generateDropTablespace(ResolvedDropTablespaceStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::DROP_TABLESPACE);
+    current_result_->writeString(std::string(getString(stmt->tablespace_name)));
+    current_result_->writeByte(stmt->force ? 1 : 0);
+}
+
+void BytecodeGeneratorV2::generateAttachTablespace(ResolvedAttachTablespaceStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::ATTACH_TABLESPACE);
+    current_result_->writeString(stmt->location);
+    current_result_->writeString(std::string(getString(stmt->tablespace_name)));
+}
+
+void BytecodeGeneratorV2::generateDetachTablespace(ResolvedDetachTablespaceStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::DETACH_TABLESPACE);
+    current_result_->writeString(std::string(getString(stmt->tablespace_name)));
+    current_result_->writeByte(stmt->force ? 1 : 0);
+}
+
+void BytecodeGeneratorV2::generateCreateGroup(ResolvedCreateGroupStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_GROUP));
+    current_result_->writeString(std::string(getString(stmt->group_name)));
+}
+
+void BytecodeGeneratorV2::generateDropGroup(ResolvedDropGroupStmt* stmt) {
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->cascade) flags |= 0x02;
+
+    for (const auto& path : stmt->groups) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_GROUP));
+        current_result_->writeString(schemaPathToString(path, string_pool_));
+        current_result_->writeByte(flags);
+    }
+}
+
+void BytecodeGeneratorV2::generateCreateForeignServer(ResolvedCreateForeignServerStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_FOREIGN_SERVER));
+    current_result_->writeString(std::string(getString(stmt->server_name)));
+    current_result_->writeString(stmt->server_type);
+    current_result_->writeString(stmt->host);
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->port));
+    current_result_->writeString(stmt->options_json);
+}
+
+void BytecodeGeneratorV2::generateDropForeignServer(ResolvedDropForeignServerStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_FOREIGN_SERVER));
+    current_result_->writeString(std::string(getString(stmt->server_name)));
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->cascade) flags |= 0x02;
+    current_result_->writeByte(flags);
+}
+
+void BytecodeGeneratorV2::generateCreateForeignTable(ResolvedCreateForeignTableStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_FOREIGN_TABLE));
+    uint8_t flags = stmt->if_not_exists ? 0x01 : 0x00;
+    current_result_->writeByte(flags);
+    std::string table_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        table_name = std::string(getString(stmt->schema.schema_name));
+        table_name += ".";
+        table_name += std::string(getString(stmt->table_name));
+    } else {
+        table_name = std::string(getString(stmt->table_name));
+    }
+    current_result_->writeString(table_name);
+    current_result_->writeString(std::string(getString(stmt->server_name)));
+    current_result_->writeString(stmt->remote_schema);
+    current_result_->writeString(stmt->remote_table);
+    current_result_->writeString(stmt->column_mapping_json);
+}
+
+void BytecodeGeneratorV2::generateDropForeignTable(ResolvedDropForeignTableStmt* stmt) {
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->cascade) flags |= 0x02;
+    for (const auto& path : stmt->tables) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_FOREIGN_TABLE));
+        current_result_->writeByte(flags);
+        current_result_->writeString(schemaPathToString(path, string_pool_));
+    }
+}
+
+void BytecodeGeneratorV2::generateCreateUserMapping(ResolvedCreateUserMappingStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_USER_MAPPING));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->target));
+    current_result_->writeString(stmt->user_name != StringPool::INVALID_ID
+                                     ? std::string(getString(stmt->user_name))
+                                     : std::string());
+    current_result_->writeString(std::string(getString(stmt->server_name)));
+    current_result_->writeString(stmt->remote_user);
+    current_result_->writeString(stmt->remote_credentials);
+}
+
+void BytecodeGeneratorV2::generateDropUserMapping(ResolvedDropUserMappingStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_USER_MAPPING));
+    uint8_t flags = stmt->if_exists ? 0x01 : 0x00;
+    current_result_->writeByte(flags);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->target));
+    current_result_->writeString(stmt->user_name != StringPool::INVALID_ID
+                                     ? std::string(getString(stmt->user_name))
+                                     : std::string());
+    current_result_->writeString(std::string(getString(stmt->server_name)));
+}
+
+void BytecodeGeneratorV2::generateCreateSynonym(ResolvedCreateSynonymStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_SYNONYM));
+    current_result_->writeByte(stmt->is_public ? 1 : 0);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->target_type));
+    current_result_->writeString(schemaPathToString(stmt->synonym_path, string_pool_));
+    current_result_->writeString(schemaPathToString(stmt->target_path, string_pool_));
+}
+
+void BytecodeGeneratorV2::generateDropSynonym(ResolvedDropSynonymStmt* stmt) {
+    uint8_t flags = stmt->if_exists ? 0x01 : 0x00;
+    for (const auto& path : stmt->synonyms) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_SYNONYM));
+        current_result_->writeByte(flags);
+        current_result_->writeString(schemaPathToString(path, string_pool_));
+    }
+}
+
+void BytecodeGeneratorV2::generateCreateUdr(ResolvedCreateUdrStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_UDR));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->udr_type));
+    std::string name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        name = std::string(getString(stmt->schema.schema_name)) + "." +
+               std::string(getString(stmt->udr_name));
+    } else {
+        name = std::string(getString(stmt->udr_name));
+    }
+    current_result_->writeString(name);
+    current_result_->writeString(stmt->library_path);
+    current_result_->writeString(stmt->entry_point);
+    current_result_->writeByte(stmt->has_signature ? 1 : 0);
+    current_result_->writeString(stmt->signature);
+}
+
+void BytecodeGeneratorV2::generateDropUdr(ResolvedDropUdrStmt* stmt) {
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->cascade) flags |= 0x02;
+    for (const auto& path : stmt->udrs) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_UDR));
+        current_result_->writeByte(flags);
+        current_result_->writeString(schemaPathToString(path, string_pool_));
     }
 }
 
@@ -2837,6 +3089,9 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
     if (stmt->has_comment) {
         flags |= 0x20;
     }
+    if (stmt->is_type) {
+        flags |= 0x40;
+    }
     current_result_->writeByte(flags);
 
     current_result_->writeByte(static_cast<uint8_t>(stmt->domain_kind));
@@ -3211,6 +3466,7 @@ void BytecodeGeneratorV2::generateDropType(ResolvedDropTypeStmt* stmt) {
     uint8_t flags = 0;
     if (stmt->if_exists) flags |= 0x01;
     if (stmt->restrict) flags |= 0x02;
+    flags |= 0x40;
 
     for (const auto& path : stmt->types) {
         current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
@@ -3885,6 +4141,12 @@ void BytecodeGeneratorV2::generateSavepoint(ResolvedSavepointStmt* stmt) {
     writeStringId(stmt->name);
 }
 
+void BytecodeGeneratorV2::generateReleaseSavepoint(ResolvedReleaseSavepointStmt* stmt) {
+    current_result_->writeExtendedOpcode(
+        sblr::ExtendedOpcode::EXT_RELEASE_SAVEPOINT);
+    writeStringId(stmt->name);
+}
+
 void BytecodeGeneratorV2::generateConnect(ResolvedConnectStmt* stmt) {
     current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_CONNECT);
     writeStringId(stmt->database);
@@ -4264,6 +4526,17 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
             current_result_->addError("Unsupported SHOW type");
             break;
     }
+}
+
+void BytecodeGeneratorV2::generateAnalyze(ResolvedAnalyzeStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ANALYZE);
+    current_result_->writeString(schemaPathToString(stmt->table_path, string_pool_));
+    if (stmt->has_column) {
+        writeStringId(stmt->column_name);
+    } else {
+        current_result_->writeString("");
+    }
+    current_result_->writeDouble(stmt->sample_rate);
 }
 
 void BytecodeGeneratorV2::generateSweepDatabase(ResolvedSweepDatabaseStmt* stmt) {

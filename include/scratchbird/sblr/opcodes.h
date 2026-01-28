@@ -1299,6 +1299,16 @@ namespace scratchbird
             EXT_REBIND_DOMAIN = 0x0110,  // Rebind domain dependencies (admin)
             EXT_RESOLVE_DOMAIN_CONFLICT = 0x0111,  // Resolve domain conflicts (admin)
             EXT_ALTER_SYSTEM = 0x0112,  // ALTER SYSTEM SET section.key = value
+            EXT_CREATE_FOREIGN_SERVER = 0x0117,  // CREATE SERVER (FDW)
+            EXT_DROP_FOREIGN_SERVER = 0x0118,  // DROP SERVER (FDW)
+            EXT_CREATE_FOREIGN_TABLE = 0x0119,  // CREATE FOREIGN TABLE
+            EXT_DROP_FOREIGN_TABLE = 0x011A,  // DROP FOREIGN TABLE
+            EXT_CREATE_USER_MAPPING = 0x011B,  // CREATE USER MAPPING
+            EXT_DROP_USER_MAPPING = 0x011C,  // DROP USER MAPPING
+            EXT_CREATE_SYNONYM = 0x011D,  // CREATE SYNONYM
+            EXT_DROP_SYNONYM = 0x011E,  // DROP SYNONYM
+            EXT_CREATE_UDR = 0x011F,  // CREATE UDR
+            EXT_DROP_UDR = 0x0120,  // DROP UDR
 
             // Null-safe comparison operators (MySQL/PostgreSQL)
             EXT_NULL_SAFE_EQ = 0x0200,  // NULL-safe equality (<=> / IS NOT DISTINCT FROM)
