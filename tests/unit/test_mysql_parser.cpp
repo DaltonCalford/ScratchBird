@@ -384,6 +384,16 @@ TEST_F(MySQLParserTest, SelectWithFunctions) {
     expectSuccess("SELECT COALESCE(name, 'Unknown') FROM users");
 }
 
+TEST_F(MySQLParserTest, SelectWithWindowFunctions) {
+    expectSuccess("SELECT ROW_NUMBER() OVER (PARTITION BY dept ORDER BY id) FROM employees");
+    expectSuccess("SELECT SUM(amount) OVER (PARTITION BY dept) FROM orders");
+}
+
+TEST_F(MySQLParserTest, SelectWithMatchAgainst) {
+    expectSuccess("SELECT id FROM docs WHERE MATCH(content) AGAINST ('foo')");
+    expectSuccess("SELECT id FROM docs WHERE MATCH(title, body) AGAINST ('foo' IN BOOLEAN MODE)");
+}
+
 TEST_F(MySQLParserTest, SelectWithCase) {
     expectSuccess("SELECT CASE WHEN status = 1 THEN 'Active' ELSE 'Inactive' END FROM users");
     expectSuccess("SELECT CASE status WHEN 1 THEN 'Active' WHEN 2 THEN 'Pending' ELSE 'Unknown' END FROM users");
@@ -415,6 +425,12 @@ TEST_F(MySQLParserTest, DeleteBasic) {
     expectSuccess("DELETE FROM users");
     expectSuccess("DELETE FROM users WHERE id = 1");
     expectSuccess("DELETE FROM users WHERE status = 'inactive' LIMIT 100");
+}
+
+TEST_F(MySQLParserTest, DeleteWithMultipleTargets) {
+    expectSuccess("DELETE t1, t2 FROM t1 JOIN t2 ON t1.id = t2.id");
+    expectSuccess("DELETE FROM t1, t2 USING t1 JOIN t2 ON t1.id = t2.id");
+    expectSuccess("DELETE FROM t1, t2 USING t1, t2");
 }
 
 TEST_F(MySQLParserTest, CreateTableBasic) {
@@ -610,6 +626,10 @@ TEST_F(MySQLParserTest, AlterTableColumnActions) {
     expectSuccess("ALTER TABLE users MODIFY COLUMN age BIGINT");
     expectSuccess("ALTER TABLE users CHANGE COLUMN age age BIGINT");
     expectSuccess("ALTER TABLE users RENAME COLUMN age TO age_years");
+    expectSuccess("ALTER TABLE users MODIFY COLUMN name VARCHAR(32) "
+                  "CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+    expectSuccess("ALTER TABLE users CHANGE COLUMN name name VARCHAR(64) "
+                  "CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
 }
 
 TEST_F(MySQLParserTest, CreateTableWithOptions) {
