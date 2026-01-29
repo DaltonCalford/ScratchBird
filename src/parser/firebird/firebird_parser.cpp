@@ -260,6 +260,8 @@ bool Parser::isNonReservedKeyword() const {
         case TokenType::KW_DATA:
         case TokenType::KW_FILE:
         case TokenType::KW_MESSAGE:
+        case TokenType::KW_RDB_GET_CONTEXT:
+        case TokenType::KW_RDB_SET_CONTEXT:
             return true;
         default:
             return false;
@@ -1961,8 +1963,18 @@ Statement* Parser::parseAlterStatement() {
     if (matchKeyword(TokenType::KW_INDEX)) {
         return parseAlterIndexImpl();
     }
+    if (matchKeyword(TokenType::KW_SEQUENCE) || matchKeyword(TokenType::KW_GENERATOR)) {
+        parseSchemaPath();
+        error("ALTER SEQUENCE/GENERATOR is not supported in Firebird parser yet");
+        return nullptr;
+    }
     if (matchKeyword(TokenType::KW_VIEW)) {
         return parseCreateViewImpl(true);
+    }
+    if (matchKeyword(TokenType::KW_ROLE)) {
+        parseIdentifier();
+        error("ALTER ROLE is not supported in Firebird parser yet");
+        return nullptr;
     }
     if (matchKeyword(TokenType::KW_PROCEDURE)) {
         return parseCreateProcedure(true);
@@ -1978,6 +1990,18 @@ Statement* Parser::parseAlterStatement() {
     }
     if (matchKeyword(TokenType::KW_EXCEPTION)) {
         return parseCreateException(true);
+    }
+    if (matchKeyword(TokenType::KW_USER)) {
+        error("ALTER USER is not supported in Firebird parser yet");
+        return nullptr;
+    }
+    if (matchKeyword(TokenType::KW_MAPPING)) {
+        error("ALTER MAPPING is not supported in Firebird parser yet");
+        return nullptr;
+    }
+    if (matchKeyword(TokenType::KW_SHADOW)) {
+        error("ALTER SHADOW is not supported in Firebird parser yet");
+        return nullptr;
     }
     error("ALTER statement for this object type not yet implemented");
     return nullptr;
@@ -2063,6 +2087,18 @@ Statement* Parser::parseDropStatement() {
             if_exists = true;
         }
         return parseDropExceptionImpl(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_USER)) {
+        error("DROP USER is not supported in Firebird parser yet");
+        return nullptr;
+    }
+    if (matchKeyword(TokenType::KW_MAPPING)) {
+        error("DROP MAPPING is not supported in Firebird parser yet");
+        return nullptr;
+    }
+    if (matchKeyword(TokenType::KW_SHADOW)) {
+        error("DROP SHADOW is not supported in Firebird parser yet");
+        return nullptr;
     }
 
     error("DROP statement for this object type not yet implemented");
@@ -2218,6 +2254,45 @@ Statement* Parser::parseRecreateStatement() {
     if (matchKeyword(TokenType::KW_INDEX)) {
         auto* stmt = parseCreateIndexImpl(false, false);
         return stmt;
+    }
+    if (matchKeyword(TokenType::KW_SEQUENCE) || matchKeyword(TokenType::KW_GENERATOR)) {
+        auto* stmt = parseCreateSequenceImpl();
+        if (stmt) {
+            stmt->or_replace = true;
+        }
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        return parseCreateProcedure(true);
+    }
+    if (matchKeyword(TokenType::KW_FUNCTION)) {
+        return parseCreateFunction(true);
+    }
+    if (matchKeyword(TokenType::KW_TRIGGER)) {
+        return parseCreateTrigger(true);
+    }
+    if (matchKeyword(TokenType::KW_PACKAGE)) {
+        return parseCreatePackage(true);
+    }
+    if (matchKeyword(TokenType::KW_EXCEPTION)) {
+        return parseCreateException(true);
+    }
+    if (matchKeyword(TokenType::KW_ROLE)) {
+        parseIdentifier();
+        error("RECREATE ROLE is not supported in Firebird parser yet");
+        return nullptr;
+    }
+    if (matchKeyword(TokenType::KW_USER)) {
+        error("RECREATE USER is not supported in Firebird parser yet");
+        return nullptr;
+    }
+    if (matchKeyword(TokenType::KW_MAPPING)) {
+        error("RECREATE MAPPING is not supported in Firebird parser yet");
+        return nullptr;
+    }
+    if (matchKeyword(TokenType::KW_SHADOW)) {
+        error("RECREATE SHADOW is not supported in Firebird parser yet");
+        return nullptr;
     }
 
     error("RECREATE statement for this object type not yet implemented");
@@ -3502,13 +3577,31 @@ Statement* Parser::parseUpdateOrInsertStatement() {
     stmt->values_rows.push_back(row);
 
     // MATCHING clause (Firebird-specific)
+    std::vector<ast::StringPool::StringId> matching_columns;
     if (matchKeyword(TokenType::KW_MATCHING)) {
         // Parse matching columns (used for determining update vs insert)
         consume(TokenType::LEFT_PAREN, "Expected '(' after MATCHING");
         do {
-            parseIdentifier();  // Just consume for now
+            matching_columns.push_back(parseIdentifier());
         } while (match(TokenType::COMMA));
         consume(TokenType::RIGHT_PAREN, "Expected ')' after MATCHING columns");
+    }
+
+    if (stmt->columns.empty()) {
+        error("UPDATE OR INSERT requires an explicit column list");
+    } else if (!stmt->values_rows.empty()) {
+        const auto& values = stmt->values_rows.front();
+        if (values.size() != stmt->columns.size()) {
+            error("UPDATE OR INSERT column count doesn't match VALUES count");
+        } else {
+            auto* on_conflict = allocate<ast::OnConflictClause>();
+            on_conflict->action = ast::ConflictAction::UPDATE;
+            on_conflict->columns = matching_columns;
+            for (size_t i = 0; i < stmt->columns.size(); ++i) {
+                on_conflict->set_items.push_back({stmt->columns[i], values[i]});
+            }
+            stmt->on_conflict = on_conflict;
+        }
     }
 
     // RETURNING clause

@@ -12,6 +12,7 @@ Legend: Implemented, Partial, Missing.
 -- Arithmetic
 SELECT 1 + 2 * 3;
 SELECT -price FROM items;
+SELECT 10 DIV 3;  -- Integer division, returns 3
 
 -- Pattern match and regex
 SELECT name LIKE 'A%';
@@ -29,7 +30,6 @@ SELECT ARRAY['a','b','c'];
 
 ## Known quirks (actual)
 
-- `||` parses but is encoded as numeric add (fails for string concat).
 - `IS DISTINCT FROM` is not null-safe (uses EQ/NE).
 - unary `NOT` is not 3VL-safe (encoded as `= 0`).
 - Bitwise and array operators are tokenized but not parsed.
@@ -37,12 +37,13 @@ SELECT ARRAY['a','b','c'];
 
 ## Arithmetic
 - `+`, `-`, `*`, `/`, `%`: Implemented (numeric).
+- `DIV` (integer division): Implemented (emits `EXT_EXPR_DIV_INT` opcode).
 - unary `-`: Implemented.
 - unary `+`: Missing.
 - `^` power: Missing (use POWER()).
 
 ## String and pattern
-- `||` concat: Partial (parsed but encoded as numeric add).
+- `||` concat: Implemented (emits `EXT_FUNC_CONCAT` opcode).
 - `LIKE`, `ILIKE`, `SIMILAR TO`: Implemented.
 - regex `~`, `~*`, `!~`, `!~*`: Implemented.
 
@@ -122,5 +123,4 @@ SELECT NOW(), CURRENT_DATE(), CURRENT_TIME(), CURRENT_TIMESTAMP();
 - `&`, `|`, `^`, `~`, `<<`, `>>`: Missing in V2.
 
 Spec delta:
-- Add CONCAT encoding or explicit opcode for `||`.
 - Add null-safe operators and NOT opcode for correct three-valued logic.

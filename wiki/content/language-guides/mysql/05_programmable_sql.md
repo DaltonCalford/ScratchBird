@@ -138,7 +138,7 @@ END;
 
 #### Current Status
 
-**NOT IMPLEMENTED:** CREATE PROCEDURE is not currently implemented in the MySQL parser and will result in parse errors.
+**Implemented:** `parseCreateProcedure()` handles CREATE PROCEDURE with IN/OUT/INOUT parameters, body capture, and catalog registration. Procedural body runtime interpretation is not yet wired.
 
 ### CALL
 
@@ -177,7 +177,7 @@ SELECT @val;  -- Returns 11
 
 #### Current Status
 
-**NOT IMPLEMENTED:** CALL is not currently implemented in the MySQL parser.
+**Implemented:** The MySQL parser handles CALL with arguments via `EXT_CALL` opcode.
 
 ### DROP PROCEDURE
 
@@ -281,7 +281,7 @@ WHERE total > 100 * (1 + get_tax(100));
 
 #### Current Status
 
-**NOT IMPLEMENTED:** CREATE FUNCTION is not currently implemented in the MySQL parser.
+**Implemented:** `parseCreateFunction()` handles CREATE FUNCTION with parameters, RETURNS, and body capture.
 
 ### DROP FUNCTION
 
@@ -674,29 +674,19 @@ Releases a prepared statement.
 
 ## Known Limitations
 
+### Implemented Features
+
+- **CREATE PROCEDURE**: Parsed with parameters, body capture, catalog registration
+- **CREATE FUNCTION**: Parsed with parameters, RETURNS, body capture, catalog registration
+- **CREATE TRIGGER**: Parsed with BEFORE/AFTER, INSERT/UPDATE/DELETE, body capture
+- **CALL statement**: Implemented with arguments
+
 ### Missing Features
 
-- **CREATE PROCEDURE**: Not implemented in the parser
-  - **Priority**: High (Beta target)
-  - **Workaround**: Use application-level logic
-
-- **CREATE FUNCTION**: Not implemented in the parser
-  - **Priority**: High (Beta target)
-  - **Workaround**: Use application-level functions or inline expressions
-
-- **CREATE TRIGGER**: Not implemented in the parser
-  - **Priority**: High (Beta target)
-  - **Workaround**: Implement trigger logic in application code
-
-- **CALL statement**: Not implemented
-  - **Priority**: High (Beta target)
-
-- **EXECUTE/PREPARE**: Dynamic SQL not implemented
-  - **Priority**: Medium (Beta target)
-
-- **All procedural constructs**: Variables, control flow, cursors, error handlers
-  - **Priority**: High (Beta target)
-  - **Workaround**: Use application-level logic
+- **DROP PROCEDURE/FUNCTION/TRIGGER**: Not yet implemented in MySQL parser's DROP dispatch
+- **ALTER PROCEDURE/FUNCTION**: Not implemented
+- **EXECUTE/PREPARE/DEALLOCATE PREPARE**: Dynamic SQL not implemented
+- **Procedural body runtime**: Bodies are stored as source text; control flow, variables, cursors, and error handlers are not yet wired for runtime execution
 
 ### Spec Deltas
 

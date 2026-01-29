@@ -6,9 +6,9 @@ This directory contains the complete distributed cluster architecture specificat
 
 ## Overview
 
-Comprehensive cluster architecture for distributed ScratchBird deployments, including Raft consensus, sharding, replication, backup/restore, job scheduling, and observability.
+Comprehensive cluster architecture for distributed ScratchBird deployments, including Raft consensus, sharding, replication, backup/restore, job scheduling, autoscaling, and observability.
 
-**Total Specifications:** 19 documents covering all aspects of cluster operation
+**Total Specifications:** 18 documents covering all aspects of cluster operation
 **Status:** ✅ Complete and comprehensive
 **Target Release:** Beta
 
@@ -44,6 +44,7 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 
 - **[SBCLUSTER-08-BACKUP-AND-RESTORE.md](SBCLUSTER-08-BACKUP-AND-RESTORE.md)** - Cluster backup and restore
 - **[SBCLUSTER-09-SCHEDULER.md](SBCLUSTER-09-SCHEDULER.md)** (907 lines) - Distributed job scheduler
+- **[SBCLUSTER-12-AUTOSCALING_AND_ELASTIC_LIFECYCLE.md](SBCLUSTER-12-AUTOSCALING_AND_ELASTIC_LIFECYCLE.md)** - Autoscaling and elastic node lifecycle
 - **[SBCLUSTER-10-OBSERVABILITY.md](SBCLUSTER-10-OBSERVABILITY.md)** - Observability and monitoring
 
 ## Implementation Guidance
@@ -99,6 +100,12 @@ Comprehensive cluster architecture for distributed ScratchBird deployments, incl
 - **Distributed tracing** - OpenTelemetry trace propagation
 - **Health monitoring** - Node health and cluster health endpoints
 - **Alerting** - Alert on node failures, replication lag, etc.
+
+### Autoscaling
+
+- **Elastic node lifecycle** - Scale out/in with safe drain and rejoin
+- **Policy-based decisions** - CPU/latency/lag/skew-driven scaling
+- **Integration guards** - Membership and shard migration safety gates
 
 ## Cluster Architecture Diagram
 

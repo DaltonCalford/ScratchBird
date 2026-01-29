@@ -1869,6 +1869,8 @@ public:
                           const std::string &new_name, ErrorContext *ctx = nullptr) -> Status;
         auto alterColumnType(const ID &table_id, const std::string &column_name,
                              DataType new_type, uint32_t new_precision, uint32_t new_scale,
+                             std::optional<uint16_t> new_charset_id = std::nullopt,
+                             std::optional<uint32_t> new_collation_id = std::nullopt,
                              ErrorContext *ctx = nullptr) -> Status;
         auto updateTableStorageParams(const ID& table_id, const std::string& storage_params,
                                       ErrorContext* ctx = nullptr) -> Status;
@@ -3104,6 +3106,10 @@ public:
         auto listTimezones(std::vector<TimezoneInfo> &timezones, ErrorContext *ctx = nullptr)
             -> Status;
         auto deleteTimezone(uint16_t timezone_id, ErrorContext *ctx = nullptr) -> Status;
+        auto setTimezoneVersion(const std::string& version, ErrorContext* ctx = nullptr) -> Status;
+        auto getTimezoneVersion(std::string& version_out, ErrorContext* ctx = nullptr) -> Status;
+        auto setI18nResourceVersion(const std::string& version, ErrorContext* ctx = nullptr) -> Status;
+        auto getI18nResourceVersion(std::string& version_out, ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // Statistics operations (sb_statistic system table - OPT-1, OPT-2)

@@ -393,7 +393,7 @@ DROP TABLE logs, sessions, temp_cache;
 
 ### Current Status
 
-**NOT IMPLEMENTED:** The DROP TABLE statement is not currently implemented in the MySQL parser and will result in a parse error.
+**Implemented:** The MySQL parser handles DROP [TEMPORARY] TABLE with IF EXISTS, schema qualification, and CASCADE/RESTRICT flags.
 
 ### Cross-References
 
@@ -447,7 +447,7 @@ TRUNCATE logs;
 
 ### Current Status
 
-**NOT IMPLEMENTED:** The TRUNCATE TABLE statement is not currently implemented in the MySQL parser and will result in a parse error.
+**Implemented:** The MySQL parser handles TRUNCATE [TABLE] with schema qualification.
 
 ### Cross-References
 
@@ -539,9 +539,9 @@ Until temporary table support is fully implemented:
 
 ### Missing Features
 
-- **DROP TABLE**: Not implemented in the parser at all. Will cause parse errors.
+- **DROP TABLE**: Implemented in the parser.
 
-- **TRUNCATE TABLE**: Not implemented in the parser at all. Will cause parse errors.
+- **TRUNCATE TABLE**: Implemented in the parser.
 
 - **UNSIGNED and ZEROFILL type modifiers**: These are parsed and stored internally but NOT emitted to bytecode. Constraints are not enforced:
   ```sql

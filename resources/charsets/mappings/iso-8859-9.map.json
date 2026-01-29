@@ -1,0 +1,1038 @@
+{
+  "charset": "ISO-8859-9",
+  "description": "Mapping table from https://www.unicode.org/Public/MAPPINGS/ISO8859/8859-9.TXT",
+  "aliases": [
+    "latin5",
+    "ISO_8859-9"
+  ],
+  "min_bytes": 1,
+  "max_bytes": 1,
+  "is_variable_width": false,
+  "unmapped_policy": "reject",
+  "mappings": [
+    {
+      "byte_sequence": "0x00",
+      "unicode_codepoint": "U+0000"
+    },
+    {
+      "byte_sequence": "0x01",
+      "unicode_codepoint": "U+0001"
+    },
+    {
+      "byte_sequence": "0x02",
+      "unicode_codepoint": "U+0002"
+    },
+    {
+      "byte_sequence": "0x03",
+      "unicode_codepoint": "U+0003"
+    },
+    {
+      "byte_sequence": "0x04",
+      "unicode_codepoint": "U+0004"
+    },
+    {
+      "byte_sequence": "0x05",
+      "unicode_codepoint": "U+0005"
+    },
+    {
+      "byte_sequence": "0x06",
+      "unicode_codepoint": "U+0006"
+    },
+    {
+      "byte_sequence": "0x07",
+      "unicode_codepoint": "U+0007"
+    },
+    {
+      "byte_sequence": "0x08",
+      "unicode_codepoint": "U+0008"
+    },
+    {
+      "byte_sequence": "0x09",
+      "unicode_codepoint": "U+0009"
+    },
+    {
+      "byte_sequence": "0x0A",
+      "unicode_codepoint": "U+000A"
+    },
+    {
+      "byte_sequence": "0x0B",
+      "unicode_codepoint": "U+000B"
+    },
+    {
+      "byte_sequence": "0x0C",
+      "unicode_codepoint": "U+000C"
+    },
+    {
+      "byte_sequence": "0x0D",
+      "unicode_codepoint": "U+000D"
+    },
+    {
+      "byte_sequence": "0x0E",
+      "unicode_codepoint": "U+000E"
+    },
+    {
+      "byte_sequence": "0x0F",
+      "unicode_codepoint": "U+000F"
+    },
+    {
+      "byte_sequence": "0x10",
+      "unicode_codepoint": "U+0010"
+    },
+    {
+      "byte_sequence": "0x11",
+      "unicode_codepoint": "U+0011"
+    },
+    {
+      "byte_sequence": "0x12",
+      "unicode_codepoint": "U+0012"
+    },
+    {
+      "byte_sequence": "0x13",
+      "unicode_codepoint": "U+0013"
+    },
+    {
+      "byte_sequence": "0x14",
+      "unicode_codepoint": "U+0014"
+    },
+    {
+      "byte_sequence": "0x15",
+      "unicode_codepoint": "U+0015"
+    },
+    {
+      "byte_sequence": "0x16",
+      "unicode_codepoint": "U+0016"
+    },
+    {
+      "byte_sequence": "0x17",
+      "unicode_codepoint": "U+0017"
+    },
+    {
+      "byte_sequence": "0x18",
+      "unicode_codepoint": "U+0018"
+    },
+    {
+      "byte_sequence": "0x19",
+      "unicode_codepoint": "U+0019"
+    },
+    {
+      "byte_sequence": "0x1A",
+      "unicode_codepoint": "U+001A"
+    },
+    {
+      "byte_sequence": "0x1B",
+      "unicode_codepoint": "U+001B"
+    },
+    {
+      "byte_sequence": "0x1C",
+      "unicode_codepoint": "U+001C"
+    },
+    {
+      "byte_sequence": "0x1D",
+      "unicode_codepoint": "U+001D"
+    },
+    {
+      "byte_sequence": "0x1E",
+      "unicode_codepoint": "U+001E"
+    },
+    {
+      "byte_sequence": "0x1F",
+      "unicode_codepoint": "U+001F"
+    },
+    {
+      "byte_sequence": "0x20",
+      "unicode_codepoint": "U+0020"
+    },
+    {
+      "byte_sequence": "0x21",
+      "unicode_codepoint": "U+0021"
+    },
+    {
+      "byte_sequence": "0x22",
+      "unicode_codepoint": "U+0022"
+    },
+    {
+      "byte_sequence": "0x23",
+      "unicode_codepoint": "U+0023"
+    },
+    {
+      "byte_sequence": "0x24",
+      "unicode_codepoint": "U+0024"
+    },
+    {
+      "byte_sequence": "0x25",
+      "unicode_codepoint": "U+0025"
+    },
+    {
+      "byte_sequence": "0x26",
+      "unicode_codepoint": "U+0026"
+    },
+    {
+      "byte_sequence": "0x27",
+      "unicode_codepoint": "U+0027"
+    },
+    {
+      "byte_sequence": "0x28",
+      "unicode_codepoint": "U+0028"
+    },
+    {
+      "byte_sequence": "0x29",
+      "unicode_codepoint": "U+0029"
+    },
+    {
+      "byte_sequence": "0x2A",
+      "unicode_codepoint": "U+002A"
+    },
+    {
+      "byte_sequence": "0x2B",
+      "unicode_codepoint": "U+002B"
+    },
+    {
+      "byte_sequence": "0x2C",
+      "unicode_codepoint": "U+002C"
+    },
+    {
+      "byte_sequence": "0x2D",
+      "unicode_codepoint": "U+002D"
+    },
+    {
+      "byte_sequence": "0x2E",
+      "unicode_codepoint": "U+002E"
+    },
+    {
+      "byte_sequence": "0x2F",
+      "unicode_codepoint": "U+002F"
+    },
+    {
+      "byte_sequence": "0x30",
+      "unicode_codepoint": "U+0030"
+    },
+    {
+      "byte_sequence": "0x31",
+      "unicode_codepoint": "U+0031"
+    },
+    {
+      "byte_sequence": "0x32",
+      "unicode_codepoint": "U+0032"
+    },
+    {
+      "byte_sequence": "0x33",
+      "unicode_codepoint": "U+0033"
+    },
+    {
+      "byte_sequence": "0x34",
+      "unicode_codepoint": "U+0034"
+    },
+    {
+      "byte_sequence": "0x35",
+      "unicode_codepoint": "U+0035"
+    },
+    {
+      "byte_sequence": "0x36",
+      "unicode_codepoint": "U+0036"
+    },
+    {
+      "byte_sequence": "0x37",
+      "unicode_codepoint": "U+0037"
+    },
+    {
+      "byte_sequence": "0x38",
+      "unicode_codepoint": "U+0038"
+    },
+    {
+      "byte_sequence": "0x39",
+      "unicode_codepoint": "U+0039"
+    },
+    {
+      "byte_sequence": "0x3A",
+      "unicode_codepoint": "U+003A"
+    },
+    {
+      "byte_sequence": "0x3B",
+      "unicode_codepoint": "U+003B"
+    },
+    {
+      "byte_sequence": "0x3C",
+      "unicode_codepoint": "U+003C"
+    },
+    {
+      "byte_sequence": "0x3D",
+      "unicode_codepoint": "U+003D"
+    },
+    {
+      "byte_sequence": "0x3E",
+      "unicode_codepoint": "U+003E"
+    },
+    {
+      "byte_sequence": "0x3F",
+      "unicode_codepoint": "U+003F"
+    },
+    {
+      "byte_sequence": "0x40",
+      "unicode_codepoint": "U+0040"
+    },
+    {
+      "byte_sequence": "0x41",
+      "unicode_codepoint": "U+0041"
+    },
+    {
+      "byte_sequence": "0x42",
+      "unicode_codepoint": "U+0042"
+    },
+    {
+      "byte_sequence": "0x43",
+      "unicode_codepoint": "U+0043"
+    },
+    {
+      "byte_sequence": "0x44",
+      "unicode_codepoint": "U+0044"
+    },
+    {
+      "byte_sequence": "0x45",
+      "unicode_codepoint": "U+0045"
+    },
+    {
+      "byte_sequence": "0x46",
+      "unicode_codepoint": "U+0046"
+    },
+    {
+      "byte_sequence": "0x47",
+      "unicode_codepoint": "U+0047"
+    },
+    {
+      "byte_sequence": "0x48",
+      "unicode_codepoint": "U+0048"
+    },
+    {
+      "byte_sequence": "0x49",
+      "unicode_codepoint": "U+0049"
+    },
+    {
+      "byte_sequence": "0x4A",
+      "unicode_codepoint": "U+004A"
+    },
+    {
+      "byte_sequence": "0x4B",
+      "unicode_codepoint": "U+004B"
+    },
+    {
+      "byte_sequence": "0x4C",
+      "unicode_codepoint": "U+004C"
+    },
+    {
+      "byte_sequence": "0x4D",
+      "unicode_codepoint": "U+004D"
+    },
+    {
+      "byte_sequence": "0x4E",
+      "unicode_codepoint": "U+004E"
+    },
+    {
+      "byte_sequence": "0x4F",
+      "unicode_codepoint": "U+004F"
+    },
+    {
+      "byte_sequence": "0x50",
+      "unicode_codepoint": "U+0050"
+    },
+    {
+      "byte_sequence": "0x51",
+      "unicode_codepoint": "U+0051"
+    },
+    {
+      "byte_sequence": "0x52",
+      "unicode_codepoint": "U+0052"
+    },
+    {
+      "byte_sequence": "0x53",
+      "unicode_codepoint": "U+0053"
+    },
+    {
+      "byte_sequence": "0x54",
+      "unicode_codepoint": "U+0054"
+    },
+    {
+      "byte_sequence": "0x55",
+      "unicode_codepoint": "U+0055"
+    },
+    {
+      "byte_sequence": "0x56",
+      "unicode_codepoint": "U+0056"
+    },
+    {
+      "byte_sequence": "0x57",
+      "unicode_codepoint": "U+0057"
+    },
+    {
+      "byte_sequence": "0x58",
+      "unicode_codepoint": "U+0058"
+    },
+    {
+      "byte_sequence": "0x59",
+      "unicode_codepoint": "U+0059"
+    },
+    {
+      "byte_sequence": "0x5A",
+      "unicode_codepoint": "U+005A"
+    },
+    {
+      "byte_sequence": "0x5B",
+      "unicode_codepoint": "U+005B"
+    },
+    {
+      "byte_sequence": "0x5C",
+      "unicode_codepoint": "U+005C"
+    },
+    {
+      "byte_sequence": "0x5D",
+      "unicode_codepoint": "U+005D"
+    },
+    {
+      "byte_sequence": "0x5E",
+      "unicode_codepoint": "U+005E"
+    },
+    {
+      "byte_sequence": "0x5F",
+      "unicode_codepoint": "U+005F"
+    },
+    {
+      "byte_sequence": "0x60",
+      "unicode_codepoint": "U+0060"
+    },
+    {
+      "byte_sequence": "0x61",
+      "unicode_codepoint": "U+0061"
+    },
+    {
+      "byte_sequence": "0x62",
+      "unicode_codepoint": "U+0062"
+    },
+    {
+      "byte_sequence": "0x63",
+      "unicode_codepoint": "U+0063"
+    },
+    {
+      "byte_sequence": "0x64",
+      "unicode_codepoint": "U+0064"
+    },
+    {
+      "byte_sequence": "0x65",
+      "unicode_codepoint": "U+0065"
+    },
+    {
+      "byte_sequence": "0x66",
+      "unicode_codepoint": "U+0066"
+    },
+    {
+      "byte_sequence": "0x67",
+      "unicode_codepoint": "U+0067"
+    },
+    {
+      "byte_sequence": "0x68",
+      "unicode_codepoint": "U+0068"
+    },
+    {
+      "byte_sequence": "0x69",
+      "unicode_codepoint": "U+0069"
+    },
+    {
+      "byte_sequence": "0x6A",
+      "unicode_codepoint": "U+006A"
+    },
+    {
+      "byte_sequence": "0x6B",
+      "unicode_codepoint": "U+006B"
+    },
+    {
+      "byte_sequence": "0x6C",
+      "unicode_codepoint": "U+006C"
+    },
+    {
+      "byte_sequence": "0x6D",
+      "unicode_codepoint": "U+006D"
+    },
+    {
+      "byte_sequence": "0x6E",
+      "unicode_codepoint": "U+006E"
+    },
+    {
+      "byte_sequence": "0x6F",
+      "unicode_codepoint": "U+006F"
+    },
+    {
+      "byte_sequence": "0x70",
+      "unicode_codepoint": "U+0070"
+    },
+    {
+      "byte_sequence": "0x71",
+      "unicode_codepoint": "U+0071"
+    },
+    {
+      "byte_sequence": "0x72",
+      "unicode_codepoint": "U+0072"
+    },
+    {
+      "byte_sequence": "0x73",
+      "unicode_codepoint": "U+0073"
+    },
+    {
+      "byte_sequence": "0x74",
+      "unicode_codepoint": "U+0074"
+    },
+    {
+      "byte_sequence": "0x75",
+      "unicode_codepoint": "U+0075"
+    },
+    {
+      "byte_sequence": "0x76",
+      "unicode_codepoint": "U+0076"
+    },
+    {
+      "byte_sequence": "0x77",
+      "unicode_codepoint": "U+0077"
+    },
+    {
+      "byte_sequence": "0x78",
+      "unicode_codepoint": "U+0078"
+    },
+    {
+      "byte_sequence": "0x79",
+      "unicode_codepoint": "U+0079"
+    },
+    {
+      "byte_sequence": "0x7A",
+      "unicode_codepoint": "U+007A"
+    },
+    {
+      "byte_sequence": "0x7B",
+      "unicode_codepoint": "U+007B"
+    },
+    {
+      "byte_sequence": "0x7C",
+      "unicode_codepoint": "U+007C"
+    },
+    {
+      "byte_sequence": "0x7D",
+      "unicode_codepoint": "U+007D"
+    },
+    {
+      "byte_sequence": "0x7E",
+      "unicode_codepoint": "U+007E"
+    },
+    {
+      "byte_sequence": "0x7F",
+      "unicode_codepoint": "U+007F"
+    },
+    {
+      "byte_sequence": "0x80",
+      "unicode_codepoint": "U+0080"
+    },
+    {
+      "byte_sequence": "0x81",
+      "unicode_codepoint": "U+0081"
+    },
+    {
+      "byte_sequence": "0x82",
+      "unicode_codepoint": "U+0082"
+    },
+    {
+      "byte_sequence": "0x83",
+      "unicode_codepoint": "U+0083"
+    },
+    {
+      "byte_sequence": "0x84",
+      "unicode_codepoint": "U+0084"
+    },
+    {
+      "byte_sequence": "0x85",
+      "unicode_codepoint": "U+0085"
+    },
+    {
+      "byte_sequence": "0x86",
+      "unicode_codepoint": "U+0086"
+    },
+    {
+      "byte_sequence": "0x87",
+      "unicode_codepoint": "U+0087"
+    },
+    {
+      "byte_sequence": "0x88",
+      "unicode_codepoint": "U+0088"
+    },
+    {
+      "byte_sequence": "0x89",
+      "unicode_codepoint": "U+0089"
+    },
+    {
+      "byte_sequence": "0x8A",
+      "unicode_codepoint": "U+008A"
+    },
+    {
+      "byte_sequence": "0x8B",
+      "unicode_codepoint": "U+008B"
+    },
+    {
+      "byte_sequence": "0x8C",
+      "unicode_codepoint": "U+008C"
+    },
+    {
+      "byte_sequence": "0x8D",
+      "unicode_codepoint": "U+008D"
+    },
+    {
+      "byte_sequence": "0x8E",
+      "unicode_codepoint": "U+008E"
+    },
+    {
+      "byte_sequence": "0x8F",
+      "unicode_codepoint": "U+008F"
+    },
+    {
+      "byte_sequence": "0x90",
+      "unicode_codepoint": "U+0090"
+    },
+    {
+      "byte_sequence": "0x91",
+      "unicode_codepoint": "U+0091"
+    },
+    {
+      "byte_sequence": "0x92",
+      "unicode_codepoint": "U+0092"
+    },
+    {
+      "byte_sequence": "0x93",
+      "unicode_codepoint": "U+0093"
+    },
+    {
+      "byte_sequence": "0x94",
+      "unicode_codepoint": "U+0094"
+    },
+    {
+      "byte_sequence": "0x95",
+      "unicode_codepoint": "U+0095"
+    },
+    {
+      "byte_sequence": "0x96",
+      "unicode_codepoint": "U+0096"
+    },
+    {
+      "byte_sequence": "0x97",
+      "unicode_codepoint": "U+0097"
+    },
+    {
+      "byte_sequence": "0x98",
+      "unicode_codepoint": "U+0098"
+    },
+    {
+      "byte_sequence": "0x99",
+      "unicode_codepoint": "U+0099"
+    },
+    {
+      "byte_sequence": "0x9A",
+      "unicode_codepoint": "U+009A"
+    },
+    {
+      "byte_sequence": "0x9B",
+      "unicode_codepoint": "U+009B"
+    },
+    {
+      "byte_sequence": "0x9C",
+      "unicode_codepoint": "U+009C"
+    },
+    {
+      "byte_sequence": "0x9D",
+      "unicode_codepoint": "U+009D"
+    },
+    {
+      "byte_sequence": "0x9E",
+      "unicode_codepoint": "U+009E"
+    },
+    {
+      "byte_sequence": "0x9F",
+      "unicode_codepoint": "U+009F"
+    },
+    {
+      "byte_sequence": "0xA0",
+      "unicode_codepoint": "U+00A0"
+    },
+    {
+      "byte_sequence": "0xA1",
+      "unicode_codepoint": "U+00A1"
+    },
+    {
+      "byte_sequence": "0xA2",
+      "unicode_codepoint": "U+00A2"
+    },
+    {
+      "byte_sequence": "0xA3",
+      "unicode_codepoint": "U+00A3"
+    },
+    {
+      "byte_sequence": "0xA4",
+      "unicode_codepoint": "U+00A4"
+    },
+    {
+      "byte_sequence": "0xA5",
+      "unicode_codepoint": "U+00A5"
+    },
+    {
+      "byte_sequence": "0xA6",
+      "unicode_codepoint": "U+00A6"
+    },
+    {
+      "byte_sequence": "0xA7",
+      "unicode_codepoint": "U+00A7"
+    },
+    {
+      "byte_sequence": "0xA8",
+      "unicode_codepoint": "U+00A8"
+    },
+    {
+      "byte_sequence": "0xA9",
+      "unicode_codepoint": "U+00A9"
+    },
+    {
+      "byte_sequence": "0xAA",
+      "unicode_codepoint": "U+00AA"
+    },
+    {
+      "byte_sequence": "0xAB",
+      "unicode_codepoint": "U+00AB"
+    },
+    {
+      "byte_sequence": "0xAC",
+      "unicode_codepoint": "U+00AC"
+    },
+    {
+      "byte_sequence": "0xAD",
+      "unicode_codepoint": "U+00AD"
+    },
+    {
+      "byte_sequence": "0xAE",
+      "unicode_codepoint": "U+00AE"
+    },
+    {
+      "byte_sequence": "0xAF",
+      "unicode_codepoint": "U+00AF"
+    },
+    {
+      "byte_sequence": "0xB0",
+      "unicode_codepoint": "U+00B0"
+    },
+    {
+      "byte_sequence": "0xB1",
+      "unicode_codepoint": "U+00B1"
+    },
+    {
+      "byte_sequence": "0xB2",
+      "unicode_codepoint": "U+00B2"
+    },
+    {
+      "byte_sequence": "0xB3",
+      "unicode_codepoint": "U+00B3"
+    },
+    {
+      "byte_sequence": "0xB4",
+      "unicode_codepoint": "U+00B4"
+    },
+    {
+      "byte_sequence": "0xB5",
+      "unicode_codepoint": "U+00B5"
+    },
+    {
+      "byte_sequence": "0xB6",
+      "unicode_codepoint": "U+00B6"
+    },
+    {
+      "byte_sequence": "0xB7",
+      "unicode_codepoint": "U+00B7"
+    },
+    {
+      "byte_sequence": "0xB8",
+      "unicode_codepoint": "U+00B8"
+    },
+    {
+      "byte_sequence": "0xB9",
+      "unicode_codepoint": "U+00B9"
+    },
+    {
+      "byte_sequence": "0xBA",
+      "unicode_codepoint": "U+00BA"
+    },
+    {
+      "byte_sequence": "0xBB",
+      "unicode_codepoint": "U+00BB"
+    },
+    {
+      "byte_sequence": "0xBC",
+      "unicode_codepoint": "U+00BC"
+    },
+    {
+      "byte_sequence": "0xBD",
+      "unicode_codepoint": "U+00BD"
+    },
+    {
+      "byte_sequence": "0xBE",
+      "unicode_codepoint": "U+00BE"
+    },
+    {
+      "byte_sequence": "0xBF",
+      "unicode_codepoint": "U+00BF"
+    },
+    {
+      "byte_sequence": "0xC0",
+      "unicode_codepoint": "U+00C0"
+    },
+    {
+      "byte_sequence": "0xC1",
+      "unicode_codepoint": "U+00C1"
+    },
+    {
+      "byte_sequence": "0xC2",
+      "unicode_codepoint": "U+00C2"
+    },
+    {
+      "byte_sequence": "0xC3",
+      "unicode_codepoint": "U+00C3"
+    },
+    {
+      "byte_sequence": "0xC4",
+      "unicode_codepoint": "U+00C4"
+    },
+    {
+      "byte_sequence": "0xC5",
+      "unicode_codepoint": "U+00C5"
+    },
+    {
+      "byte_sequence": "0xC6",
+      "unicode_codepoint": "U+00C6"
+    },
+    {
+      "byte_sequence": "0xC7",
+      "unicode_codepoint": "U+00C7"
+    },
+    {
+      "byte_sequence": "0xC8",
+      "unicode_codepoint": "U+00C8"
+    },
+    {
+      "byte_sequence": "0xC9",
+      "unicode_codepoint": "U+00C9"
+    },
+    {
+      "byte_sequence": "0xCA",
+      "unicode_codepoint": "U+00CA"
+    },
+    {
+      "byte_sequence": "0xCB",
+      "unicode_codepoint": "U+00CB"
+    },
+    {
+      "byte_sequence": "0xCC",
+      "unicode_codepoint": "U+00CC"
+    },
+    {
+      "byte_sequence": "0xCD",
+      "unicode_codepoint": "U+00CD"
+    },
+    {
+      "byte_sequence": "0xCE",
+      "unicode_codepoint": "U+00CE"
+    },
+    {
+      "byte_sequence": "0xCF",
+      "unicode_codepoint": "U+00CF"
+    },
+    {
+      "byte_sequence": "0xD0",
+      "unicode_codepoint": "U+011E"
+    },
+    {
+      "byte_sequence": "0xD1",
+      "unicode_codepoint": "U+00D1"
+    },
+    {
+      "byte_sequence": "0xD2",
+      "unicode_codepoint": "U+00D2"
+    },
+    {
+      "byte_sequence": "0xD3",
+      "unicode_codepoint": "U+00D3"
+    },
+    {
+      "byte_sequence": "0xD4",
+      "unicode_codepoint": "U+00D4"
+    },
+    {
+      "byte_sequence": "0xD5",
+      "unicode_codepoint": "U+00D5"
+    },
+    {
+      "byte_sequence": "0xD6",
+      "unicode_codepoint": "U+00D6"
+    },
+    {
+      "byte_sequence": "0xD7",
+      "unicode_codepoint": "U+00D7"
+    },
+    {
+      "byte_sequence": "0xD8",
+      "unicode_codepoint": "U+00D8"
+    },
+    {
+      "byte_sequence": "0xD9",
+      "unicode_codepoint": "U+00D9"
+    },
+    {
+      "byte_sequence": "0xDA",
+      "unicode_codepoint": "U+00DA"
+    },
+    {
+      "byte_sequence": "0xDB",
+      "unicode_codepoint": "U+00DB"
+    },
+    {
+      "byte_sequence": "0xDC",
+      "unicode_codepoint": "U+00DC"
+    },
+    {
+      "byte_sequence": "0xDD",
+      "unicode_codepoint": "U+0130"
+    },
+    {
+      "byte_sequence": "0xDE",
+      "unicode_codepoint": "U+015E"
+    },
+    {
+      "byte_sequence": "0xDF",
+      "unicode_codepoint": "U+00DF"
+    },
+    {
+      "byte_sequence": "0xE0",
+      "unicode_codepoint": "U+00E0"
+    },
+    {
+      "byte_sequence": "0xE1",
+      "unicode_codepoint": "U+00E1"
+    },
+    {
+      "byte_sequence": "0xE2",
+      "unicode_codepoint": "U+00E2"
+    },
+    {
+      "byte_sequence": "0xE3",
+      "unicode_codepoint": "U+00E3"
+    },
+    {
+      "byte_sequence": "0xE4",
+      "unicode_codepoint": "U+00E4"
+    },
+    {
+      "byte_sequence": "0xE5",
+      "unicode_codepoint": "U+00E5"
+    },
+    {
+      "byte_sequence": "0xE6",
+      "unicode_codepoint": "U+00E6"
+    },
+    {
+      "byte_sequence": "0xE7",
+      "unicode_codepoint": "U+00E7"
+    },
+    {
+      "byte_sequence": "0xE8",
+      "unicode_codepoint": "U+00E8"
+    },
+    {
+      "byte_sequence": "0xE9",
+      "unicode_codepoint": "U+00E9"
+    },
+    {
+      "byte_sequence": "0xEA",
+      "unicode_codepoint": "U+00EA"
+    },
+    {
+      "byte_sequence": "0xEB",
+      "unicode_codepoint": "U+00EB"
+    },
+    {
+      "byte_sequence": "0xEC",
+      "unicode_codepoint": "U+00EC"
+    },
+    {
+      "byte_sequence": "0xED",
+      "unicode_codepoint": "U+00ED"
+    },
+    {
+      "byte_sequence": "0xEE",
+      "unicode_codepoint": "U+00EE"
+    },
+    {
+      "byte_sequence": "0xEF",
+      "unicode_codepoint": "U+00EF"
+    },
+    {
+      "byte_sequence": "0xF0",
+      "unicode_codepoint": "U+011F"
+    },
+    {
+      "byte_sequence": "0xF1",
+      "unicode_codepoint": "U+00F1"
+    },
+    {
+      "byte_sequence": "0xF2",
+      "unicode_codepoint": "U+00F2"
+    },
+    {
+      "byte_sequence": "0xF3",
+      "unicode_codepoint": "U+00F3"
+    },
+    {
+      "byte_sequence": "0xF4",
+      "unicode_codepoint": "U+00F4"
+    },
+    {
+      "byte_sequence": "0xF5",
+      "unicode_codepoint": "U+00F5"
+    },
+    {
+      "byte_sequence": "0xF6",
+      "unicode_codepoint": "U+00F6"
+    },
+    {
+      "byte_sequence": "0xF7",
+      "unicode_codepoint": "U+00F7"
+    },
+    {
+      "byte_sequence": "0xF8",
+      "unicode_codepoint": "U+00F8"
+    },
+    {
+      "byte_sequence": "0xF9",
+      "unicode_codepoint": "U+00F9"
+    },
+    {
+      "byte_sequence": "0xFA",
+      "unicode_codepoint": "U+00FA"
+    },
+    {
+      "byte_sequence": "0xFB",
+      "unicode_codepoint": "U+00FB"
+    },
+    {
+      "byte_sequence": "0xFC",
+      "unicode_codepoint": "U+00FC"
+    },
+    {
+      "byte_sequence": "0xFD",
+      "unicode_codepoint": "U+0131"
+    },
+    {
+      "byte_sequence": "0xFE",
+      "unicode_codepoint": "U+015F"
+    },
+    {
+      "byte_sequence": "0xFF",
+      "unicode_codepoint": "U+00FF"
+    }
+  ]
+}

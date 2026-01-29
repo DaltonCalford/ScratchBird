@@ -4,7 +4,7 @@
 
 **Current Phase:** Alpha Engine Core Completion (see `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`)
 **Project Started:** July 2025
-**Status:** 5 of 9 Alpha workstreams complete; WS-6 Security Enforcement in progress
+**Status:** 9 of 9 Alpha workstreams complete
 
 ---
 
@@ -68,7 +68,7 @@ Active work tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
 | WS-8 Backup/Restore         | Done   | Multi-tablespace coverage validation                        |
 | WS-9 Cache/Buffer Plan      | Done   | Cache and buffer remediation                                |
 
-Latest full test run: 2396 tests, 0 failures (2026-02-02).
+Latest full test run: 2495 tests, 0 failures (2026-01-28).
 
 ### Beta (Deferred)
 

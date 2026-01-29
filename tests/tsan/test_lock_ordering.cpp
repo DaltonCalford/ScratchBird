@@ -29,10 +29,14 @@
 #include <vector>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <mutex>
+#include <algorithm>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/proc_array.h"
 
 using namespace scratchbird::core;
 
@@ -77,10 +81,33 @@ protected:
  * Validates correct lock ordering prevents deadlocks.
  */
 TEST_F(TSANLockOrderingTest, ConcurrentTransactionLifecycle) {
-    const int NUM_THREADS = 100;
+    const bool heavy = std::getenv("SCRATCHBIRD_TEST_HEAVY") != nullptr;
+    const int default_threads = heavy ? 100 : 60;
+    const uint32_t backend_reserve = 4;
+    uint32_t max_backends = 0;
+
+    {
+        ErrorContext bootstrap_ctx;
+        std::unique_ptr<ConnectionContext> bootstrap_conn;
+        Status bootstrap_status = db_->connect(bootstrap_conn, &bootstrap_ctx);
+        ASSERT_EQ(bootstrap_status, Status::OK)
+            << "Failed to bootstrap ProcArray: " << bootstrap_ctx.message;
+        ProcArray *proc_array = ProcArrayManager::getInstance();
+        ASSERT_NE(proc_array, nullptr) << "ProcArray not initialized";
+        max_backends = proc_array->max_backends;
+    }
+
+    int max_threads = static_cast<int>(max_backends);
+    if (max_backends > backend_reserve) {
+        max_threads = static_cast<int>(max_backends - backend_reserve);
+    }
+    const int NUM_THREADS = std::max(1, std::min(default_threads, max_threads));
     const int ITERATIONS = 50;
 
     std::atomic<int> errors{0};
+    std::atomic<uint32_t> first_error_code{0};
+    std::mutex first_error_mutex;
+    std::string first_error_message;
     std::atomic<int> deadlocks{0};
     std::vector<std::thread> threads;
 
@@ -89,16 +116,22 @@ TEST_F(TSANLockOrderingTest, ConcurrentTransactionLifecycle) {
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&]() {
             ErrorContext thread_ctx;
+            std::unique_ptr<ConnectionContext> conn;
+
+            Status s = db_->connect(conn, &thread_ctx);
+            if (s != Status::OK) {
+                errors.fetch_add(1);
+                uint32_t expected = 0;
+                if (first_error_code.compare_exchange_strong(
+                        expected, static_cast<uint32_t>(s)))
+                {
+                    std::lock_guard<std::mutex> lock(first_error_mutex);
+                    first_error_message = thread_ctx.message;
+                }
+                return;
+            }
 
             for (int i = 0; i < ITERATIONS; ++i) {
-                // Create connection (implicitly begins transaction)
-                std::unique_ptr<ConnectionContext> conn;
-                Status s = db_->connect(conn, &thread_ctx);
-                if (s != Status::OK) {
-                    errors.fetch_add(1);
-                    continue;
-                }
-
                 // Simulate some work
                 std::this_thread::yield();
 
@@ -106,6 +139,13 @@ TEST_F(TSANLockOrderingTest, ConcurrentTransactionLifecycle) {
                 s = conn->commit(&thread_ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    uint32_t expected = 0;
+                    if (first_error_code.compare_exchange_strong(
+                            expected, static_cast<uint32_t>(s)))
+                    {
+                        std::lock_guard<std::mutex> lock(first_error_mutex);
+                        first_error_message = thread_ctx.message;
+                    }
                 }
 
                 // Small delay to increase contention
@@ -129,6 +169,12 @@ TEST_F(TSANLockOrderingTest, ConcurrentTransactionLifecycle) {
     ).count();
 
     EXPECT_EQ(errors.load(), 0) << "Errors occurred during transaction lifecycle";
+    if (errors.load() > 0)
+    {
+        std::lock_guard<std::mutex> lock(first_error_mutex);
+        std::cerr << "First error: status=" << first_error_code.load()
+                  << " message=" << first_error_message << "\n";
+    }
     EXPECT_LT(elapsed, 30) << "Test took too long, possible deadlock";
 
     std::cout << "Concurrent lifecycle test: " << (NUM_THREADS * ITERATIONS)
@@ -259,6 +305,7 @@ TEST_F(TSANLockOrderingTest, HighContentionStress) {
 }
 
 int main(int argc, char** argv) {
+    setenv("SCRATCHBIRD_DISABLE_BGWRITER", "1", 1);
     ::testing::InitGoogleTest(&argc, argv);
 
     std::cout << "\n========================================\n";

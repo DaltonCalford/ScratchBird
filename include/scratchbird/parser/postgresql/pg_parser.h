@@ -119,7 +119,10 @@ struct PgDataType {
     bool with_time_zone = false;  // For TIME, TIMESTAMP
     bool nullable = true;
     std::string type_name;   // For user-defined types
-    std::string element_type;  // For ARRAY types
+    Kind element_kind = Kind::INTEGER;  // For ARRAY types (element base kind)
+    int array_dimensions = 0;  // For ARRAY types (count of [] groups)
+    int array_size = 0;  // For ARRAY types (fixed size, 0 = unspecified)
+    std::string element_type;  // For ARRAY types (element domain/type name)
 
     PgDataType() : kind(Kind::INTEGER) {}
     explicit PgDataType(Kind k) : kind(k) {}

@@ -8,6 +8,13 @@ This directory contains data type system specifications for ScratchBird's compre
 
 ScratchBird implements a rich type system supporting standard SQL types, PostgreSQL-compatible arrays, geometric types, UUIDs, and user-defined domains. The type system integrates with the MGA storage layer and supports type coercion, casting, and persistence.
 
+## SBLR Encoding Coverage (Alpha)
+SBLR type markers and literal opcodes must exist for all DataTypes to be fully
+executable in the bytecode VM. Coverage gaps and planned opcode additions are
+tracked in:
+- `docs/specifications/sblr/SBLR_OPCODE_REGISTRY.md`
+- `docs/findings/SBLR_TYPE_OPCODE_GAPS.md`
+
 ## Specifications in this Directory
 
 ### Core Type System
@@ -36,6 +43,8 @@ ScratchBird implements a rich type system supporting standard SQL types, Postgre
 - **[UUID_IDENTITY_COLUMNS.md](UUID_IDENTITY_COLUMNS.md)** (536 lines) - UUID type and identity column support
 - **[MULTI_GEOMETRY_TYPES_SPEC.md](MULTI_GEOMETRY_TYPES_SPEC.md)** (718 lines) - Geometric types (POINT, LINE, POLYGON, etc.)
 - **[character_sets_and_collations.md](character_sets_and_collations.md)** (780 lines) - Character set and collation support
+- **[COLLATION_TAILORING_LOADER_SPEC.md](COLLATION_TAILORING_LOADER_SPEC.md)** (stub) - Collation tailoring loader contract
+- **[I18N_CANONICAL_LISTS.md](I18N_CANONICAL_LISTS.md)** - Canonical charset/collation lists and conformance reporting
 
 ### Time & Timezone
 
@@ -45,7 +54,7 @@ ScratchBird implements a rich type system supporting standard SQL types, Postgre
 
 ### Numeric Types
 - **Integer:** SMALLINT, INTEGER, BIGINT, INT128
-- **Decimal:** NUMERIC, DECIMAL (arbitrary precision)
+- **Decimal:** NUMERIC, DECIMAL, MONEY, DECFLOAT(16/34)
 - **Floating-point:** REAL, DOUBLE PRECISION
 
 ### Character Types

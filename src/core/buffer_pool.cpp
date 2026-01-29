@@ -10,6 +10,7 @@
 #include <iterator>
 #include <chrono>
 #include <functional>
+#include <cstdlib>
 #include <unistd.h>
 
 namespace scratchbird::core
@@ -99,6 +100,11 @@ namespace scratchbird::core
         updateDirtyTelemetry();
 
         // Start background writer if enabled (Issue 2.20)
+        const char* disable_bgwriter = std::getenv("SCRATCHBIRD_DISABLE_BGWRITER");
+        if (disable_bgwriter && disable_bgwriter[0] != '\0' && disable_bgwriter[0] != '0')
+        {
+            config_.enable_background_writer = false;
+        }
         if (config_.enable_background_writer)
         {
             startBackgroundWriter();

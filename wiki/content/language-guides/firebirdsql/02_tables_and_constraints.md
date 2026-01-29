@@ -462,11 +462,9 @@ COMMIT;
 
 ### Current Implementation Limitations
 
-**Status**: Stubbed
+**Status**: Implemented
 
-The DROP TABLE statement is parsed and accepted, but there is a bytecode format mismatch between what the parser/semantic analyzer generates and what the executor expects. This may result in errors or unexpected behavior.
-
-See "Known Limitations" section for details.
+The DROP TABLE statement is parsed, generates `DROP_TABLE` opcode with IF EXISTS and CASCADE flags, and is executed by the executor.
 
 ### Related Features
 
@@ -580,13 +578,12 @@ For better performance when clearing large tables:
 - Cannot rename table (RENAME TO not supported)
 - Many Firebird ALTER TABLE variants are not parsed and will cause errors
 
-### Stubbed Implementation
+### DROP TABLE
 
 **DROP TABLE**
-- Parser accepts DROP TABLE and generates AST
-- Bytecode payload format does not match executor expectations
-- May result in errors or incomplete execution
-- Status: Implementation mismatch between parser/semantic/executor
+- Parser accepts DROP TABLE and generates AST with IF EXISTS flag
+- Bytecode generator emits `DROP_TABLE` opcode with name, IF EXISTS, and CASCADE flags
+- Executor processes DROP TABLE normally
 
 ### Missing Features
 

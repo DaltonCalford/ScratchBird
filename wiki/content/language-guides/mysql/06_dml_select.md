@@ -9,7 +9,7 @@
 
 This document covers the SELECT statement and related query operations in MySQL emulation mode. The SELECT statement retrieves data from one or more tables with support for filtering, joining, grouping, sorting, and limiting results.
 
-**Important:** Due to bytecode format mismatches between the parser and executor, SELECT statements are currently in a stubbed state. The parser accepts MySQL SELECT syntax but the executor may not process it correctly.
+**Important:** Basic SELECT statements (single-table, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT) are implemented and emit correct bytecode. Complex multi-table joins are parsed but skipped during bytecode emission. Window functions and CTEs are not yet supported.
 
 ---
 
@@ -456,66 +456,27 @@ ORDER BY name;
 
 ## Known Limitations
 
-### Stubbed Implementation
+### What Works
 
-- **Bytecode format mismatch**: The MySQL parser generates SELECT bytecode that does not match the executor's expectations
-  - DISTINCT flag encoding differs
-  - Alias string encoding differs
-  - Join clause encoding may not work correctly
-  - **Impact**: SELECT statements parse correctly but may fail at execution time
+- **Single-table SELECT**: Basic SELECT with WHERE, GROUP BY, HAVING, ORDER BY, LIMIT emits correct bytecode (SELECT opcode, DISTINCT flag, WHERE_CLAUSE, GROUP_BY, HAVING, ORDER_BY, LIMIT opcodes)
+- **DISTINCT / DISTINCTROW**: Properly emitted as flag byte
+- **Subqueries**: Scalar, IN, EXISTS, and correlated subqueries are parsed
+- **UNION / UNION ALL**: Parsed and emitted
 
 ### Partial Implementation
 
-- **Complex queries may fail**: While simple SELECT statements work, complex queries with:
-  - Multiple joins
-  - Subqueries
-  - Window functions
-  - CTEs (Common Table Expressions)
-
-  May not execute correctly due to bytecode mismatches
+- **Multi-table joins**: Join tokens (JOIN, LEFT, RIGHT, INNER, CROSS, NATURAL, STRAIGHT_JOIN) are recognized, but complex multi-join FROM clauses are skipped during bytecode emission (the parser advances past join tokens without emitting join opcodes)
+- **WITH ROLLUP**: Parsed but not emitted in bytecode
 
 ### Missing Features
 
 - **Window functions**: Not supported in MySQL parser
-  ```sql
-  SELECT
-      name,
-      salary,
-      ROW_NUMBER() OVER (ORDER BY salary DESC) AS rank  -- NOT SUPPORTED
-  FROM employees;
-  ```
-
 - **Common Table Expressions (WITH)**: Not supported
-  ```sql
-  WITH high_value AS (
-      SELECT * FROM orders WHERE total > 1000
-  )
-  SELECT * FROM high_value;  -- NOT SUPPORTED
-  ```
-
 - **SELECT INTO OUTFILE**: Not supported
-  ```sql
-  SELECT * INTO OUTFILE '/tmp/result.txt' FROM users;  -- NOT SUPPORTED
-  ```
-
 - **FOR UPDATE / LOCK IN SHARE MODE**: Not fully implemented
 
-###Spec Deltas
+### Spec Deltas
 
 - **Join algorithm hints**: MySQL join hints (STRAIGHT_JOIN priority) may not affect execution
 - **Query optimizer hints**: Optimizer hints are not supported
 - **Full-text search**: MATCH ... AGAINST not implemented
-
-### Implementation Priority
-
-According to audit findings:
-
-**Alpha Blockers (Critical):**
-- Fix SELECT bytecode format to match executor (2-3 days)
-- Fix DISTINCT flag encoding
-- Fix alias string handling
-
-**Post-Alpha:**
-- Window function support (1-2 weeks)
-- CTE support (1 week)
-- Full-text search (2-3 weeks)

@@ -15,9 +15,9 @@ Firebird's Procedural SQL (PSQL) extends standard SQL with procedural programmin
 - Exceptions
 - EXECUTE BLOCK (anonymous code blocks)
 
-**Current Status**: PSQL features are **not implemented** in ScratchBird's Firebird emulation. The parser does not accept most PSQL DDL statements, and procedural code execution is not supported by the V2 pipeline.
+**Current Status**: PSQL DDL statements (CREATE/ALTER PROCEDURE, FUNCTION, TRIGGER, PACKAGE, EXCEPTION) are **fully parsed** by the Firebird emulation parser. DDL is registered in the catalog. Procedural body interpretation (control flow, cursor operations, SUSPEND) is not yet wired for runtime execution - bodies are stored as source text.
 
-**Important**: This document describes standard Firebird PSQL features for reference. Users should be aware that these features are not currently available in ScratchBird Firebird emulation.
+**Important**: PSQL DDL works for defining and storing procedures, functions, triggers, packages, and exceptions. Runtime procedural body execution (complex control flow within bodies) is a known limitation.
 
 ---
 
@@ -61,11 +61,11 @@ Standard Firebird PSQL supports the following procedural language features:
 
 In standard Firebird, CREATE PROCEDURE defines a stored procedure that can be executed by client applications or called from other procedures, triggers, or functions.
 
-**Status**: Not implemented
+**Status**: Implemented (DDL parsing and catalog registration)
 
-The Firebird parser in ScratchBird does not currently accept CREATE PROCEDURE statements and will generate parser errors.
+The Firebird parser accepts CREATE [OR ALTER] PROCEDURE with parameters, RETURNS clause, and body capture. Procedure definitions are registered in the catalog. Procedural body runtime interpretation is not yet wired.
 
-### Standard Firebird Syntax
+### Syntax
 
 ```sql
 CREATE [OR ALTER] PROCEDURE procedure_name
@@ -80,12 +80,12 @@ BEGIN
 END
 ```
 
-### Standard Firebird Examples
+### Examples
 
 #### Simple Procedure
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE PROCEDURE hello_world
 AS
 BEGIN
@@ -96,7 +96,7 @@ END;
 #### Procedure with Parameters
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE PROCEDURE update_salary (
     emp_id INTEGER,
     new_salary DECIMAL(10,2)
@@ -112,7 +112,7 @@ END;
 #### Selectable Procedure
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE PROCEDURE get_employees
 RETURNS (
     emp_id INTEGER,
@@ -129,27 +129,19 @@ BEGIN
 END;
 ```
 
-### Workarounds
-
-Since stored procedures are not supported:
-
-1. **Use application logic**: Implement procedure logic in your application code
-2. **Use views**: For simple data transformations, create views instead
-3. **Use inline SQL**: Execute SQL statements directly from your application
-
 ---
 
 ## CREATE FUNCTION
 
 ### Description
 
-In standard Firebird, CREATE FUNCTION defines a User-Defined Function (UDF) that can be called in SQL expressions.
+Creates a User-Defined Function (UDF) that can be called in SQL expressions.
 
-**Status**: Not implemented
+**Status**: Implemented (DDL parsing and catalog registration)
 
-The Firebird parser does not accept CREATE FUNCTION statements.
+The Firebird parser accepts CREATE [OR ALTER] FUNCTION with parameters, RETURNS clause, DETERMINISTIC, and body capture. Function definitions are registered in the catalog. Procedural body runtime interpretation is not yet wired.
 
-### Standard Firebird Syntax
+### Syntax
 
 ```sql
 CREATE [OR ALTER] FUNCTION function_name
@@ -165,12 +157,12 @@ BEGIN
 END
 ```
 
-### Standard Firebird Examples
+### Examples
 
 #### Simple Function
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE FUNCTION add_numbers (
     a INTEGER,
     b INTEGER
@@ -185,7 +177,7 @@ END;
 #### Function with Business Logic
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE FUNCTION calculate_tax (
     amount DECIMAL(10,2),
     tax_rate DECIMAL(5,4)
@@ -199,28 +191,19 @@ BEGIN
 END;
 ```
 
-### Workarounds
-
-Since user-defined functions are not supported:
-
-1. **Use built-in functions**: Firebird has many built-in functions
-2. **Use CASE expressions**: For conditional logic
-3. **Use application logic**: Compute values in your application
-4. **Use views with expressions**: For reusable calculations
-
 ---
 
 ## CREATE TRIGGER
 
 ### Description
 
-In standard Firebird, triggers are procedural code that automatically executes in response to table events (INSERT, UPDATE, DELETE).
+Creates a trigger that automatically executes in response to table events (INSERT, UPDATE, DELETE).
 
-**Status**: Not implemented
+**Status**: Implemented (DDL parsing and catalog registration)
 
-The Firebird parser does not accept CREATE TRIGGER statements.
+The Firebird parser accepts CREATE [OR ALTER] TRIGGER with FOR table, ACTIVE/INACTIVE, BEFORE/AFTER timing, INSERT/UPDATE/DELETE events, POSITION, and body capture. Trigger definitions are registered in the catalog. Procedural body runtime interpretation is not yet wired.
 
-### Standard Firebird Syntax
+### Syntax
 
 ```sql
 CREATE [OR ALTER] TRIGGER trigger_name
@@ -237,12 +220,12 @@ BEGIN
 END
 ```
 
-### Standard Firebird Examples
+### Examples
 
 #### Before Insert Trigger
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE TRIGGER bi_orders FOR orders
 ACTIVE BEFORE INSERT
 AS
@@ -257,7 +240,7 @@ END;
 #### After Update Trigger
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE TRIGGER au_inventory FOR inventory
 AFTER UPDATE
 AS
@@ -271,7 +254,7 @@ END;
 #### Audit Trigger
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE TRIGGER ad_employees FOR employees
 AFTER DELETE
 AS
@@ -312,19 +295,10 @@ IF (OLD.price <> NEW.price) THEN
 ```
 
 **Status**
-- Not implemented: CREATE TRIGGER is not parsed in the Firebird emulation
-  layer, so NEW/OLD are not available in SQL.
-- Runtime triggers (C++-registered) expose old/new values via TriggerContext,
-  but there is no SQL trigger interpreter.
-
-### Workarounds
-
-Since triggers are not supported:
-
-1. **Application-level logic**: Implement trigger logic in your application
-2. **Explicit SQL**: Execute necessary actions explicitly
-3. **Database constraints**: Use CHECK constraints for validation
-4. **Middleware**: Use application middleware or ORM features
+- CREATE TRIGGER is fully parsed in the Firebird emulation layer
+- NEW/OLD pseudo-records are captured in the trigger body source text
+- Runtime triggers (C++-registered) expose old/new values via TriggerContext
+- SQL trigger body procedural interpretation is not yet wired for runtime execution
 
 ---
 
@@ -332,13 +306,13 @@ Since triggers are not supported:
 
 ### Description
 
-In standard Firebird (3.0+), packages group related procedures and functions into a named module.
+Packages group related procedures and functions into a named module (Firebird 3.0+).
 
-**Status**: Not implemented
+**Status**: Implemented (DDL parsing and catalog registration)
 
-The Firebird parser does not accept CREATE PACKAGE statements.
+The Firebird parser accepts CREATE [OR ALTER] PACKAGE with header and body. Package definitions are registered in the catalog.
 
-### Standard Firebird Syntax
+### Syntax
 
 ```sql
 -- Package header
@@ -368,27 +342,19 @@ BEGIN
 END;
 ```
 
-### Workarounds
-
-Since packages are not supported:
-
-1. **Naming conventions**: Use prefixes to group related procedures/functions
-2. **Schema organization**: Document related functions as a logical group
-3. **Application modules**: Organize related logic in application code
-
 ---
 
 ## CREATE EXCEPTION
 
 ### Description
 
-In standard Firebird, user-defined exceptions can be created and raised in PSQL code.
+Creates a user-defined exception that can be raised in PSQL code.
 
-**Status**: Not implemented
+**Status**: Implemented (DDL parsing and catalog registration)
 
-The Firebird parser does not accept CREATE EXCEPTION statements.
+The Firebird parser accepts CREATE [OR ALTER] EXCEPTION with exception name and message. Exception definitions are registered in the catalog.
 
-### Standard Firebird Syntax
+### Syntax
 
 ```sql
 CREATE [OR ALTER] EXCEPTION exception_name 'error message';
@@ -397,7 +363,7 @@ CREATE [OR ALTER] EXCEPTION exception_name 'error message';
 ### Standard Firebird Example
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 CREATE EXCEPTION invalid_age 'Age must be between 18 and 65';
 CREATE EXCEPTION insufficient_funds 'Account balance too low';
 ```
@@ -416,13 +382,13 @@ Since custom exceptions are not supported:
 
 ### Description
 
-In standard Firebird, EXECUTE PROCEDURE executes a stored procedure.
+Executes a stored procedure.
 
-**Status**: Not implemented
+**Status**: Implemented (parsing)
 
-The Firebird parser does not accept EXECUTE PROCEDURE statements.
+The Firebird parser accepts EXECUTE PROCEDURE with arguments.
 
-### Standard Firebird Syntax
+### Syntax
 
 ```sql
 EXECUTE PROCEDURE procedure_name [(param_value, ...)];
@@ -431,23 +397,19 @@ EXECUTE PROCEDURE procedure_name [(param_value, ...)];
 SELECT * FROM procedure_name [(param_value, ...)];
 ```
 
-### Workarounds
-
-Execute logic directly using SQL statements or application code.
-
 ---
 
 ## EXECUTE BLOCK
 
 ### Description
 
-In standard Firebird, EXECUTE BLOCK allows you to execute anonymous PSQL code without creating a stored procedure.
+Executes anonymous PSQL code without creating a stored procedure.
 
-**Status**: Not implemented
+**Status**: Implemented (parsing)
 
-The Firebird parser does not accept EXECUTE BLOCK statements.
+The Firebird parser accepts EXECUTE BLOCK with input parameters, RETURNS output definitions, DECLARE VARIABLE, and BEGIN/END body parsing. Procedural body runtime execution is not yet wired.
 
-### Standard Firebird Syntax
+### Syntax
 
 ```sql
 EXECUTE BLOCK
@@ -466,7 +428,7 @@ END
 ### Standard Firebird Example
 
 ```sql
--- This will NOT work in current ScratchBird implementation
+
 EXECUTE BLOCK
 RETURNS (product_name VARCHAR(100), total_sales DECIMAL(12,2))
 AS
@@ -482,11 +444,6 @@ BEGIN
 END;
 ```
 
-### Workarounds
-
-1. **Use regular SELECT**: For simple queries
-2. **Use CTEs**: Common Table Expressions for complex queries
-3. **Use application logic**: For procedural operations
 
 ---
 
@@ -494,9 +451,7 @@ END;
 
 ### BEGIN ... END
 
-Status: Parsed but not executed
-
-The parser can parse BEGIN...END blocks in AST, but the semantic analyzer and bytecode generator do not support PSQL nodes.
+Status: Parsed; bodies stored as source text. Runtime procedural execution not yet wired.
 
 ### IF ... THEN ... ELSE
 
@@ -560,103 +515,31 @@ Exits the current loop.
 
 ## Known Limitations
 
-### Not Implemented
+### What Works
 
-**CREATE PROCEDURE**
-- Parser rejects CREATE PROCEDURE statements
-- Will generate parse errors
-- Stored procedures cannot be created
-- Cannot execute procedures
+**PSQL DDL (All Parsed and Catalog-Registered):**
+- CREATE [OR ALTER] PROCEDURE with parameters, RETURNS, SQL SECURITY, and body capture
+- CREATE [OR ALTER] FUNCTION with parameters, RETURNS, DETERMINISTIC, and body capture
+- CREATE [OR ALTER] TRIGGER with FOR table, ACTIVE/INACTIVE, BEFORE/AFTER, events, POSITION, and body
+- CREATE [OR ALTER] PACKAGE with header and body
+- CREATE [OR ALTER] EXCEPTION with message
+- DROP PROCEDURE/FUNCTION/TRIGGER/PACKAGE/EXCEPTION (all with IF EXISTS)
+- EXECUTE PROCEDURE with arguments
+- EXECUTE BLOCK with parameters, RETURNS, DECLARE VARIABLE, and body
+- EXECUTE STATEMENT for dynamic SQL
 
-**CREATE FUNCTION**
-- Parser rejects CREATE FUNCTION statements
-- User-defined functions cannot be created
-- Cannot call custom functions in SQL
+**PSQL Language Elements (Parsed in Bodies):**
+- BEGIN...END blocks, IF...THEN...ELSE, WHILE...DO, FOR SELECT...DO
+- DECLARE VARIABLE, variable assignment, SELECT INTO
+- EXIT, SUSPEND, RETURN, EXCEPTION raise
 
-**CREATE TRIGGER**
-- Parser rejects CREATE TRIGGER statements
-- No automatic trigger execution
-- Cannot implement database-level business logic
+### Remaining Gaps
 
-**CREATE PACKAGE**
-- Parser rejects CREATE PACKAGE statements
-- Cannot group procedures/functions into modules
-
-**CREATE EXCEPTION**
-- Parser rejects CREATE EXCEPTION statements
-- Cannot define custom exceptions
-- Cannot raise user-defined exceptions
-
-**EXECUTE PROCEDURE**
-- Parser rejects EXECUTE PROCEDURE statements
-- Cannot call stored procedures
-
-**EXECUTE BLOCK**
-- Parser rejects EXECUTE BLOCK statements
-- Cannot execute anonymous PSQL code blocks
-
-### Stubbed (Parsed But Not Executed)
-
-**PSQL Language Constructs**
-- BEGIN...END, IF, WHILE, FOR - Parser creates AST nodes
-- SemanticAnalyzerV2 rejects these nodes
-- BytecodeGeneratorV2 cannot generate code for PSQL
-- Executor has no support for procedural execution
-
-### Specification Deltas
-
-**V2 Pipeline Limitations**
-
-The V2 pipeline (semantic analyzer → bytecode generator → executor) is designed for SQL DML/DDL, not procedural code:
-
-1. No symbol table for procedure-local variables
-2. No control flow graph for procedural logic
-3. No bytecode opcodes for procedural constructs
-4. No runtime support for procedure calls, variable scoping, or control flow
-
-**Impact**:
-- PSQL features require a complete procedural runtime
-- Current architecture is SQL-focused, not procedure-focused
-- Implementing PSQL would require significant V2 pipeline enhancements
-
-### Workarounds
-
-**Instead of Stored Procedures**:
-1. Implement logic in application code
-2. Use SQL scripts executed by the application
-3. Use transactions for multi-statement operations
-
-**Instead of Triggers**:
-1. Implement trigger logic in application (before/after save hooks)
-2. Use ORM features (if available)
-3. Use middleware or event listeners
-4. Execute necessary SQL explicitly
-
-**Instead of Functions**:
-1. Use built-in SQL functions
-2. Use CASE expressions for conditional logic
-3. Compute values in application code
-4. Use views with calculated columns
-
-**Instead of EXECUTE BLOCK**:
-1. Use Common Table Expressions (CTEs) for complex queries
-2. Use subqueries
-3. Execute multiple statements from application
-4. Use temporary tables for intermediate results
-
-### Recommendations
-
-For Firebird applications being ported to ScratchBird:
-
-1. **Audit existing PSQL code**: Identify all procedures, functions, triggers, and blocks
-2. **Categorize by purpose**:
-   - Data validation → Use CHECK constraints or application logic
-   - Calculated fields → Use computed columns or views
-   - Audit logging → Implement in application
-   - Complex queries → Use CTEs or views
-3. **Refactor to SQL + application logic**: Move procedural code to application tier
-4. **Use database features where possible**: Constraints, computed columns, views
-5. **Document dependencies**: Map which application logic replaces which PSQL objects
+**Procedural Body Runtime Execution:**
+- Function/procedure/trigger bodies are stored as source text in the catalog
+- Complex procedural control flow (IF, WHILE, FOR, SUSPEND, exception handling) within bodies is not yet wired for runtime interpretation
+- Simple single-statement bodies work through the standard execution path
+- Runtime triggers (C++-registered) expose old/new values via TriggerContext, but SQL trigger body interpretation is not yet wired
 
 ### Future Considerations
 

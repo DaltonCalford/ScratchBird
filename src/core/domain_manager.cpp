@@ -52,9 +52,12 @@ namespace scratchbird::core
                 case DataType::FLOAT32:
                 case DataType::FLOAT64:
                 case DataType::DECIMAL:
+                case DataType::DECFLOAT16:
+                case DataType::DECFLOAT34:
                     return value_type == DataType::FLOAT32 || value_type == DataType::FLOAT64 ||
                            value_type == DataType::INT32 || value_type == DataType::INT64 ||
-                           value_type == DataType::DECIMAL;
+                           value_type == DataType::DECIMAL || value_type == DataType::DECFLOAT16 ||
+                           value_type == DataType::DECFLOAT34;
                 case DataType::VARCHAR:
                 case DataType::TEXT:
                 case DataType::CHAR:

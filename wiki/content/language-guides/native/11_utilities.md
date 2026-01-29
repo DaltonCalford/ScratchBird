@@ -54,17 +54,93 @@ Status: Implemented.
 Spec delta: None known.
 
 ## ANALYZE (standalone)
-Description: Standalone ANALYZE is not parsed; use EXPLAIN ANALYZE.
+Description: Collects statistics about the contents of a table or specific column, which
+the query planner can use to generate better execution plans.
 
-Status: Missing.
-Spec delta: Implement ANALYZE if required by compatibility specs.
+Syntax (actual):
+```sql
+ANALYZE [VERBOSE] <table_name> [(column_name)]
+```
+Example:
+```sql
+ANALYZE app.users;
+ANALYZE VERBOSE app.orders (amount);
+```
+Status: **Implemented in V2 Parser** - `parseAnalyze()` handles standalone ANALYZE with optional
+VERBOSE flag, table name (schema-qualified), and optional single column name.
+Spec delta: Only one column may be specified per ANALYZE statement.
+
+---
 
 ## DESCRIBE / DESC
 Description: Describes database objects (tables, columns, etc.).
 
+Syntax (actual):
 ```sql
 DESCRIBE <object_name>
 DESC <object_name>
 ```
-
+Example:
+```sql
+DESCRIBE app.users;
+DESC orders;
+```
 Status: **Implemented in V2 Parser** - `parseDescribe()` handles both DESCRIBE and DESC keywords.
+
+---
+
+## SWEEP DATABASE
+Description: Triggers a manual garbage-collection sweep of the database, cleaning up
+obsolete record versions created by the Multi-Generational Architecture (MGA).
+
+Syntax (actual):
+```sql
+SWEEP DATABASE
+```
+Example:
+```sql
+SWEEP DATABASE;
+```
+Status: **Implemented in V2 Parser** - `parseSweep()` parses the SWEEP DATABASE statement.
+
+---
+
+## CONNECT
+Description: Establishes a connection to a database, optionally specifying user credentials,
+role, and character set.
+
+Syntax (actual):
+```sql
+CONNECT [TO] <database_name>
+    [USER <user_name>]
+    [PASSWORD '<password>']
+    [ROLE <role_name>]
+    [CHARSET <charset> | CHARACTER SET <charset>]
+```
+Examples:
+```sql
+CONNECT mydb;
+CONNECT TO production_db USER admin PASSWORD 'secret' ROLE dba;
+CONNECT TO analytics CHARSET UTF8;
+```
+Status: **Implemented in V2 Parser** - `parseConnect()` parses CONNECT with optional TO keyword,
+USER, PASSWORD (string literal or identifier), ROLE, and CHARSET/CHARACTER SET clauses.
+
+---
+
+## DISCONNECT
+Description: Closes a database connection.
+
+Syntax (actual):
+```sql
+DISCONNECT [ALL | CURRENT | <connection_name>]
+```
+Examples:
+```sql
+DISCONNECT;
+DISCONNECT ALL;
+DISCONNECT CURRENT;
+DISCONNECT mydb;
+```
+Status: **Implemented in V2 Parser** - `parseDisconnect()` parses DISCONNECT with ALL, CURRENT,
+or named connection targets.

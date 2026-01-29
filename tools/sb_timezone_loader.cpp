@@ -10,6 +10,7 @@
  *   --from <dir>          Load timezones from directory (default: /usr/share/zoneinfo)
  *   --file <path>         Load a single timezone file
  *   --stats               Show statistics after loading
+ *   --version             Print tzdata version stored in catalog
  *   --help                Show this help message
  *
  * Examples:
@@ -31,6 +32,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <cstring>
 
@@ -48,6 +50,7 @@ void printUsage(const char *program_name)
     std::cout << "                    Default: /usr/share/zoneinfo\n";
     std::cout << "  --file <path>     Load a single timezone file\n";
     std::cout << "  --stats           Show statistics after loading\n";
+    std::cout << "  --version         Print tzdata version stored in catalog\n";
     std::cout << "  --help            Show this help message\n";
     std::cout << "\n";
     std::cout << "Examples:\n";
@@ -63,6 +66,29 @@ void printUsage(const char *program_name)
     std::cout << "  # Load and show statistics\n";
     std::cout << "  " << program_name << " /data/mydb.sb --stats\n";
     std::cout << "\n";
+    std::cout << "  # Show catalog tzdata version\n";
+    std::cout << "  " << program_name << " /data/mydb.sb --version\n";
+    std::cout << "\n";
+}
+
+std::string readTzdataVersion(const std::string& zoneinfo_dir)
+{
+    std::string version_path = zoneinfo_dir + "/version";
+    std::ifstream file(version_path);
+    if (!file.is_open())
+    {
+        std::ifstream fallback("resources/timezones/version");
+        if (!fallback.is_open())
+        {
+            return "";
+        }
+        std::string version;
+        std::getline(fallback, version);
+        return version;
+    }
+    std::string version;
+    std::getline(file, version);
+    return version;
 }
 
 int main(int argc, char **argv)
@@ -88,6 +114,7 @@ int main(int argc, char **argv)
     std::string zoneinfo_dir = "/usr/share/zoneinfo"; // Default
     std::string single_file;
     bool show_stats = false;
+    bool show_version = false;
 
     // Parse options
     for (int i = 2; i < argc; i++)
@@ -119,6 +146,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--stats") == 0)
         {
             show_stats = true;
+        }
+        else if (strcmp(argv[i], "--version") == 0)
+        {
+            show_version = true;
         }
         else
         {
@@ -156,6 +187,21 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (show_version)
+    {
+        std::string version;
+        Status vstatus = catalog->getTimezoneVersion(version, &ctx);
+        if (vstatus != Status::OK)
+        {
+            std::cout << "tzdata_version: <not set>\n";
+        }
+        else
+        {
+            std::cout << "tzdata_version: " << version << "\n";
+        }
+        return 0;
+    }
+
     TimezoneLoader loader(catalog);
 
     // Load timezone data
@@ -186,6 +232,20 @@ int main(int argc, char **argv)
     }
 
     std::cout << "\nTimezone data loaded successfully!\n";
+
+    std::string version = readTzdataVersion(zoneinfo_dir);
+    if (!version.empty())
+    {
+        Status vstatus = catalog->setTimezoneVersion(version, &ctx);
+        if (vstatus != Status::OK)
+        {
+            std::cerr << "Warning: Failed to record tzdata version: " << ctx.message << "\n";
+        }
+        else
+        {
+            std::cout << "Recorded tzdata version: " << version << "\n";
+        }
+    }
 
     // Show statistics if requested
     if (show_stats)

@@ -9,7 +9,8 @@ resources/
 ├── config/          # Configuration files
 ├── timezones/       # IANA timezone database
 ├── charsets/        # Character set definitions
-└── collations/      # Collation (sorting) rules
+├── collations/      # Collation (sorting) rules
+└── i18n/            # i18n resource version marker
 ```
 
 ---
@@ -43,7 +44,7 @@ Contains the official IANA timezone database (tzdata) used for temporal operatio
 - `leapseconds` - Leap second data
 - `zone.tab` - Timezone coordinate table
 
-**Version:** 2024b (November 2024)
+**Version:** 2025c
 
 **Loading timezones:**
 ```bash
@@ -57,8 +58,11 @@ Contains the official IANA timezone database (tzdata) used for temporal operatio
 **Updating:**
 ```bash
 cd resources/timezones
-curl -L -O https://data.iana.org/time-zones/releases/tzdata-latest.tar.gz
-tar -xzf tzdata-latest.tar.gz
+# Replace 2025c with the latest release from the IANA directory listing.
+curl -L -O https://data.iana.org/time-zones/releases/tzdata2025c.tar.gz
+curl -L -O https://data.iana.org/time-zones/releases/tzcode2025c.tar.gz
+tar -xzf tzdata2025c.tar.gz
+tar -xzf tzcode2025c.tar.gz
 
 # Reload into database
 ./sb_timezone_loader /path/to/database.sb --from resources/timezones --stats
@@ -74,8 +78,8 @@ tar -xzf tzdata-latest.tar.gz
 
 ### Supported Character Sets
 
-Contains a baseline set of character sets. Full Firebird/PostgreSQL/MySQL
-coverage is required by spec and tracked in the resources audit.
+Contains the merged Firebird/MySQL/PostgreSQL charset baseline. The resource
+JSON is generated via `ScratchBird/resources/scripts/update_i18n_resources.py`.
 
 **Categories:**
 - **Unicode:** UTF-8, UTF-16, UTF-32
@@ -90,10 +94,10 @@ coverage is required by spec and tracked in the resources audit.
 
 **Loading character sets:**
 ```bash
-# Note: sb_charset_loader is currently deprecated in code.
-# Character sets and collations are expected to load during database initialization.
-# Once the loader tool is restored, the intended usage is:
+# Load built-in character sets only
 ./sb_charset_loader /path/to/database.sb --builtin
+
+# Load all character sets + collations from resources/
 ./sb_charset_loader /path/to/database.sb --all
 ```
 
@@ -112,7 +116,8 @@ and `ScratchBird/docs/findings/RESOURCES_I18N_TIMEZONE_AUDIT.md`.
 
 ### Collation Rules
 
-Contains collation (sorting/comparison) rules for text processing.
+Contains collation (sorting/comparison) rules for text processing, including
+Firebird/MySQL baselines plus PostgreSQL locale collations.
 
 **Files:**
 - `collations.json` - Master collation definitions
@@ -135,6 +140,14 @@ Contains collation (sorting/comparison) rules for text processing.
 # Collations are loaded automatically with character sets
 ./sb_charset_loader /path/to/database.sb --builtin
 ```
+
+---
+
+## i18n Version (`i18n/`)
+
+`resources/i18n/version` records the current resource bundle version used for
+catalog version checks. The loader tools and database bootstrap record this
+value in catalog metadata for drift detection.
 
 ---
 
@@ -187,6 +200,21 @@ current resource-loading remediation plan.
 }
 ```
 
+### UCA Weight Tables
+
+Unicode Collation Algorithm weight tables live under:
+
+```
+resources/collations/uca/allkeys.txt
+resources/collations/uca/uca_manifest.json
+```
+
+Tailoring data (MySQL/Firebird/locale-specific) is expected under
+`resources/collations/tailorings/`. Current files include:
+- MySQL collation XML definitions (from MySQL 8.x source)
+- Firebird collation tables (from Firebird 6 source)
+- Stub list files for defaults (legacy loader tests)
+
 ---
 
 ## Usage Examples
@@ -198,7 +226,7 @@ current resource-loading remediation plan.
 ./sb_init /data/mydb.sb
 
 # Load timezones
-./sb_timezone_loader /data/mydb.sb resources/timezones
+./sb_timezone_loader /data/mydb.sb --from resources/timezones
 
 # Load character sets and collations
 ./sb_charset_loader /data/mydb.sb --builtin
@@ -249,10 +277,10 @@ IANA releases timezone updates several times per year. To update:
 cd resources/timezones
 
 # Download latest version
-curl -L -O https://data.iana.org/time-zones/releases/tzdata-latest.tar.gz
+curl -L -O https://data.iana.org/time-zones/releases/tzdata2025c.tar.gz
 
 # Extract
-tar -xzf tzdata-latest.tar.gz
+tar -xzf tzdata2025c.tar.gz
 
 # Reload into database
 ./sb_timezone_loader /path/to/database.sb --from resources/timezones --stats
@@ -267,8 +295,16 @@ To add custom character sets not included in the default set:
 1. Create a JSON file in `resources/charsets/` following the format in `charsets.json`
 2. Run the loader:
    ```bash
-   ./sb_charset_loader /path/to/database.sb resources/charsets/custom_charset.json
+   ./sb_charset_loader /path/to/database.sb --json resources/charsets/custom_charset.json
    ```
+
+### Mapping Validation
+
+Validate system-derived mapping tables before loader implementation:
+
+```bash
+./resources/scripts/validate_charset_mappings.py
+```
 
 ---
 
@@ -286,4 +322,4 @@ To add custom character sets not included in the default set:
 
 ---
 
-**Last Updated:** November 23, 2025
+**Last Updated:** January 28, 2026

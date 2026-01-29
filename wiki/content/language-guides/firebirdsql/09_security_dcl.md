@@ -11,10 +11,38 @@ Spec refs:
 ## GRANT / REVOKE
 Description: Firebird privilege and role management.
 
-Status: Missing.
-Spec delta: Parser emits errors for GRANT/REVOKE.
+Syntax (actual):
+```sql
+GRANT <privilege> [, ...] ON <object> TO <grantee> [WITH GRANT OPTION]
+REVOKE [GRANT OPTION FOR] <privilege> [, ...] ON <object> FROM <grantee>
+GRANT <role_name> TO <grantee> [WITH ADMIN OPTION]
+REVOKE <role_name> FROM <grantee>
+```
 
-## CREATE/ALTER/DROP ROLE, USER
-Description: Firebird security DDL.
+Status: **Implemented** - `parseGrantStatement()` and `parseRevokeStatement()` handle privilege
+grants (SELECT, INSERT, UPDATE, DELETE, REFERENCES, ALL [PRIVILEGES]), object types (TABLE, VIEW,
+PROCEDURE, FUNCTION), WITH GRANT OPTION, and role grants/revokes.
 
-Status: Missing.
+---
+
+## CREATE ROLE
+Description: Creates a named role.
+
+Syntax (actual):
+```sql
+CREATE [OR ALTER] ROLE <role_name>
+```
+
+Status: **Implemented** - `parseCreateRole()` handles OR ALTER and role name.
+
+---
+
+## DROP ROLE
+Description: Drops a role.
+
+Syntax (actual):
+```sql
+DROP ROLE [IF EXISTS] <role_name>
+```
+
+Status: **Implemented** - `parseDropRoleImpl()` handles IF EXISTS.

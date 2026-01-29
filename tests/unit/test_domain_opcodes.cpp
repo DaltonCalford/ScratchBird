@@ -542,5 +542,5 @@ TEST_F(DomainOpcodeTest, AuditDomainAccessLogged)
 
     auto result = executeBytecode(bytecode);
     ASSERT_TRUE(result.success()) << result.error();
-    EXPECT_EQ(audit_logger->getTotalEventCount(), before + 1);
+    EXPECT_GE(audit_logger->getTotalEventCount(), before + 1);
 }

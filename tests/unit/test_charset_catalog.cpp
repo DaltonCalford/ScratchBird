@@ -5,6 +5,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include <filesystem>
 #include <cstring>
+#include <algorithm>
 
 using namespace scratchbird::core;
 
@@ -152,7 +153,17 @@ TEST_F(CharsetCatalogTest, ListCharsets)
     std::vector<CatalogManager::CharsetInfo> charsets;
     Status status = db_->catalog_manager()->listCharsets(charsets, &ctx);
     ASSERT_EQ(status, Status::OK);
-    EXPECT_EQ(charsets.size(), 3);
+    EXPECT_GE(charsets.size(), 3);
+
+    auto has_charset = [&charsets](uint16_t id)
+    {
+        return std::any_of(charsets.begin(), charsets.end(),
+                           [id](const CatalogManager::CharsetInfo &info)
+                           { return info.charset_id == id; });
+    };
+    EXPECT_TRUE(has_charset(static_cast<uint16_t>(CharacterSet::ASCII)));
+    EXPECT_TRUE(has_charset(static_cast<uint16_t>(CharacterSet::UTF8)));
+    EXPECT_TRUE(has_charset(static_cast<uint16_t>(CharacterSet::LATIN1)));
 }
 
 TEST_F(CharsetCatalogTest, UpdateCharset)
@@ -318,7 +329,17 @@ TEST_F(CharsetCatalogTest, ListCollations)
     std::vector<CatalogManager::CollationCatalogInfo> collations;
     Status status = db_->catalog_manager()->listCollations(collations, &ctx);
     ASSERT_EQ(status, Status::OK);
-    EXPECT_EQ(collations.size(), 3);
+    EXPECT_GE(collations.size(), 3);
+
+    auto has_collation = [&collations](uint32_t id)
+    {
+        return std::any_of(collations.begin(), collations.end(),
+                           [id](const CatalogManager::CollationCatalogInfo &info)
+                           { return info.collation_id == id; });
+    };
+    EXPECT_TRUE(has_collation(100));
+    EXPECT_TRUE(has_collation(101));
+    EXPECT_TRUE(has_collation(10));
 }
 
 TEST_F(CharsetCatalogTest, ListCollationsForCharset)
@@ -349,7 +370,16 @@ TEST_F(CharsetCatalogTest, ListCollationsForCharset)
     Status status = db_->catalog_manager()->listCollationsForCharset(
         static_cast<uint16_t>(CharacterSet::UTF8), utf8_collations, &ctx);
     ASSERT_EQ(status, Status::OK);
-    EXPECT_EQ(utf8_collations.size(), 2);
+    EXPECT_GE(utf8_collations.size(), 2);
+
+    auto has_utf8_collation = [&utf8_collations](uint32_t id)
+    {
+        return std::any_of(utf8_collations.begin(), utf8_collations.end(),
+                           [id](const CatalogManager::CollationCatalogInfo &info)
+                           { return info.collation_id == id; });
+    };
+    EXPECT_TRUE(has_utf8_collation(100));
+    EXPECT_TRUE(has_utf8_collation(101));
 
     // Verify all returned collations are for UTF8
     for (const auto& col : utf8_collations)
@@ -491,5 +521,5 @@ TEST_F(CharsetCatalogTest, CharsetManagerEmptyCatalogUsesDefaults)
     // Verify defaults are available
     const auto* utf8_info = charset_mgr.getCharsetInfo(CharacterSet::UTF8);
     ASSERT_NE(utf8_info, nullptr);
-    EXPECT_EQ(utf8_info->name, "utf8");
+    EXPECT_EQ(utf8_info->name, "UTF-8");
 }

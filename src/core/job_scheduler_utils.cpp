@@ -202,7 +202,7 @@ uint64_t computeNextCronRunMsWithTimezone(const std::string& expr,
         return 0;
     }
 
-    TimezoneManager tz;
+    TimezoneManager& tz = getThreadLocalTimezoneManager();
     uint16_t tz_id = TimezoneManager::TZ_UTC;
     if (!timezone_name.empty()) {
         uint16_t by_name = tz.getTimezoneByName(timezone_name);
@@ -244,7 +244,7 @@ uint64_t computePreviousCronRunMsWithTimezone(const std::string& expr,
         return 0;
     }
 
-    TimezoneManager tz;
+    TimezoneManager& tz = getThreadLocalTimezoneManager();
     uint16_t tz_id = TimezoneManager::TZ_UTC;
     if (!timezone_name.empty()) {
         uint16_t by_name = tz.getTimezoneByName(timezone_name);

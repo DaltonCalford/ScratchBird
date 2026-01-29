@@ -38,7 +38,10 @@ Sources:
 - [14_functions](14_functions.md)
 
 Notes:
-- Firebird parser accepts many Firebird-specific statements but a number of DDL
-  and PSQL constructs are stubbed or blocked by the V2 pipeline.
-- Bytecode/executor mismatches are common for CREATE/DROP VIEW/INDEX and some
-  table constraint payloads.
+- Firebird parser supports Firebird-specific syntax including PSQL, FIRST/SKIP,
+  CONTAINING/STARTING WITH, EXECUTE BLOCK, generators, and packages.
+- Most DDL statements (CREATE/DROP TABLE, INDEX, VIEW, SEQUENCE, PROCEDURE,
+  FUNCTION, TRIGGER, PACKAGE, EXCEPTION) are fully implemented through the
+  V2 pipeline (parser → semantic analyzer → bytecode generator → executor).
+- Security DCL (GRANT/REVOKE, CREATE/DROP ROLE) is implemented.
+- MERGE statement is fully supported with WHEN MATCHED/NOT MATCHED clauses.

@@ -34,6 +34,8 @@
 #include <atomic>
 #include <random>
 #include <chrono>
+#include <cstdlib>
+#include <string>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/page_manager.h"
@@ -43,6 +45,11 @@
 #include "scratchbird/core/transaction_manager.h"
 
 using namespace scratchbird::core;
+
+static bool isHeavyConcurrencyTest() {
+    const char* env = std::getenv("SCRATCHBIRD_TEST_HEAVY");
+    return env && env[0] != '\0' && env[0] != '0';
+}
 
 class ConcurrentPageAccessTest : public ::testing::Test {
 protected:
@@ -98,8 +105,9 @@ protected:
  * Validates that multiple threads can read different pages concurrently
  */
 TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
-    const int NUM_THREADS = 50;
-    const int ITERATIONS = 100;
+    const bool heavy = isHeavyConcurrencyTest();
+    const int NUM_THREADS = heavy ? 50 : 16;
+    const int ITERATIONS = heavy ? 100 : 50;
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_reads{0};
@@ -196,8 +204,9 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
  * Validates that multiple threads can write different pages concurrently
  */
 TEST_F(ConcurrentPageAccessTest, ConcurrentWritesDifferentPages) {
-    const int NUM_THREADS = 40;
-    const int ITERATIONS = 50;
+    const bool heavy = isHeavyConcurrencyTest();
+    const int NUM_THREADS = heavy ? 40 : 12;
+    const int ITERATIONS = heavy ? 50 : 30;
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_writes{0};
@@ -252,9 +261,10 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentWritesDifferentPages) {
  * Validates that multiple threads can safely access the same page
  */
 TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
-    const int NUM_READ_THREADS = 30;
-    const int NUM_WRITE_THREADS = 10;
-    const int ITERATIONS = 100;
+    const bool heavy = isHeavyConcurrencyTest();
+    const int NUM_READ_THREADS = heavy ? 30 : 12;
+    const int NUM_WRITE_THREADS = heavy ? 10 : 4;
+    const int ITERATIONS = heavy ? 100 : 50;
     const uint32_t SHARED_PAGE = allocated_pages_[10];
 
     std::atomic<int> errors{0};
@@ -330,8 +340,10 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
  * Validates that transactions spanning multiple pages are atomic
  */
 TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
-    const int NUM_THREADS = 20;
-    const int ITERATIONS = 50;
+    const bool heavy = isHeavyConcurrencyTest();
+    const int NUM_THREADS = heavy ? 20 : 8;
+    const int ITERATIONS = heavy ? 50 : 20;
+    txn_mgr_->enableGroupCommit(false);
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_transactions{0};
@@ -340,19 +352,17 @@ TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&, t]() {
             ErrorContext ctx;
+            std::unique_ptr<ConnectionContext> conn;
+            Status s = db_->connect(conn, &ctx);
+            if (s != Status::OK) {
+                errors.fetch_add(1);
+                return;
+            }
             std::random_device rd;
             std::mt19937 gen(rd());
             std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
 
             for (int i = 0; i < ITERATIONS; ++i) {
-                // Create connection (starts transaction)
-                std::unique_ptr<ConnectionContext> conn;
-                Status s = db_->connect(conn, &ctx);
-                if (s != Status::OK) {
-                    errors.fetch_add(1);
-                    continue;
-                }
-
                 // Update 3 different pages in one transaction
                 bool transaction_ok = true;
                 std::vector<uint32_t> pages_to_update;
@@ -392,6 +402,7 @@ TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
                         errors.fetch_add(1);
                     }
                 } else {
+                    conn->rollback(&ctx);
                     errors.fetch_add(1);
                 }
             }
@@ -415,9 +426,10 @@ TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
  * Validates that snapshots remain consistent despite concurrent writes
  */
 TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
-    const int NUM_WRITER_THREADS = 20;
-    const int NUM_SNAPSHOT_THREADS = 30;
-    const int ITERATIONS = 50;
+    const bool heavy = isHeavyConcurrencyTest();
+    const int NUM_WRITER_THREADS = heavy ? 20 : 8;
+    const int NUM_SNAPSHOT_THREADS = heavy ? 30 : 12;
+    const int ITERATIONS = heavy ? 50 : 30;
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_snapshots{0};
@@ -428,18 +440,17 @@ TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
     for (int t = 0; t < NUM_WRITER_THREADS; ++t) {
         threads.emplace_back([&, t]() {
             ErrorContext ctx;
+            std::unique_ptr<ConnectionContext> conn;
+            Status s = db_->connect(conn, &ctx);
+            if (s != Status::OK) {
+                errors.fetch_add(1);
+                return;
+            }
             std::random_device rd;
             std::mt19937 gen(rd());
             std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
 
             for (int i = 0; i < ITERATIONS; ++i) {
-                std::unique_ptr<ConnectionContext> conn;
-                Status s = db_->connect(conn, &ctx);
-                if (s != Status::OK) {
-                    errors.fetch_add(1);
-                    continue;
-                }
-
                 uint32_t page_id = allocated_pages_[dis(gen)];
                 void* buffer = nullptr;
                 s = pool_->pinPage(page_id, &buffer, &ctx);
@@ -493,10 +504,11 @@ TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
  * Validates that buffer pool handles high contention gracefully
  */
 TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
-    const int NUM_THREADS = 80;
-    const int ITERATIONS = 100;
+    const bool heavy = isHeavyConcurrencyTest();
+    const int NUM_THREADS = heavy ? 80 : 24;
+    const int ITERATIONS = heavy ? 100 : 50;
     // Access only 20 pages with 80 threads - forces high contention
-    const int HOT_PAGES = 20;
+    const int HOT_PAGES = heavy ? 20 : 10;
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_ops{0};

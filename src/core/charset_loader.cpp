@@ -38,9 +38,14 @@ bool resolveBuiltinCharsetId(const std::string& name, uint16_t& id_out)
         id_out = 1; // CharacterSet::LATIN1
         return true;
     }
-    if (normalized == "utf8" || normalized == "utf8mb4")
+    if (normalized == "utf8")
     {
         id_out = 2; // CharacterSet::UTF8
+        return true;
+    }
+    if (normalized == "utf8mb4")
+    {
+        id_out = 5; // CharacterSet::UTF8MB4
         return true;
     }
     if (normalized == "utf16")
@@ -66,6 +71,8 @@ uint32_t resolveBuiltinCollationId(const std::string& name)
     if (normalized == "latin1generalcs") return 12;
     if (normalized == "utf8bin") return 100;
     if (normalized == "utf8generalci") return 101;
+    if (normalized == "utf8mb4bin") return 140;
+    if (normalized == "utf8mb4generalci") return 141;
     if (normalized == "utf8unicodeci") return 102;
     if (normalized == "utf8unicodecs") return 103;
     if (normalized == "utf8enusci") return 110;
@@ -88,9 +95,13 @@ uint32_t resolveDefaultCollationId(const std::string& charset_name)
     {
         return 11;
     }
-    if (normalized == "utf8" || normalized == "utf8mb4")
+    if (normalized == "utf8")
     {
         return 101;
+    }
+    if (normalized == "utf8mb4")
+    {
+        return 141;
     }
     if (normalized == "utf16")
     {
@@ -101,6 +112,33 @@ uint32_t resolveDefaultCollationId(const std::string& charset_name)
         return 301;
     }
     return 0;
+}
+
+std::vector<std::string> splitAliases(const std::string& aliases)
+{
+    std::vector<std::string> out;
+    std::string current;
+    for (char c : aliases)
+    {
+        if (c == ',')
+        {
+            if (!current.empty())
+            {
+                out.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        if (!std::isspace(static_cast<unsigned char>(c)))
+        {
+            current.push_back(c);
+        }
+    }
+    if (!current.empty())
+    {
+        out.push_back(current);
+    }
+    return out;
 }
 
 } // namespace
@@ -175,6 +213,38 @@ Status CharsetLoader::loadCharset(const CharacterSet &charset, ErrorContext *ctx
     info.last_modified_time = info.created_time;
 
     return catalog_->createCharset(info, ctx);
+}
+
+Status CharsetLoader::loadCharsetAliases(const CharacterSet &charset, ErrorContext *ctx)
+{
+    if (charset.aliases.empty())
+    {
+        return Status::OK;
+    }
+
+    const std::string base_norm = normalizeName(charset.name);
+    for (const auto &alias : splitAliases(charset.aliases))
+    {
+        if (alias.empty())
+        {
+            continue;
+        }
+        if (normalizeName(alias) == base_norm)
+        {
+            continue;
+        }
+
+        CharacterSet alias_charset = charset;
+        alias_charset.name = alias;
+        alias_charset.aliases.clear();
+        Status status = loadCharset(alias_charset, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    return Status::OK;
 }
 
 Status CharsetLoader::loadCollation(const Collation &collation, ErrorContext *ctx)
@@ -308,12 +378,22 @@ Status CharsetLoader::loadBuiltinCharsets(ErrorContext *ctx)
             // Continue on error - best effort
             // LOG_WARNING("Failed to load charset: " + charset.name);
         }
+        else
+        {
+            Status alias_status = loadCharsetAliases(charset, ctx);
+            if (alias_status != Status::OK)
+            {
+                status = alias_status;
+            }
+        }
     }
 
     // Load default collations for built-in charsets
     std::vector<Collation> default_collations = {
         {"utf8_general_ci", "UTF-8", true, false, "", "UTF-8 general case-insensitive"},
         {"utf8_bin", "UTF-8", false, false, "", "UTF-8 binary (case-sensitive)"},
+        {"utf8mb4_general_ci", "UTF8MB4", true, false, "", "UTF-8MB4 general case-insensitive"},
+        {"utf8mb4_bin", "UTF8MB4", false, false, "", "UTF-8MB4 binary (case-sensitive)"},
         {"ascii_general_ci", "ASCII", true, false, "", "ASCII general case-insensitive"},
         {"ascii_bin", "ASCII", false, false, "", "ASCII binary (case-sensitive)"},
         {"latin1_general_ci", "ISO-8859-1", true, false, "", "Latin-1 general case-insensitive"},
@@ -352,6 +432,14 @@ Status CharsetLoader::loadFromJSONFile(const std::string &json_filepath, ErrorCo
         {
             // Continue on error - best effort
             // LOG_WARNING("Failed to load charset: " + charset.name);
+        }
+        else
+        {
+            status = loadCharsetAliases(charset, ctx);
+            if (status != Status::OK)
+            {
+                // Continue on error - best effort
+            }
         }
     }
 

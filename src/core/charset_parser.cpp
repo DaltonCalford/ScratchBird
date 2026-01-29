@@ -251,6 +251,16 @@ Status CharsetParser::generateBuiltinCharsets(std::vector<CharacterSet> &charset
     }
     charsets.push_back(utf8);
 
+    // UTF-8MB4 (MySQL compatible)
+    CharacterSet utf8mb4;
+    status = generateUTF8MB4(utf8mb4);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to generate UTF-8MB4 charset");
+        return status;
+    }
+    charsets.push_back(utf8mb4);
+
     // ASCII
     CharacterSet ascii;
     status = generateASCII(ascii);
@@ -305,6 +315,20 @@ Status CharsetParser::generateUTF8(CharacterSet &charset)
     charset.encoding_type = "unicode";
     charset.iana_name = "UTF-8";
     // UTF-8 encoding is algorithmic, no explicit mappings needed
+    charset.mappings.clear();
+    return Status::OK;
+}
+
+Status CharsetParser::generateUTF8MB4(CharacterSet &charset)
+{
+    charset.name = "UTF8MB4";
+    charset.description = "UTF-8 Unicode (MySQL utf8mb4 compatible)";
+    charset.max_bytes = 4;
+    charset.min_bytes = 1;
+    charset.is_variable_width = true;
+    charset.aliases.clear();
+    charset.encoding_type = "unicode";
+    charset.iana_name = "UTF-8";
     charset.mappings.clear();
     return Status::OK;
 }

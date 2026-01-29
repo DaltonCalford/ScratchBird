@@ -878,6 +878,7 @@ struct ResolvedColumnDef {
     ResolvedType type;
     bool is_nullable = true;
     ResolvedExpression* default_value = nullptr;
+    StringPool::StringId collation_name = StringPool::INVALID_ID;
 
     // Constraints
     bool is_primary_key = false;

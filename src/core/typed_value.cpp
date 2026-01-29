@@ -3,6 +3,7 @@
 #include "scratchbird/core/decimal.h"
 #include "scratchbird/core/firebird_datetime.h"
 #include "scratchbird/core/network.h"
+#include "scratchbird/core/decfloat.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/config.h"
@@ -145,6 +146,7 @@ namespace scratchbird::core
             offset += 8;
             return true;
         }
+
 
         bool readInt32(const std::vector<uint8_t> &data, size_t &offset, int32_t &value)
         {
@@ -394,10 +396,279 @@ namespace scratchbird::core
             return type == DataType::FLOAT32 || type == DataType::FLOAT64;
         }
 
+        DecFloatContext defaultDecfloatContext()
+        {
+            return DecFloatContext{};
+        }
+
+        Status decodeDecfloat(const std::vector<uint8_t>& bytes, DataType type,
+                              DecFloat& out, ErrorContext* ctx)
+        {
+            if (type == DataType::DECFLOAT16)
+            {
+                if (bytes.size() != 8)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "DECFLOAT16 requires 8 bytes");
+                    return Status::INVALID_ARGUMENT;
+                }
+                uint64_t bits = 0;
+                size_t offset = 0;
+                if (!readUint64(bytes, offset, bits))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "DECFLOAT16 decode failed");
+                    return Status::INVALID_ARGUMENT;
+                }
+                out = DecFloat::fromBID64(bits);
+                return Status::OK;
+            }
+            if (type == DataType::DECFLOAT34)
+            {
+                if (bytes.size() != 16)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "DECFLOAT34 requires 16 bytes");
+                    return Status::INVALID_ARGUMENT;
+                }
+                uint64_t low = 0;
+                uint64_t high = 0;
+                size_t offset = 0;
+                if (!readUint64(bytes, offset, low) || !readUint64(bytes, offset, high))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "DECFLOAT34 decode failed");
+                    return Status::INVALID_ARGUMENT;
+                }
+                out = DecFloat::fromBID128(high, low);
+                return Status::OK;
+            }
+
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Unsupported DECFLOAT type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Status encodeDecfloat(const DecFloat& value, DataType type,
+                              std::vector<uint8_t>& bytes, ErrorContext* ctx)
+        {
+            bytes.clear();
+            DecFloatContext df_ctx = defaultDecfloatContext();
+            if (type == DataType::DECFLOAT16)
+            {
+                uint64_t bits = 0;
+                Status st = value.toBID64(bits, df_ctx, ctx);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+                appendUint64(bytes, bits);
+                return Status::OK;
+            }
+            if (type == DataType::DECFLOAT34)
+            {
+                uint64_t high = 0;
+                uint64_t low = 0;
+                Status st = value.toBID128(high, low, df_ctx, ctx);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+                appendUint64(bytes, low);
+                appendUint64(bytes, high);
+                return Status::OK;
+            }
+
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Unsupported DECFLOAT type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Status coerceToDecfloat(const TypedValue& source, DataType target,
+                                DecFloat& out, ErrorContext* ctx)
+        {
+            DecFloatContext df_ctx = defaultDecfloatContext();
+            if (source.type() == DataType::DECFLOAT16 || source.type() == DataType::DECFLOAT34)
+            {
+                return decodeDecfloat(source.getDecfloatBytes(), source.type(), out, ctx);
+            }
+
+            if (source.type() == DataType::DECIMAL)
+            {
+                uint8_t precision = source.getDecimalPrecision() == 0
+                                        ? DECIMAL_MAX_PRECISION
+                                        : source.getDecimalPrecision();
+                Decimal dec(source.getDecimalUnscaled(), precision, source.getDecimalScale());
+                return DecFloat::parse(dec.toStringWithPrecision(dec.scale()),
+                                       target == DataType::DECFLOAT16 ? 16 : 34,
+                                       df_ctx, out, ctx);
+            }
+
+            if (isIntegerType(source.type()) || source.type() == DataType::BOOLEAN)
+            {
+                std::string text = source.toString();
+                return DecFloat::parse(text, target == DataType::DECFLOAT16 ? 16 : 34,
+                                       df_ctx, out, ctx);
+            }
+
+            if (isFloatType(source.type()))
+            {
+                std::ostringstream oss;
+                oss.setf(std::ios::scientific);
+                oss << std::setprecision(std::numeric_limits<double>::max_digits10)
+                    << (source.type() == DataType::FLOAT32
+                            ? static_cast<double>(source.getFloat32())
+                            : source.getFloat64());
+                return DecFloat::parse(oss.str(), target == DataType::DECFLOAT16 ? 16 : 34,
+                                       df_ctx, out, ctx);
+            }
+
+            if (source.type() == DataType::MONEY)
+            {
+                Decimal money(static_cast<int128_t>(source.getInt64()), 19, 4);
+                return DecFloat::parse(money.toStringWithPrecision(4),
+                                       target == DataType::DECFLOAT16 ? 16 : 34,
+                                       df_ctx, out, ctx);
+            }
+
+            if (isStringLike(source.type()))
+            {
+                std::string text = trimAscii(source.toString());
+                return DecFloat::parse(text, target == DataType::DECFLOAT16 ? 16 : 34,
+                                       df_ctx, out, ctx);
+            }
+
+            SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                              "Cannot convert to DECFLOAT");
+            return Status::DATATYPE_MISMATCH;
+        }
+
+        Status decfloatToInt128(const DecFloat& value, int128_t& out, ErrorContext* ctx)
+        {
+            if (value.klass != DecFloatClass::Finite)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "DECFLOAT is not finite");
+                return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+            }
+            if (value.coefficient.empty())
+            {
+                out = 0;
+                return Status::OK;
+            }
+
+            int32_t exp = value.exponent;
+            if (exp < 0 && static_cast<size_t>(-exp) >= value.coefficient.size())
+            {
+                out = 0;
+                return Status::OK;
+            }
+
+            size_t digits = value.coefficient.size();
+            if (exp > 38)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "DECFLOAT value out of range");
+                return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+            }
+            if (exp > 0 && digits + static_cast<size_t>(exp) > 38)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "DECFLOAT value out of range");
+                return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+            }
+
+            int128_t coeff = 0;
+            for (uint8_t digit : value.coefficient)
+            {
+                coeff = coeff * 10 + digit;
+            }
+
+            if (exp > 0)
+            {
+                coeff *= POWERS_OF_10[exp];
+            }
+            else if (exp < 0)
+            {
+                int32_t scale = -exp;
+                if (scale > 38)
+                {
+                    out = 0;
+                    return Status::OK;
+                }
+                coeff /= POWERS_OF_10[scale];
+            }
+
+            out = value.negative ? -coeff : coeff;
+            return Status::OK;
+        }
+
+        Status decfloatToDecimal(const DecFloat& value, uint8_t precision, uint8_t scale,
+                                 Decimal& out, ErrorContext* ctx)
+        {
+            if (value.klass != DecFloatClass::Finite)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "DECFLOAT is not finite");
+                return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+            }
+
+            int32_t exp = value.exponent;
+            int32_t target_scale = scale;
+            int128_t coeff = 0;
+            for (uint8_t digit : value.coefficient)
+            {
+                coeff = coeff * 10 + digit;
+            }
+            if (exp >= 0)
+            {
+                if (exp > 38)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "DECFLOAT value out of range");
+                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                }
+                coeff *= POWERS_OF_10[exp];
+            }
+            else
+            {
+                int32_t scale_shift = -exp;
+                if (scale_shift > 0)
+                {
+                    if (scale_shift > target_scale)
+                    {
+                        int32_t extra = scale_shift - target_scale;
+                        if (extra >= static_cast<int32_t>(value.coefficient.size()))
+                        {
+                            coeff = 0;
+                        }
+                        else
+                        {
+                            coeff /= POWERS_OF_10[extra];
+                        }
+                    }
+                }
+            }
+
+            out = Decimal(value.negative ? -coeff : coeff, precision, target_scale);
+            return Status::OK;
+        }
+
+        bool isDecimalLike(DataType type)
+        {
+            return type == DataType::DECIMAL || type == DataType::MONEY ||
+                   type == DataType::DECFLOAT16 || type == DataType::DECFLOAT34;
+        }
+
+        uint8_t defaultDecfloatPrecision(DataType type)
+        {
+            return type == DataType::DECFLOAT16 ? 16 : 34;
+        }
+
         bool isNumericType(DataType type)
         {
             return isIntegerType(type) || isFloatType(type) ||
-                   type == DataType::DECIMAL || type == DataType::MONEY ||
+                   isDecimalLike(type) ||
                    type == DataType::BOOLEAN;
         }
 
@@ -970,8 +1241,7 @@ namespace scratchbird::core
 
         TimezoneManager& timezoneManager()
         {
-            static thread_local TimezoneManager manager;
-            return manager;
+            return getThreadLocalTimezoneManager();
         }
 
         int32_t resolveTimezoneOffsetSeconds(uint16_t timezone_id, int64_t local_micros)
@@ -1599,6 +1869,31 @@ namespace scratchbird::core
         tv.decimal_unscaled_ = unscaled_value;
         tv.decimal_precision_ = precision;
         tv.decimal_scale_ = scale;
+        return tv;
+    }
+
+    TypedValue TypedValue::makeDecfloat(const DecFloat& value)
+    {
+        TypedValue tv(value.precision == 16 ? DataType::DECFLOAT16 : DataType::DECFLOAT34);
+        tv.is_null_ = false;
+        std::vector<uint8_t> bytes;
+        ErrorContext ctx;
+        Status st = encodeDecfloat(value, tv.type_, bytes, &ctx);
+        if (st != Status::OK)
+        {
+            tv.is_null_ = true;
+            tv.type_ = DataType::NULL_TYPE;
+            return tv;
+        }
+        tv.binary_data_ = std::move(bytes);
+        return tv;
+    }
+
+    TypedValue TypedValue::makeDecfloat(DataType type, const std::vector<uint8_t>& bytes)
+    {
+        TypedValue tv(type);
+        tv.is_null_ = false;
+        tv.binary_data_ = bytes;
         return tv;
     }
 
@@ -2552,6 +2847,18 @@ namespace scratchbird::core
                 Decimal decimal(decimal_unscaled_, precision, decimal_scale_);
                 return decimal.toStringWithPrecision(decimal_scale_);
             }
+            case DataType::DECFLOAT16:
+            case DataType::DECFLOAT34:
+            {
+                DecFloat value;
+                ErrorContext ctx;
+                Status st = decodeDecfloat(binary_data_, type_, value, &ctx);
+                if (st != Status::OK)
+                {
+                    return "<DECFLOAT>";
+                }
+                return value.toString();
+            }
             case DataType::MONEY:
             {
                 Decimal decimal(static_cast<int128_t>(data_.int64_val), 19, 4);
@@ -3210,12 +3517,29 @@ namespace scratchbird::core
                 return data_.float64_val == other.data_.float64_val;
             case DataType::DECIMAL:
             {
-                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                uint8_t precision = decimal_precision_ == 0
+                                        ? (type_ == DataType::DECIMAL ? DECIMAL_MAX_PRECISION
+                                                                      : defaultDecfloatPrecision(type_))
+                                        : decimal_precision_;
                 Decimal left(decimal_unscaled_, precision, decimal_scale_);
-                uint8_t other_precision = other.decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
-                                                                         : other.decimal_precision_;
+                uint8_t other_precision = other.decimal_precision_ == 0
+                                              ? DECIMAL_MAX_PRECISION
+                                              : other.decimal_precision_;
                 Decimal right(other.decimal_unscaled_, other_precision, other.decimal_scale_);
                 return left == right;
+            }
+            case DataType::DECFLOAT16:
+            case DataType::DECFLOAT34:
+            {
+                DecFloat left;
+                DecFloat right;
+                ErrorContext ctx;
+                if (decodeDecfloat(binary_data_, type_, left, &ctx) != Status::OK ||
+                    decodeDecfloat(other.binary_data_, other.type_, right, &ctx) != Status::OK)
+                {
+                    return false;
+                }
+                return DecFloat::compare(left, right, &ctx) == 0;
             }
             case DataType::BOOLEAN:
                 return data_.bool_val == other.data_.bool_val;
@@ -3326,12 +3650,29 @@ namespace scratchbird::core
                 return data_.float64_val < other.data_.float64_val;
             case DataType::DECIMAL:
             {
-                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                uint8_t precision = decimal_precision_ == 0
+                                        ? (type_ == DataType::DECIMAL ? DECIMAL_MAX_PRECISION
+                                                                      : defaultDecfloatPrecision(type_))
+                                        : decimal_precision_;
                 Decimal left(decimal_unscaled_, precision, decimal_scale_);
-                uint8_t other_precision = other.decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
-                                                                         : other.decimal_precision_;
+                uint8_t other_precision = other.decimal_precision_ == 0
+                                              ? DECIMAL_MAX_PRECISION
+                                              : other.decimal_precision_;
                 Decimal right(other.decimal_unscaled_, other_precision, other.decimal_scale_);
                 return left < right;
+            }
+            case DataType::DECFLOAT16:
+            case DataType::DECFLOAT34:
+            {
+                DecFloat left;
+                DecFloat right;
+                ErrorContext ctx;
+                if (decodeDecfloat(binary_data_, type_, left, &ctx) != Status::OK ||
+                    decodeDecfloat(other.binary_data_, other.type_, right, &ctx) != Status::OK)
+                {
+                    throw std::runtime_error("DECFLOAT decode failed");
+                }
+                return DecFloat::compare(left, right, &ctx) < 0;
             }
             case DataType::BOOLEAN:
                 return data_.bool_val < other.data_.bool_val;
@@ -3510,7 +3851,10 @@ namespace scratchbird::core
             }
             case DataType::DECIMAL:
             {
-                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                uint8_t precision = decimal_precision_ == 0
+                                        ? (type_ == DataType::DECIMAL ? DECIMAL_MAX_PRECISION
+                                                                      : defaultDecfloatPrecision(type_))
+                                        : decimal_precision_;
                 if (precision > DECIMAL_MAX_PRECISION || decimal_scale_ > precision)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid DECIMAL precision/scale");
@@ -3533,6 +3877,24 @@ namespace scratchbird::core
                 }
 
                 appendInt128(out, decimal_unscaled_, width);
+                break;
+            }
+            case DataType::DECFLOAT16:
+            case DataType::DECFLOAT34:
+            {
+                std::vector<uint8_t> bytes;
+                DecFloat df;
+                Status st = decodeDecfloat(binary_data_, type_, df, ctx);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+                st = encodeDecfloat(df, type_, bytes, ctx);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+                out.insert(out.end(), bytes.begin(), bytes.end());
                 break;
             }
             case DataType::BINARY:
@@ -4205,7 +4567,10 @@ namespace scratchbird::core
             }
             case DataType::DECIMAL:
             {
-                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                uint8_t precision = decimal_precision_ == 0
+                                        ? (type_ == DataType::DECIMAL ? DECIMAL_MAX_PRECISION
+                                                                      : defaultDecfloatPrecision(type_))
+                                        : decimal_precision_;
                 if (precision > DECIMAL_MAX_PRECISION || decimal_scale_ > precision)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECIMAL precision/scale");
@@ -4221,6 +4586,19 @@ namespace scratchbird::core
                 }
                 decimal_unscaled_ = value;
                 decimal_precision_ = precision;
+                break;
+            }
+            case DataType::DECFLOAT16:
+            case DataType::DECFLOAT34:
+            {
+                size_t expected = type_ == DataType::DECFLOAT16 ? 8 : 16;
+                if (offset + expected > data.size())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECFLOAT payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                binary_data_.assign(data.begin() + offset, data.begin() + offset + expected);
+                offset += expected;
                 break;
             }
             case DataType::DATE:
@@ -4976,9 +5354,20 @@ namespace scratchbird::core
         {
             result_out = TypedValue(target);
             result_out.is_null_ = true;
-            if (target == DataType::DECIMAL)
+            if (isDecimalLike(target))
             {
-                result_out.decimal_precision_ = static_cast<uint8_t>(target_type.precision);
+                if (target_type.precision != 0)
+                {
+                    result_out.decimal_precision_ = static_cast<uint8_t>(target_type.precision);
+                }
+                else if (target == DataType::DECIMAL)
+                {
+                    result_out.decimal_precision_ = DECIMAL_MAX_PRECISION;
+                }
+                else
+                {
+                    result_out.decimal_precision_ = defaultDecfloatPrecision(target);
+                }
                 result_out.decimal_scale_ = static_cast<uint8_t>(target_type.scale);
             }
             return Status::OK;
@@ -5103,10 +5492,13 @@ namespace scratchbird::core
         // Same type (handle modifiers)
         if (type_ == target)
         {
-            if (target == DataType::DECIMAL)
+            if (isDecimalLike(target))
             {
+                uint8_t default_precision = (target == DataType::DECIMAL)
+                                                ? DECIMAL_MAX_PRECISION
+                                                : defaultDecfloatPrecision(target);
                 uint8_t precision = target_type.precision == 0
-                                        ? (decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                        ? (decimal_precision_ == 0 ? default_precision
                                                                    : decimal_precision_)
                                         : static_cast<uint8_t>(target_type.precision);
                 uint8_t scale = target_type.precision == 0 && target_type.scale == 0
@@ -5133,6 +5525,7 @@ namespace scratchbird::core
                     return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                 }
                 result_out = makeDecimal(adjusted.unscaledValue(), precision, scale);
+                result_out.type_ = target;
                 return Status::OK;
             }
 
@@ -5545,11 +5938,21 @@ namespace scratchbird::core
                 {
                     if (type_ == DataType::DECIMAL)
                     {
-                        Decimal dec(decimal_unscaled_,
-                                    decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
-                                                            : decimal_precision_,
-                                    decimal_scale_);
+                        uint8_t precision = decimal_precision_ == 0
+                                                ? DECIMAL_MAX_PRECISION
+                                                : decimal_precision_;
+                        Decimal dec(decimal_unscaled_, precision, decimal_scale_);
                         value = dec.unscaledValue() != 0;
+                    }
+                    else if (type_ == DataType::DECFLOAT16 ||
+                             type_ == DataType::DECFLOAT34)
+                    {
+                        DecFloat df;
+                        if (decodeDecfloat(binary_data_, type_, df, ctx) != Status::OK)
+                        {
+                            return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                        value = !df.isZero();
                     }
                     else if (type_ == DataType::MONEY)
                     {
@@ -5678,14 +6081,36 @@ namespace scratchbird::core
                 }
                 else if (type_ == DataType::DECIMAL)
                 {
-                    Decimal dec(decimal_unscaled_,
-                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
-                                                        : decimal_precision_,
-                                decimal_scale_);
+                    uint8_t precision = decimal_precision_ == 0
+                                            ? DECIMAL_MAX_PRECISION
+                                            : decimal_precision_;
+                    Decimal dec(decimal_unscaled_, precision, decimal_scale_);
                     int128_t dec_val = dec.unscaledValue();
                     if (dec.scale() > 0)
                     {
                         dec_val /= POWERS_OF_10[dec.scale()];
+                    }
+                    if (dec_val < 0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Negative value for UINT128");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
+                    value = static_cast<uint128_t>(dec_val);
+                }
+                else if (type_ == DataType::DECFLOAT16 ||
+                         type_ == DataType::DECFLOAT34)
+                {
+                    DecFloat df;
+                    if (decodeDecfloat(binary_data_, type_, df, ctx) != Status::OK)
+                    {
+                        return wrapStatus(Status::INVALID_ARGUMENT);
+                    }
+                    int128_t dec_val = 0;
+                    Status st = decfloatToInt128(df, dec_val, ctx);
+                    if (st != Status::OK)
+                    {
+                        return st;
                     }
                     if (dec_val < 0)
                     {
@@ -5816,16 +6241,30 @@ namespace scratchbird::core
                 }
                 else if (type_ == DataType::DECIMAL)
                 {
-                    Decimal dec(decimal_unscaled_,
-                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
-                                                        : decimal_precision_,
-                                decimal_scale_);
+                    uint8_t precision = decimal_precision_ == 0
+                                            ? DECIMAL_MAX_PRECISION
+                                            : decimal_precision_;
+                    Decimal dec(decimal_unscaled_, precision, decimal_scale_);
                     int128_t dec_val = dec.unscaledValue();
                     if (dec.scale() > 0)
                     {
                         dec_val /= POWERS_OF_10[dec.scale()];
                     }
                     value = dec_val;
+                }
+                else if (type_ == DataType::DECFLOAT16 ||
+                         type_ == DataType::DECFLOAT34)
+                {
+                    DecFloat df;
+                    if (decodeDecfloat(binary_data_, type_, df, ctx) != Status::OK)
+                    {
+                        return wrapStatus(Status::INVALID_ARGUMENT);
+                    }
+                    Status st = decfloatToInt128(df, value, ctx);
+                    if (st != Status::OK)
+                    {
+                        return st;
+                    }
                 }
                 else if (type_ == DataType::MONEY)
                 {
@@ -5924,11 +6363,30 @@ namespace scratchbird::core
                 }
                 else if (type_ == DataType::DECIMAL)
                 {
-                    Decimal dec(decimal_unscaled_,
-                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
-                                                        : decimal_precision_,
-                                decimal_scale_);
+                    uint8_t precision = decimal_precision_ == 0
+                                            ? DECIMAL_MAX_PRECISION
+                                            : decimal_precision_;
+                    Decimal dec(decimal_unscaled_, precision, decimal_scale_);
                     value = dec.toDouble();
+                }
+                else if (type_ == DataType::DECFLOAT16 ||
+                         type_ == DataType::DECFLOAT34)
+                {
+                    DecFloat df;
+                    if (decodeDecfloat(binary_data_, type_, df, ctx) != Status::OK)
+                    {
+                        return wrapStatus(Status::INVALID_ARGUMENT);
+                    }
+                    try
+                    {
+                        value = std::stod(df.toString());
+                    }
+                    catch (...)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "DECFLOAT value out of range");
+                        return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    }
                 }
                 else if (type_ == DataType::MONEY)
                 {
@@ -5990,118 +6448,155 @@ namespace scratchbird::core
                 return Status::OK;
             }
             case DataType::DECIMAL:
+            case DataType::DECFLOAT16:
+            case DataType::DECFLOAT34:
             {
-                uint8_t precision = target_type.precision == 0
-                                        ? DECIMAL_MAX_PRECISION
-                                        : static_cast<uint8_t>(target_type.precision);
-                uint8_t scale = static_cast<uint8_t>(target_type.scale);
-                if (scale > precision || precision > DECIMAL_MAX_PRECISION)
+                if (target == DataType::DECIMAL)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                      "Invalid DECIMAL precision/scale");
-                    return wrapStatus(Status::INVALID_ARGUMENT);
-                }
-
-                Decimal dec;
-                if (type_ == DataType::DECIMAL)
-                {
-                    Decimal current(decimal_unscaled_,
-                                    decimal_precision_ == 0 ? precision : decimal_precision_,
-                                    decimal_scale_);
-                    dec = current.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
-                }
-                else if (type_ == DataType::MONEY)
-                {
-                    Decimal money(static_cast<int128_t>(data_.int64_val), 19, 4);
-                    dec = money.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
-                }
-                else if (isIntegerType(type_) || type_ == DataType::BOOLEAN)
-                {
-                    int128_t int_val = 0;
-                    if (type_ == DataType::INT128)
+                    uint8_t precision = target_type.precision == 0
+                                            ? DECIMAL_MAX_PRECISION
+                                            : static_cast<uint8_t>(target_type.precision);
+                    uint8_t scale = static_cast<uint8_t>(target_type.scale);
+                    if (scale > precision || precision > DECIMAL_MAX_PRECISION)
                     {
-                        if (!readInt128Value(int_val))
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Invalid DECIMAL precision/scale");
+                        return wrapStatus(Status::INVALID_ARGUMENT);
+                    }
+
+                    Decimal dec;
+                    if (type_ == DataType::DECIMAL)
+                    {
+                        Decimal current(decimal_unscaled_,
+                                        decimal_precision_ == 0
+                                            ? DECIMAL_MAX_PRECISION
+                                            : decimal_precision_,
+                                        decimal_scale_);
+                        dec = current.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
+                    }
+                    else if (type_ == DataType::DECFLOAT16 ||
+                             type_ == DataType::DECFLOAT34)
+                    {
+                        DecFloat df;
+                        if (decodeDecfloat(binary_data_, type_, df, ctx) != Status::OK)
                         {
                             return wrapStatus(Status::INVALID_ARGUMENT);
+                        }
+                        Status st = decfloatToDecimal(df, precision, scale, dec, ctx);
+                        if (st != Status::OK)
+                        {
+                            return st;
                         }
                     }
-                    else if (type_ == DataType::UINT128)
+                    else if (type_ == DataType::MONEY)
                     {
-                        uint128_t val = 0;
-                        if (!readUInt128Value(val))
+                        Decimal money(static_cast<int128_t>(data_.int64_val), 19, 4);
+                        dec = money.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
+                    }
+                    else if (isIntegerType(type_) || type_ == DataType::BOOLEAN)
+                    {
+                        int128_t int_val = 0;
+                        if (type_ == DataType::INT128)
                         {
-                            return wrapStatus(Status::INVALID_ARGUMENT);
+                            if (!readInt128Value(int_val))
+                            {
+                                return wrapStatus(Status::INVALID_ARGUMENT);
+                            }
                         }
-                        uint128_t max_signed = (uint128_t{1} << 127) - 1;
-                        if (val > max_signed)
+                        else if (type_ == DataType::UINT128)
+                        {
+                            uint128_t val = 0;
+                            if (!readUInt128Value(val))
+                            {
+                                return wrapStatus(Status::INVALID_ARGUMENT);
+                            }
+                            uint128_t max_signed = (uint128_t{1} << 127) - 1;
+                            if (val > max_signed)
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                                  "UINT128 value out of range");
+                                return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                            }
+                            int_val = static_cast<int128_t>(val);
+                        }
+                        else if (isUnsignedType(type_))
+                        {
+                            switch (type_)
+                            {
+                                case DataType::UINT8: int_val = data_.uint8_val; break;
+                                case DataType::UINT16: int_val = data_.uint16_val; break;
+                                case DataType::UINT32: int_val = data_.uint32_val; break;
+                                case DataType::UINT64: int_val = data_.uint64_val; break;
+                                default: break;
+                            }
+                        }
+                        else if (type_ == DataType::BOOLEAN)
+                        {
+                            int_val = data_.bool_val ? 1 : 0;
+                        }
+                        else
+                        {
+                            int_val = toInt64();
+                        }
+
+                        int128_t scaled = int_val * POWERS_OF_10[scale];
+                        dec = Decimal(scaled, precision, scale);
+                    }
+                    else if (isFloatType(type_))
+                    {
+                        double val = (type_ == DataType::FLOAT32)
+                                         ? static_cast<double>(data_.float32_val)
+                                         : data_.float64_val;
+                        if (!std::isfinite(val))
                         {
                             SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
-                                              "UINT128 value out of range");
+                                              "Float is not finite");
                             return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                         }
-                        int_val = static_cast<int128_t>(val);
+                        dec = Decimal(val, precision, scale);
                     }
-                    else if (isUnsignedType(type_))
+                    else if (isStringLike(type_))
                     {
-                        switch (type_)
+                        std::string text = trimAscii(stringValueForParse());
+                        Status status = Decimal::parseWithError(text, precision, scale, &dec, ctx);
+                        if (status != Status::OK)
                         {
-                            case DataType::UINT8: int_val = data_.uint8_val; break;
-                            case DataType::UINT16: int_val = data_.uint16_val; break;
-                            case DataType::UINT32: int_val = data_.uint32_val; break;
-                            case DataType::UINT64: int_val = data_.uint64_val; break;
-                            default: break;
+                            return setInvalidNumber(text);
                         }
-                    }
-                    else if (type_ == DataType::BOOLEAN)
-                    {
-                        int_val = data_.bool_val ? 1 : 0;
                     }
                     else
                     {
-                        int_val = toInt64();
+                        SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                          "Cannot convert to DECIMAL");
+                        return wrapStatus(Status::DATATYPE_MISMATCH);
                     }
 
-                    int128_t scaled = int_val * POWERS_OF_10[scale];
-                    dec = Decimal(scaled, precision, scale);
-                }
-                else if (isFloatType(type_))
-                {
-                    double val = (type_ == DataType::FLOAT32)
-                                     ? static_cast<double>(data_.float32_val)
-                                     : data_.float64_val;
-                    if (!std::isfinite(val))
+                    int128_t max_abs = POWERS_OF_10[precision] - 1;
+                    if (dec.unscaledValue() > max_abs || dec.unscaledValue() < -max_abs)
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
-                                          "Float is not finite");
+                                          "DECIMAL value out of range");
                         return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
-                    dec = Decimal(val, precision, scale);
-                }
-                else if (isStringLike(type_))
-                {
-                    std::string text = trimAscii(stringValueForParse());
-                    Status status = Decimal::parseWithError(text, precision, scale, &dec, ctx);
-                    if (status != Status::OK)
-                    {
-                        return setInvalidNumber(text);
-                    }
-                }
-                else
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
-                                      "Cannot convert to DECIMAL");
-                    return wrapStatus(Status::DATATYPE_MISMATCH);
+
+                    result_out = makeDecimal(dec.unscaledValue(), precision, scale);
+                    result_out.type_ = target;
+                    return Status::OK;
                 }
 
-                int128_t max_abs = POWERS_OF_10[precision] - 1;
-                if (dec.unscaledValue() > max_abs || dec.unscaledValue() < -max_abs)
+                DecFloat df;
+                Status st = coerceToDecfloat(*this, target, df, ctx);
+                if (st != Status::OK)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
-                                      "DECIMAL value out of range");
-                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                    return st;
                 }
-
-                result_out = makeDecimal(dec.unscaledValue(), precision, scale);
+                std::vector<uint8_t> bytes;
+                st = encodeDecfloat(df, target, bytes, ctx);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+                result_out = makeDecfloat(target, bytes);
                 return Status::OK;
             }
             case DataType::MONEY:
@@ -6114,10 +6609,26 @@ namespace scratchbird::core
                 }
                 if (type_ == DataType::DECIMAL)
                 {
-                    Decimal dec(decimal_unscaled_,
-                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
-                                                        : decimal_precision_,
-                                decimal_scale_);
+                    uint8_t precision = decimal_precision_ == 0
+                                            ? DECIMAL_MAX_PRECISION
+                                            : decimal_precision_;
+                    Decimal dec(decimal_unscaled_, precision, decimal_scale_);
+                    money = dec.rescale(19, 4, DecimalRoundingMode::HALF_UP);
+                }
+                else if (type_ == DataType::DECFLOAT16 ||
+                         type_ == DataType::DECFLOAT34)
+                {
+                    DecFloat df;
+                    if (decodeDecfloat(binary_data_, type_, df, ctx) != Status::OK)
+                    {
+                        return wrapStatus(Status::INVALID_ARGUMENT);
+                    }
+                    Decimal dec;
+                    Status st = decfloatToDecimal(df, 19, 4, dec, ctx);
+                    if (st != Status::OK)
+                    {
+                        return st;
+                    }
                     money = dec.rescale(19, 4, DecimalRoundingMode::HALF_UP);
                 }
                 else if (isIntegerType(type_) || type_ == DataType::BOOLEAN)

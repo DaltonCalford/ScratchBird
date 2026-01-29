@@ -693,8 +693,14 @@ CREATE TABLE managers (dept TEXT) INHERITS (employees);
 | **Types** |
 | SERIAL/BIGSERIAL | ✅ | ✅ | ✅ | **WORKS** | **COMPLETE** |
 | UUID | ✅ | ✅ | ✅ | **WORKS** | **COMPLETE** |
-| JSON/JSONB | ✅ | ✅ | ✅ | **WORKS** | **COMPLETE** |
-| INET/CIDR/MACADDR | ✅ | ⚠️ | ❓ | **UNKNOWN** | **MEDIUM** |
+| JSON | ✅ | ✅ | ✅ | **WORKS** | **COMPLETE** |
+| JSONB (typed marker) | ✅ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
+| XML | ✅ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
+| INTERVAL | ✅ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
+| MONEY | ✅ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
+| COMPOSITE | ✅ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
+| INET/CIDR/MACADDR/MACADDR8 | ✅ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
+| TIME/TIMESTAMP WITH TIME ZONE | ✅ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
 | **Constraints** |
 | DEFERRABLE | ✅ | ✅ | ❓ | **VERIFY** | **ALPHA** |
 | **Bytecode Format** |
@@ -707,6 +713,9 @@ CREATE TABLE managers (dept TEXT) INHERITS (employees);
 | DELETE format | ✅ | ⚠️ | ❌ | **MISMATCH** | ❌ **CRITICAL** |
 
 ---
+
+**Note:** SBLR type/literal gaps are tracked in `docs/findings/SBLR_TYPE_OPCODE_GAPS.md`
+and `docs/planning/SBLR_TYPE_OPCODE_REMEDIATION_PLAN.md`.
 
 ## References
 

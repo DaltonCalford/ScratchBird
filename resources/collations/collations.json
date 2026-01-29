@@ -1,130 +1,47 @@
 {
   "collations": [
     {
-      "name": "utf8_general_ci",
-      "charset": "UTF-8",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "UTF-8 Unicode general case-insensitive",
-      "supported_by": ["MySQL", "MariaDB"]
-    },
-    {
-      "name": "utf8_bin",
+      "name": "AL32UTF8",
       "charset": "UTF-8",
       "case_insensitive": false,
       "accent_insensitive": false,
       "language": "",
-      "description": "UTF-8 Unicode binary (case-sensitive)",
-      "supported_by": ["MySQL", "MariaDB"]
+      "description": "Oracle 32-bit UTF-8 Unicode",
+      "supported_by": [
+        "Oracle"
+      ]
     },
     {
-      "name": "utf8_unicode_ci",
-      "charset": "UTF-8",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "UTF-8 Unicode case-insensitive (UCA-based)",
-      "supported_by": ["MySQL", "MariaDB"]
-    },
-    {
-      "name": "utf8mb4_general_ci",
-      "charset": "UTF-8",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "UTF-8 MB4 general case-insensitive",
-      "supported_by": ["MySQL", "MariaDB"]
-    },
-    {
-      "name": "utf8mb4_bin",
-      "charset": "UTF-8",
+      "name": "armscii8_bin",
+      "charset": "armscii8",
       "case_insensitive": false,
       "accent_insensitive": false,
       "language": "",
-      "description": "UTF-8 MB4 binary (case-sensitive)",
-      "supported_by": ["MySQL", "MariaDB"]
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
     },
     {
-      "name": "utf8mb4_unicode_ci",
-      "charset": "UTF-8",
+      "name": "armscii8_general_ci",
+      "charset": "armscii8",
       "case_insensitive": true,
       "accent_insensitive": false,
       "language": "",
-      "description": "UTF-8 MB4 Unicode case-insensitive (UCA-based)",
-      "supported_by": ["MySQL", "MariaDB"]
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
     },
     {
-      "name": "utf8mb4_0900_ai_ci",
-      "charset": "UTF-8",
-      "case_insensitive": true,
-      "accent_insensitive": true,
-      "language": "",
-      "description": "UTF-8 MB4 UCA 9.0 accent/case insensitive",
-      "supported_by": ["MySQL 8.0+"]
-    },
-    {
-      "name": "en_US.UTF-8",
-      "charset": "UTF-8",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "en_US",
-      "description": "PostgreSQL US English UTF-8",
-      "supported_by": ["PostgreSQL"]
-    },
-    {
-      "name": "C",
-      "charset": "UTF-8",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "C",
-      "description": "PostgreSQL C locale (byte order)",
-      "supported_by": ["PostgreSQL"]
-    },
-    {
-      "name": "POSIX",
-      "charset": "UTF-8",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "POSIX",
-      "description": "PostgreSQL POSIX locale",
-      "supported_by": ["PostgreSQL"]
-    },
-    {
-      "name": "latin1_general_ci",
-      "charset": "ISO-8859-1",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Latin-1 general case-insensitive",
-      "supported_by": ["MySQL", "MariaDB"]
-    },
-    {
-      "name": "latin1_bin",
-      "charset": "ISO-8859-1",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Latin-1 binary (case-sensitive)",
-      "supported_by": ["MySQL", "MariaDB"]
-    },
-    {
-      "name": "latin1_swedish_ci",
-      "charset": "ISO-8859-1",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "sv",
-      "description": "Latin-1 Swedish case-insensitive (MySQL default)",
-      "supported_by": ["MySQL", "MariaDB"]
-    },
-    {
-      "name": "ascii_general_ci",
+      "name": "ASCII",
       "charset": "ASCII",
-      "case_insensitive": true,
+      "case_insensitive": false,
       "accent_insensitive": false,
       "language": "",
-      "description": "ASCII general case-insensitive",
-      "supported_by": ["MySQL", "MariaDB"]
+      "description": "Firebird collation (English)"
     },
     {
       "name": "ascii_bin",
@@ -133,133 +50,54 @@
       "accent_insensitive": false,
       "language": "",
       "description": "ASCII binary (case-sensitive)",
-      "supported_by": ["MySQL", "MariaDB"]
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
     },
     {
-      "name": "SQL_Latin1_General_CP1_CI_AS",
-      "charset": "Windows-1252",
+      "name": "ascii_general_ci",
+      "charset": "ASCII",
       "case_insensitive": true,
       "accent_insensitive": false,
       "language": "",
-      "description": "SQL Server Latin1 case-insensitive, accent-sensitive",
-      "supported_by": ["SQL Server"]
+      "description": "ASCII general case-insensitive",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
     },
     {
-      "name": "Latin1_General_CI_AS",
-      "charset": "Windows-1252",
+      "name": "big5_bin",
+      "charset": "big5",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "big5_chinese_ci",
+      "charset": "big5",
       "case_insensitive": true,
       "accent_insensitive": false,
       "language": "",
-      "description": "SQL Server Latin1 case-insensitive, accent-sensitive (default)",
-      "supported_by": ["SQL Server"]
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
     },
     {
-      "name": "Latin1_General_CS_AS",
-      "charset": "Windows-1252",
+      "name": "BIG_5",
+      "charset": "BIG_5",
       "case_insensitive": false,
       "accent_insensitive": false,
       "language": "",
-      "description": "SQL Server Latin1 case-sensitive, accent-sensitive",
-      "supported_by": ["SQL Server"]
-    },
-    {
-      "name": "Latin1_General_BIN",
-      "charset": "Windows-1252",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "SQL Server Latin1 binary",
-      "supported_by": ["SQL Server"]
-    },
-    {
-      "name": "Chinese_PRC_CI_AS",
-      "charset": "GBK",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "zh_CN",
-      "description": "SQL Server Simplified Chinese case-insensitive",
-      "supported_by": ["SQL Server"]
-    },
-    {
-      "name": "Japanese_CI_AS",
-      "charset": "Shift_JIS",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "ja",
-      "description": "SQL Server Japanese case-insensitive",
-      "supported_by": ["SQL Server"]
-    },
-    {
-      "name": "Korean_Wansung_CI_AS",
-      "charset": "EUC-KR",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "ko",
-      "description": "SQL Server Korean case-insensitive",
-      "supported_by": ["SQL Server"]
-    },
-    {
-      "name": "UTF8_UNICODE",
-      "charset": "UTF-8",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Firebird UTF-8 Unicode",
-      "supported_by": ["Firebird"]
-    },
-    {
-      "name": "UTF8_UNICODE_CI",
-      "charset": "UTF-8",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Firebird UTF-8 Unicode case-insensitive",
-      "supported_by": ["Firebird"]
-    },
-    {
-      "name": "WIN1252_UNICODE",
-      "charset": "Windows-1252",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Firebird Windows-1252 Unicode",
-      "supported_by": ["Firebird"]
-    },
-    {
-      "name": "WIN1252_UNICODE_CI",
-      "charset": "Windows-1252",
-      "case_insensitive": true,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Firebird Windows-1252 Unicode case-insensitive",
-      "supported_by": ["Firebird"]
-    },
-    {
-      "name": "AL32UTF8",
-      "charset": "UTF-8",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Oracle 32-bit UTF-8 Unicode",
-      "supported_by": ["Oracle"]
-    },
-    {
-      "name": "WE8MSWIN1252",
-      "charset": "Windows-1252",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Oracle Western European Windows-1252",
-      "supported_by": ["Oracle"]
-    },
-    {
-      "name": "WE8ISO8859P1",
-      "charset": "ISO-8859-1",
-      "case_insensitive": false,
-      "accent_insensitive": false,
-      "language": "",
-      "description": "Oracle Western European ISO-8859-1",
-      "supported_by": ["Oracle"]
+      "description": "Firebird collation (Chinese, Vietnamese, Korean)"
     },
     {
       "name": "BINARY",
@@ -268,7 +106,2625 @@
       "accent_insensitive": false,
       "language": "",
       "description": "Binary comparison (byte-by-byte)",
-      "supported_by": ["MySQL", "PostgreSQL", "SQL Server", "Oracle", "Firebird"]
+      "supported_by": [
+        "MySQL",
+        "PostgreSQL",
+        "SQL Server",
+        "Oracle",
+        "Firebird",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "BS_BA",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Bosnian)"
+    },
+    {
+      "name": "C",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "C",
+      "description": "PostgreSQL C locale (byte order); PostgreSQL system locale collation; PostgreSQL default collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "C.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "Chinese_PRC_CI_AS",
+      "charset": "GBK",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "zh_CN",
+      "description": "SQL Server Simplified Chinese case-insensitive",
+      "supported_by": [
+        "SQL Server"
+      ]
+    },
+    {
+      "name": "cp1250_bin",
+      "charset": "cp1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1250_croatian_ci",
+      "charset": "cp1250",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1250_czech_cs",
+      "charset": "cp1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1250_general_ci",
+      "charset": "cp1250",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1250_polish_ci",
+      "charset": "cp1250",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1251_bin",
+      "charset": "cp1251",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1251_bulgarian_ci",
+      "charset": "cp1251",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1251_general_ci",
+      "charset": "cp1251",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1251_general_cs",
+      "charset": "cp1251",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1251_ukrainian_ci",
+      "charset": "cp1251",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1256_bin",
+      "charset": "cp1256",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1256_general_ci",
+      "charset": "cp1256",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1257_bin",
+      "charset": "cp1257",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1257_general_ci",
+      "charset": "cp1257",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1257_lithuanian_ci",
+      "charset": "cp1257",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp850_bin",
+      "charset": "cp850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp850_general_ci",
+      "charset": "cp850",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp852_bin",
+      "charset": "cp852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp852_general_ci",
+      "charset": "cp852",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp866_bin",
+      "charset": "cp866",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp866_general_ci",
+      "charset": "cp866",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp932_bin",
+      "charset": "cp932",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp932_japanese_ci",
+      "charset": "cp932",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "CP943C",
+      "charset": "CP943C",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Japanese)"
+    },
+    {
+      "name": "CP943C_UNICODE",
+      "charset": "CP943C",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Japanese)"
+    },
+    {
+      "name": "CS_CZ",
+      "charset": "ISO8859_2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Czech)"
+    },
+    {
+      "name": "CYRL",
+      "charset": "CYRL",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Russian)"
+    },
+    {
+      "name": "DA_DA",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Danish)"
+    },
+    {
+      "name": "DB_CSY",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Czech dBase)"
+    },
+    {
+      "name": "DB_DAN865",
+      "charset": "DOS865",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Danish dBase)"
+    },
+    {
+      "name": "DB_DEU437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (German dBase)"
+    },
+    {
+      "name": "DB_DEU850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (German)"
+    },
+    {
+      "name": "DB_ESP437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Spanish dBase)"
+    },
+    {
+      "name": "DB_ESP850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Spanish)"
+    },
+    {
+      "name": "DB_FIN437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Finnish dBase)"
+    },
+    {
+      "name": "DB_FRA437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French dBase)"
+    },
+    {
+      "name": "DB_FRA850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French)"
+    },
+    {
+      "name": "DB_FRC850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French-Canada)"
+    },
+    {
+      "name": "DB_FRC863",
+      "charset": "DOS863",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French dBase-Canada)"
+    },
+    {
+      "name": "DB_ITA437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Italian dBase)"
+    },
+    {
+      "name": "DB_ITA850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Italian)"
+    },
+    {
+      "name": "DB_NLD437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Dutch dBase)"
+    },
+    {
+      "name": "DB_NLD850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Dutch)"
+    },
+    {
+      "name": "DB_NOR865",
+      "charset": "DOS865",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Norwegian dBase)"
+    },
+    {
+      "name": "DB_PLK",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Polish dBase)"
+    },
+    {
+      "name": "DB_PTB850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Portuguese-Brazil)"
+    },
+    {
+      "name": "DB_PTG860",
+      "charset": "DOS860",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Portuguese dBase)"
+    },
+    {
+      "name": "DB_RUS",
+      "charset": "CYRL",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Russian dBase)"
+    },
+    {
+      "name": "DB_SLO",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Slovene dBase)"
+    },
+    {
+      "name": "DB_SVE437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Swedish dBase)"
+    },
+    {
+      "name": "DB_SVE850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Swedish)"
+    },
+    {
+      "name": "DB_TRK",
+      "charset": "DOS857",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Turkish dBase)"
+    },
+    {
+      "name": "DB_UK437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (English (Great Britain) dBase)"
+    },
+    {
+      "name": "DB_UK850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (English-Great Britain)"
+    },
+    {
+      "name": "DB_US437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (U.S. English dBase)"
+    },
+    {
+      "name": "DB_US850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (U.S. English)"
+    },
+    {
+      "name": "DE_DE",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (German)"
+    },
+    {
+      "name": "dec8_bin",
+      "charset": "dec8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "dec8_swedish_ci",
+      "charset": "dec8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "default",
+      "charset": "ASCII",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL default collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "DOS437",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (U.S. English)"
+    },
+    {
+      "name": "DOS737",
+      "charset": "DOS737",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Greek)"
+    },
+    {
+      "name": "DOS775",
+      "charset": "DOS775",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Baltic)"
+    },
+    {
+      "name": "DOS850",
+      "charset": "DOS850",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin I (no Euro symbol))"
+    },
+    {
+      "name": "DOS852",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin II)"
+    },
+    {
+      "name": "DOS857",
+      "charset": "DOS857",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Turkish)"
+    },
+    {
+      "name": "DOS858",
+      "charset": "DOS858",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin I (with Euro symbol))"
+    },
+    {
+      "name": "DOS860",
+      "charset": "DOS860",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Portuguese)"
+    },
+    {
+      "name": "DOS861",
+      "charset": "DOS861",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Icelandic)"
+    },
+    {
+      "name": "DOS862",
+      "charset": "DOS862",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Hebrew)"
+    },
+    {
+      "name": "DOS863",
+      "charset": "DOS863",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French-Canada)"
+    },
+    {
+      "name": "DOS864",
+      "charset": "DOS864",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Arabic)"
+    },
+    {
+      "name": "DOS865",
+      "charset": "DOS865",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Scandinavian)"
+    },
+    {
+      "name": "DOS866",
+      "charset": "DOS866",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Russian)"
+    },
+    {
+      "name": "DOS869",
+      "charset": "DOS869",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Modern Greek)"
+    },
+    {
+      "name": "DU_NL",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Dutch)"
+    },
+    {
+      "name": "en_AG",
+      "charset": "ASCII",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_AG.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_AU.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_BW.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_CA.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_DK.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_GB.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_HK.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_IE.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_IL",
+      "charset": "ASCII",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_IL.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_IN",
+      "charset": "ASCII",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_IN.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_NG",
+      "charset": "ASCII",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_NG.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_NZ.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_PH.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_SG.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "EN_UK",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (English-Great Britain)"
+    },
+    {
+      "name": "EN_US",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (U.S. English)"
+    },
+    {
+      "name": "en_US.UTF-8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "en_US",
+      "description": "PostgreSQL US English UTF-8",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_ZA.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_ZM",
+      "charset": "ASCII",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_ZM.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "en_ZW.utf8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "PostgreSQL system locale collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "ES_ES",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Spanish)"
+    },
+    {
+      "name": "ES_ES_CI_AI",
+      "charset": "ISO8859_1",
+      "case_insensitive": true,
+      "accent_insensitive": true,
+      "language": "",
+      "description": "Firebird collation (Spanish - case insensitive and +)"
+    },
+    {
+      "name": "EUCJ_0208",
+      "charset": "EUCJ_0208",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Japanese EUC)"
+    },
+    {
+      "name": "eucjpms_bin",
+      "charset": "eucjpms",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "eucjpms_japanese_ci",
+      "charset": "eucjpms",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "euckr_bin",
+      "charset": "euckr",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "euckr_korean_ci",
+      "charset": "euckr",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "FI_FI",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Finnish)"
+    },
+    {
+      "name": "FR_CA",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French-Canada)"
+    },
+    {
+      "name": "FR_CA_CI_AI",
+      "charset": "ISO8859_1",
+      "case_insensitive": true,
+      "accent_insensitive": true,
+      "language": "",
+      "description": "Firebird collation (French-Canada - case insensitive)"
+    },
+    {
+      "name": "FR_FR",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French)"
+    },
+    {
+      "name": "FR_FR_CI_AI",
+      "charset": "ISO8859_1",
+      "case_insensitive": true,
+      "accent_insensitive": true,
+      "language": "",
+      "description": "Firebird collation (French - case insensitive + accent)"
+    },
+    {
+      "name": "GB18030",
+      "charset": "GB18030",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Chinese)"
+    },
+    {
+      "name": "gb18030_bin",
+      "charset": "gb18030",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "gb18030_chinese_ci",
+      "charset": "gb18030",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "GB18030_UNICODE",
+      "charset": "GB18030",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Chinese)"
+    },
+    {
+      "name": "gb2312_bin",
+      "charset": "gb2312",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "gb2312_chinese_ci",
+      "charset": "gb2312",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "GB_2312",
+      "charset": "GB_2312",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Simplified Chinese (Hong Kong,)"
+    },
+    {
+      "name": "GBK",
+      "charset": "GBK",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Chinese)"
+    },
+    {
+      "name": "gbk_bin",
+      "charset": "gbk",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "gbk_chinese_ci",
+      "charset": "gbk",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "GBK_UNICODE",
+      "charset": "GBK",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Chinese)"
+    },
+    {
+      "name": "geostd8_bin",
+      "charset": "geostd8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "geostd8_general_ci",
+      "charset": "geostd8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "greek_bin",
+      "charset": "greek",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "greek_general_ci",
+      "charset": "greek",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "hebrew_bin",
+      "charset": "hebrew",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "hebrew_general_ci",
+      "charset": "hebrew",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "hp8_bin",
+      "charset": "hp8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "hp8_english_ci",
+      "charset": "hp8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "IS_IS",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Icelandic)"
+    },
+    {
+      "name": "ISO8859_1",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin I)"
+    },
+    {
+      "name": "ISO8859_13",
+      "charset": "ISO8859_13",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin 7 - Baltic)"
+    },
+    {
+      "name": "ISO8859_2",
+      "charset": "ISO8859_2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin 2 - Central Europe)"
+    },
+    {
+      "name": "ISO8859_3",
+      "charset": "ISO8859_3",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin 3 - Southern Europe (Malta,)"
+    },
+    {
+      "name": "ISO8859_4",
+      "charset": "ISO8859_4",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin 4 - Northern Europe)"
+    },
+    {
+      "name": "ISO8859_5",
+      "charset": "ISO8859_5",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Cyrillic (Russian))"
+    },
+    {
+      "name": "ISO8859_6",
+      "charset": "ISO8859_6",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Arabic)"
+    },
+    {
+      "name": "ISO8859_7",
+      "charset": "ISO8859_7",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Greek)"
+    },
+    {
+      "name": "ISO8859_8",
+      "charset": "ISO8859_8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Hebrew)"
+    },
+    {
+      "name": "ISO8859_9",
+      "charset": "ISO8859_9",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Latin 5)"
+    },
+    {
+      "name": "ISO_HUN",
+      "charset": "ISO8859_2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Hungarian - case insensitive,)"
+    },
+    {
+      "name": "ISO_PLK",
+      "charset": "ISO8859_2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Polish)"
+    },
+    {
+      "name": "IT_IT",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Italian)"
+    },
+    {
+      "name": "Japanese_CI_AS",
+      "charset": "Shift_JIS",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "ja",
+      "description": "SQL Server Japanese case-insensitive",
+      "supported_by": [
+        "SQL Server"
+      ]
+    },
+    {
+      "name": "keybcs2_bin",
+      "charset": "keybcs2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "keybcs2_general_ci",
+      "charset": "keybcs2",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "KOI8R",
+      "charset": "KOI8R",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Russian - dictionary ordering)"
+    },
+    {
+      "name": "koi8r_bin",
+      "charset": "KOI8-R",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "koi8r_general_ci",
+      "charset": "KOI8-R",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "KOI8R_RU",
+      "charset": "KOI8R",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Russian)"
+    },
+    {
+      "name": "KOI8U",
+      "charset": "KOI8U",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Ukrainian - dictionary ordering)"
+    },
+    {
+      "name": "koi8u_bin",
+      "charset": "KOI8-U",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "koi8u_general_ci",
+      "charset": "KOI8-U",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "KOI8U_UA",
+      "charset": "KOI8U",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Ukrainian)"
+    },
+    {
+      "name": "Korean_Wansung_CI_AS",
+      "charset": "EUC-KR",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "ko",
+      "description": "SQL Server Korean case-insensitive",
+      "supported_by": [
+        "SQL Server"
+      ]
+    },
+    {
+      "name": "KSC_5601",
+      "charset": "KSC_5601",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Korean)"
+    },
+    {
+      "name": "KSC_DICTIONARY",
+      "charset": "KSC_5601",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Korean - dictionary sort order)"
+    },
+    {
+      "name": "latin1_bin",
+      "charset": "ISO-8859-1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Latin-1 binary (case-sensitive)",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin1_danish_ci",
+      "charset": "latin1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "Latin1_General_BIN",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 binary",
+      "supported_by": [
+        "SQL Server"
+      ]
+    },
+    {
+      "name": "latin1_general_ci",
+      "charset": "ISO-8859-1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Latin-1 general case-insensitive",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "Latin1_General_CI_AS",
+      "charset": "Windows-1252",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 case-insensitive, accent-sensitive (default)",
+      "supported_by": [
+        "SQL Server"
+      ]
+    },
+    {
+      "name": "latin1_general_cs",
+      "charset": "latin1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "Latin1_General_CS_AS",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 case-sensitive, accent-sensitive",
+      "supported_by": [
+        "SQL Server"
+      ]
+    },
+    {
+      "name": "latin1_german1_ci",
+      "charset": "latin1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin1_german2_ci",
+      "charset": "latin1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin1_spanish_ci",
+      "charset": "latin1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin1_swedish_ci",
+      "charset": "ISO-8859-1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "sv",
+      "description": "Latin-1 Swedish case-insensitive (MySQL default)",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin2_bin",
+      "charset": "latin2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin2_croatian_ci",
+      "charset": "latin2",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin2_czech_cs",
+      "charset": "latin2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin2_general_ci",
+      "charset": "latin2",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin2_hungarian_ci",
+      "charset": "latin2",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin5_bin",
+      "charset": "latin5",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin5_turkish_ci",
+      "charset": "latin5",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin7_bin",
+      "charset": "latin7",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin7_estonian_cs",
+      "charset": "latin7",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin7_general_ci",
+      "charset": "latin7",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin7_general_cs",
+      "charset": "latin7",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "LT_LT",
+      "charset": "ISO8859_13",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Lithuanian)"
+    },
+    {
+      "name": "macce_bin",
+      "charset": "macce",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "macce_general_ci",
+      "charset": "macce",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "macroman_bin",
+      "charset": "macroman",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "macroman_general_ci",
+      "charset": "macroman",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "NEXT",
+      "charset": "NEXT",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Coding NeXTSTEP)"
+    },
+    {
+      "name": "NO_NO",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Norwegian)"
+    },
+    {
+      "name": "NONE",
+      "charset": "NONE",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Neutral code page. Translation to)"
+    },
+    {
+      "name": "NXT_DEU",
+      "charset": "NEXT",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (German)"
+    },
+    {
+      "name": "NXT_ESP",
+      "charset": "NEXT",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Spanish)"
+    },
+    {
+      "name": "NXT_FRA",
+      "charset": "NEXT",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (French)"
+    },
+    {
+      "name": "NXT_ITA",
+      "charset": "NEXT",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Italian)"
+    },
+    {
+      "name": "NXT_US",
+      "charset": "NEXT",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (U.S. English)"
+    },
+    {
+      "name": "OCTETS",
+      "charset": "OCTETS",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Binary character encoding)"
+    },
+    {
+      "name": "PDOX_ASCII",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Code page Paradox-ASCII)"
+    },
+    {
+      "name": "PDOX_CSY",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Czech Paradox)"
+    },
+    {
+      "name": "PDOX_CYRL",
+      "charset": "CYRL",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Russian Paradox)"
+    },
+    {
+      "name": "PDOX_HUN",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Hungarian Paradox)"
+    },
+    {
+      "name": "PDOX_INTL",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (International English Paradox)"
+    },
+    {
+      "name": "PDOX_ISL",
+      "charset": "DOS861",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Icelandic Paradox)"
+    },
+    {
+      "name": "PDOX_NORDAN4",
+      "charset": "DOS865",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Paradox Norway and Denmark)"
+    },
+    {
+      "name": "PDOX_PLK",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Polish Paradox)"
+    },
+    {
+      "name": "PDOX_SLO",
+      "charset": "DOS852",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Slovene Paradox)"
+    },
+    {
+      "name": "PDOX_SWEDFIN",
+      "charset": "DOS437",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Swedish / Finnish Paradox)"
+    },
+    {
+      "name": "POSIX",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "POSIX",
+      "description": "PostgreSQL POSIX locale; PostgreSQL system locale collation; PostgreSQL default collation",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "PT_BR",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Portuguese-Brazil)"
+    },
+    {
+      "name": "PT_PT",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Portuguese)"
+    },
+    {
+      "name": "PXW_CSY",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Czech)"
+    },
+    {
+      "name": "PXW_CYRL",
+      "charset": "WIN1251",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Paradox Cyrillic (Russian))"
+    },
+    {
+      "name": "PXW_GREEK",
+      "charset": "WIN1253",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Paradox Greek)"
+    },
+    {
+      "name": "PXW_HUN",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Hungarian - case insensitive,)"
+    },
+    {
+      "name": "PXW_HUNDC",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Hungarian - dictionary ordering)"
+    },
+    {
+      "name": "PXW_INTL",
+      "charset": "WIN1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (English International)"
+    },
+    {
+      "name": "PXW_INTL850",
+      "charset": "WIN1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Paradox multilingual Latin I)"
+    },
+    {
+      "name": "PXW_NORDAN4",
+      "charset": "WIN1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Norwegian and Danish)"
+    },
+    {
+      "name": "PXW_PLK",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Polish)"
+    },
+    {
+      "name": "PXW_SLOV",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Slovenian)"
+    },
+    {
+      "name": "PXW_SPAN",
+      "charset": "WIN1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Paradox Spanish)"
+    },
+    {
+      "name": "PXW_SWEDFIN",
+      "charset": "WIN1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Swedish and Finnish)"
+    },
+    {
+      "name": "SJIS_0208",
+      "charset": "SJIS_0208",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Japanese)"
+    },
+    {
+      "name": "sjis_bin",
+      "charset": "sjis",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "sjis_japanese_ci",
+      "charset": "sjis",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "SQL_Latin1_General_CP1_CI_AS",
+      "charset": "Windows-1252",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 case-insensitive, accent-sensitive",
+      "supported_by": [
+        "SQL Server"
+      ]
+    },
+    {
+      "name": "SV_SV",
+      "charset": "ISO8859_1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Swedish)"
+    },
+    {
+      "name": "swe7_bin",
+      "charset": "swe7",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "swe7_swedish_ci",
+      "charset": "swe7",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "TIS620",
+      "charset": "TIS620",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Thai)"
+    },
+    {
+      "name": "tis620_bin",
+      "charset": "tis620",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "tis620_thai_ci",
+      "charset": "tis620",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "TIS620_UNICODE",
+      "charset": "TIS620",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Thai)"
+    },
+    {
+      "name": "ucs2_bin",
+      "charset": "ucs2",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "ucs2_general_ci",
+      "charset": "ucs2",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "UCS_BASIC",
+      "charset": "UTF8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Any language that is supported in)"
+    },
+    {
+      "name": "ujis_bin",
+      "charset": "ujis",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "ujis_japanese_ci",
+      "charset": "ujis",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "UNICODE",
+      "charset": "UTF8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Any language that is supported in)"
+    },
+    {
+      "name": "UNICODE_CI",
+      "charset": "UTF8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Any language that is supported in)"
+    },
+    {
+      "name": "UNICODE_CI_AI",
+      "charset": "UTF8",
+      "case_insensitive": true,
+      "accent_insensitive": true,
+      "language": "",
+      "description": "Firebird collation (Any language that is supported in)"
+    },
+    {
+      "name": "UNICODE_FSS",
+      "charset": "UNICODE_FSS",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (All English)"
+    },
+    {
+      "name": "UTF8",
+      "charset": "UTF8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Any language that is supported in)"
+    },
+    {
+      "name": "utf8_bin",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 Unicode binary (case-sensitive)",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "utf8_general_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 Unicode general case-insensitive",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "utf8_tolower_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "UTF8_UNICODE",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird UTF-8 Unicode",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "UTF8_UNICODE_CI",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird UTF-8 Unicode case-insensitive",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "utf8mb4_0900_ai_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": true,
+      "language": "",
+      "description": "UTF-8 MB4 UCA 9.0 accent/case insensitive",
+      "supported_by": [
+        "MySQL 8.0+"
+      ]
+    },
+    {
+      "name": "utf8mb4_bin",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 MB4 binary (case-sensitive)",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "utf8mb4_general_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 MB4 general case-insensitive",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "utf8mb4_unicode_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 MB4 Unicode case-insensitive (UCA-based)",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "WE8ISO8859P1",
+      "charset": "ISO-8859-1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Oracle Western European ISO-8859-1",
+      "supported_by": [
+        "Oracle"
+      ]
+    },
+    {
+      "name": "WE8MSWIN1252",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Oracle Western European Windows-1252",
+      "supported_by": [
+        "Oracle"
+      ]
+    },
+    {
+      "name": "WIN1250",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (ANSI - Central Europe)"
+    },
+    {
+      "name": "WIN1251",
+      "charset": "WIN1251",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (ANSI Cyrillic)"
+    },
+    {
+      "name": "WIN1251_UA",
+      "charset": "WIN1251",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Ukrainian)"
+    },
+    {
+      "name": "WIN1252",
+      "charset": "WIN1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (ANSI - Latin I)"
+    },
+    {
+      "name": "WIN1252_UNICODE",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird Windows-1252 Unicode",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "WIN1252_UNICODE_CI",
+      "charset": "Windows-1252",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird Windows-1252 Unicode case-insensitive",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "WIN1253",
+      "charset": "WIN1253",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (ANSI Greek)"
+    },
+    {
+      "name": "WIN_CZ",
+      "charset": "WIN1250",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Czech)"
+    },
+    {
+      "name": "WIN_CZ_CI_AI",
+      "charset": "WIN1250",
+      "case_insensitive": true,
+      "accent_insensitive": true,
+      "language": "",
+      "description": "Firebird collation (Czech - Case insensitive and)"
+    },
+    {
+      "name": "WIN_PTBR",
+      "charset": "WIN1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird collation (Portuguese - Brazil)"
     }
   ]
 }

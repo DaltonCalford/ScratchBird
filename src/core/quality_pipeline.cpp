@@ -90,6 +90,8 @@ namespace scratchbird::core
                     break;
                 case DataType::FLOAT64:
                 case DataType::DECIMAL:
+                case DataType::DECFLOAT16:
+                case DataType::DECFLOAT34:
                     if (value.is_number())
                     {
                         return TypedValue::makeFloat64(value.get<double>());

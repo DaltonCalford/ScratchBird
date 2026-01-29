@@ -7,6 +7,7 @@
 #include <optional>
 #include <variant>
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/decfloat.h"
 #include "scratchbird/core/range.h"
 #include "scratchbird/core/network.h"
 #include "scratchbird/core/tsvector.h"
@@ -70,6 +71,8 @@ namespace scratchbird::core
         static TypedValue makeBytea(const std::vector<uint8_t>& value);
         static TypedValue makeXML(const std::string& value);
         static TypedValue makeDecimal(int128_t unscaled_value, uint8_t precision, uint8_t scale);
+        static TypedValue makeDecfloat(const DecFloat& value);
+        static TypedValue makeDecfloat(DataType type, const std::vector<uint8_t>& bytes);
 
         // Factory methods for spatial types
         static TypedValue makePoint(const Point& value);
@@ -187,6 +190,7 @@ namespace scratchbird::core
         int128_t getDecimalUnscaled() const { return decimal_unscaled_; }
         uint8_t getDecimalPrecision() const { return decimal_precision_; }
         uint8_t getDecimalScale() const { return decimal_scale_; }
+        const std::vector<uint8_t>& getDecfloatBytes() const { return binary_data_; }
 
         // Utility methods
         std::string toString() const;
@@ -209,6 +213,10 @@ namespace scratchbird::core
                 case DataType::BOOLEAN: return data_.bool_val ? 1 : 0;
                 case DataType::FLOAT32: return static_cast<int64_t>(data_.float32_val);
                 case DataType::FLOAT64: return static_cast<int64_t>(data_.float64_val);
+                case DataType::DECIMAL:
+                case DataType::DECFLOAT16:
+                case DataType::DECFLOAT34:
+                    return std::stoll(toString());
                 default: return getInt64();
             }
         }
@@ -228,6 +236,10 @@ namespace scratchbird::core
                 case DataType::UINT128: return static_cast<int32_t>(getUInt128());
                 case DataType::FLOAT32: return static_cast<int32_t>(data_.float32_val);
                 case DataType::FLOAT64: return static_cast<int32_t>(data_.float64_val);
+                case DataType::DECIMAL:
+                case DataType::DECFLOAT16:
+                case DataType::DECFLOAT34:
+                    return static_cast<int32_t>(std::stoll(toString()));
                 default: return getInt32();
             }
         }
@@ -246,7 +258,11 @@ namespace scratchbird::core
                 case DataType::UINT128: return static_cast<double>(getUInt128());
                 case DataType::FLOAT32: return static_cast<double>(data_.float32_val);
                 case DataType::FLOAT64: return data_.float64_val;
-                case DataType::DECIMAL: return std::stod(toString());
+                case DataType::DECIMAL:
+                case DataType::DECFLOAT16:
+                case DataType::DECFLOAT34:
+                case DataType::MONEY:
+                    return std::stod(toString());
                 default: return getFloat64();
             }
         }

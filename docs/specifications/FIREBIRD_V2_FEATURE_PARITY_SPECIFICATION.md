@@ -515,6 +515,25 @@ This section documents features that are **ACCEPTED BY PARSERS** but have **NO A
 
 ---
 
+### 0. SBLR type/literal coverage gaps (Firebird parity)
+
+**Status:** ❌ **BLOCKED (SBLR markers/literals missing)**
+
+Firebird-specific types cannot be fully represented in SBLR until the missing
+type markers and literal opcodes are added:
+
+- **DECFLOAT(16/34)**: requires new DataType and SBLR type markers.
+- **TIME WITH TIME ZONE / TIMESTAMP WITH TIME ZONE**: requires SBLR type
+  markers or timezone flags in the type payload.
+- **Typed literals** for temporal + decimal types are missing; parser must
+  currently rely on string + CAST.
+
+**References:**
+- `docs/findings/SBLR_TYPE_OPCODE_GAPS.md`
+- `docs/planning/SBLR_TYPE_OPCODE_REMEDIATION_PLAN.md`
+
+---
+
 ### 1. TEMPORARY TABLES (CRITICAL - All Parsers)
 
 **Status:** ❌ **PARSED BUT NOT IMPLEMENTED**
@@ -939,6 +958,7 @@ CREATE TABLE test (id INT)
 
 | Feature | Parsers Affected | AST Field | Bytecode | Executor | Priority |
 |---------|-----------------|-----------|----------|----------|----------|
+| **SBLR type/literal coverage (DECFLOAT, TIME/TIMESTAMP WITH TZ)** | Firebird | N/A | ❌ | ❌ | ❌ **CRITICAL** |
 | **TEMPORARY TABLES** | All 4 | ✅ | ❌ | ❌ | ❌ **CRITICAL** |
 | **ON COMMIT clause** | Firebird | ❌ | ❌ | ❌ | ❌ **CRITICAL** |
 | **UNLOGGED TABLES** | V2, PostgreSQL | ✅ | ❌ | ❌ | 🟡 MEDIUM |

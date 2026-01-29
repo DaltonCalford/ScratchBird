@@ -197,6 +197,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_client_server_integration\.cpp$"
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_gc\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_network\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_shadow_index_rebuild\.cpp$")  # Standalone main()
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_concurrent_page_access\.cpp$")  # Standalone main()
 
 # Integration tests
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rollup_simple\.cpp$")  # Root-level test with API issues

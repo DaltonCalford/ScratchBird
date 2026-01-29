@@ -36,6 +36,17 @@ Status: Draft (Alpha). This document defines the canonical on-disk encoding for 
   - precision > 38  -> error (unsupported)
 - Scale and precision come from column metadata (TypeInfo/ColumnInfo). No scale bytes are stored.
 
+### DECFLOAT (decimal floating)
+- Stored as IEEE 754-2008 decimal floating formats:
+  - DECFLOAT(16) -> Decimal64 (8 bytes)
+  - DECFLOAT(34) -> Decimal128 (16 bytes)
+- Payload is the raw IEEE decimal encoding in little-endian byte order.
+- Values outside the target range raise NUMERIC_VALUE_OUT_OF_RANGE.
+- NaN/Infinity are rejected (INVALID_TEXT_REPRESENTATION) unless explicitly
+  enabled by a future session/config flag.
+- Rounding and trap behavior follow session settings (see SET DECFLOAT in the
+  Firebird compatibility spec).
+
 ### MONEY
 - Stored as int64 (fixed 8 bytes), scale is implied by MONEY semantics.
 
@@ -75,7 +86,7 @@ Status: Draft (Alpha). This document defines the canonical on-disk encoding for 
 ## CAST/TRY_CAST Rules
 
 ### Supported conversions (minimum)
-- string -> numeric: INT*, UINT*, FLOAT*, DECIMAL, MONEY
+- string -> numeric: INT*, UINT*, FLOAT*, DECIMAL, MONEY, DECFLOAT
 - numeric -> string (VARCHAR/TEXT)
 - string -> temporal: DATE/TIME/TIMESTAMP (with optional timezone offset)
 - temporal -> string (uses stored offset or UTC)
@@ -91,6 +102,7 @@ For each type below, any string that matches the canonical format MUST be accept
 - Integer types also accept hexadecimal literal form (`0x` or `0X` + hex digits) for parsing; this is not the default formatting unless `USING hexadecimal` is specified.
 - Floating types: base-10 decimal or exponent form (per `strtod`), finite only. NaN/Inf are rejected.
 - DECIMAL: optional sign, digits, optional decimal point; scale/precision enforced by target type.
+- DECFLOAT: decimal or scientific notation; precision 16 or 34 is enforced by the target type.
 - MONEY: decimal string with scale 4 (extra fractional digits are rounded per DECIMAL rules).
 - BOOLEAN: `true`/`false`/`t`/`f`/`1`/`0` (case-insensitive, ASCII whitespace allowed).
 - UUID: canonical `8-4-4-4-12` hex is the default; parser must also accept raw 32-hex (no separators), braces, and `urn:uuid:` prefixes.

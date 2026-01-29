@@ -1,16 +1,7 @@
 /**
  * sb_charset_loader - ScratchBird Character Set Loader
  *
- * ⚠️ DEPRECATED - 2025-11-24
- *
- * This tool has a linking issue with OpenSSL (RAND_bytes) and is no longer maintained.
- * Character set data is now loaded automatically during database initialization.
- *
- * DO NOT USE - Kept for historical reference only.
- *
- * NOTE: This file does not compile due to missing OpenSSL linkage in CMakeLists.txt.
- * The tool called statistics_manager which uses RAND_bytes, but sb_charset_loader
- * target doesn't link against OpenSSL crypto library (-lcrypto).
+ * Loader tool for character sets and collations.
  *
  * Original Purpose:
  * Command-line tool to load character set and collation data into the database catalog.
@@ -41,6 +32,7 @@
 #include "scratchbird/core/charset_parser.h"
 #include "scratchbird/core/error_context.h"
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <cstring>
 
@@ -60,6 +52,18 @@ void printUsage(const char *program_name)
     std::cout << "  " << program_name << " /data/mydb.sb --all\n";
     std::cout << "  " << program_name << " /data/mydb.sb --json resources/charsets/charsets.json\n";
     std::cout << "  " << program_name << " /data/mydb.sb --json resources/charsets/charsets.json --collations resources/collations/collations.json\n";
+}
+
+std::string readI18nVersion()
+{
+    std::ifstream file("resources/i18n/version");
+    if (!file.is_open())
+    {
+        return "";
+    }
+    std::string version;
+    std::getline(file, version);
+    return version;
 }
 
 int main(int argc, char **argv)
@@ -225,6 +229,16 @@ int main(int argc, char **argv)
         }
 
         std::cout << "Loading complete!\n";
+    }
+
+    std::string i18n_version = readI18nVersion();
+    if (!i18n_version.empty())
+    {
+        Status vstatus = catalog->setI18nResourceVersion(i18n_version, &ctx);
+        if (vstatus != Status::OK)
+        {
+            std::cerr << "Warning: Failed to record i18n resource version: " << ctx.message << "\n";
+        }
     }
 
     // Close database

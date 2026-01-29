@@ -7639,14 +7639,25 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             include_column_ids.push_back(col_info.column_id);
         }
 
-        // Allocate root page for index data
+        uint16_t resolved_tablespace_id = tablespace_id;
+        if (resolved_tablespace_id == 0)
+        {
+            auto table_it = table_cache_.find(table_id);
+            if (table_it != table_cache_.end())
+            {
+                resolved_tablespace_id = table_it->second.tablespace_id;
+            }
+        }
+
+        // Allocate root page for index data (tablespace-aware GPID)
         PageManager *pm = db_->page_manager();
-        uint32_t root_page;
-        Status status = pm->allocatePage(root_page, ctx);
+        GPID root_gpid = 0;
+        Status status = pm->allocatePageInTablespace(resolved_tablespace_id, &root_gpid, ctx);
         if (status != Status::OK)
         {
             return status;
         }
+        uint32_t root_page = static_cast<uint32_t>(getPageNumber(root_gpid));
 
         // Create index info
         IndexInfo index;
@@ -7658,8 +7669,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             return ctx ? ctx->code : Status::PAGE_CORRUPT;
         }
-        index.root_gpid = makeGPID(tablespace_id, root_page);
-        index.tablespace_id = tablespace_id;
+        index.root_gpid = root_gpid;
+        index.tablespace_id = resolved_tablespace_id;
         index.index_type = index_type;
         index.is_unique = is_unique;
         index.column_ids = column_ids;
@@ -7699,7 +7710,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             Status toast_status = storeStringInToast(blob, xmin, index.expression_oid, ctx);
             if (toast_status != Status::OK)
             {
-                pm->freePage(root_page, ctx);
+                pm->freePageGlobal(root_gpid, ctx);
                 return toast_status;
             }
         }
@@ -7711,7 +7722,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             Status toast_status = storeStringInToast(blob, xmin, index.predicate_oid, ctx);
             if (toast_status != Status::OK)
             {
-                pm->freePage(root_page, ctx);
+                pm->freePageGlobal(root_gpid, ctx);
                 return toast_status;
             }
         }
@@ -7720,7 +7731,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = writeIndexRecord(index, ctx);
         if (status != Status::OK)
         {
-            pm->freePage(root_page, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
             return status;
         }
 
@@ -7752,7 +7763,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             // Rollback: Remove catalog entry
             index_cache_.erase(index.index_id);
-            pm->freePage(root_page, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
             return status;
         }
 
@@ -7778,7 +7789,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 index_object_cache_.erase(index.index_id);
             }
             index_cache_.erase(index.index_id);
-            pm->freePage(root_page, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
             LOG_ERROR(CATALOG, "Failed to create dependency for index");
             return status;
         }
@@ -7796,9 +7807,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         auto it = index_cache_.find(index_id);
         if (it == index_cache_.end())
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
                               ("Index not found: " + index_id.toString()).c_str());
-            return Status::INVALID_ARGUMENT;
+            return Status::NOT_FOUND;
         }
 
         info = it->second;
@@ -7821,9 +7832,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
                           ("Index not found: " + index_name).c_str());
-        return Status::INVALID_ARGUMENT;
+        return Status::NOT_FOUND;
     }
 
     auto CatalogManager::listIndexesForTable(const ID &table_id, std::vector<IndexInfo> &indexes,
@@ -9434,6 +9445,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
+        auto filter = [](const TimezoneRecord &rec)
+        {
+            return rec.is_valid == 1 && rec.timezone_id != 0 && rec.timezone_id != 65535;
+        };
+
         auto converter = [](const TimezoneRecord &rec, TimezoneInfo &info)
         {
             info.timezone_id = rec.timezone_id;
@@ -9454,8 +9470,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.last_modified_time = rec.last_modified_time;
         };
 
-        return scanHeapPage<TimezoneRecord, TimezoneInfo>(timezones_table_page_, timezones,
-                                                          converter, ctx);
+        return scanHeapPageWithFilter<TimezoneRecord, TimezoneInfo>(timezones_table_page_,
+                                                                    timezones, filter, converter,
+                                                                    ctx);
     }
 
     auto CatalogManager::deleteTimezone(uint16_t timezone_id, ErrorContext *ctx) -> Status
@@ -9477,6 +9494,128 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         return updateRecordInHeapPage<TimezoneRecord>(timezones_table_page_, result.slot_index,
                                                       record, ctx);
+    }
+
+    auto CatalogManager::setTimezoneVersion(const std::string& version, ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        auto predicate = [](const TimezoneRecord& rec)
+        { return rec.timezone_id == 0 && rec.is_valid; };
+        auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
+
+        TimezoneRecord record{};
+        if (result.status == Status::OK)
+        {
+            record = result.record;
+        }
+
+        record.timezone_id = 0;
+        std::string name = "TZDATA_VERSION";
+        std::string version_trim = version;
+        if (version_trim.size() >= sizeof(record.abbreviation))
+        {
+            version_trim.resize(sizeof(record.abbreviation) - 1);
+        }
+        std::memset(record.name, 0, sizeof(record.name));
+        std::strncpy(record.name, name.c_str(), sizeof(record.name) - 1);
+        std::memset(record.abbreviation, 0, sizeof(record.abbreviation));
+        std::strncpy(record.abbreviation, version_trim.c_str(),
+                     sizeof(record.abbreviation) - 1);
+        record.std_offset_minutes = 0;
+        record.observes_dst = 0;
+        record.dst_offset_minutes = 0;
+        record.is_valid = 1;
+        if (record.created_time == 0)
+        {
+            record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+        }
+        record.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+        if (result.status == Status::OK)
+        {
+            return updateRecordInHeapPage<TimezoneRecord>(timezones_table_page_, result.slot_index,
+                                                          record, ctx);
+        }
+
+        return writeRecordToHeapPage(timezones_table_page_, record, ctx);
+    }
+
+    auto CatalogManager::getTimezoneVersion(std::string& version_out, ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        auto predicate = [](const TimezoneRecord& rec)
+        { return rec.timezone_id == 0 && rec.is_valid; };
+        auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            return Status::NOT_FOUND;
+        }
+        version_out = std::string(result.record.abbreviation);
+        return Status::OK;
+    }
+
+    auto CatalogManager::setI18nResourceVersion(const std::string& version, ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        constexpr uint16_t kI18nVersionId = 65535;
+        auto predicate = [kI18nVersionId](const TimezoneRecord& rec)
+        { return rec.timezone_id == kI18nVersionId && rec.is_valid; };
+        auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
+
+        TimezoneRecord record{};
+        if (result.status == Status::OK)
+        {
+            record = result.record;
+        }
+
+        record.timezone_id = kI18nVersionId;
+        std::string name = "I18N_RESOURCE_VERSION";
+        std::string version_trim = version;
+        if (version_trim.size() >= sizeof(record.abbreviation))
+        {
+            version_trim.resize(sizeof(record.abbreviation) - 1);
+        }
+        std::memset(record.name, 0, sizeof(record.name));
+        std::strncpy(record.name, name.c_str(), sizeof(record.name) - 1);
+        std::memset(record.abbreviation, 0, sizeof(record.abbreviation));
+        std::strncpy(record.abbreviation, version_trim.c_str(),
+                     sizeof(record.abbreviation) - 1);
+        record.std_offset_minutes = 0;
+        record.observes_dst = 0;
+        record.dst_offset_minutes = 0;
+        record.is_valid = 1;
+        if (record.created_time == 0)
+        {
+            record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+        }
+        record.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+        if (result.status == Status::OK)
+        {
+            return updateRecordInHeapPage<TimezoneRecord>(timezones_table_page_, result.slot_index,
+                                                          record, ctx);
+        }
+
+        return writeRecordToHeapPage(timezones_table_page_, record, ctx);
+    }
+
+    auto CatalogManager::getI18nResourceVersion(std::string& version_out, ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        constexpr uint16_t kI18nVersionId = 65535;
+        auto predicate = [kI18nVersionId](const TimezoneRecord& rec)
+        { return rec.timezone_id == kI18nVersionId && rec.is_valid; };
+        auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            return Status::NOT_FOUND;
+        }
+        version_out = std::string(result.record.abbreviation);
+        return Status::OK;
     }
 
     // ========== Statistics Operations (OPT-1, OPT-2) ==========
@@ -9788,7 +9927,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         rec.last_modified_time = rec.created_time;
         rec.is_valid = 1;
 
-        return writeRecordToHeapPage(charsets_table_page_, rec, ctx);
+        auto matcher = [&cs_info](const CharsetRecord &existing)
+        { return existing.is_valid && existing.charset_id == cs_info.charset_id; };
+
+        return updateRecordInHeapPage(charsets_table_page_, matcher, rec, ctx);
     }
 
     auto CatalogManager::updateCharset(uint16_t charset_id, const CharsetInfo &cs_info,
@@ -9873,8 +10015,24 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // P0-8: Implemented charset retrieval by name using findRecordInHeapPage
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        auto predicate = [&name](const CharsetRecord &rec)
-        { return std::string(rec.name) == name && rec.is_valid; };
+        auto normalize = [](std::string_view value) -> std::string {
+            std::string out;
+            out.reserve(value.size());
+            for (char c : value)
+            {
+                if (std::isalnum(static_cast<unsigned char>(c)))
+                {
+                    out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                }
+            }
+            return out;
+        };
+
+        std::string needle = normalize(name);
+        auto predicate = [&needle, &normalize](const CharsetRecord &rec)
+        {
+            return rec.is_valid && normalize(rec.name) == needle;
+        };
         auto result = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, predicate, ctx);
 
         if (result.status != Status::OK)
@@ -10036,7 +10194,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         rec.last_modified_time = rec.created_time;
         rec.is_valid = 1;
 
-        return writeRecordToHeapPage(collation_defs_table_page_, rec, ctx);
+        auto matcher = [&col_info](const CollationRecord &existing)
+        { return existing.is_valid && existing.collation_id == col_info.collation_id; };
+
+        return updateRecordInHeapPage(collation_defs_table_page_, matcher, rec, ctx);
     }
 
     auto CatalogManager::updateCollation(uint32_t collation_id,
@@ -18849,7 +19010,10 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
 
 Status CatalogManager::alterColumnType(const ID &table_id, const std::string &column_name,
                                         DataType new_type, uint32_t new_precision,
-                                        uint32_t new_scale, ErrorContext *ctx)
+                                        uint32_t new_scale,
+                                        std::optional<uint16_t> new_charset_id,
+                                        std::optional<uint32_t> new_collation_id,
+                                        ErrorContext *ctx)
 {
     // ALTER COLUMN TYPE implementation (ALPHA Phase 1)
     // Phase 1: Only allows compatible type changes (no data conversion)
@@ -19019,6 +19183,14 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
                 record->data_type = static_cast<uint16_t>(new_type);
                 record->type_precision = new_precision;
                 record->type_scale = new_scale;
+                if (new_charset_id.has_value())
+                {
+                    record->charset = new_charset_id.value();
+                }
+                if (new_collation_id.has_value())
+                {
+                    record->collation_id = new_collation_id.value();
+                }
                 heap->header.generation++;
                 page_dirty = true;
                 updated = true;

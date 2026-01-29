@@ -9,6 +9,7 @@
 
 namespace scratchbird::core
 {
+    class CatalogManager;
 
     /**
      * Timezone offset representation
@@ -42,6 +43,15 @@ namespace scratchbird::core
         std::string abbreviation; // e.g., "EST", "PST", "UTC"
         TimezoneOffset offset;    // Current offset from GMT
         bool observes_dst;        // Whether this timezone observes DST
+        uint8_t dst_start_month = 0;
+        uint8_t dst_start_week = 0;
+        uint8_t dst_start_day = 0;
+        uint8_t dst_start_hour = 0;
+        uint8_t dst_end_month = 0;
+        uint8_t dst_end_week = 0;
+        uint8_t dst_end_day = 0;
+        uint8_t dst_end_hour = 0;
+        int32_t dst_offset_minutes = 0;
 
         TimezoneInfo()
             : timezone_id(0), name("UTC"), abbreviation("UTC"), offset(0, false),
@@ -65,6 +75,9 @@ namespace scratchbird::core
     public:
         TimezoneManager();
         ~TimezoneManager();
+
+        // Load timezone definitions from catalog (falls back to built-ins if catalog is empty).
+        auto loadFromCatalog(CatalogManager* catalog, ErrorContext* ctx = nullptr) -> Status;
 
         // Timezone lookup
         auto getTimezoneInfo(uint16_t timezone_id) const -> const TimezoneInfo *;
@@ -143,5 +156,8 @@ namespace scratchbird::core
         auto parseISO8601(const std::string &str, ErrorContext *ctx = nullptr) const
             -> std::optional<std::pair<int64_t, std::optional<TimezoneOffset>>>;
     };
+
+    // Thread-local timezone manager used by type conversions and expression evaluation.
+    auto getThreadLocalTimezoneManager() -> TimezoneManager&;
 
 } // namespace scratchbird::core

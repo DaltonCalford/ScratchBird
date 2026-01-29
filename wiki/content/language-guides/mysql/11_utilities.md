@@ -708,27 +708,31 @@ HELP 'functions';
 
 | Command | Status | Notes |
 |---------|--------|-------|
-| SHOW DATABASES | Implemented | Works correctly |
-| SHOW TABLES | Implemented | Works correctly |
-| SHOW COLUMNS | Implemented | Basic columns |
-| SHOW CREATE TABLE | Partial | May not include all options |
-| SHOW INDEX | Partial | Basic info only |
-| SHOW TABLE STATUS | Partial | Some fields empty |
-| SHOW PROCESSLIST | Stubbed | Returns empty or dummy data |
-| SHOW VARIABLES | Partial | Limited variables |
-| SHOW STATUS | Stubbed | Not collecting statistics |
-| SHOW WARNINGS/ERRORS | Partial | Basic support |
-| SHOW GRANTS | Missing | Not implemented |
-| USE | Implemented | Works correctly |
-| EXPLAIN | Partial | Basic format only |
-| EXPLAIN ANALYZE | Missing | Not implemented |
-| SET (session vars) | Partial | Limited variables |
-| SET (global vars) | Stubbed | No-op |
-| KILL | Missing | Not implemented |
-| FLUSH | Stubbed | No-op |
-| LOCK/UNLOCK TABLES | Partial | Treated as no-op |
-| ANALYZE TABLE | Stubbed | No-op |
-| OPTIMIZE TABLE | Stubbed | No-op |
+| SHOW DATABASES/SCHEMAS | Implemented | Emits EXT_SHOW_DATABASES |
+| SHOW TABLES | Implemented | Emits EXT_SHOW_TABLES with FROM/IN and LIKE |
+| SHOW COLUMNS | Implemented | Emits EXT_SHOW_COLUMNS |
+| SHOW CREATE TABLE | Implemented | Emits EXT_SHOW_CREATE_TABLE |
+| SHOW CREATE DATABASE | Implemented | Emits EXT_SHOW_DATABASE |
+| SHOW INDEX/INDEXES/KEY | Implemented | Emits EXT_SHOW_INDEXES |
+| SHOW TABLE STATUS | Not implemented | Falls through to error |
+| SHOW PROCESSLIST | Not implemented | Falls through to error |
+| SHOW VARIABLES | Not implemented | Falls through to error |
+| SHOW STATUS | Not implemented | Falls through to error |
+| SHOW WARNINGS/ERRORS | Not implemented | Falls through to error |
+| SHOW GRANTS | Not implemented | Falls through to error |
+| USE | Implemented | Updates search_path via EXT_SET_VARIABLE |
+| DESCRIBE/DESC | Implemented | Emits EXT_DESCRIBE_TABLE |
+| EXPLAIN | Not implemented | Falls through to error |
+| SET (session vars) | Implemented | Emits EXT_SET_VARIABLE |
+| SET AUTOCOMMIT | Implemented | Emits EXT_SET_AUTOCOMMIT |
+| SET TRANSACTION | Implemented | Emits SET_TRANSACTION with isolation mapping |
+| KILL | Not implemented | Falls through to error |
+| FLUSH | Not implemented | Falls through to error |
+| LOCK/UNLOCK TABLES | Not implemented | Explicit error: "not supported in MySQL emulation yet" |
+| ANALYZE TABLE | Not implemented | Falls through to error |
+| OPTIMIZE TABLE | Not implemented | Falls through to error |
+| CHECK TABLE | Not implemented | Falls through to error |
+| REPAIR TABLE | Not implemented | Falls through to error |
 
 ### Workarounds
 

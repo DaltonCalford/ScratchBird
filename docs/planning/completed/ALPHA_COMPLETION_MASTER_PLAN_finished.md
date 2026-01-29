@@ -21,6 +21,7 @@ Alpha scope.
 - `ScratchBird/docs/planning/RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN.md`
 - `ScratchBird/docs/planning/TRACKER_INDEX_SPEC_GAPS.md`
 - `ScratchBird/docs/planning/ALPHA_CODE_TRUTH_AUDIT_2026-01-28.md`
+- `ScratchBird/docs/planning/SBLR_TYPE_OPCODE_REMEDIATION_PLAN.md`
 
 ## Tracking Table
 
@@ -28,12 +29,13 @@ Alpha scope.
 | --- | --- | --- | --- | --- | --- |
 | Engine core | Tablespace routing defaults + root page allocation | Done |  | Alpha‑Core‑WS2 | `ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` |
 | Engine core | Index migration safety (SPGIST/BITMAP/COLUMNSTORE/LSM) | Done |  | Alpha‑Core‑WS3 | `ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` |
-| Engine core | Expression/partial index root allocation uses primary tablespace | Open |  | Alpha‑Core‑WS3 | Code: `ScratchBird/src/core/catalog_manager.cpp:7642` |
+| Engine core | Expression/partial index root allocation uses primary tablespace | Done |  | Alpha‑Core‑WS3 | Code: `ScratchBird/src/core/catalog_manager.cpp:7642` |
 | Engine core | Monitoring parity (remaining MON$ placeholders) | Done |  | Alpha‑Core‑WS7 | Code: `ScratchBird/src/catalog/sys_catalog.cpp:173` |
 | Engine core | Backup/restore parity (all tablespaces/catalogs) | Done |  | Alpha‑Core‑WS8 | Code: `ScratchBird/src/core/backup_manager.cpp:723` |
 | Parser/PSQL | V2 parser completeness (DDL/DML/utility/PSQL) | Done |  | Alpha‑Parser‑P1 | `PLAN_V2_PARSER_COMPLETION.md` |
 | PSQL runtime | PSQL bytecode emission + executor parity | Done |  | Alpha‑Parser‑P2 | `V2_PARSER_DDL_DML_PSQL_AUDIT.md` |
-| Resources | Timezones/Charsets/Collations loaders + catalog | Open |  | Alpha‑I18N‑P1 | `RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN.md` |
+| SBLR/types | Missing type markers + typed literals | Done |  | Alpha‑Parser‑P3 | `SBLR_TYPE_OPCODE_REMEDIATION_PLAN.md` |
+| Resources | Timezones/Charsets/Collations loaders + catalog | Done |  | Alpha‑I18N‑P1 | `RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN.md` |
 | Indexes | Inverted GC, IVF, Zone Maps, GPID/TID checks | Done |  | Alpha‑Index‑P1 | `TRACKER_INDEX_SPEC_GAPS.md` |
 
 ## Execution Order (Suggested)
@@ -55,3 +57,6 @@ Alpha scope.
 ## Notes
 - Beta scope is tracked separately in:
   `ScratchBird/docs/findings/ALPHA_BETA_SCOPE_STATUS.md`
+
+## Progress Log
+- 2026-01-29: Verified expression/partial index root allocation uses tablespace-aware GPIDs and completed full build + `ctest` pass (2490 tests).

@@ -475,6 +475,198 @@ EXCEPTION exception_name 'message';
 
 ---
 
+## Job Scheduler
+
+### CREATE JOB
+
+#### Description
+
+Creates a scheduled job that runs SQL statements, stored procedures, or external commands on a defined schedule. Jobs support cron expressions, one-time execution, and interval-based scheduling, with options for partitioning, retry behavior, timeouts, and dependency chains.
+
+#### Syntax
+
+```sql
+CREATE [OR ALTER] JOB <job_name>
+    SCHEDULE = { CRON '<cron_expression>'
+               | AT '<timestamp>'
+               | EVERY <duration> [<unit>] [STARTS '<timestamp>'] [ENDS '<timestamp>'] }
+    [DEPENDS ON <job_name> [, ...]]
+    [CLASS = <job_class>]
+    [PARTITION BY { ALL_SHARDS | SINGLE_SHARD '<shard>' | SHARD_SET (<shard>, ...) | DYNAMIC (<expression>) }]
+    [MAX_RETRIES = <integer>]
+    [RETRY_BACKOFF = <duration> [<unit>]]
+    [TIMEOUT = <duration> [<unit>]]
+    [ON COMPLETION { PRESERVE | DROP }]
+    [RUN AS <role_name>]
+    [DESCRIPTION = '<description>']
+    [STATE = { ENABLED | DISABLED | PAUSED }]
+    { AS '<sql_statement>'
+    | CALL <procedure_name> [()]
+    | EXEC '<external_command>' }
+
+RECREATE JOB <job_name> ...
+```
+
+Duration units: `S`/`SEC`/`SECOND(S)`, `M`/`MIN`/`MINUTE(S)`, `H`/`HOUR(S)`, `D`/`DAY(S)`
+
+#### Examples
+
+**Example 1: Cron-scheduled SQL job**
+```sql
+CREATE JOB nightly_cleanup
+    SCHEDULE = CRON '0 2 * * *'
+    DESCRIPTION = 'Clean up expired sessions'
+    AS 'DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP';
+```
+
+**Example 2: Interval-based procedure call**
+```sql
+CREATE JOB sync_analytics
+    SCHEDULE = EVERY 15 MINUTES
+    STARTS '2026-01-01 00:00:00'
+    MAX_RETRIES = 3
+    RETRY_BACKOFF = 30 SECONDS
+    TIMEOUT = 5 MINUTES
+    CALL refresh_analytics_cache();
+```
+
+**Example 3: One-time execution**
+```sql
+CREATE JOB migration_task
+    SCHEDULE = AT '2026-02-01 03:00:00'
+    ON COMPLETION DROP
+    AS 'CALL run_data_migration()';
+```
+
+**Example 4: Partitioned job with dependencies**
+```sql
+CREATE JOB shard_reindex
+    SCHEDULE = CRON '0 4 * * 0'
+    PARTITION BY ALL_SHARDS
+    DEPENDS ON nightly_cleanup
+    RUN AS maintenance_role
+    STATE = ENABLED
+    AS 'REINDEX ALL';
+```
+
+#### Implementation Status
+
+- V2 parser: `parseCreateJob()` handles all options including SCHEDULE (CRON/AT/EVERY), DEPENDS ON, CLASS, PARTITION BY, MAX_RETRIES, RETRY_BACKOFF, TIMEOUT, ON COMPLETION, RUN AS, DESCRIPTION, STATE, and body types (AS/CALL/EXEC)
+- RECREATE JOB is supported via `parseCreateJob(false, true)` in the statement dispatch
+- CREATE OR ALTER JOB is supported via `parseCreateJob(true, false)`
+
+---
+
+### ALTER JOB
+
+#### Description
+
+Modifies properties of an existing scheduled job, including schedule, retry behavior, timeout, state, and job body.
+
+#### Syntax
+
+```sql
+ALTER JOB <job_name>
+    [SCHEDULE = { CRON '<cron_expression>'
+                | AT '<timestamp>'
+                | EVERY <duration> [<unit>] [STARTS '<timestamp>'] [ENDS '<timestamp>'] }]
+    [MAX_RETRIES = <integer>]
+    [RETRY_BACKOFF = <duration> [<unit>]]
+    [TIMEOUT = <duration> [<unit>]]
+    [ON COMPLETION { PRESERVE | DROP }]
+    [RUN AS <role_name>]
+    [DESCRIPTION = '<description>']
+    [STATE = { ENABLED | DISABLED | PAUSED }]
+    [{ AS '<sql_statement>' | CALL <procedure_name> [()] | EXEC '<external_command>' }]
+```
+
+#### Examples
+
+```sql
+ALTER JOB nightly_cleanup STATE = DISABLED;
+ALTER JOB sync_analytics SCHEDULE = EVERY 30 MINUTES TIMEOUT = 10 MINUTES;
+ALTER JOB migration_task AS 'CALL run_data_migration_v2()';
+```
+
+#### Implementation Status
+
+- V2 parser: `parseAlterJob()` supports modifying all job properties
+
+---
+
+### DROP JOB
+
+#### Description
+
+Removes a scheduled job.
+
+#### Syntax
+
+```sql
+DROP JOB <job_name> [KEEP HISTORY]
+```
+
+#### Examples
+
+```sql
+DROP JOB nightly_cleanup;
+DROP JOB old_job KEEP HISTORY;
+```
+
+#### Implementation Status
+
+- V2 parser: `parseDropJob()` supports DROP JOB with optional KEEP HISTORY
+
+---
+
+### EXECUTE JOB
+
+#### Description
+
+Immediately triggers execution of a scheduled job, regardless of its schedule.
+
+#### Syntax
+
+```sql
+EXECUTE JOB <job_name>
+```
+
+#### Example
+
+```sql
+EXECUTE JOB nightly_cleanup;
+```
+
+#### Implementation Status
+
+- V2 parser: `parseExecuteJob()` parses immediate job execution
+
+---
+
+### CANCEL JOB RUN
+
+#### Description
+
+Cancels a currently running job execution by its run UUID.
+
+#### Syntax
+
+```sql
+CANCEL JOB RUN <job_run_uuid>
+```
+
+#### Example
+
+```sql
+CANCEL JOB RUN 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+```
+
+#### Implementation Status
+
+- V2 parser: `parseCancelJobRun()` parses cancellation by UUID (string literal or identifier)
+
+---
+
 ## Known Limitations
 
 ### What Works
@@ -485,11 +677,13 @@ EXCEPTION exception_name 'message';
 - **EXECUTE BLOCK**: Parsed with input/output parameters, variable declarations, and body
 - **EXECUTE PROCEDURE**: Parsed with arguments and RETURNING_VALUES
 - **EXECUTE STATEMENT**: Parsed for dynamic SQL
+- **CREATE/ALTER/DROP JOB**: Full DDL parsing with schedule, partition, retry, and dependency options
+- **EXECUTE JOB / CANCEL JOB RUN**: Parsed for immediate execution and run cancellation
+- **CALL**: Implemented in V2 parser via `parseCall()`
 
 ### Remaining Gaps
 
 - **Procedural body runtime execution**: Function/procedure/trigger bodies are stored as source text. Complex procedural control flow (IF, WHILE, FOR, SUSPEND, exception handling) within bodies is not yet wired for runtime interpretation. Simple single-statement bodies work through the standard execution path.
-- **CALL syntax**: Implemented in V2 parser via `parseCall()`
 
 ### Spec References
 

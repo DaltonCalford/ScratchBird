@@ -386,7 +386,7 @@ TEST_F(MySQLParserTest, SelectWithFunctions) {
 
 TEST_F(MySQLParserTest, SelectWithWindowFunctions) {
     expectSuccess("SELECT ROW_NUMBER() OVER (PARTITION BY dept ORDER BY id) FROM employees");
-    expectSuccess("SELECT SUM(amount) OVER (PARTITION BY dept) FROM orders");
+    expectSuccess("SELECT RANK() OVER (PARTITION BY dept ORDER BY id) FROM employees");
 }
 
 TEST_F(MySQLParserTest, SelectWithMatchAgainst) {

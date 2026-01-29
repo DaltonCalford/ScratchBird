@@ -53,6 +53,8 @@ private:
     CatalogManager *catalog_;
     Database *db_;
 
+    Status loadCharsetAliases(const CharacterSet &charset, ErrorContext *ctx);
+
     // Get current timestamp in microseconds
     uint64_t getCurrentTimestamp();
 };

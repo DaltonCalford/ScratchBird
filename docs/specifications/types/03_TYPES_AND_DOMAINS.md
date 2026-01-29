@@ -13,11 +13,11 @@ ScratchBird supports a wide range of standard SQL data types.
 | Category | Types | Description |
 | :---- | :---- | :---- |
 | **Integers** | SMALLINT, INTEGER, BIGINT, INT128 | Signed integers of 16, 32, 64, and 128 bits. Unsigned variants (UINT8 to UINT64) are also available. |
-| **Decimal** | DECIMAL(p,s), NUMERIC(p,s), MONEY | Exact-precision decimal numbers. MONEY is a fixed-precision currency type. |
+| **Decimal** | DECIMAL(p,s), NUMERIC(p,s), MONEY, DECFLOAT(16/34) | Exact-precision decimal numbers. MONEY is a fixed-precision currency type. DECFLOAT provides IEEE-754 decimal floating. |
 | **Floating-Point** | REAL, DOUBLE PRECISION | Approximate-precision floating-point numbers (32-bit and 64-bit). |
 | **Character** | CHAR(n), VARCHAR(n), TEXT | Fixed-length, variable-length, and unlimited-length character strings. |
 | **Binary** | BYTEA, BLOB, BINARY(n) | For storing raw binary data. |
-| **Date/Time** | DATE, TIME, TIMESTAMP, INTERVAL | Types for storing dates, times of day, timestamps (with optional time zone), and time intervals. |
+| **Date/Time** | DATE, TIME, TIMESTAMP, INTERVAL, TIME WITH TIME ZONE, TIMESTAMP WITH TIME ZONE | Types for storing dates, times of day, timestamps (with optional time zone), and time intervals. |
 | **Boolean** | BOOLEAN | Stores TRUE or FALSE truth values. |
 | **Special** | UUID, JSON, JSONB, XML | Specialized types for universally unique identifiers and semi-structured documents. |
 | **Arrays** | datatype\[\] | A one-dimensional or multi-dimensional array of any other data type (e.g., INTEGER\[\], VARCHAR(10)\[\]). |
@@ -27,6 +27,12 @@ ScratchBird supports a wide range of standard SQL data types.
 - **JSONB storage:** In Alpha, JSONB is stored as canonical text (same encoding as JSON). Binary JSON is a future optimization.
 - **Arrays:** SQL arrays are defined as homogeneous and may be multi-dimensional, but the current on-disk encoding is a typed element list (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`). Dimension/bounds enforcement is a planned enhancement.
 - **Domains:** Domain values are stored using the base type's canonical encoding. Domain constraints, security, and quality rules are enforced by the DomainManager at write/read time.
+
+### **2.2. SBLR Coverage Notes (Alpha)**
+SBLR type markers and typed literal opcodes must exist for all DataTypes to be
+fully executable. Coverage gaps and planned opcode additions are tracked in:
+- `docs/specifications/sblr/SBLR_OPCODE_REGISTRY.md`
+- `docs/findings/SBLR_TYPE_OPCODE_GAPS.md`
 
 ## **3\. The DOMAIN Concept**
 

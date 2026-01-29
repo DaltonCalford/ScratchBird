@@ -31,6 +31,7 @@ ScratchBird integrates with major big data and streaming platforms for large-sca
 - Change Data Capture (CDC)
 - Sink and source connectors
 - **Market Share:** Dominant event streaming
+ - Spec: `apache-kafka/SPECIFICATION.md`
 
 ### Hadoop Ecosystem
 

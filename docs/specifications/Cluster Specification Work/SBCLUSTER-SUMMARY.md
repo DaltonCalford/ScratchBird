@@ -20,7 +20,7 @@ This document suite specifies the complete architecture for ScratchBird distribu
 
 ## Specification Structure
 
-The ScratchBird cluster specification is organized into 11 documents:
+The ScratchBird cluster specification is organized into 12 documents:
 
 | Document | Title | Lines | Focus Area | Status |
 |----------|-------|-------|------------|--------|
@@ -35,7 +35,8 @@ The ScratchBird cluster specification is organized into 11 documents:
 | **SBCLUSTER-08** | Backup and Restore | 1,042 | Backup procedures | Complete |
 | **SBCLUSTER-09** | Scheduler | 907 | Distributed job scheduling | Complete |
 | **SBCLUSTER-10** | Observability and Audit | 1,520 | Metrics, tracing, audit | Complete |
-| | **Total** | **9,800** | | |
+| **SBCLUSTER-12** | Autoscaling and Elastic Lifecycle | 194 | Autoscaling and node lifecycle | Complete |
+| | **Total** | **9,994** | | |
 
 ---
 
@@ -58,11 +59,12 @@ The ScratchBird cluster specification is organized into 11 documents:
 1. **SBCLUSTER-00**: Operational principles
 2. **SBCLUSTER-08**: Backup and restore procedures
 3. **SBCLUSTER-09**: Scheduler for maintenance jobs
-4. **SBCLUSTER-10**: Monitoring and alerting
-5. **SBCLUSTER-07**: Replication and failover
+4. [**SBCLUSTER-12-AUTOSCALING_AND_ELASTIC_LIFECYCLE.md**](SBCLUSTER-12-AUTOSCALING_AND_ELASTIC_LIFECYCLE.md): Autoscaling and elastic lifecycle
+5. **SBCLUSTER-10**: Monitoring and alerting
+6. **SBCLUSTER-07**: Replication and failover
 
 ### For Implementers
-Read in sequence: SBCLUSTER-00 through SBCLUSTER-10
+Read in sequence: SBCLUSTER-00 through SBCLUSTER-12
 
 ---
 

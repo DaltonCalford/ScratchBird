@@ -21,6 +21,8 @@ feeds the active Alpha tracker and remediation work.
   - `ScratchBird/src/core/catalog_manager.cpp:6714-6749`
 - Standard index root allocation uses tablespace-aware GPID allocation.
   - `ScratchBird/src/core/catalog_manager.cpp:7403-7412`
+ - Expression/partial index root allocation uses tablespace-aware GPID allocation.
+   - `ScratchBird/src/core/catalog_manager.cpp:7642-7663`
 
 2) **Backup/restore multi-file tablespaces**
 - Restore builds per-tablespace file ranges and writes pages to the correct file.
@@ -60,18 +62,19 @@ feeds the active Alpha tracker and remediation work.
   - `ScratchBird/src/sblr/bytecode_generator_v2.cpp:5593-5603`
   - `ScratchBird/src/sblr/executor.cpp:26113-26178`
 
+6) **Resources/i18n coverage + loader tooling**
+- Firebird/MySQL/PostgreSQL charset baselines added in resources.
+  - `ScratchBird/resources/charsets/charsets.json`
+- Firebird collation baseline added in resources.
+  - `ScratchBird/resources/collations/collations.json`
+- Charset loader now materializes alias names during load.
+  - `ScratchBird/src/core/charset_loader.cpp:106-237`
+- Loader usage/docs aligned with current tooling.
+  - `ScratchBird/resources/README.md`
+
 ### ❌ Still Open (verified in code or resources)
 
-1) **Expression/partial index root allocation is NOT tablespace-aware**
-- Expression/partial index create path uses `allocatePage()` (primary tablespace)
-  instead of `allocatePageInTablespace()`.
-  - `ScratchBird/src/core/catalog_manager.cpp:7642-7663`
-
-2) **Resources/i18n coverage + loader tooling**
-- Resource lists and loader tooling are still incomplete per audit.
-  - `ScratchBird/docs/findings/RESOURCES_I18N_TIMEZONE_AUDIT.md`
-  - Missing Firebird/MySQL/PG charset/collation coverage
-  - `sb_charset_loader` deprecated/non-compiling; timezone loader flag mismatch
+None.
 
 ## Notes / Caveats
 
@@ -84,9 +87,4 @@ feeds the active Alpha tracker and remediation work.
 
 ## Alpha Status (based on code-truth)
 
-**Alpha is not complete** due to:
-1) Expression/partial index root allocation (tablespace-aware fix needed).
-2) Resources/i18n loaders + coverage completeness.
-
-All other items in the Alpha master plan appear implemented per code evidence.
-
+**Alpha is complete** based on the code-truth items in this audit.

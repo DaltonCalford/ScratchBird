@@ -39,9 +39,89 @@ Status: Implemented.
 Spec delta: Cascade/behavior details should be validated against
 `03_AUTHORIZATION_MODEL.md`.
 
-## CREATE ROLE / CREATE USER
-Description: Role/user DDL is spec-defined but not parsed by V2.
+## CREATE USER
 
-Status: Missing.
-Spec delta: Implement role/user creation per `DDL_ROLES_AND_GROUPS.md` if
-required for Alpha.
+Description: Creates a database user with optional password and privilege settings.
+
+Syntax (actual):
+```sql
+CREATE USER <user_name> [WITH]
+    [PASSWORD '<password>']
+    [SUPERUSER | NOSUPERUSER]
+```
+Example:
+```sql
+CREATE USER alice WITH PASSWORD 'secure_pass' NOSUPERUSER;
+CREATE USER admin PASSWORD 'admin_pass' SUPERUSER;
+```
+Status: **Implemented in V2 Parser** - `parseCreateUser()` handles WITH, PASSWORD (string literal),
+SUPERUSER, and NOSUPERUSER options.
+
+---
+
+## CREATE ROLE
+
+Description: Creates a named role that can be granted privileges and assigned to users.
+
+Syntax (actual):
+```sql
+CREATE ROLE <role_name>
+```
+Example:
+```sql
+CREATE ROLE app_readonly;
+CREATE ROLE data_admin;
+```
+Status: **Implemented in V2 Parser** - `parseCreateRole()` parses the role name.
+
+---
+
+## DROP ROLE
+
+Description: Drops one or more roles.
+
+Syntax (actual):
+```sql
+DROP ROLE [IF EXISTS] <role_name> [, ...] [CASCADE]
+```
+Example:
+```sql
+DROP ROLE app_readonly;
+DROP ROLE IF EXISTS legacy_role CASCADE;
+```
+Status: **Implemented in V2 Parser** - `parseDropRole()` supports IF EXISTS, multiple roles,
+and CASCADE.
+
+---
+
+## CREATE GROUP
+
+Description: Creates a user group for simplified privilege management.
+
+Syntax (actual):
+```sql
+CREATE GROUP <group_name>
+```
+Example:
+```sql
+CREATE GROUP developers;
+```
+Status: **Implemented in V2 Parser** - `parseCreateGroup()` parses the group name.
+
+---
+
+## DROP GROUP
+
+Description: Drops one or more groups.
+
+Syntax (actual):
+```sql
+DROP GROUP [IF EXISTS] <group_name> [, ...] [CASCADE]
+```
+Example:
+```sql
+DROP GROUP developers;
+DROP GROUP IF EXISTS old_team CASCADE;
+```
+Status: **Implemented in V2 Parser** - `parseDropGroup()` supports IF EXISTS, multiple groups,
+and CASCADE.

@@ -1,5 +1,243 @@
 News for the tz database
 
+Release 2025c - 2025-12-10 14:42:37 -0800
+
+  Briefly:
+    Several code changes for compatibility with FreeBSD.
+
+  Changes to past timestamps
+
+    Baja California agreed with California’s DST rules in 1953 and in
+    1961 through 1975, instead of observing standard time all year.
+    (Thanks to Alois Treindl.)
+
+  Changes to build procedure
+
+    Files in distributed tarballs now have correct commit times.
+    Formerly, the committer’s time zone was incorrectly ignored.
+
+    Distribution products (*.asc, *.gz, and *.lz) now have
+    reproducible timestamps.  Formerly, only the contents of the
+    compressed tarballs had reproducible timestamps.
+
+    By default, distributed formatted man pages (*.txt) now use UTF-8
+    and are left-adjusted more consistently.  A new Makefile macro
+    MANFLAGS can override these defaults.  (Thanks to G. Branden
+    Robinson for inspiring these changes.)
+
+  Changes to code
+
+    An unset TZ is no longer invalid when /etc/localtime is missing,
+    and is abbreviated "UTC" not "-00".  This reverts to 2024b behavior.
+    (Problem and patch reported by Dag-Erling Smørgrav.)
+
+    New function offtime_r, short for fixed-offset localtime_rz.
+    It is defined if STD_INSPIRED is defined.
+    (Patch from Dag-Erling Smørgrav.)
+
+    tzset etc. are now more cautious about questionable TZ settings.
+    Privileged programs now reject TZ settings that start with '/',
+    unless they are TZDEFAULT (default "/etc/localtime") or
+    start with TZDIR then '/' (default "/usr/share/zoneinfo/").
+    Unprivileged programs now require files to be regular files
+    and reject relative names containing ".." directory components;
+    formerly, only privileged programs did those two things.
+    These changes were inspired by similar behavior in FreeBSD.
+    On NetBSD, unprivileged programs now use O_REGULAR to check
+    whether a TZ setting starting with '/' names a regular file,
+    avoiding a minor security race still present elsewhere.
+    TZ strings taken from tzalloc arguments are now treated with
+    no less caution than TZ strings taken from the environment, as
+    the old undocumented behavior would have been hard to explain.
+    tzset etc. no longer use the ‘access’ system call to check access;
+    instead they now use the system calls issetugid, getauxval,
+    getresuid/getresgid, and geteuid/getegid/getuid/getgid (whichever
+    first works) to test whether a program is privileged.
+    Compile with -DHAVE_SYS_AUXV_H=[01] to enable or disable
+    <sys/auxv.h> which (if it defines AT_SECURE) enables getauxval,
+    and compile with -DHAVE_ISSETUGID=[01], -DHAVE_GETRESUID=[01], and
+    -DHAVE_GETEUID=[01] to enable or disable the other calls’ use.
+
+    The new CFLAGS option -DTZ_CHANGE_INTERVAL=N makes tzset etc.
+    check for TZif file changes if the in-memory data are N seconds
+    old or more, and are derived from the TZ environment variable.
+    This is intended for platforms that want tzset etc. to reflect
+    changes to whatever file TZ selects (including changes to
+    /etc/localtime if TZ is unset).  If N is negative (the default)
+    these checks are omitted; this is the traditional behavior.
+
+    The new CFLAGS options -DHAVE_STRUCT_STAT_ST_CTIM=0 and
+    -DHAVE_STRUCT_TIMESPEC=0 port to non-POSIX.1-2008 platforms
+    that lack st_ctim and struct timespec, respectively.
+
+    tzset etc. now treat ' ' like '_' in time zone abbreviations,
+    just as they treat other invalid bytes.  This continues the
+    transition begun in release 96k, which removed spaces in tzdata
+    because the spaces break time string parsers.
+
+    The new CFLAGS option -DTHREAD_PREFER_SINGLE causes tzcode
+    in single-threaded processes to avoid locks, as FreeBSD does.
+    This can save time in single-threaded apps.  The threadedness
+    testing costs CPU time and energy in multi-threaded apps.
+    New options -DHAVE___ISTHREADED and -DHAVE_SYS_SINGLE_THREADED_H
+    can help configure how to test for single-threadedness.
+
+    The new CFLAGS option -DTHREAD_RWLOCK uses read-write locks, as
+    macOS does, instead of mutexes.  This saves real time when TZ is
+    rarely changing and many threads call tzcode simultaneously.
+    It costs more CPU time and energy.
+
+    The new CFLAGS option -TTHREAD_TM_MULTI causes localtime to return
+    a pointer to thread-specific memory, as FreeBSD does, instead of
+    to the same memory in all threads.  This supports unportable
+    programs that incorrectly use localtime instead of localtime_r.
+    This option affects gmtime and offtime similarly to localtime.
+    Because the corresponding storage is freed on thread exit, this
+    option is incompatible with POSIX.1-2024 and earlier.  It also
+    costs CPU time and memory.
+
+    tzfree now preserves errno, consistently with POSIX.1-2024 ‘free’.
+
+    tzcode now uses mempcpy if available, guessing its availability.
+    Compile with -DHAVE_MEMPCPY=1 or 0 to override the guess.
+
+    tzcode now uses strnlen to improve asymptotic performance a bit.
+    Compile with -DHAVE_STRNLEN=0 if your platform lacks it.
+
+    tzcode now hand-declares unistd.h-provided symbols like getopt
+    if HAVE_UNISTD_H=0, not if HAVE_POSIX_DECLS=0.
+
+    tzset etc. now have an experimental OPENAT_TZDIR option;
+    see Makefile and localtime.c for details.
+
+    On platforms like GNU/Hurd that do not define PATH_MAX,
+    exceedingly long TZ strings no longer fail merely because they
+    exceed an arbitrary file name length limit imposed by tzcode.
+
+    zic has new options inspired by FreeBSD.  ‘-D’ skips creation of
+    output ancestor directories, ‘-m MODE’ sets output files’ mode,
+    and ‘-u OWNER[:GROUP]’ sets output files’ owner and group.
+
+    zic now uses the fdopen function, which was standardized by
+    POSIX.1-1988 and is now safe to use in portable code.
+    This replaces its use of the older umask function, which
+    complicated maintenance.
+
+  Changes to commentary
+
+    The leapseconds file contains commentary about the IERS and NIST
+    last-modified and expiration timestamps for leap second data.
+    (Thanks to Judah Levine.)
+
+    Commentary now also uses characters from the set –‘’“”•≤ as this
+    can be useful and should work with current applications.  This
+    also affects data in iso3166.tab and zone1970.tab, which now
+    contain strings like “Côte d’Ivoire” instead of “Côte d'Ivoire”.
+
+
+Release 2025b - 2025-03-22 13:40:46 -0700
+
+  Briefly:
+    New zone for Aysén Region in Chile which moves from -04/-03 to -03.
+
+  Changes to future timestamps
+
+    Chile's Aysén Region moves from -04/-03 to -03 year-round, joining
+    Magallanes Region.  The region will not change its clocks on
+    2025-04-05 at 24:00, diverging from America/Santiago and creating a
+    new zone America/Coyhaique.  (Thanks to Yonathan Dossow.)  Model
+    this as a change to standard offset effective 2025-03-20.
+
+  Changes to past timestamps
+
+    Iran switched from +04 to +0330 on 1978-11-10 at 24:00, not at
+    year end.  (Thanks to Roozbeh Pournader.)
+
+  Changes to code
+
+    'zic -l TIMEZONE -d . -l /some/other/file/system' no longer
+    attempts to create an incorrect symlink, and no longer has a
+    read buffer underflow.  (Problem reported by Evgeniy Gorbanev.)
+
+
+Release 2025a - 2025-01-15 10:47:24 -0800
+
+  Briefly:
+    Paraguay adopted permanent -03 starting spring 2024.
+    Improve pre-1991 data for the Philippines.
+    Etc/Unknown is now reserved.
+
+  Changes to future timestamps
+
+    Paraguay stopped changing its clocks after the spring-forward
+    transition on 2024-10-06, so it is now permanently at -03.
+    (Thanks to Heitor David Pinto and Even Scharning.)
+    This affects timestamps starting 2025-03-22, as well as the
+    obsolescent tm_isdst flags starting 2024-10-15.
+
+  Changes to past timestamps
+
+    Correct timestamps for the Philippines before 1900, and from 1937
+    through 1990.  (Thanks to P Chan for the heads-up and citations.)
+    This includes adjusting local mean time before 1899; fixing
+    transitions in September 1899, January 1937, and June 1954; adding
+    transitions in December 1941, November 1945, March and September
+    1977, and May and July 1990; and removing incorrect transitions in
+    March and September 1978.
+
+  Changes to data
+
+    Add zone1970.tab lines for the Concordia and Eyre Bird Observatory
+    research stations.  (Thanks to Derick Rethans and Jule Dabars.)
+
+  Changes to code
+
+    strftime %s now generates the correct numeric string even when the
+    represented number does not fit into time_t.  This is better than
+    generating the numeric equivalent of (time_t) -1, as strftime did
+    in TZDB releases 96a (when %s was introduced) through 2020a and in
+    releases 2022b through 2024b.  It is also better than failing and
+    returning 0, as strftime did in releases 2020b through 2022a.
+
+    strftime now outputs an invalid conversion specifier as-is,
+    instead of eliding the leading '%', which confused debugging.
+
+    An invalid TZ now generates the time zone abbreviation "-00", not
+    "UTC", to help the user see that an error has occurred.  (Thanks
+    to Arthur David Olson for suggesting a "wrong result".)
+
+    mktime and timeoff no longer incorrectly fail merely because a
+    struct tm component near INT_MIN or INT_MAX overflows when a
+    lower-order component carries into it.
+
+    TZNAME_MAXIMUM, the maximum number of bytes in a proleptic TZ
+    string's time zone abbreviation, now defaults to 254 not 255.
+    This helps reduce the size of internal state from 25480 to 21384
+    on common platforms.  This change should not be a problem, as
+    nobody uses such long "abbreviations" and the longstanding tzcode
+    maximum was 16 until release 2023a.  For those who prefer no
+    arbitrary limits, you can now specify TZNAME_MAXIMUM values up to
+    PTRDIFF_MAX, a limit forced by C anyway; formerly tzcode silently
+    misbehaved unless TZNAME_MAXIMUM was less than INT_MAX.
+
+    tzset and related functions no longer leak a file descriptor if
+    another thread forks or execs at about the same time and if the
+    platform has O_CLOFORK and O_CLOEXEC respectively.  Also, the
+    functions no longer let a TZif file become a controlling terminal.
+
+    'zdump -' now reads TZif data from /dev/stdin.
+    (From a question by Arthur David Olson.)
+
+  Changes to documentation
+
+    The name Etc/Unknown is now reserved: it will not be used by TZDB.
+    This is for compatibility with CLDR, which uses the string
+    "Etc/Unknown" for an unknown or invalid timezone.  (Thanks to
+    Justin Grant, Mark Davis, and Guy Harris.)
+
+    Cite Internet RFC 9636, which obsoletes RFC 8536 for TZif format.
+
+
 Release 2024b - 2024-09-04 12:27:47 -0700
 
   Briefly:
@@ -116,7 +354,7 @@ Release 2024b - 2024-09-04 12:27:47 -0700
   Changes to commentary
 
     Commentary about historical transitions in Portugal and her former
-    colonies has been expanded with links to many relevant legislation.
+    colonies has been expanded with links to relevant legislation.
     (Thanks to Tim Parenti.)
 
 
@@ -204,10 +442,10 @@ Release 2023d - 2023-12-21 20:02:24 -0800
     changing its time zone from -01/+00 to -02/-01 at the same moment
     as the spring-forward transition.  Its clocks will therefore not
     spring forward as previously scheduled.  The time zone change
-    reverts to its common practice before 1981.
+    reverts to its common practice before 1981.  (Thanks to Jule Dabars.)
 
     Fix predictions for DST transitions in Palestine in 2072-2075,
-    correcting a typo introduced in 2023a.
+    correcting a typo introduced in 2023a.  (Thanks to Jule Dabars.)
 
   Changes to past and future timestamps
 

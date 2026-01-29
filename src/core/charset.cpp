@@ -128,7 +128,7 @@ namespace scratchbird::core
             1,    // min_bytes
             4,    // max_bytes
             true, // variable_width
-            100   // default_collation_id (utf8_general_ci)
+            141   // default_collation_id (utf8mb4_general_ci)
         });
 
         // UTF-16
@@ -250,6 +250,25 @@ namespace scratchbird::core
             true,    // pad_space
             "de_DE", // locale
             false    // is_default
+        });
+
+        // UTF-8MB4 collations (MySQL compatible)
+        collations_.push_back({
+            140, // id
+            "utf8mb4_bin", CharacterSet::UTF8MB4, CollationType::BINARY,
+            CollationStrength::IDENTICAL,
+            true, // pad_space
+            "",   // locale
+            false // is_default
+        });
+
+        collations_.push_back({
+            141, // id
+            "utf8mb4_general_ci", CharacterSet::UTF8MB4, CollationType::CASE_INSENSITIVE,
+            CollationStrength::TERTIARY,
+            true, // pad_space
+            "",   // locale
+            true  // is_default
         });
 
         // UTF-16 collations

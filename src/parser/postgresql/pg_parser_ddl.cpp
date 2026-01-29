@@ -381,6 +381,10 @@ void Parser::parseCreateTable() {
             emitString("");
             emitString(col.name);
             emitTypeDefinition(col.type);
+            if (!col.collation.empty()) {
+                emit(sblr::Opcode::COLUMN_COLLATE);
+                emitString(col.collation);
+            }
 
             // Constraints
             if (col.not_null || col.primary_key) {
@@ -833,12 +837,30 @@ PgDataType Parser::parseDataType() {
     }
 
     // Check for array modifier
+    int array_dimensions = 0;
+    int array_size = 0;
     while (match(TokenType::LEFT_BRACKET)) {
-        type.kind = PgDataType::Kind::ARRAY;
+        array_dimensions++;
         if (check(TokenType::INTEGER_LITERAL)) {
+            if (array_dimensions == 1) {
+                array_size = static_cast<int>(current_token_.value.int_value);
+            }
             advance();  // Array dimension
         }
         consume(TokenType::RIGHT_BRACKET, "Expected ]");
+    }
+    if (array_dimensions > 0) {
+        PgDataType base = type;
+        type.kind = PgDataType::Kind::ARRAY;
+        type.element_kind = base.kind;
+        type.element_type = base.type_name;
+        type.array_dimensions = array_dimensions;
+        type.array_size = array_size;
+        type.length = base.length;
+        type.precision = base.precision;
+        type.scale = base.scale;
+        type.with_time_zone = base.with_time_zone;
+        type.nullable = base.nullable;
     }
 
     return type;
@@ -1045,6 +1067,7 @@ void Parser::parseCreateIndex() {
         tablespace_name.clear();
     }
 
+    bool emit_expressions = false;
     if (has_expressions) {
         error("PostgreSQL expression indexes are not supported in current bytecode yet");
     }
@@ -1062,8 +1085,13 @@ void Parser::parseCreateIndex() {
     }
     emitString(tablespace_name);
     emitByte(index_type);
-    emitByte(0);
+    emitU32(0);  // options_flags
+    emitByte(emit_expressions ? 1 : 0);
     emitByte(has_predicate ? 1 : 0);
+    if (emit_expressions) {
+        emitU32(0);
+        emitU32(0);
+    }
     if (has_predicate) {
         emitU32(static_cast<uint32_t>(predicate_bytecode.size()));
         if (emit_enabled_) {
@@ -1311,29 +1339,29 @@ void Parser::parseCreateSequence() {
             matchKeyword(TokenType::KW_WITH);
             start_value = parse_int64();
             has_start = true;
-        } else if (matchKeyword(TokenType::KW_INCREMENT)) {
+        } else if (matchIdentifierKeyword("INCREMENT")) {
             matchKeyword(TokenType::KW_BY);
             increment_by = parse_int64();
             has_increment = true;
-        } else if (matchKeyword(TokenType::KW_MINVALUE)) {
+        } else if (matchIdentifierKeyword("MINVALUE")) {
             min_value = parse_int64();
             has_minvalue = true;
         } else if (matchKeyword(TokenType::KW_NO)) {
-            if (matchKeyword(TokenType::KW_MINVALUE)) {
+            if (matchIdentifierKeyword("MINVALUE")) {
                 has_minvalue = false;
-            } else if (matchKeyword(TokenType::KW_MAXVALUE)) {
+            } else if (matchIdentifierKeyword("MAXVALUE")) {
                 has_maxvalue = false;
-            } else if (matchKeyword(TokenType::KW_CYCLE)) {
+            } else if (matchIdentifierKeyword("CYCLE")) {
                 has_cycle = true;
                 cycle = false;
             }
-        } else if (matchKeyword(TokenType::KW_MAXVALUE)) {
+        } else if (matchIdentifierKeyword("MAXVALUE")) {
             max_value = parse_int64();
             has_maxvalue = true;
-        } else if (matchKeyword(TokenType::KW_CYCLE)) {
+        } else if (matchIdentifierKeyword("CYCLE")) {
             has_cycle = true;
             cycle = true;
-        } else if (matchKeyword(TokenType::KW_CACHE)) {
+        } else if (matchIdentifierKeyword("CACHE")) {
             cache_size = parse_int64();
             has_cache = true;
         } else if (matchKeyword(TokenType::KW_OWNED)) {
@@ -2566,7 +2594,7 @@ void Parser::parseAlterStmt() {
                 matchKeyword(TokenType::KW_COLUMN);
                 ColumnDef col = parseColumnDef();
                 if (col.has_default || col.primary_key || col.unique ||
-                    col.is_identity || col.is_generated) {
+                    col.is_identity || col.is_generated || col.not_null) {
                     error("ALTER TABLE ADD COLUMN does not support constraints yet");
                     return;
                 }

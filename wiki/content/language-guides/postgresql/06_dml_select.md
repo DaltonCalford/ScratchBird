@@ -1151,9 +1151,9 @@ FOR UPDATE OF orders;
 | FETCH | Partial | Basic works, WITH TIES stubbed |
 | Subqueries | Partial | Simple works, correlated may fail |
 | Set operations | Partial | UNION works, INTERSECT/EXCEPT stubbed |
-| CTEs | Stubbed | Parser accepts, executor mismatch |
-| Recursive CTEs | Stubbed | Parser accepts, executor mismatch |
-| Window functions | Stubbed | Parser accepts, executor mismatch |
+| CTEs | Implemented | Emits EXT_CTE_DEF opcodes |
+| Recursive CTEs | Implemented | WITH RECURSIVE parsed and emitted |
+| Window functions | Implemented | Parses OVER clauses and window definitions |
 | FOR UPDATE | Partial | Basic locking works |
 
 ### Specific Issues

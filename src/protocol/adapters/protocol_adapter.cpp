@@ -326,6 +326,8 @@ protocol::WireType ProtocolAdapter::mapDataType(core::DataType type) const {
         case DataType::FLOAT32: return protocol::WireType::FLOAT32;
         case DataType::FLOAT64: return protocol::WireType::FLOAT64;
         case DataType::DECIMAL: return protocol::WireType::DECIMAL;
+        case DataType::DECFLOAT16: return protocol::WireType::DECIMAL;
+        case DataType::DECFLOAT34: return protocol::WireType::DECIMAL;
         case DataType::CHAR:    return protocol::WireType::CHAR;
         case DataType::VARCHAR:
         case DataType::TEXT:    return protocol::WireType::VARCHAR;

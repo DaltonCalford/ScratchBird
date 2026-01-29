@@ -701,6 +701,10 @@ void Parser::parseSelectStmt() {
     consume(TokenType::KW_SELECT, "Expected SELECT");
     emit(sblr::Opcode::SELECT);
 
+    window_specs_.clear();
+    last_expr_was_window_ = false;
+    last_window_index_ = 0;
+
     // Handle SELECT modifiers
     bool distinct = false;
     if (matchKeyword(TokenType::KW_DISTINCT) || matchKeyword(TokenType::KW_DISTINCTROW)) {
@@ -803,7 +807,7 @@ void Parser::parseSelectStmt() {
             }
         }
         bool emit_fallback_null = false;
-        if (emit_count == 0) {
+        if (emit_count == 0 && window_specs_.empty()) {
             emit_count = 1;
             emit_fallback_null = true;
         }
@@ -853,6 +857,10 @@ void Parser::parseSelectStmt() {
         parseHavingClause();
     }
 
+    if (!window_specs_.empty()) {
+        emitWindowSpecs();
+    }
+
     if (matchKeyword(TokenType::KW_ORDER)) {
         consumeKeyword(TokenType::KW_BY, "Expected BY after ORDER");
         parseOrderByClause();
@@ -899,6 +907,7 @@ void Parser::parseSelectList(std::vector<SelectItem>& items) {
         if (match(TokenType::STAR)) {
             item.kind = SelectItem::Kind::Star;
         } else {
+            last_expr_was_window_ = false;
             item.expr_bytecode = captureExpressionBytecode();
             std::string column_name;
             if (decode_simple_column(item.expr_bytecode, column_name)) {
@@ -909,10 +918,33 @@ void Parser::parseSelectList(std::vector<SelectItem>& items) {
             }
         }
 
+        bool is_window_expr = false;
+        if (last_expr_was_window_ &&
+            item.expr_bytecode.size() == 1 &&
+            item.expr_bytecode[0] == static_cast<uint8_t>(sblr::Opcode::LITERAL_NULL)) {
+            is_window_expr = true;
+        }
+
         if (matchKeyword(TokenType::KW_AS)) {
             item.alias = parseIdentifier();
         } else if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
             item.alias = parseIdentifier();
+        }
+
+        if (is_window_expr) {
+            if (last_window_index_ < window_specs_.size()) {
+                auto& spec = window_specs_[last_window_index_];
+                spec.output_column = item.alias.empty() ? spec.function_name : item.alias;
+            }
+            continue;
+        }
+
+        if (last_expr_was_window_) {
+            error("Window functions cannot be combined with other expressions yet");
+            if (last_window_index_ < window_specs_.size()) {
+                window_specs_.erase(window_specs_.begin() + static_cast<long>(last_window_index_));
+            }
+            last_expr_was_window_ = false;
         }
 
         items.push_back(std::move(item));
@@ -1624,6 +1656,12 @@ void Parser::parsePrimaryExpr() {
         return;
     }
 
+    if (matchKeyword(TokenType::KW_MATCH)) {
+        consume(TokenType::LEFT_PAREN, "Expected ( after MATCH");
+        parseMatchAgainstExpr();
+        return;
+    }
+
     // EXISTS
     if (matchKeyword(TokenType::KW_EXISTS)) {
         consume(TokenType::LEFT_PAREN, "Expected ( after EXISTS");
@@ -1774,7 +1812,9 @@ void Parser::parseFunctionCall(const std::string& name) {
         }
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+            WindowFunctionSpec spec;
+            error("Aggregate window functions are not supported in MySQL parser");
+            parseWindowSpecForFunction(spec);
         }
         return;
     }
@@ -1786,7 +1826,9 @@ void Parser::parseFunctionCall(const std::string& name) {
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+            WindowFunctionSpec spec;
+            error("Aggregate window functions are not supported in MySQL parser");
+            parseWindowSpecForFunction(spec);
         }
         return;
     }
@@ -1798,7 +1840,9 @@ void Parser::parseFunctionCall(const std::string& name) {
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+            WindowFunctionSpec spec;
+            error("Aggregate window functions are not supported in MySQL parser");
+            parseWindowSpecForFunction(spec);
         }
         return;
     }
@@ -1809,7 +1853,9 @@ void Parser::parseFunctionCall(const std::string& name) {
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+            WindowFunctionSpec spec;
+            error("Aggregate window functions are not supported in MySQL parser");
+            parseWindowSpecForFunction(spec);
         }
         return;
     }
@@ -1820,96 +1866,179 @@ void Parser::parseFunctionCall(const std::string& name) {
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+            WindowFunctionSpec spec;
+            error("Aggregate window functions are not supported in MySQL parser");
+            parseWindowSpecForFunction(spec);
         }
         return;
     }
 
     // Window functions
     if (upper_name == "ROW_NUMBER") {
-        emit(sblr::Opcode::WIN_ROW_NUMBER);
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.func_opcode = sblr::Opcode::WIN_ROW_NUMBER;
+        spec.function_name = upper_name;
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("ROW_NUMBER requires OVER clause");
+            return;
         }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "RANK") {
-        emit(sblr::Opcode::WIN_RANK);
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.func_opcode = sblr::Opcode::WIN_RANK;
+        spec.function_name = upper_name;
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("RANK requires OVER clause");
+            return;
         }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "DENSE_RANK") {
-        emit(sblr::Opcode::WIN_DENSE_RANK);
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.func_opcode = sblr::Opcode::WIN_DENSE_RANK;
+        spec.function_name = upper_name;
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("DENSE_RANK requires OVER clause");
+            return;
         }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "LAG" || upper_name == "LEAD") {
-        emit(upper_name == "LAG" ? sblr::Opcode::WIN_LAG : sblr::Opcode::WIN_LEAD);
-        parseExpression();  // value expression
-        if (match(TokenType::COMMA)) {
-            parseExpression();  // offset
+        WindowFunctionSpec spec;
+        spec.func_opcode = (upper_name == "LAG") ? sblr::Opcode::WIN_LAG
+                                                 : sblr::Opcode::WIN_LEAD;
+        spec.function_name = upper_name;
+        if (!check(TokenType::RIGHT_PAREN)) {
+            spec.args.push_back(captureExpressionBytecode());
             if (match(TokenType::COMMA)) {
-                parseExpression();  // default
+                spec.args.push_back(captureExpressionBytecode());
+                if (match(TokenType::COMMA)) {
+                    spec.args.push_back(captureExpressionBytecode());
+                }
             }
         }
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("LAG/LEAD requires OVER clause");
+            return;
         }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "FIRST_VALUE") {
-        emit(sblr::Opcode::WIN_FIRST_VALUE);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.func_opcode = sblr::Opcode::WIN_FIRST_VALUE;
+        spec.function_name = upper_name;
+        if (!check(TokenType::RIGHT_PAREN)) {
+            spec.args.push_back(captureExpressionBytecode());
         }
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("FIRST_VALUE requires OVER clause");
+            return;
+        }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "LAST_VALUE") {
-        emit(sblr::Opcode::WIN_LAST_VALUE);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.func_opcode = sblr::Opcode::WIN_LAST_VALUE;
+        spec.function_name = upper_name;
+        if (!check(TokenType::RIGHT_PAREN)) {
+            spec.args.push_back(captureExpressionBytecode());
         }
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("LAST_VALUE requires OVER clause");
+            return;
+        }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "NTH_VALUE") {
-        emit(sblr::Opcode::WIN_NTH_VALUE);
-        parseExpression();
-        consume(TokenType::COMMA, "Expected ,");
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.func_opcode = sblr::Opcode::WIN_NTH_VALUE;
+        spec.function_name = upper_name;
+        if (!check(TokenType::RIGHT_PAREN)) {
+            spec.args.push_back(captureExpressionBytecode());
+            consume(TokenType::COMMA, "Expected ,");
+            spec.args.push_back(captureExpressionBytecode());
         }
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("NTH_VALUE requires OVER clause");
+            return;
+        }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "CUME_DIST") {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_WIN_CUME_DIST));
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.is_extended = true;
+        spec.ext_opcode = sblr::ExtendedOpcode::EXT_WIN_CUME_DIST;
+        spec.function_name = upper_name;
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("CUME_DIST requires OVER clause");
+            return;
         }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
     if (upper_name == "PERCENT_RANK") {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_WIN_PERCENT_RANK));
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
+        WindowFunctionSpec spec;
+        spec.is_extended = true;
+        spec.ext_opcode = sblr::ExtendedOpcode::EXT_WIN_PERCENT_RANK;
+        spec.function_name = upper_name;
+        if (!matchKeyword(TokenType::KW_OVER)) {
+            error("PERCENT_RANK requires OVER clause");
+            return;
         }
+        parseWindowSpecForFunction(spec);
+        window_specs_.push_back(std::move(spec));
+        last_window_index_ = window_specs_.size() - 1;
+        last_expr_was_window_ = true;
+        emit(sblr::Opcode::LITERAL_NULL);
         return;
     }
 
@@ -2173,6 +2302,180 @@ void Parser::parseCaseExpr() {
     consumeKeyword(TokenType::KW_END, "Expected END");
 }
 
+std::string Parser::parseWindowColumnName() {
+    auto parse_identifier = [&]() -> std::string {
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            return parseIdentifier();
+        }
+        if (isNonReservedKeyword(current_token_.type)) {
+            std::string name = tokenToString(current_token_.type);
+            advance();
+            return name;
+        }
+        error("Expected column name in window clause");
+        return "";
+    };
+
+    std::string column = parse_identifier();
+    if (match(TokenType::DOT)) {
+        column = parse_identifier();
+        if (match(TokenType::DOT)) {
+            column = parse_identifier();
+        }
+    }
+    return column;
+}
+
+bool Parser::parseWindowFrameBound(sblr::Opcode& bound_out) {
+    if (matchKeyword(TokenType::KW_UNBOUNDED)) {
+        if (matchKeyword(TokenType::KW_PRECEDING)) {
+            bound_out = sblr::Opcode::FRAME_UNBOUNDED_PRECEDING;
+            return true;
+        }
+        if (matchKeyword(TokenType::KW_FOLLOWING)) {
+            bound_out = sblr::Opcode::FRAME_UNBOUNDED_FOLLOWING;
+            return true;
+        }
+        error("Expected PRECEDING or FOLLOWING after UNBOUNDED");
+        return false;
+    }
+    if (matchKeyword(TokenType::KW_CURRENT)) {
+        consumeKeyword(TokenType::KW_ROW, "Expected ROW after CURRENT");
+        bound_out = sblr::Opcode::FRAME_CURRENT_ROW;
+        return true;
+    }
+
+    parseExpression();
+    if (matchKeyword(TokenType::KW_PRECEDING) || matchKeyword(TokenType::KW_FOLLOWING)) {
+        error("Window frame offsets are not supported yet");
+    } else {
+        error("Expected PRECEDING or FOLLOWING in frame bound");
+    }
+    return false;
+}
+
+void Parser::parseWindowSpecForFunction(WindowFunctionSpec& spec) {
+    if (!match(TokenType::LEFT_PAREN)) {
+        error("Named windows are not supported in MySQL parser");
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_PARTITION)) {
+        consumeKeyword(TokenType::KW_BY, "Expected BY after PARTITION");
+        do {
+            spec.partition_columns.push_back(parseWindowColumnName());
+        } while (match(TokenType::COMMA));
+    }
+
+    if (matchKeyword(TokenType::KW_ORDER)) {
+        consumeKeyword(TokenType::KW_BY, "Expected BY after ORDER");
+        do {
+            spec.order_columns.push_back(parseWindowColumnName());
+            if (matchKeyword(TokenType::KW_DESC)) {
+                // DESC parsed but not emitted in window bytecode yet.
+            } else {
+                matchKeyword(TokenType::KW_ASC);
+            }
+            if (matchKeyword(TokenType::KW_NULLS)) {
+                if (matchKeyword(TokenType::KW_FIRST)) {
+                } else if (matchKeyword(TokenType::KW_LAST)) {
+                }
+            }
+        } while (match(TokenType::COMMA));
+    }
+
+    TokenType frame_type = TokenType::END_OF_FILE;
+    if (matchKeyword(TokenType::KW_ROWS)) {
+        frame_type = TokenType::KW_ROWS;
+    } else if (matchKeyword(TokenType::KW_RANGE)) {
+        frame_type = TokenType::KW_RANGE;
+    } else if (matchKeyword(TokenType::KW_GROUPS)) {
+        frame_type = TokenType::KW_GROUPS;
+    }
+
+    if (frame_type != TokenType::END_OF_FILE) {
+        spec.has_frame = true;
+        if (frame_type == TokenType::KW_RANGE) {
+            spec.frame_mode = sblr::Opcode::FRAME_RANGE;
+        } else if (frame_type == TokenType::KW_GROUPS) {
+            spec.frame_mode = sblr::Opcode::FRAME_GROUPS;
+        } else {
+            spec.frame_mode = sblr::Opcode::FRAME_ROWS;
+        }
+
+        if (matchKeyword(TokenType::KW_BETWEEN)) {
+            if (!parseWindowFrameBound(spec.frame_start)) {
+                return;
+            }
+            consumeKeyword(TokenType::KW_AND, "Expected AND in frame clause");
+            if (!parseWindowFrameBound(spec.frame_end)) {
+                return;
+            }
+        } else {
+            if (!parseWindowFrameBound(spec.frame_start)) {
+                return;
+            }
+            spec.frame_end = sblr::Opcode::FRAME_CURRENT_ROW;
+        }
+    }
+
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+}
+
+void Parser::emitWindowSpecs() {
+    emit(sblr::Opcode::WINDOW);
+    emitU32(static_cast<uint32_t>(window_specs_.size()));
+
+    for (auto& spec : window_specs_) {
+        if (spec.is_extended) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(spec.ext_opcode));
+        } else {
+            emit(spec.func_opcode);
+        }
+
+        emitU32(static_cast<uint32_t>(spec.args.size()));
+        for (const auto& arg : spec.args) {
+            bytecode_.insert(bytecode_.end(), arg.begin(), arg.end());
+        }
+
+        emit(sblr::Opcode::WINDOW_SPEC);
+
+        emitU32(static_cast<uint32_t>(spec.partition_columns.size()));
+        if (!spec.partition_columns.empty()) {
+            emit(sblr::Opcode::PARTITION_BY);
+            for (const auto& column : spec.partition_columns) {
+                emit(sblr::Opcode::COLUMN_REF);
+                emitString("");
+                emitString(column);
+            }
+        }
+
+        emitU32(static_cast<uint32_t>(spec.order_columns.size()));
+        if (!spec.order_columns.empty()) {
+            emit(sblr::Opcode::WINDOW_ORDER_BY);
+            for (const auto& column : spec.order_columns) {
+                emit(sblr::Opcode::COLUMN_REF);
+                emitString("");
+                emitString(column);
+            }
+        }
+
+        emitU32(spec.has_frame ? 1u : 0u);
+        if (spec.has_frame) {
+            emit(sblr::Opcode::FRAME_CLAUSE);
+            emit(spec.frame_mode);
+            emit(spec.frame_start);
+            emit(spec.frame_end);
+        }
+
+        if (spec.output_column.empty()) {
+            spec.output_column = spec.function_name;
+        }
+        emitString(spec.output_column);
+    }
+}
+
 void Parser::parseWindowClause() {
     emit(sblr::Opcode::WINDOW);
 
@@ -2333,11 +2636,12 @@ void Parser::parseMatchAgainstExpr() {
 
     bool boolean_mode = false;
     if (matchKeyword(TokenType::KW_IN)) {
-        if (matchIdentifierKeyword("BOOLEAN")) {
+        if (matchKeyword(TokenType::KW_BOOLEAN) || matchIdentifierKeyword("BOOLEAN")) {
             matchIdentifierKeyword("MODE");
             boolean_mode = true;
-        } else if (matchIdentifierKeyword("NATURAL")) {
-            matchIdentifierKeyword("LANGUAGE");
+        } else if (matchKeyword(TokenType::KW_NATURAL) || matchIdentifierKeyword("NATURAL")) {
+            if (matchKeyword(TokenType::KW_LANGUAGE) || matchIdentifierKeyword("LANGUAGE")) {
+            }
             matchIdentifierKeyword("MODE");
         }
     }
@@ -6624,7 +6928,7 @@ void Parser::parseShowStmt() {
         warning("SHOW ERRORS is mapped to SHOW SYSTEM output");
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_SYSTEM));
-    } else if (matchKeyword(TokenType::KW_GRANTS) || matchIdentifierKeyword("GRANTS")) {
+    } else if (matchIdentifierKeyword("GRANTS")) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_GRANTS));
 
@@ -7148,7 +7452,7 @@ void Parser::parseExplainStmt() {
     if (matchKeyword(TokenType::KW_ANALYZE)) {
         options |= 1;
     }
-    if (matchKeyword(TokenType::KW_VERBOSE)) {
+    if (matchIdentifierKeyword("VERBOSE")) {
         options |= 2;
     }
 
@@ -7156,15 +7460,15 @@ void Parser::parseExplainStmt() {
         while (!check(TokenType::RIGHT_PAREN)) {
             if (matchKeyword(TokenType::KW_ANALYZE)) {
                 options |= 1;
-            } else if (matchKeyword(TokenType::KW_VERBOSE)) {
+            } else if (matchIdentifierKeyword("VERBOSE")) {
                 options |= 2;
-            } else if (matchKeyword(TokenType::KW_COSTS)) {
+            } else if (matchIdentifierKeyword("COSTS")) {
                 options |= 4;
             } else if (matchIdentifierKeyword("BUFFERS")) {
                 options |= 8;
             } else if (matchIdentifierKeyword("TIMING")) {
                 options |= 16;
-            } else if (matchKeyword(TokenType::KW_FORMAT)) {
+            } else if (matchIdentifierKeyword("FORMAT")) {
                 parseIdentifier();
             } else {
                 parseIdentifier();

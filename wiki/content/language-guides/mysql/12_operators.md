@@ -108,5 +108,6 @@ SELECT NOW(), CURRENT_TIMESTAMP(), CURRENT_DATE();
 - `&`, `|`, `^`, `~`, `<<`, `>>`: Implemented.
 
 ## JSON / arrays
-- JSON operators: Missing.
-- Array operators: Missing.
+- JSON operators (`->`, `->>`): Not implemented.
+- JSON functions (JSON_EXTRACT, JSON_OBJECT): Implemented via function calls.
+- Array operators: Not implemented.

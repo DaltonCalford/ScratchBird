@@ -1,0 +1,679 @@
+{
+  "uca_version": "17.0.0",
+  "data_version": "2026-01-28",
+  "source": "Unicode UCA",
+  "files": [
+    {
+      "type": "weights",
+      "path": "resources/collations/uca/allkeys.txt",
+      "sha256": "2503d09367c2639a4fb8fd55e81aaacb0d9fb4ea26600333329bd12456b99ecd",
+      "format": "allkeys"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/firebird_appendix_h_collations.txt",
+      "sha256": "0d9ab7106df682e5c3728c56763471e7a64df3aa01a255df7877c2c3221d575b",
+      "format": "tailoring-index"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/source_version.txt",
+      "sha256": "e9825e4242724474e12dd0dcd9cdbb0d0f954cd972c66badac9c7f355a4ac277",
+      "format": "tailoring-index"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591ca0.h",
+      "sha256": "92728f6521760cebfc11b0e201bde615c1aff985efbca238e255b58b90f3e077",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591da0.h",
+      "sha256": "4a04abdbfecb981452cdd8826abbe32e9d108c2432144639c05ba7df502a7913",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591de0.h",
+      "sha256": "92728f6521760cebfc11b0e201bde615c1aff985efbca238e255b58b90f3e077",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591es0.h",
+      "sha256": "e60245b3cf72b0f35680ae3f043cd67c839be8fc71e11f7e7a2092df4aba569a",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591fi0.h",
+      "sha256": "1e99f2dbc659e8bb44a30d503fa3dcf1e1ccc1491f799b2d30a2ee969fa267fa",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591is0.h",
+      "sha256": "fbe34c654f3480ddfca35acdf2b412467f6c22efa2ec8fb2100e510a490a35ff",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591it0.h",
+      "sha256": "92728f6521760cebfc11b0e201bde615c1aff985efbca238e255b58b90f3e077",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591nl0.h",
+      "sha256": "92728f6521760cebfc11b0e201bde615c1aff985efbca238e255b58b90f3e077",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591no0.h",
+      "sha256": "da8f748beb0afb8b8f18f671019a4359ee76b1e127c2526ecf8f0b249c3f0373",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591pt0.h",
+      "sha256": "c08a8fecb32ef00ad8498c5cf5f6e5cf543b5b22d7c0f4d423f0c8bde11e3e6c",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591ptbr0.h",
+      "sha256": "8eba2ae87ffa02c2d20c39d974d38dfd25ef2237ce193d986a9a7daf9d33f03f",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591sv0.h",
+      "sha256": "c834df3191da36c96942db4bff46043797a8cdded9b098af51f2176f906af15d",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591uk0.h",
+      "sha256": "92728f6521760cebfc11b0e201bde615c1aff985efbca238e255b58b90f3e077",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/bl88591us0.h",
+      "sha256": "9f50c76d1872b9129c4b83c3b60799c1922a9f48daf9c27ad52956dc0c513431",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/blNEXTde0.h",
+      "sha256": "483b55fb33c16e504a660f96121bf8b0a8a1fc42b051717b60473193873b7d32",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/blNEXTes0.h",
+      "sha256": "59c1e3c169cf25b97e158ca3e7b900b565dee0baa650a45dd8d9f2bed1091af4",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/blNEXTfr0.h",
+      "sha256": "966e7d173ca1c8a4caee7655b70040c9f866a414a3fa6ef4615b9a9df5333867",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/blNEXTit0.h",
+      "sha256": "fdaaf4c8bf1736c013733b4b7a03afd8cc07b4d41c0ede674421583038b50a6e",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/blNEXTus0.h",
+      "sha256": "d3b4b383a4d64fa2d52166c2df84012eebbd556c3df339d11d4f47d99fa6485b",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437de0.h",
+      "sha256": "ab021740d1dba47097d13a848298403d1f1f343359752f5597e496bad2612ec0",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437es1.h",
+      "sha256": "a4a2c88f31d085087ab66a6734dd1ba7a57ca3db1d67339d2cdda30b6e4a12c4",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437fi0.h",
+      "sha256": "660944af42b32edd5263c4b4378c40f4380cbd947f514d0f3fcfe21e6bcb4565",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437fr0.h",
+      "sha256": "f656279f4d7018870ded1661386f33feda0c5c1e4fcbd7247b1f9a4fd87e8aad",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437it0.h",
+      "sha256": "a15c46459e9718221c876a2ec24b009dfdffe9c930cf013c18e1d275c2c0b203",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437nl0.h",
+      "sha256": "a4f25f7c3eba45f47e84be0c80e267cb093dd4b0409891fcca3ff77d89c49607",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437sv0.h",
+      "sha256": "0f73f34b8ea2cded5264335f74950aea3371b378e38a14560e42d21bef4fa073",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437uk0.h",
+      "sha256": "096d49bac9e29eb10b68e83cd3e2f8ed6f0605f6c41694faf24647d6169e1614",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db437us0.h",
+      "sha256": "ff8567d4b00f74572d881a6ab3d71d3be3a0b2ad48d7d22858ecce00a7580780",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850cf0.h",
+      "sha256": "5f13c841cbeb405067ec86ce96c8e386ec5d0312982091b37b8a79e2625992d0",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850de0.h",
+      "sha256": "e88aa3691e592e64128ea86187fbc393b3c619203a29ca5cb4f313fd9e3537e0",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850es0.h",
+      "sha256": "6c25b143836f7c00438b25b7085ee34ccc32d6b4da164e3594f94ca55ee875b4",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850fr0.h",
+      "sha256": "1480279214d9ee3ac17d37a166d7fa5395a3b14717691dde041ab8e16539e057",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850it1.h",
+      "sha256": "384b45bb957d9ac372b0001a5874d572d2a4b4300a6cb170716d25c15a8e82d3",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850nl0.h",
+      "sha256": "84aefde199898802a83ceaa4d2d63daaa3592faff728d7b9a5bba3cb33e41fbb",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850pt0.h",
+      "sha256": "d8c11ea96d232d0a9862b62e3d92eba78fa3afb5310e5dc139366b902faaf6c2",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850sv1.h",
+      "sha256": "a0370c73e10f3f866801f30313c29b9625ae012842f1a562ba6e77bcc1b7d75f",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850uk0.h",
+      "sha256": "5d7461e9849739e186052a39b6b046c90320a60bc83f6c40762921c55ba671f5",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db850us0.h",
+      "sha256": "d4605fca34f42fe0a00a2401d08dd8bb3e6466dd6a8a633169dafde4ec552224",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db852cz0.h",
+      "sha256": "04c65073acd06d2ca814d129bb2c419fe53d0a9cf04525f8835fb69404244256",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db852po0.h",
+      "sha256": "f71efd2166cc82ce7787a308554f1e4184a1766006841064a4b7e1e5c17e4d64",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db852sl0.h",
+      "sha256": "08096fff1eb842458de71a76494bcf3d3a2924d94ca92b88aa950be0249b576c",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db857tr0.h",
+      "sha256": "c25385d66a57e491ee81bfb68015cfb120cf69c231617883c2adc32a69bf14e6",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db860pt0.h",
+      "sha256": "39919c65b4843ecffd07e141cafd9c11c4fd2546650817cd974c0a46049f260d",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db863cf1.h",
+      "sha256": "d418e6a03a6b67a86fc5fb1ba8e90e54d02503bca75ec3005f0c284458541f57",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db865da0.h",
+      "sha256": "6dd8ac9262d57ccf1bd9be34f0dcb84530b46c001f8361bf7e4b076f932a65f2",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db865no0.h",
+      "sha256": "fa17702301709f8b36fed03776da2167b36e6f583e652d58022e964c2a4aaabb",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/db866ru0.h",
+      "sha256": "3bb084802c63d7e9363489e93a8826bcb4d08223d873456a35d5b35e284bbd30",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/koi8r_ru.h",
+      "sha256": "8b4523be58a79b94df530a3e3fdd9ea6daf801ee92ab83e733ab433390c1e7ab",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/koi8u_ua.h",
+      "sha256": "f63e67279382d281d98bac2b90c9905982c1a30c6845d12aa0313320324ad1b6",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd437intl.h",
+      "sha256": "cf7f97ceba87427d5090a1f8c30be2f6296dafc1600f9883c71d67720810e2c6",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd437swedfin.h",
+      "sha256": "f0a1a412fc7345f28c9e7a3d382ff2741b817b263f49a29e45e5ad1d465bc2c4",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd852czech.h",
+      "sha256": "ca077c718467f41822bae96f6a524a47a40e45713afb88f04d4efc22df5d998d",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd852hundc.h",
+      "sha256": "22f285e8a5cf379f6c377f8cec09e1f9e4bffd01b6bb8380d17d4755bf2178f6",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd852polish.h",
+      "sha256": "5cda62532a961c4a81678b33639680bf0f082af6aa9ae8cbb2a15b664735675e",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd852slovene.h",
+      "sha256": "315102f471eb8f4b071a6ecdda0e7169e7a1250c283dc21c1d20505930e36818",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd861iceland.h",
+      "sha256": "ad813c6962318c1b55e6eb5c0d9fe33254e31fb4501fbf7697ceb7e059eaa726",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd865nordan40.h",
+      "sha256": "0bd467b98eb1fd27272bc7d7add615642c3bf1dd94975fc6cfa99b77dea96ca8",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pd866cyrr.h",
+      "sha256": "f8f5719b3cae54a0aa65461e764d77fa156c7f6b13dfb14ad655a1bd326cbf3f",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1250czech.h",
+      "sha256": "2b1352527ba6ee961c968077cce4dd681a2f1979bba406fe5e3a350643989dc0",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1250hun.h",
+      "sha256": "5228a3505042cf81b05c9e14ad8d756a1524da71ba8a7bb883bfb6693dcb5732",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1250hundc.h",
+      "sha256": "486a6701d52910ad852f7497428290ff53a76fbb3f74fd3c4aaf69fbaad62a31",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1250polish.h",
+      "sha256": "8a856eda2b65325961e0ae12e16798790edfd6cd923fff324c9f4ae824c5f1e3",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1250slov.h",
+      "sha256": "ed7cfc662af6d2488f9e5a40dc2b18bc394c9cc80481831b9918b6b1c35dfa43",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1251cyrr.h",
+      "sha256": "cfe7c6fbd0e48a14a09c920f6922de84436fc418fcddcf69c3f187ef77a6a61d",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1252i850.h",
+      "sha256": "41f4e79473336d1bf3acfd22b7f5f3171a0004fdc29d6dd09d4437fe263627e8",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1252intl.h",
+      "sha256": "5188f3ded76d338c7f797c7fb845870b5299c6e7380eea3289f4a0512cbb7928",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1252nor4.h",
+      "sha256": "7c845edebec059a03b33c02d802630d06bdb2098647d4b42b6c79e18e6f022aa",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1252ptbr.h",
+      "sha256": "227893831e958c3fc6e36c0826b69e548205f38d60bbd1cbcb25ffbc04716255",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1252span.h",
+      "sha256": "aa72796cbfc81596e21e46b116bbfc71e94725adb239c1ef7bbef777b679f74e",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1252swfn.h",
+      "sha256": "2ddca01de3eeeb6624326951a31ddb609d5f69f4c6bc54a99d5009fc555d6442",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1253greek1.h",
+      "sha256": "63bac1d2c53c0b6bf75069be6e542cf61dac908e4919d582aed065e749baa0a2",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/pw1254turk.h",
+      "sha256": "4f38618cbd1f160288f616872bba7b1d77e856df2ab261d28b4ac533fa072b94",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/win1250bsba.h",
+      "sha256": "538011a4952982051f4a7dddfc00bc1f54aa93e111e11c37db0d07acb0e03a1f",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/win1257_ee.h",
+      "sha256": "f508a771f75eec02fb98bbfc15f571d2759e84e99fe302f1f2ad84191678d263",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/win1257_lt.h",
+      "sha256": "0932c55eda109cbf31b0c1a49a373ea853cfa29ab1604207de6536c0b4c3f7c3",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/win1257_lv.h",
+      "sha256": "791302a45ebbb95a6e9e93cf1a837ef52d2ec773383bb5bc17c02a392521ed5c",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/win_cz.h",
+      "sha256": "ac9f459739fe623f4c05f495113cbeaf855f984290af20972329da49fe526400",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/win_cz_ci_ai.h",
+      "sha256": "361e8103a0bcae46f9cfa8b0812951e946508607164cd036b94deb8af9e42e9f",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/xx1251_ua.h",
+      "sha256": "bd2fab42d5aaa649e15f7b70ae225fb3ff5add4e23ddb82fe4eaa4d26d5f4b6e",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/xx885913lt.h",
+      "sha256": "a635879236f4b2800f709a0ffbd1449695157f86bca8550ffb36868a816908fc",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/xx88592czech.h",
+      "sha256": "33bb97e3a25fea0f60a6089e42ab545d4041c4ae5a41580dec68829606bcd6f9",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/xx88592hun.h",
+      "sha256": "2747251ec0262a1100cd48027e17509de102c4f70bb59fc6a727cd740b3a4f71",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/firebird/tables/xx88592plk.h",
+      "sha256": "11a77199074e387cb193b7bcab7092d9d11d25152f3a1af4ead83d319550603d",
+      "format": "firebird-collation-table"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/armscii8.xml",
+      "sha256": "cc950a4e20e4ea7872617998fd2e4b84ac2621cfc858a116e30d15c0ef96fe01",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/ascii.xml",
+      "sha256": "e69e77baf42575872759f4ea3fb917417e7eec713fe2ebac9629e5ff2ce73886",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/cp1250.xml",
+      "sha256": "266e0d10e5c6f7fd648f52ebc40c11f365a9cce7e97b28cadce93c3bc650e42c",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/cp1251.xml",
+      "sha256": "705fb5f8a471f566443c34bad6ca9a99fd1503205ad3a801944487e2c316ec32",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/cp1256.xml",
+      "sha256": "9cca5256e9873080a4033434bede2eea68492629de7a38da5cb2fb7cbdf30fdb",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/cp1257.xml",
+      "sha256": "c14c5981c339762ae356b25b7a07644fcafc617d36b50570d7ca64134f9295e0",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/cp850.xml",
+      "sha256": "015fe14c2bb867ce4ba7935c24eea07d18b0930b84ef6a94732db0414299f41f",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/cp852.xml",
+      "sha256": "eeb31fb7ba0d90dc3a62a5f182702338ead59ec29144cbb53d6a7a1ace0b8d9c",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/cp866.xml",
+      "sha256": "772a691ed737da8d1c7cd5fca09685dd9c0378857c3bbc24e3b5567fd24e2cc0",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/dec8.xml",
+      "sha256": "b32f97f56a3960d5400d0fa7192c4f351cbef270d9e393543280b0fcff2c44a6",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/geostd8.xml",
+      "sha256": "2e48b5d8c45da98fa0ec25ef3a135c4d30da4b42c55c7b84461e2a1370443d64",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/greek.xml",
+      "sha256": "9d339917eb427e497f823d49b130b91f2e414ca590845c84621528d6cde41843",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/hebrew.xml",
+      "sha256": "287d26cfedc3c6c78d34c2607e7c89d91c321f0b48f265a6e9ec165c2eafd26e",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/hp8.xml",
+      "sha256": "7ee13224173cf0fa52af6551630d1f451ef50d4c5012afb49f7826fabe8a4e0f",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/keybcs2.xml",
+      "sha256": "d446a109d0a504b38947cbcb36d1abc9118fe4033032c229fbc8cf6fcbd79c96",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/koi8r.xml",
+      "sha256": "6550b306b04fc5f69a233ea2b0427954d2ab7741e02927da479e84e94edb0a2d",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/koi8u.xml",
+      "sha256": "d0a8cb1de11ef570e0521d010b34cfcb74638e66137b378114c186dd4b053a5f",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/latin1.xml",
+      "sha256": "8afb9f20b76373031ef84dc077425c4ba1297ff2b54aeb077bd3f93d3d56117c",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/latin2.xml",
+      "sha256": "1aa687e3d26e85ede104bb62983b49aa845f29e7263f6283b645299716140d7e",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/latin5.xml",
+      "sha256": "acb916bf820b088ce9e1a012e9a2fe5f19f52c4b66cbc425e08c1e79ab75a21b",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/latin7.xml",
+      "sha256": "64cf99567127b03faa171d928bbcacd2451f000e3729f64763c1dc67c65378e7",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/macce.xml",
+      "sha256": "f474df7e0e0845a88ba7aabb04562705a2ab00185d037a7b1e12070f0d61fff0",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/macroman.xml",
+      "sha256": "c9c87850ae02bbd426c977a3635329b144f604274d7f6c4f7ff76b38a204ec50",
+      "format": "mysql-charset-xml"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/mysql_defaults.txt",
+      "sha256": "1681665a13fc0890c1d41830e4c72431be4d7c58f9730d8a04535cb08d8fe73f",
+      "format": "tailoring-index"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/source_version.txt",
+      "sha256": "007607da1952ea28ee3c559aec3990de324eeeb1cd443990271e7ed0ea31be21",
+      "format": "tailoring-index"
+    },
+    {
+      "type": "tailoring",
+      "path": "resources/collations/tailorings/mysql/swe7.xml",
+      "sha256": "a5ac2e1374340b7d636fde7a6a5139e3902e73d40588006e705142ede90c0711",
+      "format": "mysql-charset-xml"
+    }
+  ]
+}

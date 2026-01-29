@@ -503,6 +503,14 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
                 mapping.field_scale = static_cast<int16_t>(-static_cast<int32_t>(scale));
                 break;
             }
+            case DataType::DECFLOAT16:
+                mapping.field_type = 24; // DECFLOAT(16)
+                mapping.field_length = 8;
+                break;
+            case DataType::DECFLOAT34:
+                mapping.field_type = 25; // DECFLOAT(34)
+                mapping.field_length = 16;
+                break;
             case DataType::CHAR:
                 mapping.field_type = 14; // CHAR
                 mapping.field_length = static_cast<int16_t>(precision == 0 ? 1 : precision);

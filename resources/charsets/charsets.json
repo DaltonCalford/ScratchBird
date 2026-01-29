@@ -1,401 +1,1606 @@
 {
   "character_sets": [
     {
-      "name": "UTF-8",
-      "description": "Unicode Transformation Format, 8-bit (built-in)",
-      "aliases": ["utf8", "UTF8", "UTF-8"],
-      "max_bytes": 4,
+      "name": "ARMSCII8",
+      "description": "ARMSCII-8 Armenian",
+      "aliases": [
+        "armscii8",
+        "ARMSCII-8"
+      ],
+      "max_bytes": 1,
       "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "unicode",
-      "iana_name": "UTF-8",
-      "supported_by": ["PostgreSQL", "MySQL", "SQL Server", "Oracle", "Firebird", "MariaDB"]
-    },
-    {
-      "name": "UTF-16",
-      "description": "Unicode Transformation Format, 16-bit",
-      "aliases": ["utf16", "UTF16"],
-      "max_bytes": 4,
-      "min_bytes": 2,
-      "is_variable_width": true,
-      "encoding_type": "unicode",
-      "iana_name": "UTF-16",
-      "supported_by": ["MySQL", "SQL Server", "Oracle"]
-    },
-    {
-      "name": "UTF-32",
-      "description": "Unicode Transformation Format, 32-bit",
-      "aliases": ["utf32", "UTF32"],
-      "max_bytes": 4,
-      "min_bytes": 4,
       "is_variable_width": false,
-      "encoding_type": "unicode",
-      "iana_name": "UTF-32",
-      "supported_by": ["MySQL"]
+      "encoding_type": "single_byte",
+      "iana_name": "ARMSCII-8",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
     },
     {
       "name": "ASCII",
       "description": "American Standard Code for Information Interchange (built-in)",
-      "aliases": ["US-ASCII", "ANSI_X3.4-1968", "iso-ir-6", "ASCII"],
+      "aliases": [
+        "US-ASCII",
+        "ANSI_X3.4-1968",
+        "iso-ir-6",
+        "ASCII",
+        "SQL_ASCII"
+      ],
       "max_bytes": 1,
       "min_bytes": 1,
       "is_variable_width": false,
       "encoding_type": "single_byte",
       "iana_name": "US-ASCII",
-      "supported_by": ["PostgreSQL", "MySQL", "SQL Server", "Oracle", "Firebird"]
-    },
-    {
-      "name": "ISO-8859-1",
-      "description": "Latin-1 Western European (built-in)",
-      "aliases": ["latin1", "ISO_8859-1", "CP819", "IBM819"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-1",
-      "supported_by": ["PostgreSQL", "MySQL", "Firebird", "Oracle"],
-      "note": "Direct mapping to Unicode U+0000 to U+00FF"
-    },
-    {
-      "name": "ISO-8859-2",
-      "description": "Latin-2 Central European",
-      "aliases": ["latin2", "ISO_8859-2"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-2",
-      "supported_by": ["PostgreSQL", "Firebird", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-3",
-      "description": "Latin-3 South European",
-      "aliases": ["latin3", "ISO_8859-3"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-3",
-      "supported_by": ["PostgreSQL", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-4",
-      "description": "Latin-4 North European",
-      "aliases": ["latin4", "ISO_8859-4"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-4",
-      "supported_by": ["PostgreSQL", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-5",
-      "description": "Latin/Cyrillic",
-      "aliases": ["cyrillic", "ISO_8859-5"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-5",
-      "supported_by": ["PostgreSQL", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-6",
-      "description": "Latin/Arabic",
-      "aliases": ["arabic", "ISO_8859-6", "ECMA-114", "ASMO-708"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-6",
-      "supported_by": ["PostgreSQL", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-7",
-      "description": "Latin/Greek",
-      "aliases": ["greek", "ISO_8859-7", "ECMA-118"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-7",
-      "supported_by": ["PostgreSQL", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-8",
-      "description": "Latin/Hebrew",
-      "aliases": ["hebrew", "ISO_8859-8"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-8",
-      "supported_by": ["PostgreSQL", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-9",
-      "description": "Latin-5 Turkish",
-      "aliases": ["latin5", "ISO_8859-9"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-9",
-      "supported_by": ["PostgreSQL", "Firebird", "Oracle"]
-    },
-    {
-      "name": "ISO-8859-10",
-      "description": "Latin-6 Nordic",
-      "aliases": ["latin6", "ISO_8859-10"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-10",
-      "supported_by": ["PostgreSQL"]
-    },
-    {
-      "name": "ISO-8859-13",
-      "description": "Latin-7 Baltic Rim",
-      "aliases": ["latin7", "ISO_8859-13"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-13",
-      "supported_by": ["PostgreSQL", "Firebird"]
-    },
-    {
-      "name": "ISO-8859-15",
-      "description": "Latin-9 Western European with Euro",
-      "aliases": ["latin9", "ISO_8859-15"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "ISO-8859-15",
-      "supported_by": ["PostgreSQL", "Firebird", "Oracle"]
-    },
-    {
-      "name": "Windows-1250",
-      "description": "Microsoft Central European",
-      "aliases": ["CP1250", "MS1250"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1250",
-      "supported_by": ["PostgreSQL", "SQL Server", "Firebird", "Oracle"]
-    },
-    {
-      "name": "Windows-1251",
-      "description": "Microsoft Cyrillic",
-      "aliases": ["CP1251", "MS1251"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1251",
-      "supported_by": ["PostgreSQL", "SQL Server", "Firebird", "Oracle"]
-    },
-    {
-      "name": "Windows-1252",
-      "description": "Microsoft Western European",
-      "aliases": ["CP1252", "MS1252"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1252",
-      "supported_by": ["PostgreSQL", "SQL Server", "Firebird", "Oracle"]
-    },
-    {
-      "name": "Windows-1253",
-      "description": "Microsoft Greek",
-      "aliases": ["CP1253", "MS1253"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1253",
-      "supported_by": ["PostgreSQL", "SQL Server", "Oracle"]
-    },
-    {
-      "name": "Windows-1254",
-      "description": "Microsoft Turkish",
-      "aliases": ["CP1254", "MS1254"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1254",
-      "supported_by": ["PostgreSQL", "SQL Server", "Oracle"]
-    },
-    {
-      "name": "Windows-1255",
-      "description": "Microsoft Hebrew",
-      "aliases": ["CP1255", "MS1255"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1255",
-      "supported_by": ["PostgreSQL", "SQL Server", "Oracle"]
-    },
-    {
-      "name": "Windows-1256",
-      "description": "Microsoft Arabic",
-      "aliases": ["CP1256", "MS1256"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1256",
-      "supported_by": ["PostgreSQL", "SQL Server", "Oracle"]
-    },
-    {
-      "name": "Windows-1257",
-      "description": "Microsoft Baltic",
-      "aliases": ["CP1257", "MS1257"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1257",
-      "supported_by": ["PostgreSQL", "SQL Server", "Firebird"]
-    },
-    {
-      "name": "Windows-1258",
-      "description": "Microsoft Vietnamese",
-      "aliases": ["CP1258", "MS1258"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "windows-1258",
-      "supported_by": ["PostgreSQL", "SQL Server", "Oracle"]
-    },
-    {
-      "name": "KOI8-R",
-      "description": "Russian Cyrillic",
-      "aliases": ["KOI8R"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "KOI8-R",
-      "supported_by": ["PostgreSQL", "Firebird", "Oracle"]
-    },
-    {
-      "name": "KOI8-U",
-      "description": "Ukrainian Cyrillic",
-      "aliases": ["KOI8U"],
-      "max_bytes": 1,
-      "min_bytes": 1,
-      "is_variable_width": false,
-      "encoding_type": "single_byte",
-      "iana_name": "KOI8-U",
-      "supported_by": ["PostgreSQL"]
-    },
-    {
-      "name": "Shift_JIS",
-      "description": "Japanese Shift JIS",
-      "aliases": ["SJIS", "MS_Kanji", "csShiftJIS"],
-      "max_bytes": 2,
-      "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "multi_byte",
-      "iana_name": "Shift_JIS",
-      "supported_by": ["PostgreSQL", "MySQL", "Oracle"]
-    },
-    {
-      "name": "EUC-JP",
-      "description": "Japanese Extended Unix Code",
-      "aliases": ["eucjp", "Extended_UNIX_Code_Packed_Format_for_Japanese"],
-      "max_bytes": 3,
-      "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "multi_byte",
-      "iana_name": "EUC-JP",
-      "supported_by": ["PostgreSQL", "Oracle"]
-    },
-    {
-      "name": "EUC-KR",
-      "description": "Korean Extended Unix Code",
-      "aliases": ["euckr", "csEUCKR"],
-      "max_bytes": 2,
-      "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "multi_byte",
-      "iana_name": "EUC-KR",
-      "supported_by": ["PostgreSQL", "MySQL", "Oracle"]
-    },
-    {
-      "name": "EUC-CN",
-      "description": "Chinese Extended Unix Code (GB2312)",
-      "aliases": ["euccn", "GB2312", "csGB2312"],
-      "max_bytes": 2,
-      "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "multi_byte",
-      "iana_name": "GB2312",
-      "supported_by": ["PostgreSQL", "MySQL", "Oracle"]
-    },
-    {
-      "name": "EUC-TW",
-      "description": "Traditional Chinese Extended Unix Code",
-      "aliases": ["euctw", "csEUCTW"],
-      "max_bytes": 4,
-      "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "multi_byte",
-      "iana_name": "EUC-TW",
-      "supported_by": ["PostgreSQL"]
-    },
-    {
-      "name": "GBK",
-      "description": "Extended GB2312 Simplified Chinese",
-      "aliases": ["CP936", "MS936"],
-      "max_bytes": 2,
-      "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "multi_byte",
-      "iana_name": "GBK",
-      "supported_by": ["MySQL", "SQL Server", "Oracle"]
-    },
-    {
-      "name": "GB18030",
-      "description": "Chinese National Standard",
-      "aliases": [],
-      "max_bytes": 4,
-      "min_bytes": 1,
-      "is_variable_width": true,
-      "encoding_type": "multi_byte",
-      "iana_name": "GB18030",
-      "supported_by": ["MySQL", "Oracle"]
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "SQL Server",
+        "Oracle",
+        "Firebird",
+        "MariaDB"
+      ]
     },
     {
       "name": "Big5",
       "description": "Traditional Chinese (Taiwan)",
-      "aliases": ["csBig5"],
+      "aliases": [
+        "csBig5",
+        "big5"
+      ],
       "max_bytes": 2,
       "min_bytes": 1,
       "is_variable_width": true,
       "encoding_type": "multi_byte",
       "iana_name": "Big5",
-      "supported_by": ["PostgreSQL", "MySQL", "Oracle"]
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "Oracle",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "binary",
+      "description": "",
+      "aliases": [
+        "binary"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "binary",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1250",
+      "description": "",
+      "aliases": [
+        "cp1250"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp1250",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1251",
+      "description": "",
+      "aliases": [
+        "cp1251"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp1251",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1256",
+      "description": "",
+      "aliases": [
+        "cp1256"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp1256",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp1257",
+      "description": "",
+      "aliases": [
+        "cp1257"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp1257",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp850",
+      "description": "",
+      "aliases": [
+        "cp850"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp850",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp852",
+      "description": "",
+      "aliases": [
+        "cp852"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp852",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp866",
+      "description": "",
+      "aliases": [
+        "cp866"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp866",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "cp932",
+      "description": "",
+      "aliases": [
+        "cp932"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "cp932",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "CP943C",
+      "description": "CP943C Japanese",
+      "aliases": [
+        "CP943",
+        "IBM943C"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "CP943C",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "CYRL",
+      "description": "Cyrillic (Firebird CYRL)",
+      "aliases": [
+        "ISO-8859-5"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-5",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DEC8",
+      "description": "DEC West European",
+      "aliases": [
+        "dec8"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "DEC-MCS",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "DOS437",
+      "description": "DOS code page 437",
+      "aliases": [
+        "CP437",
+        "IBM437"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM437",
+      "supported_by": [
+        "Firebird",
+        "MySQL"
+      ]
+    },
+    {
+      "name": "DOS737",
+      "description": "DOS code page 737 (Greek)",
+      "aliases": [
+        "CP737",
+        "IBM737"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM737",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS775",
+      "description": "DOS code page 775 (Baltic)",
+      "aliases": [
+        "CP775",
+        "IBM775"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM775",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS850",
+      "description": "DOS code page 850 (Latin 1)",
+      "aliases": [
+        "CP850",
+        "IBM850"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM850",
+      "supported_by": [
+        "Firebird",
+        "MySQL"
+      ]
+    },
+    {
+      "name": "DOS852",
+      "description": "DOS code page 852 (Latin 2)",
+      "aliases": [
+        "CP852",
+        "IBM852"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM852",
+      "supported_by": [
+        "Firebird",
+        "MySQL"
+      ]
+    },
+    {
+      "name": "DOS857",
+      "description": "DOS code page 857 (Turkish)",
+      "aliases": [
+        "CP857",
+        "IBM857"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM857",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS858",
+      "description": "DOS code page 858 (Latin 1 with Euro)",
+      "aliases": [
+        "CP858",
+        "IBM858"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM858",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS860",
+      "description": "DOS code page 860 (Portuguese)",
+      "aliases": [
+        "CP860",
+        "IBM860"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM860",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS861",
+      "description": "DOS code page 861 (Icelandic)",
+      "aliases": [
+        "CP861",
+        "IBM861"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM861",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS862",
+      "description": "DOS code page 862 (Hebrew)",
+      "aliases": [
+        "CP862",
+        "IBM862"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM862",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS863",
+      "description": "DOS code page 863 (French-Canada)",
+      "aliases": [
+        "CP863",
+        "IBM863"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM863",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS864",
+      "description": "DOS code page 864 (Arabic)",
+      "aliases": [
+        "CP864",
+        "IBM864"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM864",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS865",
+      "description": "DOS code page 865 (Nordic)",
+      "aliases": [
+        "CP865",
+        "IBM865"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM865",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "DOS866",
+      "description": "DOS code page 866 (Cyrillic)",
+      "aliases": [
+        "CP866",
+        "IBM866",
+        "WIN866"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM866",
+      "supported_by": [
+        "Firebird",
+        "MySQL",
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "DOS869",
+      "description": "DOS code page 869 (Modern Greek)",
+      "aliases": [
+        "CP869",
+        "IBM869"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "IBM869",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "EUC-CN",
+      "description": "Chinese Extended Unix Code (GB2312)",
+      "aliases": [
+        "euccn",
+        "GB2312",
+        "csGB2312"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "GB2312",
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "EUC-JP",
+      "description": "Japanese Extended Unix Code",
+      "aliases": [
+        "eucjp",
+        "Extended_UNIX_Code_Packed_Format_for_Japanese"
+      ],
+      "max_bytes": 3,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "EUC-JP",
+      "supported_by": [
+        "PostgreSQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "EUC-KR",
+      "description": "Korean Extended Unix Code",
+      "aliases": [
+        "euckr",
+        "csEUCKR"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "EUC-KR",
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "Oracle",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "EUC-TW",
+      "description": "Traditional Chinese Extended Unix Code",
+      "aliases": [
+        "euctw",
+        "csEUCTW"
+      ],
+      "max_bytes": 4,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "EUC-TW",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "EUC_JIS_2004",
+      "description": "EUC-JIS-2004",
+      "aliases": [
+        "EUC-JIS-2004"
+      ],
+      "max_bytes": 3,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "EUC-JIS-2004",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "EUCJ_0208",
+      "description": "EUC-JP (Firebird EUCJ_0208)",
+      "aliases": [
+        "EUC-JP",
+        "eucjpms"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "EUC-JP",
+      "supported_by": [
+        "Firebird",
+        "MySQL"
+      ]
+    },
+    {
+      "name": "eucjpms",
+      "description": "",
+      "aliases": [
+        "eucjpms"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "eucjpms",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "GB18030",
+      "description": "Chinese National Standard",
+      "aliases": [
+        "gb18030"
+      ],
+      "max_bytes": 4,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "GB18030",
+      "supported_by": [
+        "MySQL",
+        "Oracle",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "GB_2312",
+      "description": "GB 2312 Simplified Chinese",
+      "aliases": [
+        "GB2312"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "GB2312",
+      "supported_by": [
+        "Firebird",
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "GBK",
+      "description": "Extended GB2312 Simplified Chinese",
+      "aliases": [
+        "CP936",
+        "MS936",
+        "gbk"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "GBK",
+      "supported_by": [
+        "MySQL",
+        "SQL Server",
+        "Oracle",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "GEOSTD8",
+      "description": "GEOSTD8 (Georgian)",
+      "aliases": [
+        "geostd8"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "GEORGIAN-ACADEMY",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "greek",
+      "description": "",
+      "aliases": [
+        "greek"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "greek",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "hebrew",
+      "description": "",
+      "aliases": [
+        "hebrew"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "hebrew",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "HP8",
+      "description": "HP Roman8",
+      "aliases": [
+        "hp8"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "HP-ROMAN8",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "ISO-8859-1",
+      "description": "Latin-1 Western European (built-in)",
+      "aliases": [
+        "latin1",
+        "ISO_8859-1",
+        "CP819",
+        "IBM819"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-1",
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "Firebird",
+        "Oracle"
+      ],
+      "note": "Direct mapping to Unicode U+0000 to U+00FF"
+    },
+    {
+      "name": "ISO-8859-10",
+      "description": "Latin-6 Nordic",
+      "aliases": [
+        "latin6",
+        "ISO_8859-10",
+        "LATIN6"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-10",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "ISO-8859-13",
+      "description": "Latin-7 Baltic Rim",
+      "aliases": [
+        "latin7",
+        "ISO_8859-13",
+        "LATIN7"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-13",
+      "supported_by": [
+        "PostgreSQL",
+        "Firebird"
+      ]
+    },
+    {
+      "name": "ISO-8859-14",
+      "description": "Latin 8 (Celtic)",
+      "aliases": [
+        "LATIN8",
+        "latin8",
+        "ISO8859-14"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-14",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "ISO-8859-15",
+      "description": "Latin-9 Western European with Euro",
+      "aliases": [
+        "latin9",
+        "ISO_8859-15",
+        "LATIN9"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-15",
+      "supported_by": [
+        "PostgreSQL",
+        "Firebird",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-16",
+      "description": "Latin 10 (South-Eastern Europe)",
+      "aliases": [
+        "LATIN10",
+        "LATIN16",
+        "latin10",
+        "latin16",
+        "ISO8859-16"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-16",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "ISO-8859-2",
+      "description": "Latin-2 Central European",
+      "aliases": [
+        "latin2",
+        "ISO_8859-2"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-2",
+      "supported_by": [
+        "PostgreSQL",
+        "Firebird",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-3",
+      "description": "Latin-3 South European",
+      "aliases": [
+        "latin3",
+        "ISO_8859-3"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-3",
+      "supported_by": [
+        "PostgreSQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-4",
+      "description": "Latin-4 North European",
+      "aliases": [
+        "latin4",
+        "ISO_8859-4"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-4",
+      "supported_by": [
+        "PostgreSQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-5",
+      "description": "Latin/Cyrillic",
+      "aliases": [
+        "cyrillic",
+        "ISO_8859-5"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-5",
+      "supported_by": [
+        "PostgreSQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-6",
+      "description": "Latin/Arabic",
+      "aliases": [
+        "arabic",
+        "ISO_8859-6",
+        "ECMA-114",
+        "ASMO-708"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-6",
+      "supported_by": [
+        "PostgreSQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-7",
+      "description": "Latin/Greek",
+      "aliases": [
+        "greek",
+        "ISO_8859-7",
+        "ECMA-118"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-7",
+      "supported_by": [
+        "PostgreSQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-8",
+      "description": "Latin/Hebrew",
+      "aliases": [
+        "hebrew",
+        "ISO_8859-8"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-8",
+      "supported_by": [
+        "PostgreSQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "ISO-8859-9",
+      "description": "Latin-5 Turkish",
+      "aliases": [
+        "latin5",
+        "ISO_8859-9"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ISO-8859-9",
+      "supported_by": [
+        "PostgreSQL",
+        "Firebird",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "KEYBCS2",
+      "description": "Kamenicky (Czech)",
+      "aliases": [
+        "keybcs2"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "KAMENICKY",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "KOI8-R",
+      "description": "Russian Cyrillic",
+      "aliases": [
+        "KOI8R"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "KOI8-R",
+      "supported_by": [
+        "PostgreSQL",
+        "Firebird",
+        "Oracle",
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "KOI8-U",
+      "description": "Ukrainian Cyrillic",
+      "aliases": [
+        "KOI8U"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "KOI8-U",
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "KSC_5601",
+      "description": "Korean KSC 5601",
+      "aliases": [
+        "EUC-KR",
+        "KSC5601"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "EUC-KR",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "latin1",
+      "description": "",
+      "aliases": [
+        "latin1"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "latin1",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin2",
+      "description": "",
+      "aliases": [
+        "latin2"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "latin2",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin5",
+      "description": "",
+      "aliases": [
+        "latin5"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "latin5",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "latin7",
+      "description": "",
+      "aliases": [
+        "latin7"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "latin7",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "MACCE",
+      "description": "Macintosh Central Europe",
+      "aliases": [
+        "macce",
+        "MacCE"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "macce",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "MACROMAN",
+      "description": "Macintosh Roman",
+      "aliases": [
+        "macroman",
+        "MacRoman"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "macintosh",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "MULE_INTERNAL",
+      "description": "PostgreSQL internal multibyte encoding",
+      "aliases": [],
+      "max_bytes": 4,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "MULE_INTERNAL",
+      "supported_by": [
+        "PostgreSQL"
+      ]
+    },
+    {
+      "name": "NEXT",
+      "description": "NeXTSTEP encoding",
+      "aliases": [
+        "NEXTSTEP"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "NEXTSTEP",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "NONE",
+      "description": "Firebird NONE (neutral code page)",
+      "aliases": [],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "NONE",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "OCTETS",
+      "description": "Binary octets",
+      "aliases": [
+        "binary"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "binary",
+      "supported_by": [
+        "Firebird",
+        "MySQL"
+      ]
+    },
+    {
+      "name": "Shift_JIS",
+      "description": "Japanese Shift JIS",
+      "aliases": [
+        "SJIS",
+        "MS_Kanji",
+        "csShiftJIS"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "Shift_JIS",
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "sjis",
+      "description": "",
+      "aliases": [
+        "sjis"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "sjis",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "SJIS_0208",
+      "description": "Shift_JIS (Firebird SJIS_0208)",
+      "aliases": [
+        "Shift_JIS",
+        "CP932"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "multi_byte",
+      "iana_name": "Shift_JIS",
+      "supported_by": [
+        "Firebird",
+        "MySQL"
+      ]
+    },
+    {
+      "name": "SWE7",
+      "description": "7-bit Swedish",
+      "aliases": [
+        "swe7"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "SWE7",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
     },
     {
       "name": "TIS-620",
       "description": "Thai",
-      "aliases": ["TIS620"],
+      "aliases": [
+        "TIS620"
+      ],
       "max_bytes": 1,
       "min_bytes": 1,
       "is_variable_width": false,
       "encoding_type": "single_byte",
       "iana_name": "TIS-620",
-      "supported_by": ["MySQL", "Oracle"]
+      "supported_by": [
+        "MySQL",
+        "Oracle",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "UCS-2",
+      "description": "UCS-2 (BMP only)",
+      "aliases": [
+        "ucs2",
+        "UCS2"
+      ],
+      "max_bytes": 2,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "unicode",
+      "iana_name": "UCS-2",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "ujis",
+      "description": "",
+      "aliases": [
+        "ujis"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "ujis",
+      "supported_by": [
+        "MySQL",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "UNICODE_FSS",
+      "description": "Firebird Unicode FSS (legacy UTF-8, 3-byte max)",
+      "aliases": [],
+      "max_bytes": 3,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "unicode",
+      "iana_name": "UTF-8",
+      "supported_by": [
+        "Firebird"
+      ]
+    },
+    {
+      "name": "UTF-16",
+      "description": "Unicode Transformation Format, 16-bit",
+      "aliases": [
+        "utf16",
+        "UTF16",
+        "utf16le",
+        "UTF16LE"
+      ],
+      "max_bytes": 4,
+      "min_bytes": 2,
+      "is_variable_width": true,
+      "encoding_type": "unicode",
+      "iana_name": "UTF-16",
+      "supported_by": [
+        "MySQL",
+        "SQL Server",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "UTF-16LE",
+      "description": "UTF-16 little-endian",
+      "aliases": [
+        "utf16le",
+        "UTF16LE"
+      ],
+      "max_bytes": 4,
+      "min_bytes": 2,
+      "is_variable_width": true,
+      "encoding_type": "unicode",
+      "iana_name": "UTF-16LE",
+      "supported_by": [
+        "MySQL"
+      ]
+    },
+    {
+      "name": "UTF-32",
+      "description": "Unicode Transformation Format, 32-bit",
+      "aliases": [
+        "utf32",
+        "UTF32"
+      ],
+      "max_bytes": 4,
+      "min_bytes": 4,
+      "is_variable_width": false,
+      "encoding_type": "unicode",
+      "iana_name": "UTF-32",
+      "supported_by": [
+        "MySQL"
+      ]
+    },
+    {
+      "name": "UTF-8",
+      "description": "Unicode Transformation Format, 8-bit (built-in)",
+      "aliases": [
+        "utf8",
+        "UTF8",
+        "UTF-8",
+        "utf8mb4",
+        "utf8mb3"
+      ],
+      "max_bytes": 4,
+      "min_bytes": 1,
+      "is_variable_width": true,
+      "encoding_type": "unicode",
+      "iana_name": "UTF-8",
+      "supported_by": [
+        "PostgreSQL",
+        "MySQL",
+        "SQL Server",
+        "Oracle",
+        "Firebird",
+        "MariaDB"
+      ]
+    },
+    {
+      "name": "Windows-1250",
+      "description": "Microsoft Central European",
+      "aliases": [
+        "CP1250",
+        "MS1250",
+        "WIN1250"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1250",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Firebird",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-1251",
+      "description": "Microsoft Cyrillic",
+      "aliases": [
+        "CP1251",
+        "MS1251",
+        "WIN1251"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1251",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Firebird",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-1252",
+      "description": "Microsoft Western European",
+      "aliases": [
+        "CP1252",
+        "MS1252",
+        "WIN1252"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1252",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Firebird",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-1253",
+      "description": "Microsoft Greek",
+      "aliases": [
+        "CP1253",
+        "MS1253",
+        "WIN1253"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1253",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-1254",
+      "description": "Microsoft Turkish",
+      "aliases": [
+        "CP1254",
+        "MS1254"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1254",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-1255",
+      "description": "Microsoft Hebrew",
+      "aliases": [
+        "CP1255",
+        "MS1255"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1255",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-1256",
+      "description": "Microsoft Arabic",
+      "aliases": [
+        "CP1256",
+        "MS1256"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1256",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-1257",
+      "description": "Microsoft Baltic",
+      "aliases": [
+        "CP1257",
+        "MS1257"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1257",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Firebird"
+      ]
+    },
+    {
+      "name": "Windows-1258",
+      "description": "Microsoft Vietnamese",
+      "aliases": [
+        "CP1258",
+        "MS1258"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "windows-1258",
+      "supported_by": [
+        "PostgreSQL",
+        "SQL Server",
+        "Oracle"
+      ]
+    },
+    {
+      "name": "Windows-874",
+      "description": "Windows-874 (Thai)",
+      "aliases": [
+        "WIN874",
+        "CP874"
+      ],
+      "max_bytes": 1,
+      "min_bytes": 1,
+      "is_variable_width": false,
+      "encoding_type": "single_byte",
+      "iana_name": "Windows-874",
+      "supported_by": [
+        "PostgreSQL"
+      ]
     }
   ]
 }

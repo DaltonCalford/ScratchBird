@@ -14,6 +14,7 @@
 #include <sstream>
 #include "scratchbird/parser/shared_types.h"
 #include "scratchbird/parser/parser_v2.h"
+#include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/resolved_ast_v2.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
@@ -27,6 +28,7 @@
 #include "scratchbird/core/index_factory.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/decimal.h"
+#include "scratchbird/core/decfloat.h"
 #include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/type_extractor.h"
 #include "scratchbird/core/storage_engine.h"
@@ -166,6 +168,14 @@ namespace scratchbird
                                                   core::ErrorContext* ctx);
             bool userHasRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx,
                              const core::ID& role_id);
+            core::Status findFunctionById(core::CatalogManager* catalog,
+                                          const core::ID& function_id,
+                                          core::CatalogManager::FunctionInfo& info_out,
+                                          core::ErrorContext* ctx);
+            core::Status findProcedureById(core::CatalogManager* catalog,
+                                           const core::ID& procedure_id,
+                                           core::CatalogManager::ProcedureInfo& info_out,
+                                           core::ErrorContext* ctx);
             QueryHash computeResultCacheHash(const std::vector<uint8_t>& bytecode,
                                               const std::vector<std::string>& params,
                                               const std::vector<bool>& nulls,
@@ -249,6 +259,8 @@ namespace scratchbird
                         return core::DataType::DECIMAL;
                     case Opcode::TYPE_JSON:
                         return core::DataType::JSON;
+                    case Opcode::TYPE_ARRAY:
+                        return core::DataType::ARRAY;
 
                     default:
                         throw std::runtime_error("Unknown data type opcode");
@@ -263,12 +275,56 @@ namespace scratchbird
                         return core::DataType::INT128;
                     case ExtendedOpcode::EXT_TYPE_UINT128:
                         return core::DataType::UINT128;
+                    case ExtendedOpcode::EXT_TYPE_UINT8:
+                        return core::DataType::UINT8;
+                    case ExtendedOpcode::EXT_TYPE_UINT16:
+                        return core::DataType::UINT16;
+                    case ExtendedOpcode::EXT_TYPE_UINT32:
+                        return core::DataType::UINT32;
+                    case ExtendedOpcode::EXT_TYPE_UINT64:
+                        return core::DataType::UINT64;
+                    case ExtendedOpcode::EXT_TYPE_MONEY:
+                        return core::DataType::MONEY;
+                    case ExtendedOpcode::EXT_TYPE_DECFLOAT16:
+                        return core::DataType::DECFLOAT16;
+                    case ExtendedOpcode::EXT_TYPE_DECFLOAT34:
+                        return core::DataType::DECFLOAT34;
+                    case ExtendedOpcode::EXT_TYPE_INTERVAL:
+                        return core::DataType::INTERVAL;
+                    case ExtendedOpcode::EXT_TYPE_JSONB:
+                        return core::DataType::JSONB;
+                    case ExtendedOpcode::EXT_TYPE_XML:
+                        return core::DataType::XML;
                     case ExtendedOpcode::EXT_TYPE_POINT:
                         return core::DataType::POINT;
                     case ExtendedOpcode::EXT_TYPE_LINESTRING:
                         return core::DataType::LINESTRING;
                     case ExtendedOpcode::EXT_TYPE_POLYGON:
                         return core::DataType::POLYGON;
+                    case ExtendedOpcode::EXT_TYPE_MULTIPOINT:
+                        return core::DataType::MULTIPOINT;
+                    case ExtendedOpcode::EXT_TYPE_MULTILINESTRING:
+                        return core::DataType::MULTILINESTRING;
+                    case ExtendedOpcode::EXT_TYPE_MULTIPOLYGON:
+                        return core::DataType::MULTIPOLYGON;
+                    case ExtendedOpcode::EXT_TYPE_GEOMETRYCOLLECTION:
+                        return core::DataType::GEOMETRYCOLLECTION;
+                    case ExtendedOpcode::EXT_TYPE_COMPOSITE:
+                        return core::DataType::COMPOSITE;
+                    case ExtendedOpcode::EXT_TYPE_VARIANT:
+                        return core::DataType::VARIANT;
+                    case ExtendedOpcode::EXT_TYPE_INET:
+                        return core::DataType::INET;
+                    case ExtendedOpcode::EXT_TYPE_CIDR:
+                        return core::DataType::CIDR;
+                    case ExtendedOpcode::EXT_TYPE_MACADDR:
+                        return core::DataType::MACADDR;
+                    case ExtendedOpcode::EXT_TYPE_MACADDR8:
+                        return core::DataType::MACADDR8;
+                    case ExtendedOpcode::EXT_TYPE_TIME_TZ:
+                        return core::DataType::TIME;
+                    case ExtendedOpcode::EXT_TYPE_TIMESTAMP_TZ:
+                        return core::DataType::TIMESTAMP;
                     case ExtendedOpcode::EXT_TYPE_TSVECTOR:
                         return core::DataType::TSVECTOR;
                     case ExtendedOpcode::EXT_TYPE_TSQUERY:
@@ -722,6 +778,8 @@ namespace scratchbird
                 case core::DataType::FLOAT64:
                     return val.getFloat64();
                 case core::DataType::DECIMAL:
+                case core::DataType::DECFLOAT16:
+                case core::DataType::DECFLOAT34:
                     // Try to convert decimal string to double
                     try {
                         return std::stod(val.toString());
@@ -768,7 +826,89 @@ namespace scratchbird
             return isIntegerType(type) ||
                    type == core::DataType::FLOAT32 ||
                    type == core::DataType::FLOAT64 ||
-                   type == core::DataType::DECIMAL;
+                   type == core::DataType::DECIMAL ||
+                   type == core::DataType::DECFLOAT16 ||
+                   type == core::DataType::DECFLOAT34;
+        }
+
+        static bool isDecfloatType(core::DataType type) {
+            return type == core::DataType::DECFLOAT16 || type == core::DataType::DECFLOAT34;
+        }
+
+        static core::DecFloatContext defaultDecfloatContext() {
+            return core::DecFloatContext{};
+        }
+
+        static core::DecFloat decodeDecfloatValue(const core::TypedValue& value) {
+            const auto& bytes = value.getDecfloatBytes();
+            if (value.type() == core::DataType::DECFLOAT16) {
+                if (bytes.size() != 8) {
+                    throw std::runtime_error("DECFLOAT16 payload size invalid");
+                }
+                uint64_t bits = 0;
+                for (int i = 0; i < 8; ++i) {
+                    bits |= (static_cast<uint64_t>(bytes[i]) << (i * 8));
+                }
+                return core::DecFloat::fromBID64(bits);
+            }
+            if (value.type() == core::DataType::DECFLOAT34) {
+                if (bytes.size() != 16) {
+                    throw std::runtime_error("DECFLOAT34 payload size invalid");
+                }
+                uint64_t low = 0;
+                uint64_t high = 0;
+                for (int i = 0; i < 8; ++i) {
+                    low |= (static_cast<uint64_t>(bytes[i]) << (i * 8));
+                    high |= (static_cast<uint64_t>(bytes[i + 8]) << (i * 8));
+                }
+                return core::DecFloat::fromBID128(high, low);
+            }
+            throw std::runtime_error("Invalid DECFLOAT type");
+        }
+
+        static core::DecFloat coerceToDecfloat(const core::TypedValue& value, uint8_t precision) {
+            core::DecFloat out;
+            core::DecFloatContext ctx = defaultDecfloatContext();
+            if (isDecfloatType(value.type())) {
+                out = decodeDecfloatValue(value);
+                out.precision = precision;
+                return out;
+            }
+            core::Status st = core::DecFloat::parse(value.toString(), precision, ctx, out, nullptr);
+            if (st != core::Status::OK) {
+                throw std::runtime_error("Failed to coerce value to DECFLOAT");
+            }
+            return out;
+        }
+
+        static core::TypedValue makeDecfloatValue(const core::DecFloat& value, core::DataType type) {
+            core::DecFloatContext ctx = defaultDecfloatContext();
+            std::vector<uint8_t> bytes;
+            if (type == core::DataType::DECFLOAT16) {
+                uint64_t bits = 0;
+                if (value.toBID64(bits, ctx, nullptr) != core::Status::OK) {
+                    throw std::runtime_error("Failed to encode DECFLOAT16");
+                }
+                for (int i = 0; i < 8; ++i) {
+                    bytes.push_back(static_cast<uint8_t>((bits >> (i * 8)) & 0xFF));
+                }
+                return core::TypedValue::makeDecfloat(type, bytes);
+            }
+            if (type == core::DataType::DECFLOAT34) {
+                uint64_t high = 0;
+                uint64_t low = 0;
+                if (value.toBID128(high, low, ctx, nullptr) != core::Status::OK) {
+                    throw std::runtime_error("Failed to encode DECFLOAT34");
+                }
+                for (int i = 0; i < 8; ++i) {
+                    bytes.push_back(static_cast<uint8_t>((low >> (i * 8)) & 0xFF));
+                }
+                for (int i = 0; i < 8; ++i) {
+                    bytes.push_back(static_cast<uint8_t>((high >> (i * 8)) & 0xFF));
+                }
+                return core::TypedValue::makeDecfloat(type, bytes);
+            }
+            throw std::runtime_error("Invalid DECFLOAT type");
         }
 
         static core::int128_t toSigned128(const core::TypedValue& value) {
@@ -1642,6 +1782,13 @@ namespace scratchbird
                 throw std::invalid_argument("Database pointer cannot be null");
             }
 
+            {
+                core::ErrorContext ctx;
+                charset_manager_.loadFromCatalog(db_, &ctx);
+                timezone_manager_.loadFromCatalog(db_->catalog_manager(), &ctx);
+                core::getThreadLocalTimezoneManager().loadFromCatalog(db_->catalog_manager(), &ctx);
+            }
+
             // SECURITY ENHANCEMENT (MEDIUM-3): Initialize query limits with defaults
             query_limits_ = QueryLimits::defaults();
             query_start_time_ = std::chrono::steady_clock::now();
@@ -2314,6 +2461,36 @@ namespace scratchbird
                             executeCreateProcedureStatement();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_FUNCTION_STMT))
+                        {
+                            executeAlterFunctionStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_PROCEDURE_STMT))
+                        {
+                            executeAlterProcedureStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_KILL))
+                        {
+                            executeMySqlKill();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_FLUSH))
+                        {
+                            executeMySqlFlush();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_LOCK_TABLES))
+                        {
+                            executeMySqlLockTables();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_UNLOCK_TABLES))
+                        {
+                            executeMySqlUnlockTables();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_PACKAGE_STMT))
                         {
                             executeCreatePackageStatement();
@@ -2427,6 +2604,20 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXECUTE_STMT))
                         {
                             executeExecuteStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PREPARE_STMT))
+                        {
+                            executePrepareStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXECUTE_PREPARED))
+                        {
+                            result = executeExecutePrepared();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DEALLOCATE_PREPARED))
+                        {
+                            executeDeallocatePrepared();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TRY))
@@ -3376,12 +3567,30 @@ namespace scratchbird
         }
 
         core::DataType Executor::readDataTypeWithModifiers(uint32_t& precision_out,
-                                                           uint32_t& scale_out)
+                                                           uint32_t& scale_out,
+                                                           bool* with_timezone_out,
+                                                           uint16_t* timezone_hint_out)
         {
             precision_out = 0;
             scale_out = 0;
+            if (with_timezone_out)
+            {
+                *with_timezone_out = false;
+            }
+            if (timezone_hint_out)
+            {
+                *timezone_hint_out = 0;
+            }
 
             Opcode type_op = static_cast<Opcode>(readByte());
+            if (type_op == Opcode::TYPE_ARRAY)
+            {
+                uint32_t element_precision = 0;
+                uint32_t element_scale = 0;
+                (void)readDataTypeWithModifiers(element_precision, element_scale);
+                (void)readInt32(); // array_size
+                return core::DataType::ARRAY;
+            }
             if (type_op == Opcode::EXTENDED_OPCODE)
             {
                 uint16_t ext_op = readExtendedOpcode();
@@ -3389,6 +3598,32 @@ namespace scratchbird
                 {
                     precision_out = readInt32();
                     return core::DataType::VECTOR;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_DECFLOAT16))
+                {
+                    precision_out = 16;
+                    return core::DataType::DECFLOAT16;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_DECFLOAT34))
+                {
+                    precision_out = 34;
+                    return core::DataType::DECFLOAT34;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_TIME_TZ))
+                {
+                    if (with_timezone_out)
+                    {
+                        *with_timezone_out = true;
+                    }
+                    return core::DataType::TIME;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_TIMESTAMP_TZ))
+                {
+                    if (with_timezone_out)
+                    {
+                        *with_timezone_out = true;
+                    }
+                    return core::DataType::TIMESTAMP;
                 }
                 return convertExtendedDataType(ext_op);
             }
@@ -3414,15 +3649,38 @@ namespace scratchbird
                                                           uint32_t& precision_out,
                                                           uint32_t& scale_out,
                                                           bool& is_array_out,
-                                                          uint32_t& array_size_out)
+                                                          uint32_t& array_size_out,
+                                                          bool* with_timezone_out,
+                                                          uint16_t* timezone_hint_out)
         {
             precision_out = 0;
             scale_out = 0;
             domain_id_out = core::ID{};
             is_array_out = false;
             array_size_out = 0;
+            if (with_timezone_out)
+            {
+                *with_timezone_out = false;
+            }
+            if (timezone_hint_out)
+            {
+                *timezone_hint_out = 0;
+            }
 
             Opcode type_op = static_cast<Opcode>(readByte());
+            if (type_op == Opcode::TYPE_ARRAY)
+            {
+                uint32_t element_precision = 0;
+                uint32_t element_scale = 0;
+                core::DataType element_type = readDataTypeWithModifiers(element_precision,
+                                                                        element_scale);
+                uint32_t array_size = readInt32();
+                precision_out = element_precision;
+                scale_out = element_scale;
+                is_array_out = true;
+                array_size_out = array_size;
+                return element_type;
+            }
             if (type_op == Opcode::TYPE_DOMAIN)
             {
                 domain_id_out = readId();
@@ -3466,6 +3724,32 @@ namespace scratchbird
                 {
                     precision_out = readInt32();
                     return core::DataType::VECTOR;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_DECFLOAT16))
+                {
+                    precision_out = 16;
+                    return core::DataType::DECFLOAT16;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_DECFLOAT34))
+                {
+                    precision_out = 34;
+                    return core::DataType::DECFLOAT34;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_TIME_TZ))
+                {
+                    if (with_timezone_out)
+                    {
+                        *with_timezone_out = true;
+                    }
+                    return core::DataType::TIME;
+                }
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TYPE_TIMESTAMP_TZ))
+                {
+                    if (with_timezone_out)
+                    {
+                        *with_timezone_out = true;
+                    }
+                    return core::DataType::TIMESTAMP;
                 }
                 return convertExtendedDataType(ext_op);
             }
@@ -3868,6 +4152,35 @@ namespace scratchbird
                     case Opcode::LITERAL_STRING:
                         readString();
                         break;
+                    case Opcode::LITERAL_BOOLEAN:
+                        readByte();
+                        break;
+                    case Opcode::LITERAL_UUID:
+                        readId();
+                        break;
+                    case Opcode::LITERAL_DATE:
+                        readInt32();
+                        break;
+                    case Opcode::LITERAL_TIME:
+                        readInt64();
+                        break;
+                    case Opcode::LITERAL_TIMESTAMP:
+                        readInt64();
+                        break;
+                    case Opcode::LITERAL_BINARY:
+                    {
+                        uint64_t len = readUVarint();
+                        for (uint64_t i = 0; i < len; ++i)
+                        {
+                            readByte();
+                        }
+                        break;
+                    }
+                    case Opcode::LITERAL_DECIMAL:
+                    case Opcode::LITERAL_JSON:
+                    case Opcode::LITERAL_XML:
+                        readString();
+                        break;
                     case Opcode::LITERAL_CHARSET:
                         readInt16();
                         break;
@@ -3969,6 +4282,15 @@ namespace scratchbird
                         uint16_t ext = readExtendedOpcode();
                         switch (static_cast<ExtendedOpcode>(ext))
                         {
+                            case ExtendedOpcode::EXT_LITERAL_JSONB:
+                            case ExtendedOpcode::EXT_LITERAL_INTERVAL:
+                            case ExtendedOpcode::EXT_LITERAL_MONEY:
+                            case ExtendedOpcode::EXT_LITERAL_INET:
+                            case ExtendedOpcode::EXT_LITERAL_CIDR:
+                            case ExtendedOpcode::EXT_LITERAL_MACADDR:
+                            case ExtendedOpcode::EXT_LITERAL_MACADDR8:
+                                readString();
+                                break;
                             case ExtendedOpcode::EXT_NULL_SAFE_EQ:
                             case ExtendedOpcode::EXT_EXPR_NOT:
                             case ExtendedOpcode::EXT_EXPR_IS_NULL:
@@ -5363,6 +5685,8 @@ namespace scratchbird
                     }
                     case core::DataType::FLOAT64:
                     case core::DataType::DECIMAL:
+                    case core::DataType::DECFLOAT16:
+                    case core::DataType::DECFLOAT34:
                     {
                         double value = 0.0;
                         if (!parse_double(trimmed_str, value))
@@ -5608,11 +5932,33 @@ namespace scratchbird
                 core::ID domain_id{};
                 bool is_array = false;
                 uint32_t array_size = 0;
+                bool with_timezone = false;
                 core::DataType col_type = readColumnTypeWithDomain(domain_id,
                                                                    precision,
                                                                    scale,
                                                                    is_array,
-                                                                   array_size);
+                                                                   array_size,
+                                                                   &with_timezone);
+
+                std::string column_charset;
+                std::string column_collation;
+                while (pc_ < bytecode_size_)
+                {
+                    uint8_t next = bytecode_[pc_];
+                    if (next == static_cast<uint8_t>(Opcode::COLUMN_CHARSET))
+                    {
+                        readByte();
+                        column_charset = readString();
+                        continue;
+                    }
+                    if (next == static_cast<uint8_t>(Opcode::COLUMN_COLLATE))
+                    {
+                        readByte();
+                        column_collation = readString();
+                        continue;
+                    }
+                    break;
+                }
 
                 // Check for NOT_NULL constraint
                 bool nullable = true;
@@ -5790,6 +6136,7 @@ namespace scratchbird
                 col_info.domain_id = domain_id;
                 col_info.is_array = is_array;
                 col_info.array_size = array_size;
+                col_info.with_timezone = with_timezone;
                 col_info.nullable = nullable;
                 col_info.has_default = !default_expr_hex.empty();
                 col_info.is_primary_key = is_primary_key;
@@ -5800,6 +6147,56 @@ namespace scratchbird
                 col_info.identity_always = identity_always; // ALPHA Phase 1 - IDENTITY columns
                 col_info.generated_type = generated_type;  // ALPHA Phase 1 - GENERATED columns
                 col_info.generation_expression = generation_expr_hex; // ALPHA Phase 1 - GENERATED columns
+                if (!column_charset.empty() || !column_collation.empty())
+                {
+                    core::CatalogManager::CharsetInfo charset_info;
+                    core::CatalogManager::CollationCatalogInfo coll_info;
+                    uint16_t charset_id = 0;
+                    uint32_t collation_id = 0;
+
+                    if (!column_charset.empty())
+                    {
+                        core::ErrorContext charset_ctx;
+                        auto charset_status = db_->catalog_manager()->getCharsetByName(
+                            column_charset, charset_info, &charset_ctx);
+                        if (charset_status != core::Status::OK)
+                        {
+                            error("Unknown charset: " + column_charset);
+                        }
+                        charset_id = charset_info.charset_id;
+                        collation_id = charset_info.default_collation_id;
+                    }
+
+                    if (!column_collation.empty())
+                    {
+                        core::ErrorContext coll_ctx;
+                        auto coll_status = db_->catalog_manager()->getCollationByName(
+                            column_collation, coll_info, &coll_ctx);
+                        if (coll_status != core::Status::OK)
+                        {
+                            error("Unknown collation: " + column_collation);
+                        }
+                        if (charset_id != 0 && coll_info.charset_id != charset_id)
+                        {
+                            error("Collation " + column_collation +
+                                  " does not belong to charset " + column_charset);
+                        }
+                        collation_id = coll_info.collation_id;
+                        if (charset_id == 0)
+                        {
+                            charset_id = coll_info.charset_id;
+                        }
+                    }
+
+                    if (charset_id != 0)
+                    {
+                        col_info.charset = charset_id;
+                    }
+                    if (collation_id != 0)
+                    {
+                        col_info.collation_id = collation_id;
+                    }
+                }
                 columns.push_back(col_info);
             }
 
@@ -8177,6 +8574,25 @@ namespace scratchbird
                     uint32_t precision = readInt32();
                     uint32_t scale = readInt32();
                     bool nullable = readByte() != 0;
+                    std::string column_charset;
+                    std::string column_collation;
+                    while (pc_ < bytecode_size_)
+                    {
+                        uint8_t next = bytecode_[pc_];
+                        if (next == static_cast<uint8_t>(Opcode::COLUMN_CHARSET))
+                        {
+                            readByte();
+                            column_charset = readString();
+                            continue;
+                        }
+                        if (next == static_cast<uint8_t>(Opcode::COLUMN_COLLATE))
+                        {
+                            readByte();
+                            column_collation = readString();
+                            continue;
+                        }
+                        break;
+                    }
 
                     core::CatalogManager::ColumnInfo col_info;
                     col_info.column_name = col_name;
@@ -8184,6 +8600,57 @@ namespace scratchbird
                     col_info.type_precision = precision;
                     col_info.type_scale = scale;
                     col_info.nullable = nullable;
+                    if (!column_charset.empty() || !column_collation.empty())
+                    {
+                        core::CatalogManager::CharsetInfo charset_info;
+                        core::CatalogManager::CollationCatalogInfo coll_info;
+                        uint16_t charset_id = 0;
+                        uint32_t collation_id = 0;
+
+                        if (!column_charset.empty())
+                        {
+                            core::ErrorContext charset_ctx;
+                            auto charset_status = db_->catalog_manager()->getCharsetByName(
+                                column_charset, charset_info, &charset_ctx);
+                            if (charset_status != core::Status::OK)
+                            {
+                                throw std::runtime_error("Unknown charset: " + column_charset);
+                            }
+                            charset_id = charset_info.charset_id;
+                            collation_id = charset_info.default_collation_id;
+                        }
+
+                        if (!column_collation.empty())
+                        {
+                            core::ErrorContext coll_ctx;
+                            auto coll_status = db_->catalog_manager()->getCollationByName(
+                                column_collation, coll_info, &coll_ctx);
+                            if (coll_status != core::Status::OK)
+                            {
+                                throw std::runtime_error("Unknown collation: " + column_collation);
+                            }
+                            if (charset_id != 0 && coll_info.charset_id != charset_id)
+                            {
+                                throw std::runtime_error("Collation " + column_collation +
+                                                         " does not belong to charset " +
+                                                         column_charset);
+                            }
+                            collation_id = coll_info.collation_id;
+                            if (charset_id == 0)
+                            {
+                                charset_id = coll_info.charset_id;
+                            }
+                        }
+
+                        if (charset_id != 0)
+                        {
+                            col_info.charset = charset_id;
+                        }
+                        if (collation_id != 0)
+                        {
+                            col_info.collation_id = collation_id;
+                        }
+                    }
 
                     status = db_->catalog_manager()->addColumn(table_info.table_id, col_info, &ctx);
                     if (status != Status::OK)
@@ -8230,10 +8697,77 @@ namespace scratchbird
                     uint16_t new_type = readInt16();
                     uint32_t new_precision = readInt32();
                     uint32_t new_scale = readInt32();
+                    std::string column_charset;
+                    std::string column_collation;
+                    while (pc_ < bytecode_size_)
+                    {
+                        uint8_t next = bytecode_[pc_];
+                        if (next == static_cast<uint8_t>(Opcode::COLUMN_CHARSET))
+                        {
+                            readByte();
+                            column_charset = readString();
+                            continue;
+                        }
+                        if (next == static_cast<uint8_t>(Opcode::COLUMN_COLLATE))
+                        {
+                            readByte();
+                            column_collation = readString();
+                            continue;
+                        }
+                        break;
+                    }
+
+                    std::optional<uint16_t> charset_id;
+                    std::optional<uint32_t> collation_id;
+                    if (!column_charset.empty() || !column_collation.empty())
+                    {
+                        core::CatalogManager::CharsetInfo charset_info;
+                        core::CatalogManager::CollationCatalogInfo coll_info;
+                        uint16_t resolved_charset = 0;
+                        uint32_t resolved_collation = 0;
+
+                        if (!column_charset.empty())
+                        {
+                            core::ErrorContext charset_ctx;
+                            auto charset_status = db_->catalog_manager()->getCharsetByName(
+                                column_charset, charset_info, &charset_ctx);
+                            if (charset_status != core::Status::OK)
+                            {
+                                throw std::runtime_error("Unknown charset: " + column_charset);
+                            }
+                            resolved_charset = charset_info.charset_id;
+                            resolved_collation = charset_info.default_collation_id;
+                        }
+
+                        if (!column_collation.empty())
+                        {
+                            core::ErrorContext coll_ctx;
+                            auto coll_status = db_->catalog_manager()->getCollationByName(
+                                column_collation, coll_info, &coll_ctx);
+                            if (coll_status != core::Status::OK)
+                            {
+                                throw std::runtime_error("Unknown collation: " + column_collation);
+                            }
+                            if (resolved_charset != 0 && coll_info.charset_id != resolved_charset)
+                            {
+                                throw std::runtime_error("Collation " + column_collation +
+                                                         " does not belong to charset " +
+                                                         column_charset);
+                            }
+                            resolved_collation = coll_info.collation_id;
+                            if (resolved_charset == 0)
+                            {
+                                resolved_charset = coll_info.charset_id;
+                            }
+                        }
+
+                        charset_id = resolved_charset;
+                        collation_id = resolved_collation;
+                    }
 
                     status = db_->catalog_manager()->alterColumnType(
                         table_info.table_id, col_name, static_cast<core::DataType>(new_type),
-                        new_precision, new_scale, &ctx);
+                        new_precision, new_scale, charset_id, collation_id, &ctx);
 
                     if (status != Status::OK)
                     {
@@ -9655,7 +10189,22 @@ namespace scratchbird
             options.nullable = nullable;
             options.default_value = default_value;
             options.constraints = constraints;
-            options.collation_name = collation_name;
+            if (!collation_name.empty())
+            {
+                core::CatalogManager::CollationCatalogInfo coll_info;
+                core::ErrorContext coll_ctx;
+                auto coll_status = db_->catalog_manager()->getCollationByName(
+                    collation_name, coll_info, &coll_ctx);
+                if (coll_status != core::Status::OK)
+                {
+                    error("Unknown collation: " + collation_name);
+                }
+                options.collation_name = coll_info.name;
+            }
+            else
+            {
+                options.collation_name.clear();
+            }
             options.dialect_tag = dialect_tag;
             options.compat_name = compat_name;
             options.enum_wrap = enum_wrap;
@@ -24865,6 +25414,29 @@ namespace scratchbird
         {
             Opcode op = static_cast<Opcode>(readByte());
 
+            auto parseTypedStringLiteral = [&](core::DataType target_type,
+                                               bool with_timezone = false) {
+                std::string text = readString();
+                core::TypeInfo type_info(target_type);
+                type_info.with_timezone = with_timezone;
+                core::TypedValue source = core::TypedValue::makeVarchar(text);
+                core::TypedValue converted;
+                core::ErrorContext ctx;
+                core::Status status = source.convertTo(type_info, converted,
+                                                       core::CastFormat::DEFAULT, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string msg = ctx.message;
+                    if (msg.empty())
+                    {
+                        msg = "Invalid literal for " +
+                              std::string(core::TypeSystem::getTypeName(target_type));
+                    }
+                    error(msg);
+                }
+                push(converted);
+            };
+
             switch (op)
             {
                 case Opcode::LITERAL_NULL:
@@ -24885,6 +25457,55 @@ namespace scratchbird
 
                 case Opcode::LITERAL_STRING:
                     push(Value::makeVarchar(readString()));
+                    break;
+
+                case Opcode::LITERAL_BOOLEAN:
+                    push(Value::makeBool(readByte() != 0));
+                    break;
+
+                case Opcode::LITERAL_UUID:
+                {
+                    core::ID uuid = readId();
+                    std::vector<uint8_t> bytes(uuid.bytes.begin(), uuid.bytes.end());
+                    push(Value::makeUUID(bytes));
+                    break;
+                }
+
+                case Opcode::LITERAL_DATE:
+                    push(Value::makeDate(static_cast<int32_t>(readInt32())));
+                    break;
+
+                case Opcode::LITERAL_TIME:
+                    push(Value::makeTime(static_cast<int64_t>(readInt64())));
+                    break;
+
+                case Opcode::LITERAL_TIMESTAMP:
+                    push(Value::makeTimestamp(static_cast<int64_t>(readInt64())));
+                    break;
+
+                case Opcode::LITERAL_BINARY:
+                {
+                    uint64_t len = readUVarint();
+                    std::vector<uint8_t> data;
+                    data.reserve(static_cast<size_t>(len));
+                    for (uint64_t i = 0; i < len; ++i)
+                    {
+                        data.push_back(readByte());
+                    }
+                    push(Value::makeVarbinary(data));
+                    break;
+                }
+
+                case Opcode::LITERAL_DECIMAL:
+                    parseTypedStringLiteral(core::DataType::DECIMAL);
+                    break;
+
+                case Opcode::LITERAL_JSON:
+                    parseTypedStringLiteral(core::DataType::JSON);
+                    break;
+
+                case Opcode::LITERAL_XML:
+                    parseTypedStringLiteral(core::DataType::XML);
                     break;
 
                 case Opcode::COLUMN_REF:
@@ -24961,10 +25582,13 @@ namespace scratchbird
                     // Read target type
                     uint32_t precision = 0;
                     uint32_t scale = 0;
+                    bool with_timezone = false;
+                    uint16_t timezone_hint = 0;
                     core::DataType target_type = core::DataType::UNKNOWN;
                     try
                     {
-                        target_type = readDataTypeWithModifiers(precision, scale);
+                        target_type = readDataTypeWithModifiers(precision, scale,
+                                                                &with_timezone, &timezone_hint);
                     }
                     catch (const std::exception&)
                     {
@@ -24974,6 +25598,8 @@ namespace scratchbird
                     core::TypeInfo target_info(target_type);
                     target_info.precision = precision;
                     target_info.scale = scale;
+                    target_info.with_timezone = with_timezone;
+                    target_info.timezone_hint = timezone_hint;
 
                     core::CastFormat format =
                         static_cast<core::CastFormat>(readByte());
@@ -26341,6 +26967,41 @@ namespace scratchbird
                         {
                             conn_ctx_->updateStatementSourceLocation(line, column);
                         }
+                        break;
+                    }
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_JSONB))
+                    {
+                        parseTypedStringLiteral(core::DataType::JSONB);
+                        break;
+                    }
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_INTERVAL))
+                    {
+                        parseTypedStringLiteral(core::DataType::INTERVAL);
+                        break;
+                    }
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_MONEY))
+                    {
+                        parseTypedStringLiteral(core::DataType::MONEY);
+                        break;
+                    }
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_INET))
+                    {
+                        parseTypedStringLiteral(core::DataType::INET);
+                        break;
+                    }
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_CIDR))
+                    {
+                        parseTypedStringLiteral(core::DataType::CIDR);
+                        break;
+                    }
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_MACADDR))
+                    {
+                        parseTypedStringLiteral(core::DataType::MACADDR);
+                        break;
+                    }
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_MACADDR8))
+                    {
+                        parseTypedStringLiteral(core::DataType::MACADDR8);
                         break;
                     }
                     if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_NULL_SAFE_EQ))
@@ -33167,6 +33828,13 @@ namespace scratchbird
             bool isExpressionExtendedOpcode(ExtendedOpcode op)
             {
                 static const std::unordered_set<uint16_t> kExpressionExt = {
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_JSONB),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_INTERVAL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_MONEY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_INET),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_CIDR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_MACADDR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LITERAL_MACADDR8),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_DOMAIN_MASKING),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_QUALITY_PIPELINE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_APPEND),
@@ -33385,6 +34053,15 @@ namespace scratchbird
                     static_cast<uint8_t>(Opcode::LITERAL_INT64),
                     static_cast<uint8_t>(Opcode::LITERAL_DOUBLE),
                     static_cast<uint8_t>(Opcode::LITERAL_STRING),
+                    static_cast<uint8_t>(Opcode::LITERAL_BOOLEAN),
+                    static_cast<uint8_t>(Opcode::LITERAL_UUID),
+                    static_cast<uint8_t>(Opcode::LITERAL_DATE),
+                    static_cast<uint8_t>(Opcode::LITERAL_TIME),
+                    static_cast<uint8_t>(Opcode::LITERAL_TIMESTAMP),
+                    static_cast<uint8_t>(Opcode::LITERAL_BINARY),
+                    static_cast<uint8_t>(Opcode::LITERAL_DECIMAL),
+                    static_cast<uint8_t>(Opcode::LITERAL_JSON),
+                    static_cast<uint8_t>(Opcode::LITERAL_XML),
                     static_cast<uint8_t>(Opcode::LITERAL_CHARSET),
                     static_cast<uint8_t>(Opcode::LITERAL_COLLATION),
                     static_cast<uint8_t>(Opcode::COLUMN_REF),
@@ -33658,6 +34335,26 @@ namespace scratchbird
             {
                 case Opcode::EXPR_ADD:
                 {
+                    if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        core::DataType result_type =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? core::DataType::DECFLOAT34
+                                : core::DataType::DECFLOAT16;
+                        uint8_t precision = result_type == core::DataType::DECFLOAT34 ? 34 : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        core::DecFloat result;
+                        core::DecFloatContext ctx = defaultDecfloatContext();
+                        core::Status st = core::DecFloat::add(lhs, rhs, ctx, result, nullptr);
+                        if (st != core::Status::OK)
+                        {
+                            error("DECFLOAT addition failed");
+                        }
+                        push(makeDecfloatValue(result, result_type));
+                        break;
+                    }
                     if (left.type() == core::DataType::FLOAT64 ||
                         right.type() == core::DataType::FLOAT64 ||
                         left.type() == core::DataType::FLOAT32 ||
@@ -33671,6 +34368,26 @@ namespace scratchbird
                 }
                 case Opcode::EXPR_SUBTRACT:
                 {
+                    if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        core::DataType result_type =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? core::DataType::DECFLOAT34
+                                : core::DataType::DECFLOAT16;
+                        uint8_t precision = result_type == core::DataType::DECFLOAT34 ? 34 : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        core::DecFloat result;
+                        core::DecFloatContext ctx = defaultDecfloatContext();
+                        core::Status st = core::DecFloat::subtract(lhs, rhs, ctx, result, nullptr);
+                        if (st != core::Status::OK)
+                        {
+                            error("DECFLOAT subtraction failed");
+                        }
+                        push(makeDecfloatValue(result, result_type));
+                        break;
+                    }
                     if (left.type() == core::DataType::FLOAT64 ||
                         right.type() == core::DataType::FLOAT64 ||
                         left.type() == core::DataType::FLOAT32 ||
@@ -33684,6 +34401,26 @@ namespace scratchbird
                 }
                 case Opcode::EXPR_MULTIPLY:
                 {
+                    if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        core::DataType result_type =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? core::DataType::DECFLOAT34
+                                : core::DataType::DECFLOAT16;
+                        uint8_t precision = result_type == core::DataType::DECFLOAT34 ? 34 : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        core::DecFloat result;
+                        core::DecFloatContext ctx = defaultDecfloatContext();
+                        core::Status st = core::DecFloat::multiply(lhs, rhs, ctx, result, nullptr);
+                        if (st != core::Status::OK)
+                        {
+                            error("DECFLOAT multiplication failed");
+                        }
+                        push(makeDecfloatValue(result, result_type));
+                        break;
+                    }
                     if (left.type() == core::DataType::FLOAT64 ||
                         right.type() == core::DataType::FLOAT64 ||
                         left.type() == core::DataType::FLOAT32 ||
@@ -33697,6 +34434,26 @@ namespace scratchbird
                 }
                 case Opcode::EXPR_DIVIDE:
                 {
+                    if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        core::DataType result_type =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? core::DataType::DECFLOAT34
+                                : core::DataType::DECFLOAT16;
+                        uint8_t precision = result_type == core::DataType::DECFLOAT34 ? 34 : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        core::DecFloat result;
+                        core::DecFloatContext ctx = defaultDecfloatContext();
+                        core::Status st = core::DecFloat::divide(lhs, rhs, ctx, result, nullptr);
+                        if (st != core::Status::OK)
+                        {
+                            error("DECFLOAT division failed");
+                        }
+                        push(makeDecfloatValue(result, result_type));
+                        break;
+                    }
                     double right_val = coerceToDouble(right);
                     if (right_val == 0.0)
                         error("Division by zero");
@@ -33731,6 +34488,17 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) == 0;
+                    else if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        uint8_t precision =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? 34
+                                : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        result = core::DecFloat::compare(lhs, rhs, nullptr) == 0;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) == 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
@@ -33749,6 +34517,17 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) != 0;
+                    else if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        uint8_t precision =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? 34
+                                : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        result = core::DecFloat::compare(lhs, rhs, nullptr) != 0;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) != 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
@@ -33767,6 +34546,17 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) < 0;
+                    else if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        uint8_t precision =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? 34
+                                : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        result = core::DecFloat::compare(lhs, rhs, nullptr) < 0;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) < 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
@@ -33785,6 +34575,17 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) > 0;
+                    else if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        uint8_t precision =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? 34
+                                : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        result = core::DecFloat::compare(lhs, rhs, nullptr) > 0;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) > 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
@@ -33803,6 +34604,17 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) <= 0;
+                    else if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        uint8_t precision =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? 34
+                                : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        result = core::DecFloat::compare(lhs, rhs, nullptr) <= 0;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) <= 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
@@ -33821,6 +34633,17 @@ namespace scratchbird
                     if (core::TypeSystem::isString(left.type()) ||
                         core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) >= 0;
+                    else if (isDecfloatType(left.type()) || isDecfloatType(right.type()))
+                    {
+                        uint8_t precision =
+                            (left.type() == core::DataType::DECFLOAT34 ||
+                             right.type() == core::DataType::DECFLOAT34)
+                                ? 34
+                                : 16;
+                        core::DecFloat lhs = coerceToDecfloat(left, precision);
+                        core::DecFloat rhs = coerceToDecfloat(right, precision);
+                        result = core::DecFloat::compare(lhs, rhs, nullptr) >= 0;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) >= 0;
                     else if (left.type() == core::DataType::FLOAT64 ||
@@ -34197,7 +35020,9 @@ namespace scratchbird
 
                 core::ErrorContext local_ctx;
                 core::TypedValue value(storage_type);
-                if (value.type() == core::DataType::DECIMAL)
+                if (value.type() == core::DataType::DECIMAL ||
+                    value.type() == core::DataType::DECFLOAT16 ||
+                    value.type() == core::DataType::DECFLOAT34)
                 {
                     uint32_t precision = columns[i].type_precision != 0
                                              ? columns[i].type_precision
@@ -34384,43 +35209,7 @@ namespace scratchbird
                 readByte(); // Consume JOIN_CONDITION opcode
                 condition_start_pc = pc_;
 
-                // Skip over condition expression
-                int depth = 1;
-                while (pc_ < bytecode_size_ && depth > 0)
-                {
-                    Opcode op = static_cast<Opcode>(readByte());
-
-                    if (op == Opcode::LITERAL_INT32)
-                    {
-                        pc_ += 4;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_INT64)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_DOUBLE)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
-                    {
-                        uint32_t len = readInt32();
-                        pc_ += len;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_NULL)
-                    {
-                        depth++;
-                    }
-                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
-                    {
-                        depth--;
-                    }
-                }
-                condition_end_pc = pc_;
+                condition_end_pc = skipExpressionRange(pc_);
             }
 
             // Build combined result set schema
@@ -34675,43 +35464,7 @@ namespace scratchbird
                 has_condition = true;
                 readByte(); // Consume JOIN_CONDITION
                 condition_start_pc = pc_;
-
-                // Skip condition expression (same logic as nested loop join)
-                int depth = 1;
-                while (pc_ < bytecode_size_ && depth > 0)
-                {
-                    Opcode op = static_cast<Opcode>(readByte());
-                    if (op == Opcode::LITERAL_INT32)
-                    {
-                        pc_ += 4;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_INT64)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_DOUBLE)
-                    {
-                        pc_ += 8;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
-                    {
-                        uint32_t len = readInt32();
-                        pc_ += len;
-                        depth++;
-                    }
-                    else if (op == Opcode::LITERAL_NULL)
-                    {
-                        depth++;
-                    }
-                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
-                    {
-                        depth--;
-                    }
-                }
-                condition_end_pc = pc_;
+                condition_end_pc = skipExpressionRange(pc_);
             }
 
             // Build hash table from inner result
@@ -36661,6 +37414,393 @@ namespace scratchbird
                     }
                 }
             }
+        }
+
+        void Executor::executePrepareStatement()
+        {
+            std::string statement_name = readString();
+            if (statement_name.empty())
+            {
+                error("PREPARE requires a statement name");
+            }
+            if (!conn_ctx_)
+            {
+                error("PREPARE requires a connection context");
+            }
+
+            uint32_t sql_expr_len = readInt32();
+            size_t sql_start = pc_;
+            size_t sql_end = pc_ + sql_expr_len;
+            pc_ = sql_end;
+
+            size_t saved_pc = pc_;
+            pc_ = sql_start;
+            Value sql_val = evaluateExpressionRange(sql_end);
+            pc_ = saved_pc;
+
+            std::string sql_text = sql_val.toString();
+            if (sql_text.empty())
+            {
+                error("PREPARE requires a SQL statement");
+            }
+
+            std::string default_schema = "/remote/emulated/mysql/localhost/";
+            if (conn_ctx_)
+            {
+                const std::string& current_schema = conn_ctx_->current_schema();
+                if (current_schema.find("mysql") != std::string::npos)
+                {
+                    default_schema = current_schema;
+                }
+            }
+
+            parser::mysql::Parser parser(sql_text, db_, default_schema);
+            auto parse_result = parser.parseStatement();
+            if (!parse_result.success())
+            {
+                std::string err = "PREPARE parse failed";
+                if (!parse_result.errors().empty())
+                {
+                    err += ": " + parse_result.errors().front().message;
+                }
+                error(err);
+            }
+
+            core::ErrorContext err_ctx;
+            std::vector<uint16_t> param_types;
+            auto status = conn_ctx_->prepareStatement(statement_name,
+                                                      sql_text,
+                                                      parse_result.bytecode(),
+                                                      param_types,
+                                                      &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "PREPARE failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        ExecutionResult Executor::executeExecutePrepared()
+        {
+            std::string statement_name = readString();
+            if (statement_name.empty())
+            {
+                return ExecutionResult("EXECUTE requires a statement name");
+            }
+            if (!conn_ctx_)
+            {
+                return ExecutionResult("EXECUTE requires a connection context");
+            }
+
+            uint32_t param_count = readInt32();
+            std::vector<Value> params;
+            params.reserve(param_count);
+            for (uint32_t i = 0; i < param_count; ++i)
+            {
+                uint32_t expr_len = readInt32();
+                size_t expr_start = pc_;
+                size_t expr_end = pc_ + expr_len;
+                pc_ = expr_end;
+
+                size_t saved_param_pc = pc_;
+                pc_ = expr_start;
+                params.push_back(evaluateExpressionRange(expr_end));
+                pc_ = saved_param_pc;
+            }
+
+            auto* stmt = conn_ctx_->getPreparedStatement(statement_name);
+            if (!stmt)
+            {
+                return ExecutionResult("Prepared statement '" + statement_name + "' not found");
+            }
+
+            Executor nested(db_);
+            nested.setConnectionContext(conn_ctx_);
+            if (!params.empty())
+            {
+                std::vector<std::string> param_values;
+                std::vector<bool> param_nulls;
+                param_values.reserve(params.size());
+                param_nulls.reserve(params.size());
+                for (const auto& param : params)
+                {
+                    param_nulls.push_back(param.isNull());
+                    param_values.push_back(param.isNull() ? std::string() : param.toString());
+                }
+                nested.setParameters(param_values, param_nulls);
+            }
+
+            auto exec_result = nested.execute(stmt->bytecode);
+            if (!exec_result.success())
+            {
+                return ExecutionResult("EXECUTE failed: " + exec_result.error());
+            }
+
+            conn_ctx_->recordStatementExecution(statement_name);
+            return exec_result;
+        }
+
+        void Executor::executeDeallocatePrepared()
+        {
+            std::string statement_name = readString();
+            if (!conn_ctx_)
+            {
+                error("DEALLOCATE requires a connection context");
+            }
+
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx_->deallocatePreparedStatement(statement_name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DEALLOCATE failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeAlterFunctionStatement()
+        {
+            uint8_t flags = readByte();
+            bool has_sql_security = (flags & 0x01) != 0;
+            bool has_deterministic = (flags & 0x02) != 0;
+            bool has_comment = (flags & 0x04) != 0;
+            std::string function_name = readString();
+
+            core::ErrorContext ctx;
+            core::ID function_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                function_name, core::CatalogManager::ObjectType::FUNCTION,
+                function_id, resolved_type, nullptr, &ctx, false);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Function not found: '" + function_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            core::CatalogManager::FunctionInfo func_info;
+            status = findFunctionById(db_->catalog_manager(), function_id, func_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to load function '" + function_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            if (has_sql_security)
+            {
+                uint8_t security_mode = readByte();
+                func_info.sql_security =
+                    security_mode ? core::CatalogManager::FunctionInfo::SqlSecurity::INVOKER
+                                   : core::CatalogManager::FunctionInfo::SqlSecurity::DEFINER;
+            }
+            if (has_deterministic)
+            {
+                uint8_t deterministic = readByte();
+                func_info.deterministic = (deterministic != 0);
+            }
+            std::string comment_text;
+            if (has_comment)
+            {
+                comment_text = readString();
+            }
+
+            func_info.or_replace = true;
+            func_info.modified_time = static_cast<uint64_t>(
+                std::chrono::system_clock::now().time_since_epoch().count());
+
+            status = db_->catalog_manager()->registerFunction(func_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to alter function '" + function_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            if (has_comment)
+            {
+                core::ErrorContext comment_ctx;
+                auto comment_status = db_->catalog_manager()->setComment(
+                    func_info.function_id, core::CatalogManager::ObjectType::FUNCTION,
+                    comment_text, &comment_ctx);
+                if (comment_status != core::Status::OK)
+                {
+                    std::string msg = "Failed to update function comment";
+                    if (!comment_ctx.message.empty()) { msg += ": " + comment_ctx.message; }
+                    error(msg);
+                }
+            }
+        }
+
+        void Executor::executeAlterProcedureStatement()
+        {
+            uint8_t flags = readByte();
+            bool has_sql_security = (flags & 0x01) != 0;
+            bool has_comment = (flags & 0x02) != 0;
+            std::string procedure_name = readString();
+
+            core::ErrorContext ctx;
+            core::ID procedure_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                procedure_name, core::CatalogManager::ObjectType::PROCEDURE,
+                procedure_id, resolved_type, nullptr, &ctx, false);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Procedure not found: '" + procedure_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            core::CatalogManager::ProcedureInfo proc_info;
+            status = findProcedureById(db_->catalog_manager(), procedure_id, proc_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to load procedure '" + procedure_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            if (has_sql_security)
+            {
+                uint8_t security_mode = readByte();
+                proc_info.sql_security =
+                    security_mode ? core::CatalogManager::ProcedureInfo::SqlSecurity::INVOKER
+                                  : core::CatalogManager::ProcedureInfo::SqlSecurity::DEFINER;
+            }
+            std::string comment_text;
+            if (has_comment)
+            {
+                comment_text = readString();
+            }
+
+            proc_info.or_replace = true;
+            proc_info.modified_time = static_cast<uint64_t>(
+                std::chrono::system_clock::now().time_since_epoch().count());
+
+            status = db_->catalog_manager()->registerProcedure(proc_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to alter procedure '" + procedure_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            if (has_comment)
+            {
+                core::ErrorContext comment_ctx;
+                auto comment_status = db_->catalog_manager()->setComment(
+                    proc_info.procedure_id, core::CatalogManager::ObjectType::PROCEDURE,
+                    comment_text, &comment_ctx);
+                if (comment_status != core::Status::OK)
+                {
+                    std::string msg = "Failed to update procedure comment";
+                    if (!comment_ctx.message.empty()) { msg += ": " + comment_ctx.message; }
+                    error(msg);
+                }
+            }
+        }
+
+        void Executor::executeMySqlKill()
+        {
+            uint8_t kill_type = readByte();
+            uint32_t proc_id = readInt32();
+
+            core::ErrorContext ctx;
+            auto status = core::ProcArrayManager::requestBackendTermination(proc_id, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "KILL failed to signal backend";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            if (kill_type == 0)
+            {
+                std::vector<core::ProcessControlBlock> backends;
+                core::ErrorContext proc_ctx;
+                auto proc_status = core::ProcArrayManager::getAllActiveBackends(
+                    &backends, &proc_ctx);
+                if (proc_status == core::Status::OK && db_ && db_->catalog_manager())
+                {
+                    for (const auto& proc : backends)
+                    {
+                        if (!proc.is_active || proc.proc_id != proc_id)
+                        {
+                            continue;
+                        }
+                        if (!isZeroUuid(proc.session_id))
+                        {
+                            core::ErrorContext close_ctx;
+                            db_->catalog_manager()->closeSession(proc.session_id, &close_ctx);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        void Executor::executeMySqlFlush()
+        {
+            enum class FlushAction : uint8_t {
+                TABLES = 0,
+                PRIVILEGES = 1,
+                LOGS = 2,
+                STATUS = 3,
+                HOSTS = 4
+            };
+
+            auto action = static_cast<FlushAction>(readByte());
+            uint8_t flags = readByte();
+            uint32_t table_count = readInt32();
+            for (uint32_t i = 0; i < table_count; ++i)
+            {
+                readString();
+            }
+
+            const char* action_name = "FLUSH";
+            switch (action)
+            {
+                case FlushAction::TABLES: action_name = "FLUSH TABLES"; break;
+                case FlushAction::PRIVILEGES: action_name = "FLUSH PRIVILEGES"; break;
+                case FlushAction::LOGS: action_name = "FLUSH LOGS"; break;
+                case FlushAction::STATUS: action_name = "FLUSH STATUS"; break;
+                case FlushAction::HOSTS: action_name = "FLUSH HOSTS"; break;
+            }
+
+            if (flags & 0x01)
+            {
+                LOG_WARNING(EXECUTOR, "%s WITH READ LOCK ignored in MySQL emulation", action_name);
+            }
+            else
+            {
+                LOG_WARNING(EXECUTOR, "%s ignored in MySQL emulation", action_name);
+            }
+        }
+
+        void Executor::executeMySqlLockTables()
+        {
+            uint32_t table_count = readInt32();
+            for (uint32_t i = 0; i < table_count; ++i)
+            {
+                readString();
+                readByte();
+            }
+
+            LOG_WARNING(EXECUTOR, "LOCK TABLES ignored in MySQL emulation");
+        }
+
+        void Executor::executeMySqlUnlockTables()
+        {
+            LOG_WARNING(EXECUTOR, "UNLOCK TABLES ignored in MySQL emulation");
         }
 
         // PSQL Variable Operations
@@ -40584,7 +41724,14 @@ namespace scratchbird
 
             if (has_charset && !charset.empty())
             {
-                conn_ctx_->set_charset(charset);
+                core::CatalogManager::CharsetInfo charset_info;
+                core::ErrorContext charset_ctx;
+                auto charset_status = catalog->getCharsetByName(charset, charset_info, &charset_ctx);
+                if (charset_status != core::Status::OK)
+                {
+                    error("Unknown character set: " + charset);
+                }
+                conn_ctx_->set_charset(charset_info.name);
             }
 
             core::ID authkey_id = conn_ctx_->authKeyId();
@@ -41024,6 +42171,8 @@ namespace scratchbird
                 case core::DataType::FLOAT32: return "FLOAT";
                 case core::DataType::FLOAT64: return "DOUBLE";
                 case core::DataType::DECIMAL: return "DECIMAL";
+                case core::DataType::DECFLOAT16: return "DECFLOAT(16)";
+                case core::DataType::DECFLOAT34: return "DECFLOAT(34)";
                 case core::DataType::BOOLEAN: return "BOOLEAN";
                 case core::DataType::CHAR: return "CHAR";
                 case core::DataType::VARCHAR: return "VARCHAR";
@@ -45582,10 +46731,28 @@ namespace scratchbird
             // Read bytecode parameter
             std::string charset_name = readString();
 
+            if (charset_name.empty())
+            {
+                error("SET NAMES requires a character set");
+            }
+
+            if (!db_ || !db_->catalog_manager())
+            {
+                error("Catalog manager not available");
+            }
+
+            core::CatalogManager::CharsetInfo charset_info;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getCharsetByName(charset_name, charset_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                error("Unknown character set: " + charset_name);
+            }
+
             // Set character set in connection context
             if (conn_ctx_)
             {
-                conn_ctx_->set_charset(charset_name);
+                conn_ctx_->set_charset(charset_info.name);
             }
         }
 

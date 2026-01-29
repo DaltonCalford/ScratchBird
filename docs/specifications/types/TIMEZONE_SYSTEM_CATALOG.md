@@ -266,8 +266,11 @@ record the tzdata version used for traceability.
 
 **Version tracking (required):**
 - Store the IANA tzdata version (e.g., `2024b`) in a small metadata record
-  (proposed: `sys.config` key `timezone.tzdata_version` or a dedicated catalog
-  row in `pg_timezone`).
+  (current: dedicated catalog row in `pg_timezone` with `timezone_id=0`,
+  `name='TZDATA_VERSION'`, version stored in `abbreviation`).
+- Store the i18n resource bundle version in a separate metadata record
+  (`timezone_id=65535`, `name='I18N_RESOURCE_VERSION'`), sourced from
+  `resources/i18n/version`.
 
 **Update workflow (expected):**
 1. Replace tzdata in `resources/timezones/` (or use system `/usr/share/zoneinfo`).

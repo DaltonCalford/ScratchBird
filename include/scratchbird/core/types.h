@@ -38,9 +38,11 @@ namespace scratchbird::core
         UINT64 = 9,   // 8-byte unsigned integer
         FLOAT32 = 10, // 4-byte IEEE 754 float (alias: REAL, FLOAT)
         FLOAT64 = 11, // 8-byte IEEE 754 double (alias: DOUBLE)
-        DECIMAL = 12, // Fixed-precision decimal (precision, scale)
-        MONEY = 13,   // Fixed-precision currency type
-        UINT128 = 14, // 16-byte unsigned integer
+        DECIMAL = 12,    // Fixed-precision decimal (precision, scale)
+        MONEY = 13,      // Fixed-precision currency type
+        UINT128 = 14,    // 16-byte unsigned integer
+        DECFLOAT16 = 15, // IEEE-754 decimal floating (Decimal64)
+        DECFLOAT34 = 16, // IEEE-754 decimal floating (Decimal128)
 
         // String types (20-29)
         CHAR = 20,    // Fixed-length string (padded with spaces)

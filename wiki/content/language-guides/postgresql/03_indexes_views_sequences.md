@@ -17,10 +17,10 @@ Indexes improve query performance, views provide abstracted query interfaces, an
 
 **Key Points:**
 - Full PostgreSQL 16 syntax support for indexes, views, and sequences
-- Advanced indexing: partial indexes, expression indexes, INCLUDE columns, CONCURRENTLY
+- Advanced indexing: partial indexes, INCLUDE columns, CONCURRENTLY (expression indexes not yet supported)
 - Materialized views for pre-computed query results
 - Sequences for auto-incrementing values (SERIAL types use sequences internally)
-- Current implementation status: parser complete, executor integration pending (see Known Limitations)
+- Parser emits proper bytecode opcodes (CREATE_INDEX, CREATE_VIEW, CREATE_SEQUENCE, etc.)
 
 ---
 
@@ -1005,19 +1005,31 @@ DROP SEQUENCE user_id_seq CASCADE;
 
 ## Known Limitations
 
-### Stubbed Implementation
+### What Works
 
-🚧 **CREATE INDEX** - Parser accepts full syntax but bytecode format mismatch prevents execution. Parser emits different name/table/flags ordering than executor expects.
+**CREATE INDEX** - Parser emits `CREATE_INDEX` opcode with full payload:
+- Index name, table path, unique flag
+- Column list with INCLUDE columns
+- Index type (btree, hash, gin, gist, spgist, brin)
+- Partial index WHERE predicate bytecode
 
-🚧 **DROP INDEX** - Parser emits different format than executor expects.
+**DROP INDEX** - Emits `DROP_INDEX` opcode with IF EXISTS support
 
-🚧 **CREATE VIEW** - Parser emits SELECT bytecode, but executor expects SQL string and flags. Bytecode structure mismatch prevents execution.
+**CREATE VIEW** - Emits `CREATE_VIEW` opcode with OR REPLACE support
 
-🚧 **DROP VIEW** - Stubbed due to payload mismatch.
+**DROP VIEW** - Emits `DROP_VIEW` opcode with IF EXISTS support
 
-🚧 **CREATE MATERIALIZED VIEW** - Uses CREATE_VIEW opcode with materialized flag but format doesn't match executor expectations.
+**CREATE MATERIALIZED VIEW** - Emits `CREATE_VIEW` opcode with materialized flag
 
-🚧 **CREATE SEQUENCE** - Parser drops sequence options during emission; executor expects different payload structure.
+**CREATE SEQUENCE** - Emits `CREATE_SEQUENCE` opcode with all options (INCREMENT, MINVALUE, MAXVALUE, START, CACHE, CYCLE, OWNED BY)
+
+### Known Issues
+
+**Expression indexes**: Parser explicitly errors on expression indexes ("not supported in current bytecode yet")
+
+**TABLESPACE clauses**: Rejected with error "TABLESPACE clauses are not supported in emulated parsers"
+
+**CONCURRENTLY**: Keyword is parsed but has no effect on execution (blocking index creation)
 
 🚧 **ALTER SEQUENCE** - Bytecode payload mismatch.
 

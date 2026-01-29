@@ -80,6 +80,9 @@ private:
     // Generate UTF-8 character set
     Status generateUTF8(CharacterSet &charset);
 
+    // Generate UTF-8MB4 character set
+    Status generateUTF8MB4(CharacterSet &charset);
+
     // Generate UTF-16 character set
     Status generateUTF16(CharacterSet &charset);
 

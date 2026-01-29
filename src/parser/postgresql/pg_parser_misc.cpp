@@ -109,7 +109,7 @@ void Parser::parseSetStmt() {
         if (has_isolation) emitByte(isolation);
         if (has_access_mode) emitByte(access_mode);
         if (has_deferrable) emitByte(deferrable);
-    } else if (matchKeyword(TokenType::KW_CONSTRAINTS)) {
+    } else if (matchIdentifierKeyword("CONSTRAINTS")) {
         // SET CONSTRAINTS
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_CONSTRAINTS));
@@ -197,7 +197,7 @@ void Parser::parseSetStmt() {
         } else {
             parseExpression();
         }
-    } else if (matchKeyword(TokenType::KW_SEARCH_PATH)) {
+    } else if (matchIdentifierKeyword("SEARCH_PATH")) {
         // SET search_path
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_VARIABLE));
@@ -261,23 +261,23 @@ void Parser::parseShowStmt() {
         consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_TRANSACTION_LEVEL));
-    } else if (matchKeyword(TokenType::KW_TABLES)) {
+    } else if (matchKeyword(TokenType::KW_TABLES) || matchIdentifierKeyword("TABLES")) {
         error("SHOW TABLES is not supported in PostgreSQL dialect");
         synchronize();
         return;
-    } else if (matchKeyword(TokenType::KW_DATABASES)) {
+    } else if (matchKeyword(TokenType::KW_DATABASES) || matchIdentifierKeyword("DATABASES")) {
         error("SHOW DATABASES is not supported in PostgreSQL dialect");
         synchronize();
         return;
-    } else if (matchKeyword(TokenType::KW_COLUMNS)) {
+    } else if (matchKeyword(TokenType::KW_COLUMNS) || matchIdentifierKeyword("COLUMNS")) {
         error("SHOW COLUMNS is not supported in PostgreSQL dialect");
         synchronize();
         return;
-    } else if (matchKeyword(TokenType::KW_INDEXES)) {
+    } else if (matchKeyword(TokenType::KW_INDEXES) || matchIdentifierKeyword("INDEXES")) {
         error("SHOW INDEXES is not supported in PostgreSQL dialect");
         synchronize();
         return;
-    } else if (matchKeyword(TokenType::KW_SEARCH_PATH)) {
+    } else if (matchIdentifierKeyword("SEARCH_PATH")) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_SEARCH_PATH));
     } else {

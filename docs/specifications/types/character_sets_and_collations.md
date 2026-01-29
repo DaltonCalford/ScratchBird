@@ -34,6 +34,7 @@ ScratchBird will support multiple character sets and collations for internationa
 ## Resource Baseline (Alpha Requirement)
 ScratchBird resources must include a complete baseline of character sets and collations
 required for Firebird, PostgreSQL, and MySQL compatibility.
+Canonical lists are defined in `docs/specifications/types/I18N_CANONICAL_LISTS.md`.
 
 ### Charset coverage requirements
 - `resources/charsets/charsets.json` must include all Firebird Appendix H character
@@ -46,6 +47,8 @@ required for Firebird, PostgreSQL, and MySQL compatibility.
   ISO8859_5, ISO8859_6, ISO8859_7, ISO8859_8, ISO8859_9, ISO8859_13, KOI8R,
   KOI8U, KSC_5601, NEXT, NONE, OCTETS, SJIS_0208, TIS620, UNICODE_FSS, UTF8,
   WIN1250, WIN1251, WIN1252, WIN1253.
+  - **UNICODE_FSS** is treated as UTF-8 with a 3-byte ceiling (legacy Firebird
+    behavior); 4-byte UTF-8 sequences are rejected under this charset.
 - Provide engine-specific aliases where names differ (examples):
   - Firebird: WIN125x alias for Windows-125x; ISO8859_1 alias for ISO-8859-1;
     UTF8 alias for UTF-8; BIG_5 alias for Big5; GB_2312 alias for GB2312.
@@ -61,6 +64,32 @@ required for Firebird, PostgreSQL, and MySQL compatibility.
   - PostgreSQL locale collations via OS/ICU ingestion plus built-in `C`/`POSIX`.
 - Collation resources must expose default collation per charset and allow multiple
   collations per charset (case-insensitive, accent-insensitive, binary).
+
+### Alias and normalization rules
+- Canonical names are the `name` fields in `resources/charsets/charsets.json`
+  and `resources/collations/collations.json`.
+- Normalization rule for lookup:
+  - Lowercase ASCII.
+  - Strip non-alphanumeric characters.
+  - Example: `UTF-8`, `utf8`, `utf_8` all normalize to `utf8`.
+- Alias resolution:
+  - Firebird: `WIN125x` -> `Windows-125x`, `ISO8859_1` -> `ISO-8859-1`,
+    `UTF8` -> `UTF-8`, `BIG_5` -> `Big5`, `GB_2312` -> `GB2312`.
+  - MySQL: preserve `utf8mb4`, `utf8mb3`, and charset family aliases even if
+    the runtime maps them to UTF-8 internally.
+  - PostgreSQL: preserve `SQL_ASCII`, `MULE_INTERNAL`, and `EUC_*` variants as
+    distinct named encodings where supported.
+
+### Mapping validation rules
+- Mapping tables are required for non-Unicode encodings.
+- Multibyte encodings must declare `validation` ranges in mapping files:
+  - `single_byte_ranges`, `lead_byte_ranges`, `trail_byte_ranges`.
+  - `multi_byte_sequences` for fixed-length multi-byte patterns (e.g. GB18030).
+- Unmapped input policy is controlled by `unmapped_policy`:
+  - `reject`: invalid sequences raise an error.
+  - `replace`: invalid sequences map to `replacement_codepoint`.
+- Resource version tracking: `resources/i18n/version` is written to the catalog
+  (see `TIMEZONE_SYSTEM_CATALOG.md` for the version record placement).
 
 ## Architecture
 
@@ -482,6 +511,10 @@ Character sets and timezones work together:
 - All timestamps stored in GMT (no charset conversion)
 - Timezone names and abbreviations stored as UTF-8 strings
 - Display formatting respects both charset and timezone settings
+
+### Collation Tailoring Loader
+See **[COLLATION_TAILORING_LOADER_SPEC.md](COLLATION_TAILORING_LOADER_SPEC.md)**
+for the loader contract and file formats.
 
 ## Implementation Status
 

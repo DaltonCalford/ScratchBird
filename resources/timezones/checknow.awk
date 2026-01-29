@@ -44,11 +44,16 @@ BEGIN {
 END {
  for (zone in zone_data) {
     data = zone_data[zone]
-    if (!zonenow[data]) {
+    if (data && !zonenow[data]) {
       printf "Zone table should have one of:%s\n", zones[data]
       zonenow[data] = zone # This suppresses duplicate diagnostics.
       status = 1
     }
+ }
+ if (now_out) {
+   for (data in zones) {
+     printf "%s=%s\n", now, zones[data] >>now_out
+   }
  }
  exit status
 }

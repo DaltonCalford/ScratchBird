@@ -643,9 +643,11 @@ SHOW CREATE TABLE t;
 | REPLACE INTO | ✅ | ✅ | ✅ | **REMAPPED** | **COMPLETE** |
 | INSERT IGNORE | ✅ | ❌ | ❌ | **PARSED/IGNORED** | **MEDIUM** |
 | **Type Modifiers** |
-| UNSIGNED | ✅ | ❌ | ❌ | **PARSED/IGNORED** | **MEDIUM** |
+| UNSIGNED | ✅ | ❌ | ❌ | **BLOCKED (SBLR UINT* markers)** | **MEDIUM** |
 | ZEROFILL | ✅ | ❌ | ❌ | **PARSED/IGNORED** | **LOW** |
 | AUTO_INCREMENT | ✅ | ✅ | ✅ | **WORKS** | **COMPLETE** |
+| **Types** |
+| MULTI* geometry (MULTIPOINT/MULTILINESTRING/MULTIPOLYGON/GEOMETRYCOLLECTION) | ❌ | ❌ | ❌ | **BLOCKED (SBLR type marker)** | **ALPHA** |
 | **Table Options** |
 | ENGINE | ✅ | ❓ | ❓ | **UNKNOWN** | **MEDIUM** |
 | CHARSET/COLLATE | ✅ | ❓ | ❓ | **UNKNOWN** | **MEDIUM** |

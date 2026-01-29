@@ -9,7 +9,7 @@
 
 This document covers data modification operations in MySQL emulation mode. These statements allow inserting, updating, deleting, and replacing rows in database tables.
 
-**Important:** Due to bytecode format mismatches between the parser and executor, most DML modification statements are currently in a stubbed state.
+**Important:** INSERT, UPDATE, and DELETE emit correct bytecode for basic operations. ON DUPLICATE KEY UPDATE is implemented via EXT_ON_CONFLICT opcodes. ORDER BY/LIMIT on UPDATE/DELETE are parsed but not emitted.
 
 ---
 
@@ -93,11 +93,13 @@ INSERT DELAYED INTO logs VALUES (...);        -- Asynchronous (deprecated)
 
 ### Current Status
 
-**STUBBED:** INSERT is parsed but has bytecode format mismatches:
-- Multi-row inserts may not work correctly
-- Column reference qualifiers differ from executor expectations
-- ON DUPLICATE KEY UPDATE is parsed but disabled (no bytecode emitted)
-- INSERT modifiers are parsed but ignored
+**Implemented:** INSERT emits correct bytecode:
+- Single-row and multi-row INSERT with VALUES emit INSERT opcode, TABLE_REF, column list, and value rows
+- INSERT SELECT captures and emits the SELECT bytecode inline
+- ON DUPLICATE KEY UPDATE emits EXT_ON_CONFLICT + EXT_ON_CONFLICT_DO_UPDATE with assignment list
+- DEFAULT values handling supported (explicit column filtering)
+- Column list auto-resolution from catalog when no column list specified
+- INSERT modifiers (LOW_PRIORITY, DELAYED, HIGH_PRIORITY, IGNORE) are parsed but ignored
 
 ---
 
@@ -169,10 +171,12 @@ WHERE price IS NULL;
 
 ### Current Status
 
-**STUBBED:** UPDATE is parsed but has bytecode format mismatches:
-- Table list and alias encoding differs
-- Qualified column references not handled correctly
-- ORDER BY/LIMIT may not work
+**Implemented:** UPDATE emits correct bytecode:
+- UPDATE opcode with TABLE_REF (name + alias)
+- SET clause emits ASSIGNMENT list with COLUMN_REF and expression bytecode
+- WHERE clause emitted via WHERE_CLAUSE opcode
+- Multi-table UPDATE: additional tables after comma are parsed but skipped (emit disabled)
+- ORDER BY and LIMIT are parsed but not emitted to bytecode
 
 ---
 
@@ -238,9 +242,11 @@ WHERE user_status.inactive_days > 365;
 
 ### Current Status
 
-**STUBBED:** DELETE is parsed but has bytecode format mismatches:
-- Alias encoding differs
-- ORDER BY/LIMIT payload differs from executor expectations
+**Implemented:** DELETE emits correct bytecode:
+- DELETE opcode with TABLE_REF (name + alias)
+- WHERE clause emitted via WHERE_CLAUSE opcode
+- ORDER BY and LIMIT are parsed but not emitted to bytecode
+- Multi-table DELETE syntax is not supported
 
 ---
 
@@ -297,9 +303,10 @@ SELECT customer_id, COUNT(*) FROM orders GROUP BY customer_id;
 
 ### Current Status
 
-**STUBBED:** REPLACE is parsed and encoded as INSERT + ON CONFLICT DO UPDATE, but:
-- Uses PostgreSQL ON CONFLICT semantics (UPDATE) instead of MySQL semantics (DELETE + INSERT)
-- Bytecode format EXT_ON_CONFLICT_DO_UPDATE is not supported by executor
+**Implemented (with semantic difference):** REPLACE emits as INSERT opcode plus EXT_ON_CONFLICT_DO_UPDATE:
+- Uses ON CONFLICT UPDATE semantics instead of MySQL's DELETE + INSERT semantics
+- Trigger behavior differs: MySQL fires DELETE + INSERT triggers; ScratchBird fires UPDATE triggers
+- Row identity may differ (MySQL creates new row; ScratchBird updates in-place)
 
 ---
 
@@ -340,9 +347,9 @@ DELETE IGNORE FROM table ...;
 
 ### Current Status
 
-**PARSED BUT IGNORED:** All modifiers are parsed but not implemented:
-- No bytecode emitted for LOW_PRIORITY/HIGH_PRIORITY/DELAYED
-- IGNORE is parsed but not converted to ON CONFLICT behavior
+**Parsed but ignored:** All modifiers are consumed during parsing but have no runtime effect:
+- LOW_PRIORITY/HIGH_PRIORITY/DELAYED are MySQL engine-level hints not applicable to ScratchBird
+- IGNORE is parsed but not mapped to ON CONFLICT DO NOTHING behavior
 
 ---
 
@@ -418,49 +425,21 @@ DELETE IGNORE FROM table ...;
 
 ## Known Limitations
 
-### Stubbed Implementation
+### What Works
 
-- **INSERT bytecode mismatch**: Multi-row INSERT and column qualifier encoding doesn't match executor
-- **UPDATE bytecode mismatch**: Table list, alias, and qualified column references differ
-- **DELETE bytecode mismatch**: Alias and ORDER BY/LIMIT encoding differs
-- **REPLACE bytecode mismatch**: Encoded as unsupported EXT_ON_CONFLICT_DO_UPDATE
+- **INSERT**: Single/multi-row, INSERT SELECT, ON DUPLICATE KEY UPDATE, DEFAULT values, catalog column resolution
+- **UPDATE**: Single-table with SET, WHERE
+- **DELETE**: Single-table with WHERE
+- **REPLACE**: Parsed as INSERT + ON CONFLICT DO UPDATE
 
 ### Partial Implementation
 
-- **ON DUPLICATE KEY UPDATE - CRITICAL ISSUE**: Parsed but bytecode emission is disabled
-  - Should be remapped to MERGE statement
-  - Currently does nothing
-  - **Priority**: Alpha blocker
-
-- **REPLACE semantics differ**: Maps to ON CONFLICT (UPDATE) instead of DELETE + INSERT
-  - Different trigger behavior
-  - Different OID behavior
-  - **Priority**: Low (document difference)
+- **UPDATE/DELETE ORDER BY and LIMIT**: Parsed but bytecode emission is disabled (no runtime effect)
+- **Multi-table UPDATE**: Additional tables after comma are parsed but skipped during emission
+- **REPLACE semantics**: Maps to ON CONFLICT UPDATE instead of DELETE + INSERT (different trigger and row identity behavior)
+- **INSERT modifiers**: LOW_PRIORITY, HIGH_PRIORITY, DELAYED, IGNORE are parsed but ignored at runtime
 
 ### Missing Features
 
-- **Multi-table UPDATE**: Not supported
-  ```sql
-  UPDATE t1, t2 SET t1.col = t2.col WHERE ...;  -- NOT SUPPORTED
-  ```
-
 - **Multi-table DELETE**: Not supported
-  ```sql
-  DELETE t1, t2 FROM t1 JOIN t2 WHERE ...;  -- NOT SUPPORTED
-  ```
-
-- **INSERT modifiers**: LOW_PRIORITY, HIGH_PRIORITY, DELAYED, IGNORE
-  - Parsed but no implementation
-  - **IGNORE** should map to ON CONFLICT DO NOTHING
-
-### Implementation Priority
-
-According to `/docs/specifications/MYSQL_PARSER_IMPLEMENTATION_GAPS.md`:
-
-**Alpha Blockers (Critical):**
-- Implement ON DUPLICATE KEY UPDATE → MERGE remapping (2-3 days)
-- Fix INSERT/UPDATE/DELETE bytecode formats (2-3 days)
-
-**Post-Alpha (High):**
-- Implement INSERT IGNORE → ON CONFLICT DO NOTHING (1 day)
-- Fix multi-row INSERT support
+- **INSERT IGNORE → ON CONFLICT DO NOTHING mapping**: IGNORE keyword is consumed but has no bytecode effect

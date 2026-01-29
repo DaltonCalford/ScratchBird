@@ -31,17 +31,25 @@ missing or require explicit user-defined registration (UDR/UDF).
 - `VARIANCE(expr)`, `VAR_SAMP(expr)`, `VAR_POP(expr)`
 - `CORR(x, y)`, `COVAR_POP(x, y)`
 - `ARRAY_AGG(expr)`
+- `REGR_SLOPE(y, x)`, `REGR_INTERCEPT(y, x)`, `REGR_COUNT(y, x)`
+- `REGR_R2(y, x)`, `REGR_AVGX(y, x)`, `REGR_AVGY(y, x)`
+- `REGR_SXX(y, x)`, `REGR_SYY(y, x)`, `REGR_SXY(y, x)`
+- `GROUPING(expr)`
 
 ### String Functions
 
-- `LENGTH(text)`
+- `LENGTH(text)`, `LEN(text)`
 - `CHAR_LENGTH(text)`
 - `OCTET_LENGTH(text)`
 - `UPPER(text)`, `LOWER(text)`
 - `TRIM(text)`, `LTRIM(text)`, `RTRIM(text)`
-- `SUBSTRING(text, start, length)`
+- `SUBSTRING(text, start, length)`, `SUBSTR(text, start, length)`
 - `CONCAT(a, b, ...)`
 - `CONCAT_WS(sep, a, b, ...)`
+- `REPLACE(text, from, to)`
+- `ENDS_WITH(text, suffix)`
+- `ASCII(char)`
+- `CHR(code)`
 - `FORMAT_TYPE(oid, modifier)`
 - `OBJ_DESCRIPTION(oid, catalog)`
 - `COL_DESCRIPTION(table_oid, column_num)`
@@ -55,6 +63,9 @@ missing or require explicit user-defined registration (UDR/UDF).
 - `DATE_ADD(date, interval)`
 - `DATE_SUB(date, interval)`
 - `DATE_DIFF(a, b)`, `DATEDIFF(a, b)`
+- `TO_CHAR(value, format)`
+- `TO_DATE(text, format)`
+- `TO_TIMESTAMP(text, format)`
 
 ### JSON / JSONB Functions
 
@@ -64,6 +75,8 @@ missing or require explicit user-defined registration (UDR/UDF).
 - `JSON_REMOVE(json, path)`
 - `JSON_OBJECT(key, value, ...)`
 - `JSON_ARRAY(value, ...)`
+- `JSON_EXISTS(json, path)`
+- `JSON_HAS_KEY(json, key)`
 - `JSONB_EXTRACT_PATH(jsonb, path, ...)`
 - `JSONB_BUILD_OBJECT(key, value, ...)`
 - `JSONB_BUILD_ARRAY(value, ...)`
@@ -84,7 +97,7 @@ missing or require explicit user-defined registration (UDR/UDF).
 - `ABS(x)`
 - `SIGN(x)`
 - `ROUND(x[, scale])`
-- `CEIL(x)`, `FLOOR(x)`, `TRUNC(x)`
+- `CEIL(x)`, `CEILING(x)`, `FLOOR(x)`, `TRUNC(x)`
 - `MOD(a, b)`
 - `SQRT(x)`, `CBRT(x)`
 - `POWER(a, b)`, `POW(a, b)`
@@ -96,10 +109,35 @@ missing or require explicit user-defined registration (UDR/UDF).
 - `ASINH(x)`, `ACOSH(x)`, `ATANH(x)`
 - `COT(x)`
 
+### Bitwise Functions
+
+- `GET_BYTE(bytea, offset)`
+- `SET_BYTE(bytea, offset, value)`
+- `GET_BIT(bytea, offset)`
+- `SET_BIT(bytea, offset, value)`
+- `BIT_AND(a, b)`
+- `BIT_OR(a, b)`
+- `BIT_XOR(a, b)`
+- `BIT_NOT(a)`
+- `BIT_SHIFT_LEFT(a, n)`
+- `BIT_SHIFT_RIGHT(a, n)`
+- `BIT_SHIFT_RIGHT_LOGICAL(a, n)`
+- `BIT_COUNT(a)`
+- `BIT_LENGTH(a)`
+- `BIT_MASK(a)`
+
+### Array Functions
+
+- `ARRAY_POSITION(array, element)`
+- `ARRAY_SLICE(array, start, end)`
+- `ARRAY_SUBSCRIPT(array, index)`
+
 ### Conditional Functions
 
 - `COALESCE(a, b, ...)`
 - `NULLIF(a, b)`
+- `LEAST(a, b, ...)`
+- `GREATEST(a, b, ...)`
 
 ---
 

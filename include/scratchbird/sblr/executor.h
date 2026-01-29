@@ -368,12 +368,17 @@ namespace scratchbird
             size_t skipExpressionRange(size_t start_pc);
             size_t skipExpressionRangeNoAggregates(size_t start_pc);
             void skipSelectStatement();
-            core::DataType readDataTypeWithModifiers(uint32_t& precision_out, uint32_t& scale_out);
+            core::DataType readDataTypeWithModifiers(uint32_t& precision_out,
+                                                     uint32_t& scale_out,
+                                                     bool* with_timezone_out = nullptr,
+                                                     uint16_t* timezone_hint_out = nullptr);
             core::DataType readColumnTypeWithDomain(core::ID& domain_id_out,
                                                     uint32_t& precision_out,
                                                     uint32_t& scale_out,
                                                     bool& is_array_out,
-                                                    uint32_t& array_size_out);
+                                                    uint32_t& array_size_out,
+                                                    bool* with_timezone_out = nullptr,
+                                                    uint16_t* timezone_hint_out = nullptr);
             void readDependencies(std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
             core::Status resolveSchemaIdForName(const std::string& schema_path,
                                                 core::ID& schema_id_out,
@@ -949,6 +954,15 @@ namespace scratchbird
             void executeShowLocation();      // Execute SHOW LOCATION OF [type] name
             void executeShowResolved();      // Execute SHOW RESOLVED name
             void executeShowObjects();       // Execute SHOW OBJECTS
+            void executePrepareStatement();  // Execute PREPARE statement
+            ExecutionResult executeExecutePrepared();  // Execute prepared statement
+            void executeDeallocatePrepared();  // Execute DEALLOCATE PREPARE
+            void executeAlterFunctionStatement();  // Execute ALTER FUNCTION
+            void executeAlterProcedureStatement();  // Execute ALTER PROCEDURE
+            void executeMySqlKill();  // Execute MySQL KILL
+            void executeMySqlFlush();  // Execute MySQL FLUSH
+            void executeMySqlLockTables();  // Execute MySQL LOCK TABLES
+            void executeMySqlUnlockTables();  // Execute MySQL UNLOCK TABLES
             void executeObjectResolverQuery(
                 const std::vector<std::pair<std::string, std::string>>& select_items,
                 bool is_select_star,

@@ -38,6 +38,7 @@ bool Parser::isNonReservedKeyword(TokenType type) const {
         case TokenType::KW_MINUTE:
         case TokenType::KW_SECOND:
         case TokenType::KW_ZONE:
+        case TokenType::KW_PUBLIC:
         case TokenType::KW_OPTIONS:
         case TokenType::KW_COMMENT:
         case TokenType::KW_LANGUAGE:
@@ -629,8 +630,9 @@ sblr::Opcode Parser::typeToOpcode(PgDataType::Kind kind) {
         case PgDataType::Kind::UUID:
             return sblr::Opcode::TYPE_UUID;
         case PgDataType::Kind::JSON:
-        case PgDataType::Kind::JSONB:
             return sblr::Opcode::TYPE_JSON;
+        case PgDataType::Kind::ARRAY:
+            return sblr::Opcode::TYPE_ARRAY;
         default:
             return sblr::Opcode::TYPE_VARCHAR;  // Default fallback
     }
@@ -638,6 +640,98 @@ sblr::Opcode Parser::typeToOpcode(PgDataType::Kind kind) {
 
 void Parser::emitTypeDefinition(const PgDataType& type) {
     // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md for SBLR type encoding.
+    if (type.kind == PgDataType::Kind::JSONPATH) {
+        error("PostgreSQL JSONPATH is not supported yet");
+        return;
+    }
+    auto emit_extended = [&](sblr::ExtendedOpcode opcode) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(opcode));
+    };
+
+    auto emit_extended_for_kind = [&](PgDataType::Kind kind,
+                                      bool with_time_zone) -> bool {
+        switch (kind) {
+            case PgDataType::Kind::TIMETZ:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TIME_TZ);
+                return true;
+            case PgDataType::Kind::TIMESTAMPTZ:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TIMESTAMP_TZ);
+                return true;
+            case PgDataType::Kind::TIME:
+                if (with_time_zone) {
+                    emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TIME_TZ);
+                    return true;
+                }
+                return false;
+            case PgDataType::Kind::TIMESTAMP:
+                if (with_time_zone) {
+                    emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TIMESTAMP_TZ);
+                    return true;
+                }
+                return false;
+            case PgDataType::Kind::JSONB:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_JSONB);
+                return true;
+            case PgDataType::Kind::MONEY:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_MONEY);
+                return true;
+            case PgDataType::Kind::INTERVAL:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_INTERVAL);
+                return true;
+            case PgDataType::Kind::INET:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_INET);
+                return true;
+            case PgDataType::Kind::CIDR:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_CIDR);
+                return true;
+            case PgDataType::Kind::MACADDR:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_MACADDR);
+                return true;
+            case PgDataType::Kind::MACADDR8:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_MACADDR8);
+                return true;
+            case PgDataType::Kind::TSVECTOR:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TSVECTOR);
+                return true;
+            case PgDataType::Kind::TSQUERY:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TSQUERY);
+                return true;
+            case PgDataType::Kind::INT4RANGE:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_INT4RANGE);
+                return true;
+            case PgDataType::Kind::INT8RANGE:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_INT8RANGE);
+                return true;
+            case PgDataType::Kind::NUMRANGE:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_NUMRANGE);
+                return true;
+            case PgDataType::Kind::DATERANGE:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_DATERANGE);
+                return true;
+            case PgDataType::Kind::TSRANGE:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TSRANGE);
+                return true;
+            case PgDataType::Kind::TSTZRANGE:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_TSTZRANGE);
+                return true;
+            case PgDataType::Kind::XML:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_XML);
+                return true;
+            case PgDataType::Kind::POINT:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_POINT);
+                return true;
+            case PgDataType::Kind::POLYGON:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_POLYGON);
+                return true;
+            case PgDataType::Kind::COMPOSITE:
+                emit_extended(sblr::ExtendedOpcode::EXT_TYPE_COMPOSITE);
+                return true;
+            default:
+                return false;
+        }
+    };
+
     if (type.kind == PgDataType::Kind::DOMAIN) {
         core::ID domain_id;
         if (!resolveDomainId(type.type_name, domain_id)) {
@@ -649,6 +743,52 @@ void Parser::emitTypeDefinition(const PgDataType& type) {
         return;
     }
 
+    if (type.kind == PgDataType::Kind::ARRAY) {
+        if (type.element_kind == PgDataType::Kind::DOMAIN) {
+            core::ID domain_id;
+            if (!resolveDomainId(type.element_type, domain_id)) {
+                return;
+            }
+            emit(sblr::Opcode::TYPE_DOMAIN);
+            emitUUID(domain_id);
+            emitByte(1);
+            emitU32(type.array_size > 0 ? static_cast<uint32_t>(type.array_size) : 0);
+            return;
+        }
+
+        emit(sblr::Opcode::TYPE_ARRAY);
+        PgDataType element = type;
+        element.kind = type.element_kind;
+        if (element.kind == PgDataType::Kind::INT128 ||
+            element.kind == PgDataType::Kind::UINT128) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(
+                element.kind == PgDataType::Kind::INT128
+                    ? sblr::ExtendedOpcode::EXT_TYPE_INT128
+                    : sblr::ExtendedOpcode::EXT_TYPE_UINT128));
+        } else if (!emit_extended_for_kind(element.kind, element.with_time_zone)) {
+            emit(typeToOpcode(element.kind));
+            switch (element.kind) {
+                case PgDataType::Kind::CHAR:
+                case PgDataType::Kind::VARCHAR:
+                case PgDataType::Kind::BIT:
+                case PgDataType::Kind::VARBIT:
+                    emitU32(element.length > 0 ? static_cast<uint32_t>(element.length) : 255);
+                    break;
+                case PgDataType::Kind::DECIMAL:
+                case PgDataType::Kind::NUMERIC:
+                case PgDataType::Kind::MONEY:
+                    emitU32(element.precision > 0 ? static_cast<uint32_t>(element.precision) : 18);
+                    emitU32(static_cast<uint32_t>(element.scale));
+                    break;
+                default:
+                    break;
+            }
+        }
+        emitU32(type.array_size > 0 ? static_cast<uint32_t>(type.array_size) : 0);
+        return;
+    }
+
     if (type.kind == PgDataType::Kind::INT128 ||
         type.kind == PgDataType::Kind::UINT128) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
@@ -656,6 +796,10 @@ void Parser::emitTypeDefinition(const PgDataType& type) {
             type.kind == PgDataType::Kind::INT128
                 ? sblr::ExtendedOpcode::EXT_TYPE_INT128
                 : sblr::ExtendedOpcode::EXT_TYPE_UINT128));
+        return;
+    }
+
+    if (emit_extended_for_kind(type.kind, type.with_time_zone)) {
         return;
     }
 

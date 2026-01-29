@@ -80,6 +80,15 @@ namespace scratchbird
             LITERAL_STRING = 0x34,    // String literal (length + data)
             LITERAL_CHARSET = 0x35,   // Charset ID (uint16_t)
             LITERAL_COLLATION = 0x36, // Collation ID (uint32_t)
+            LITERAL_BOOLEAN = 0x37,   // Boolean literal (uint8_t 0/1)
+            LITERAL_UUID = 0x38,      // UUID literal (16 bytes)
+            LITERAL_DATE = 0x39,      // Date literal (int32 days since epoch)
+            LITERAL_TIME = 0x3A,      // Time literal (int64 microseconds since midnight)
+            LITERAL_TIMESTAMP = 0x3B, // Timestamp literal (int64 microseconds since epoch)
+            LITERAL_BINARY = 0x3C,    // Binary literal (len:UVARINT + bytes)
+            LITERAL_DECIMAL = 0x3D,   // Decimal literal (string payload)
+            LITERAL_JSON = 0x3E,      // JSON literal (string payload)
+            LITERAL_XML = 0x3F,       // XML literal (string payload)
 
             // Column/Table references
             TABLE_REF = 0x40,  // Table reference (string id)
@@ -173,6 +182,8 @@ namespace scratchbird
             PRIMARY_KEY = 0x96,       // PRIMARY KEY constraint (column-level or table-level)
             IDENTITY_COLUMN = 0x97,   // IDENTITY column (GENERATED {ALWAYS|BY DEFAULT} AS IDENTITY) - ALPHA Phase 1
             GENERATED_COLUMN = 0x98,  // GENERATED column (GENERATED ALWAYS AS expr [STORED|VIRTUAL]) - ALPHA Phase 1
+            COLUMN_COLLATE = 0x99,   // Column collation name (string payload)
+            COLUMN_CHARSET = 0x9A,   // Column charset name (string payload)
 
             // Special
             SELECT_STAR = 0xA0,  // SELECT *
@@ -183,6 +194,7 @@ namespace scratchbird
             TYPE_BLOB = 0xB1,      // Binary large object
             TYPE_BYTEA = 0xB2,     // Byte array (PostgreSQL compatible)
             TYPE_JSON = 0xB3,      // JSON data
+            TYPE_ARRAY = 0xB9,     // Array type (element type + size payload)
             TYPE_DOMAIN = 0xB8,    // Domain type reference (domain_id follows)
 
             // Query optimization hints (Phase 1, Task 1.3)
@@ -1061,6 +1073,28 @@ namespace scratchbird
             EXT_TYPE_INT128 = 0x0400,  // INT128 data type marker
             EXT_TYPE_UINT128 = 0x0401,  // UINT128 data type marker
             EXT_TYPE_VECTOR = 0x0402,  // VECTOR data type marker
+            EXT_TYPE_UINT8 = 0x0410,  // UINT8 data type marker
+            EXT_TYPE_UINT16 = 0x0411,  // UINT16 data type marker
+            EXT_TYPE_UINT32 = 0x0412,  // UINT32 data type marker
+            EXT_TYPE_UINT64 = 0x0413,  // UINT64 data type marker
+            EXT_TYPE_MONEY = 0x0414,  // MONEY data type marker
+            EXT_TYPE_INTERVAL = 0x0415,  // INTERVAL data type marker
+            EXT_TYPE_JSONB = 0x0416,  // JSONB data type marker
+            EXT_TYPE_XML = 0x0417,  // XML data type marker
+            EXT_TYPE_MULTIPOINT = 0x0418,  // MULTIPOINT data type marker
+            EXT_TYPE_MULTILINESTRING = 0x0419,  // MULTILINESTRING data type marker
+            EXT_TYPE_MULTIPOLYGON = 0x041A,  // MULTIPOLYGON data type marker
+            EXT_TYPE_GEOMETRYCOLLECTION = 0x041B,  // GEOMETRYCOLLECTION data type marker
+            EXT_TYPE_COMPOSITE = 0x041C,  // COMPOSITE data type marker
+            EXT_TYPE_VARIANT = 0x041D,  // VARIANT data type marker
+            EXT_TYPE_INET = 0x041E,  // INET data type marker
+            EXT_TYPE_CIDR = 0x041F,  // CIDR data type marker
+            EXT_TYPE_MACADDR = 0x0420,  // MACADDR data type marker
+            EXT_TYPE_MACADDR8 = 0x0421,  // MACADDR8 data type marker
+            EXT_TYPE_TIME_TZ = 0x0422,  // TIME WITH TIME ZONE marker
+            EXT_TYPE_TIMESTAMP_TZ = 0x0423,  // TIMESTAMP WITH TIME ZONE marker
+            EXT_TYPE_DECFLOAT16 = 0x0424,  // DECFLOAT(16) data type marker
+            EXT_TYPE_DECFLOAT34 = 0x0425,  // DECFLOAT(34) data type marker
             EXT_TO_TSVECTOR = 0xAD,  // TO_TSVECTOR(config, text) - text to tsvector
             EXT_TO_TSQUERY = 0xAE,  // TO_TSQUERY(config, query) - query to tsquery
             EXT_PLAINTO_TSQUERY = 0xAF,  // PLAINTO_TSQUERY(config, text) - plain text to query
@@ -1158,6 +1192,14 @@ namespace scratchbird
             EXT_SHA512 = 0xFC,  // SHA512(data) - 512-bit hash
             EXT_ENCODE = 0xFD,  // ENCODE(data, format) - encode binary to text
             EXT_DECODE = 0xFE,  // DECODE(text, format) - decode text to binary
+            // Extended literal opcodes (0x0600+ range)
+            EXT_LITERAL_JSONB = 0x0600,  // JSONB literal (string payload)
+            EXT_LITERAL_INTERVAL = 0x0601,  // INTERVAL literal (string payload)
+            EXT_LITERAL_MONEY = 0x0602,  // MONEY literal (string payload)
+            EXT_LITERAL_INET = 0x0603,  // INET literal (string payload)
+            EXT_LITERAL_CIDR = 0x0604,  // CIDR literal (string payload)
+            EXT_LITERAL_MACADDR = 0x0605,  // MACADDR literal (string payload)
+            EXT_LITERAL_MACADDR8 = 0x0606,  // MACADDR8 literal (string payload)
             EXT_SHOW_TABLES = 0x05,  // SHOW TABLES [FROM database] [LIKE 'pattern']
             EXT_SHOW_DATABASES = 0x06,  // SHOW DATABASES [LIKE 'pattern']
             EXT_SHOW_COLUMNS = 0x07,  // SHOW COLUMNS FROM table [LIKE 'pattern']
@@ -1309,6 +1351,15 @@ namespace scratchbird
             EXT_DROP_SYNONYM = 0x011E,  // DROP SYNONYM
             EXT_CREATE_UDR = 0x011F,  // CREATE UDR
             EXT_DROP_UDR = 0x0120,  // DROP UDR
+            EXT_PREPARE_STMT = 0x0121,  // PREPARE statement_name FROM sql
+            EXT_EXECUTE_PREPARED = 0x0122,  // EXECUTE prepared statement
+            EXT_DEALLOCATE_PREPARED = 0x0123,  // DEALLOCATE PREPARE statement_name
+            EXT_ALTER_FUNCTION_STMT = 0x0124,  // ALTER FUNCTION (characteristics)
+            EXT_ALTER_PROCEDURE_STMT = 0x0125,  // ALTER PROCEDURE (characteristics)
+            EXT_MYSQL_KILL = 0x0126,  // MySQL KILL CONNECTION/QUERY
+            EXT_MYSQL_FLUSH = 0x0127,  // MySQL FLUSH variants
+            EXT_MYSQL_LOCK_TABLES = 0x0128,  // MySQL LOCK TABLES
+            EXT_MYSQL_UNLOCK_TABLES = 0x0129,  // MySQL UNLOCK TABLES
 
             // Null-safe comparison operators (MySQL/PostgreSQL)
             EXT_NULL_SAFE_EQ = 0x0200,  // NULL-safe equality (<=> / IS NOT DISTINCT FROM)

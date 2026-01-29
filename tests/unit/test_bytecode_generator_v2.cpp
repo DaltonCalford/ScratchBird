@@ -444,8 +444,7 @@ TEST_F(BytecodeGeneratorV2Test, BooleanLiteral) {
     auto result = generateBytecode("SELECT TRUE");
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
 
-    // Boolean stored as INT32
-    EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::LITERAL_INT32));
+    EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::LITERAL_BOOLEAN));
 }
 
 // =============================================================================

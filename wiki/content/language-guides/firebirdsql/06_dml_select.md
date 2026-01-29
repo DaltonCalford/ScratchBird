@@ -925,8 +925,8 @@ FROM employees;
 - Status: Implemented
 
 **CONTAINING / STARTING WITH**
-- Parsed but not encoded in V2 generator
-- Status: Stubbed
+- Parsed and encoded as `EXT_PRED_CONTAINING` / `EXT_PRED_STARTING_WITH` extended opcodes
+- Status: Implemented
 
 **Schema-qualified identifiers**
 - `schema.table.column` syntax is rejected in Firebird parser

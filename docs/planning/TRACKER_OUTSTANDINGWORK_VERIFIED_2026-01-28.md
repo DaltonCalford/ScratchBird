@@ -51,8 +51,8 @@ remaining Alpha gaps within ~24 hours.
   Evidence: `src/parser/mysql/mysql_parser.cpp:5060-5205`, `src/parser/mysql/mysql_parser.cpp:6710-6795`, `src/sblr/executor.cpp:37662-37760`  
   Missing: LOCK/FLUSH are no-op; KILL maps to backend termination only
 - **Partial**: MySQL DML gaps (window functions, multi-table DELETE, MATCH...AGAINST)  
-  Evidence: `src/parser/mysql/mysql_parser.cpp:1720-2260`, `src/parser/mysql/mysql_parser.cpp:2576-2745`, `src/parser/mysql/mysql_parser.cpp:2883-3255`  
-  Missing: window execution path is limited (parser emits OVER/WINDOW); MATCH...AGAINST uses fulltext opcodes but still needs full executor coverage validation
+  Evidence: `src/parser/mysql/mysql_parser.cpp:1720-2260`, `src/parser/mysql/mysql_parser.cpp:2576-2745`, `src/parser/mysql/mysql_parser.cpp:2883-3255`, `tests/unit/test_mysql_query_compiler.cpp`  
+  Missing: aggregate OVER remains unsupported; MATCH...AGAINST ignores WITH QUERY EXPANSION and uses basic BOOLEAN/NATURAL handling only
 - **Partial**: MySQL SHOW STATUS/VARIABLES/PROCESSLIST/WARNINGS/ERRORS  
   Evidence: `src/parser/mysql/mysql_parser.cpp`  
   Missing: status/variable filters and processlist/warnings/errors outputs are mapped to generic SHOW output

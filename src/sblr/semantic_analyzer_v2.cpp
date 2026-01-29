@@ -382,6 +382,8 @@ ElementInfo resolveElementInfo(const ResolvedType& source, ExtractField field)
         }
 
         case DataType::DECIMAL:
+        case DataType::DECFLOAT16:
+        case DataType::DECFLOAT34:
         {
             switch (field)
             {
@@ -908,7 +910,9 @@ bool baseTypeMatchesParent(const ResolvedType& child, const core::DomainInfo& pa
             int32_t length = child.length.value_or(kDefaultVarcharLength);
             return parent.precision == static_cast<uint32_t>(length);
         }
-        case DataType::DECIMAL: {
+        case DataType::DECIMAL:
+        case DataType::DECFLOAT16:
+        case DataType::DECFLOAT34: {
             int32_t precision = child.precision.value_or(kDefaultDecimalPrecision);
             int32_t scale = child.scale.value_or(kDefaultDecimalScale);
             return parent.precision == static_cast<uint32_t>(precision) &&
@@ -1124,6 +1128,8 @@ bool isNumericType(DataType type) {
         case DataType::FLOAT64:
         case DataType::DECIMAL:
         case DataType::MONEY:
+        case DataType::DECFLOAT16:
+        case DataType::DECFLOAT34:
             return true;
         default:
             return false;
@@ -1816,6 +1822,8 @@ bool ResolvedType::isNumeric() const {
         case DataType::FLOAT32:
         case DataType::FLOAT64:
         case DataType::DECIMAL:
+        case DataType::DECFLOAT16:
+        case DataType::DECFLOAT34:
             return true;
         default:
             return false;
@@ -3502,6 +3510,10 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
                     result.data_type = DataType::FLOAT64;
                 } else if (left.data_type == DataType::FLOAT32 || right.data_type == DataType::FLOAT32) {
                     result.data_type = DataType::FLOAT32;
+                } else if (left.data_type == DataType::DECFLOAT34 || right.data_type == DataType::DECFLOAT34) {
+                    result.data_type = DataType::DECFLOAT34;
+                } else if (left.data_type == DataType::DECFLOAT16 || right.data_type == DataType::DECFLOAT16) {
+                    result.data_type = DataType::DECFLOAT16;
                 } else if (left.data_type == DataType::DECIMAL || right.data_type == DataType::DECIMAL) {
                     result.data_type = DataType::DECIMAL;
                 } else if (left.data_type == DataType::INT64 || right.data_type == DataType::INT64) {
@@ -9332,7 +9344,9 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
         resolved.data_type = dinfo.base_type;
         if (dinfo.base_type == DataType::VARCHAR || dinfo.base_type == DataType::CHAR) {
             resolved.length = static_cast<int32_t>(dinfo.precision);
-        } else if (dinfo.base_type == DataType::DECIMAL) {
+        } else if (dinfo.base_type == DataType::DECIMAL ||
+                   dinfo.base_type == DataType::DECFLOAT16 ||
+                   dinfo.base_type == DataType::DECFLOAT34) {
             resolved.precision = static_cast<int32_t>(dinfo.precision);
             resolved.scale = static_cast<int32_t>(dinfo.scale);
         }
@@ -9388,6 +9402,13 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
             resolved.data_type = DataType::FLOAT64;
         } else if (name_str == "decimal" || name_str == "numeric") {
             resolved.data_type = DataType::DECIMAL;
+        } else if (name_str == "decfloat") {
+            int32_t precision = type_name.precision.value_or(34);
+            if (precision <= 16) {
+                resolved.data_type = DataType::DECFLOAT16;
+            } else {
+                resolved.data_type = DataType::DECFLOAT34;
+            }
         } else if (name_str == "varchar" || name_str == "character varying") {
             resolved.data_type = DataType::VARCHAR;
         } else if (name_str == "char" || name_str == "character") {
@@ -9404,16 +9425,52 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
             resolved.data_type = DataType::TIMESTAMP;
         } else if (name_str == "interval") {
             resolved.data_type = DataType::INTERVAL;
-        } else if (name_str == "blob" || name_str == "bytea") {
+        } else if (name_str == "blob") {
             resolved.data_type = DataType::BLOB;
+        } else if (name_str == "bytea") {
+            resolved.data_type = DataType::BYTEA;
         } else if (name_str == "uuid") {
             resolved.data_type = DataType::UUID;
         } else if (name_str == "json") {
             resolved.data_type = DataType::JSON;
         } else if (name_str == "jsonb") {
             resolved.data_type = DataType::JSONB;
+        } else if (name_str == "xml") {
+            resolved.data_type = DataType::XML;
+        } else if (name_str == "money") {
+            resolved.data_type = DataType::MONEY;
         } else if (name_str == "vector") {
             resolved.data_type = DataType::VECTOR;
+        } else if (name_str == "point") {
+            resolved.data_type = DataType::POINT;
+        } else if (name_str == "linestring") {
+            resolved.data_type = DataType::LINESTRING;
+        } else if (name_str == "polygon") {
+            resolved.data_type = DataType::POLYGON;
+        } else if (name_str == "multipoint") {
+            resolved.data_type = DataType::MULTIPOINT;
+        } else if (name_str == "multilinestring") {
+            resolved.data_type = DataType::MULTILINESTRING;
+        } else if (name_str == "multipolygon") {
+            resolved.data_type = DataType::MULTIPOLYGON;
+        } else if (name_str == "geometrycollection") {
+            resolved.data_type = DataType::GEOMETRYCOLLECTION;
+        } else if (name_str == "inet") {
+            resolved.data_type = DataType::INET;
+        } else if (name_str == "cidr") {
+            resolved.data_type = DataType::CIDR;
+        } else if (name_str == "macaddr") {
+            resolved.data_type = DataType::MACADDR;
+        } else if (name_str == "macaddr8") {
+            resolved.data_type = DataType::MACADDR8;
+        } else if (name_str == "tsvector") {
+            resolved.data_type = DataType::TSVECTOR;
+        } else if (name_str == "tsquery") {
+            resolved.data_type = DataType::TSQUERY;
+        } else if (name_str == "composite") {
+            resolved.data_type = DataType::COMPOSITE;
+        } else if (name_str == "variant") {
+            resolved.data_type = DataType::VARIANT;
         } else {
             // Try resolving as a domain
             core::ErrorContext ctx;
@@ -9588,7 +9645,7 @@ ResolvedColumnDef SemanticAnalyzerV2::analyzeColumnDef(ColumnDef* def) {
                 break;
 
             case ConstraintType::COLLATE:
-                // Collation constraint - would need special handling
+                resolved.collation_name = constraint.collation;
                 break;
         }
     }

@@ -1,9 +1,11 @@
 #include "scratchbird/core/timezone.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <sstream>
 #include <iomanip>
 #include <ctime>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 namespace scratchbird::core
 {
@@ -118,6 +120,10 @@ namespace scratchbird::core
 
     void TimezoneManager::initializeTimezones()
     {
+        timezones_.clear();
+        name_to_id_.clear();
+        abbr_to_id_.clear();
+
         // UTC/GMT (ID 1)
         TimezoneInfo utc;
         utc.timezone_id = 1;
@@ -125,6 +131,7 @@ namespace scratchbird::core
         utc.abbreviation = "UTC";
         utc.offset = TimezoneOffset(0, false);
         utc.observes_dst = false;
+        utc.dst_offset_minutes = 0;
         timezones_[1] = utc;
         name_to_id_["UTC"] = 1;
         name_to_id_["GMT"] = 1;
@@ -138,6 +145,15 @@ namespace scratchbird::core
         est.abbreviation = "EST";
         est.offset = TimezoneOffset(-5 * 60, false); // -05:00
         est.observes_dst = true;
+        est.dst_start_month = 3;
+        est.dst_start_week = 2;
+        est.dst_start_day = 0;
+        est.dst_start_hour = 2;
+        est.dst_end_month = 11;
+        est.dst_end_week = 1;
+        est.dst_end_day = 0;
+        est.dst_end_hour = 2;
+        est.dst_offset_minutes = 60;
         timezones_[2] = est;
         name_to_id_["America/New_York"] = 2;
         name_to_id_["EST"] = 2;
@@ -152,6 +168,15 @@ namespace scratchbird::core
         pst.abbreviation = "PST";
         pst.offset = TimezoneOffset(-8 * 60, false); // -08:00
         pst.observes_dst = true;
+        pst.dst_start_month = 3;
+        pst.dst_start_week = 2;
+        pst.dst_start_day = 0;
+        pst.dst_start_hour = 2;
+        pst.dst_end_month = 11;
+        pst.dst_end_week = 1;
+        pst.dst_end_day = 0;
+        pst.dst_end_hour = 2;
+        pst.dst_offset_minutes = 60;
         timezones_[3] = pst;
         name_to_id_["America/Los_Angeles"] = 3;
         name_to_id_["PST"] = 3;
@@ -166,6 +191,15 @@ namespace scratchbird::core
         cst.abbreviation = "CST";
         cst.offset = TimezoneOffset(-6 * 60, false); // -06:00
         cst.observes_dst = true;
+        cst.dst_start_month = 3;
+        cst.dst_start_week = 2;
+        cst.dst_start_day = 0;
+        cst.dst_start_hour = 2;
+        cst.dst_end_month = 11;
+        cst.dst_end_week = 1;
+        cst.dst_end_day = 0;
+        cst.dst_end_hour = 2;
+        cst.dst_offset_minutes = 60;
         timezones_[4] = cst;
         name_to_id_["America/Chicago"] = 4;
         name_to_id_["CST"] = 4;
@@ -180,12 +214,79 @@ namespace scratchbird::core
         mst.abbreviation = "MST";
         mst.offset = TimezoneOffset(-7 * 60, false); // -07:00
         mst.observes_dst = true;
+        mst.dst_start_month = 3;
+        mst.dst_start_week = 2;
+        mst.dst_start_day = 0;
+        mst.dst_start_hour = 2;
+        mst.dst_end_month = 11;
+        mst.dst_end_week = 1;
+        mst.dst_end_day = 0;
+        mst.dst_end_hour = 2;
+        mst.dst_offset_minutes = 60;
         timezones_[5] = mst;
         name_to_id_["America/Denver"] = 5;
         name_to_id_["MST"] = 5;
         name_to_id_["MDT"] = 5;
         abbr_to_id_["MST"] = 5;
         abbr_to_id_["MDT"] = 5;
+    }
+
+    auto TimezoneManager::loadFromCatalog(CatalogManager* catalog, ErrorContext* ctx) -> Status
+    {
+        if (catalog == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager not available for timezone load");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::TimezoneInfo> tz_list;
+        Status status = catalog->listTimezones(tz_list, ctx);
+
+        if (status == Status::OK && !tz_list.empty())
+        {
+            timezones_.clear();
+            name_to_id_.clear();
+            abbr_to_id_.clear();
+
+            for (const auto& tz : tz_list)
+            {
+                TimezoneInfo info;
+                info.timezone_id = tz.timezone_id;
+                info.name = tz.name;
+                info.abbreviation = tz.abbreviation;
+                info.offset = TimezoneOffset(tz.std_offset_minutes, false);
+                info.observes_dst = tz.observes_dst;
+                info.dst_start_month = tz.dst_start_month;
+                info.dst_start_week = tz.dst_start_week;
+                info.dst_start_day = tz.dst_start_day;
+                info.dst_start_hour = tz.dst_start_hour;
+                info.dst_end_month = tz.dst_end_month;
+                info.dst_end_week = tz.dst_end_week;
+                info.dst_end_day = tz.dst_end_day;
+                info.dst_end_hour = tz.dst_end_hour;
+                info.dst_offset_minutes = tz.dst_offset_minutes;
+
+                timezones_[info.timezone_id] = info;
+                if (!info.name.empty())
+                {
+                    name_to_id_[info.name] = info.timezone_id;
+                }
+                if (!info.abbreviation.empty())
+                {
+                    abbr_to_id_[info.abbreviation] = info.timezone_id;
+                }
+            }
+            return Status::OK;
+        }
+
+        if (status == Status::NOT_FOUND || tz_list.empty())
+        {
+            initializeTimezones();
+            return Status::OK;
+        }
+
+        return status;
     }
 
     auto TimezoneManager::getTimezoneInfo(uint16_t timezone_id) const -> const TimezoneInfo *
@@ -204,6 +305,99 @@ namespace scratchbird::core
     {
         auto it = abbr_to_id_.find(abbr);
         return it != abbr_to_id_.end() ? it->second : 1; // Default to UTC
+    }
+
+    static bool isLeapYear(int year)
+    {
+        return (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    }
+
+    static int daysInMonth(int year, int month)
+    {
+        static const int kDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        if (month == 2)
+        {
+            return isLeapYear(year) ? 29 : 28;
+        }
+        if (month < 1 || month > 12)
+        {
+            return 30;
+        }
+        return kDays[month - 1];
+    }
+
+    // 0=Sunday, 1=Monday, ... 6=Saturday
+    static int dayOfWeek(int year, int month, int day)
+    {
+        static const int kMonthOffsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+        if (month < 3)
+        {
+            year -= 1;
+        }
+        return (year + year / 4 - year / 100 + year / 400 +
+                kMonthOffsets[month - 1] + day) % 7;
+    }
+
+    static int nthWeekdayOfMonth(int year, int month, int weekday, int week)
+    {
+        if (week <= 0)
+        {
+            week = 5;
+        }
+        int first_dow = dayOfWeek(year, month, 1);
+        int first_target = 1 + (7 + weekday - first_dow) % 7;
+        if (week >= 5)
+        {
+            int last_day = daysInMonth(year, month);
+            int last_dow = dayOfWeek(year, month, last_day);
+            return last_day - (7 + last_dow - weekday) % 7;
+        }
+        return first_target + (week - 1) * 7;
+    }
+
+    static bool isWithinDSTByRule(const TimezoneInfo &info, int year, int month, int day, int hour)
+    {
+        if (!info.observes_dst || info.dst_start_month == 0 || info.dst_end_month == 0)
+        {
+            return false;
+        }
+
+        int start_dow = info.dst_start_day;
+        int end_dow = info.dst_end_day;
+        int start_day = nthWeekdayOfMonth(year, info.dst_start_month, start_dow, info.dst_start_week);
+        int end_day = nthWeekdayOfMonth(year, info.dst_end_month, end_dow, info.dst_end_week);
+
+        auto after_start = [&]() -> bool
+        {
+            if (month > info.dst_start_month) return true;
+            if (month < info.dst_start_month) return false;
+            if (day > start_day) return true;
+            if (day < start_day) return false;
+            return hour >= info.dst_start_hour;
+        };
+
+        auto before_end = [&]() -> bool
+        {
+            if (month < info.dst_end_month) return true;
+            if (month > info.dst_end_month) return false;
+            if (day < end_day) return true;
+            if (day > end_day) return false;
+            return hour < info.dst_end_hour;
+        };
+
+        if (info.dst_start_month < info.dst_end_month)
+        {
+            return after_start() && before_end();
+        }
+        if (info.dst_start_month > info.dst_end_month)
+        {
+            return after_start() || before_end();
+        }
+        if (start_day == end_day)
+        {
+            return hour >= info.dst_start_hour && hour < info.dst_end_hour;
+        }
+        return after_start() && before_end();
     }
 
     // Helper function: Check if a given time falls within DST for US timezones
@@ -346,31 +540,37 @@ namespace scratchbird::core
         }
 
         // Calculate month and day
-        bool is_leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
-        int days_in_month[] = {31, is_leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-
         int month = 1;
         int day = 1;
         for (int m = 0; m < 12; m++)
         {
-            if (remaining_days < days_in_month[m])
+            int dim = daysInMonth(year, m + 1);
+            if (remaining_days < dim)
             {
                 month = m + 1;
                 day = static_cast<int>(remaining_days) + 1;
                 break;
             }
-            remaining_days -= days_in_month[m];
+            remaining_days -= dim;
         }
 
         int hour = static_cast<int>(seconds_today / 3600);
 
-        // Check if within DST period (currently only US timezones supported)
-        bool in_dst = isWithinDST_US(year, month, day, hour);
+        bool in_dst = false;
+        if (info->dst_start_month != 0 && info->dst_end_month != 0)
+        {
+            in_dst = isWithinDSTByRule(*info, year, month, day, hour);
+        }
+        else
+        {
+            // Fallback to US DST rules when no explicit rule is stored.
+            in_dst = isWithinDST_US(year, month, day, hour);
+        }
 
         if (in_dst)
         {
-            // Add 1 hour (60 minutes) for DST
-            return TimezoneOffset(info->offset.offset_minutes + 60, true);
+            int32_t dst_offset = info->dst_offset_minutes != 0 ? info->dst_offset_minutes : 60;
+            return TimezoneOffset(info->offset.offset_minutes + dst_offset, true);
         }
         else
         {
@@ -633,6 +833,12 @@ namespace scratchbird::core
         }
 
         return oss.str();
+    }
+
+    auto getThreadLocalTimezoneManager() -> TimezoneManager&
+    {
+        static thread_local TimezoneManager manager;
+        return manager;
     }
 
 } // namespace scratchbird::core

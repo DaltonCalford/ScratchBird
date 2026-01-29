@@ -17,6 +17,8 @@
 #include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/table_stats_manager.h"
+#include "scratchbird/core/charset_loader.h"
+#include "scratchbird/core/timezone_loader.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
@@ -37,6 +39,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <fstream>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -88,6 +91,171 @@ namespace scratchbird::core
                 *recognized = false;
             }
             return BufferPool::PoolLayout::Single;
+        }
+
+        bool readVersionFile(const std::string& path, std::string& out)
+        {
+            std::ifstream file(path);
+            if (!file.is_open())
+            {
+                return false;
+            }
+            std::getline(file, out);
+            while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+            {
+                out.pop_back();
+            }
+            return !out.empty();
+        }
+
+        Status bootstrapI18nResources(Database* db, ErrorContext* ctx)
+        {
+            auto* catalog = db->catalog_manager();
+            if (catalog == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            bool need_charsets = false;
+            bool need_collations = false;
+            bool need_timezones = false;
+
+            std::vector<CatalogManager::CharsetInfo> charsets;
+            Status status = catalog->listCharsets(charsets, ctx);
+            if (status == Status::NOT_FOUND || charsets.empty())
+            {
+                need_charsets = true;
+            }
+            else if (status != Status::OK)
+            {
+                return status;
+            }
+
+            std::vector<CatalogManager::CollationCatalogInfo> collations;
+            status = catalog->listCollations(collations, ctx);
+            if (status == Status::NOT_FOUND || collations.empty())
+            {
+                need_collations = true;
+            }
+            else if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (need_charsets || need_collations)
+            {
+                CharsetLoader loader(catalog, db);
+                Status cs_status = loader.loadBuiltinCharsets(ctx);
+                if (cs_status != Status::OK)
+                {
+                    return cs_status;
+                }
+
+                if (need_charsets && std::filesystem::exists("resources/charsets/charsets.json"))
+                {
+                    cs_status = loader.loadFromJSONFile("resources/charsets/charsets.json", ctx);
+                    if (cs_status != Status::OK)
+                    {
+                        return cs_status;
+                    }
+                }
+                else if (need_charsets)
+                {
+                    LOG_WARNING(GENERAL, "Charset resources not found; using built-in defaults");
+                }
+
+                if (need_collations && std::filesystem::exists("resources/collations/collations.json"))
+                {
+                    cs_status = loader.loadCollationsFromJSONFile("resources/collations/collations.json", ctx);
+                    if (cs_status != Status::OK)
+                    {
+                        return cs_status;
+                    }
+                }
+                else if (need_collations)
+                {
+                    LOG_WARNING(GENERAL, "Collation resources not found; using built-in defaults");
+                }
+            }
+
+            std::vector<CatalogManager::TimezoneInfo> timezones;
+            status = catalog->listTimezones(timezones, ctx);
+            if (status == Status::NOT_FOUND || timezones.empty())
+            {
+                need_timezones = true;
+            }
+            else if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (need_timezones)
+            {
+                std::string zoneinfo_dir;
+                if (std::filesystem::exists("resources/timezones"))
+                {
+                    zoneinfo_dir = "resources/timezones";
+                }
+                else if (std::filesystem::exists("/usr/share/zoneinfo"))
+                {
+                    zoneinfo_dir = "/usr/share/zoneinfo";
+                }
+
+                if (!zoneinfo_dir.empty())
+                {
+                    TimezoneLoader loader(catalog);
+                    ErrorContext tz_ctx;
+                    Status tz_status = loader.loadFromDirectory(zoneinfo_dir, &tz_ctx);
+                    if (tz_status == Status::NOT_FOUND)
+                    {
+                        LOG_WARNING(GENERAL, "Timezone resources not found; using built-in defaults");
+                    }
+                    else if (tz_status != Status::OK)
+                    {
+                        if (ctx)
+                        {
+                            ctx->set(tz_status,
+                                     tz_ctx.message.empty() ? "Failed to load timezones"
+                                                            : tz_ctx.message.c_str(),
+                                     tz_ctx.file ? tz_ctx.file : __FILE__,
+                                     tz_ctx.line,
+                                     tz_ctx.function ? tz_ctx.function : __func__);
+                        }
+                        return tz_status;
+                    }
+
+                    std::string tzdata_version;
+                    if (readVersionFile(zoneinfo_dir + "/version", tzdata_version) ||
+                        readVersionFile("resources/timezones/version", tzdata_version))
+                    {
+                        catalog->setTimezoneVersion(tzdata_version, ctx);
+                    }
+                }
+                else
+                {
+                    LOG_WARNING(GENERAL, "Timezone resources not found; using built-in defaults");
+                }
+            }
+
+            std::string resource_version;
+            if (readVersionFile("resources/i18n/version", resource_version))
+            {
+                std::string catalog_version;
+                Status vstatus = catalog->getI18nResourceVersion(catalog_version, ctx);
+                if (vstatus == Status::NOT_FOUND)
+                {
+                    catalog->setI18nResourceVersion(resource_version, ctx);
+                }
+                else if (vstatus == Status::OK && catalog_version != resource_version)
+                {
+                    LOG_WARNING(GENERAL,
+                                "i18n resource version mismatch: catalog=%s resources=%s",
+                                catalog_version.c_str(), resource_version.c_str());
+                }
+            }
+
+            return Status::OK;
         }
     }
     namespace {
@@ -1286,6 +1454,13 @@ namespace scratchbird::core
             return status;
         }
         status = ensureSysarchUser(catalog_manager_.get(), ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
+        }
+
+        status = bootstrapI18nResources(this, ctx);
         if (status != Status::OK)
         {
             close();

@@ -463,11 +463,16 @@ Or use a stored procedure pattern (if PSQL is available):
 
 The MERGE statement (also known as UPSERT in some databases) conditionally inserts, updates, or deletes rows based on matching conditions.
 
-**Status**: Not implemented
+**Status**: Implemented
 
-The Firebird parser does not currently parse MERGE statements.
+The Firebird parser fully supports MERGE with:
+- WHEN MATCHED THEN UPDATE/DELETE (with optional AND condition)
+- WHEN NOT MATCHED [BY TARGET] THEN INSERT (with optional AND condition)
+- WHEN NOT MATCHED BY SOURCE THEN UPDATE/DELETE (with optional AND condition)
+- Source can be a table or subquery
+- Bytecode generator emits EXT_MERGE_* extended opcodes
 
-### Standard Firebird MERGE Syntax
+### Syntax
 
 ```sql
 MERGE INTO target_table [AS alias]
@@ -722,10 +727,11 @@ Each modification fires triggers. For bulk operations:
 - Will fail on existing rows due to constraint violations
 - Status: Stubbed
 
-### Missing Features
+### Implemented Features
 
 **MERGE**
-- Parser does not accept MERGE statements
+- Fully implemented with WHEN MATCHED/NOT MATCHED clauses
+- Emits EXT_MERGE_* extended opcodes
 - Will generate parse errors
 - Status: Missing
 

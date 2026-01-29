@@ -771,26 +771,28 @@ WHERE id IN (
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Basic INSERT | Partial | Simple inserts work |
-| INSERT ... VALUES | Partial | Single and multi-row |
-| INSERT ... SELECT | Stubbed | Bytecode mismatch |
-| INSERT ... RETURNING | Stubbed | Executor doesn't process |
-| ON CONFLICT | Stubbed | Parser accepts, executor fails |
-| Basic UPDATE | Partial | Simple updates work |
-| UPDATE ... FROM | Stubbed | Bytecode mismatch |
-| UPDATE ... RETURNING | Stubbed | Executor doesn't process |
-| Basic DELETE | Partial | Simple deletes work |
-| DELETE ... USING | Stubbed | Bytecode mismatch |
-| DELETE ... RETURNING | Stubbed | Executor doesn't process |
-| MERGE | Stubbed | Parser accepts, no executor |
-| TRUNCATE | Implemented | Works correctly |
+| Basic INSERT | Implemented | Emits INSERT opcode |
+| INSERT ... VALUES | Implemented | Single and multi-row |
+| INSERT ... SELECT | Implemented | Emits SELECT bytecode inline |
+| INSERT ... RETURNING | Implemented | Emits EXT_RETURNING opcode |
+| ON CONFLICT DO NOTHING | Implemented | Emits EXT_ON_CONFLICT_DO_NOTHING |
+| ON CONFLICT DO UPDATE | Implemented | Emits EXT_ON_CONFLICT_DO_UPDATE with assignments |
+| Basic UPDATE | Implemented | Emits UPDATE opcode |
+| UPDATE ... FROM | Partial | FROM table parsed but may have issues |
+| UPDATE ... RETURNING | Implemented | Emits EXT_RETURNING opcode |
+| Basic DELETE | Implemented | Emits DELETE opcode |
+| DELETE ... USING | Partial | USING table parsed but may have issues |
+| DELETE ... RETURNING | Implemented | Emits EXT_RETURNING opcode |
+| MERGE | Implemented | Emits EXT_MERGE_* opcodes |
+| TRUNCATE | Implemented | Emits TRUNCATE opcode |
 | COPY | Partial | Basic import/export works |
 
-### Specific Issues
+### Specific Notes
 
-**Bytecode Format Mismatches:**
-- RETURNING clause generates EXT_RETURNING_CLAUSE that executor doesn't handle
-- ON CONFLICT generates unsupported opcode payload
+**ON CONFLICT opcodes:**
+- `EXT_ON_CONFLICT` - Start of conflict handling
+- `EXT_ON_CONFLICT_COLUMN` / `EXT_ON_CONFLICT_CONSTRAINT` - Conflict target
+- `EXT_ON_CONFLICT_DO_NOTHING` / `EXT_ON_CONFLICT_DO_UPDATE` - Conflict action
 - UPDATE ... FROM join encoding differs from executor expectations
 - DELETE ... USING similarly mismatched
 

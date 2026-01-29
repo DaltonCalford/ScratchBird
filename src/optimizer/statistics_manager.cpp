@@ -461,10 +461,12 @@ namespace scratchbird::optimizer
                     case core::DataType::TIMESTAMP:
                     case core::DataType::TIME:
                     case core::DataType::INTERVAL:
+                    case core::DataType::DECFLOAT16:
                         estimated_row_size += 8;
                         break;
                     case core::DataType::UUID:
                     case core::DataType::DECIMAL:
+                    case core::DataType::DECFLOAT34:
                         estimated_row_size += 16;
                         break;
                     case core::DataType::VARCHAR:

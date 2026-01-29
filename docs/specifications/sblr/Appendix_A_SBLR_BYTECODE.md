@@ -59,6 +59,11 @@ Unless an opcode defines a custom payload, inline literal encoding follows these
 - uuid: 16 bytes, RFC 4122 byte order.
 - binary: [len:UVARINT][bytes].
 
+Literal opcodes include `NULL`, integer/floating forms, `STRING`, `CHARSET`,
+`COLLATION`, plus typed literals for boolean/date/time/uuid/binary/decimal and
+JSON/XML/network families. See `SBLR_OPCODE_REGISTRY.md` for the canonical
+opcode list and payload encoding.
+
 ## 5. Module Container Format (SBLR Module v2)
 
 The module is a header plus sections. Offsets are relative to the start of the header. Sections may be omitted if their size is zero.
@@ -153,6 +158,10 @@ typedef struct SBLR_TypeInfo {
     uint16_t collation_id;// for character types
     uint8_t  flags;       // bit0 nullable, bit1 variable_len, others reserved
 } SBLR_TypeInfo;
+
+Note: SBLR type markers and extended type markers are defined in
+`SBLR_OPCODE_REGISTRY.md`. Types present in `core/types.h` that lack markers
+are not currently encodable in SBLR.
 ```
 
 Complex types are encoded as extended records in the type section:

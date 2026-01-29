@@ -1359,6 +1359,8 @@ static protocol::WireType dataTypeToWireType(core::DataType type) {
         case core::DataType::FLOAT32:   return protocol::WireType::FLOAT32;
         case core::DataType::FLOAT64:   return protocol::WireType::FLOAT64;
         case core::DataType::DECIMAL:   return protocol::WireType::DECIMAL;
+        case core::DataType::DECFLOAT16: return protocol::WireType::DECIMAL;
+        case core::DataType::DECFLOAT34: return protocol::WireType::DECIMAL;
         case core::DataType::CHAR:      return protocol::WireType::CHAR;
         case core::DataType::VARCHAR:   return protocol::WireType::VARCHAR;
         case core::DataType::TEXT:      return protocol::WireType::VARCHAR;

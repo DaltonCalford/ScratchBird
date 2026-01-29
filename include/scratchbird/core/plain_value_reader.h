@@ -333,6 +333,24 @@ namespace scratchbird::core
                 }
                 break;
             }
+            case DataType::DECFLOAT16:
+            {
+                if (!skipBytes(size, offset, 8))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECFLOAT16 payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                break;
+            }
+            case DataType::DECFLOAT34:
+            {
+                if (!skipBytes(size, offset, 16))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECFLOAT34 payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                break;
+            }
             case DataType::CHAR:
             case DataType::VARCHAR:
             case DataType::TEXT:

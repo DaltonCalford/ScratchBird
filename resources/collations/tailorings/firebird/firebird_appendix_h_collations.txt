@@ -1,0 +1,7 @@
+# Firebird Appendix H collations (from resources/collations/collations.json)
+# Source: ScratchBird/docs/specifications/reference/firebird/firebird_docs_split/App_H_Charsets_and_Collations.md
+BINARY
+UTF8_UNICODE
+UTF8_UNICODE_CI
+WIN1252_UNICODE
+WIN1252_UNICODE_CI

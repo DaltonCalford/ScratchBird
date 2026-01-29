@@ -494,8 +494,7 @@ namespace scratchbird::sblr
         }
 
         inline core::TimezoneManager& timezoneManager() {
-            static core::TimezoneManager manager;
-            return manager;
+            return core::getThreadLocalTimezoneManager();
         }
 
         static bool matchSqlLike(const std::string& str, const std::string& pattern,

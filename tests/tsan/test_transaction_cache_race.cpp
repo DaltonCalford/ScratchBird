@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <cstdlib>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/connection_context.h"
@@ -103,6 +104,7 @@ TEST_F(TSANTransactionCacheTest, ConcurrentCacheQueries) {
 }
 
 int main(int argc, char** argv) {
+    setenv("SCRATCHBIRD_DISABLE_BGWRITER", "1", 1);
     ::testing::InitGoogleTest(&argc, argv);
 
     std::cout << "\n========================================\n";

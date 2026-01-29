@@ -27,7 +27,7 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 **For Architects:**
 1. [Security Architecture](Security%20Design%20Specification/00_SECURITY_SPEC_INDEX.md) - Complete security design (19 specs)
-2. [Cluster Architecture](Cluster%20Specification%20Work/SBCLUSTER-SUMMARY.md) - Distributed system design (19 specs)
+2. [Cluster Architecture](Cluster%20Specification%20Work/SBCLUSTER-SUMMARY.md) - Distributed system design (18 specs)
 3. [Transaction System](transaction/TRANSACTION_MAIN.md) - MGA transaction model
 4. [Storage Engine](storage/STORAGE_ENGINE_MAIN.md) - Storage architecture
 
@@ -72,10 +72,11 @@ This directory contains comprehensive technical specifications for the ScratchBi
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**cluster/**](Cluster%20Specification%20Work/) | Distributed cluster architecture | 19 specs | ✅ Complete |
+| [**cluster/**](Cluster%20Specification%20Work/) | Distributed cluster architecture | 18 specs | ✅ Complete |
 | [Raft Consensus](Cluster%20Specification%20Work/SBCLUSTER-01-CLUSTER-CONFIG-EPOCH.md) | Cluster config management | CCE specification | ✅ Complete |
 | [Sharding](Cluster%20Specification%20Work/SBCLUSTER-05-SHARDING.md) | Data partitioning | Consistent hashing | ✅ Complete |
 | [Shard Migration](Cluster%20Specification%20Work/SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md) | Cross-node data movement | Online migration + rebalancing | ✅ Complete |
+| [Autoscaling](Cluster%20Specification%20Work/SBCLUSTER-12-AUTOSCALING_AND_ELASTIC_LIFECYCLE.md) | Elastic node lifecycle | Policy-driven scale out/in | ✅ Complete |
 | [Replication](Cluster%20Specification%20Work/SBCLUSTER-07-REPLICATION.md) | Data replication | Async logical stream (optional write-after log) | ✅ Complete |
 
 ### Network & Connectivity

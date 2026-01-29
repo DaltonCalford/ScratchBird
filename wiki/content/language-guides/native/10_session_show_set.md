@@ -43,10 +43,13 @@ SET SEARCH_PATH TO app, public;
   GENERATOR/ROLE/GRANTS/CHECKS/COLLATIONS/COMMENTS/DEPENDENCIES/PACKAGE`
 - `SHOW SQL DIALECT`, `SHOW VERSION`, `SHOW DATABASE`, `SHOW SYSTEM`
 - `SHOW SCHEMA [schema]` (empty lists schemas)
+- `SHOW JOBS [LIKE pattern]` - Lists scheduled jobs
+- `SHOW JOB <name>` - Detailed info for a specific job
+- `SHOW JOB RUNS [FOR] <job_name>` - Lists execution history for a job
+- `SHOW METRICS` - Exports server metrics
+- `SHOW ALL`, `SHOW <variable>`, `SHOW TRANSACTION ISOLATION LEVEL`
 
 ### Stubbed / missing
-- `SHOW ALL`, `SHOW <variable>`, `SHOW TRANSACTION ISOLATION LEVEL`:
-  parser emits, executor lacks handlers.
 - Schema navigation SHOW commands (`SHOW SCHEMA PATH/TREE/SEARCH PATH/...`) are
   implemented in executor but parser does not emit.
 - `SHOW CREATE DATABASE` is spec-only.
@@ -57,6 +60,27 @@ SET SEARCH_PATH TO app, public;
 - `SHOW SCHEMA` with no argument also lists schemas; with a schema name, it
   returns Firebird-style property/value details for that schema.
 - `SHOW DATABASE` (singular) returns current database info, not a list.
+
+## RESET commands
+Description: Resets session variables back to their defaults.
+
+Syntax (actual):
+```sql
+RESET ALL
+RESET SESSION AUTHORIZATION
+RESET ROLE
+RESET TIME ZONE
+RESET <variable_name>
+```
+Example:
+```sql
+RESET ALL;
+RESET TIME ZONE;
+```
+Status: **Implemented in V2 Parser** - `parseReset()` handles ALL, SESSION AUTHORIZATION, ROLE,
+TIME ZONE, and arbitrary variable names.
+
+---
 
 Notes:
 - Some SET/SHOW commands are client-only in `sb_isql` and never reach the

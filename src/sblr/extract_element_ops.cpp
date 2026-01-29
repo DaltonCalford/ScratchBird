@@ -349,6 +349,8 @@ namespace scratchbird::sblr
                 case core::DataType::FLOAT32:
                 case core::DataType::FLOAT64:
                 case core::DataType::DECIMAL:
+                case core::DataType::DECFLOAT16:
+                case core::DataType::DECFLOAT34:
                     return value.toDouble();
                 case core::DataType::BOOLEAN:
                     return value.getBoolean();
@@ -1514,10 +1516,26 @@ namespace scratchbird::sblr
             }
         }
 
-        if (source_type == core::DataType::DECIMAL)
+        if (source_type == core::DataType::DECIMAL ||
+            source_type == core::DataType::DECFLOAT16 ||
+            source_type == core::DataType::DECFLOAT34)
         {
-            uint8_t precision = source.getDecimalPrecision() == 0 ?
-                                    core::DECIMAL_MAX_PRECISION : source.getDecimalPrecision();
+            uint8_t precision = source.getDecimalPrecision();
+            if (precision == 0)
+            {
+                if (source_type == core::DataType::DECFLOAT16)
+                {
+                    precision = 16;
+                }
+                else if (source_type == core::DataType::DECFLOAT34)
+                {
+                    precision = 34;
+                }
+                else
+                {
+                    precision = core::DECIMAL_MAX_PRECISION;
+                }
+            }
             uint8_t scale = source.getDecimalScale();
             switch (field)
             {

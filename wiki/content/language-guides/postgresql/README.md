@@ -40,7 +40,12 @@ Sources:
 - [14_functions](14_functions.md)
 
 Notes:
-- Many PostgreSQL statements parse but emit bytecode layouts that do not match
-  the executor; these are marked as Stubbed.
-- Transaction control, CREATE DATABASE/SCHEMA/DOMAIN, and ANALYZE are the main
-  end-to-end implementations.
+- PostgreSQL parser emits SBLR bytecode directly (no V2 semantic analyzer stage).
+- Most DDL statements are fully implemented: CREATE/DROP TABLE, INDEX, VIEW,
+  MATERIALIZED VIEW, SEQUENCE, FUNCTION, PROCEDURE, TRIGGER, TYPE, DOMAIN.
+- DML statements with RETURNING, ON CONFLICT, and MERGE are implemented via
+  extended opcodes (EXT_RETURNING, EXT_ON_CONFLICT_*, EXT_MERGE_*).
+- CTEs (WITH/WITH RECURSIVE) and window functions emit proper bytecode.
+- GRANT/REVOKE emit EXT_GRANT_PRIVILEGE/EXT_REVOKE_PRIVILEGE opcodes.
+- Transaction control (BEGIN/COMMIT/ROLLBACK/SAVEPOINT) fully implemented.
+- Expression indexes and TABLESPACE clauses are explicitly not supported.

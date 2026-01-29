@@ -332,6 +332,33 @@ public:
     MySQLCompatMode compatibilityMode() const { return compat_mode_; }
 
 private:
+    struct SelectItem {
+        enum class Kind {
+            Star,
+            Column,
+            Expression
+        };
+        Kind kind = Kind::Expression;
+        std::string column_name;
+        std::vector<uint8_t> expr_bytecode;
+        std::string alias;
+    };
+
+    struct WindowFunctionSpec {
+        bool is_extended = false;
+        sblr::Opcode func_opcode = sblr::Opcode::WIN_ROW_NUMBER;
+        sblr::ExtendedOpcode ext_opcode = sblr::ExtendedOpcode::EXT_WIN_CUME_DIST;
+        std::vector<std::vector<uint8_t>> args;
+        std::vector<std::string> partition_columns;
+        std::vector<std::string> order_columns;
+        bool has_frame = false;
+        sblr::Opcode frame_mode = sblr::Opcode::FRAME_ROWS;
+        sblr::Opcode frame_start = sblr::Opcode::FRAME_UNBOUNDED_PRECEDING;
+        sblr::Opcode frame_end = sblr::Opcode::FRAME_CURRENT_ROW;
+        std::string output_column;
+        std::string function_name;
+    };
+
     Lexer lexer_;
     core::Database* db_;
     std::string default_schema_;
@@ -344,6 +371,9 @@ private:
     bool in_on_duplicate_update_ = false;
     MySQLCompatMode compat_mode_ = MySQLCompatMode::MYSQL57;
     std::vector<std::string> warnings_;
+    std::vector<WindowFunctionSpec> window_specs_;
+    bool last_expr_was_window_ = false;
+    size_t last_window_index_ = 0;
 
     // Token management
     void advance();
@@ -382,6 +412,14 @@ private:
     void parseCreateStmt();
     void parseRenameStmt();
     void parseAlterStmt();
+    void parseAlterView();
+    void parseAlterProcedure();
+    void parseAlterFunction();
+    void parseKillStmt();
+    void parseFlushStmt();
+    void parseWindowClause();
+    void parseFrameBound();
+    void parseMatchAgainstExpr();
     void parseDropStmt();
     void parseTruncateStmt();
     void parseSetStmt();
@@ -395,12 +433,23 @@ private:
     void parseReleaseStmt();
     void parseLockStmt();
     void parseUnlockStmt();
+    void parseGrantStmt();
+    void parseRevokeStmt();
+    void parseExplainStmt();
+    void parsePrepareStmt();
+    void parseExecuteStmt();
+    void parseDeallocateStmt();
 
     // DDL parsing
     void parseCreateTable();
     void parseCreateIndex();
     void parseCreateView();
     void parseCreateDatabase();
+    void parseCreateUser();
+    void parseCreateRole();
+    void parseAlterUser();
+    void parseDropUser();
+    void parseDropRole();
     void parseCreateProcedure();
     void parseCreateFunction();
     void parseCreateTrigger();
@@ -408,18 +457,6 @@ private:
     MySQLDataType parseDataType();
     IndexDef parseIndexDef();
     ForeignKeyDef parseForeignKeyDef();
-
-    struct SelectItem {
-        enum class Kind {
-            Star,
-            Column,
-            Expression
-        };
-        Kind kind = Kind::Expression;
-        std::string column_name;
-        std::vector<uint8_t> expr_bytecode;
-        std::string alias;
-    };
 
     // DML clause parsing
     void parseSelectList(std::vector<SelectItem>& items);
@@ -429,6 +466,10 @@ private:
     void parseHavingClause();
     void parseOrderByClause();
     void parseLimitClause();
+    void parseWindowSpecForFunction(WindowFunctionSpec& spec);
+    std::string parseWindowColumnName();
+    bool parseWindowFrameBound(sblr::Opcode& bound_out);
+    void emitWindowSpecs();
 
     // Expression parsing (generates bytecode)
     void parseExpression();

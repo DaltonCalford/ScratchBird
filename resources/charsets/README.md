@@ -4,16 +4,18 @@ This directory contains character set definition files used by ScratchBird for t
 
 ## Supported Character Sets
 
-Note: This list represents the target baseline. The current resource JSON may
-not yet include all entries. See
+Note: This list represents the current baseline. The resource JSON is generated
+from Firebird Appendix H plus MySQL/PostgreSQL sources via
+`ScratchBird/resources/scripts/update_i18n_resources.py`. See
 `ScratchBird/docs/findings/RESOURCES_I18N_TIMEZONE_AUDIT.md` and
 `ScratchBird/docs/specifications/types/character_sets_and_collations.md` for
-coverage requirements and gaps.
+coverage requirements and maintenance guidance.
 
 ### Unicode Encodings (Built-in - No files required)
 - **UTF-8** - Variable width (1-4 bytes), default for PostgreSQL, MySQL 8.0+
 - **UTF-16** - Variable width (2 or 4 bytes)
 - **UTF-32** - Fixed width (4 bytes)
+- **UNICODE_FSS** - Firebird legacy UTF-8 variant (1-3 bytes), treated as UTF-8 with a 3-byte ceiling
 
 ### Western European
 - **ASCII** - 7-bit ASCII (0x00-0x7F), built-in
@@ -91,6 +93,12 @@ Character set files use the following JSON format:
   ]
 }
 ```
+
+### Mapping Tables
+
+Mapping tables live in `resources/charsets/mappings/` and follow the schema in
+`charset_mapping.schema.json`. Each file includes byte-to-Unicode mappings for
+non-Unicode encodings (e.g., `iso-8859-1.map.json`, `windows-1252.map.json`).
 
 ## Loading Character Sets
 

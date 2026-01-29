@@ -106,18 +106,7 @@ CREATE INDEX idx_status ON orders (status) COMMENT 'Index for order status queri
 
 #### Current Status
 
-**NOT IMPLEMENTED:** The CREATE INDEX statement is not currently implemented in the MySQL parser. Attempts to create standalone indexes will result in parse errors.
-
-**Workaround:** Define indexes inline within CREATE TABLE statements:
-```sql
-CREATE TABLE users (
-    id INT PRIMARY KEY,
-    email VARCHAR(255),
-    username VARCHAR(100),
-    INDEX idx_email (email),
-    UNIQUE INDEX idx_username (username)
-);
-```
+**Implemented:** `parseCreateIndex()` handles CREATE [UNIQUE|FULLTEXT|SPATIAL] INDEX with ON table, column list, USING method, and index options.
 
 ### DROP INDEX
 
@@ -158,7 +147,7 @@ DROP INDEX idx_status ON orders ALGORITHM=INPLACE LOCK=NONE;
 
 #### Current Status
 
-**NOT IMPLEMENTED:** The DROP INDEX statement is not currently implemented in the MySQL parser and will result in parse errors.
+**Implemented:** The MySQL parser handles DROP INDEX with IF EXISTS.
 
 ### ALTER TABLE ... ADD/DROP INDEX
 
@@ -353,7 +342,7 @@ UPDATE active_users SET name = 'John Doe' WHERE id = 1;
 
 #### Current Status
 
-**NOT IMPLEMENTED:** The CREATE VIEW statement is not currently implemented in the MySQL parser and will result in parse errors.
+**Implemented:** `parseCreateView()` handles CREATE [OR REPLACE] VIEW with column list and AS query.
 
 ### DROP VIEW
 
@@ -392,7 +381,7 @@ DROP VIEW view1, view2, view3;
 
 #### Current Status
 
-**NOT IMPLEMENTED:** The DROP VIEW statement is not currently implemented in the MySQL parser and will result in parse errors.
+**Implemented:** The MySQL parser handles DROP VIEW with IF EXISTS.
 
 ### ALTER VIEW
 
@@ -563,22 +552,14 @@ DELETE FROM sequence_generator WHERE id < LAST_INSERT_ID();
 
 ## Known Limitations
 
+### Implemented Features
+
+- **CREATE INDEX**: Standalone CREATE INDEX with UNIQUE/FULLTEXT/SPATIAL, column list, USING method
+- **DROP INDEX**: Implemented with IF EXISTS
+- **CREATE VIEW**: CREATE [OR REPLACE] VIEW with column list and AS query
+- **DROP VIEW**: Implemented with IF EXISTS
+
 ### Missing Features
-
-- **CREATE INDEX**: Standalone CREATE INDEX statements are not implemented. Parse errors will occur.
-  - **Workaround**: Define indexes inline within CREATE TABLE statements
-  - **Priority**: CRITICAL for Alpha release
-
-- **DROP INDEX**: Not implemented. Cannot drop indexes via SQL.
-  - **Workaround**: Recreate table without the index
-  - **Priority**: CRITICAL for Alpha release
-
-- **CREATE VIEW**: Not implemented. View creation will fail with parse errors.
-  - **Workaround**: Use application-level abstraction or subqueries
-  - **Priority**: CRITICAL for Alpha release
-
-- **DROP VIEW**: Not implemented. Cannot drop views via SQL.
-  - **Priority**: CRITICAL for Alpha release
 
 - **ALTER VIEW**: Not implemented.
   - **Priority**: Medium

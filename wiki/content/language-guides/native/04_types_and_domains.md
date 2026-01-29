@@ -364,6 +364,132 @@ For reference, ScratchBird supports these standard SQL data types that can be us
 
 ---
 
+## CREATE TYPE
+
+### Description
+
+Creates a custom composite, enum, range, base, or shell type. CREATE TYPE provides PostgreSQL-style type creation as an alternative to CREATE DOMAIN.
+
+### Syntax
+
+**Enum Type:**
+```sql
+CREATE TYPE [IF NOT EXISTS] <type_name> [AS] ENUM (
+    '<label>' [= <position>] [, ...]
+)
+```
+
+**Record/Composite Type:**
+```sql
+CREATE TYPE [IF NOT EXISTS] <type_name> [AS] RECORD (
+    <field_name> <type> [COLLATE <collation>] [NOT NULL | NULL] [DEFAULT <expr>] [, ...]
+)
+-- or without RECORD keyword:
+CREATE TYPE <type_name> (
+    <field_name> <type> [, ...]
+)
+```
+
+**Range Type:**
+```sql
+CREATE TYPE [IF NOT EXISTS] <type_name> [AS] RANGE (
+    SUBTYPE = <type>,
+    [SUBTYPE_COLLATION = <collation>,]
+    [SUBTYPE_OPCLASS = <opclass>,]
+    [CANONICAL = <function>,]
+    [SUBTYPE_DIFF = <function>,]
+    [MULTIRANGE = {TRUE | FALSE}]
+)
+```
+
+**Base Type:**
+```sql
+CREATE TYPE [IF NOT EXISTS] <type_name> [AS] BASE (
+    INPUT = <function>,
+    OUTPUT = <function>,
+    [RECEIVE = <function>,]
+    [SEND = <function>,]
+    [TYPMOD_IN = <function>,]
+    [TYPMOD_OUT = <function>,]
+    [ANALYZE = <function>,]
+    [STORAGE = <type>,]
+    [ALIGNMENT = {CHAR | SHORT | INT | DOUBLE},]
+    [STORAGE_MODE = {PLAIN | EXTERNAL | EXTENDED | MAIN},]
+    [CATEGORY = '<char>',]
+    [PREFERRED = {TRUE | FALSE}]
+)
+```
+
+**Shell Type:**
+```sql
+CREATE TYPE [IF NOT EXISTS] <type_name> [AS] SHELL
+```
+
+### Examples
+
+**Example 1: Enum type**
+```sql
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+```
+
+**Example 2: Enum type with explicit positions**
+```sql
+CREATE TYPE priority AS ENUM ('low' = 1, 'medium' = 5, 'high' = 10);
+```
+
+**Example 3: Composite type**
+```sql
+CREATE TYPE address AS RECORD (
+    street VARCHAR(200),
+    city VARCHAR(100) NOT NULL,
+    zip VARCHAR(10) DEFAULT '00000'
+);
+```
+
+**Example 4: Range type**
+```sql
+CREATE TYPE float_range AS RANGE (
+    SUBTYPE = FLOAT,
+    SUBTYPE_DIFF = float_diff
+);
+```
+
+**Example 5: Shell type placeholder**
+```sql
+CREATE TYPE custom_type AS SHELL;
+```
+
+### Implementation Status
+
+- V2 parser: `parseCreateType()` handles IF NOT EXISTS, schema-qualified names, and all five type kinds: ENUM (with positions), RECORD (with fields, collation, nullability, defaults), RANGE (with full options), BASE (with I/O functions, alignment, storage), and SHELL
+
+---
+
+## DROP TYPE
+
+### Description
+
+Removes one or more types.
+
+### Syntax
+
+```sql
+DROP TYPE [IF EXISTS] <type_name> [, ...] [CASCADE | RESTRICT]
+```
+
+### Examples
+
+```sql
+DROP TYPE mood;
+DROP TYPE IF EXISTS address, priority CASCADE;
+```
+
+### Implementation Status
+
+- V2 parser: `parseDropType()` supports IF EXISTS, multiple types, CASCADE, and RESTRICT
+
+---
+
 ## Known Limitations
 
 ### Partial Implementation
@@ -376,14 +502,11 @@ For reference, ScratchBird supports these standard SQL data types that can be us
 - VARIANT domains: Implemented (serialization needs validation)
 - Spec reference: `/docs/specifications/types/03_TYPES_AND_DOMAINS.md`
 
-### Missing Features
+**CREATE TYPE:**
+- Fully parsed in V2 for ENUM, RECORD, RANGE, BASE, and SHELL type kinds
+- Catalog registration and runtime usage need validation for complex type kinds (RANGE, BASE)
 
-**CREATE TYPE Statement:**
-- Separate CREATE TYPE not supported in V2 parser
-- All custom types must be created as domains
-- PostgreSQL-style CREATE TYPE AS ENUM not parsed
-- Must use CREATE DOMAIN AS ENUM instead
-- Spec reference: `/docs/specifications/types/03_TYPES_AND_DOMAINS.md`
+### Known Gaps
 
 **Domain Features:**
 - COLLATE clause not fully supported for string domains
@@ -392,10 +515,9 @@ For reference, ScratchBird supports these standard SQL data types that can be us
 - Type casts between domains not fully implemented
 
 **Advanced Type Features:**
-- Composite type constructors limited
 - ROW type expressions partial
 - Type resolution in complex expressions may have edge cases
-- Custom type input/output functions not supported
+- Custom type input/output function wiring needs validation
 
 ### Spec Deltas
 
@@ -403,7 +525,6 @@ For reference, ScratchBird supports these standard SQL data types that can be us
 - Implementation exists but full serialization needs validation
 - SBLR bytecode encoding for complex domains needs testing
 - Cross-session persistence of complex domain values needs verification
-- Spec reference: `/docs/specifications/sblr/SBLR_DOMAIN_PAYLOADS.md` (if exists)
 
 **Domain Constraints:**
 - Multi-column CHECK constraints not supported in domains
@@ -418,8 +539,8 @@ For reference, ScratchBird supports these standard SQL data types that can be us
 
 ### General Notes
 
-- All domain DDL operations are fully transactional
-- Domains are persisted using ScratchBird's Multi-Generational Architecture (MGA)
+- All domain and type DDL operations are fully transactional
+- Domains and types are persisted using ScratchBird's Multi-Generational Architecture (MGA)
 - Domain constraints are enforced at runtime during DML operations
 - Full implementation status in `/docs/audit/parsers/V2/SUMMARY.md`
 - Critical findings in `/docs/audit/parsers/CRITICAL_FINDINGS.md`

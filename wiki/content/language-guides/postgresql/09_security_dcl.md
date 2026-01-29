@@ -676,36 +676,30 @@ GRANT SELECT ON ALL TABLES IN SCHEMA audit TO auditor;
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| CREATE ROLE | Implemented | Basic role creation works |
-| CREATE USER | Stubbed | Parser accepts, executor mismatch |
+| CREATE ROLE | Implemented | Emits EXT_CREATE_ROLE opcode with options |
+| CREATE USER | Implemented | Emits EXT_CREATE_USER opcode |
 | ALTER ROLE | Partial | Basic alterations work |
 | DROP ROLE | Implemented | Works correctly |
-| GRANT (role membership) | Partial | Basic membership works |
-| GRANT (privileges) | Stubbed | Parser accepts, executor mismatch |
-| REVOKE | Stubbed | Parser accepts, executor mismatch |
-| ALTER DEFAULT PRIVILEGES | Stubbed | Not implemented |
-| Row-Level Security | Stubbed | Parser accepts, not enforced |
-| SET ROLE | Partial | Basic role switching works |
+| GRANT (role membership) | Implemented | Emits EXT_GRANT_PRIVILEGE |
+| GRANT (privileges) | Implemented | Emits EXT_GRANT_PRIVILEGE with privilege type/object |
+| REVOKE | Implemented | Emits EXT_REVOKE_PRIVILEGE |
+| ALTER DEFAULT PRIVILEGES | Not implemented | Parser does not accept |
+| Row-Level Security | Parsed only | Parser accepts, not enforced at runtime |
+| SET ROLE | Implemented | Via SET statement handling |
 
-### Specific Issues
+### Specific Limitations
 
-**Bytecode Format Mismatches:**
-- GRANT/REVOKE generate EXT_GRANT_PRIVILEGE/EXT_REVOKE_PRIVILEGE opcodes that executor doesn't handle
-- CREATE USER bytecode differs from executor expectations
-- RLS policies are parsed but not enforced
+**Limited Scope:**
+- GRANT/REVOKE support a single object per statement (ON ALL not fully supported)
+- GRANT/REVOKE support a single grantee per statement
+- Column-level privileges not supported
+- GRANT WITH GRANT OPTION parsed but flag may not be enforced
 
-**Unsupported Features:**
-- Column-level GRANT
-- GRANT WITH GRANT OPTION
+**Not Implemented:**
 - ALTER DEFAULT PRIVILEGES
 - Row-Level Security enforcement
 - Security labels
-
-### Workarounds
-
-**For Privileges:** Use ScratchBird native security commands through the native protocol, or configure access at the connection level using `sb_hba.conf`.
-
-**For RLS:** Implement row filtering in application logic or use views with SECURITY DEFINER functions.
+- REASSIGN OWNED / DROP OWNED
 
 ---
 

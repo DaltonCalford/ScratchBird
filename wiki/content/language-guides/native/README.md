@@ -100,7 +100,7 @@ SQL Text
 ## Language Topics
 
 ### Data Definition
-- [Databases and Schemas](01_databases_and_schemas.md) - CREATE DATABASE, CREATE SCHEMA
+- [Databases and Schemas](01_databases_and_schemas.md) - CREATE DATABASE, CREATE SCHEMA, tablespaces, foreign data wrappers, synonyms, UDRs
 - [Tables and Constraints](02_tables_and_constraints.md) - CREATE TABLE, constraints
 - [Indexes, Views, Sequences](03_indexes_views_sequences.md) - Indexes, views, sequences
 - [Types and Domains](04_types_and_domains.md) - Data types, custom domains
@@ -110,14 +110,14 @@ SQL Text
 - [DML: Modification](07_dml_modification.md) - INSERT, UPDATE, DELETE
 
 ### Programmability
-- [Programmable SQL](05_programmable_sql.md) - Stored procedures, triggers
+- [Programmable SQL](05_programmable_sql.md) - Stored procedures, triggers, job scheduler
 - [Functions](14_functions.md) - Built-in functions
 
 ### Administration
 - [Transactions](08_transactions.md) - Transaction control, isolation
-- [Security (DCL)](09_security_dcl.md) - Users, roles, permissions
+- [Security (DCL)](09_security_dcl.md) - Users, roles, groups, permissions
 - [Session, SHOW, SET](10_session_show_set.md) - Session management
-- [Utilities](11_utilities.md) - EXPLAIN, COPY, maintenance
+- [Utilities](11_utilities.md) - EXPLAIN, ANALYZE, COPY, SWEEP, CONNECT/DISCONNECT
 
 ### Reference
 - [Operators](12_operators.md) - All operators

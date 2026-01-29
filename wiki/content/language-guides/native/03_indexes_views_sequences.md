@@ -45,7 +45,7 @@ CREATE [UNIQUE] INDEX [IF NOT EXISTS] <index_name>
 - **IF NOT EXISTS**: Prevents error if index already exists
 - **index_name**: Name of the index (must be unique within schema)
 - **table_name**: Table to index (with optional schema qualification)
-- **USING method**: Index type - `btree` (default), `hash`, `gin`, `gist`, `brin`
+- **USING method**: Index type - `btree` (default), `hash`, `gin`, `gist`, `brin`, `spgist`, `hnsw`, `bitmap`, `lsm`, `rtree`, `columnstore`, `fulltext`, `inverted`
 - **column_or_expression**: Column name or expression to index
 - **ASC | DESC**: Sort order (ASC is default)
 - **NULLS FIRST | NULLS LAST**: NULL value placement
@@ -718,15 +718,15 @@ All 14 index types are parsed in the V2 parser via CREATE INDEX ... USING:
 - Expression indexes: Implemented with expression serialization/evaluation
 - CONCURRENTLY keyword: Parsed in PostgreSQL dialect
 - ALTER INDEX ACTIVE/INACTIVE: Implemented (Firebird-style)
+- ALTER INDEX SET (BLOOM_FILTER = true/false, BLOOM_FPR = <rate>): Implemented for LSM indexes
 - Index reindexing (REINDEX) not exposed in V2 parser
 
 ### Implemented Features
 
 **Materialized View Refresh:**
-- REFRESH MATERIALIZED VIEW: Fully implemented (executor.cpp:11277-11360)
-- Supports REFRESH CONCURRENTLY
-- Enforces RLS policies during refresh
-- Re-executes view definition SQL to populate materialized table
+- REFRESH MATERIALIZED VIEW: Implemented in executor (executor.cpp) with opcode `REFRESH_MATERIALIZED_VIEW`
+- Supports CONCURRENTLY flag and enforces RLS policies during refresh
+- **Note:** The V2 parser does not currently expose a REFRESH MATERIALIZED VIEW statement; this opcode is accessible through emulated dialect parsers or direct SBLR
 
 **Tablespace Commands:**
 - TABLESPACE clause in CREATE TABLE and CREATE INDEX: Parsed and enforced
@@ -754,8 +754,7 @@ All 14 index types are parsed in the V2 parser via CREATE INDEX ... USING:
 - Spec reference: `/docs/specifications/indexes/AdvancedIndexes.md`
 
 **Materialized Views:**
-- Refresh behavior spec-defined but command not exposed
-- Concurrent refresh not supported
+- REFRESH MATERIALIZED VIEW is not parsed in V2 (executor supports it via opcode)
 - Materialized view indexes not automatically maintained
 - Spec reference: `/docs/specifications/ddl/DDL_VIEWS.md`
 

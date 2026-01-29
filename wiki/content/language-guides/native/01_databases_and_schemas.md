@@ -515,6 +515,249 @@ DROP TABLESPACE ts_archive FORCE;
 
 ---
 
+## Foreign Data Wrappers
+
+### CREATE SERVER
+
+#### Description
+
+Creates a foreign server definition that references an external data source via a foreign data wrapper (FDW).
+
+#### Syntax
+
+```sql
+CREATE SERVER <server_name>
+    [TYPE '<server_type>']
+    [VERSION '<server_version>']
+    FOREIGN DATA WRAPPER <fdw_name>
+    [OPTIONS (<key> <value> [, ...])]
+```
+
+#### Examples
+
+```sql
+CREATE SERVER remote_pg
+    TYPE 'postgresql'
+    VERSION '15'
+    FOREIGN DATA WRAPPER postgres_fdw
+    OPTIONS (host 'db.example.com', port '5432', dbname 'analytics');
+
+CREATE SERVER file_server
+    FOREIGN DATA WRAPPER file_fdw;
+```
+
+#### Implementation Status
+
+- V2 parser: `parseCreateForeignServer()` handles TYPE, VERSION, FOREIGN DATA WRAPPER, and OPTIONS
+
+---
+
+### CREATE FOREIGN TABLE
+
+#### Description
+
+Creates a table whose data resides on an external server accessed through a foreign data wrapper.
+
+#### Syntax
+
+```sql
+CREATE FOREIGN TABLE [IF NOT EXISTS] <table_name> (
+    <column_name> <data_type> [OPTIONS (<key> <value> [, ...])] [, ...]
+)
+SERVER <server_name>
+[OPTIONS (<key> <value> [, ...])]
+```
+
+#### Examples
+
+```sql
+CREATE FOREIGN TABLE remote_users (
+    id INTEGER,
+    name VARCHAR(100),
+    email VARCHAR(255) OPTIONS (column_name 'user_email')
+)
+SERVER remote_pg
+OPTIONS (schema_name 'public', table_name 'users');
+
+CREATE FOREIGN TABLE IF NOT EXISTS csv_data (
+    col1 TEXT,
+    col2 INTEGER
+)
+SERVER file_server
+OPTIONS (filename '/data/import.csv', format 'csv');
+```
+
+#### Implementation Status
+
+- V2 parser: `parseCreateForeignTable()` handles IF NOT EXISTS, column definitions with per-column OPTIONS, table constraints, SERVER clause, and table-level OPTIONS
+
+---
+
+### CREATE USER MAPPING
+
+#### Description
+
+Creates a mapping between a local user and a remote user on a foreign server, storing credentials for authenticated access.
+
+#### Syntax
+
+```sql
+CREATE USER MAPPING FOR { <user_name> | CURRENT_USER | SESSION_USER | PUBLIC }
+    SERVER <server_name>
+    [OPTIONS (<key> <value> [, ...])]
+```
+
+#### Examples
+
+```sql
+CREATE USER MAPPING FOR alice
+    SERVER remote_pg
+    OPTIONS (user 'remote_alice', password 'remote_pass');
+
+CREATE USER MAPPING FOR PUBLIC
+    SERVER file_server;
+
+CREATE USER MAPPING FOR CURRENT_USER
+    SERVER remote_pg
+    OPTIONS (user 'readonly');
+```
+
+#### Implementation Status
+
+- V2 parser: `parseCreateUserMapping()` handles user targets (USER name, CURRENT_USER, SESSION_USER, PUBLIC), SERVER clause, and OPTIONS
+
+---
+
+### DROP SERVER / DROP FOREIGN TABLE / DROP USER MAPPING
+
+#### Description
+
+Removes foreign data wrapper objects.
+
+#### Syntax
+
+```sql
+DROP SERVER <server_name>
+DROP FOREIGN TABLE <table_name>
+DROP USER MAPPING FOR { <user_name> | CURRENT_USER | SESSION_USER | PUBLIC } SERVER <server_name>
+```
+
+#### Implementation Status
+
+- V2 parser: `parseDropForeignServer()`, `parseDropForeignTable()`, and `parseDropUserMapping()` are all implemented
+
+---
+
+## Synonyms
+
+### CREATE SYNONYM
+
+#### Description
+
+Creates a synonym (alias) for a database object. Synonyms can be public (visible to all schemas) or private (schema-scoped). Synonyms can reference tables, views, sequences, functions, procedures, domains, types, packages, schemas, databases, UDRs, and foreign tables.
+
+#### Syntax
+
+```sql
+CREATE [PUBLIC] SYNONYM <synonym_name>
+    FOR { TABLE | VIEW | SEQUENCE | FUNCTION | PROCEDURE | DOMAIN | TYPE
+        | PACKAGE | SCHEMA | DATABASE | UDR | FOREIGN TABLE } <target_name>
+```
+
+#### Examples
+
+```sql
+CREATE SYNONYM users FOR TABLE app.users;
+CREATE PUBLIC SYNONYM orders FOR TABLE sales.orders;
+CREATE SYNONYM get_total FOR FUNCTION analytics.calculate_total;
+CREATE SYNONYM remote_data FOR FOREIGN TABLE remote_users;
+```
+
+#### Implementation Status
+
+- V2 parser: `parseCreateSynonym()` handles PUBLIC/private distinction, 12 target object types, and schema-qualified paths
+
+---
+
+### DROP SYNONYM
+
+#### Description
+
+Removes a synonym.
+
+#### Syntax
+
+```sql
+DROP [PUBLIC] SYNONYM <synonym_name>
+```
+
+#### Example
+
+```sql
+DROP SYNONYM users;
+DROP PUBLIC SYNONYM orders;
+```
+
+#### Implementation Status
+
+- V2 parser: `parseDropSynonym()` handles PUBLIC/private and schema-qualified paths
+
+---
+
+## User-Defined Routines (UDR)
+
+### CREATE UDR
+
+#### Description
+
+Registers an external User-Defined Routine implemented in a shared library (e.g., C/C++). UDRs can be functions, procedures, or triggers backed by native code.
+
+#### Syntax
+
+```sql
+CREATE UDR { FUNCTION | PROCEDURE | TRIGGER } <udr_name>
+    AS '<library_path>'
+    ENTRY '<entry_point>'
+    [SIGNATURE '<signature>']
+```
+
+#### Examples
+
+```sql
+CREATE UDR FUNCTION fast_hash
+    AS '/usr/lib/scratchbird/udr_hash.so'
+    ENTRY 'compute_hash'
+    SIGNATURE 'INTEGER (VARCHAR)';
+
+CREATE UDR PROCEDURE bulk_import
+    AS '/opt/scratchbird/plugins/import.so'
+    ENTRY 'run_import';
+```
+
+#### Implementation Status
+
+- V2 parser: `parseCreateUdr()` handles FUNCTION/PROCEDURE/TRIGGER type, library path, entry point, and optional signature
+
+---
+
+### DROP UDR
+
+#### Description
+
+Removes a UDR registration.
+
+#### Syntax
+
+```sql
+DROP UDR <udr_name>
+```
+
+#### Implementation Status
+
+- V2 parser: `parseDropUdr()` is implemented
+
+---
+
 ## Known Limitations
 
 ### Spec Deltas (Implementation differs from specification)

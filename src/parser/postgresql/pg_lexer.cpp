@@ -327,6 +327,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"move", TokenType::KW_MOVE},
         {"close", TokenType::KW_CLOSE},
         {"open", TokenType::KW_OPEN},
+        {"show", TokenType::KW_SHOW},
 
         // Trigger keywords
         {"before", TokenType::KW_BEFORE},

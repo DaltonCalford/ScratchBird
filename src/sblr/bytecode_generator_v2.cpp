@@ -1475,6 +1475,11 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
         // Write data type opcode
         write_column_type(col.type);
 
+        if (col.collation_name != StringPool::INVALID_ID) {
+            current_result_->writeOpcode(sblr::Opcode::COLUMN_COLLATE);
+            writeStringId(col.collation_name);
+        }
+
         // Write NOT NULL constraint if column is not nullable
         if (!col.is_nullable) {
             current_result_->writeOpcode(sblr::Opcode::NOT_NULL);
@@ -3597,6 +3602,12 @@ void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
         if (type.data_type == DataType::DECIMAL && precision == 0) {
             precision = 18;
         }
+        if (type.data_type == DataType::DECFLOAT16 && precision == 0) {
+            precision = 16;
+        }
+        if (type.data_type == DataType::DECFLOAT34 && precision == 0) {
+            precision = 34;
+        }
     };
 
     switch (stmt->action) {
@@ -4810,9 +4821,8 @@ void BytecodeGeneratorV2::generateLiteral(ResolvedLiteral* expr) {
             break;
 
         case LiteralType::BOOLEAN:
-            // Boolean is stored as int32: 1 for true, 0 for false
-            current_result_->writeOpcode(sblr::Opcode::LITERAL_INT32);
-            current_result_->writeInt32(expr->bool_value ? 1 : 0);
+            current_result_->writeOpcode(sblr::Opcode::LITERAL_BOOLEAN);
+            current_result_->writeByte(expr->bool_value ? 1 : 0);
             break;
 
         case LiteralType::STRING:
@@ -4821,9 +4831,15 @@ void BytecodeGeneratorV2::generateLiteral(ResolvedLiteral* expr) {
             break;
 
         case LiteralType::BLOB:
-            current_result_->writeOpcode(sblr::Opcode::LITERAL_STRING);
-            writeStringId(expr->string_value);
+        {
+            std::string_view blob = getString(expr->string_value);
+            current_result_->writeOpcode(sblr::Opcode::LITERAL_BINARY);
+            current_result_->writeUVarint(static_cast<uint64_t>(blob.size()));
+            for (unsigned char ch : blob) {
+                current_result_->writeByte(static_cast<uint8_t>(ch));
+            }
             break;
+        }
 
         default:
             current_result_->writeOpcode(sblr::Opcode::LITERAL_NULL);
@@ -6042,11 +6058,35 @@ void BytecodeGeneratorV2::generateLimitOffset(ResolvedExpression* limit, Resolve
 
 void BytecodeGeneratorV2::generateDataType(const ResolvedType& type) {
     // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md for SBLR type encoding.
+    if (type.data_type == DataType::TIME && type.with_time_zone) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_TIME_TZ);
+        return;
+    }
+    if (type.data_type == DataType::TIMESTAMP && type.with_time_zone) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_TIMESTAMP_TZ);
+        return;
+    }
     if (type.data_type == DataType::INT128 || type.data_type == DataType::UINT128) {
         current_result_->writeExtendedOpcode(
             type.data_type == DataType::INT128
                 ? sblr::ExtendedOpcode::EXT_TYPE_INT128
                 : sblr::ExtendedOpcode::EXT_TYPE_UINT128);
+        return;
+    }
+    if (type.data_type == DataType::UINT8) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_UINT8);
+        return;
+    }
+    if (type.data_type == DataType::UINT16) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_UINT16);
+        return;
+    }
+    if (type.data_type == DataType::UINT32) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_UINT32);
+        return;
+    }
+    if (type.data_type == DataType::UINT64) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_UINT64);
         return;
     }
     if (type.data_type == DataType::VECTOR) {
@@ -6058,6 +6098,113 @@ void BytecodeGeneratorV2::generateDataType(const ResolvedType& type) {
             dimension = *type.precision;
         }
         current_result_->writeInt32(dimension);
+        return;
+    }
+    if (type.data_type == DataType::MONEY) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_MONEY);
+        return;
+    }
+    if (type.data_type == DataType::DECFLOAT16 || type.data_type == DataType::DECFLOAT34) {
+        current_result_->writeExtendedOpcode(
+            type.data_type == DataType::DECFLOAT16
+                ? sblr::ExtendedOpcode::EXT_TYPE_DECFLOAT16
+                : sblr::ExtendedOpcode::EXT_TYPE_DECFLOAT34);
+        return;
+    }
+    if (type.data_type == DataType::INTERVAL) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_INTERVAL);
+        return;
+    }
+    if (type.data_type == DataType::JSONB) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_JSONB);
+        return;
+    }
+    if (type.data_type == DataType::XML) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_XML);
+        return;
+    }
+    if (type.data_type == DataType::POINT) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_POINT);
+        return;
+    }
+    if (type.data_type == DataType::LINESTRING) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_LINESTRING);
+        return;
+    }
+    if (type.data_type == DataType::POLYGON) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_POLYGON);
+        return;
+    }
+    if (type.data_type == DataType::MULTIPOINT) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_MULTIPOINT);
+        return;
+    }
+    if (type.data_type == DataType::MULTILINESTRING) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_MULTILINESTRING);
+        return;
+    }
+    if (type.data_type == DataType::MULTIPOLYGON) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_MULTIPOLYGON);
+        return;
+    }
+    if (type.data_type == DataType::GEOMETRYCOLLECTION) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_GEOMETRYCOLLECTION);
+        return;
+    }
+    if (type.data_type == DataType::COMPOSITE) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_COMPOSITE);
+        return;
+    }
+    if (type.data_type == DataType::VARIANT) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_VARIANT);
+        return;
+    }
+    if (type.data_type == DataType::INET) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_INET);
+        return;
+    }
+    if (type.data_type == DataType::CIDR) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_CIDR);
+        return;
+    }
+    if (type.data_type == DataType::MACADDR) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_MACADDR);
+        return;
+    }
+    if (type.data_type == DataType::MACADDR8) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_MACADDR8);
+        return;
+    }
+    if (type.data_type == DataType::TSVECTOR) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_TSVECTOR);
+        return;
+    }
+    if (type.data_type == DataType::TSQUERY) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_TSQUERY);
+        return;
+    }
+    if (type.data_type == DataType::INT4RANGE) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_INT4RANGE);
+        return;
+    }
+    if (type.data_type == DataType::INT8RANGE) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_INT8RANGE);
+        return;
+    }
+    if (type.data_type == DataType::NUMRANGE) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_NUMRANGE);
+        return;
+    }
+    if (type.data_type == DataType::DATERANGE) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_DATERANGE);
+        return;
+    }
+    if (type.data_type == DataType::TSRANGE) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_TSRANGE);
+        return;
+    }
+    if (type.data_type == DataType::TSTZRANGE) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TYPE_TSTZRANGE);
         return;
     }
 
@@ -6102,6 +6249,8 @@ sblr::Opcode BytecodeGeneratorV2::dataTypeToOpcode(DataType type) {
         case DataType::FLOAT32: return sblr::Opcode::TYPE_FLOAT32;
         case DataType::FLOAT64: return sblr::Opcode::TYPE_DOUBLE;
         case DataType::DECIMAL: return sblr::Opcode::TYPE_DECIMAL;
+        case DataType::DECFLOAT16: return sblr::Opcode::TYPE_DECIMAL;
+        case DataType::DECFLOAT34: return sblr::Opcode::TYPE_DECIMAL;
         case DataType::BOOLEAN: return sblr::Opcode::TYPE_BOOLEAN;
         case DataType::VARCHAR: return sblr::Opcode::TYPE_VARCHAR;
         case DataType::CHAR: return sblr::Opcode::TYPE_CHAR;
@@ -6113,6 +6262,7 @@ sblr::Opcode BytecodeGeneratorV2::dataTypeToOpcode(DataType type) {
         case DataType::BINARY: return sblr::Opcode::TYPE_BINARY;
         case DataType::VARBINARY: return sblr::Opcode::TYPE_VARBINARY;
         case DataType::BLOB: return sblr::Opcode::TYPE_BLOB;
+        case DataType::BYTEA: return sblr::Opcode::TYPE_BYTEA;
         case DataType::JSON: return sblr::Opcode::TYPE_JSON;
         default: return sblr::Opcode::TYPE_VARCHAR;
     }
