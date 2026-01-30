@@ -189,6 +189,7 @@ private:
     void generateCreateIndex(ResolvedCreateIndexStmt* stmt);
     void generateCreateView(ResolvedCreateViewStmt* stmt);
     void generateCreateSequence(ResolvedCreateSequenceStmt* stmt);
+    void generateAlterSequence(ResolvedAlterSequenceStmt* stmt);
     void generateCreateSchema(ResolvedCreateSchemaStmt* stmt);
     void generateDropSchema(ResolvedDropSchemaStmt* stmt);
     void generateAlterSchema(ResolvedAlterSchemaStmt* stmt);

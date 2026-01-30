@@ -1004,6 +1004,10 @@ namespace scratchbird
             EXT_CREATE_EXCEPTION_STMT = 0x0318,  // CREATE EXCEPTION exception_name 'message'
             EXT_TABLE_OPTIONS = 0x0319,  // CREATE TABLE table options payload (MySQL emulation)
             EXT_DROP_EXCEPTION_STMT = 0x031A,  // DROP EXCEPTION [IF EXISTS] exception_name
+            EXT_TABLE_PARTITIONING = 0x031B,  // CREATE TABLE partitioning metadata payload
+            EXT_TABLE_INHERITS = 0x031C,  // CREATE TABLE inheritance metadata payload
+            EXT_DISTINCT_ON = 0x031D,  // DISTINCT ON expression payload
+            EXT_CREATE_TABLE_AS = 0x031E,  // CREATE TABLE AS SELECT payload
             EXT_CREATE_DB_TRIGGER = 0x6D,  // CREATE TRIGGER (database trigger)
             EXT_DROP_DB_TRIGGER = 0x6E,  // DROP TRIGGER (database trigger)
             EXT_FIRE_DB_TRIGGER = 0x6F,  // Internal: Fire database trigger
@@ -1134,6 +1138,7 @@ namespace scratchbird
             EXT_ALTER_USER = 0xCB,  // ALTER USER username [WITH PASSWORD 'xxx'] [SUPERUSER]
             EXT_DROP_USER = 0xCC,  // DROP USER username [IF EXISTS] [CASCADE | RESTRICT]
             EXT_CREATE_ROLE = 0xCD,  // CREATE ROLE rolename
+            EXT_ALTER_ROLE = 0x02F0,  // ALTER ROLE rolename RENAME TO new_name
             EXT_DROP_ROLE = 0xCE,  // DROP ROLE rolename [IF EXISTS] [CASCADE | RESTRICT]
             EXT_CREATE_GROUP = 0xCF,  // CREATE GROUP groupname
             EXT_DROP_GROUP = 0xD0,  // DROP GROUP groupname [IF EXISTS] [CASCADE | RESTRICT]
@@ -1402,7 +1407,11 @@ namespace scratchbird
             EXT_FUNC_TO_DATE = 0x0327,  // TO_DATE(text, format)
             EXT_FUNC_TO_TIMESTAMP = 0x0328,  // TO_TIMESTAMP(text, format)
             EXT_FUNC_LEAST = 0x0329,  // LEAST(a, b, ...)
-            EXT_FUNC_GREATEST = 0x032A  // GREATEST(a, b, ...)
+            EXT_FUNC_GREATEST = 0x032A,  // GREATEST(a, b, ...)
+            EXT_FUNC_CURRENT_USER = 0x032B,  // CURRENT_USER
+            EXT_FUNC_CURRENT_ROLE = 0x032C,  // CURRENT_ROLE
+            EXT_FUNC_CURRENT_CONNECTION = 0x032D,  // CURRENT_CONNECTION
+            EXT_FUNC_CURRENT_TRANSACTION = 0x032E  // CURRENT_TRANSACTION
         };
 
         enum class AlterSchemaAction : uint8_t

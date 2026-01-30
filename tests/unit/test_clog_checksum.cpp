@@ -7,11 +7,13 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/ondisk.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 
 TEST(ClogChecksumTest, Comprehensive) {
@@ -37,18 +39,18 @@ TEST(ClogChecksumTest, Comprehensive) {
     {
         std::cout << "Test 2: CLOG page checksum creation... ";
 
-        const char *db_path = "/tmp/test_clog_checksum.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_clog_checksum", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             FAIL(); return;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             FAIL(); return;
@@ -132,7 +134,7 @@ TEST(ClogChecksumTest, Comprehensive) {
         std::cout << "PASSED" << std::endl;
 
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
     }
 
     std::cout << std::endl;
@@ -147,4 +149,3 @@ TEST(ClogChecksumTest, Comprehensive) {
     std::cout << "  - Checksums are validated when pages are loaded from disk" << std::endl;
     std::cout << "  - All transaction status operations work correctly with checksummed pages" << std::endl;
 }
-

@@ -2971,6 +2971,11 @@ namespace scratchbird
                             executeCreateRole();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_ROLE))
+                        {
+                            executeAlterRole();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_ROLE))
                         {
                             executeDropRole();
@@ -6322,14 +6327,57 @@ namespace scratchbird
             std::string tablespace_name = readString();
             uint16_t tablespace_id = 0; // Default tablespace
 
-            // Optional table options payload (MySQL emulation)
-            if (pc_ < bytecode_size_ &&
-                bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            bool has_partitioning = false;
+            std::string partition_strategy;
+            std::vector<std::string> partition_columns;
+            std::vector<std::string> inherit_parents;
+            bool has_ctas = false;
+            std::vector<uint8_t> ctas_bytecode;
+
+            // Optional partitioning/table options payloads
+            while (pc_ < bytecode_size_ &&
+                   bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
             {
                 size_t saved_pc = pc_;
                 readByte();
                 uint16_t ext_op = readExtendedOpcode();
-                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TABLE_OPTIONS))
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TABLE_PARTITIONING))
+                {
+                    has_partitioning = true;
+                    partition_strategy = readString();
+                    if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                    {
+                        error("Expected BEGIN_LIST for partition columns");
+                    }
+                    uint64_t col_count = readUVarint();
+                    partition_columns.reserve(static_cast<size_t>(col_count));
+                    for (uint64_t i = 0; i < col_count; ++i)
+                    {
+                        partition_columns.push_back(readString());
+                    }
+                    if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                    {
+                        error("Expected END_LIST after partition columns");
+                    }
+                }
+                else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TABLE_INHERITS))
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                    {
+                        error("Expected BEGIN_LIST for table inheritance");
+                    }
+                    uint64_t parent_count = readUVarint();
+                    inherit_parents.reserve(static_cast<size_t>(parent_count));
+                    for (uint64_t i = 0; i < parent_count; ++i)
+                    {
+                        inherit_parents.push_back(readString());
+                    }
+                    if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                    {
+                        error("Expected END_LIST after table inheritance");
+                    }
+                }
+                else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TABLE_OPTIONS))
                 {
                     if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
                     {
@@ -6348,9 +6396,24 @@ namespace scratchbird
                         error("Expected END_LIST after table options");
                     }
                 }
+                else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_TABLE_AS))
+                {
+                    if (has_ctas)
+                    {
+                        error("CREATE TABLE AS specified more than once");
+                    }
+                    uint32_t bytecode_len = readInt32();
+                    ctas_bytecode.reserve(bytecode_len);
+                    for (uint32_t i = 0; i < bytecode_len; ++i)
+                    {
+                        ctas_bytecode.push_back(readByte());
+                    }
+                    has_ctas = true;
+                }
                 else
                 {
                     pc_ = saved_pc;
+                    break;
                 }
             }
 
@@ -6470,6 +6533,53 @@ namespace scratchbird
             }
             LOG_INFO(EXECUTOR, "CREATE TABLE permission check passed: %s",
                      schema_info.schema_name.c_str());
+
+            ExecutionResult ctas_exec_result;
+            ResultSet* ctas_result_set = nullptr;
+            if (has_ctas)
+            {
+                Executor nested(db_);
+                if (conn_ctx_)
+                {
+                    nested.setConnectionContext(conn_ctx_);
+                }
+
+                ctas_exec_result = nested.execute(ctas_bytecode);
+                if (!ctas_exec_result.success())
+                {
+                    error("CREATE TABLE AS SELECT failed: " + ctas_exec_result.error());
+                }
+                if (!ctas_exec_result.hasResultSet() || !ctas_exec_result.resultSet())
+                {
+                    error("CREATE TABLE AS SELECT requires a query result set");
+                }
+
+                ctas_result_set = ctas_exec_result.resultSet();
+                if (columns.empty())
+                {
+                    size_t col_count = ctas_result_set->columnCount();
+                    columns.reserve(col_count);
+                    for (size_t i = 0; i < col_count; ++i)
+                    {
+                        core::CatalogManager::ColumnInfo col_info;
+                        std::string col_name = ctas_result_set->columnName(i);
+                        if (col_name.empty())
+                        {
+                            col_name = "column" + std::to_string(i + 1);
+                        }
+                        col_info.column_name = col_name;
+                        col_info.ordinal = static_cast<uint16_t>(i);
+                        col_info.data_type = static_cast<uint16_t>(ctas_result_set->columnType(i));
+                        col_info.nullable = true;
+                        col_info.domain_id = core::ID{};
+                        columns.push_back(std::move(col_info));
+                    }
+                }
+                else if (ctas_result_set->columnCount() != columns.size())
+                {
+                    error("CREATE TABLE AS SELECT column count does not match table definition");
+                }
+            }
 
             core::CatalogManager::TempObjectOptions temp_seq_opts;
             core::CatalogManager::TempObjectOptions* temp_seq_opts_ptr = nullptr;
@@ -6610,15 +6720,34 @@ namespace scratchbird
                 }
             }
 
-            if (!table_options.empty())
+            if (has_partitioning && partition_columns.empty())
+            {
+                error("PARTITION BY requires at least one column");
+            }
+
+            if (has_partitioning || !inherit_parents.empty() || !table_options.empty())
             {
                 json metadata = json::object();
+                if (has_partitioning)
+                {
+                    json partition = json::object();
+                    partition["strategy"] = partition_strategy;
+                    partition["columns"] = partition_columns;
+                    metadata["partition"] = std::move(partition);
+                }
+                if (!inherit_parents.empty())
+                {
+                    metadata["inherits"] = inherit_parents;
+                }
                 json mysql_opts = json::object();
                 for (const auto& opt : table_options)
                 {
                     mysql_opts[opt.first] = opt.second;
                 }
-                metadata["mysql"] = mysql_opts;
+                if (!table_options.empty())
+                {
+                    metadata["mysql"] = std::move(mysql_opts);
+                }
 
                 core::ErrorContext opt_ctx;
                 auto opt_status = db_->catalog_manager()->updateTableStorageParams(
@@ -6837,6 +6966,48 @@ namespace scratchbird
                 if (status != core::Status::OK)
                 {
                     error("Failed to create foreign key constraint: " + fk_name);
+                }
+            }
+
+            if (has_ctas && ctas_result_set)
+            {
+                size_t row_count = ctas_result_set->rowCount();
+                size_t col_count = ctas_result_set->columnCount();
+                for (size_t row_idx = 0; row_idx < row_count; ++row_idx)
+                {
+                    std::vector<Value> row_values;
+                    row_values.reserve(col_count);
+                    for (size_t col_idx = 0; col_idx < col_count; ++col_idx)
+                    {
+                        row_values.push_back(ctas_result_set->getValue(row_idx, col_idx));
+                    }
+
+                    std::vector<uint8_t> tuple_data;
+                    core::ErrorContext serialize_ctx;
+                    if (!serializeTupleFromValues(row_values, columns, tuple_data, &serialize_ctx))
+                    {
+                        std::string err_msg = "Failed to serialize CREATE TABLE AS row";
+                        if (!serialize_ctx.message.empty())
+                        {
+                            err_msg += ": " + serialize_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    uint32_t page_id = 0;
+                    uint16_t item_id = 0;
+                    status = db_->storage_engine()->insertTuple(
+                        table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()),
+                        &page_id, &item_id, &table_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to insert CREATE TABLE AS row";
+                        if (!table_ctx.message.empty())
+                        {
+                            err_msg += ": " + table_ctx.message;
+                        }
+                        error(err_msg);
+                    }
                 }
             }
 
@@ -8565,6 +8736,43 @@ namespace scratchbird
             }
 
             // Dispatch based on action
+            auto load_table_metadata = [&](const core::CatalogManager::TableInfo& info) {
+                json metadata = json::object();
+                if (info.storage_params_oid != 0)
+                {
+                    std::string params;
+                    if (db_->catalog_manager()->loadStringFromToast(
+                            info.storage_params_oid, 0, params, &ctx) == core::Status::OK &&
+                        !params.empty())
+                    {
+                        try
+                        {
+                            metadata = json::parse(params);
+                        }
+                        catch (...)
+                        {
+                            metadata = json::object();
+                        }
+                    }
+                }
+                return metadata;
+            };
+
+            auto persist_table_metadata = [&](const core::ID& target_id, const json& metadata) {
+                core::ErrorContext meta_ctx;
+                auto meta_status = db_->catalog_manager()->updateTableStorageParams(
+                    target_id, metadata.dump(), &meta_ctx);
+                if (meta_status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to update partition metadata";
+                    if (!meta_ctx.message.empty())
+                    {
+                        err_msg += ": " + meta_ctx.message;
+                    }
+                    throw std::runtime_error(err_msg);
+                }
+            };
+
             switch (action)
             {
                 case 0: // ADD_COLUMN
@@ -8687,6 +8895,297 @@ namespace scratchbird
                     if (status != Status::OK)
                     {
                         throw std::runtime_error("Failed to rename column: " + ctx.message);
+                    }
+                    break;
+                }
+
+                case 6: // ATTACH_PARTITION
+                {
+                    std::string partition_name = readString();
+                    std::string partition_bounds = readString();
+
+                    core::ID partition_id;
+                    core::CatalogManager::ObjectType resolved_partition_type;
+                    core::ErrorContext part_ctx;
+                    auto part_status = resolveObjectIdForQualifiedName(
+                        partition_name, core::CatalogManager::ObjectType::TABLE,
+                        partition_id, resolved_partition_type, nullptr, &part_ctx, false);
+                    if (part_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Partition table not found: " + partition_name;
+                        if (!part_ctx.message.empty())
+                        {
+                            err_msg += ": " + part_ctx.message;
+                        }
+                        throw std::runtime_error(err_msg);
+                    }
+
+                    core::CatalogManager::TableInfo partition_info;
+                    if (db_->catalog_manager()->getTable(partition_id, partition_info, &part_ctx) != core::Status::OK)
+                    {
+                        throw std::runtime_error("Partition table not found: " + partition_name);
+                    }
+
+                    json parent_meta = load_table_metadata(table_info);
+                    json child_meta = load_table_metadata(partition_info);
+
+                    if (!parent_meta.contains("partition")) {
+                        parent_meta["partition"] = json::object();
+                    }
+                    auto& partition_meta = parent_meta["partition"];
+                    if (!partition_meta.contains("children")) {
+                        partition_meta["children"] = json::array();
+                    }
+
+                    bool exists = false;
+                    for (const auto& entry : partition_meta["children"])
+                    {
+                        if (entry.contains("name") && entry["name"] == partition_name)
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists)
+                    {
+                        json child_entry = json::object();
+                        child_entry["name"] = partition_name;
+                        child_entry["bounds"] = partition_bounds;
+                        partition_meta["children"].push_back(std::move(child_entry));
+                    }
+
+                    child_meta["partition_parent"] = table_name;
+
+                    persist_table_metadata(table_info.table_id, parent_meta);
+                    persist_table_metadata(partition_info.table_id, child_meta);
+                    break;
+                }
+
+                case 7: // DETACH_PARTITION
+                {
+                    std::string partition_name = readString();
+
+                    core::ID partition_id;
+                    core::CatalogManager::ObjectType resolved_partition_type;
+                    core::ErrorContext part_ctx;
+                    auto part_status = resolveObjectIdForQualifiedName(
+                        partition_name, core::CatalogManager::ObjectType::TABLE,
+                        partition_id, resolved_partition_type, nullptr, &part_ctx, false);
+                    if (part_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Partition table not found: " + partition_name;
+                        if (!part_ctx.message.empty())
+                        {
+                            err_msg += ": " + part_ctx.message;
+                        }
+                        throw std::runtime_error(err_msg);
+                    }
+
+                    core::CatalogManager::TableInfo partition_info;
+                    if (db_->catalog_manager()->getTable(partition_id, partition_info, &part_ctx) != core::Status::OK)
+                    {
+                        throw std::runtime_error("Partition table not found: " + partition_name);
+                    }
+
+                    json parent_meta = load_table_metadata(table_info);
+                    if (parent_meta.contains("partition") &&
+                        parent_meta["partition"].contains("children"))
+                    {
+                        auto& children = parent_meta["partition"]["children"];
+                        if (children.is_array())
+                        {
+                            json updated = json::array();
+                            for (const auto& entry : children)
+                            {
+                                if (entry.contains("name") && entry["name"] == partition_name)
+                                {
+                                    continue;
+                                }
+                                updated.push_back(entry);
+                            }
+                            children = std::move(updated);
+                        }
+                    }
+
+                    json child_meta = load_table_metadata(partition_info);
+                    if (child_meta.contains("partition_parent"))
+                    {
+                        child_meta.erase("partition_parent");
+                    }
+
+                    persist_table_metadata(table_info.table_id, parent_meta);
+                    persist_table_metadata(partition_info.table_id, child_meta);
+                    break;
+                }
+
+                case 8: // ENABLE_TRIGGER
+                case 9: // DISABLE_TRIGGER
+                {
+                    bool trigger_all = readByte() != 0;
+                    std::string trigger_name = readString();
+                    bool enable = (action == 8);
+
+                    if (trigger_all)
+                    {
+                        std::vector<core::CatalogManager::TriggerInfo> triggers;
+                        if (db_->catalog_manager()->listAllTriggersForTable(table_info.table_id,
+                                                                            triggers, &ctx) != core::Status::OK)
+                        {
+                            throw std::runtime_error("Failed to list triggers for table");
+                        }
+                        for (const auto& trig : triggers)
+                        {
+                            core::ErrorContext trig_ctx;
+                            auto trig_status = db_->catalog_manager()->enableTrigger(
+                                trig.trigger_name, enable, &trig_ctx);
+                            if (trig_status != core::Status::OK)
+                            {
+                                std::string err_msg = "Failed to update trigger '" +
+                                                      trig.trigger_name + "'";
+                                if (!trig_ctx.message.empty())
+                                {
+                                    err_msg += ": " + trig_ctx.message;
+                                }
+                                throw std::runtime_error(err_msg);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        core::CatalogManager::TriggerInfo trigger_info;
+                        if (db_->catalog_manager()->getTriggerByName(trigger_name,
+                                                                    trigger_info, &ctx) != core::Status::OK)
+                        {
+                            throw std::runtime_error("Trigger not found: " + trigger_name);
+                        }
+                        if (trigger_info.table_id != table_info.table_id)
+                        {
+                            throw std::runtime_error("Trigger does not belong to table: " + trigger_name);
+                        }
+                        status = db_->catalog_manager()->enableTrigger(trigger_name, enable, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to update trigger '" + trigger_name + "'";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            throw std::runtime_error(err_msg);
+                        }
+                    }
+                    break;
+                }
+
+                case 10: // SET_STATISTICS
+                {
+                    std::string col_name = readString();
+                    uint32_t target = readInt32();
+                    json metadata = load_table_metadata(table_info);
+                    if (!metadata.contains("column_stats"))
+                    {
+                        metadata["column_stats"] = json::object();
+                    }
+                    metadata["column_stats"][col_name] = target;
+                    persist_table_metadata(table_info.table_id, metadata);
+                    break;
+                }
+
+                case 11: // SET_STORAGE
+                {
+                    std::string col_name = readString();
+                    std::string storage_type = readString();
+                    json metadata = load_table_metadata(table_info);
+                    if (!metadata.contains("column_storage"))
+                    {
+                        metadata["column_storage"] = json::object();
+                    }
+                    metadata["column_storage"][col_name] = storage_type;
+                    persist_table_metadata(table_info.table_id, metadata);
+                    break;
+                }
+
+                case 12: // INHERIT
+                case 13: // NO_INHERIT
+                {
+                    std::string parent_name = readString();
+                    json metadata = load_table_metadata(table_info);
+                    if (!metadata.contains("inherits"))
+                    {
+                        metadata["inherits"] = json::array();
+                    }
+                    auto& inherits = metadata["inherits"];
+                    if (!inherits.is_array())
+                    {
+                        inherits = json::array();
+                    }
+
+                    if (action == 12)
+                    {
+                        bool exists = false;
+                        for (const auto& entry : inherits)
+                        {
+                            if (entry == parent_name)
+                            {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists)
+                        {
+                            inherits.push_back(parent_name);
+                        }
+                    }
+                    else
+                    {
+                        json updated = json::array();
+                        for (const auto& entry : inherits)
+                        {
+                            if (entry == parent_name)
+                            {
+                                continue;
+                            }
+                            updated.push_back(entry);
+                        }
+                        inherits = std::move(updated);
+                    }
+
+                    persist_table_metadata(table_info.table_id, metadata);
+                    break;
+                }
+
+                case 14: // VALIDATE_CONSTRAINT
+                {
+                    std::string constraint_name = readString();
+                    core::CatalogManager::ConstraintInfo constraint;
+                    if (db_->catalog_manager()->getConstraintByName(table_info.table_id,
+                                                                     constraint_name,
+                                                                     constraint,
+                                                                     &ctx) != core::Status::OK)
+                    {
+                        throw std::runtime_error("Constraint not found: " + constraint_name);
+                    }
+
+                    bool is_valid = false;
+                    std::string violation;
+                    status = db_->catalog_manager()->validateConstraint(
+                        constraint.constraint_id, is_valid, violation, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to validate constraint '" + constraint_name + "'";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        throw std::runtime_error(err_msg);
+                    }
+                    if (!is_valid)
+                    {
+                        std::string err_msg = "Constraint validation failed: " + constraint_name;
+                        if (!violation.empty())
+                        {
+                            err_msg += ": " + violation;
+                        }
+                        throw std::runtime_error(err_msg);
                     }
                     break;
                 }
@@ -13162,6 +13661,10 @@ namespace scratchbird
             core::CatalogManager::ObjectType resolved_type;
             core::CatalogManager::ResolvedObject resolved_table;
             core::CatalogManager::TableInfo table_info;
+            core::CatalogManager::ViewInfo view_info;
+            bool is_view = false;
+            std::vector<std::vector<Value>> view_rows;
+            bool view_rows_loaded = false;
             if (has_uuid)
             {
                 if (db_->catalog_manager()->getTable(table_id, table_info, &err_ctx) != core::Status::OK)
@@ -13180,21 +13683,40 @@ namespace scratchbird
                     table_id, resolved_type, &resolved_table, &err_ctx);
                 if (status != core::Status::OK)
                 {
-                    std::string err_msg = "Failed to resolve table '" + table_name + "'";
-                    if (!err_ctx.message.empty())
+                    core::ID view_id;
+                    core::CatalogManager::ResolvedObject resolved_view;
+                    auto view_status = resolveObjectIdForQualifiedName(
+                        table_name, core::CatalogManager::ObjectType::VIEW,
+                        view_id, resolved_type, &resolved_view, &err_ctx);
+                    if (view_status == core::Status::OK &&
+                        db_->catalog_manager()->getViewById(view_id, view_info, &err_ctx) == core::Status::OK)
                     {
-                        err_msg += ": " + err_ctx.message;
+                        is_view = true;
+                        table_id = view_id;
                     }
-                    error(err_msg);
+                    else
+                    {
+                        std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                        if (!err_ctx.message.empty())
+                        {
+                            err_msg += ": " + err_ctx.message;
+                        }
+                        error(err_msg);
+                    }
                 }
-
-                status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
-                if (status != core::Status::OK)
+                else
                 {
-                    error("Table not found: " + table_name);
+                    status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        error("Table not found: " + table_name);
+                    }
                 }
             }
-            table_id = table_info.table_id;
+            if (!is_view)
+            {
+                table_id = table_info.table_id;
+            }
 
             bool has_table_insert = true;
             std::vector<std::string> accessible_insert_columns;
@@ -13202,7 +13724,7 @@ namespace scratchbird
             const auto& user_id = getCurrentUserID();
             bool skip_perm_check = (user_id == core::ID{});
 
-            if (!skip_perm_check)
+            if (!skip_perm_check && !is_view)
             {
                 has_table_insert = checkPermission(table_info.table_id,
                                    core::CatalogManager::PermissionObjectType::TABLE,
@@ -13255,9 +13777,34 @@ namespace scratchbird
             }
 
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
-            if (db_->catalog_manager()->getColumns(table_id, all_columns, nullptr) != core::Status::OK)
+            if (is_view)
             {
-                error("Failed to get table columns");
+                std::vector<std::string> view_columns = view_info.column_names;
+                if (view_columns.empty())
+                {
+                    view_columns = col_names;
+                }
+                if (view_columns.empty())
+                {
+                    error("INSERT into view requires an explicit column list");
+                }
+                all_columns.reserve(view_columns.size());
+                for (size_t i = 0; i < view_columns.size(); ++i)
+                {
+                    core::CatalogManager::ColumnInfo col_info;
+                    col_info.column_name = view_columns[i];
+                    col_info.data_type = static_cast<uint16_t>(core::DataType::UNKNOWN);
+                    col_info.nullable = true;
+                    col_info.ordinal = static_cast<uint16_t>(i + 1);
+                    all_columns.push_back(std::move(col_info));
+                }
+            }
+            else
+            {
+                if (db_->catalog_manager()->getColumns(table_id, all_columns, nullptr) != core::Status::OK)
+                {
+                    error("Failed to get table columns");
+                }
             }
 
             struct DomainDefault {
@@ -13265,33 +13812,36 @@ namespace scratchbird
                 std::string value;
             };
             std::vector<DomainDefault> domain_defaults(all_columns.size());
-            if (auto* domain_mgr = db_ ? db_->domain_manager() : nullptr)
+            if (!is_view)
             {
-                for (size_t i = 0; i < all_columns.size(); ++i)
+                if (auto* domain_mgr = db_ ? db_->domain_manager() : nullptr)
                 {
-                    const auto& col = all_columns[i];
-                    if (col.domain_id == core::ID{} || col.has_default)
+                    for (size_t i = 0; i < all_columns.size(); ++i)
                     {
-                        continue;
-                    }
-
-                    core::DomainInfo domain_info;
-                    core::ErrorContext dom_ctx;
-                    auto status = domain_mgr->getDomain(col.domain_id, domain_info, &dom_ctx);
-                    if (status != core::Status::OK)
-                    {
-                        std::string err_msg = "Failed to resolve domain default";
-                        if (!dom_ctx.message.empty())
+                        const auto& col = all_columns[i];
+                        if (col.domain_id == core::ID{} || col.has_default)
                         {
-                            err_msg += ": " + dom_ctx.message;
+                            continue;
                         }
-                        error(err_msg);
-                    }
 
-                    if (!domain_info.default_value.empty())
-                    {
-                        domain_defaults[i].has_default = true;
-                        domain_defaults[i].value = domain_info.default_value;
+                        core::DomainInfo domain_info;
+                        core::ErrorContext dom_ctx;
+                        auto status = domain_mgr->getDomain(col.domain_id, domain_info, &dom_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to resolve domain default";
+                            if (!dom_ctx.message.empty())
+                            {
+                                err_msg += ": " + dom_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+
+                        if (!domain_info.default_value.empty())
+                        {
+                            domain_defaults[i].has_default = true;
+                            domain_defaults[i].value = domain_info.default_value;
+                        }
                     }
                 }
             }
@@ -13769,6 +14319,104 @@ namespace scratchbird
                 {
                     pc_ = saved_pc;
                 }
+            }
+
+            if (is_view)
+            {
+                if (on_conflict.action != OnConflictInfo::Action::NONE)
+                {
+                    error("ON CONFLICT is not supported for view inserts");
+                }
+                if (has_returning)
+                {
+                    error("RETURNING is not supported for view inserts");
+                }
+
+                std::vector<std::vector<Value>> new_rows;
+                new_rows.reserve(input_rows.size());
+
+                std::unordered_map<std::string, size_t> view_index;
+                view_index.reserve(all_columns.size());
+                for (size_t i = 0; i < all_columns.size(); ++i)
+                {
+                    view_index[core::IdentifierUtils::toUpper(all_columns[i].column_name)] = i;
+                }
+
+                for (const auto& row : input_rows)
+                {
+                    std::vector<Value> row_values(all_columns.size(), Value::makeNull());
+                    if (col_names.empty())
+                    {
+                        if (row.size() != all_columns.size())
+                        {
+                            error("INSERT row does not match view column count");
+                        }
+                        row_values = row;
+                    }
+                    else
+                    {
+                        if (row.size() != col_names.size())
+                        {
+                            error("INSERT row does not match column list");
+                        }
+                        for (size_t i = 0; i < col_names.size(); ++i)
+                        {
+                            std::string col = std::string(col_names[i]);
+                            std::string key = core::IdentifierUtils::toUpper(col);
+                            auto it = view_index.find(key);
+                            if (it == view_index.end())
+                            {
+                                error("View column not found: " + col);
+                            }
+                            row_values[it->second] = row[i];
+                        }
+                    }
+                    new_rows.push_back(std::move(row_values));
+                }
+
+                std::vector<core::CatalogManager::TriggerInfo> instead_triggers;
+                auto trigger_status = db_->catalog_manager()->listTriggersForTable(
+                    table_id,
+                    core::CatalogManager::TriggerEvent::INSERT,
+                    core::CatalogManager::TriggerTiming::INSTEAD_OF,
+                    instead_triggers,
+                    &err_ctx);
+
+                if (trigger_status != core::Status::OK || instead_triggers.empty())
+                {
+                    error("INSERT on view requires an INSTEAD OF trigger");
+                }
+
+                core::CatalogManager::TableInfo view_table_info;
+                view_table_info.table_id = table_id;
+                view_table_info.table_name = view_info.name;
+                view_table_info.schema_id = view_info.schema_id;
+
+                for (const auto& trigger : instead_triggers)
+                {
+                    if (!trigger.enabled) continue;
+                    if (trigger.granularity == core::CatalogManager::TriggerGranularity::FOR_EACH_STATEMENT)
+                    {
+                        StatementTriggerContext ctx(trigger, view_table_info, all_columns,
+                                                    nullptr, &new_rows);
+                        if (!fireStatementTrigger(ctx))
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+
+                    for (const auto& row_values : new_rows)
+                    {
+                        TriggerContext ctx(trigger, nullptr, &row_values, view_table_info, all_columns);
+                        if (!fireTrigger(ctx))
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                return;
             }
 
             std::vector<std::string> accessible_update_columns;
@@ -15362,6 +16010,10 @@ namespace scratchbird
             core::CatalogManager::ObjectType resolved_type;
             core::CatalogManager::ResolvedObject resolved_table;
             core::CatalogManager::TableInfo table_info;
+            core::CatalogManager::ViewInfo view_info;
+            bool is_view = false;
+            std::vector<std::vector<Value>> view_rows;
+            bool view_rows_loaded = false;
             if (has_uuid)
             {
                 if (db_->catalog_manager()->getTable(table_id, table_info, &err_ctx) != core::Status::OK)
@@ -15380,32 +16032,51 @@ namespace scratchbird
                     table_id, resolved_type, &resolved_table, &err_ctx);
                 if (status != core::Status::OK)
                 {
-                    std::string err_msg = "Failed to resolve table '" + table_name + "'";
-                    if (!err_ctx.message.empty())
+                    core::ID view_id;
+                    core::CatalogManager::ResolvedObject resolved_view;
+                    auto view_status = resolveObjectIdForQualifiedName(
+                        table_name, core::CatalogManager::ObjectType::VIEW,
+                        view_id, resolved_type, &resolved_view, &err_ctx);
+                    if (view_status == core::Status::OK &&
+                        db_->catalog_manager()->getViewById(view_id, view_info, &err_ctx) == core::Status::OK)
                     {
-                        err_msg += ": " + err_ctx.message;
+                        is_view = true;
+                        table_id = view_id;
                     }
-                    error(err_msg);
+                    else
+                    {
+                        std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                        if (!err_ctx.message.empty())
+                        {
+                            err_msg += ": " + err_ctx.message;
+                        }
+                        error(err_msg);
+                    }
                 }
-
-                status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
-                if (status != core::Status::OK)
+                else
                 {
-                    error("Table not found: " + table_name);
+                    status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        error("Table not found: " + table_name);
+                    }
                 }
             }
-            table_id = table_info.table_id;
+            if (!is_view)
+            {
+                table_id = table_info.table_id;
+            }
 
             // Check UPDATE permission on table (VERIFIED mode - security-critical)
             // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for UPDATE (data modification operation)
-            bool has_table_update = checkPermission(table_info.table_id,
+            bool has_table_update = is_view ? true : checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
                                static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE),
                                core::PermissionCheckMode::VERIFIED);
 
             // Security Phase 3.3.5: Get accessible columns for UPDATE if no table-level permission
             std::vector<std::string> accessible_update_columns;
-            if (!has_table_update)
+            if (!has_table_update && !is_view)
             {
                 // Check column-level UPDATE permissions
                 const auto& user_id = getCurrentUserID();
@@ -15424,10 +16095,117 @@ namespace scratchbird
 
             // Get column information
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
-            status = db_->catalog_manager()->getColumns(table_id, all_columns, nullptr);
-            if (status != core::Status::OK)
+            auto materialize_view_rows = [&]() {
+                if (view_rows_loaded)
+                {
+                    return;
+                }
+                if (view_info.definition.empty())
+                {
+                    error("View definition missing for DML: " + table_name);
+                }
+
+#if SCRATCHBIRD_WITH_COMPILER
+                QueryCompilerV2 view_compiler(db_);
+                core::ID zero_id{};
+                if (std::memcmp(&view_info.schema_id, &zero_id, sizeof(core::ID)) != 0)
+                {
+                    view_compiler.setCurrentSchema(view_info.schema_id);
+                }
+                auto compile_result = view_compiler.compile(view_info.definition);
+                if (!compile_result.success())
+                {
+                    std::string err_msg = "Failed to compile view definition for '" + table_name + "'";
+                    if (!compile_result.errors().empty())
+                    {
+                        err_msg += ": " + compile_result.errors()[0];
+                    }
+                    error(err_msg);
+                }
+
+                Executor view_executor(db_);
+                view_executor.setConnectionContext(conn_ctx_);
+                auto exec_result = view_executor.execute(compile_result.bytecode());
+                if (!exec_result.success())
+                {
+                    error("Failed to execute view definition: " + exec_result.error());
+                }
+                if (!exec_result.hasResultSet() || exec_result.resultSet() == nullptr)
+                {
+                    error("View definition must return a result set");
+                }
+
+                ResultSet* rs = exec_result.resultSet();
+                size_t col_count = rs->columnCount();
+                if (all_columns.empty())
+                {
+                    std::vector<std::string> names = view_info.column_names;
+                    if (!names.empty() && names.size() != col_count)
+                    {
+                        error("View column list does not match definition output");
+                    }
+                    all_columns.reserve(col_count);
+                    for (size_t i = 0; i < col_count; ++i)
+                    {
+                        core::CatalogManager::ColumnInfo col_info;
+                        col_info.column_name = names.empty() ? rs->columnName(i) : names[i];
+                        col_info.data_type = static_cast<uint16_t>(rs->columnType(i));
+                        col_info.nullable = true;
+                        col_info.ordinal = static_cast<uint16_t>(i + 1);
+                        all_columns.push_back(std::move(col_info));
+                    }
+                }
+                else if (all_columns.size() == col_count)
+                {
+                    for (size_t i = 0; i < col_count; ++i)
+                    {
+                        all_columns[i].data_type = static_cast<uint16_t>(rs->columnType(i));
+                    }
+                }
+
+                view_rows.reserve(rs->rowCount());
+                for (size_t row_idx = 0; row_idx < rs->rowCount(); ++row_idx)
+                {
+                    std::vector<Value> row;
+                    row.reserve(col_count);
+                    for (size_t col_idx = 0; col_idx < col_count; ++col_idx)
+                    {
+                        row.push_back(rs->getValue(row_idx, col_idx));
+                    }
+                    view_rows.push_back(std::move(row));
+                }
+#else
+                error("View DML requires compiler support");
+#endif
+                view_rows_loaded = true;
+            };
+
+            if (is_view)
             {
-                error("Failed to get table columns");
+                if (view_info.column_names.empty())
+                {
+                    materialize_view_rows();
+                }
+                else
+                {
+                    for (const auto& name : view_info.column_names)
+                    {
+                        core::CatalogManager::ColumnInfo col_info;
+                        col_info.column_name = name;
+                        col_info.data_type = static_cast<uint16_t>(core::DataType::UNKNOWN);
+                        col_info.nullable = true;
+                        col_info.ordinal = static_cast<uint16_t>(all_columns.size() + 1);
+                        all_columns.push_back(std::move(col_info));
+                    }
+                }
+            }
+            else
+            {
+                status = db_->catalog_manager()->getColumns(table_id, all_columns, nullptr);
+                if (status != core::Status::OK)
+                {
+                    error("Failed to get table columns");
+                }
             }
 
             // Read assignments list
@@ -15783,6 +16561,108 @@ namespace scratchbird
                 {
                     pc_ = saved_pc;
                 }
+            }
+
+            if (is_view)
+            {
+                materialize_view_rows();
+                if (has_returning)
+                {
+                    error("RETURNING is not supported for view updates");
+                }
+
+                std::vector<core::CatalogManager::TriggerInfo> instead_triggers;
+                auto trigger_status = db_->catalog_manager()->listTriggersForTable(
+                    table_id,
+                    core::CatalogManager::TriggerEvent::UPDATE,
+                    core::CatalogManager::TriggerTiming::INSTEAD_OF,
+                    instead_triggers,
+                    &err_ctx);
+
+                if (trigger_status != core::Status::OK || instead_triggers.empty())
+                {
+                    error("UPDATE on view requires an INSTEAD OF trigger");
+                }
+
+                core::CatalogManager::TableInfo view_table_info;
+                view_table_info.table_id = table_id;
+                view_table_info.table_name = view_info.name;
+                view_table_info.schema_id = view_info.schema_id;
+
+                std::vector<std::vector<Value>> old_rows;
+                std::vector<std::vector<Value>> new_rows;
+                old_rows.reserve(view_rows.size());
+                new_rows.reserve(view_rows.size());
+
+                for (const auto& row : view_rows)
+                {
+                    bool matches = true;
+                    if (has_where)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = where_start_pc;
+                        current_row_values_ = &row;
+                        current_row_columns_ = &all_columns;
+                        Value where_result = evaluateExpressionRange(where_end_pc);
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        matches = where_result.toBoolean();
+                    }
+
+                    if (!matches)
+                    {
+                        continue;
+                    }
+
+                    std::vector<Value> new_row = row;
+                    for (const auto& assign : assignments)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = assign.expr_start_pc;
+                        current_row_values_ = &row;
+                        current_row_columns_ = &all_columns;
+                        Value new_value = evaluateExpressionRange(assign.expr_end_pc);
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        if (assign.column_index < new_row.size())
+                        {
+                            new_row[assign.column_index] = std::move(new_value);
+                        }
+                    }
+
+                    old_rows.push_back(row);
+                    new_rows.push_back(std::move(new_row));
+                }
+
+                for (const auto& trigger : instead_triggers)
+                {
+                    if (!trigger.enabled) continue;
+                    if (trigger.granularity == core::CatalogManager::TriggerGranularity::FOR_EACH_STATEMENT)
+                    {
+                        StatementTriggerContext ctx(trigger, view_table_info, all_columns,
+                                                    old_rows.empty() ? nullptr : &old_rows,
+                                                    new_rows.empty() ? nullptr : &new_rows);
+                        if (!fireStatementTrigger(ctx))
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+
+                    for (size_t row_idx = 0; row_idx < old_rows.size(); ++row_idx)
+                    {
+                        TriggerContext ctx(trigger, &old_rows[row_idx], &new_rows[row_idx],
+                                           view_table_info, all_columns);
+                        if (!fireTrigger(ctx))
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                return;
             }
 
             auto emit_returning_row = [&](const std::vector<Value>& row_values) {
@@ -16951,6 +17831,8 @@ namespace scratchbird
             core::CatalogManager::ObjectType resolved_type;
             core::CatalogManager::ResolvedObject resolved_table;
             core::CatalogManager::TableInfo table_info;
+            core::CatalogManager::ViewInfo view_info;
+            bool is_view = false;
             if (has_uuid)
             {
                 if (db_->catalog_manager()->getTable(table_id, table_info, &err_ctx) != core::Status::OK)
@@ -16969,25 +17851,44 @@ namespace scratchbird
                     table_id, resolved_type, &resolved_table, &err_ctx);
                 if (status != core::Status::OK)
                 {
-                    std::string err_msg = "Failed to resolve table '" + table_name + "'";
-                    if (!err_ctx.message.empty())
+                    core::ID view_id;
+                    core::CatalogManager::ResolvedObject resolved_view;
+                    auto view_status = resolveObjectIdForQualifiedName(
+                        table_name, core::CatalogManager::ObjectType::VIEW,
+                        view_id, resolved_type, &resolved_view, &err_ctx);
+                    if (view_status == core::Status::OK &&
+                        db_->catalog_manager()->getViewById(view_id, view_info, &err_ctx) == core::Status::OK)
                     {
-                        err_msg += ": " + err_ctx.message;
+                        is_view = true;
+                        table_id = view_id;
                     }
-                    error(err_msg);
+                    else
+                    {
+                        std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                        if (!err_ctx.message.empty())
+                        {
+                            err_msg += ": " + err_ctx.message;
+                        }
+                        error(err_msg);
+                    }
                 }
-
-                status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
-                if (status != core::Status::OK)
+                else
                 {
-                    error("Table not found: " + table_name);
+                    status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        error("Table not found: " + table_name);
+                    }
                 }
             }
-            table_id = table_info.table_id;
+            if (!is_view)
+            {
+                table_id = table_info.table_id;
+            }
 
             // Check DELETE permission on table (VERIFIED mode - security-critical)
             // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for DELETE (data loss operation)
-            if (!checkPermission(table_info.table_id,
+            if (!is_view && !checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
                                static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE),
                                core::PermissionCheckMode::VERIFIED))
@@ -16997,10 +17898,119 @@ namespace scratchbird
 
             // Get column information for WHERE clause evaluation
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
-            status = db_->catalog_manager()->getColumns(table_id, all_columns, nullptr);
-            if (status != core::Status::OK)
+            std::vector<std::vector<Value>> view_rows;
+            bool view_rows_loaded = false;
+            auto materialize_view_rows = [&]() {
+                if (view_rows_loaded)
+                {
+                    return;
+                }
+                if (view_info.definition.empty())
+                {
+                    error("View definition missing for DML: " + table_name);
+                }
+
+#if SCRATCHBIRD_WITH_COMPILER
+                QueryCompilerV2 view_compiler(db_);
+                core::ID zero_id{};
+                if (std::memcmp(&view_info.schema_id, &zero_id, sizeof(core::ID)) != 0)
+                {
+                    view_compiler.setCurrentSchema(view_info.schema_id);
+                }
+                auto compile_result = view_compiler.compile(view_info.definition);
+                if (!compile_result.success())
+                {
+                    std::string err_msg = "Failed to compile view definition for '" + table_name + "'";
+                    if (!compile_result.errors().empty())
+                    {
+                        err_msg += ": " + compile_result.errors()[0];
+                    }
+                    error(err_msg);
+                }
+
+                Executor view_executor(db_);
+                view_executor.setConnectionContext(conn_ctx_);
+                auto exec_result = view_executor.execute(compile_result.bytecode());
+                if (!exec_result.success())
+                {
+                    error("Failed to execute view definition: " + exec_result.error());
+                }
+                if (!exec_result.hasResultSet() || exec_result.resultSet() == nullptr)
+                {
+                    error("View definition must return a result set");
+                }
+
+                ResultSet* rs = exec_result.resultSet();
+                size_t col_count = rs->columnCount();
+                if (all_columns.empty())
+                {
+                    std::vector<std::string> names = view_info.column_names;
+                    if (!names.empty() && names.size() != col_count)
+                    {
+                        error("View column list does not match definition output");
+                    }
+                    all_columns.reserve(col_count);
+                    for (size_t i = 0; i < col_count; ++i)
+                    {
+                        core::CatalogManager::ColumnInfo col_info;
+                        col_info.column_name = names.empty() ? rs->columnName(i) : names[i];
+                        col_info.data_type = static_cast<uint16_t>(rs->columnType(i));
+                        col_info.nullable = true;
+                        col_info.ordinal = static_cast<uint16_t>(i + 1);
+                        all_columns.push_back(std::move(col_info));
+                    }
+                }
+                else if (all_columns.size() == col_count)
+                {
+                    for (size_t i = 0; i < col_count; ++i)
+                    {
+                        all_columns[i].data_type = static_cast<uint16_t>(rs->columnType(i));
+                    }
+                }
+
+                view_rows.reserve(rs->rowCount());
+                for (size_t row_idx = 0; row_idx < rs->rowCount(); ++row_idx)
+                {
+                    std::vector<Value> row;
+                    row.reserve(col_count);
+                    for (size_t col_idx = 0; col_idx < col_count; ++col_idx)
+                    {
+                        row.push_back(rs->getValue(row_idx, col_idx));
+                    }
+                    view_rows.push_back(std::move(row));
+                }
+#else
+                error("View DML requires compiler support");
+#endif
+                view_rows_loaded = true;
+            };
+
+            if (is_view)
             {
-                error("Failed to get table columns");
+                if (view_info.column_names.empty())
+                {
+                    materialize_view_rows();
+                }
+                else
+                {
+                    for (const auto& name : view_info.column_names)
+                    {
+                        core::CatalogManager::ColumnInfo col_info;
+                        col_info.column_name = name;
+                        col_info.data_type = static_cast<uint16_t>(core::DataType::UNKNOWN);
+                        col_info.nullable = true;
+                        col_info.ordinal = static_cast<uint16_t>(all_columns.size() + 1);
+                        all_columns.push_back(std::move(col_info));
+                    }
+                }
+            }
+            else
+            {
+                status = db_->catalog_manager()->getColumns(table_id, all_columns, nullptr);
+                if (status != core::Status::OK)
+                {
+                    error("Failed to get table columns");
+                }
             }
 
             struct TableRefInfo
@@ -17292,6 +18302,83 @@ namespace scratchbird
                 {
                     pc_ = saved_pc;
                 }
+            }
+
+            if (is_view)
+            {
+                materialize_view_rows();
+                if (has_returning)
+                {
+                    error("RETURNING is not supported for view deletes");
+                }
+
+                std::vector<core::CatalogManager::TriggerInfo> instead_triggers;
+                auto trigger_status = db_->catalog_manager()->listTriggersForTable(
+                    table_id,
+                    core::CatalogManager::TriggerEvent::DELETE,
+                    core::CatalogManager::TriggerTiming::INSTEAD_OF,
+                    instead_triggers,
+                    &err_ctx);
+
+                if (trigger_status != core::Status::OK || instead_triggers.empty())
+                {
+                    error("DELETE on view requires an INSTEAD OF trigger");
+                }
+
+                core::CatalogManager::TableInfo view_table_info;
+                view_table_info.table_id = table_id;
+                view_table_info.table_name = view_info.name;
+                view_table_info.schema_id = view_info.schema_id;
+
+                std::vector<std::vector<Value>> old_rows;
+                old_rows.reserve(view_rows.size());
+                for (const auto& row : view_rows)
+                {
+                    bool matches = true;
+                    if (has_where)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = where_start_pc;
+                        current_row_values_ = &row;
+                        current_row_columns_ = &all_columns;
+                        Value where_result = evaluateExpressionRange(where_end_pc);
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        matches = where_result.toBoolean();
+                    }
+                    if (matches)
+                    {
+                        old_rows.push_back(row);
+                    }
+                }
+
+                for (const auto& trigger : instead_triggers)
+                {
+                    if (!trigger.enabled) continue;
+                    if (trigger.granularity == core::CatalogManager::TriggerGranularity::FOR_EACH_STATEMENT)
+                    {
+                        StatementTriggerContext ctx(trigger, view_table_info, all_columns,
+                                                    old_rows.empty() ? nullptr : &old_rows,
+                                                    nullptr);
+                        if (!fireStatementTrigger(ctx))
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+
+                    for (const auto& row : old_rows)
+                    {
+                        TriggerContext ctx(trigger, &row, nullptr, view_table_info, all_columns);
+                        if (!fireTrigger(ctx))
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                return;
             }
 
             auto emit_returning_row = [&](const std::vector<Value>& row_values) {
@@ -20682,7 +21769,7 @@ namespace scratchbird
             }
         }
 
-        void Executor::executeSort(std::unique_ptr<ResultSet> input_result_set)
+        void Executor::executeSort(std::unique_ptr<ResultSet> input_result_set, bool apply_limit)
         {
             // Phase 1 Task 1.6.4: Sorting execution
 
@@ -20921,11 +22008,11 @@ namespace scratchbird
             }
 
             // Check for LIMIT/OFFSET after sorting
-            if (pc_ < bytecode_size_ &&
+            if (apply_limit &&
+                pc_ < bytecode_size_ &&
                 (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
                  bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
             {
-                // Move result set and apply limit/offset
                 executeLimit(std::move(current_result_set_));
             }
         }
@@ -21061,6 +22148,21 @@ namespace scratchbird
                     case Opcode::WIN_NTH_VALUE:
                         spec.func_type = WindowFunctionSpec::FuncType::NTH_VALUE;
                         break;
+                    case Opcode::AGG_COUNT:
+                        spec.func_type = WindowFunctionSpec::FuncType::AGG_COUNT;
+                        break;
+                    case Opcode::AGG_SUM:
+                        spec.func_type = WindowFunctionSpec::FuncType::AGG_SUM;
+                        break;
+                    case Opcode::AGG_AVG:
+                        spec.func_type = WindowFunctionSpec::FuncType::AGG_AVG;
+                        break;
+                    case Opcode::AGG_MIN:
+                        spec.func_type = WindowFunctionSpec::FuncType::AGG_MIN;
+                        break;
+                    case Opcode::AGG_MAX:
+                        spec.func_type = WindowFunctionSpec::FuncType::AGG_MAX;
+                        break;
                     case Opcode::EXTENDED_OPCODE:
                     {
                         uint16_t ext_op = readExtendedOpcode();
@@ -21085,21 +22187,52 @@ namespace scratchbird
                 // WP-5 EXEC-12: Read and evaluate function arguments
                 // Arguments are inline bytecode expressions that need to be evaluated
                 uint32_t arg_count = readInt32();
-                for (uint32_t a = 0; a < arg_count; a++)
-                {
-                    // Evaluate the argument expression - it's inline in the bytecode stream
-                    evaluateExpression();
+                bool is_aggregate =
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_COUNT ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_SUM ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_AVG ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_MIN ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_MAX;
 
-                    // Get result from stack and store in spec.args
-                    if (!stack_.empty())
+                if (is_aggregate)
+                {
+                    if (arg_count == 0 && spec.func_type != WindowFunctionSpec::FuncType::AGG_COUNT)
                     {
-                        spec.args.push_back(stack_.top());
-                        stack_.pop();
+                        error("Aggregate window function requires one argument");
+                    }
+                    if (arg_count > 1)
+                    {
+                        error("Aggregate window functions accept a single argument");
+                    }
+                    if (arg_count == 0)
+                    {
+                        spec.aggregate_count_star = true;
                     }
                     else
                     {
-                        // Expression produced no result - use NULL
-                        spec.args.push_back(Value::makeNull());
+                        size_t arg_start = pc_;
+                        size_t arg_end = skipExpressionRange(pc_);
+                        spec.aggregate_expr.assign(bytecode_ + arg_start, bytecode_ + arg_end);
+                    }
+                }
+                else
+                {
+                    for (uint32_t a = 0; a < arg_count; a++)
+                    {
+                        // Evaluate the argument expression - it's inline in the bytecode stream
+                        evaluateExpression();
+
+                        // Get result from stack and store in spec.args
+                        if (!stack_.empty())
+                        {
+                            spec.args.push_back(stack_.top());
+                            stack_.pop();
+                        }
+                        else
+                        {
+                            // Expression produced no result - use NULL
+                            spec.args.push_back(Value::makeNull());
+                        }
                     }
                 }
 
@@ -21301,16 +22434,197 @@ namespace scratchbird
             // Add window function output columns
             for (const auto& spec : window_specs)
             {
-                current_result_set_->addColumn(spec.output_column, core::DataType::INT64);
+                core::DataType out_type = core::DataType::INT64;
+                switch (spec.func_type)
+                {
+                    case WindowFunctionSpec::FuncType::AGG_SUM:
+                    case WindowFunctionSpec::FuncType::AGG_AVG:
+                        out_type = core::DataType::FLOAT64;
+                        break;
+                    case WindowFunctionSpec::FuncType::AGG_MIN:
+                    case WindowFunctionSpec::FuncType::AGG_MAX:
+                        out_type = core::DataType::UNKNOWN;
+                        break;
+                    default:
+                        break;
+                }
+                current_result_set_->addColumn(spec.output_column, out_type);
             }
 
-            // For each row in input, compute window functions
-            // This is a simplified implementation - full implementation would:
-            // 1. Partition rows by PARTITION BY columns
-            // 2. Sort partitions by ORDER BY columns
-            // 3. Compute window functions with frame windows
+            const size_t row_count = input_result_set->rowCount();
 
-            for (size_t row_idx = 0; row_idx < input_result_set->rowCount(); row_idx++)
+            std::vector<core::CatalogManager::ColumnInfo> row_columns;
+            row_columns.reserve(input_result_set->columnCount());
+            for (size_t i = 0; i < input_result_set->columnCount(); ++i)
+            {
+                core::CatalogManager::ColumnInfo col;
+                col.column_name = input_result_set->columnName(i);
+                col.data_type = static_cast<uint32_t>(input_result_set->columnType(i));
+                row_columns.push_back(std::move(col));
+            }
+
+            auto evaluate_expr_bytes = [&](const std::vector<uint8_t>& expr_bytes,
+                                           const std::vector<Value>& row_vals) -> Value {
+                if (expr_bytes.empty())
+                {
+                    return Value::makeNull();
+                }
+                const uint8_t* saved_bytecode = bytecode_;
+                const std::vector<uint8_t>* saved_vec = current_bytecode_vec_;
+                size_t saved_size = bytecode_size_;
+                size_t saved_pc = pc_;
+                const std::vector<Value>* saved_values = current_row_values_;
+                const std::vector<core::CatalogManager::ColumnInfo>* saved_columns = current_row_columns_;
+                bool saved_case = current_row_case_insensitive_;
+
+                current_row_values_ = &row_vals;
+                current_row_columns_ = &row_columns;
+                current_row_case_insensitive_ = true;
+                bytecode_ = expr_bytes.data();
+                current_bytecode_vec_ = nullptr;
+                bytecode_size_ = expr_bytes.size();
+                pc_ = 0;
+                Value result = evaluateExpressionRange(expr_bytes.size());
+
+                current_row_values_ = saved_values;
+                current_row_columns_ = saved_columns;
+                current_row_case_insensitive_ = saved_case;
+                bytecode_ = saved_bytecode;
+                current_bytecode_vec_ = saved_vec;
+                bytecode_size_ = saved_size;
+                pc_ = saved_pc;
+                return result;
+            };
+
+            std::vector<std::vector<Value>> aggregate_values;
+            aggregate_values.resize(window_specs.size(),
+                                    std::vector<Value>(row_count, Value::makeNull()));
+
+            for (size_t spec_idx = 0; spec_idx < window_specs.size(); ++spec_idx)
+            {
+                const auto& spec = window_specs[spec_idx];
+                bool is_aggregate =
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_COUNT ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_SUM ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_AVG ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_MIN ||
+                    spec.func_type == WindowFunctionSpec::FuncType::AGG_MAX;
+                if (!is_aggregate)
+                {
+                    continue;
+                }
+
+                std::unordered_map<std::string, std::vector<size_t>> partitions;
+                partitions.reserve(row_count);
+                for (size_t row_idx = 0; row_idx < row_count; ++row_idx)
+                {
+                    std::string key;
+                    if (!spec.partition_cols.empty())
+                    {
+                        for (size_t col_idx : spec.partition_cols)
+                        {
+                            if (col_idx >= input_result_set->columnCount())
+                            {
+                                continue;
+                            }
+                            const Value& val = input_result_set->getValue(row_idx, col_idx);
+                            key.append(std::to_string(static_cast<uint16_t>(val.type())));
+                            key.push_back(':');
+                            key.append(val.isNull() ? "<NULL>" : val.toString());
+                            key.push_back('|');
+                        }
+                    }
+                    partitions[key].push_back(row_idx);
+                }
+
+                for (const auto& entry : partitions)
+                {
+                    const auto& rows = entry.second;
+                    int64_t count = 0;
+                    double sum = 0.0;
+                    Value min_val = Value::makeNull();
+                    Value max_val = Value::makeNull();
+                    bool has_min = false;
+                    bool has_max = false;
+
+                    for (size_t row_idx : rows)
+                    {
+                        std::vector<Value> row_vals;
+                        row_vals.reserve(input_result_set->columnCount());
+                        for (size_t col = 0; col < input_result_set->columnCount(); ++col)
+                        {
+                            row_vals.push_back(input_result_set->getValue(row_idx, col));
+                        }
+
+                        if (spec.func_type == WindowFunctionSpec::FuncType::AGG_COUNT &&
+                            spec.aggregate_count_star)
+                        {
+                            count++;
+                            continue;
+                        }
+
+                        Value arg_val = evaluate_expr_bytes(spec.aggregate_expr, row_vals);
+                        if (arg_val.isNull())
+                        {
+                            continue;
+                        }
+
+                        count++;
+                        if (spec.func_type == WindowFunctionSpec::FuncType::AGG_SUM ||
+                            spec.func_type == WindowFunctionSpec::FuncType::AGG_AVG)
+                        {
+                            sum += arg_val.toDouble();
+                        }
+                        if (spec.func_type == WindowFunctionSpec::FuncType::AGG_MIN)
+                        {
+                            if (!has_min || arg_val.toDouble() < min_val.toDouble())
+                            {
+                                min_val = arg_val;
+                                has_min = true;
+                            }
+                        }
+                        if (spec.func_type == WindowFunctionSpec::FuncType::AGG_MAX)
+                        {
+                            if (!has_max || arg_val.toDouble() > max_val.toDouble())
+                            {
+                                max_val = arg_val;
+                                has_max = true;
+                            }
+                        }
+                    }
+
+                    Value aggregate_result = Value::makeNull();
+                    switch (spec.func_type)
+                    {
+                        case WindowFunctionSpec::FuncType::AGG_COUNT:
+                            aggregate_result = core::TypedValue::makeInt64(count);
+                            break;
+                        case WindowFunctionSpec::FuncType::AGG_SUM:
+                            aggregate_result = core::TypedValue::makeFloat64(sum);
+                            break;
+                        case WindowFunctionSpec::FuncType::AGG_AVG:
+                            aggregate_result = (count > 0)
+                                ? core::TypedValue::makeFloat64(sum / static_cast<double>(count))
+                                : Value::makeNull();
+                            break;
+                        case WindowFunctionSpec::FuncType::AGG_MIN:
+                            aggregate_result = has_min ? min_val : Value::makeNull();
+                            break;
+                        case WindowFunctionSpec::FuncType::AGG_MAX:
+                            aggregate_result = has_max ? max_val : Value::makeNull();
+                            break;
+                        default:
+                            break;
+                    }
+
+                    for (size_t row_idx : rows)
+                    {
+                        aggregate_values[spec_idx][row_idx] = aggregate_result;
+                    }
+                }
+            }
+
+            for (size_t row_idx = 0; row_idx < row_count; row_idx++)
             {
                 std::vector<Value> output_row;
 
@@ -21368,6 +22682,23 @@ namespace scratchbird
                         // Simplified: without proper ORDER BY support, same as RANK
                         // In full implementation, would count distinct ORDER BY value groups
                         result = core::TypedValue::makeInt64(static_cast<int64_t>(row_idx + 1));
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::AGG_COUNT ||
+                             spec.func_type == WindowFunctionSpec::FuncType::AGG_SUM ||
+                             spec.func_type == WindowFunctionSpec::FuncType::AGG_AVG ||
+                             spec.func_type == WindowFunctionSpec::FuncType::AGG_MIN ||
+                             spec.func_type == WindowFunctionSpec::FuncType::AGG_MAX)
+                    {
+                        size_t spec_idx = static_cast<size_t>(&spec - &window_specs[0]);
+                        if (spec_idx < aggregate_values.size() &&
+                            row_idx < aggregate_values[spec_idx].size())
+                        {
+                            result = aggregate_values[spec_idx][row_idx];
+                        }
+                        else
+                        {
+                            result = Value::makeNull();
+                        }
                     }
                     else if (spec.func_type == WindowFunctionSpec::FuncType::LAG)
                     {
@@ -22127,6 +23458,13 @@ namespace scratchbird
 
             uint8_t flags = readByte();
             bool is_distinct = (flags & 0x01) != 0;
+            bool has_distinct_on = false;
+            struct DistinctOnExpr
+            {
+                size_t start = 0;
+                size_t end = 0;
+            };
+            std::vector<DistinctOnExpr> distinct_on_exprs;
 
             struct TableRefInfo
             {
@@ -22275,6 +23613,44 @@ namespace scratchbird
                     join.condition_end = skipExpressionRange(pc_);
                 }
                 joins.push_back(std::move(join));
+            }
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            {
+                size_t saved_pc = pc_;
+                readByte();
+                uint16_t ext = readExtendedOpcode();
+                if (ext == static_cast<uint16_t>(ExtendedOpcode::EXT_DISTINCT_ON))
+                {
+                    has_distinct_on = true;
+                    if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+                    {
+                        error("Expected BEGIN_LIST for DISTINCT ON");
+                    }
+                    uint64_t expr_count = readUVarint();
+                    distinct_on_exprs.reserve(static_cast<size_t>(expr_count));
+                    for (uint64_t i = 0; i < expr_count; ++i)
+                    {
+                        uint32_t expr_len = readInt32();
+                        size_t expr_start = pc_;
+                        size_t expr_end = pc_ + expr_len;
+                        if (expr_end > bytecode_size_)
+                        {
+                            error("DISTINCT ON expression exceeds bytecode size");
+                        }
+                        pc_ = expr_end;
+                        distinct_on_exprs.push_back({expr_start, expr_end});
+                    }
+                    if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+                    {
+                        error("Expected END_LIST after DISTINCT ON");
+                    }
+                }
+                else
+                {
+                    pc_ = saved_pc;
+                }
             }
 
             auto normalize_cte_name = [](const std::string& name) {
@@ -23448,7 +24824,7 @@ namespace scratchbird
                 }
             }
 
-            if (is_distinct && current_result_set_)
+            if (is_distinct && current_result_set_ && !has_distinct_on)
             {
                 std::unordered_set<std::string> seen;
                 auto original = std::move(current_result_set_);
@@ -23482,6 +24858,74 @@ namespace scratchbird
             if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::WINDOW))
             {
                 executeWindow(std::move(current_result_set_));
+            }
+
+            auto apply_distinct_on = [&]() {
+                if (!has_distinct_on || !current_result_set_)
+                {
+                    return;
+                }
+                std::unordered_set<std::string> seen;
+                auto original = std::move(current_result_set_);
+                current_result_set_ = std::make_unique<ResultSet>();
+
+                std::vector<core::CatalogManager::ColumnInfo> result_columns;
+                result_columns.reserve(original->columnCount());
+                for (size_t i = 0; i < original->columnCount(); ++i)
+                {
+                    current_result_set_->addColumn(original->columnName(i), original->columnType(i));
+                    core::CatalogManager::ColumnInfo col_info;
+                    col_info.column_name = original->columnName(i);
+                    col_info.data_type = static_cast<uint16_t>(original->columnType(i));
+                    result_columns.push_back(std::move(col_info));
+                }
+
+                for (size_t r = 0; r < original->rowCount(); ++r)
+                {
+                    std::vector<Value> row;
+                    row.reserve(original->columnCount());
+                    for (size_t c = 0; c < original->columnCount(); ++c)
+                    {
+                        row.push_back(original->getValue(r, c));
+                    }
+
+                    std::string key;
+                    size_t saved_pc = pc_;
+                    current_row_values_ = &row;
+                    current_row_columns_ = &result_columns;
+                    for (const auto& expr : distinct_on_exprs)
+                    {
+                        pc_ = expr.start;
+                        Value val = evaluateExpressionRange(expr.end);
+                        key.append(std::to_string(static_cast<uint16_t>(val.type())));
+                        key.push_back(':');
+                        key.append(val.isNull() ? "<NULL>" : val.toString());
+                        key.push_back('|');
+                    }
+                    current_row_values_ = nullptr;
+                    current_row_columns_ = nullptr;
+                    pc_ = saved_pc;
+
+                    if (seen.insert(key).second)
+                    {
+                        current_result_set_->addRow(std::move(row));
+                    }
+                }
+            };
+
+            if (has_distinct_on)
+            {
+                if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+                {
+                    executeSort(std::move(current_result_set_), false);
+                }
+                apply_distinct_on();
+                if (pc_ < bytecode_size_ &&
+                    (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                     bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+                {
+                    executeLimit(std::move(current_result_set_));
+                }
                 return;
             }
 
@@ -24722,32 +26166,59 @@ namespace scratchbird
             core::ErrorContext err_ctx;
             core::ID table_id;
             core::CatalogManager::ObjectType resolved_type;
-            auto status = resolveObjectIdForQualifiedName(
-                table_name, core::CatalogManager::ObjectType::TABLE,
-                table_id, resolved_type, nullptr, &err_ctx);
-            if (status != core::Status::OK)
-            {
-                std::string err_msg = "Failed to resolve table '" + table_name + "'";
-                if (!err_ctx.message.empty())
-                {
-                    err_msg += ": " + err_ctx.message;
-                }
-                error(err_msg);
-            }
-
-            // Get table from catalog
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
-            if (status != core::Status::OK)
+            core::CatalogManager::ViewInfo view_info;
+            bool is_view = false;
+            core::Status status = core::Status::OK;
+
+            if (timing == core::CatalogManager::TriggerTiming::INSTEAD_OF)
             {
-                error("Table not found: " + table_name);
+                status = resolveObjectIdForQualifiedName(
+                    table_name, core::CatalogManager::ObjectType::VIEW,
+                    table_id, resolved_type, nullptr, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to resolve view '" + table_name + "'";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
+                }
+
+                if (db_->catalog_manager()->getViewById(table_id, view_info, &err_ctx) != core::Status::OK)
+                {
+                    error("View not found: " + table_name);
+                }
+                is_view = true;
+            }
+            else
+            {
+                status = resolveObjectIdForQualifiedName(
+                    table_name, core::CatalogManager::ObjectType::TABLE,
+                    table_id, resolved_type, nullptr, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
+                }
+
+                status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Table not found: " + table_name);
+                }
             }
 
             // Create TriggerInfo
             core::CatalogManager::TriggerInfo trigger_info;
             trigger_info.trigger_name = trigger_name;
-            trigger_info.table_id = table_info.table_id;
-            trigger_info.table_name = table_info.table_name;
+            trigger_info.table_id = table_id;
+            trigger_info.table_name = is_view ? view_info.name : table_info.table_name;
             trigger_info.timing = timing;
             trigger_info.event_mask = event_mask;
             trigger_info.granularity = granularity;
@@ -24913,8 +26384,9 @@ namespace scratchbird
                 std::cerr << "Trigger '" << trigger.trigger_name
                           << "' failed: " << e.what() << "\n";
 
-                // BEFORE triggers: failure prevents operation
-                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE)
+                // BEFORE/INSTEAD OF triggers: failure prevents operation
+                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE ||
+                    trigger.timing == core::CatalogManager::TriggerTiming::INSTEAD_OF)
                 {
                     return false;
                 }
@@ -24965,8 +26437,9 @@ namespace scratchbird
                 std::cerr << "Statement trigger '" << trigger.trigger_name
                           << "' failed: " << e.what() << "\n";
 
-                // BEFORE triggers: failure prevents operation
-                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE)
+                // BEFORE/INSTEAD OF triggers: failure prevents operation
+                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE ||
+                    trigger.timing == core::CatalogManager::TriggerTiming::INSTEAD_OF)
                 {
                     return false;
                 }
@@ -31387,6 +32860,90 @@ namespace scratchbird
                         }
                         push(Value::makeTime(utc_time_micros, offset_seconds));
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_USER))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 0)
+                        {
+                            error("CURRENT_USER expects 0 arguments");
+                        }
+
+                        std::string user_name;
+                        if (conn_ctx_)
+                        {
+                            core::CatalogManager::UserInfo user_info;
+                            core::ErrorContext user_ctx;
+                            if (!isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                                db_->catalog_manager()->getUser(conn_ctx_->getCurrentUserId(),
+                                                                user_info, &user_ctx) == core::Status::OK)
+                            {
+                                user_name = user_info.username;
+                            }
+                        }
+                        push(user_name.empty() ? Value::makeNull()
+                                               : Value::makeVarchar(user_name));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_ROLE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 0)
+                        {
+                            error("CURRENT_ROLE expects 0 arguments");
+                        }
+
+                        std::string role_name;
+                        if (conn_ctx_)
+                        {
+                            core::CatalogManager::RoleInfo role_info;
+                            core::ErrorContext role_ctx;
+                            if (!isZeroUuid(conn_ctx_->getActiveRoleId()) &&
+                                db_->catalog_manager()->getRole(conn_ctx_->getActiveRoleId(),
+                                                               role_info, &role_ctx) == core::Status::OK)
+                            {
+                                role_name = role_info.role_name;
+                            }
+                        }
+                        push(role_name.empty() ? Value::makeNull()
+                                               : Value::makeVarchar(role_name));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_CONNECTION))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 0)
+                        {
+                            error("CURRENT_CONNECTION expects 0 arguments");
+                        }
+
+                        std::string conn_id;
+                        if (conn_ctx_)
+                        {
+                            core::ID session_id = conn_ctx_->effectiveSessionId();
+                            if (!isZeroUuid(session_id))
+                            {
+                                conn_id = session_id.toString();
+                            }
+                        }
+                        push(conn_id.empty() ? Value::makeNull()
+                                             : Value::makeVarchar(conn_id));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_TRANSACTION))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 0)
+                        {
+                            error("CURRENT_TRANSACTION expects 0 arguments");
+                        }
+
+                        int64_t xid = conn_ctx_ ? static_cast<int64_t>(conn_ctx_->getCurrentXid()) : 0;
+                        if (xid == 0)
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            push(Value::makeInt64(xid));
+                        }
+                    }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_CHAR))
                     {
                         uint8_t arg_count = readByte();
@@ -33898,6 +35455,10 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COSH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_TIME),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_USER),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_ROLE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_CONNECTION),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CURRENT_TRANSACTION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ENDS_WITH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_REPLACE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TO_CHAR),
@@ -37776,7 +39337,30 @@ namespace scratchbird
                 case FlushAction::HOSTS: action_name = "FLUSH HOSTS"; break;
             }
 
-            if (flags & 0x01)
+            if (action == FlushAction::TABLES)
+            {
+                QueryResultCacheManager::getInstance().invalidateAll();
+                if (flags & 0x01)
+                {
+                    LOG_WARNING(EXECUTOR, "%s WITH READ LOCK ignored in MySQL emulation", action_name);
+                }
+            }
+            else if (action == FlushAction::PRIVILEGES)
+            {
+                if (db_ && db_->permission_cache())
+                {
+                    db_->permission_cache()->invalidateAll();
+                }
+            }
+            else if (action == FlushAction::STATUS)
+            {
+                QueryResultCacheManager::getInstance().resetStatistics();
+                if (db_ && db_->permission_cache())
+                {
+                    db_->permission_cache()->resetStatistics();
+                }
+            }
+            else if (flags & 0x01)
             {
                 LOG_WARNING(EXECUTOR, "%s WITH READ LOCK ignored in MySQL emulation", action_name);
             }
@@ -37789,18 +39373,114 @@ namespace scratchbird
         void Executor::executeMySqlLockTables()
         {
             uint32_t table_count = readInt32();
+            std::vector<std::pair<std::string, uint8_t>> tables;
+            tables.reserve(table_count);
             for (uint32_t i = 0; i < table_count; ++i)
             {
-                readString();
-                readByte();
+                tables.emplace_back(readString(), readByte());
             }
 
-            LOG_WARNING(EXECUTOR, "LOCK TABLES ignored in MySQL emulation");
+            if (!db_ || !db_->lock_manager())
+            {
+                error("LOCK TABLES requires lock manager");
+            }
+            if (!conn_ctx_)
+            {
+                error("LOCK TABLES requires connection context");
+            }
+
+            auto release_mysql_locks = [&]() {
+                if (!db_ || !db_->lock_manager() || !conn_ctx_)
+                {
+                    mysql_table_locks_.clear();
+                    return;
+                }
+                for (const auto& entry : mysql_table_locks_)
+                {
+                    db_->lock_manager()->releaseLock(conn_ctx_->getProcId(),
+                                                     entry.tag,
+                                                     entry.mode,
+                                                     nullptr);
+                }
+                mysql_table_locks_.clear();
+            };
+
+            // LOCK TABLES replaces any existing explicit locks.
+            release_mysql_locks();
+
+            core::ErrorContext ctx;
+            for (const auto& table : tables)
+            {
+                const std::string& table_name = table.first;
+                uint8_t lock_type = table.second;
+
+                core::ID table_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto status = resolveObjectIdForQualifiedName(
+                    table_name, core::CatalogManager::ObjectType::TABLE,
+                    table_id, resolved_type, nullptr, &ctx, false);
+                if (status != core::Status::OK)
+                {
+                    release_mysql_locks();
+                    std::string msg = "Table not found: " + table_name;
+                    if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                    error(msg);
+                }
+
+                core::LockMode mode = core::LockMode::LOCK_SHARE;
+                if (lock_type != 0)
+                {
+                    mode = core::LockMode::LOCK_EXCLUSIVE;
+                }
+
+                core::LockTag tag{};
+                tag.target_type = core::LockTarget::LOCK_TARGET_TABLE;
+                tag.object_uuid = table_id;
+                tag.page_num = 0;
+                tag.offset_num = 0;
+                tag.padding = 0;
+
+                status = db_->lock_manager()->acquireLock(conn_ctx_->getProcId(),
+                                                          tag,
+                                                          mode,
+                                                          true,
+                                                          0,
+                                                          &ctx);
+                if (status != core::Status::OK)
+                {
+                    release_mysql_locks();
+                    std::string msg = "LOCK TABLES failed for " + table_name;
+                    if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                    error(msg);
+                }
+
+                mysql_table_locks_.push_back({tag, mode});
+            }
         }
 
         void Executor::executeMySqlUnlockTables()
         {
-            LOG_WARNING(EXECUTOR, "UNLOCK TABLES ignored in MySQL emulation");
+            if (!db_ || !db_->lock_manager() || !conn_ctx_)
+            {
+                mysql_table_locks_.clear();
+                return;
+            }
+
+            core::ErrorContext ctx;
+            for (const auto& entry : mysql_table_locks_)
+            {
+                auto status = db_->lock_manager()->releaseLock(conn_ctx_->getProcId(),
+                                                               entry.tag,
+                                                               entry.mode,
+                                                               &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string msg = "UNLOCK TABLES failed";
+                    if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                    error(msg);
+                }
+            }
+            mysql_table_locks_.clear();
         }
 
         // PSQL Variable Operations
@@ -38563,6 +40243,55 @@ namespace scratchbird
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::ROLE, role_uuid);
+        }
+
+        void Executor::executeAlterRole()
+        {
+            std::string rolename = readString();
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            std::string new_name = readString();
+
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can alter roles");
+                return;
+            }
+
+            if (new_name.empty())
+            {
+                error("ALTER ROLE requires RENAME TO <new_name>");
+                return;
+            }
+
+            core::CatalogManager::RoleInfo role_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getRoleByName(
+                rolename, role_info, &err_ctx);
+            if (get_status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                error("Role '" + rolename + "' not found");
+            }
+
+            auto status = db_->catalog_manager()->updateRole(
+                role_info.role_id,
+                std::optional<std::string>(new_name),
+                std::nullopt,
+                std::nullopt,
+                std::nullopt,
+                std::nullopt,
+                &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("ALTER ROLE failed: " + std::string("Operation failed"));
+            }
+
+            db_->permission_cache()->invalidateAll();
         }
 
         void Executor::executeDropRole()
@@ -42289,6 +44018,7 @@ namespace scratchbird
             {
                 case core::CatalogManager::TriggerTiming::BEFORE: return "BEFORE";
                 case core::CatalogManager::TriggerTiming::AFTER: return "AFTER";
+                case core::CatalogManager::TriggerTiming::INSTEAD_OF: return "INSTEAD OF";
                 default: return "UNKNOWN";
             }
         }
@@ -44122,6 +45852,96 @@ namespace scratchbird
                 return grantor_id.toString();
             };
 
+            auto normalize_principal = [&](const std::string& name) -> std::string {
+                std::string cleaned = name;
+                auto at_pos = cleaned.find('@');
+                if (at_pos != std::string::npos)
+                {
+                    cleaned = cleaned.substr(0, at_pos);
+                }
+                if (cleaned.size() >= 2)
+                {
+                    char first = cleaned.front();
+                    char last = cleaned.back();
+                    if ((first == '\'' && last == '\'') ||
+                        (first == '"' && last == '"') ||
+                        (first == '`' && last == '`'))
+                    {
+                        cleaned = cleaned.substr(1, cleaned.size() - 2);
+                    }
+                }
+                return cleaned;
+            };
+
+            auto resolve_grantee = [&](const std::string& name,
+                                       core::CatalogManager::GranteeType* type_out,
+                                       core::ID* id_out,
+                                       std::string* label_out) -> bool {
+                std::string resolved_name = name;
+                if (resolved_name.empty())
+                {
+                    if (!conn_ctx_)
+                    {
+                        return false;
+                    }
+                    core::CatalogManager::UserInfo user;
+                    if (catalog->getUser(conn_ctx_->getCurrentUserId(), user, &err_ctx) != core::Status::OK)
+                    {
+                        return false;
+                    }
+                    *type_out = core::CatalogManager::GranteeType::USER;
+                    *id_out = user.user_id;
+                    *label_out = user.username;
+                    return true;
+                }
+
+                resolved_name = normalize_principal(resolved_name);
+                std::string upper = scratchbird::core::IdentifierUtils::toUpper(resolved_name);
+                if (upper == "CURRENT_USER" || upper == "CURRENT_USER()")
+                {
+                    if (!conn_ctx_)
+                    {
+                        return false;
+                    }
+                    core::CatalogManager::UserInfo user;
+                    if (catalog->getUser(conn_ctx_->getCurrentUserId(), user, &err_ctx) != core::Status::OK)
+                    {
+                        return false;
+                    }
+                    *type_out = core::CatalogManager::GranteeType::USER;
+                    *id_out = user.user_id;
+                    *label_out = user.username;
+                    return true;
+                }
+                if (upper == "PUBLIC")
+                {
+                    *type_out = core::CatalogManager::GranteeType::PUBLIC;
+                    *id_out = core::ID{};
+                    *label_out = "PUBLIC";
+                    return true;
+                }
+
+                core::CatalogManager::UserInfo user;
+                if (catalog->getUserByName(resolved_name, user, &err_ctx) == core::Status::OK)
+                {
+                    *type_out = core::CatalogManager::GranteeType::USER;
+                    *id_out = user.user_id;
+                    *label_out = user.username;
+                    return true;
+                }
+
+                core::CatalogManager::RoleInfo role;
+                if (catalog->getRoleByName(resolved_name, role, &err_ctx) == core::Status::OK)
+                {
+                    *type_out = core::CatalogManager::GranteeType::ROLE;
+                    *id_out = role.role_id;
+                    *label_out = role.role_name;
+                    return true;
+                }
+
+                return false;
+            };
+
             auto add_privilege_rows = [&](const std::string& grantee,
                                           const std::string& object_label,
                                           const std::string& grantor,
@@ -44187,6 +46007,31 @@ namespace scratchbird
                 }
             };
 
+            auto add_role_memberships = [&](const std::string& grantee_label,
+                                            const core::ID& user_id) {
+                std::vector<core::CatalogManager::RoleMembershipInfo> memberships;
+                if (catalog->getUserRoles(user_id, memberships, &err_ctx) != core::Status::OK)
+                {
+                    return;
+                }
+                for (const auto& membership : memberships)
+                {
+                    core::CatalogManager::RoleInfo role;
+                    if (catalog->getRole(membership.role_id, role, &err_ctx) != core::Status::OK)
+                    {
+                        continue;
+                    }
+                    std::string grantor = format_grantor(membership.granted_by);
+                    current_result_set_->addRow({
+                        Value::makeVarchar(grantee_label),
+                        Value::makeVarchar("ROLE " + role.role_name),
+                        Value::makeVarchar("ROLE"),
+                        Value::makeVarchar(grantor),
+                        Value::makeVarchar(membership.with_admin_option ? "YES" : "NO")
+                    });
+                }
+            };
+
             auto build_search_path = [&]() {
                 std::vector<std::string> normalized_paths;
                 if (conn_ctx_)
@@ -44228,6 +46073,144 @@ namespace scratchbird
                 }
                 return false;
             };
+
+            core::CatalogManager::GranteeType filter_type =
+                core::CatalogManager::GranteeType::USER;
+            core::ID filter_id;
+            std::string filter_label;
+            bool filter_by_grantee = resolve_grantee(object_name, &filter_type, &filter_id, &filter_label);
+
+            if (filter_by_grantee)
+            {
+                std::vector<core::CatalogManager::PermissionInfo> permissions;
+                auto status = catalog->listPermissions(permissions, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Failed to load grants");
+                }
+
+                const auto normalized_paths = build_search_path();
+
+                auto grantee_matches = [&](const auto& perm) {
+                    if (perm.grantee_type == filter_type && perm.grantee_id == filter_id)
+                    {
+                        return true;
+                    }
+                    if (filter_type == core::CatalogManager::GranteeType::USER &&
+                        perm.grantee_type == core::CatalogManager::GranteeType::PUBLIC)
+                    {
+                        return true;
+                    }
+                    return false;
+                };
+
+                for (const auto& perm : permissions)
+                {
+                    if (!grantee_matches(perm))
+                    {
+                        continue;
+                    }
+                    std::string object_label = perm.object_id.toString();
+                    core::CatalogManager::ResolvedObject resolved;
+                    if (catalog->resolveObjectId(perm.object_id, resolved, &err_ctx) == core::Status::OK)
+                    {
+                        if (!schema_visible(resolved.schema_path, normalized_paths))
+                        {
+                            continue;
+                        }
+                        if (!resolved.full_path.empty())
+                        {
+                            object_label = resolved.full_path;
+                        }
+                    }
+
+                    bool redact_entry = shouldRedactMetadata(
+                        perm.object_id,
+                        perm.object_type,
+                        core::ID{},
+                        static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+                    if (redact_entry)
+                    {
+                        continue;
+                    }
+
+                    std::string grantee = format_grantee(perm.grantee_id, perm.grantee_type);
+                    std::string grantor = format_grantor(perm.grantor_id);
+                    add_privilege_rows(grantee, object_label, grantor,
+                                       perm.grant_option, perm.privileges);
+                }
+
+                std::vector<core::CatalogManager::SchemaInfo> schemas;
+                if (catalog->listSchemas(schemas, &err_ctx) == core::Status::OK)
+                {
+                    for (const auto& schema : schemas)
+                    {
+                        std::string schema_path;
+                        if (catalog->getSchemaPath(schema.schema_id, schema_path, &err_ctx) != core::Status::OK)
+                        {
+                            schema_path = schema.schema_name;
+                        }
+                        if (!schema_visible(schema_path, normalized_paths))
+                        {
+                            continue;
+                        }
+
+                        std::vector<core::CatalogManager::TableInfo> tables;
+                        if (catalog->listTables(schema.schema_id, tables, &err_ctx) != core::Status::OK)
+                        {
+                            continue;
+                        }
+
+                        for (const auto& table : tables)
+                        {
+                            bool redact_columns = shouldRedactMetadata(
+                                table.table_id,
+                                core::CatalogManager::PermissionObjectType::TABLE,
+                                core::ID{},
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+                            if (redact_columns)
+                            {
+                                continue;
+                            }
+
+                            std::vector<core::CatalogManager::ColumnPermissionInfo> column_perms;
+                            if (catalog->getColumnPermissions(table.table_id, column_perms, &err_ctx) != core::Status::OK)
+                            {
+                                continue;
+                            }
+
+                            if (column_perms.empty())
+                            {
+                                continue;
+                            }
+
+                            std::string table_label = schema_path.empty()
+                                ? table.table_name
+                                : schema_path + "." + table.table_name;
+
+                            for (const auto& perm : column_perms)
+                            {
+                                if (!grantee_matches(perm))
+                                {
+                                    continue;
+                                }
+                                std::string grantee = format_grantee(perm.grantee_id, perm.grantee_type);
+                                std::string grantor = format_grantor(perm.grantor_id);
+                                std::string column_label = table_label + "." + perm.column_name;
+                                add_privilege_rows(grantee, column_label, grantor,
+                                                   perm.grant_option, perm.privileges);
+                            }
+                        }
+                    }
+                }
+
+                if (filter_type == core::CatalogManager::GranteeType::USER)
+                {
+                    add_role_memberships(filter_label, filter_id);
+                }
+
+                return;
+            }
 
             if (!object_name.empty())
             {

@@ -362,6 +362,7 @@ Deployment and operations:
 - [SYSTEMD_SERVICE_SPECIFICATION.md](deployment/SYSTEMD_SERVICE_SPECIFICATION.md) (2,127 lines) - systemd integration
 - [INSTALLATION_AND_BUILD_SPECIFICATION.md](deployment/INSTALLATION_AND_BUILD_SPECIFICATION.md) - install/build methods
 - [WINDOWS_CROSS_COMPILE_SPECIFICATION.md](deployment/WINDOWS_CROSS_COMPILE_SPECIFICATION.md) - Windows cross-compile
+- [INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md](deployment/INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md) - installer features + config wizard
 - [ALPHA3_TEST_PLAN.md](testing/ALPHA3_TEST_PLAN.md) (727 lines) - Test planning
 
 ### Architecture

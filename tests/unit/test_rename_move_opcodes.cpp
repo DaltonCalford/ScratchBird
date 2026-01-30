@@ -12,6 +12,7 @@
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
 #include "unit/test_user_helpers.h"
+#include "test_helpers.h"
 
 #include <filesystem>
 #include <iomanip>
@@ -216,7 +217,7 @@ bool containsUpperToken(const std::string& value, const std::string& token_upper
 class RenameMoveOpcodeDbTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "/tmp/test_rename_move_opcodes.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_rename_move_opcodes");
         std::filesystem::remove(test_db_path_);
         std::filesystem::remove(test_db_path_ + "-lock");
 

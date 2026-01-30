@@ -313,8 +313,10 @@ private:
     void parseCreateTrigger();
     void parseCreateType();
     void parseCreateDomain();
+    void parseCreatePolicy();
     void parseAlterDomain();
     void parseDropDomain();
+    void parseDropPolicy();
     ColumnDef parseColumnDef();
     PgDataType parseDataType();
     IndexDef parseIndexDef();

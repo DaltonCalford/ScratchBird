@@ -5,11 +5,13 @@
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <vector>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class EncryptedStorageTest : public ::testing::Test
 {
@@ -18,7 +20,7 @@ protected:
 
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_encrypted_storage.db";
+        test_db_path_ = uniqueTestDbPath("test_encrypted_storage");
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;

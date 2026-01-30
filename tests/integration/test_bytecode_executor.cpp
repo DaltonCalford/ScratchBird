@@ -30,6 +30,7 @@
 #include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
+#include "test_helpers.h"
 #include <memory>
 #include <filesystem>
 
@@ -41,7 +42,7 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        test_db_path_ = "/tmp/test_bytecode_executor.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_bytecode_executor", ".db");
         std::filesystem::remove_all(test_db_path_);
 
         core::ErrorContext ctx;

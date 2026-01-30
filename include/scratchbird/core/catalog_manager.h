@@ -3656,7 +3656,8 @@ public:
         enum class TriggerTiming : uint8_t
         {
             BEFORE = 0,
-            AFTER = 1
+            AFTER = 1,
+            INSTEAD_OF = 2
         };
         
         // Trigger event

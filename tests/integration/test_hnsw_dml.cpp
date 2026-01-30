@@ -11,6 +11,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/vector.h"
 #include "scratchbird/core/logger.h"
+#include "test_helpers.h"
 #include <gtest/gtest.h>
 #include <memory>
 #include <vector>
@@ -23,7 +24,8 @@ protected:
     void SetUp() override
     {
         // Create test database in temporary directory
-        db_ = std::make_unique<Database>("/tmp/test_hnsw_dml.db", 8192);
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_hnsw_dml", ".db");
+        db_ = std::make_unique<Database>(test_db_path_, 8192);
         ASSERT_NE(db_, nullptr);
 
         // Initialize core components
@@ -36,10 +38,14 @@ protected:
     {
         db_.reset();
         // Clean up test database file
-        std::remove("/tmp/test_hnsw_dml.db");
+        if (!test_db_path_.empty())
+        {
+            std::remove(test_db_path_.c_str());
+        }
     }
 
     std::unique_ptr<Database> db_;
+    std::string test_db_path_;
 };
 
 /**
@@ -240,4 +246,3 @@ TEST_F(HnswDMLTest, MultipleOperations)
     ASSERT_EQ(status, Status::OK);
     // Should find remaining visible vectors
 }
-

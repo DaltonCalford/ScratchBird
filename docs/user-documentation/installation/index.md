@@ -37,6 +37,16 @@ This section covers installing ScratchBird on various platforms.
 
 ---
 
+## Installer Features and Config Wizard
+
+ScratchBird installers support modular components (server/tools/emulation/drivers)
+and a rerunnable configuration wizard (`sb_setup`) to enable/disable features,
+set ports, and tune the server for your machine. See:
+
+- [Installer Features + Config Generator](../../specifications/deployment/INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md)
+
+---
+
 ## Prerequisites
 
 Before installing, ensure your system meets the [System Requirements](system-requirements.md).

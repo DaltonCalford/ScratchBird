@@ -5,11 +5,13 @@
 
 #include "scratchbird/core/clog.h"
 #include "scratchbird/core/database.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <type_traits>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 
 TEST(ClogStateSizeTest, Comprehensive) {
@@ -119,18 +121,18 @@ TEST(ClogStateSizeTest, Comprehensive) {
     {
         std::cout << "Test 4: Test CLOG setStatus/getStatus with all 4 states... ";
 
-        const char *db_path = "/tmp/test_clog_state_size.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_clog_state_size", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             FAIL(); return;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             FAIL(); return;
@@ -173,7 +175,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
         }
 
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
 
         std::cout << "PASSED" << std::endl;
         std::cout << "  - All 4 ClogStatus values work correctly ✅" << std::endl;
@@ -184,18 +186,18 @@ TEST(ClogStateSizeTest, Comprehensive) {
     {
         std::cout << "Test 5: Verify space efficiency (4 txns/byte = 65536 txns/page)... ";
 
-        const char *db_path = "/tmp/test_clog_state_size2.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_clog_state_size2", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 16384, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 16384, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             FAIL(); return;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             FAIL(); return;
@@ -236,7 +238,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
         // (Approximate - actual is 65536 per page)
 
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
 
         std::cout << "PASSED" << std::endl;
         std::cout << "  - 100 transactions stored and retrieved correctly ✅" << std::endl;
@@ -273,4 +275,3 @@ TEST(ClogStateSizeTest, Comprehensive) {
     std::cout << "  - Error message explains: 'must fit in 2 bits (0-3)'" << std::endl;
     std::cout << "  - Instructions provided for expanding to 3-bit storage" << std::endl;
 }
-

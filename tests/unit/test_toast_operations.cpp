@@ -19,11 +19,13 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <vector>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class ToastOperationsTest : public ::testing::Test
 {
@@ -33,7 +35,7 @@ protected:
 
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_toast_ops.db";
+        test_db_path_ = uniqueTestDbPath("test_toast_ops");
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;

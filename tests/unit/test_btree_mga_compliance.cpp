@@ -7,6 +7,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/storage_engine.h"
+#include "test_helpers.h"
 #include <vector>
 #include <cstring>
 
@@ -18,7 +19,7 @@ protected:
     void SetUp() override
     {
         // Create temporary database for testing
-        db_path_ = "/tmp/test_btree_mga.db";
+        db_path_ = scratchbird::testing::uniqueTestDbPath("test_btree_mga", ".db");
         remove(db_path_.c_str());
 
         ErrorContext ctx;
@@ -479,4 +480,3 @@ TEST_F(BTreeMGATest, MultipleVersionsOfSameKey)
     btree->search(key, &snapshot3, &tids, &ctx);
     EXPECT_GE(tids.size(), 1);  // May see both, but at least tid2
 }
-

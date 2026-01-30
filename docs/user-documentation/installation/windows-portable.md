@@ -29,6 +29,24 @@ bin\sb_server --config conf\sb_server.conf --foreground
 
 ---
 
+## Portable Package Contents (Feature Matrix)
+
+The portable ZIP includes a minimal feature set:
+
+| Component | Included | Notes |
+| --- | --- | --- |
+| Server (`sb_server`) | Yes | Core server binary |
+| CLI tools | Yes | `sb_isql`, `sb_backup`, `sb_verify`, `sb_security` |
+| Client libs | Yes | Included in `lib/` for local apps |
+| Emulation listeners | Optional | If present, configured in `conf/` |
+| GUI (ScratchRobin) | Optional | Only in GUI bundle |
+| Drivers/ODBC/JDBC | Optional | Separate downloads |
+
+Full installer feature matrix: see
+[Installer Features + Config Generator](../../specifications/deployment/INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md).
+
+---
+
 ## Step-by-Step Setup
 
 ### 1. Download ZIP

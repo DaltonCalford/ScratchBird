@@ -8,11 +8,13 @@
 #include "include/scratchbird/core/buffer_pool.h"
 #include "include/scratchbird/core/page_manager.h"
 #include "include/scratchbird/core/ondisk.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 // Helper function to check if a value is aligned to 8 bytes
 bool isAligned8(uint32_t offset)
@@ -24,18 +26,18 @@ int main()
 {
     std::cout << "=== Testing Issue 1.15: Tuple Header Alignment ===\n" << std::endl;
 
-    const char *db_path = "/tmp/test_tuple_alignment.sbrd";
-    std::remove(db_path);
+    std::string db_path = uniqueTestShortPath("test_tuple_alignment", ".sbrd");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
-    if (Database::create(db_path, 8192, &ctx) != Status::OK)
+    if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
     {
         std::cout << "FAILED (create): " << ctx.message << std::endl;
         return 1;
     }
 
     Database db;
-    if (db.open(db_path, &ctx) != Status::OK)
+    if (db.open(db_path.c_str(), &ctx) != Status::OK)
     {
         std::cout << "FAILED (open): " << ctx.message << std::endl;
         return 1;
@@ -355,7 +357,7 @@ int main()
     }
 
     db.close();
-    std::remove(db_path);
+    std::remove(db_path.c_str());
 
     std::cout << "\n=== All tests PASSED ===" << std::endl;
     std::cout << "\nIssue 1.15 FIX VERIFIED!" << std::endl;

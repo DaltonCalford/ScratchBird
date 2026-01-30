@@ -13,6 +13,8 @@
 #include "scratchbird/core/heap_page.h"
 #include <iostream>
 #include <cstring>
+#include <string>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -21,8 +23,8 @@ int main()
     std::cout << "\n=== Test: Hint Bits Optimization (Issue 2.13) ===" << std::endl;
 
     // Create test database
-    const char *db_path = "/tmp/test_hint_bits.db";
-    std::remove(db_path);
+    std::string db_path = "/tmp/test_hint_bits_" + std::to_string(getpid()) + ".db";
+    std::remove(db_path.c_str());
 
     ErrorContext err_ctx;
     Status s = Database::create(db_path, 8192, &err_ctx);

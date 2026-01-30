@@ -9,6 +9,7 @@
 #include "scratchbird/protocol/adapters/mysql_adapter.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/telemetry.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
@@ -18,6 +19,7 @@
 #include <random>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <limits>
 #include <sstream>
 #include <functional>
@@ -113,6 +115,230 @@ uint16_t clampWarningCount(size_t count) {
     return static_cast<uint16_t>(std::min<size_t>(count, std::numeric_limits<uint16_t>::max()));
 }
 
+struct ShowFilter {
+    enum class Kind : uint8_t {
+        NONE = 0,
+        LIKE = 1,
+        EQUALS = 2,
+    };
+    Kind kind = Kind::NONE;
+    std::string pattern;
+};
+
+static std::string toUpperAscii(std::string input) {
+    for (char& c : input) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    return input;
+}
+
+static void ltrimInPlace(std::string& text) {
+    size_t pos = 0;
+    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
+        ++pos;
+    }
+    if (pos > 0) {
+        text.erase(0, pos);
+    }
+}
+
+static bool isWordBoundary(char c) {
+    return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
+}
+
+static size_t findKeywordOutsideQuotes(const std::string& sql_upper,
+                                       const std::string& keyword,
+                                       size_t start) {
+    bool in_quote = false;
+    for (size_t i = start; i + keyword.size() <= sql_upper.size(); ++i) {
+        char ch = sql_upper[i];
+        if (ch == '\'') {
+            in_quote = !in_quote;
+        }
+        if (in_quote) {
+            continue;
+        }
+        if (sql_upper.compare(i, keyword.size(), keyword) == 0) {
+            char before = (i == 0) ? ' ' : sql_upper[i - 1];
+            char after = (i + keyword.size() < sql_upper.size())
+                ? sql_upper[i + keyword.size()]
+                : ' ';
+            if (isWordBoundary(before) && isWordBoundary(after)) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
+static bool parseStringLiteralAt(const std::string& sql, size_t& pos, std::string& out) {
+    while (pos < sql.size() && std::isspace(static_cast<unsigned char>(sql[pos]))) {
+        ++pos;
+    }
+    if (pos >= sql.size() || sql[pos] != '\'') {
+        return false;
+    }
+    ++pos;
+    std::string value;
+    while (pos < sql.size()) {
+        char ch = sql[pos++];
+        if (ch == '\'') {
+            if (pos < sql.size() && sql[pos] == '\'') {
+                value.push_back('\'');
+                ++pos;
+                continue;
+            }
+            out = value;
+            return true;
+        }
+        value.push_back(ch);
+    }
+    return false;
+}
+
+static bool matchSqlLike(const std::string& str,
+                         const std::string& pattern,
+                         char escape = '\\') {
+    size_t s = 0, p = 0;
+    size_t star_p = std::string::npos, star_s = 0;
+
+    while (s < str.size()) {
+        if (p < pattern.size()) {
+            if (escape != '\0' && pattern[p] == escape && p + 1 < pattern.size()) {
+                ++p;
+                if (str[s] == pattern[p]) {
+                    ++s;
+                    ++p;
+                    continue;
+                }
+                if (star_p != std::string::npos) {
+                    p = star_p + 1;
+                    s = ++star_s;
+                    continue;
+                }
+                return false;
+            }
+
+            if (pattern[p] == '%') {
+                star_p = p++;
+                star_s = s;
+                continue;
+            }
+
+            if (pattern[p] == '_' || pattern[p] == str[s]) {
+                ++s;
+                ++p;
+                continue;
+            }
+        }
+
+        if (star_p != std::string::npos) {
+            p = star_p + 1;
+            s = ++star_s;
+            continue;
+        }
+
+        return false;
+    }
+
+    while (p < pattern.size() && pattern[p] == '%') {
+        ++p;
+    }
+
+    return p == pattern.size();
+}
+
+static bool matchSqlLikeCase(const std::string& str,
+                             const std::string& pattern,
+                             char escape,
+                             bool case_insensitive) {
+    if (!case_insensitive) {
+        return matchSqlLike(str, pattern, escape);
+    }
+    std::string lower_str = str;
+    std::string lower_pattern = pattern;
+    for (char& c : lower_str) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    for (char& c : lower_pattern) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return matchSqlLike(lower_str, lower_pattern, escape);
+}
+
+static bool parseShowFilter(const std::string& sql,
+                            const std::string& sql_upper,
+                            size_t start_pos,
+                            ShowFilter& filter_out,
+                            std::string& error_out) {
+    size_t like_pos = findKeywordOutsideQuotes(sql_upper, "LIKE", start_pos);
+    size_t where_pos = findKeywordOutsideQuotes(sql_upper, "WHERE", start_pos);
+    if (like_pos == std::string::npos && where_pos == std::string::npos) {
+        return true;
+    }
+
+    if (where_pos != std::string::npos &&
+        (like_pos == std::string::npos || where_pos < like_pos)) {
+        size_t pos = where_pos + 5;
+        std::string identifier;
+        while (pos < sql.size() && std::isspace(static_cast<unsigned char>(sql[pos]))) {
+            ++pos;
+        }
+        while (pos < sql.size()) {
+            char ch = sql[pos];
+            if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '$') {
+                identifier.push_back(ch);
+                ++pos;
+            } else {
+                break;
+            }
+        }
+        std::string identifier_upper = toUpperAscii(identifier);
+        if (identifier_upper != "VARIABLE_NAME" &&
+            identifier_upper != "VARIABLE" && identifier_upper != "NAME") {
+            error_out = "SHOW ... WHERE supports Variable_name predicates only";
+            return false;
+        }
+
+        while (pos < sql.size() && std::isspace(static_cast<unsigned char>(sql[pos]))) {
+            ++pos;
+        }
+
+        ShowFilter filter;
+        if (sql_upper.compare(pos, 4, "LIKE") == 0) {
+            pos += 4;
+            filter.kind = ShowFilter::Kind::LIKE;
+        } else if (pos < sql.size() && sql[pos] == '=') {
+            ++pos;
+            filter.kind = ShowFilter::Kind::EQUALS;
+        } else {
+            error_out = "SHOW ... WHERE supports LIKE or = predicates only";
+            return false;
+        }
+
+        std::string literal;
+        if (!parseStringLiteralAt(sql, pos, literal)) {
+            error_out = "SHOW ... WHERE expects a quoted string literal";
+            return false;
+        }
+        filter.pattern = literal;
+        filter_out = std::move(filter);
+        return true;
+    }
+
+    if (like_pos != std::string::npos) {
+        size_t pos = like_pos + 4;
+        std::string literal;
+        if (!parseStringLiteralAt(sql, pos, literal)) {
+            error_out = "SHOW ... LIKE expects a quoted string literal";
+            return false;
+        }
+        filter_out.kind = ShowFilter::Kind::LIKE;
+        filter_out.pattern = literal;
+    }
+    return true;
+}
+
 } // namespace
 
 // ============================================================================
@@ -121,6 +347,7 @@ uint16_t clampWarningCount(size_t count) {
 
 MySqlAdapter::MySqlAdapter(const ProtocolAdapterConfig& config)
     : ProtocolAdapter(config) {
+    start_time_ = std::chrono::steady_clock::now();
 
     // Generate connection ID
     std::random_device rd;
@@ -424,6 +651,10 @@ core::Status MySqlAdapter::sendProtocolError(network::Connection* conn,
     if (mapped_state.empty()) {
         mapped_state = "HY000";
     }
+    last_errors_.clear();
+    last_errors_.push_back(message);
+    last_error_code_ = mapped_code;
+    last_error_sqlstate_ = mapped_state;
     sendErrorPacket(conn, mapped_code, mapped_state, message);
     return core::Status::OK;
 }
@@ -816,10 +1047,19 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    last_warnings_.clear();
-
     std::string query(reinterpret_cast<const char*>(current_packet_.data() + 1),
                       current_packet_.size() - 1);
+
+    ResultContext show_result;
+    if (handleShowQuery(query, show_result)) {
+        sendQueryResult(conn, show_result);
+        return sendBuffer(conn);
+    }
+
+    last_warnings_.clear();
+    last_errors_.clear();
+    last_error_code_ = 0;
+    last_error_sqlstate_.clear();
 
     // Execute query
     QueryContext ctx;
@@ -832,6 +1072,300 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
 
     sendQueryResult(conn, result);
     return sendBuffer(conn);
+}
+
+bool MySqlAdapter::handleShowQuery(const std::string& query, ResultContext& result) {
+    std::string trimmed = query;
+    ltrimInPlace(trimmed);
+    std::string upper = toUpperAscii(trimmed);
+    if (upper.rfind("SHOW", 0) != 0) {
+        return false;
+    }
+
+    auto read_keyword = [&](size_t& pos) -> std::string {
+        while (pos < upper.size() && std::isspace(static_cast<unsigned char>(upper[pos]))) {
+            ++pos;
+        }
+        size_t start = pos;
+        while (pos < upper.size()) {
+            char ch = upper[pos];
+            if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') {
+                ++pos;
+                continue;
+            }
+            break;
+        }
+        if (start == pos) {
+            return "";
+        }
+        return upper.substr(start, pos - start);
+    };
+
+    size_t pos = 4;
+    std::string keyword = read_keyword(pos);
+    if (keyword.empty()) {
+        return false;
+    }
+
+    if (keyword == "GLOBAL" || keyword == "SESSION") {
+        keyword = read_keyword(pos);
+        if (keyword.empty()) {
+            return false;
+        }
+    }
+
+    if (keyword == "FULL") {
+        keyword = read_keyword(pos);
+    }
+
+    auto build_string_result = [&](const std::vector<std::string>& columns) {
+        result.columns.clear();
+        for (const auto& name : columns) {
+            ProtocolCodec::ColumnInfo col;
+            col.name = name;
+            col.type = protocol::WireType::VARCHAR;
+            col.type_modifier = 0;
+            result.columns.push_back(col);
+        }
+    };
+
+    auto append_row = [&](std::vector<protocol::ProtocolCodec::ColumnValue> row) {
+        result.rows.push_back(std::move(row));
+    };
+
+    if (keyword == "STATUS") {
+        ShowFilter filter;
+        std::string error;
+        if (!parseShowFilter(trimmed, upper, pos, filter, error)) {
+            result.has_error = true;
+            result.error_message = error;
+            return true;
+        }
+
+        build_string_result({"Variable_name", "Value"});
+
+        auto emit_status = [&](const std::string& name, const std::string& value) {
+            bool matches = true;
+            if (filter.kind == ShowFilter::Kind::LIKE) {
+                matches = matchSqlLikeCase(name, filter.pattern, '\\', true);
+            } else if (filter.kind == ShowFilter::Kind::EQUALS) {
+                matches = toUpperAscii(name) == toUpperAscii(filter.pattern);
+            }
+            if (!matches) {
+                return;
+            }
+            append_row({protocol::ProtocolCodec::ColumnValue::fromString(name),
+                        protocol::ProtocolCodec::ColumnValue::fromString(value)});
+        };
+
+        auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start_time_).count();
+        emit_status("Uptime", std::to_string(uptime));
+        emit_status("Uptime_since_flush_status", std::to_string(uptime));
+        emit_status("Threads_connected", "1");
+
+        auto& metrics = core::MetricsRegistry::getInstance();
+        std::string payload = metrics.exportPrometheus();
+        std::istringstream stream(payload);
+        std::string line;
+        while (std::getline(stream, line)) {
+            if (line.empty() || line[0] == '#') {
+                continue;
+            }
+            std::istringstream row(line);
+            std::string name;
+            std::string value;
+            row >> name >> value;
+            if (name.empty() || value.empty()) {
+                continue;
+            }
+            emit_status(name, value);
+        }
+
+        return true;
+    }
+
+    if (keyword == "VARIABLES") {
+        ShowFilter filter;
+        std::string error;
+        if (!parseShowFilter(trimmed, upper, pos, filter, error)) {
+            result.has_error = true;
+            result.error_message = error;
+            return true;
+        }
+
+        build_string_result({"Variable_name", "Value"});
+
+        auto emit_variable = [&](const std::string& name, const std::string& value) {
+            bool matches = true;
+            if (filter.kind == ShowFilter::Kind::LIKE) {
+                matches = matchSqlLikeCase(name, filter.pattern, '\\', true);
+            } else if (filter.kind == ShowFilter::Kind::EQUALS) {
+                matches = toUpperAscii(name) == toUpperAscii(filter.pattern);
+            }
+            if (!matches) {
+                return;
+            }
+            append_row({protocol::ProtocolCodec::ColumnValue::fromString(name),
+                        protocol::ProtocolCodec::ColumnValue::fromString(value)});
+        };
+
+        const bool autocommit =
+            (server_status_ & mysql::ServerStatus::AUTOCOMMIT) != 0;
+
+        emit_variable("autocommit", autocommit ? "ON" : "OFF");
+        emit_variable("character_set_client", "utf8mb4");
+        emit_variable("character_set_connection", "utf8mb4");
+        emit_variable("character_set_results", "utf8mb4");
+        emit_variable("collation_connection", "utf8mb4_general_ci");
+        emit_variable("sql_mode", "");
+        emit_variable("time_zone", "SYSTEM");
+        emit_variable("transaction_isolation", "READ-COMMITTED");
+        emit_variable("version", server_version_);
+
+        return true;
+    }
+
+    if (keyword == "PROCESSLIST") {
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_message = ctx.message.empty()
+                ? "Failed to connect to engine"
+                : ctx.message;
+            return true;
+        }
+
+        client::ResultSet rs;
+        status = client_->executeQuery(
+            "SELECT ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO "
+            "FROM information_schema.PROCESSLIST",
+            &rs, &ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_message = ctx.message.empty()
+                ? "Failed to load process list"
+                : ctx.message;
+            return true;
+        }
+
+        result.columns.clear();
+        for (const auto& col : rs.getColumns()) {
+            ProtocolCodec::ColumnInfo info;
+            info.name = col.name;
+            info.type = col.type;
+            info.type_modifier = col.type_modifier;
+            result.columns.push_back(info);
+        }
+
+        result.rows.clear();
+        const auto row_count = static_cast<size_t>(rs.getRowCount());
+        for (size_t i = 0; i < row_count; ++i) {
+            result.rows.push_back(rs.getRowValues(i));
+        }
+
+        return true;
+    }
+
+    if (keyword == "WARNINGS" || keyword == "ERRORS") {
+        size_t limit_pos = findKeywordOutsideQuotes(upper, "LIMIT", pos);
+        int64_t offset = 0;
+        int64_t count = -1;
+        if (limit_pos != std::string::npos) {
+            size_t parse_pos = limit_pos + 5;
+            auto parse_int = [&](int64_t& out) -> bool {
+                while (parse_pos < trimmed.size() &&
+                       std::isspace(static_cast<unsigned char>(trimmed[parse_pos]))) {
+                    ++parse_pos;
+                }
+                if (parse_pos >= trimmed.size()) {
+                    return false;
+                }
+                char* end_ptr = nullptr;
+                long long value = std::strtoll(trimmed.c_str() + parse_pos, &end_ptr, 10);
+                if (end_ptr == trimmed.c_str() + parse_pos) {
+                    return false;
+                }
+                out = static_cast<int64_t>(value);
+                parse_pos = static_cast<size_t>(end_ptr - trimmed.c_str());
+                return true;
+            };
+
+            int64_t first = 0;
+            if (!parse_int(first)) {
+                result.has_error = true;
+                result.error_message = "SHOW ... LIMIT expects numeric values";
+                return true;
+            }
+
+            size_t saved_pos = parse_pos;
+            while (parse_pos < trimmed.size() &&
+                   std::isspace(static_cast<unsigned char>(trimmed[parse_pos]))) {
+                ++parse_pos;
+            }
+
+            if (parse_pos < trimmed.size() && trimmed[parse_pos] == ',') {
+                ++parse_pos;
+                int64_t second = 0;
+                if (!parse_int(second)) {
+                    result.has_error = true;
+                    result.error_message = "SHOW ... LIMIT expects numeric values";
+                    return true;
+                }
+                offset = first;
+                count = second;
+            } else if (upper.compare(parse_pos, 6, "OFFSET") == 0) {
+                parse_pos += 6;
+                int64_t off = 0;
+                if (!parse_int(off)) {
+                    result.has_error = true;
+                    result.error_message = "SHOW ... LIMIT OFFSET expects numeric values";
+                    return true;
+                }
+                offset = off;
+                count = first;
+            } else {
+                parse_pos = saved_pos;
+                count = first;
+            }
+        }
+
+        result.columns.clear();
+        ProtocolCodec::ColumnInfo level;
+        level.name = "Level";
+        level.type = protocol::WireType::VARCHAR;
+        level.type_modifier = 0;
+        ProtocolCodec::ColumnInfo code;
+        code.name = "Code";
+        code.type = protocol::WireType::INT64;
+        code.type_modifier = 0;
+        ProtocolCodec::ColumnInfo message;
+        message.name = "Message";
+        message.type = protocol::WireType::VARCHAR;
+        message.type_modifier = 0;
+        result.columns = {level, code, message};
+
+        const auto& source = (keyword == "WARNINGS") ? last_warnings_ : last_errors_;
+        int64_t start = std::max<int64_t>(0, offset);
+        int64_t end = (count < 0) ? static_cast<int64_t>(source.size())
+                                  : std::min<int64_t>(static_cast<int64_t>(source.size()),
+                                                      start + count);
+        for (int64_t i = start; i < end; ++i) {
+            const auto& msg = source[static_cast<size_t>(i)];
+            int64_t code_value = (keyword == "ERRORS")
+                ? static_cast<int64_t>(last_error_code_)
+                : 0;
+            append_row({protocol::ProtocolCodec::ColumnValue::fromString(
+                            keyword == "WARNINGS" ? "Warning" : "Error"),
+                        protocol::ProtocolCodec::ColumnValue::fromInt64(code_value),
+                        protocol::ProtocolCodec::ColumnValue::fromString(msg)});
+        }
+
+        return true;
+    }
+
+    return false;
 }
 
 core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
@@ -1139,6 +1673,10 @@ core::Status MySqlAdapter::handleComResetConnection(network::Connection* conn) {
     in_transaction_ = false;
     server_status_ = mysql::ServerStatus::AUTOCOMMIT;
     prepared_statements_.clear();
+    last_warnings_.clear();
+    last_errors_.clear();
+    last_error_code_ = 0;
+    last_error_sqlstate_.clear();
 
     sendOkPacket(conn);
     return sendBuffer(conn);

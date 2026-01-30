@@ -6,6 +6,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include <cstdio>
 #include <optional>
 #include <string>
@@ -19,6 +20,7 @@ class CatalogRenameMoveTest : public ::testing::Test
 {
 protected:
     std::string test_db_path_;
+    std::string udr_path_;
     std::unique_ptr<Database> db_;
     CatalogManager* catalog_ = nullptr;
     std::unique_ptr<ConnectionContext> conn_;
@@ -28,6 +30,7 @@ protected:
     void SetUp() override
     {
         test_db_path_ = "/tmp/test_catalog_rename_move_" + std::to_string(getpid()) + ".db";
+        udr_path_ = scratchbird::testing::uniqueTestDbPath("libudr", ".so");
         std::remove(test_db_path_.c_str());
 
         ErrorContext ctx;
@@ -275,7 +278,7 @@ protected:
     {
         ErrorContext ctx;
         ID udr_id;
-        auto status = catalog_->createUDR(schema_id, name, "/tmp/libudr.so", "entry",
+        auto status = catalog_->createUDR(schema_id, name, udr_path_, "entry",
                                           CatalogManager::UDRType::FUNCTION, "signature",
                                           udr_id, &ctx);
         EXPECT_EQ(status, Status::OK) << ctx.message;

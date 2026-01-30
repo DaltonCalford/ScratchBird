@@ -3,17 +3,19 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
+#include "test_helpers.h"
 #include <cstring>
 #include <filesystem>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class HashCustomTablespaceTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        test_db_path = "/tmp/test_hash_custom_tablespace.db";
+        test_db_path = uniqueTestDbPath("test_hash_custom_tablespace");
 
         // Remove if exists
         if (std::filesystem::exists(test_db_path))

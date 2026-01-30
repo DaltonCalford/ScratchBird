@@ -1,6 +1,6 @@
 # ScratchBird Project Statistics
 
-**Generated:** 2026-01-20 22:22:27 UTC
+**Generated:** 2026-01-30 21:07:33 UTC
 **Project Root:** /home/dcalford/CliWork/ScratchBird
 
 ---
@@ -9,11 +9,11 @@
 
 | Metric | Count |
 |--------|-------|
-| **Total Files** | 2732 |
-| **C++ Source Files** | 582 |
-| **Header Files** | 302 |
-| **Test Files** | 335 |
-| **Documentation Files** | 1830 |
+| **Total Files** | 2977 |
+| **C++ Source Files** | 610 |
+| **Header Files** | 396 |
+| **Test Files** | 353 |
+| **Documentation Files** | 1947 |
 
 ---
 
@@ -22,36 +22,36 @@
 ### Source Code
 | Language | Files | Lines |
 |----------|-------|-------|
-cloc|github.com/AlDanial/cloc v 2.04  T=17.66 s (1044.0 files/s, 261028.2 lines/s)
+cloc|github.com/AlDanial/cloc v 2.04  T=20.48 s (944.5 files/s, 278199.8 lines/s)
 --- | ---
 
 Language|files|blank|comment|code
 :-------|-------:|-------:|-------:|-------:
-SQL|12794|354277|693119|1181160
-Markdown|1762|216447|813|705024
-C++|690|71595|49802|376469
-JSON|75|0|0|222404
+SQL|13303|355013|694592|1185826
+JSON|142|0|0|1106714
+Markdown|1910|221653|813|722106
+C++|718|76181|49681|420581
 PHP|1652|28871|30415|183355
-Text|150|2761|0|139075
-C/C++ Header|349|22667|45431|102011
+Text|164|3143|0|180433
+C/C++ Header|439|24025|47813|170475
 Pascal|166|12629|23119|50453
 Perl|45|6009|3707|16617
+C|11|1421|2203|11041
 Fortran 77|298|1310|0|9284
-make|14|2356|2118|6812
-CMake|183|1264|1731|6698
-Java|21|1180|625|6104
-Python|45|1605|2708|5834
-Bourne Shell|37|1123|716|5133
-C|4|662|835|3435
+Python|51|1773|2738|6875
+make|14|2357|2187|6824
+CMake|183|1278|1734|6744
+Bourne Shell|66|1263|721|5939
+XML|32|646|91|4977
+HTML|5|144|0|4117
 YAML|17|177|56|1772
-HTML|2|69|0|1567
-XML|8|125|74|1423
-awk|6|115|185|1036
+awk|6|119|185|1079
 CSV|7|0|0|799
 Starlark|4|91|117|746
+Korn Shell|1|53|84|664
 D|1|239|0|479
+INI|12|68|0|264
 Scheme|14|0|0|264
-INI|12|67|0|262
 Windows Module Definition|2|31|0|207
 DOS Batch|2|37|4|174
 SCSS|2|37|3|165
@@ -65,7 +65,7 @@ Bazel|1|5|0|22
 Nix|1|4|30|21
 Visual Basic|1|0|0|15
 --------|--------|--------|--------|--------
-SUM:|18442|725847|855687|3029399
+SUM:|19347|738671|860372|4099611
 
 One or more files took longer to process than expected.
 Try rerunning without timeout guards by adding  --timeout 0
@@ -75,9 +75,9 @@ the --timeout switch for more information.
 ### Code Organization
 | Category | Count |
 |----------|-------|
-| Source Files (src/) | 582 |
-| Header Files (include/) | 302 |
-| Test Files (tests/) | 335 |
+| Source Files (src/) | 610 |
+| Header Files (include/) | 396 |
+| Test Files (tests/) | 353 |
 
 ---
 
@@ -85,10 +85,10 @@ the --timeout switch for more information.
 
 | Test Type | Count |
 |-----------|-------|
-| **Unit Tests** | 73 |
-| **Integration Tests** | 67 |
-| **Benchmark Tests** | 2 |
-| **Total Tests** | 142 |
+| **Unit Tests** | 74 |
+| **Integration Tests** | 71 |
+| **Benchmark Tests** | 3 |
+| **Total Tests** | 148 |
 
 ---
 
@@ -97,9 +97,9 @@ the --timeout switch for more information.
 | Category | Count | Status |
 |----------|-------|--------|
 | **Wiki Pages** | 159 | 🚧 In Progress |
-| **Specifications** | 430 | ✅ Active |
-| **Planning Docs** | 20 | ✅ Active |
-| **Total Markdown** | 1830 | - |
+| **Specifications** | 508 | ✅ Active |
+| **Planning Docs** | 36 | ✅ Active |
+| **Total Markdown** | 1947 | - |
 
 ### Wiki Infrastructure
 - **Content Pages:** 159 / 67 planned (237%)
@@ -120,21 +120,21 @@ the --timeout switch for more information.
 
 | Category | Count |
 |----------|-------|
-| **Total Items** | 19 items |
-| **Categories** | 70 directories |
+| **Total Items** | 23 items |
+| **Categories** | 90 directories |
 | **P0 (Critical)** | 9 items |
 | **P1 (High)** | 0 items |
 | **P2 (Medium)** | 0 items |
-| **Unspecified** | 10 items |
+| **Unspecified** | 14 items |
 
 ### Priority Breakdown
 | Priority | Items | Percentage |
 |----------|-------|------------|
-| P0 (Critical - Beta Required) | 9 | 47% |
+| P0 (Critical - Beta Required) | 9 | 39% |
 | P1 (High - Post-Beta) | 0 | 0% |
 | P2 (Medium - Future) | 0 | 0% |
-| Unspecified | 10 | 52% |
-| **Total** | **19** | **100%** |
+| Unspecified | 14 | 60% |
+| **Total** | **23** | **100%** |
 
 ### P0 Drivers (Beta Critical)
 See `docs/specifications/beta_requirements/COMPLETION_STATUS.md` for the authoritative driver list.
@@ -145,15 +145,15 @@ See `docs/specifications/beta_requirements/COMPLETION_STATUS.md` for the authori
 
 | Metric | Value |
 |--------|-------|
-| **Total Commits** | 1605 |
+| **Total Commits** | 1646 |
 | **Contributors** | 7 |
 | **Branches** | 21 |
-| **Commits (30 days)** | 99 |
+| **Commits (30 days)** | 124 |
 | **Repository Size** | 11G |
 
 **Most Recent Commit:**
 ```
-96d725ff - Update specifications (75 minutes ago)
+14ed34f6 - Fix MySQL MATCH/OVER support and stabilize tests (24 hours ago)
 ```
 
 ---
@@ -161,12 +161,12 @@ See `docs/specifications/beta_requirements/COMPLETION_STATUS.md` for the authori
 ## 📈 Project Trends
 
 ### Activity Metrics
-- **Commits per day (30d avg):** 3 commits/day
+- **Commits per day (30d avg):** 4 commits/day
 - **Active development:** ✅ Very Active
 
 ### Documentation Ratio
-- **Docs to Code Ratio:** 2.07
-- **Test Coverage Ratio:** 0.38
+- **Docs to Code Ratio:** 1.94
+- **Test Coverage Ratio:** 0.35
 
 ---
 
@@ -174,15 +174,15 @@ See `docs/specifications/beta_requirements/COMPLETION_STATUS.md` for the authori
 
 ```
 ScratchBird/
-├── src/                    # Source code (582 files)
-├── include/                # Headers (302 files)
-├── tests/                  # Test suite (335 files)
-│   ├── unit/              # Unit tests (73 files)
-│   ├── integration/       # Integration tests (67 files)
-│   └── benchmark/         # Benchmarks (2 files)
-├── docs/                  # Documentation (450 files)
-│   ├── specifications/    # Technical specs (430 files)
-│   └── planning/          # Planning docs (20 files)
+├── src/                    # Source code (610 files)
+├── include/                # Headers (396 files)
+├── tests/                  # Test suite (353 files)
+│   ├── unit/              # Unit tests (74 files)
+│   ├── integration/       # Integration tests (71 files)
+│   └── benchmark/         # Benchmarks (3 files)
+├── docs/                  # Documentation (544 files)
+│   ├── specifications/    # Technical specs (508 files)
+│   └── planning/          # Planning docs (36 files)
 ├── wiki/                  # Wiki content (159 files)
 └── scripts/               # Automation scripts
 ```
@@ -192,24 +192,24 @@ ScratchBird/
 ## 🚀 Quick Stats
 
 **Code Maturity:**
-- Source files: **582** C++ files
-- Test coverage: **335** test files
-- Documentation: **1830** markdown files
+- Source files: **610** C++ files
+- Test coverage: **353** test files
+- Documentation: **1947** markdown files
 
 **Beta Readiness:**
 - P0 Requirements: **9** items identified
-- Unspecified Requirements: **10** items
+- Unspecified Requirements: **14** items
 - Driver Specs: **7/7** P0 drivers specified ✅
 - Wiki Infrastructure: **100%** complete ✅
 
 **Development Velocity:**
-- Total commits: **1605**
-- Recent activity: **99** commits (30 days)
+- Total commits: **1646**
+- Recent activity: **124** commits (30 days)
 - Contributors: **7** developers
 
 ---
 
-**Last Updated:** 2026-01-20 22:22:27 UTC
+**Last Updated:** 2026-01-30 21:07:33 UTC
 **Generated by:** `scripts/generate-project-stats.sh`
 
 To regenerate: `./scripts/generate-project-stats.sh`

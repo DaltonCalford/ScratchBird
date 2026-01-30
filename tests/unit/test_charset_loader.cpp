@@ -6,6 +6,7 @@
 #include "scratchbird/core/charset_loader.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -20,7 +21,7 @@ protected:
     void SetUp() override
     {
         // Create a temporary database for testing
-        test_db_path_ = "/tmp/test_charset_loader.sbrd";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_charset_loader", ".sbrd");
         std::filesystem::remove(test_db_path_);
 
         auto status = Database::create(test_db_path_, 16384, nullptr);

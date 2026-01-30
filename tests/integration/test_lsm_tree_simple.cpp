@@ -11,6 +11,7 @@
 #include <string>
 #include <cstdlib>
 #include <cstdio>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -36,8 +37,9 @@ void testBasicPutGet()
 {
     std::cout << "\n=== Test: Basic Put/Get ===\n";
 
-    std::string index_path = "/tmp/lsm_test_simple";
-    std::string db_path = "/tmp/lsm_test_simple.db";
+    std::string suffix = "_" + std::to_string(getpid());
+    std::string index_path = "/tmp/lsm_test_simple" + suffix;
+    std::string db_path = "/tmp/lsm_test_simple" + suffix + ".db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 

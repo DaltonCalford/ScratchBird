@@ -3056,6 +3056,21 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
+    if (func_name == "current_user" || func_name == "current_role" ||
+        func_name == "current_connection") {
+        ret_type->data_type = DataType::TEXT;
+        ret_type->is_nullable = false;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "current_transaction") {
+        ret_type->data_type = DataType::INT64;
+        ret_type->is_nullable = false;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
     if (func_name == "date_add" || func_name == "date_sub") {
         if (!arg_types.empty()) {
             *ret_type = arg_types[0];
@@ -3434,6 +3449,60 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
         return std::nullopt;
     }
 
+    if (op == BinaryOp::JSON_EXISTS || op == BinaryOp::JSON_EXISTS_ANY ||
+        op == BinaryOp::JSON_EXISTS_ALL) {
+        ResolvedType result;
+        result.data_type = DataType::BOOLEAN;
+        result.is_nullable = left.is_nullable || right.is_nullable ||
+                             left.data_type == DataType::UNKNOWN ||
+                             right.data_type == DataType::UNKNOWN;
+        auto is_json_like = [](const ResolvedType& t) {
+            return t.isString() || t.data_type == DataType::JSON ||
+                   t.data_type == DataType::JSONB || t.data_type == DataType::UNKNOWN;
+        };
+        if (!is_json_like(left)) {
+            return std::nullopt;
+        }
+        if (op == BinaryOp::JSON_EXISTS) {
+            if (right.isString() || right.data_type == DataType::UNKNOWN) {
+                return result;
+            }
+            return std::nullopt;
+        }
+        if (right.is_array || right.data_type == DataType::UNKNOWN) {
+            return result;
+        }
+        return std::nullopt;
+    }
+
+    if (op == BinaryOp::ARRAY_CONTAINS || op == BinaryOp::ARRAY_CONTAINED_BY ||
+        op == BinaryOp::ARRAY_OVERLAP) {
+        ResolvedType result;
+        result.data_type = DataType::BOOLEAN;
+        result.is_nullable = left.is_nullable || right.is_nullable ||
+                             left.data_type == DataType::UNKNOWN ||
+                             right.data_type == DataType::UNKNOWN;
+        if (left.is_array && right.is_array) {
+            return result;
+        }
+        if (left.data_type == DataType::UNKNOWN || right.data_type == DataType::UNKNOWN) {
+            return result;
+        }
+        return std::nullopt;
+    }
+
+    if (op == BinaryOp::BIT_AND || op == BinaryOp::BIT_OR ||
+        op == BinaryOp::BIT_XOR || op == BinaryOp::SHIFT_LEFT ||
+        op == BinaryOp::SHIFT_RIGHT) {
+        if (left.isNumeric() && right.isNumeric()) {
+            ResolvedType result;
+            result.data_type = DataType::INT64;
+            result.is_nullable = left.is_nullable || right.is_nullable;
+            return result;
+        }
+        return std::nullopt;
+    }
+
     // Comparison operators always yield boolean
     if (op == BinaryOp::EQ || op == BinaryOp::NE || op == BinaryOp::LT ||
         op == BinaryOp::LE || op == BinaryOp::GT || op == BinaryOp::GE) {
@@ -3497,6 +3566,7 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
         case BinaryOp::DIV:
         case BinaryOp::DIV_INT:
         case BinaryOp::MOD:
+        case BinaryOp::POWER:
             if (left.isNumeric() && right.isNumeric()) {
                 ResolvedType result;
                 result.is_nullable = left.is_nullable || right.is_nullable;
@@ -3630,6 +3700,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateView(static_cast<CreateViewStmt*>(stmt));
         case ASTKind::CreateSequenceStmt:
             return analyzeCreateSequence(static_cast<CreateSequenceStmt*>(stmt));
+        case ASTKind::AlterSequenceStmt:
+            return analyzeAlterSequence(static_cast<AlterSequenceStmt*>(stmt));
         case ASTKind::CreateSchemaStmt:
             return analyzeCreateSchema(static_cast<CreateSchemaStmt*>(stmt));
         case ASTKind::DropSchemaStmt:
@@ -4235,6 +4307,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTable(CreateTableStmt* stmt)
     if (stmt->has_tablespace) {
         resolved->tablespace_name = internString(schemaPathToString(stmt->tablespace, string_pool_));
     }
+    resolved->is_partitioned = stmt->is_partitioned;
+    resolved->partition_by = stmt->partition_by;
+    resolved->partition_columns = stmt->partition_columns;
+    for (const auto& inherit_path : stmt->inherits) {
+        resolved->inherits.push_back(internString(schemaPathToString(inherit_path, string_pool_)));
+    }
 
     if (resolved->temp_type == TempTableType::NONE &&
         resolved->on_commit != TempOnCommitAction::NONE)
@@ -4283,10 +4361,56 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTable(CreateTableStmt* stmt)
         resolved->columns.push_back(resolved_col);
     }
 
+    if (resolved->is_partitioned) {
+        if (resolved->partition_by == StringPool::INVALID_ID) {
+            error(stmt->span, "PARTITION BY requires a partition strategy");
+        }
+
+        if (resolved->partition_columns.empty()) {
+            error(stmt->span, "PARTITION BY requires at least one column");
+        }
+
+        std::unordered_set<std::string> seen_cols;
+        for (auto col_id : resolved->partition_columns) {
+            const std::string name = core::IdentifierUtils::toUpper(std::string(getString(col_id)));
+            if (!seen_cols.insert(name).second) {
+                error(stmt->span, "Duplicate column in PARTITION BY: " + std::string(getString(col_id)));
+            }
+
+            bool found = false;
+            for (const auto& column : resolved->columns) {
+                if (column.name == col_id) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                error(stmt->span, "PARTITION BY column not found: " + std::string(getString(col_id)));
+            }
+        }
+    }
+
+    if (!stmt->inherits.empty()) {
+        for (const auto& parent_path : stmt->inherits) {
+            auto parent_ref = resolveTable(parent_path, stmt->span, false);
+            if (!parent_ref || parent_ref->object_type != ResolvedTableRef::ObjectType::TABLE) {
+                error(stmt->span, "Inherited table not found: " +
+                                 schemaPathToString(parent_path, string_pool_));
+            }
+        }
+    }
+
     // Analyze table constraints
     for (auto* constraint : stmt->constraints) {
         ResolvedTableConstraint resolved_constraint = analyzeTableConstraint(constraint, resolved->columns);
         resolved->constraints.push_back(resolved_constraint);
+    }
+
+    if (stmt->as_query) {
+        if (stmt->columns.empty() && !stmt->constraints.empty()) {
+            error(stmt->span, "CREATE TABLE AS without columns cannot include constraints");
+        }
+        resolved->as_query = analyzeSelect(stmt->as_query);
     }
 
     return resolved;
@@ -4576,6 +4700,36 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateSequence(CreateSequenceStmt*
         resolved->owned_by_table =
             internString(schemaPathToString(stmt->owned_by_table, string_pool_));
         resolved->owned_by_column = stmt->owned_by_column;
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterSequence(AlterSequenceStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterSequenceStmt>();
+    resolved->span = stmt->span;
+    resolved->increment_by = stmt->increment_by;
+    resolved->min_value = stmt->min_value;
+    resolved->max_value = stmt->max_value;
+    resolved->restart_with = stmt->restart_with;
+    resolved->cache = stmt->cache;
+    resolved->cycle = stmt->cycle;
+
+    if (stmt->sequence_path.components.size() >= 2) {
+        std::string schema_name = std::string(string_pool_.get(stmt->sequence_path.components[0]));
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema(schema_name, schema_info) == Status::OK) {
+            resolved->schema.schema_uuid = schema_info.schema_id;
+            resolved->schema.schema_name = stmt->sequence_path.components[0];
+        }
+        resolved->sequence_name = stmt->sequence_path.components[1];
+    } else if (stmt->sequence_path.components.size() == 1) {
+        resolved->schema.schema_uuid = current_schema_;
+        resolved->sequence_name = stmt->sequence_path.components[0];
     }
 
     return resolved;
@@ -5205,6 +5359,20 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTrigger(CreateTriggerStmt* s
     resolved->granularity = stmt->granularity;
     if (stmt->body != StringPool::INVALID_ID) {
         resolved->body = std::string(string_pool_.get(stmt->body));
+    }
+
+    auto table_ref = resolveTable(stmt->table_path, stmt->span, false);
+    if (!table_ref) {
+        return nullptr;
+    }
+    if (stmt->timing == TriggerTiming::INSTEAD_OF) {
+        if (table_ref->object_type != ResolvedTableRef::ObjectType::VIEW) {
+            error(stmt->span, "INSTEAD OF triggers require a view");
+            return nullptr;
+        }
+    } else if (table_ref->object_type != ResolvedTableRef::ObjectType::TABLE) {
+        error(stmt->span, "CREATE TRIGGER requires a base table");
+        return nullptr;
     }
 
     if (!resolved->body.empty()) {
@@ -5897,6 +6065,20 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDatabase(AlterDatabaseStmt* s
     {
         resolved->alias = std::string(string_pool_.get(stmt->alias));
     }
+    if (!stmt->options.empty())
+    {
+        resolved->options.reserve(stmt->options.size());
+        for (const auto& opt : stmt->options)
+        {
+            std::string key = opt.key != StringPool::INVALID_ID
+                                  ? std::string(string_pool_.get(opt.key))
+                                  : std::string();
+            std::string value = opt.value != StringPool::INVALID_ID
+                                    ? std::string(string_pool_.get(opt.value))
+                                    : std::string();
+            resolved->options.emplace_back(std::move(key), std::move(value));
+        }
+    }
 
     return resolved;
 }
@@ -6437,6 +6619,23 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
     resolved->qualified_table_name = internString(qualified_name);
 
     switch (stmt->action) {
+        case AlterTableAction::ATTACH_PARTITION:
+        case AlterTableAction::DETACH_PARTITION: {
+            if (stmt->partition_path.isEmpty()) {
+                error(stmt->span, "ALTER TABLE partition action requires a partition name");
+                return nullptr;
+            }
+            resolved->partition_name = internString(
+                schemaPathToString(stmt->partition_path, string_pool_));
+            resolved->has_partition_bounds = stmt->has_partition_bounds;
+            resolved->partition_bounds = stmt->partition_bounds;
+            if (stmt->action == AlterTableAction::ATTACH_PARTITION &&
+                !resolved->has_partition_bounds) {
+                error(stmt->span, "ATTACH PARTITION requires FOR VALUES clause");
+                return nullptr;
+            }
+            break;
+        }
         case AlterTableAction::ADD_COLUMN: {
             if (!stmt->column) {
                 error(stmt->span, "ALTER TABLE ADD COLUMN requires a column definition");
@@ -6568,6 +6767,100 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
         case AlterTableAction::DISABLE_RLS:
             resolved->rls_action = 1;
             return resolved;
+        case AlterTableAction::ENABLE_TRIGGER:
+        case AlterTableAction::DISABLE_TRIGGER: {
+            if (!stmt->trigger_all && stmt->trigger_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE ENABLE/DISABLE TRIGGER requires a trigger name or ALL");
+                return nullptr;
+            }
+            resolved->trigger_all = stmt->trigger_all;
+            if (!stmt->trigger_all) {
+                core::CatalogManager::TriggerInfo trigger_info;
+                if (catalog_.getTriggerByName(std::string(getString(stmt->trigger_name)),
+                                              trigger_info, &err_ctx) != Status::OK) {
+                    error(stmt->span, "Trigger not found: " + std::string(getString(stmt->trigger_name)));
+                    return nullptr;
+                }
+                if (trigger_info.table_id != table_ref->table_uuid) {
+                    error(stmt->span, "Trigger does not belong to table");
+                    return nullptr;
+                }
+                resolved->trigger_name = stmt->trigger_name;
+            }
+            return resolved;
+        }
+        case AlterTableAction::SET_STATISTICS: {
+            if (stmt->column_name == StringPool::INVALID_ID || !stmt->has_statistics_target) {
+                error(stmt->span, "ALTER TABLE SET STATISTICS requires column name and target");
+                return nullptr;
+            }
+            if (stmt->statistics_target < 0) {
+                error(stmt->span, "ALTER TABLE SET STATISTICS requires non-negative target");
+                return nullptr;
+            }
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(stmt->column_name)),
+                                   existing, &err_ctx) != Status::OK) {
+                error(stmt->span, "Column not found: " + std::string(getString(stmt->column_name)));
+                return nullptr;
+            }
+            resolved->column_name = stmt->column_name;
+            resolved->statistics_target = stmt->statistics_target;
+            resolved->has_statistics_target = true;
+            return resolved;
+        }
+        case AlterTableAction::SET_STORAGE: {
+            if (stmt->column_name == StringPool::INVALID_ID || stmt->storage_type == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE SET STORAGE requires column name and storage type");
+                return nullptr;
+            }
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(stmt->column_name)),
+                                   existing, &err_ctx) != Status::OK) {
+                error(stmt->span, "Column not found: " + std::string(getString(stmt->column_name)));
+                return nullptr;
+            }
+            std::string storage = core::IdentifierUtils::toUpper(
+                std::string(getString(stmt->storage_type)));
+            if (storage != "PLAIN" && storage != "EXTERNAL" && storage != "EXTENDED" && storage != "MAIN") {
+                error(stmt->span, "Unsupported storage type: " + storage);
+                return nullptr;
+            }
+            resolved->column_name = stmt->column_name;
+            resolved->storage_type = internString(storage);
+            return resolved;
+        }
+        case AlterTableAction::INHERIT:
+        case AlterTableAction::NO_INHERIT: {
+            if (!stmt->has_inherit_parent) {
+                error(stmt->span, "ALTER TABLE INHERIT/NO INHERIT requires parent table");
+                return nullptr;
+            }
+            auto parent_ref = resolveTable(stmt->inherit_parent, stmt->span, false);
+            if (!parent_ref || parent_ref->object_type != ResolvedTableRef::ObjectType::TABLE) {
+                error(stmt->span, "INHERIT requires a base table");
+                return nullptr;
+            }
+            resolved->inherit_parent = internString(
+                schemaPathToString(stmt->inherit_parent, string_pool_));
+            resolved->has_inherit_parent = true;
+            return resolved;
+        }
+        case AlterTableAction::VALIDATE_CONSTRAINT: {
+            if (stmt->constraint_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE VALIDATE requires a constraint name");
+                return nullptr;
+            }
+            core::CatalogManager::ConstraintInfo constraint;
+            if (catalog_.getConstraintByName(table_ref->table_uuid,
+                                             std::string(getString(stmt->constraint_name)),
+                                             constraint, &err_ctx) != Status::OK) {
+                error(stmt->span, "Constraint not found: " + std::string(getString(stmt->constraint_name)));
+                return nullptr;
+            }
+            resolved->constraint_name = stmt->constraint_name;
+            return resolved;
+        }
         case AlterTableAction::ADD_CONSTRAINT: {
             if (!stmt->constraint) {
                 error(stmt->span, "ALTER TABLE ADD CONSTRAINT requires a constraint definition");
@@ -8256,7 +8549,10 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeBinaryExpr(BinaryExpr* expr) {
     if (!common_type) {
         if (expr->op == BinaryOp::ADD || expr->op == BinaryOp::SUB ||
             expr->op == BinaryOp::MUL || expr->op == BinaryOp::DIV ||
-            expr->op == BinaryOp::DIV_INT || expr->op == BinaryOp::MOD) {
+            expr->op == BinaryOp::DIV_INT || expr->op == BinaryOp::MOD ||
+            expr->op == BinaryOp::POWER || expr->op == BinaryOp::BIT_AND ||
+            expr->op == BinaryOp::BIT_OR || expr->op == BinaryOp::BIT_XOR ||
+            expr->op == BinaryOp::SHIFT_LEFT || expr->op == BinaryOp::SHIFT_RIGHT) {
             warning(expr->span,
                     "Incompatible types for arithmetic operator; deferring type checking");
             auto* resolved = arena_.create<ResolvedBinaryExpr>();

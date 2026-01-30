@@ -17,11 +17,13 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 #include <thread>
 #include <chrono>
 #include <vector>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class DeadlockDetectionTest : public ::testing::Test
 {
@@ -29,16 +31,16 @@ protected:
     void SetUp() override
     {
         // Clean up any existing test database
-        std::string db_path = "/tmp/test_deadlock_db.sb";
-        ::unlink(db_path.c_str());
+        db_path_ = uniqueTestDbPath("test_deadlock_db", ".sb");
+        ::unlink(db_path_.c_str());
 
         // Create test database
         ErrorContext ctx;
-        Status status = Database::create(db_path, 16384, &ctx);
+        Status status = Database::create(db_path_.c_str(), 16384, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();
-        status = db_->open(db_path, &ctx);
+        status = db_->open(db_path_.c_str(), &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         lock_mgr_ = db_->lock_manager();
@@ -60,8 +62,7 @@ protected:
             db_->close();
         }
         db_.reset();
-        std::string db_path = "/tmp/test_deadlock_db.sb";
-        ::unlink(db_path.c_str());
+        ::unlink(db_path_.c_str());
     }
 
     // Helper to create a lock tag for testing
@@ -100,6 +101,7 @@ protected:
     std::unique_ptr<Database> db_;
     LockManager* lock_mgr_;
     TransactionManager* txn_mgr_;
+    std::string db_path_;
 };
 
 /**

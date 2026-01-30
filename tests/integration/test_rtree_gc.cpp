@@ -22,6 +22,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/types.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <memory>
 
@@ -35,7 +36,7 @@ protected:
     void SetUp() override
     {
         // Create temporary database
-        test_db_path_ = "/tmp/test_rtree_gc.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_rtree_gc", ".db");
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove(test_db_path_);

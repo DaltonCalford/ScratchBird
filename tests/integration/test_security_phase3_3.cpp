@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "test_helpers.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -31,7 +32,7 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        test_db_path = "/tmp/test_security_phase3_3.db";
+        test_db_path = scratchbird::testing::uniqueTestDbPath("test_security_phase3_3", ".db");
 
         // Remove old test database if exists
         if (std::filesystem::exists(test_db_path))

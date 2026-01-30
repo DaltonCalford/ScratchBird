@@ -11,6 +11,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <chrono>
 #include <vector>
@@ -20,6 +21,7 @@
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 // Timing helper
 class Timer
@@ -44,7 +46,7 @@ private:
 // Create test database
 Database *createTestDatabase()
 {
-    std::string db_path = "/tmp/columnstore_batch_perf_test.db";
+    std::string db_path = uniqueTestShortPath("columnstore_batch_perf_test", ".db");
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

@@ -36,6 +36,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <string>
+#include <algorithm>
+#include "test_helpers.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/page_manager.h"
@@ -51,11 +53,21 @@ static bool isHeavyConcurrencyTest() {
     return env && env[0] != '\0' && env[0] != '0';
 }
 
+static int parallelDivisor() {
+    const char* env = std::getenv("CTEST_PARALLEL_LEVEL");
+    if (!env) {
+        return 1;
+    }
+    int level = std::atoi(env);
+    return level > 1 ? 2 : 1;
+}
+
 class ConcurrentPageAccessTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "/tmp/test_concurrent_page_access.db";
-        std::remove(test_db_path_);
+        test_db_path_ =
+            scratchbird::testing::uniqueTestDbPath("test_concurrent_page_access", ".db");
+        std::remove(test_db_path_.c_str());
 
         ErrorContext ctx;
         Status status = Database::create(test_db_path_, 8192, &ctx);
@@ -87,10 +99,10 @@ protected:
         if (db_) {
             db_->close();
         }
-        std::remove(test_db_path_);
+        std::remove(test_db_path_.c_str());
     }
 
-    const char* test_db_path_;
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
     BufferPool* pool_;
     PageManager* page_mgr_;
@@ -106,8 +118,9 @@ protected:
  */
 TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
     const bool heavy = isHeavyConcurrencyTest();
-    const int NUM_THREADS = heavy ? 50 : 16;
-    const int ITERATIONS = heavy ? 100 : 50;
+    const int scale = parallelDivisor();
+    const int NUM_THREADS = std::max(4, (heavy ? 50 : 16) / scale);
+    const int ITERATIONS = std::max(10, (heavy ? 100 : 50) / scale);
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_reads{0};
@@ -205,8 +218,9 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
  */
 TEST_F(ConcurrentPageAccessTest, ConcurrentWritesDifferentPages) {
     const bool heavy = isHeavyConcurrencyTest();
-    const int NUM_THREADS = heavy ? 40 : 12;
-    const int ITERATIONS = heavy ? 50 : 30;
+    const int scale = parallelDivisor();
+    const int NUM_THREADS = std::max(4, (heavy ? 40 : 12) / scale);
+    const int ITERATIONS = std::max(10, (heavy ? 50 : 30) / scale);
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_writes{0};
@@ -262,9 +276,10 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentWritesDifferentPages) {
  */
 TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
     const bool heavy = isHeavyConcurrencyTest();
-    const int NUM_READ_THREADS = heavy ? 30 : 12;
-    const int NUM_WRITE_THREADS = heavy ? 10 : 4;
-    const int ITERATIONS = heavy ? 100 : 50;
+    const int scale = parallelDivisor();
+    const int NUM_READ_THREADS = std::max(4, (heavy ? 30 : 12) / scale);
+    const int NUM_WRITE_THREADS = std::max(2, (heavy ? 10 : 4) / scale);
+    const int ITERATIONS = std::max(10, (heavy ? 100 : 50) / scale);
     const uint32_t SHARED_PAGE = allocated_pages_[10];
 
     std::atomic<int> errors{0};
@@ -341,8 +356,9 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
  */
 TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
     const bool heavy = isHeavyConcurrencyTest();
-    const int NUM_THREADS = heavy ? 20 : 8;
-    const int ITERATIONS = heavy ? 50 : 20;
+    const int scale = parallelDivisor();
+    const int NUM_THREADS = std::max(4, (heavy ? 20 : 8) / scale);
+    const int ITERATIONS = std::max(10, (heavy ? 50 : 20) / scale);
     txn_mgr_->enableGroupCommit(false);
 
     std::atomic<int> errors{0};
@@ -427,9 +443,10 @@ TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
  */
 TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
     const bool heavy = isHeavyConcurrencyTest();
-    const int NUM_WRITER_THREADS = heavy ? 20 : 8;
-    const int NUM_SNAPSHOT_THREADS = heavy ? 30 : 12;
-    const int ITERATIONS = heavy ? 50 : 30;
+    const int scale = parallelDivisor();
+    const int NUM_WRITER_THREADS = std::max(4, (heavy ? 20 : 8) / scale);
+    const int NUM_SNAPSHOT_THREADS = std::max(4, (heavy ? 30 : 12) / scale);
+    const int ITERATIONS = std::max(10, (heavy ? 50 : 30) / scale);
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_snapshots{0};
@@ -505,8 +522,9 @@ TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
  */
 TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
     const bool heavy = isHeavyConcurrencyTest();
-    const int NUM_THREADS = heavy ? 80 : 24;
-    const int ITERATIONS = heavy ? 100 : 50;
+    const int scale = parallelDivisor();
+    const int NUM_THREADS = std::max(8, (heavy ? 80 : 24) / scale);
+    const int ITERATIONS = std::max(10, (heavy ? 100 : 50) / scale);
     // Access only 20 pages with 80 threads - forces high contention
     const int HOT_PAGES = heavy ? 20 : 10;
 

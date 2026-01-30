@@ -9,12 +9,14 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/btree_page.h"
 #include "scratchbird/core/page_manager.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <cstring>
 #include <vector>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 
 TEST(BtreeRightmostChildTest, Comprehensive) {
@@ -22,22 +24,22 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
     std::cout << "=== Testing Issue 1.10: B-Tree Rightmost Child Validation ===" << std::endl;
     std::cout << std::endl;
 
-    const char *db_path = "/tmp/test_btree_rightmost.sbrd";
-    std::remove(db_path);
+    std::string db_path = uniqueTestDbPath("test_btree_rightmost", ".sbrd");
+    std::remove(db_path.c_str());
 
     // Test 1: Create a B-tree and verify root initialization
     {
         std::cout << "Test 1: Root initialization with rightmost_child... ";
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             FAIL(); return;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             FAIL(); return;
@@ -97,7 +99,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
 
         Database db;
         ErrorContext ctx;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (reopen): " << ctx.message << std::endl;
             FAIL(); return;
@@ -341,7 +343,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         }
     }
 
-    std::remove(db_path);
+    std::remove(db_path.c_str());
 
     std::cout << std::endl;
     std::cout << "=== All tests PASSED ===" << std::endl;
@@ -355,4 +357,3 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
     std::cout << "  - Code at btree.cpp:1083, 1087, 1378 properly sets rightmost_child ✅" << std::endl;
     std::cout << "  - No infinite loop possible - error is returned immediately ✅" << std::endl;
 }
-

@@ -11,6 +11,7 @@
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/tid.h"
+#include "test_helpers.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,14 +24,15 @@ protected:
     void SetUp() override
     {
         // Create test database
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_storage_toast_indexing", ".db");
         ErrorContext ctx;
-        Status status = Database::create("/tmp/test_storage_toast_indexing.db", 8192, &ctx);
+        Status status = Database::create(test_db_path_, 8192, &ctx);
         if (status != Status::OK && status != Status::ERROR_EXISTS) {
             FAIL() << "Failed to create database: " << ctx.message;
         }
 
         db_ = std::make_unique<Database>();
-        status = db_->open("/tmp/test_storage_toast_indexing.db", &ctx);
+        status = db_->open(test_db_path_, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         storage_ = db_->storage_engine();
@@ -49,6 +51,8 @@ protected:
             db_->close();
         }
     }
+
+    std::string test_db_path_;
 
     // Helper: Create a large text value that will be TOASTed (>2KB)
     std::string createLargeText(size_t size_kb)
@@ -401,4 +405,3 @@ TEST_F(StorageToastIndexingTest, DetoastIfNeeded)
 // =============================================================================
 // Main
 // =============================================================================
-

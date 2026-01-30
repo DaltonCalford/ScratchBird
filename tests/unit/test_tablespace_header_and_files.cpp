@@ -8,16 +8,19 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/tablespace.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
+using scratchbird::testing::uniqueTestShortPath;
 
 class TablespaceHeaderTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        db_path_ = "/tmp/test_tablespace_header.db";
-        ts_path_ = "/tmp/test_tablespace_header.sbts";
+        db_path_ = uniqueTestDbPath("test_tablespace_header");
+        ts_path_ = uniqueTestShortPath("test_tablespace_header", ".sbts");
         std::filesystem::remove(db_path_);
         std::filesystem::remove(ts_path_);
     }
@@ -92,7 +95,7 @@ TEST_F(TablespaceHeaderTest, TablespaceFileRecordsLoadMultipleFiles)
                                                            tablespace_id, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
-    std::string second_path = "/tmp/test_tablespace_header_extra.sbts";
+    std::string second_path = uniqueTestShortPath("test_tablespace_header_extra", ".sbts");
     std::filesystem::remove(second_path);
     status = db.catalog_manager()->writeTablespaceFileRecord(tablespace_id, 1, second_path,
                                                              0, 0, 0, true, 0, 0, &ctx);
@@ -115,7 +118,7 @@ TEST_F(TablespaceHeaderTest, TablespaceFileRecordsPersistAcrossRestart)
     ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     uint16_t tablespace_id = 0;
-    std::string second_path = "/tmp/test_tablespace_header_extra_persist.sbts";
+    std::string second_path = uniqueTestShortPath("test_tablespace_header_extra_persist", ".sbts");
     std::filesystem::remove(second_path);
 
     {

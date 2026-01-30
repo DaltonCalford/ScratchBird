@@ -17,6 +17,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <vector>
 #include <algorithm>
@@ -29,7 +30,7 @@ class BTreeIteratorTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_btree_iter.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_btree_iter", ".db");
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;

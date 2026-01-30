@@ -11,8 +11,10 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/page_manager.h"
+#include "tests/test_helpers.h"
 #include <iostream>
 #include <cstring>
+#include <string>
 
 using namespace scratchbird::core;
 
@@ -22,8 +24,9 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     std::cout << "\n=== Test: Hint Bits Optimization (Issue 2.13) ===" << std::endl;
 
     // Create test database
-    const char *db_path = "/tmp/test_hint_bits.db";
-    std::remove(db_path);
+    std::string db_path =
+        scratchbird::testing::uniqueTestDbPath("test_hint_bits", ".db");
+    std::remove(db_path.c_str());
 
     ErrorContext err_ctx;
     Status s = Database::create(db_path, 8192, &err_ctx);
@@ -235,4 +238,3 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     std::cout << "  3. Fast path logic is in place (no errors on second check)" << std::endl;
     std::cout << "  4. Implementation follows PostgreSQL pattern" << std::endl;
 }
-

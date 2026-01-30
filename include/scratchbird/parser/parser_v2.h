@@ -364,10 +364,17 @@ private:
     Expression* parseNotExpr();
     Expression* parseComparisonExpr();
     Expression* parseComparisonExprWithLeft(Expression* left);
+    Expression* parseBitOrExpr();
+    Expression* parseBitOrExprWithLeft(Expression* left);
+    Expression* parseBitAndExpr();
+    Expression* parseBitAndExprWithLeft(Expression* left);
+    Expression* parseShiftExpr();
+    Expression* parseShiftExprWithLeft(Expression* left);
     Expression* parseAddExpr();
     Expression* parseAddExprWithLeft(Expression* left);
     Expression* parseMulExpr();
     Expression* parseMulExprWithLeft(Expression* left);
+    Expression* parsePowerExpr();
     Expression* parseUnaryExpr();
     Expression* parsePrimaryExpr();
     Expression* parseLiteral();

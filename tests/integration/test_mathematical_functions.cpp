@@ -6,7 +6,9 @@
 
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include <scratchbird/sblr/executor.h>
+#include "test_helpers.h"
 #include <cmath>
+#include <string>
 
 using namespace scratchbird;
 
@@ -14,16 +16,18 @@ class MathematicalFunctionsTest : public ::testing::Test
 {
 protected:
     std::unique_ptr<core::Database> db;
+    std::string test_db_path_;
 
     void SetUp() override
     {
         // Create test database
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_math_functions", ".db");
         core::ErrorContext ctx;
-        auto status = core::Database::create("/tmp/test_math_functions.db", 16384, &ctx);
+        auto status = core::Database::create(test_db_path_, 16384, &ctx);
         ASSERT_TRUE(status == core::Status::OK) << "Failed to create database: " << ctx.message;
 
         db = std::make_unique<core::Database>();
-        status = db->open("/tmp/test_math_functions.db", &ctx);
+        status = db->open(test_db_path_, &ctx);
         ASSERT_TRUE(status == core::Status::OK) << "Failed to open database: " << ctx.message;
     }
 
@@ -31,7 +35,7 @@ protected:
     {
         db.reset();
         // Clean up test database
-        std::remove("/tmp/test_math_functions.db");
+        std::remove(test_db_path_.c_str());
     }
 
     // Helper to execute a simple SELECT statement and get the result

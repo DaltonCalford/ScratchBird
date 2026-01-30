@@ -5,8 +5,10 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 /**
  * Test heap page memory management (Issue 1.4 from audit)
@@ -18,7 +20,7 @@ class HeapPageMemoryTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_heap_page_memory.sbrd";
+        test_db_path_ = uniqueTestDbPath("test_heap_page_memory", ".sbrd");
         std::filesystem::remove(test_db_path_);
 
         auto status = Database::create(test_db_path_, 16384, nullptr);

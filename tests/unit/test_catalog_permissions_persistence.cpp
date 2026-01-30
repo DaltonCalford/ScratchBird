@@ -6,21 +6,23 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 TEST(CatalogPermissionsPersistenceTest, ColumnObjectPolicyPersistAcrossRestart)
 {
-    const char *db_path = "/tmp/test_catalog_permissions_persist.db";
-    std::remove(db_path);
+    std::string db_path = uniqueTestDbPath("test_catalog_permissions_persist");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
-    Status status = Database::create(db_path, 8192, &ctx);
+    Status status = Database::create(db_path.c_str(), 8192, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
     {
         Database db;
-        status = db.open(db_path, &ctx);
+        status = db.open(db_path.c_str(), &ctx);
         ASSERT_EQ(status, Status::OK) << ctx.message;
 
         auto *catalog = db.catalog_manager();
@@ -72,7 +74,7 @@ TEST(CatalogPermissionsPersistenceTest, ColumnObjectPolicyPersistAcrossRestart)
 
     {
         Database db;
-        status = db.open(db_path, &ctx);
+        status = db.open(db_path.c_str(), &ctx);
         ASSERT_EQ(status, Status::OK) << ctx.message;
 
         auto *catalog = db.catalog_manager();
@@ -111,5 +113,5 @@ TEST(CatalogPermissionsPersistenceTest, ColumnObjectPolicyPersistAcrossRestart)
         db.close();
     }
 
-    std::remove(db_path);
+    std::remove(db_path.c_str());
 }

@@ -65,6 +65,35 @@ Right-click the installer and select "Run as administrator" (recommended).
 - Documentation (optional)
 - Click "Next"
 
+**Feature IDs (MSI/NSIS component names):**
+
+| Feature ID | Description |
+| --- | --- |
+| `CoreServer` | Server + service |
+| `Tools` | CLI tools (`sb_isql`, `sb_admin`, `sb_backup`, `sb_verify`, `sb_security`) |
+| `ClientLibs` | Native client libraries |
+| `DevHeaders` | Headers/SDK for embedding |
+| `ScratchRobin` | ScratchRobin GUI |
+| `EmulationPG` | PostgreSQL listener/parser |
+| `EmulationMySQL` | MySQL listener/parser |
+| `EmulationFirebird` | Firebird listener/parser |
+| `ODBCDriver` | ODBC driver |
+| `JDBCDriver` | JDBC driver |
+| `DriverGo` | Go driver |
+| `DriverPython` | Python driver |
+| `DriverNode` | Node.js driver |
+| `DriverDotNet` | .NET driver |
+| `DriverJDBC` | JDBC driver |
+| `DriverPHP` | PHP driver |
+| `DriverRuby` | Ruby driver |
+| `DriverR` | R driver |
+| `DriverRust` | Rust driver |
+| `DriverPascal` | Pascal/Delphi driver |
+| `SignedRuntime` | Signed runtime bundle |
+
+Full installer feature matrix: see
+[Installer Features + Config Generator](../../specifications/deployment/INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md).
+
 **Start Menu:**
 - Create Start Menu shortcuts
 - Click "Install"
@@ -179,6 +208,13 @@ fb_port = 3050
 
 [logging]
 file = C:\ProgramData\ScratchBird\logs\sb_server.log
+```
+
+You can also run the post-install configuration wizard to add/remove features,
+set ports, and tune performance:
+
+```cmd
+sb_setup --interactive
 ```
 
 ---

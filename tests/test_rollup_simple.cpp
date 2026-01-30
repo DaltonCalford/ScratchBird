@@ -23,6 +23,8 @@
 #include <iostream>
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <unistd.h>
 
 using namespace scratchbird;
 
@@ -30,7 +32,8 @@ class SimpleTest {
 private:
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<sblr::QueryCompilerV2> compiler_;
-    const std::string db_path_ = "/tmp/test_rollup_simple_db";
+    const std::string db_path_ =
+        "/tmp/test_rollup_simple_db_" + std::to_string(getpid());
     int test_count_ = 0;
     int passed_count_ = 0;
 

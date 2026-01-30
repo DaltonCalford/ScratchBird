@@ -1010,6 +1010,17 @@ struct ResolvedCreateTableStmt : public ResolvedStatement {
     // Storage options
     uint16_t tablespace_id = 0;
     StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+
+    // Partitioning metadata (native parser)
+    bool is_partitioned = false;
+    StringPool::StringId partition_by = StringPool::INVALID_ID;
+    std::vector<StringPool::StringId> partition_columns;
+
+    // Inheritance metadata (native parser)
+    std::vector<StringPool::StringId> inherits;
+
+    // CREATE TABLE AS SELECT
+    ResolvedSelectStmt* as_query = nullptr;
 };
 
 /**
@@ -1074,6 +1085,18 @@ struct ResolvedCreateSequenceStmt : public ResolvedStatement {
     bool has_owned_by = false;
     StringPool::StringId owned_by_table = StringPool::INVALID_ID;
     StringPool::StringId owned_by_column = StringPool::INVALID_ID;
+};
+
+struct ResolvedAlterSequenceStmt : public ResolvedStatement {
+    ResolvedSchemaRef schema;
+    StringPool::StringId sequence_name;
+
+    std::optional<int64_t> increment_by;
+    std::optional<int64_t> min_value;
+    std::optional<int64_t> max_value;
+    std::optional<int64_t> restart_with;
+    std::optional<int64_t> cache;
+    std::optional<bool> cycle;
 };
 
 struct ResolvedRoutineParam {
@@ -1641,6 +1664,7 @@ struct ResolvedAlterDatabaseStmt : public ResolvedStatement {
     StringPool::StringId new_name = StringPool::INVALID_ID;
     StringPool::StringId owner = StringPool::INVALID_ID;
     std::string alias;
+    std::vector<std::pair<std::string, std::string>> options;
 };
 
 /**
@@ -1671,8 +1695,26 @@ struct ResolvedAlterTableStmt : public ResolvedStatement {
     StringPool::StringId tablespace_name = StringPool::INVALID_ID;
     bool tablespace_online = false;
 
+    // Trigger operations
+    StringPool::StringId trigger_name = StringPool::INVALID_ID;
+    bool trigger_all = false;
+
+    // Statistics/storage operations
+    int32_t statistics_target = 0;
+    bool has_statistics_target = false;
+    StringPool::StringId storage_type = StringPool::INVALID_ID;
+
     // RLS operations
     uint8_t rls_action = 0;
+
+    // Partition operations
+    StringPool::StringId partition_name = StringPool::INVALID_ID;
+    StringPool::StringId partition_bounds = StringPool::INVALID_ID;
+    bool has_partition_bounds = false;
+
+    // Inheritance operations
+    StringPool::StringId inherit_parent = StringPool::INVALID_ID;
+    bool has_inherit_parent = false;
 };
 
 /**

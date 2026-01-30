@@ -13,10 +13,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 
 TEST(SubtransactionsTest, Comprehensive) {
@@ -24,11 +26,11 @@ TEST(SubtransactionsTest, Comprehensive) {
     std::cout << "\n=== Test: Subtransaction/Savepoint Support (Issue 2.15) ===" << std::endl;
 
     // Create test database
-    const char *db_path = "/tmp/test_subtransactions.db";
-    std::remove(db_path);
+    std::string db_path = uniqueTestDbPath("test_subtransactions");
+    std::remove(db_path.c_str());
 
     ErrorContext err_ctx;
-    Status s = Database::create(db_path, 8192, &err_ctx);
+    Status s = Database::create(db_path.c_str(), 8192, &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
@@ -36,7 +38,7 @@ TEST(SubtransactionsTest, Comprehensive) {
     }
 
     Database db;
-    s = db.open(db_path, &err_ctx);
+    s = db.open(db_path.c_str(), &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
@@ -288,4 +290,3 @@ TEST(SubtransactionsTest, Comprehensive) {
     std::cout << "  7. Savepoints cleared on commit/rollback" << std::endl;
     std::cout << "\nSpec: docs/specifications/TRANSACTION_MGA_CORE.md:774-908" << std::endl;
 }
-

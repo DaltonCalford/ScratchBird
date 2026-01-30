@@ -1006,6 +1006,30 @@ Expression* Parser::parsePrimaryExpression() {
         expr->function_path.components.push_back(string_pool_.intern("CURRENT_TRANSACTION"));
         return expr;
     }
+    if (checkKeyword(TokenType::KW_LOCALTIME)) {
+        advance();
+        auto* expr = allocate<ast::FunctionCallExpr>();
+        expr->function_path.components.push_back(string_pool_.intern("LOCALTIME"));
+        return expr;
+    }
+    if (checkKeyword(TokenType::KW_LOCALTIMESTAMP)) {
+        advance();
+        auto* expr = allocate<ast::FunctionCallExpr>();
+        expr->function_path.components.push_back(string_pool_.intern("LOCALTIMESTAMP"));
+        return expr;
+    }
+    if (checkKeyword(TokenType::KW_DATEADD)) {
+        advance();
+        ast::SchemaPath path;
+        path.components.push_back(string_pool_.intern("DATEADD"));
+        return parseFunctionCall(path);
+    }
+    if (checkKeyword(TokenType::KW_RDB_GET_CONTEXT)) {
+        advance();
+        ast::SchemaPath path;
+        path.components.push_back(string_pool_.intern("RDB$GET_CONTEXT"));
+        return parseFunctionCall(path);
+    }
 
     // CASE expression
     if (matchKeyword(TokenType::KW_CASE)) {
@@ -1067,6 +1091,21 @@ Expression* Parser::parsePrimaryExpression() {
             id = string_pool_.intern(text);
         }
         advance();
+
+        auto is_context_literal = [&](std::string_view name) {
+            std::string upper;
+            upper.reserve(name.size());
+            for (char c : name) {
+                upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+            }
+            return upper == "TODAY" || upper == "YESTERDAY" || upper == "TOMORROW";
+        };
+
+        if (is_context_literal(string_pool_.get(id))) {
+            auto* expr = allocate<ast::FunctionCallExpr>();
+            expr->function_path.components.push_back(id);
+            return expr;
+        }
 
         // Check for function call
         if (check(TokenType::LEFT_PAREN)) {
@@ -1964,9 +2003,30 @@ Statement* Parser::parseAlterStatement() {
         return parseAlterIndexImpl();
     }
     if (matchKeyword(TokenType::KW_SEQUENCE) || matchKeyword(TokenType::KW_GENERATOR)) {
-        parseSchemaPath();
-        error("ALTER SEQUENCE/GENERATOR is not supported in Firebird parser yet");
-        return nullptr;
+        auto* stmt = allocate<ast::AlterSequenceStmt>();
+        stmt->sequence_path = parseSchemaPath();
+        while (!atEnd() && !check(TokenType::SEMICOLON)) {
+            if (matchKeyword(TokenType::KW_RESTART)) {
+                matchKeyword(TokenType::KW_WITH);
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    stmt->restart_with = current_token_.value.int_value;
+                    advance();
+                } else {
+                    error("Expected integer value after RESTART");
+                }
+            } else if (matchKeyword(TokenType::KW_INCREMENT)) {
+                matchKeyword(TokenType::KW_BY);
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    stmt->increment_by = current_token_.value.int_value;
+                    advance();
+                } else {
+                    error("Expected integer value after INCREMENT");
+                }
+            } else {
+                break;
+            }
+        }
+        return stmt;
     }
     if (matchKeyword(TokenType::KW_VIEW)) {
         return parseCreateViewImpl(true);
@@ -2227,6 +2287,64 @@ Statement* Parser::parseAlterDatabase() {
         return stmt;
     }
 
+    if (matchKeyword(TokenType::KW_SET)) {
+        auto parseValueTokenText = [&]() -> std::string {
+            if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+                auto id = internFromLexer(current_token_.value.string_id);
+                std::string value = std::string(string_pool_.get(id));
+                advance();
+                return value;
+            }
+            if (check(TokenType::IDENTIFIER)) {
+                auto id = parseIdentifier();
+                return std::string(string_pool_.get(id));
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                std::string value = std::to_string(current_token_.value.int_value);
+                advance();
+                return value;
+            }
+            return {};
+        };
+
+        while (!atEnd() && !check(TokenType::SEMICOLON)) {
+            if (matchKeyword(TokenType::KW_DEFAULT)) {
+                if (matchKeyword(TokenType::KW_CHARACTER)) {
+                    matchKeyword(TokenType::KW_SET);
+                    std::string value = parseValueTokenText();
+                    if (value.empty()) {
+                        error("Expected character set after DEFAULT CHARACTER SET");
+                        break;
+                    }
+                    ast::AlterDatabaseOption opt;
+                    opt.key = string_pool_.intern("default_character_set");
+                    opt.value = string_pool_.intern(value);
+                    stmt->options.push_back(opt);
+                } else if (matchKeyword(TokenType::KW_COLLATION)) {
+                    std::string value = parseValueTokenText();
+                    if (value.empty()) {
+                        error("Expected collation after DEFAULT COLLATION");
+                        break;
+                    }
+                    ast::AlterDatabaseOption opt;
+                    opt.key = string_pool_.intern("default_collation");
+                    opt.value = string_pool_.intern(value);
+                    stmt->options.push_back(opt);
+                } else {
+                    error("Expected CHARACTER SET or COLLATION after DEFAULT");
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if (!stmt->options.empty()) {
+            stmt->action = ast::AlterDatabaseAction::SET_OPTIONS;
+            return stmt;
+        }
+    }
+
     if (matchIdentifierText("OWNER")) {
         consume(TokenType::KW_TO, "Expected TO after OWNER");
         stmt->action = ast::AlterDatabaseAction::SET_OWNER;
@@ -2343,6 +2461,24 @@ ast::CreateTableStmt* Parser::parseCreateTableImpl(bool or_replace, bool tempora
             stmt->on_commit = ast::TempOnCommitAction::PRESERVE_ROWS;
         }
         matchKeyword(TokenType::KW_ROWS);  // Optional ROWS keyword
+    }
+
+    if (matchKeyword(TokenType::KW_PARTITION)) {
+        error("Firebird does not support partitioned tables");
+        if (matchKeyword(TokenType::KW_BY)) {
+            if (match(TokenType::LEFT_PAREN)) {
+                int depth = 1;
+                while (depth > 0 && !atEnd()) {
+                    if (match(TokenType::LEFT_PAREN)) {
+                        depth++;
+                    } else if (match(TokenType::RIGHT_PAREN)) {
+                        depth--;
+                    } else {
+                        advance();
+                    }
+                }
+            }
+        }
     }
 
     return stmt;

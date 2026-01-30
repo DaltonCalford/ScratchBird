@@ -20,16 +20,27 @@ void Parser::parseSelectStmt() {
 
     // Handle SELECT modifiers
     bool distinct = false;
+    std::vector<std::vector<uint8_t>> distinct_on_exprs;
+    auto capture_expr = [&]() {
+        std::vector<uint8_t> saved;
+        saved.swap(bytecode_);
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = true;
+        bytecode_.clear();
+        parseExpression();
+        std::vector<uint8_t> expr;
+        expr.swap(bytecode_);
+        bytecode_.swap(saved);
+        emit_enabled_ = prev_emit;
+        return expr;
+    };
     if (matchKeyword(TokenType::KW_DISTINCT)) {
         distinct = true;
         if (matchKeyword(TokenType::KW_ON)) {
             consume(TokenType::LEFT_PAREN, "Expected (");
-            bool prev_emit = emit_enabled_;
-            emit_enabled_ = false;
             do {
-                parseExpression();
+                distinct_on_exprs.push_back(capture_expr());
             } while (match(TokenType::COMMA));
-            emit_enabled_ = prev_emit;
             consume(TokenType::RIGHT_PAREN, "Expected )");
         }
     } else {
@@ -101,6 +112,18 @@ void Parser::parseSelectStmt() {
         } else {
             emit(sblr::Opcode::BEGIN_LIST);
             emitUVarint(0);
+            emit(sblr::Opcode::END_LIST);
+        }
+
+        if (!distinct_on_exprs.empty()) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DISTINCT_ON));
+            emit(sblr::Opcode::BEGIN_LIST);
+            emitUVarint(distinct_on_exprs.size());
+            for (const auto& expr : distinct_on_exprs) {
+                emitU32(static_cast<uint32_t>(expr.size()));
+                bytecode_.insert(bytecode_.end(), expr.begin(), expr.end());
+            }
             emit(sblr::Opcode::END_LIST);
         }
     }

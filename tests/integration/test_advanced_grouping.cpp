@@ -29,6 +29,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
+#include "test_helpers.h"
 
 #include <filesystem>
 #include <memory>
@@ -42,7 +43,7 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        test_db_path_ = "/tmp/test_advanced_grouping.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_advanced_grouping", ".db");
         std::filesystem::remove_all(test_db_path_);
 
         core::ErrorContext ctx;

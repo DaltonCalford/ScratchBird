@@ -22,6 +22,7 @@
 
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <memory>
 
@@ -31,9 +32,10 @@ class AdvancedGroupingTest : public ::testing::Test {
 protected:
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<sblr::QueryCompilerV2> compiler_;
-    const std::string db_path_ = "/tmp/test_advanced_grouping_db";
+    std::string db_path_;
 
     void SetUp() override {
+        db_path_ = scratchbird::testing::uniqueTestDbPath("test_advanced_grouping", ".db");
         // Clean up any existing database
         std::filesystem::remove_all(db_path_);
 

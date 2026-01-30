@@ -195,6 +195,8 @@ void Parser::parseCreateStmt() {
         parseCreateType();
     } else if (matchKeyword(TokenType::KW_DOMAIN)) {
         parseCreateDomain();
+    } else if (matchKeyword(TokenType::KW_POLICY)) {
+        parseCreatePolicy();
     } else if (matchKeyword(TokenType::KW_ROLE)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_ROLE));
@@ -307,6 +309,9 @@ void Parser::parseCreateTable() {
     };
     std::vector<ForeignKeyDef> pending_fks;
     std::string tablespace_name;
+    bool has_partition_clause = false;
+    std::string partition_strategy;
+    std::vector<std::string> partition_columns;
 
     do {
         bool emitted_entry = false;
@@ -501,6 +506,26 @@ void Parser::parseCreateTable() {
         tablespace_name.clear();
     }
 
+    if (matchKeyword(TokenType::KW_PARTITION)) {
+        consumeKeyword(TokenType::KW_BY, "Expected BY after PARTITION");
+        if (matchKeyword(TokenType::KW_RANGE)) {
+            partition_strategy = "RANGE";
+        } else if (matchKeyword(TokenType::KW_LIST)) {
+            partition_strategy = "LIST";
+        } else if (matchKeyword(TokenType::KW_HASH)) {
+            partition_strategy = "HASH";
+        } else {
+            error("Expected RANGE, LIST, or HASH after PARTITION BY");
+        }
+
+        consume(TokenType::LEFT_PAREN, "Expected ( after PARTITION BY");
+        do {
+            partition_columns.push_back(parseIdentifier());
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected ) after partition columns");
+        has_partition_clause = true;
+    }
+
     for (const auto& fk : pending_fks) {
         if (fk.columns.size() > 255 || fk.ref_columns.size() > 255) {
             error("Foreign key has too many columns");
@@ -544,6 +569,137 @@ void Parser::parseCreateTable() {
     }
 
     emitString(tablespace_name);
+
+    if (has_partition_clause) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TABLE_PARTITIONING));
+        emitString(partition_strategy);
+        emit(sblr::Opcode::BEGIN_LIST);
+        emitUVarint(partition_columns.size());
+        for (const auto& col : partition_columns) {
+            emitString(col);
+        }
+        emit(sblr::Opcode::END_LIST);
+    }
+}
+
+// ============================================================================
+// CREATE POLICY
+// ============================================================================
+
+void Parser::parseCreatePolicy() {
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_POLICY));
+
+    std::string policy_name = parseIdentifier();
+    emitString(policy_name);
+
+    consumeKeyword(TokenType::KW_ON, "Expected ON");
+    std::string table_name = parseQualifiedName();
+    emitString(table_name);
+
+    // Optional AS PERMISSIVE/RESTRICTIVE (ignored for now)
+    if (matchKeyword(TokenType::KW_AS)) {
+        if (matchIdentifierKeyword("PERMISSIVE") ||
+            matchIdentifierKeyword("RESTRICTIVE"))
+        {
+            // no-op
+        }
+    }
+
+    uint8_t policy_command = 0; // ALL
+    if (matchKeyword(TokenType::KW_FOR)) {
+        if (matchKeyword(TokenType::KW_ALL)) {
+            policy_command = 0;
+        } else if (matchKeyword(TokenType::KW_SELECT)) {
+            policy_command = 1;
+        } else if (matchKeyword(TokenType::KW_INSERT)) {
+            policy_command = 2;
+        } else if (matchKeyword(TokenType::KW_UPDATE)) {
+            policy_command = 3;
+        } else if (matchKeyword(TokenType::KW_DELETE)) {
+            policy_command = 4;
+        } else {
+            error("Expected ALL, SELECT, INSERT, UPDATE, or DELETE after FOR");
+        }
+    }
+
+    std::vector<std::string> roles;
+    if (matchKeyword(TokenType::KW_TO)) {
+        do {
+            if (matchKeyword(TokenType::KW_PUBLIC)) {
+                roles.emplace_back("PUBLIC");
+            } else if (matchKeyword(TokenType::KW_CURRENT_USER)) {
+                roles.emplace_back("CURRENT_USER");
+            } else if (matchKeyword(TokenType::KW_CURRENT_ROLE)) {
+                roles.emplace_back("CURRENT_ROLE");
+            } else if (matchKeyword(TokenType::KW_SESSION_USER)) {
+                roles.emplace_back("SESSION_USER");
+            } else {
+                roles.push_back(parseIdentifier());
+            }
+        } while (match(TokenType::COMMA));
+    } else {
+        roles.emplace_back("PUBLIC");
+    }
+
+    auto capture_expr = [&]() {
+        std::vector<uint8_t> saved;
+        saved.swap(bytecode_);
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = true;
+        bytecode_.clear();
+        parseExpression();
+        std::vector<uint8_t> expr;
+        expr.swap(bytecode_);
+        bytecode_.swap(saved);
+        emit_enabled_ = prev_emit;
+        return expr;
+    };
+
+    bool has_using = false;
+    bool has_with_check = false;
+    std::vector<uint8_t> using_expr;
+    std::vector<uint8_t> with_check_expr;
+
+    if (matchKeyword(TokenType::KW_USING)) {
+        has_using = true;
+        if (match(TokenType::LEFT_PAREN)) {
+            using_expr = capture_expr();
+            consume(TokenType::RIGHT_PAREN, "Expected ) after USING");
+        } else {
+            using_expr = capture_expr();
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_WITH)) {
+        consumeKeyword(TokenType::KW_CHECK, "Expected CHECK");
+        has_with_check = true;
+        if (match(TokenType::LEFT_PAREN)) {
+            with_check_expr = capture_expr();
+            consume(TokenType::RIGHT_PAREN, "Expected ) after WITH CHECK");
+        } else {
+            with_check_expr = capture_expr();
+        }
+    }
+
+    emitByte(policy_command);
+    emitU32(static_cast<uint32_t>(roles.size()));
+    for (const auto& role : roles) {
+        emitString(role);
+    }
+
+    uint8_t flags = 0;
+    if (has_using) flags |= 0x01;
+    if (has_with_check) flags |= 0x02;
+    emitByte(flags);
+
+    if (has_using) {
+        bytecode_.insert(bytecode_.end(), using_expr.begin(), using_expr.end());
+    }
+    if (has_with_check) {
+        bytecode_.insert(bytecode_.end(), with_check_expr.begin(), with_check_expr.end());
+    }
 }
 
 ColumnDef Parser::parseColumnDef() {
@@ -1063,8 +1219,6 @@ void Parser::parseCreateIndex() {
     std::string tablespace_name;
     if (matchKeyword(TokenType::KW_TABLESPACE)) {
         tablespace_name = parseIdentifier();
-        error("TABLESPACE clauses are not supported in emulated parsers");
-        tablespace_name.clear();
     }
 
     bool emit_expressions = false;
@@ -2495,6 +2649,12 @@ void Parser::parseAlterStmt() {
         error("Expected RENAME TO or SET SCHEMA after object name");
     };
 
+    if (matchKeyword(TokenType::KW_DEFAULT)) {
+        consumeKeyword(TokenType::KW_PRIVILEGES, "Expected PRIVILEGES after DEFAULT");
+        error("ALTER DEFAULT PRIVILEGES is not supported yet");
+        return;
+    }
+
     if (matchKeyword(TokenType::KW_TABLE)) {
         bool if_exists = false;
         if (matchKeyword(TokenType::KW_IF)) {
@@ -2510,6 +2670,36 @@ void Parser::parseAlterStmt() {
         }
 
         auto table_components = build_object_path(schema, table);
+
+        uint8_t rls_action = 0;
+        bool rls_action_set = false;
+        if (matchKeyword(TokenType::KW_ENABLE)) {
+            rls_action = 0;
+            rls_action_set = true;
+        } else if (matchKeyword(TokenType::KW_DISABLE)) {
+            rls_action = 1;
+            rls_action_set = true;
+        } else if (matchKeyword(TokenType::KW_FORCE)) {
+            rls_action = 2;
+            rls_action_set = true;
+        } else if (matchKeyword(TokenType::KW_NO)) {
+            consumeKeyword(TokenType::KW_FORCE, "Expected FORCE after NO");
+            rls_action = 3;
+            rls_action_set = true;
+        }
+
+        if (rls_action_set) {
+            consumeKeyword(TokenType::KW_ROW, "Expected ROW");
+            consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
+            consumeKeyword(TokenType::KW_SECURITY, "Expected SECURITY");
+            resolveTableName(schema, table);
+            std::string table_path = schema.empty() ? table : (schema + "/" + table);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_TABLE_RLS));
+            emitString(table_path);
+            emitByte(rls_action);
+            return;
+        }
 
         if (matchKeyword(TokenType::KW_RENAME)) {
             if (matchKeyword(TokenType::KW_COLUMN)) {
@@ -2858,11 +3048,49 @@ void Parser::parseDropDomain() {
     }
 }
 
+void Parser::parseDropPolicy() {
+    bool if_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_exists = true;
+    }
+
+    std::string policy_name = parseIdentifier();
+    consumeKeyword(TokenType::KW_ON, "Expected ON");
+    std::string table_name = parseQualifiedName();
+
+    bool cascade = false;
+    if (matchKeyword(TokenType::KW_CASCADE)) {
+        cascade = true;
+    } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+        cascade = false;
+    }
+
+    uint8_t flags = 0;
+    if (if_exists) {
+        flags |= 0x01;
+    }
+    if (cascade) {
+        flags |= 0x02;
+    }
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_POLICY));
+    emitString(policy_name);
+    emitString(table_name);
+    emitByte(flags);
+}
+
 void Parser::parseDropStmt() {
     consume(TokenType::KW_DROP, "Expected DROP");
 
     if (matchKeyword(TokenType::KW_DOMAIN)) {
         parseDropDomain();
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_POLICY)) {
+        parseDropPolicy();
         return;
     }
 

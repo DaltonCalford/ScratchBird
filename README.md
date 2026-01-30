@@ -2,9 +2,9 @@
 
 **Firebird-style MGA database engine** with multi-dialect wire compatibility and advanced distributed cluster capabilities.
 
-**Current Phase:** Alpha Engine Core Completion (see `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`)
+**Current Phase:** Pre-Beta (Alpha Complete)
 **Project Started:** July 2025
-**Status:** 9 of 9 Alpha workstreams complete
+**Status:** All 9 Alpha workstreams complete; preparing for Beta
 
 ---
 
@@ -52,9 +52,9 @@ ScratchBird has been split into multiple repositories for parallel development:
 - Listener/pool/parser/server process operational with socket handoff per dialect
 - Shared SBLR cache with per-connection compile caches
 
-### Engine Core Alpha Workstreams
+### Engine Core Alpha Workstreams (Complete)
 
-Active work tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
+All workstreams tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
 
 | Workstream                  | Status | Description                                                 |
 | --------------------------- | ------ | ----------------------------------------------------------- |
@@ -68,7 +68,7 @@ Active work tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
 | WS-8 Backup/Restore         | Done   | Multi-tablespace coverage validation                        |
 | WS-9 Cache/Buffer Plan      | Done   | Cache and buffer remediation                                |
 
-Latest full test run: 2495 tests, 0 failures (2026-01-28).
+Latest full test run: 2495 tests, 0 failures (2026-01-30).
 
 ### Beta (Deferred)
 
@@ -120,7 +120,7 @@ ctest --test-dir build --output-on-failure
 - **Query Optimizer** - Cost-based optimization with push-down support
 - **Security Subsystem** - Authentication, authorization, encryption, masking, audit
 - **Wire Protocol** - Native ScratchBird + emulated Firebird/PostgreSQL/MySQL protocols
-- **Index Manager** - 11 index types including HNSW for vector search
+- **Index Manager** - 14 index types including HNSW/IVF for vector search
 
 ### Module Structure
 
@@ -134,7 +134,7 @@ src/
 ├── fdw/            Foreign data wrappers
 ├── geo/            Geospatial functions
 ├── git/            Version control integration
-├── index/          Index structures (11 types)
+├── index/          Index structures (14 types)
 ├── network/        Network layer and wire protocols
 ├── odbc/           ODBC driver
 ├── optimizer/      Query optimizer
@@ -154,25 +154,29 @@ src/
 
 ### Database Capabilities
 
-- **ACID Transactions** - Full transaction support with snapshot isolation
-- **11 Index Types** - B-Tree, Hash, GIN, GiST, SP-GiST, BRIN, R-Tree, HNSW, Bitmap, Columnstore, LSM
-- **86 Data Types** - Including complex types (RECORD, VARIANT, ARRAY, GEOMETRY, VECTOR)
-- **Advanced Domains** - WITH blocks for SECURITY, INTEGRITY, VALIDATION, QUALITY
-- **Foreign Data Wrappers** - Connect to external data sources
-- **Full-Text Search** - Built-in text search capabilities
-- **Spatial/Geographic** - PostGIS-compatible spatial operations
-- **Vector Search** - HNSW index for AI/ML vector similarity
+- **ACID Transactions** - Full transaction support with Firebird MGA snapshot isolation
+- **14 Index Types** - B-Tree, Hash, GIN, GiST, SP-GiST, BRIN, R-Tree, HNSW, IVF, Bitmap, Columnstore, LSM, Full-Text, Zone Map
+- **56 Data Types** - Numeric, string, binary, date/time, spatial (7 geometry types), network (4 types), range (6 types), JSON/JSONB, XML, VECTOR, ARRAY, COMPOSITE, VARIANT
+- **24 Window Functions** - ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE, NTH_VALUE, NTILE, plus aggregates as windows
+- **18 Aggregate Functions** - COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG, STRING_AGG, STDDEV, VAR, CORR, COVAR, regression functions
+- **Foreign Data Wrappers** - PostgreSQL, MySQL, Firebird adapters
+- **Full-Text Search** - TSVector/TSQuery with GIN-based indexing
+- **Spatial/Geographic** - PostGIS-compatible with WKT/WKB, GEOS, PROJ support
+- **Vector Search** - HNSW and IVF indexes for AI/ML similarity
+- **Stored Procedures** - Procedures, functions, packages, table/database triggers
 - **Job Scheduler** - Cron-based scheduling with dependency management
+- **Backup/Recovery** - Full, incremental, differential with compression and PITR
 
 ### Security Features
 
-- **Authentication** - Password, certificate, and multi-factor authentication
-- **Authorization** - Role-based access control (RBAC)
-- **Row-Level Security (RLS)** - Fine-grained row filtering
-- **Column-Level Security (CLS)** - Column masking and encryption
-- **Audit Logging** - Comprehensive audit trail
-- **Encryption** - At-rest and in-transit encryption
+- **Authentication** - SCRAM, LDAP, Kerberos, OAuth, SAML, certificate, MFA (7 methods)
+- **Authorization** - Role-based access control (RBAC) with granular privileges
+- **Row-Level Security (RLS)** - Fine-grained row filtering with forced enforcement
+- **Column-Level Security** - Column-level permissions and masking
+- **Audit Logging** - 20+ event types (auth, access, DDL, system events)
+- **Encryption** - At-rest and in-transit encryption with key management
 - **Data Masking** - Built-in domain-level masking
+- **Password Policy** - Account locking, password policy enforcement
 
 ### Wire Protocol Compatibility
 
@@ -201,26 +205,26 @@ ctest --test-dir build -R integration # Integration tests
 ctest --test-dir build -R benchmark   # Benchmarks
 ```
 
-Recent full suite: 2396 tests, 0 failures (2026-02-02).
+Recent full suite: 2495 tests, 0 failures (2026-01-30).
 
-### Test Results (January 25, 2026)
+### Test Results (January 30, 2026)
 
 | Metric    | Value |
 | --------- | ----- |
-| Tests run | 2,347 |
+| Tests run | 2,495 |
 | Failures  | 0     |
 | Skips     | 0     |
 
 ### Test File Breakdown
 
-| Category            | Files   |
-| ------------------- | ------- |
-| Unit tests          | 234     |
-| Integration tests   | 69      |
-| Stress tests        | 6       |
-| Benchmarks          | 2       |
-| SQL compatibility   | 12,483  |
-| **Total C++ tests** | **337** |
+| Category            | Files    |
+| ------------------- | -------- |
+| Unit tests          | 74       |
+| Integration tests   | 71       |
+| Stress tests        | 6        |
+| Benchmarks          | 3        |
+| SQL compatibility   | 13,303   |
+| **Total C++ tests** | **350**  |
 
 Compatibility suites exist for PostgreSQL, MySQL, Firebird, and ScratchBird native; see `tests/compatibility/`.
 
@@ -240,15 +244,15 @@ Compatibility suites exist for PostgreSQL, MySQL, Firebird, and ScratchBird nati
 
 ### Documentation Directories
 
-- **docs/specifications/** - Technical specifications
+- **docs/specifications/** - Technical specifications (508 files)
   - **Cluster Specification Work/** - Beta cluster architecture
-  - **Security Design Specification/** - Security architecture (30 specs)
+  - **Security Design Specification/** - Security architecture
   - **beta_requirements/** - Beta requirements tracking
-- **docs/planning/** - Implementation plans and workstream trackers
-- **docs/findings/** - Analysis and investigation reports (12 audits)
+- **docs/planning/** - Implementation plans and workstream trackers (36 files)
+- **docs/findings/** - Analysis and investigation reports
 - **docs/design/** - Architecture and design documents
 - **docs/development/** - Development guides and procedures
-- **wiki/** - User-facing documentation (168 pages)
+- **wiki/** - User-facing documentation (159 pages)
 
 ---
 
@@ -281,11 +285,11 @@ See `docs/specifications/Cluster Specification Work/SBCLUSTER-SUMMARY.md` for co
 
 ```
 ScratchBird/
-├── src/                    Source code (20 modules, 243 files)
-├── include/                Public headers (256 files)
-├── tests/                  Test suite (337 C++ files + 12,483 SQL files)
-├── docs/                   Documentation (1,652 files)
-├── wiki/                   User documentation (168 pages)
+├── src/                    Source code (610 files)
+├── include/                Public headers (396 files)
+├── tests/                  Test suite (350 C++ files + 13,303 SQL files)
+├── docs/                   Documentation (1,947 files)
+├── wiki/                   User documentation (159 pages)
 ├── scripts/                Automation scripts
 ├── tools/                  Development tools
 ├── MGA_RULES.md            MGA architecture rules (CRITICAL)
@@ -324,23 +328,11 @@ ScratchBird/
 
 ## Roadmap
 
-### Alpha Phase (Current)
+### Alpha Phase - Complete
 
-- ✅ Plans 01-04: Core storage, UUID resolution, security context, domain DDL
-- ✅ Listener/pool/parser/server process operational
-- ✅ WS-1: Catalog bootstrap
-- ✅ WS-2: Tablespace routing + GPID wiring
-- ✅ WS-3: Index migration safety (all 11 index types)
-- ✅ WS-4: Scheduler/job system
-- ✅ WS-5: Constraint enforcement (PK/FK/UNIQUE/CHECK/NOT NULL)
-- ✅ WS-9: Cache/buffer remediation
-- ✅ WS-6: Security enforcement (view definer, RLS SELECT)
-- ✅ WS-7: Monitoring parity (sys.* views, MON$ sources)
-- ✅ WS-8: Backup/restore multi-tablespace validation
+All 9 Alpha workstreams completed. See `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` for details.
 
-See `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` for detailed tracking.
-
-### Pre-Beta Phase (Next)
+### Pre-Beta Phase (Current)
 
 - Audit and verification of Alpha deliverables
 - Prepare infrastructure for Beta cluster implementation
@@ -374,21 +366,20 @@ Licensed under the [Initial Developer's Public License Version 1.0 (IPL 1.0)](ht
 
 ## Project Statistics
 
-**Quick Stats (snapshot as of January 25, 2026):**
+**Quick Stats (snapshot as of January 30, 2026):**
 
 | Metric                  | Value                             |
 | ----------------------- | --------------------------------- |
-| Production source files | 499                               |
-| Production LOC          | 424,686                           |
-| Test C++ files          | 337                               |
-| Test LOC                | 121,824                           |
-| SQL compatibility files | 12,483                            |
-| Total LOC (all C++)     | 546,510                           |
-| Documentation files     | 1,652                             |
-| Wiki pages              | 168                               |
-| Git commits             | 1,618                             |
-| Commits (last 30 days)  | 111                               |
-| CTest results           | 2,347 passed, 0 failed, 0 skipped |
+| Production source files | 610                               |
+| Production LOC          | 420,581                           |
+| Test C++ files          | 350                               |
+| Test LOC                | 120,393                           |
+| SQL compatibility files | 13,303                            |
+| Documentation files     | 1,947                             |
+| Wiki pages              | 159                               |
+| Git commits             | 1,646                             |
+| Commits (last 30 days)  | 124                               |
+| CTest results           | 2,495 passed, 0 failed, 0 skipped |
 
 Run `./scripts/generate-all-stats.sh` to regenerate `PROJECT_STATS.md` and related reports.
 
@@ -398,5 +389,5 @@ Run `./scripts/generate-all-stats.sh` to regenerate `PROJECT_STATS.md` and relat
 - **Driver Repository:** https://github.com/DaltonCalford/ScratchBird-driver
 - **GUI Tools:** https://github.com/DaltonCalford/ScratchRobin
 
-**Last Updated:** January 25, 2026
-**Next Milestone:** Complete remaining Alpha workstreams (WS-6 Security, WS-7 Monitoring, WS-8 Backup, WS-9 Cache)
+**Last Updated:** January 30, 2026
+**Next Milestone:** Pre-Beta audit and verification; driver work at [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver)

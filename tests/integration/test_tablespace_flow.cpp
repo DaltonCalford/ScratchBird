@@ -9,6 +9,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/tid.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -17,8 +18,8 @@ class TablespaceFlowTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        db_path_ = "/tmp/test_tablespace_flow.db";
-        ts_path_ = "/tmp/test_tablespace_flow.sbts";
+        db_path_ = scratchbird::testing::uniqueTestDbPath("test_tablespace_flow", ".db");
+        ts_path_ = scratchbird::testing::uniqueTestDbPath("test_tablespace_flow", ".sbts");
         std::filesystem::remove(db_path_);
         std::filesystem::remove(ts_path_);
 
@@ -145,7 +146,8 @@ TEST_F(TablespaceFlowTest, BackupRestoreWithTablespaceOverride)
                                    &page_id, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
-    std::string backup_path = "/tmp/test_tablespace_flow.sbk";
+    std::string backup_path =
+        scratchbird::testing::uniqueTestDbPath("test_tablespace_flow_backup", ".sbk");
     std::filesystem::remove(backup_path);
 
     auto *bp = db_.buffer_pool();
@@ -159,8 +161,10 @@ TEST_F(TablespaceFlowTest, BackupRestoreWithTablespaceOverride)
     status = backup_mgr.createBackup(backup_path, backup_cfg, nullptr, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
-    std::string restored_db_path = "/tmp/test_tablespace_flow_restore.db";
-    std::string restored_ts_path = "/tmp/test_tablespace_flow_restore.sbts";
+    std::string restored_db_path =
+        scratchbird::testing::uniqueTestDbPath("test_tablespace_flow_restore", ".db");
+    std::string restored_ts_path =
+        scratchbird::testing::uniqueTestDbPath("test_tablespace_flow_restore", ".sbts");
     std::filesystem::remove(restored_db_path);
     std::filesystem::remove(restored_ts_path);
 

@@ -4,6 +4,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <cstring>
 
@@ -16,7 +17,7 @@ protected:
     void SetUp() override
     {
         // Create test database directory
-        test_db_path_ = "/tmp/test_btree_vacuum_db";
+        test_db_path_ = scratchbird::testing::uniqueTestDirPath("test_btree_vacuum");
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove_all(test_db_path_);

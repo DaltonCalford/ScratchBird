@@ -12,25 +12,27 @@
 #include <vector>
 #include <atomic>
 #include <cstdlib>
+#include "test_helpers.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class TSANTransactionCacheTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "/tmp/test_tsan_transaction_cache.db";
-        std::remove(test_db_path_);
+        test_db_path_ = uniqueTestDbPath("test_tsan_transaction_cache");
+        std::remove(test_db_path_.c_str());
 
         ErrorContext ctx;
-        Status status = Database::create(test_db_path_, 8192, &ctx);
+        Status status = Database::create(test_db_path_.c_str(), 8192, &ctx);
         ASSERT_EQ(status, Status::OK);
 
         db_ = std::make_unique<Database>();
-        status = db_->open(test_db_path_, &ctx);
+        status = db_->open(test_db_path_.c_str(), &ctx);
         ASSERT_EQ(status, Status::OK);
 
         txn_mgr_ = db_->transaction_manager();
@@ -41,10 +43,10 @@ protected:
         if (db_) {
             db_->close();
         }
-        std::remove(test_db_path_);
+        std::remove(test_db_path_.c_str());
     }
 
-    const char* test_db_path_;
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
     TransactionManager* txn_mgr_;
 };

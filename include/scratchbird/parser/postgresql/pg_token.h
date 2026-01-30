@@ -423,6 +423,7 @@ enum class TokenType : uint16_t {
     // Security keywords
     KW_USER,
     KW_ROLE,
+    KW_POLICY,
     // Note: KW_GROUP already defined in Clause keywords section
     KW_PUBLIC,
     KW_PRIVILEGES,
@@ -465,6 +466,8 @@ enum class TokenType : uint16_t {
     KW_ANALYZE_KW,
     KW_VERBOSE,
     KW_FORCE,
+    KW_ENABLE,
+    KW_DISABLE,
     KW_MATCH,
     KW_PARTIAL,
     KW_SIMPLE,

@@ -18,10 +18,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 
 TEST(HotUpdatesTest, Comprehensive) {
@@ -29,11 +31,11 @@ TEST(HotUpdatesTest, Comprehensive) {
     std::cout << "\n=== Test: HOT Update Implementation (Issue 2.16) ===\n" << std::endl;
 
     // Create test database
-    const char *db_path = "/tmp/test_hot_updates.db";
-    std::remove(db_path);
+    std::string db_path = uniqueTestDbPath("test_hot_updates");
+    std::remove(db_path.c_str());
 
     ErrorContext err_ctx;
-    Status s = Database::create(db_path, 8192, &err_ctx);
+    Status s = Database::create(db_path.c_str(), 8192, &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
@@ -41,7 +43,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     }
 
     Database db;
-    s = db.open(db_path, &err_ctx);
+    s = db.open(db_path.c_str(), &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
@@ -343,4 +345,3 @@ TEST(HotUpdatesTest, Comprehensive) {
     std::cout << "\nSpec: docs/specifications/MGA_IMPLEMENTATION.md (HOT optimization)" << std::endl;
     std::cout << "Issue: COMPREHENSIVE_AUDIT_REPORT.md Issue 2.16" << std::endl;
 }
-

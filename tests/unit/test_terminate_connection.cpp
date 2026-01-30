@@ -20,22 +20,24 @@
 #include "scratchbird/core/long_transaction_monitor.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/logger.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 void test_terminate_connection_policy()
 {
     std::cout << "\n=== Test: TERMINATE_CONNECTION Policy ===" << std::endl;
 
     // Create test database
-    const char *db_path = "/tmp/test_terminate_connection.db";
-    std::remove(db_path);
+    std::string db_path = uniqueTestDbPath("test_terminate_connection");
+    std::remove(db_path.c_str());
 
     ErrorContext err_ctx;
-    Status s = Database::create(db_path, 8192, &err_ctx);
+    Status s = Database::create(db_path.c_str(), 8192, &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
@@ -43,7 +45,7 @@ void test_terminate_connection_policy()
     }
 
     Database db;
-    s = db.open(db_path, &err_ctx);
+    s = db.open(db_path.c_str(), &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
@@ -199,11 +201,11 @@ void test_terminate_connection_on_rollback()
     std::cout << "\n=== Test: TERMINATE_CONNECTION on Rollback ===" << std::endl;
 
     // Create test database
-    const char *db_path = "/tmp/test_terminate_rollback.db";
-    std::remove(db_path);
+    std::string db_path = uniqueTestDbPath("test_terminate_rollback");
+    std::remove(db_path.c_str());
 
     ErrorContext err_ctx;
-    Status s = Database::create(db_path, 8192, &err_ctx);
+    Status s = Database::create(db_path.c_str(), 8192, &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
@@ -211,7 +213,7 @@ void test_terminate_connection_on_rollback()
     }
 
     Database db;
-    s = db.open(db_path, &err_ctx);
+    s = db.open(db_path.c_str(), &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;

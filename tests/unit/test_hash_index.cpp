@@ -2,11 +2,13 @@
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/hash_functions.h"
+#include "test_helpers.h"
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class HashIndexTest : public ::testing::Test
 {
@@ -14,7 +16,7 @@ protected:
     void SetUp() override
     {
         // Create test database
-        test_db_path = "/tmp/test_hash_index.db";
+        test_db_path = uniqueTestDbPath("test_hash_index");
 
         // Remove if exists
         if (std::filesystem::exists(test_db_path))

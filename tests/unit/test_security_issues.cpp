@@ -114,7 +114,9 @@ TEST_F(SecurityTest, PathTraversal_AbsolutePath)
     Database db;
 
     // Attempt to create database in system directory
-    Status status = db.create("/tmp/system_breach.db", 8192);
+    std::string system_breach_path =
+        scratchbird::testing::uniqueTestDbPath("system_breach");
+    Status status = db.create(system_breach_path.c_str(), 8192);
 
     // Currently this succeeds (may want to restrict in production)
     if (status == Status::OK)
@@ -123,7 +125,7 @@ TEST_F(SecurityTest, PathTraversal_AbsolutePath)
         // Marking as informational rather than failure
         std::cout << "INFO: Absolute paths are allowed - consider restricting\n";
         db.close();
-        remove("/tmp/system_breach.db");
+        remove(system_breach_path.c_str());
     }
 }
 

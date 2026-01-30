@@ -8,11 +8,13 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/btree_page.h"
 #include "scratchbird/core/page_manager.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 
 TEST(BtreeRightmostSimpleTest, Comprehensive) {
@@ -42,18 +44,18 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
     {
         std::cout << "Test 3: Create B-tree and verify initialization... ";
 
-        const char *db_path = "/tmp/test_btree_simple.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestDbPath("test_btree_simple", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             FAIL(); return;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             FAIL(); return;
@@ -104,7 +106,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
 
         db.buffer_pool()->unpinPage(root_page, false, &ctx);
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
 
         std::cout << "PASSED" << std::endl;
     }
@@ -113,18 +115,18 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
     {
         std::cout << "Test 4: Internal page rightmost_child field works... ";
 
-        const char *db_path = "/tmp/test_btree_internal.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestDbPath("test_btree_internal", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             FAIL(); return;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             FAIL(); return;
@@ -182,7 +184,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
 
         db.buffer_pool()->unpinPage(page_id, true, &ctx);
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
 
         std::cout << "PASSED" << std::endl;
     }
@@ -203,4 +205,3 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
     std::cout << std::endl;
     std::cout << "The audit was WRONG - this functionality already exists and works correctly." << std::endl;
 }
-

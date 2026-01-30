@@ -18,6 +18,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/table_stats_manager.h"
 #include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/uuidv7.h"
 #include <algorithm>
@@ -1490,6 +1491,16 @@ private:
             return Status::OK;
         }
 
+        std::unordered_map<ID, TableStatsSnapshot, IDHash> stats_by_table;
+        if (auto* db = catalog_manager_->database()) {
+            if (auto* stats_mgr = db->table_stats_manager()) {
+                auto snapshots = stats_mgr->snapshot();
+                for (auto& entry : snapshots) {
+                    stats_by_table.emplace(entry.table_id, std::move(entry));
+                }
+            }
+        }
+
         std::vector<CatalogManager::SchemaInfo> schemas;
         Status status = catalog_manager_->listSchemas(schemas, ctx);
         if (status != Status::OK && status != Status::NOT_FOUND) {
@@ -1505,20 +1516,35 @@ private:
             }
 
             for (const auto& table : tables) {
+                const TableStatsSnapshot* stats = nullptr;
+                auto stats_it = stats_by_table.find(table.table_id);
+                if (stats_it != stats_by_table.end()) {
+                    stats = &stats_it->second;
+                }
+
+                int64_t live_rows = static_cast<int64_t>(table.row_count);
+                int64_t dead_rows = 0;
+                if (stats) {
+                    if (stats->live_rows_estimate > 0) {
+                        live_rows = stats->live_rows_estimate;
+                    }
+                    dead_rows = stats->dead_rows_estimate;
+                }
+
                 VirtualRow row;
                 row.columns = {
                     {"relid", TypedValue::makeInt64(oidFromUuid(table.table_id))},
                     {"schemaname", TypedValue::makeVarchar(schema_name)},
                     {"relname", TypedValue::makeVarchar(table.table_name)},
-                    {"seq_scan", TypedValue::makeInt64(0)},
-                    {"seq_tup_read", TypedValue::makeInt64(0)},
-                    {"idx_scan", TypedValue::makeInt64(0)},
-                    {"idx_tup_fetch", TypedValue::makeInt64(0)},
-                    {"n_tup_ins", TypedValue::makeInt64(0)},
-                    {"n_tup_upd", TypedValue::makeInt64(0)},
-                    {"n_tup_del", TypedValue::makeInt64(0)},
-                    {"n_live_tup", TypedValue::makeInt64(static_cast<int64_t>(table.row_count))},
-                    {"n_dead_tup", TypedValue::makeInt64(0)}
+                    {"seq_scan", TypedValue::makeInt64(stats ? static_cast<int64_t>(stats->seq_scan_count) : 0)},
+                    {"seq_tup_read", TypedValue::makeInt64(stats ? static_cast<int64_t>(stats->seq_rows_read) : 0)},
+                    {"idx_scan", TypedValue::makeInt64(stats ? static_cast<int64_t>(stats->idx_scan_count) : 0)},
+                    {"idx_tup_fetch", TypedValue::makeInt64(stats ? static_cast<int64_t>(stats->idx_rows_fetch) : 0)},
+                    {"n_tup_ins", TypedValue::makeInt64(stats ? static_cast<int64_t>(stats->rows_inserted) : 0)},
+                    {"n_tup_upd", TypedValue::makeInt64(stats ? static_cast<int64_t>(stats->rows_updated) : 0)},
+                    {"n_tup_del", TypedValue::makeInt64(stats ? static_cast<int64_t>(stats->rows_deleted) : 0)},
+                    {"n_live_tup", TypedValue::makeInt64(live_rows)},
+                    {"n_dead_tup", TypedValue::makeInt64(dead_rows)}
                 };
                 results.rows.push_back(std::move(row));
             }

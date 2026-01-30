@@ -11,6 +11,7 @@
 #include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
 #include "scratchbird/core/function_invoker.h"
+#include "scratchbird/core/lock_manager.h"
 // Index headers needed for template implementation
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
@@ -316,6 +317,12 @@ namespace scratchbird
             std::unordered_set<core::ID, core::IDHash> last_select_table_ids_;
             bool last_select_cacheable_ = true;
 
+            struct MySqlTableLock {
+                core::LockTag tag{};
+                core::LockMode mode = core::LockMode::LOCK_ACCESS_SHARE;
+            };
+            std::vector<MySqlTableLock> mysql_table_locks_;
+
             // BLR savepoint scope tracking (implicit savepoints)
             std::vector<std::string> blr_savepoint_stack_;
             uint64_t blr_savepoint_counter_ = 0;
@@ -590,7 +597,7 @@ namespace scratchbird
             Value executeScalarAggregate(uint8_t func_type, size_t arg_expr_start, size_t arg_expr_end);
 
             // Sorting execution helper (Phase 1 Task 1.6.4)
-            void executeSort(std::unique_ptr<ResultSet> input_result_set);
+            void executeSort(std::unique_ptr<ResultSet> input_result_set, bool apply_limit = true);
 
             // LIMIT/OFFSET execution helper (Phase 1 Task 1.6.5)
             void executeLimit(std::unique_ptr<ResultSet> input_result_set);
@@ -704,11 +711,14 @@ namespace scratchbird
                     ROW_NUMBER, RANK, DENSE_RANK,
                     LAG, LEAD,
                     FIRST_VALUE, LAST_VALUE, NTH_VALUE,
-                    CUME_DIST, PERCENT_RANK
+                    CUME_DIST, PERCENT_RANK,
+                    AGG_COUNT, AGG_SUM, AGG_AVG, AGG_MIN, AGG_MAX
                 };
 
                 FuncType func_type;
                 std::vector<Value> args;  // Function arguments (already evaluated)
+                std::vector<uint8_t> aggregate_expr;  // Raw expression bytecode for aggregates
+                bool aggregate_count_star = false;
                 std::vector<size_t> partition_cols;  // Column indices for PARTITION BY
                 std::vector<size_t> order_cols;       // Column indices for ORDER BY
                 std::vector<bool> order_asc;          // Sort directions
@@ -876,6 +886,7 @@ namespace scratchbird
             void executeAlterUser();         // Execute ALTER USER
             void executeDropUser();          // Execute DROP USER
             void executeCreateRole();        // Execute CREATE ROLE
+            void executeAlterRole();         // Execute ALTER ROLE
             void executeDropRole();          // Execute DROP ROLE
             void executeCreateJob();         // Execute CREATE JOB
             void executeAlterJob();          // Execute ALTER JOB

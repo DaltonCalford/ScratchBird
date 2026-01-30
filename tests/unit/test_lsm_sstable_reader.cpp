@@ -8,12 +8,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "test_helpers.h"
 #include <cassert>
 #include <iostream>
 #include <cstdio>
 #include <vector>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 // Helper: Create key from string
 std::vector<uint8_t> makeKey(const std::string &s)
@@ -117,7 +119,7 @@ void testPointQuery()
     std::cout << "\n=== Test 2: Point Query (get) ===\n";
 
     // Create database for transaction manager
-    std::string db_path = "/tmp/test_sstable_reader_db";
+    std::string db_path = uniqueTestShortPath("test_sstable_reader_db", ".db");
     std::system(("rm -rf " + db_path + "*").c_str());
 
     Database *db = new Database();
@@ -224,7 +226,7 @@ void testRangeScan()
     std::cout << "\n=== Test 3: Range Scan ===\n";
 
     // Create database
-    std::string db_path = "/tmp/test_sstable_reader_scan_db";
+    std::string db_path = uniqueTestShortPath("test_sstable_reader_scan_db", ".db");
     std::remove((db_path + ".db").c_str());
 
     Database *db = new Database();
@@ -340,7 +342,7 @@ void testBloomFilterOptimization()
     std::cout << "\n=== Test 4: Bloom Filter Optimization ===\n";
 
     // Create database
-    std::string db_path = "/tmp/test_sstable_reader_bloom_db";
+    std::string db_path = uniqueTestShortPath("test_sstable_reader_bloom_db", ".db");
     std::remove((db_path + ".db").c_str());
 
     Database *db = new Database();
@@ -437,7 +439,7 @@ void testWriteReadRoundtrip()
     std::cout << "\n=== Test 5: Write/Read Roundtrip (1000 entries) ===\n";
 
     // Create database
-    std::string db_path = "/tmp/test_sstable_reader_roundtrip_db";
+    std::string db_path = uniqueTestShortPath("test_sstable_reader_roundtrip_db", ".db");
     std::remove((db_path + ".db").c_str());
 
     Database *db = new Database();

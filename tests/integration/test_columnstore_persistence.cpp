@@ -18,6 +18,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <memory>
 #include <cstring>
@@ -32,7 +33,7 @@ protected:
     void SetUp() override
     {
         // Create temporary database
-        test_db_path_ = "/tmp/test_columnstore_persist.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_columnstore_persist", ".db");
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove(test_db_path_);

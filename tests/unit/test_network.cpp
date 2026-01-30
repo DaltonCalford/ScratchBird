@@ -29,6 +29,7 @@
 
 using namespace scratchbird::network;
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestSocketPath;
 
 namespace {
 bool isNetworkRestrictedError(const ErrorContext& ctx) {
@@ -751,8 +752,9 @@ TEST(NetworkAddressTest, IPv6ToString) {
 }
 
 TEST(NetworkAddressTest, UnixToString) {
-    NetworkAddress addr("/tmp/test.sock");
-    EXPECT_EQ(addr.toString(), "unix:/tmp/test.sock");
+    std::string socket_path = uniqueTestSocketPath("test_network_addr");
+    NetworkAddress addr(socket_path);
+    EXPECT_EQ(addr.toString(), "unix:" + socket_path);
     EXPECT_TRUE(addr.isValid());
 }
 

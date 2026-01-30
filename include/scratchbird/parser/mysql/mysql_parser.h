@@ -345,10 +345,14 @@ private:
     };
 
     struct WindowFunctionSpec {
+        bool is_aggregate = false;
         bool is_extended = false;
         sblr::Opcode func_opcode = sblr::Opcode::WIN_ROW_NUMBER;
         sblr::ExtendedOpcode ext_opcode = sblr::ExtendedOpcode::EXT_WIN_CUME_DIST;
         std::vector<std::vector<uint8_t>> args;
+        sblr::Opcode agg_opcode = sblr::Opcode::AGG_COUNT;
+        std::vector<uint8_t> agg_expr;
+        bool agg_count_star = false;
         std::vector<std::string> partition_columns;
         std::vector<std::string> order_columns;
         bool has_frame = false;
@@ -412,6 +416,7 @@ private:
     void parseCreateStmt();
     void parseRenameStmt();
     void parseAlterStmt();
+    void parseAlterRole();
     void parseAlterView();
     void parseAlterProcedure();
     void parseAlterFunction();

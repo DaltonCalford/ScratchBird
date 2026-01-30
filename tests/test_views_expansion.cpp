@@ -5,6 +5,8 @@
 #include "scratchbird/sblr/executor.h"
 #include <iostream>
 #include <filesystem>
+#include <string>
+#include <unistd.h>
 
 using namespace scratchbird;
 
@@ -36,7 +38,8 @@ void execute_sql(core::Database* db, sblr::QueryCompilerV2* compiler, const std:
 }
 
 int main() {
-    const std::string db_path = "/tmp/test_views_db";
+    const std::string db_path =
+        "/tmp/test_views_db_" + std::to_string(getpid());
 
     // Clean up any existing database
     std::filesystem::remove_all(db_path);

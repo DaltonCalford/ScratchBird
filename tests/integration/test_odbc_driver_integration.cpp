@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "test_helpers.h"
 #include "scratchbird/odbc/odbc_driver.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/network/network.h"
@@ -72,10 +73,7 @@ uint16_t reservePort() {
 }  // namespace
 
 TEST(OdbcDriverIntegrationTest, ConnectPrepareExecuteFetch) {
-    std::filesystem::create_directories("build/database");
-    std::filesystem::create_directories("build/ipc_tests");
-
-    std::string db_path = "build/database/odbc_integration.sbdb";
+    std::string db_path = scratchbird::testing::uniqueTestDbPath("odbc_integration", ".sbdb");
     std::error_code ec;
     std::filesystem::remove(db_path, ec);
 
@@ -99,7 +97,7 @@ TEST(OdbcDriverIntegrationTest, ConnectPrepareExecuteFetch) {
     uint16_t port = reservePort();
     ASSERT_GT(port, 0u);
 
-    std::string control_dir = "build/ipc_tests/odbc_listener";
+    std::string control_dir = scratchbird::testing::uniqueTestDirPath("sb_odbc_ctl");
     std::filesystem::create_directories(control_dir);
 
     const char* path_env = std::getenv("PATH");

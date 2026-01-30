@@ -41,6 +41,24 @@ sudo -u scratchbird /opt/scratchbird/bin/sb_server --config /opt/scratchbird/con
 
 ---
 
+## Tarball Contents (Feature Matrix)
+
+The portable tarball includes a minimal feature set:
+
+| Component | Included | Notes |
+| --- | --- | --- |
+| Server (`sb_server`) | Yes | Core server binary |
+| CLI tools | Yes | `sb_isql`, `sb_backup`, `sb_verify`, `sb_security` |
+| Client libs | Yes | `libscratchbird_client.so` |
+| Emulation listeners | Optional | If included, configured in `conf/` |
+| GUI (ScratchRobin) | Optional | Separate bundle |
+| Drivers/ODBC/JDBC | Optional | Separate downloads |
+
+Full installer feature matrix: see
+[Installer Features + Config Generator](../../specifications/deployment/INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md).
+
+---
+
 ## Step-by-Step Installation
 
 ### 1. Download and Extract

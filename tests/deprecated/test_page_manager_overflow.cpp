@@ -10,12 +10,14 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/status.h"
+#include "test_helpers.h"
 #include <gtest/gtest.h>
 #include <cstdint>
 #include <limits>
 #include <cstdio>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class PageManagerOverflowTest : public ::testing::Test
 {
@@ -23,17 +25,17 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        db_path_ = "/tmp/test_overflow.sbrd";
+        db_path_ = uniqueTestDbPath("test_overflow", ".sbrd");
         std::remove(db_path_.c_str());
 
         ErrorContext ctx;
         // Use static create method
-        ASSERT_EQ(Status::OK, Database::create(db_path_, 8192, &ctx))
+        ASSERT_EQ(Status::OK, Database::create(db_path_.c_str(), 8192, &ctx))
             << "Database create failed: " << ctx.message;
 
         // Open the database
         db_ = new Database();
-        ASSERT_EQ(Status::OK, db_->open(db_path_, &ctx))
+        ASSERT_EQ(Status::OK, db_->open(db_path_.c_str(), &ctx))
             << "Database open failed: " << ctx.message;
 
         page_manager_ = db_->page_manager();

@@ -8,12 +8,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include <cassert>
 #include <cstdio>
 #include <iostream>
 #include <chrono>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 // Timing helper
 class Timer
@@ -41,7 +43,7 @@ int main()
     std::cout << "Testing insert and scan performance with 50K rows\n\n";
 
     // Create database
-    std::string db_path = "/tmp/columnstore_load_simple.db";
+    std::string db_path = uniqueTestShortPath("columnstore_load_simple", ".db");
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

@@ -346,10 +346,11 @@ public:
 
         if (::bind(listen_fd_, reinterpret_cast<struct sockaddr*>(&addr),
                    sizeof(addr)) < 0) {
+            int bind_errno = errno;
             ::close(listen_fd_);
             listen_fd_ = -1;
             SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
-                              ("bind() failed: " + std::string(strerror(errno))).c_str());
+                              ("bind() failed: " + std::string(strerror(bind_errno))).c_str());
             return core::Status::IO_ERROR;
         }
 

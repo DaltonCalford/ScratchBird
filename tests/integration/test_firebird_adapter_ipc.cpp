@@ -30,6 +30,9 @@ public:
         database_name_ = path;
         database_path_ = path;
     }
+    void setEngineEndpoint(const std::string& endpoint) {
+        config_.engine_endpoint = endpoint;
+    }
     using FirebirdAdapter::executeRemoteQuery;
 };
 
@@ -40,12 +43,9 @@ protected:
             GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
         }
 
-        std::filesystem::create_directories("build/database");
-        std::filesystem::create_directories("build/ipc_tests");
-
-        config_.database_path = "build/database/fb_bridge_test.sbdb";
+        config_.database_path = scratchbird::testing::uniqueTestDbPath("fb_bridge_test", ".sbdb");
         config_.ipc_method = IPCMethod::UNIX_SOCKET;
-        config_.ipc_path = scratchbird::server::getIPCPath(config_.database_path, config_.ipc_method);
+        config_.ipc_path = scratchbird::testing::uniqueTestSocketPath("sb_fb_bridge_ipc");
         std::error_code ec;
         std::filesystem::remove(config_.database_path, ec);
         std::filesystem::remove(config_.ipc_path, ec);
@@ -62,7 +62,7 @@ protected:
         client::ConnectionConfig cc;
         cc.database_name = config_.database_path;
         cc.ipc_method = IPCMethod::UNIX_SOCKET;
-        cc.socket_path = scratchbird::server::getIPCPath(cc.database_name, cc.ipc_method);
+        cc.socket_path = config_.ipc_path;
         cc.auto_start_server = false;
         cc.username = "SYSARCH";
         cc.password = "ScratchBirdBeta1!";
@@ -86,6 +86,7 @@ protected:
 TEST_F(FirebirdAdapterBridgeTest, ExecutesSelectOverIPC) {
     TestFirebirdAdapter adapter;
     adapter.setDatabasePath(config_.database_path);
+    adapter.setEngineEndpoint(config_.ipc_path);
     adapter.setRemoteCredentials("SYSARCH", "ScratchBirdBeta1!");
     adapter.setSharedDatabase(server_->database());
 
@@ -114,7 +115,7 @@ TEST_F(FirebirdAdapterBridgeTest, ExposesIndexesAndConstraintsInCatalogViews) {
     client::ConnectionConfig cc;
     cc.database_name = config_.database_path;
     cc.ipc_method = IPCMethod::UNIX_SOCKET;
-    cc.socket_path = scratchbird::server::getIPCPath(cc.database_name, cc.ipc_method);
+    cc.socket_path = config_.ipc_path;
     cc.auto_start_server = false;
     cc.username = "SYSARCH";
     cc.password = "ScratchBirdBeta1!";
@@ -127,6 +128,7 @@ TEST_F(FirebirdAdapterBridgeTest, ExposesIndexesAndConstraintsInCatalogViews) {
 
     TestFirebirdAdapter adapter;
     adapter.setDatabasePath(config_.database_path);
+    adapter.setEngineEndpoint(config_.ipc_path);
     adapter.setRemoteCredentials("SYSARCH", "ScratchBirdBeta1!");
     adapter.setSharedDatabase(server_->database());
 

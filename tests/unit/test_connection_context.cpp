@@ -5,6 +5,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/types.h"
+#include "test_helpers.h"
 #include <algorithm>
 #include <filesystem>
 #include <thread>
@@ -17,7 +18,7 @@ protected:
     void SetUp() override
     {
         // Create test database (use relative path in current directory)
-        test_db_path_ = "/tmp/test_connection_context.sbrd";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_connection_context", ".sbrd");
 
         // Clean up any existing test database
         std::filesystem::remove(test_db_path_);

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <random>
 #include <filesystem>
+#include "test_helpers.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
@@ -19,7 +20,7 @@ class BTreeCompressionTest : public ::testing::Test {
 protected:
     void SetUp() override {
         // Create a temporary database for testing in current directory (allowed by security policy)
-        test_db_path_ = "/tmp/test_btree_compression.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_btree_compression", ".db");
 
         // Remove old test database if it exists
         if (std::filesystem::exists(test_db_path_)) {

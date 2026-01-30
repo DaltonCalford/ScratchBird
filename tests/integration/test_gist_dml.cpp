@@ -36,6 +36,7 @@
 #include "scratchbird/core/index_factory.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -180,8 +181,8 @@ class GiSTDMLTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_gist_dml.db";
-        std::remove(test_db_path_);
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_gist_dml", ".db");
+        std::remove(test_db_path_.c_str());
 
         // Register box operator class
         auto opclass = std::make_shared<BoxOperatorClass>();
@@ -218,7 +219,7 @@ protected:
             db_->close();
             db_.reset();
         }
-        std::remove(test_db_path_);
+        std::remove(test_db_path_.c_str());
     }
 
     // Helper: Begin transaction with MGA API
@@ -333,7 +334,7 @@ protected:
         return TID(0, page_id, item_id);  // tablespace_id=0, page_number, slot
     }
 
-    const char* test_db_path_;
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
     CatalogManager* catalog_;
     StorageEngine* storage_;
@@ -593,4 +594,3 @@ TEST_F(GiSTDMLTest, ConsistentAfterCommit)
 
     commitTxn(new_xid, &ctx);
 }
-

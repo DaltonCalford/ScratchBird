@@ -20,6 +20,7 @@ void CreateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -267,6 +268,7 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateIndexStmt: return "CreateIndexStmt";
         case ASTKind::CreateViewStmt: return "CreateViewStmt";
         case ASTKind::CreateSequenceStmt: return "CreateSequenceStmt";
+        case ASTKind::AlterSequenceStmt: return "AlterSequenceStmt";
         case ASTKind::CreateSchemaStmt: return "CreateSchemaStmt";
         case ASTKind::DropSchemaStmt: return "DropSchemaStmt";
         case ASTKind::AlterSchemaStmt: return "AlterSchemaStmt";
@@ -412,6 +414,9 @@ const char* binaryOpToString(BinaryOp op) {
         case BinaryOp::JSON_EXTRACT_TEXT: return "->>";
         case BinaryOp::JSON_HASH_EXTRACT: return "#>";
         case BinaryOp::JSON_HASH_EXTRACT_TEXT: return "#>>";
+        case BinaryOp::JSON_EXISTS: return "?";
+        case BinaryOp::JSON_EXISTS_ANY: return "?|";
+        case BinaryOp::JSON_EXISTS_ALL: return "?&";
         case BinaryOp::ARRAY_CONTAINS: return "@>";
         case BinaryOp::ARRAY_CONTAINED_BY: return "<@";
         case BinaryOp::ARRAY_OVERLAP: return "&&";

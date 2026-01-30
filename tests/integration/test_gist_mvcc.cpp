@@ -50,6 +50,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -195,8 +196,8 @@ class GiSTMVCCTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_gist_mvcc.db";
-        std::remove(test_db_path_);
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_gist_mvcc", ".db");
+        std::remove(test_db_path_.c_str());
 
         ErrorContext ctx;
         Status status = Database::create(test_db_path_, 8192, &ctx);
@@ -239,7 +240,7 @@ protected:
         {
             db_->close();
         }
-        std::remove(test_db_path_);
+        std::remove(test_db_path_.c_str());
     }
 
     // Helper: Create box predicate
@@ -262,7 +263,7 @@ protected:
         return TID(0, page, slot);
     }
 
-    const char* test_db_path_;
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
     TransactionManager* txn_mgr_;
     BufferPool* buffer_pool_;

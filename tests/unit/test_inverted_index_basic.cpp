@@ -4,6 +4,7 @@
 #include "scratchbird/core/inverted_index.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -13,6 +14,7 @@
 #endif
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 namespace {
 
@@ -48,7 +50,7 @@ class InvertedIndexBasicTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_inverted_index_basic.db";
+        test_db_path_ = uniqueTestDbPath("test_inverted_index_basic");
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove(test_db_path_);

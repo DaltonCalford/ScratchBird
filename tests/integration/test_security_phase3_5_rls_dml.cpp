@@ -27,6 +27,7 @@
 
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <memory>
 
@@ -45,7 +46,8 @@ protected:
         GTEST_SKIP() << "Parser V2 RLS DML support pending";
 
         // Create temporary test database
-        test_db_path = "/tmp/test_security_phase3_5_rls_dml.db";
+        test_db_path =
+            scratchbird::testing::uniqueTestDbPath("test_security_phase3_5_rls_dml", ".db");
 
         // Remove old test database if exists
         if (std::filesystem::exists(test_db_path))

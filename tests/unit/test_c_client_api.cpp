@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -96,6 +97,7 @@ void prependBuildPathToEnv() {
     }
     setenv("PATH", new_path.c_str(), 1);
 }
+
 } // namespace
 
 TEST(CClientApi, NullInputs) {
@@ -126,14 +128,11 @@ TEST(CClientApi, IntegrationSelect) {
         if (!scratchbird::testing::networkTestsEnabled()) {
             GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
         }
-        std::filesystem::create_directories("build/database");
-        std::filesystem::create_directories("build/ipc_tests");
-
-        db_name = "c_api_integration";
-        db_path = "build/database/" + db_name + ".sbdb";
-        control_dir = "build/ipc_tests/c_api_control";
+        db_name = "c_api_integration_" + std::to_string(getpid());
+        db_path = scratchbird::testing::uniqueTestDbPath("c_api_integration", ".sbdb");
+        control_dir = scratchbird::testing::uniqueTestDirPath("sb_capi_ctl");
         std::filesystem::create_directories(control_dir);
-        engine_sock = (std::filesystem::current_path() / control_dir / "engine.sock").string();
+        engine_sock = scratchbird::testing::uniqueTestSocketPath("sb_capi_engine");
         std::error_code ec;
         std::filesystem::remove(db_path, ec);
         std::filesystem::remove(engine_sock, ec);

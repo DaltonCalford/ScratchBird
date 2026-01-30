@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "test_helpers.h"
 #include "scratchbird/client/connection.h"
 #include "scratchbird/client/network_client.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -81,15 +82,11 @@ uint16_t reservePort() {
 } // namespace
 
 TEST(NativeListenerSmokeTest, EndToEndQueryAndCopyOverIPC) {
-    std::filesystem::create_directories("build/database");
-    std::filesystem::create_directories("build/ipc_tests");
-
-    std::string db_name = "native_listener_smoke";
-    std::string db_path = "build/database/" + db_name + ".sbdb";
-    std::string control_dir = "build/ipc_tests/native_listener_smoke";
+    std::string db_name = "native_listener_smoke_" + std::to_string(getpid());
+    std::string db_path = scratchbird::testing::uniqueTestDbPath("native_listener_smoke", ".sbdb");
+    std::string control_dir = scratchbird::testing::uniqueTestDirPath("sb_listener_ctl");
     std::filesystem::create_directories(control_dir);
-    std::string engine_sock =
-        (std::filesystem::current_path() / control_dir / "engine.sock").string();
+    std::string engine_sock = scratchbird::testing::uniqueTestSocketPath("sb_engine_smoke");
     std::error_code ec;
     std::filesystem::remove(db_path, ec);
 

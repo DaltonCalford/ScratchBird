@@ -1802,74 +1802,146 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     // Aggregate functions
     if (upper_name == "COUNT") {
-        emit(sblr::Opcode::AGG_COUNT);
-        emitByte(1);
+        bool distinct = matchKeyword(TokenType::KW_DISTINCT);
+        bool count_star = false;
+        std::vector<uint8_t> expr_bytes;
         if (match(TokenType::STAR)) {
-            emit(sblr::Opcode::LITERAL_NULL);
+            count_star = true;
         } else {
-            matchKeyword(TokenType::KW_DISTINCT);
-            parseExpression();
+            expr_bytes = captureExpressionBytecode();
         }
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
             WindowFunctionSpec spec;
-            error("Aggregate window functions are not supported in MySQL parser");
+            spec.is_aggregate = true;
+            spec.agg_opcode = sblr::Opcode::AGG_COUNT;
+            spec.agg_count_star = count_star;
+            spec.function_name = upper_name;
+            if (!count_star) {
+                spec.agg_expr = std::move(expr_bytes);
+            }
+            if (distinct) {
+                warning("COUNT(DISTINCT ...) window aggregates ignore DISTINCT for now");
+            }
             parseWindowSpecForFunction(spec);
+            window_specs_.push_back(std::move(spec));
+            last_window_index_ = window_specs_.size() - 1;
+            last_expr_was_window_ = true;
+            emit(sblr::Opcode::LITERAL_NULL);
+            return;
+        }
+        emit(sblr::Opcode::AGG_COUNT);
+        emitByte(1);
+        if (count_star) {
+            emit(sblr::Opcode::LITERAL_NULL);
+        } else {
+            if (distinct) {
+                warning("COUNT(DISTINCT ...) is parsed but DISTINCT is ignored");
+            }
+            bytecode_.insert(bytecode_.end(), expr_bytes.begin(), expr_bytes.end());
         }
         return;
     }
 
     if (upper_name == "SUM") {
-        emit(sblr::Opcode::AGG_SUM);
-        emitByte(1);
-        matchKeyword(TokenType::KW_DISTINCT);
-        parseExpression();
+        bool distinct = matchKeyword(TokenType::KW_DISTINCT);
+        std::vector<uint8_t> expr_bytes = captureExpressionBytecode();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
             WindowFunctionSpec spec;
-            error("Aggregate window functions are not supported in MySQL parser");
+            spec.is_aggregate = true;
+            spec.agg_opcode = sblr::Opcode::AGG_SUM;
+            spec.function_name = upper_name;
+            spec.agg_expr = std::move(expr_bytes);
+            if (distinct) {
+                warning("SUM(DISTINCT ...) window aggregates ignore DISTINCT for now");
+            }
             parseWindowSpecForFunction(spec);
+            window_specs_.push_back(std::move(spec));
+            last_window_index_ = window_specs_.size() - 1;
+            last_expr_was_window_ = true;
+            emit(sblr::Opcode::LITERAL_NULL);
+            return;
         }
+        emit(sblr::Opcode::AGG_SUM);
+        emitByte(1);
+        if (distinct) {
+            warning("SUM(DISTINCT ...) is parsed but DISTINCT is ignored");
+        }
+        bytecode_.insert(bytecode_.end(), expr_bytes.begin(), expr_bytes.end());
         return;
     }
 
     if (upper_name == "AVG") {
-        emit(sblr::Opcode::AGG_AVG);
-        emitByte(1);
-        matchKeyword(TokenType::KW_DISTINCT);
-        parseExpression();
+        bool distinct = matchKeyword(TokenType::KW_DISTINCT);
+        std::vector<uint8_t> expr_bytes = captureExpressionBytecode();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
             WindowFunctionSpec spec;
-            error("Aggregate window functions are not supported in MySQL parser");
+            spec.is_aggregate = true;
+            spec.agg_opcode = sblr::Opcode::AGG_AVG;
+            spec.function_name = upper_name;
+            spec.agg_expr = std::move(expr_bytes);
+            if (distinct) {
+                warning("AVG(DISTINCT ...) window aggregates ignore DISTINCT for now");
+            }
             parseWindowSpecForFunction(spec);
+            window_specs_.push_back(std::move(spec));
+            last_window_index_ = window_specs_.size() - 1;
+            last_expr_was_window_ = true;
+            emit(sblr::Opcode::LITERAL_NULL);
+            return;
         }
+        emit(sblr::Opcode::AGG_AVG);
+        emitByte(1);
+        if (distinct) {
+            warning("AVG(DISTINCT ...) is parsed but DISTINCT is ignored");
+        }
+        bytecode_.insert(bytecode_.end(), expr_bytes.begin(), expr_bytes.end());
         return;
     }
 
     if (upper_name == "MIN") {
-        emit(sblr::Opcode::AGG_MIN);
-        emitByte(1);
-        parseExpression();
+        std::vector<uint8_t> expr_bytes = captureExpressionBytecode();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
             WindowFunctionSpec spec;
-            error("Aggregate window functions are not supported in MySQL parser");
+            spec.is_aggregate = true;
+            spec.agg_opcode = sblr::Opcode::AGG_MIN;
+            spec.function_name = upper_name;
+            spec.agg_expr = std::move(expr_bytes);
             parseWindowSpecForFunction(spec);
+            window_specs_.push_back(std::move(spec));
+            last_window_index_ = window_specs_.size() - 1;
+            last_expr_was_window_ = true;
+            emit(sblr::Opcode::LITERAL_NULL);
+            return;
         }
+        emit(sblr::Opcode::AGG_MIN);
+        emitByte(1);
+        bytecode_.insert(bytecode_.end(), expr_bytes.begin(), expr_bytes.end());
         return;
     }
 
     if (upper_name == "MAX") {
-        emit(sblr::Opcode::AGG_MAX);
-        emitByte(1);
-        parseExpression();
+        std::vector<uint8_t> expr_bytes = captureExpressionBytecode();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         if (matchKeyword(TokenType::KW_OVER)) {
             WindowFunctionSpec spec;
-            error("Aggregate window functions are not supported in MySQL parser");
+            spec.is_aggregate = true;
+            spec.agg_opcode = sblr::Opcode::AGG_MAX;
+            spec.function_name = upper_name;
+            spec.agg_expr = std::move(expr_bytes);
             parseWindowSpecForFunction(spec);
+            window_specs_.push_back(std::move(spec));
+            last_window_index_ = window_specs_.size() - 1;
+            last_expr_was_window_ = true;
+            emit(sblr::Opcode::LITERAL_NULL);
+            return;
         }
+        emit(sblr::Opcode::AGG_MAX);
+        emitByte(1);
+        bytecode_.insert(bytecode_.end(), expr_bytes.begin(), expr_bytes.end());
         return;
     }
 
@@ -2427,16 +2499,27 @@ void Parser::emitWindowSpecs() {
     emitU32(static_cast<uint32_t>(window_specs_.size()));
 
     for (auto& spec : window_specs_) {
-        if (spec.is_extended) {
+        if (spec.is_aggregate) {
+            emit(spec.agg_opcode);
+        } else if (spec.is_extended) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
             emitU16(static_cast<uint16_t>(spec.ext_opcode));
         } else {
             emit(spec.func_opcode);
         }
 
-        emitU32(static_cast<uint32_t>(spec.args.size()));
-        for (const auto& arg : spec.args) {
-            bytecode_.insert(bytecode_.end(), arg.begin(), arg.end());
+        if (spec.is_aggregate) {
+            if (spec.agg_count_star) {
+                emitU32(0);
+            } else {
+                emitU32(1);
+                bytecode_.insert(bytecode_.end(), spec.agg_expr.begin(), spec.agg_expr.end());
+            }
+        } else {
+            emitU32(static_cast<uint32_t>(spec.args.size()));
+            for (const auto& arg : spec.args) {
+                bytecode_.insert(bytecode_.end(), arg.begin(), arg.end());
+            }
         }
 
         emit(sblr::Opcode::WINDOW_SPEC);
@@ -2609,30 +2692,40 @@ void Parser::parseMatchAgainstExpr() {
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TO_TSVECTOR));
     emitByte(1);
 
-    auto emit_simple_expr = [&]() {
-        if (check(TokenType::STRING_LITERAL)) {
-            emit(sblr::Opcode::LITERAL_STRING);
-            std::string_view str = lexer_.stringPool().get(current_token_.value.string_id);
-            emitString(str);
-            advance();
-            return;
-        }
-        if (check(TokenType::INTEGER_LITERAL)) {
-            emit(sblr::Opcode::LITERAL_INT64);
-            emitI64(current_token_.value.int_value);
-            advance();
-            return;
-        }
-        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
-            std::string name = parseIdentifier();
-            emit(sblr::Opcode::COLUMN_REF);
-            emitString(name);
-            return;
-        }
-        parseExpression();
+    bool against_is_literal = check(TokenType::STRING_LITERAL);
+    std::string against_literal;
+    if (against_is_literal) {
+        std::string_view str = lexer_.stringPool().get(current_token_.value.string_id);
+        against_literal.assign(str.data(), str.size());
+    }
+    auto build_literal_expr = [&](const std::string& value) {
+        std::vector<uint8_t> saved;
+        saved.swap(bytecode_);
+        bool prev_emit = emit_enabled_;
+        emit_enabled_ = true;
+        bytecode_.clear();
+        emit(sblr::Opcode::LITERAL_STRING);
+        emitString(value);
+        std::vector<uint8_t> expr;
+        expr.swap(bytecode_);
+        bytecode_.swap(saved);
+        emit_enabled_ = prev_emit;
+        return expr;
     };
 
-    emit_simple_expr();
+    bool allow_modifiers = false;
+    if (against_is_literal) {
+        Token next = lexer_.peek();
+        allow_modifiers = (next.type == TokenType::KW_IN || next.type == TokenType::KW_WITH);
+    }
+
+    std::vector<uint8_t> against_expr;
+    if (against_is_literal && allow_modifiers) {
+        against_expr = build_literal_expr(against_literal);
+        advance();
+    } else {
+        against_expr = captureExpressionBytecode();
+    }
 
     bool boolean_mode = false;
     if (matchKeyword(TokenType::KW_IN)) {
@@ -2645,12 +2738,47 @@ void Parser::parseMatchAgainstExpr() {
             matchIdentifierKeyword("MODE");
         }
     }
+    bool query_expansion = false;
     if (matchKeyword(TokenType::KW_WITH)) {
         if (matchIdentifierKeyword("QUERY")) {
             matchIdentifierKeyword("EXPANSION");
-            warning("WITH QUERY EXPANSION is ignored");
+            query_expansion = true;
         }
     }
+
+    if (query_expansion && against_is_literal) {
+        auto expand_query = [](const std::string& input) {
+            std::string out;
+            std::string token;
+            for (char ch : input) {
+                if (std::isspace(static_cast<unsigned char>(ch))) {
+                    if (!token.empty()) {
+                        if (!out.empty()) {
+                            out += " | ";
+                        }
+                        out += token;
+                        token.clear();
+                    }
+                    continue;
+                }
+                token.push_back(ch);
+            }
+            if (!token.empty()) {
+                if (!out.empty()) {
+                    out += " | ";
+                }
+                out += token;
+            }
+            return out.empty() ? input : out;
+        };
+
+        against_expr = build_literal_expr(expand_query(against_literal));
+        boolean_mode = true;
+    } else if (query_expansion) {
+        warning("WITH QUERY EXPANSION only supported for string literal AGAINST");
+    }
+
+    bytecode_.insert(bytecode_.end(), against_expr.begin(), against_expr.end());
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
     emitU16(static_cast<uint16_t>(
@@ -3242,7 +3370,7 @@ void Parser::parseDeleteStmt() {
     };
 
     std::vector<TableRef> targets;
-    bool explicit_targets = !check(TokenType::KW_FROM);
+    bool explicit_targets = !(check(TokenType::KW_FROM) || check(TokenType::KW_USING));
 
     if (explicit_targets) {
         do {
@@ -3252,15 +3380,24 @@ void Parser::parseDeleteStmt() {
         } while (match(TokenType::COMMA));
     }
 
-    consumeKeyword(TokenType::KW_FROM, "Expected FROM");
+    bool using_clause = false;
+    if (matchKeyword(TokenType::KW_FROM)) {
+        using_clause = false;
+    } else if (matchKeyword(TokenType::KW_USING)) {
+        using_clause = true;
+    } else {
+        error("Expected FROM or USING");
+        synchronize();
+        return;
+    }
 
     TableRef base = parse_table_ref();
-    bool using_clause = false;
     std::vector<JoinDef> join_defs;
 
     if (targets.empty()) {
         std::vector<TableRef> from_targets;
         from_targets.push_back({base.path, ""});
+        bool using_reparse = false;
         if (match(TokenType::COMMA)) {
             do {
                 TableRef ref;
@@ -3273,13 +3410,17 @@ void Parser::parseDeleteStmt() {
                 return;
             }
             using_clause = true;
+            using_reparse = true;
         } else if (matchKeyword(TokenType::KW_USING)) {
             using_clause = true;
+            using_reparse = true;
         }
 
         if (using_clause) {
             targets = from_targets;
-            base = parse_table_ref();
+            if (using_reparse) {
+                base = parse_table_ref();
+            }
         } else {
             targets = from_targets;
         }
@@ -4031,6 +4172,10 @@ void Parser::parseAlterStmt() {
         parseAlterUser();
         return;
     }
+    if (matchKeyword(TokenType::KW_ROLE) || matchIdentifierKeyword("ROLE")) {
+        parseAlterRole();
+        return;
+    }
     if (matchKeyword(TokenType::KW_VIEW)) {
         parseAlterView();
         return;
@@ -4292,6 +4437,57 @@ void Parser::parseAlterStmt() {
         emitByte(0);
     };
 
+    auto parse_column_list = [&]() {
+        std::vector<std::string> columns;
+        consume(TokenType::LEFT_PAREN, "Expected (");
+        do {
+            columns.push_back(parseIdentifier());
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+        return columns;
+    };
+
+    auto emit_add_constraint = [&](uint8_t constraint_type,
+                                   const std::string& constraint_name,
+                                   const std::vector<std::string>& columns,
+                                   const std::string& parent_table,
+                                   const std::vector<std::string>& parent_columns,
+                                   const std::string& on_delete,
+                                   const std::string& on_update,
+                                   const std::vector<uint8_t>& check_expr) {
+        emit(sblr::Opcode::ALTER_TABLE);
+        emitString(table_path);
+        emitByte(3); // ADD_CONSTRAINT
+        emitByte(constraint_type);
+        emitString(constraint_name);
+        if (constraint_type == 0 || constraint_type == 1) {
+            emitUVarint(columns.size());
+            for (const auto& col : columns) {
+                emitString(col);
+            }
+            return;
+        }
+        if (constraint_type == 2) {
+            emitUVarint(columns.size());
+            for (const auto& col : columns) {
+                emitString(col);
+            }
+            emitString(parent_table);
+            emitUVarint(parent_columns.size());
+            for (const auto& col : parent_columns) {
+                emitString(col);
+            }
+            emitString(on_delete);
+            emitString(on_update);
+            emitByte(0); // deferrable flags
+            return;
+        }
+        if (constraint_type == 3) {
+            emitU32(static_cast<uint32_t>(check_expr.size()));
+            bytecode_.insert(bytecode_.end(), check_expr.begin(), check_expr.end());
+        }
+    };
+
     if (matchKeyword(TokenType::KW_RENAME)) {
         if (matchKeyword(TokenType::KW_TO)) {
             std::string new_schema;
@@ -4332,6 +4528,114 @@ void Parser::parseAlterStmt() {
         bool is_unique = false;
         bool is_fulltext = false;
         bool is_spatial = false;
+        std::string constraint_name;
+
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            constraint_name = parseIdentifier();
+        }
+
+        if (matchKeyword(TokenType::KW_PRIMARY)) {
+            consumeKeyword(TokenType::KW_KEY, "Expected KEY after PRIMARY");
+            auto columns = parse_column_list();
+            emit_add_constraint(0, constraint_name, columns, "", {}, "NO ACTION", "NO ACTION", {});
+            return;
+        }
+        if (matchKeyword(TokenType::KW_UNIQUE)) {
+            matchKeyword(TokenType::KW_KEY);
+            matchKeyword(TokenType::KW_INDEX);
+            if (constraint_name.empty() &&
+                (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)))
+            {
+                constraint_name = parseIdentifier();
+            }
+            auto columns = parse_column_list();
+            emit_add_constraint(1, constraint_name, columns, "", {}, "NO ACTION", "NO ACTION", {});
+            return;
+        }
+        if (matchKeyword(TokenType::KW_FOREIGN)) {
+            consumeKeyword(TokenType::KW_KEY, "Expected KEY after FOREIGN");
+            if (constraint_name.empty() &&
+                (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) &&
+                !check(TokenType::LEFT_PAREN))
+            {
+                constraint_name = parseIdentifier();
+            }
+            auto columns = parse_column_list();
+            consumeKeyword(TokenType::KW_REFERENCES, "Expected REFERENCES");
+            std::string parent_schema;
+            std::string parent_table = parseIdentifier();
+            if (match(TokenType::DOT)) {
+                parent_schema = parent_table;
+                parent_table = parseIdentifier();
+            }
+            resolveTableName(parent_schema, parent_table);
+            std::string parent_path = parent_schema.empty()
+                ? parent_table
+                : parent_schema + "/" + parent_table;
+
+            std::vector<std::string> parent_columns;
+            if (match(TokenType::LEFT_PAREN)) {
+                do {
+                    parent_columns.push_back(parseIdentifier());
+                } while (match(TokenType::COMMA));
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            }
+
+            std::string on_delete = "NO ACTION";
+            std::string on_update = "NO ACTION";
+            while (matchKeyword(TokenType::KW_ON)) {
+                if (matchKeyword(TokenType::KW_DELETE)) {
+                    if (matchKeyword(TokenType::KW_CASCADE)) {
+                        on_delete = "CASCADE";
+                    } else if (matchKeyword(TokenType::KW_SET)) {
+                        if (matchKeyword(TokenType::KW_NULL)) {
+                            on_delete = "SET NULL";
+                        } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+                            on_delete = "SET DEFAULT";
+                        }
+                    } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+                        on_delete = "RESTRICT";
+                    } else {
+                        matchKeyword(TokenType::KW_NO);
+                        consumeKeyword(TokenType::KW_ACTION, "Expected ACTION");
+                        on_delete = "NO ACTION";
+                    }
+                } else if (matchKeyword(TokenType::KW_UPDATE)) {
+                    if (matchKeyword(TokenType::KW_CASCADE)) {
+                        on_update = "CASCADE";
+                    } else if (matchKeyword(TokenType::KW_SET)) {
+                        if (matchKeyword(TokenType::KW_NULL)) {
+                            on_update = "SET NULL";
+                        } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+                            on_update = "SET DEFAULT";
+                        }
+                    } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+                        on_update = "RESTRICT";
+                    } else {
+                        matchKeyword(TokenType::KW_NO);
+                        consumeKeyword(TokenType::KW_ACTION, "Expected ACTION");
+                        on_update = "NO ACTION";
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            emit_add_constraint(2, constraint_name, columns, parent_path,
+                                parent_columns, on_delete, on_update, {});
+            return;
+        }
+        if (matchKeyword(TokenType::KW_CHECK)) {
+            std::vector<uint8_t> expr;
+            if (match(TokenType::LEFT_PAREN)) {
+                expr = captureExpressionBytecode();
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            } else {
+                expr = captureExpressionBytecode();
+            }
+            emit_add_constraint(3, constraint_name, {}, "", {}, "NO ACTION", "NO ACTION", expr);
+            return;
+        }
 
         if (matchKeyword(TokenType::KW_UNIQUE)) {
             is_unique = true;
@@ -4361,6 +4665,48 @@ void Parser::parseAlterStmt() {
     }
 
     if (matchKeyword(TokenType::KW_DROP)) {
+        if (matchKeyword(TokenType::KW_PRIMARY)) {
+            consumeKeyword(TokenType::KW_KEY, "Expected KEY after PRIMARY");
+            std::string base_name = table_path;
+            size_t sep = base_name.find_last_of("/.");
+            std::string table_name = (sep == std::string::npos)
+                ? base_name
+                : base_name.substr(sep + 1);
+            emit(sblr::Opcode::ALTER_TABLE);
+            emitString(table_path);
+            emitByte(4); // DROP_CONSTRAINT
+            emitString(table_name + "_pkey");
+            emitByte(0);
+            return;
+        }
+        if (matchKeyword(TokenType::KW_FOREIGN)) {
+            consumeKeyword(TokenType::KW_KEY, "Expected KEY after FOREIGN");
+            std::string constraint_name = parseIdentifier();
+            emit(sblr::Opcode::ALTER_TABLE);
+            emitString(table_path);
+            emitByte(4); // DROP_CONSTRAINT
+            emitString(constraint_name);
+            emitByte(0);
+            return;
+        }
+        if (matchKeyword(TokenType::KW_CHECK)) {
+            std::string constraint_name = parseIdentifier();
+            emit(sblr::Opcode::ALTER_TABLE);
+            emitString(table_path);
+            emitByte(4); // DROP_CONSTRAINT
+            emitString(constraint_name);
+            emitByte(0);
+            return;
+        }
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            std::string constraint_name = parseIdentifier();
+            emit(sblr::Opcode::ALTER_TABLE);
+            emitString(table_path);
+            emitByte(4); // DROP_CONSTRAINT
+            emitString(constraint_name);
+            emitByte(0);
+            return;
+        }
         if (matchKeyword(TokenType::KW_INDEX) || matchKeyword(TokenType::KW_KEY)) {
             bool if_exists = false;
             if (matchKeyword(TokenType::KW_IF)) {
@@ -4441,7 +4787,7 @@ void Parser::parseAlterStmt() {
         }
     }
 
-    error("ALTER TABLE supports RENAME, ADD COLUMN, DROP COLUMN, MODIFY COLUMN, and CHANGE COLUMN");
+    error("ALTER TABLE supports RENAME, ADD/DROP COLUMN, MODIFY/CHANGE COLUMN, ADD/DROP CONSTRAINT, and ADD/DROP INDEX");
     synchronize();
 }
 
@@ -4852,6 +5198,9 @@ void Parser::parseCreateTable() {
 
     // Table options (ENGINE, CHARSET, etc.)
     std::vector<std::pair<std::string, std::string>> table_options;
+    bool has_partition_clause = false;
+    std::string partition_strategy;
+    std::vector<std::string> partition_columns;
     auto to_upper = [](std::string value) {
         std::transform(value.begin(), value.end(), value.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
@@ -4943,10 +5292,58 @@ void Parser::parseCreateTable() {
             synchronize();
             return;
         }
-        if (matchKeyword(TokenType::KW_PARTITION) || matchKeyword(TokenType::KW_PARTITIONS)) {
-            error("MySQL partition options are not supported");
-            synchronize();
-            return;
+        if (matchKeyword(TokenType::KW_PARTITION)) {
+            consumeKeyword(TokenType::KW_BY, "Expected BY after PARTITION");
+            if (matchKeyword(TokenType::KW_RANGE)) {
+                partition_strategy = "RANGE";
+            } else if (matchIdentifierKeyword("LIST")) {
+                partition_strategy = "LIST";
+            } else if (matchKeyword(TokenType::KW_HASH)) {
+                partition_strategy = "HASH";
+            } else if (matchKeyword(TokenType::KW_KEY)) {
+                partition_strategy = "KEY";
+            } else {
+                error("Expected RANGE, LIST, HASH, or KEY after PARTITION BY");
+                synchronize();
+                return;
+            }
+
+            consume(TokenType::LEFT_PAREN, "Expected ( after PARTITION BY");
+            do {
+                std::string col = parse_option_identifier();
+                if (col.empty()) {
+                    error("Expected partition column name");
+                    synchronize();
+                    return;
+                }
+                partition_columns.push_back(col);
+            } while (match(TokenType::COMMA));
+            consume(TokenType::RIGHT_PAREN, "Expected ) after partition columns");
+
+            if (matchKeyword(TokenType::KW_PARTITIONS)) {
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("Expected partition count after PARTITIONS");
+                    synchronize();
+                    return;
+                }
+                advance();
+            }
+
+            if (match(TokenType::LEFT_PAREN)) {
+                int depth = 1;
+                while (depth > 0 && !check(TokenType::END_OF_FILE)) {
+                    if (match(TokenType::LEFT_PAREN)) {
+                        depth++;
+                    } else if (match(TokenType::RIGHT_PAREN)) {
+                        depth--;
+                    } else {
+                        advance();
+                    }
+                }
+            }
+
+            has_partition_clause = true;
+            continue;
         }
         if (matchKeyword(TokenType::KW_ENGINE)) {
             auto value = require_table_option_value("ENGINE");
@@ -5147,6 +5544,17 @@ void Parser::parseCreateTable() {
         for (const auto& opt : table_options) {
             emitString(opt.first);
             emitString(opt.second);
+        }
+        emit(sblr::Opcode::END_LIST);
+    }
+    if (has_partition_clause) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TABLE_PARTITIONING));
+        emitString(partition_strategy);
+        emit(sblr::Opcode::BEGIN_LIST);
+        emitUVarint(partition_columns.size());
+        for (const auto& col : partition_columns) {
+            emitString(col);
         }
         emit(sblr::Opcode::END_LIST);
     }
@@ -7066,6 +7474,46 @@ void Parser::parseAlterUser() {
     if (has_password) {
         emitString(password);
     }
+}
+
+void Parser::parseAlterRole() {
+    bool if_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    auto parse_role_name = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+            advance();
+            return value;
+        }
+        return parseIdentifier();
+    };
+
+    std::string role_name = parse_role_name();
+    std::string new_name;
+
+    if (matchKeyword(TokenType::KW_RENAME) || matchIdentifierKeyword("RENAME")) {
+        consumeKeyword(TokenType::KW_TO, "Expected TO after RENAME");
+        new_name = parse_role_name();
+    } else {
+        error("ALTER ROLE supports RENAME TO only");
+        synchronize();
+        return;
+    }
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_ROLE));
+    emitString(role_name);
+
+    uint8_t flags = 0;
+    if (if_exists) {
+        flags |= 0x01;
+    }
+    emitByte(flags);
+    emitString(new_name);
 }
 
 void Parser::parseDropUser() {

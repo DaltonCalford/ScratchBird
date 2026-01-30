@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <vector>
 #include <random>
+#include "test_helpers.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -55,8 +56,9 @@ using namespace scratchbird::core;
 class ExceptionInjectionTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "/tmp/test_exception_injection.db";
-        std::remove(test_db_path_);
+        test_db_path_ =
+            scratchbird::testing::uniqueTestDbPath("test_exception_injection", ".db");
+        std::remove(test_db_path_.c_str());
 
         ErrorContext ctx;
         Status status = Database::create(test_db_path_, 8192, &ctx);
@@ -77,7 +79,7 @@ protected:
         if (db_) {
             db_->close();
         }
-        std::remove(test_db_path_);
+        std::remove(test_db_path_.c_str());
     }
 
     // Track pinned pages for leak detection
@@ -102,7 +104,7 @@ protected:
         size_t count() const { return pinned_pages.size(); }
     };
 
-    const char* test_db_path_;
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
     BufferPool* pool_;
     PageManager* page_mgr_;

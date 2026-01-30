@@ -17,6 +17,7 @@
 
 #include <unordered_map>
 #include <deque>
+#include <chrono>
 
 namespace scratchbird {
 namespace protocol {
@@ -304,6 +305,7 @@ private:
     core::Status handleComFieldList(network::Connection* conn);
     core::Status handleComStatistics(network::Connection* conn);
     core::Status handleComResetConnection(network::Connection* conn);
+    bool handleShowQuery(const std::string& query, ResultContext& result);
 
     // ========================================================================
     // Packet Sending
@@ -422,6 +424,10 @@ private:
     uint32_t next_stmt_id_ = 1;
     std::unordered_map<uint32_t, MySqlPreparedStatement> prepared_statements_;
     std::vector<std::string> last_warnings_;
+    std::vector<std::string> last_errors_;
+    uint16_t last_error_code_ = 0;
+    std::string last_error_sqlstate_;
+    std::chrono::steady_clock::time_point start_time_;
 
     // IPC client (bridge to engine)
     std::unique_ptr<client::Connection> client_;

@@ -11,6 +11,8 @@
 #include <cassert>
 #include <cstdio>
 #include <iostream>
+#include <string>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -19,7 +21,8 @@ int main()
     std::cout << "=== Columnstore Simple E2E Test ===\n";
 
     // Create database
-    std::string db_path = "/tmp/columnstore_simple_e2e.db";
+    std::string db_path =
+        "/tmp/columnstore_simple_e2e_" + std::to_string(getpid()) + ".db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

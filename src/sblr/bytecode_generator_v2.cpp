@@ -598,6 +598,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateView(create_view);
     } else if (auto* create_sequence = dynamic_cast<ResolvedCreateSequenceStmt*>(stmt)) {
         generateCreateSequence(create_sequence);
+    } else if (auto* alter_sequence = dynamic_cast<ResolvedAlterSequenceStmt*>(stmt)) {
+        generateAlterSequence(alter_sequence);
     } else if (auto* create_schema = dynamic_cast<ResolvedCreateSchemaStmt*>(stmt)) {
         generateCreateSchema(create_schema);
     } else if (auto* drop_schema = dynamic_cast<ResolvedDropSchemaStmt*>(stmt)) {
@@ -1606,6 +1608,42 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
     } else {
         current_result_->writeString("");
     }
+
+    if (stmt->is_partitioned) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TABLE_PARTITIONING);
+        writeStringId(stmt->partition_by);
+        current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+        current_result_->writeListCount(static_cast<uint64_t>(stmt->partition_columns.size()));
+        for (const auto& col : stmt->partition_columns) {
+            writeStringId(col);
+        }
+        current_result_->writeOpcode(sblr::Opcode::END_LIST);
+    }
+
+    if (!stmt->inherits.empty()) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_TABLE_INHERITS);
+        current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+        current_result_->writeListCount(static_cast<uint64_t>(stmt->inherits.size()));
+        for (const auto& parent : stmt->inherits) {
+            writeStringId(parent);
+        }
+        current_result_->writeOpcode(sblr::Opcode::END_LIST);
+    }
+
+    if (stmt->as_query) {
+        BytecodeResultV2 temp_result;
+        BytecodeResultV2* saved_result = current_result_;
+        current_result_ = &temp_result;
+        generateSelect(stmt->as_query);
+        current_result_ = saved_result;
+
+        const auto& bytecode = temp_result.bytecode();
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_CREATE_TABLE_AS);
+        current_result_->writeInt32(static_cast<uint32_t>(bytecode.size()));
+        for (uint8_t b : bytecode) {
+            current_result_->writeByte(b);
+        }
+    }
 }
 
 void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
@@ -1998,6 +2036,37 @@ void BytecodeGeneratorV2::generateCreateSequence(ResolvedCreateSequenceStmt* stm
         writeStringId(stmt->owned_by_table);
         writeStringId(stmt->owned_by_column);
     }
+}
+
+void BytecodeGeneratorV2::generateAlterSequence(ResolvedAlterSequenceStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::ALTER_SEQUENCE);
+
+    std::string sequence_name;
+    if (stmt->schema.schema_name != StringPool::INVALID_ID) {
+        sequence_name = std::string(getString(stmt->schema.schema_name));
+        sequence_name += ".";
+        sequence_name += std::string(getString(stmt->sequence_name));
+    } else {
+        sequence_name = std::string(getString(stmt->sequence_name));
+    }
+
+    current_result_->writeString(sequence_name);
+
+    uint8_t flags = 0;
+    if (stmt->increment_by.has_value()) flags |= 0x01;
+    if (stmt->min_value.has_value()) flags |= 0x02;
+    if (stmt->max_value.has_value()) flags |= 0x04;
+    if (stmt->restart_with.has_value()) flags |= 0x08;
+    if (stmt->cache.has_value()) flags |= 0x10;
+    if (stmt->cycle.has_value()) flags |= 0x20;
+
+    current_result_->writeByte(flags);
+    if (stmt->increment_by.has_value()) current_result_->writeInt64(*stmt->increment_by);
+    if (stmt->min_value.has_value()) current_result_->writeInt64(*stmt->min_value);
+    if (stmt->max_value.has_value()) current_result_->writeInt64(*stmt->max_value);
+    if (stmt->restart_with.has_value()) current_result_->writeInt64(*stmt->restart_with);
+    if (stmt->cache.has_value()) current_result_->writeInt64(*stmt->cache);
+    if (stmt->cycle.has_value()) current_result_->writeByte(*stmt->cycle ? 1 : 0);
 }
 
 void BytecodeGeneratorV2::generateCreateSchema(ResolvedCreateSchemaStmt* stmt) {
@@ -3549,6 +3618,13 @@ void BytecodeGeneratorV2::generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt)
         case AlterDatabaseAction::DROP_ALIAS:
             current_result_->writeString(stmt->alias);
             break;
+        case AlterDatabaseAction::SET_OPTIONS:
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->options.size()));
+            for (const auto& opt : stmt->options) {
+                current_result_->writeString(opt.first);
+                current_result_->writeString(opt.second);
+            }
+            break;
         default:
             current_result_->writeString("");
             break;
@@ -3798,6 +3874,92 @@ void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
                 sblr::ExtendedOpcode::EXT_ALTER_TABLE_RLS);
             if (!writeQualifiedTableName()) return;
             current_result_->writeByte(stmt->rls_action);
+            break;
+        }
+        case AlterTableAction::ATTACH_PARTITION: {
+            if (stmt->partition_name == StringPool::INVALID_ID ||
+                !stmt->has_partition_bounds) {
+                current_result_->addError("ALTER TABLE ATTACH PARTITION requires name and bounds");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(6);  // ATTACH_PARTITION
+            writeStringId(stmt->partition_name);
+            writeStringId(stmt->partition_bounds);
+            break;
+        }
+        case AlterTableAction::DETACH_PARTITION: {
+            if (stmt->partition_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE DETACH PARTITION requires name");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(7);  // DETACH_PARTITION
+            writeStringId(stmt->partition_name);
+            break;
+        }
+        case AlterTableAction::ENABLE_TRIGGER:
+        case AlterTableAction::DISABLE_TRIGGER: {
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(
+                stmt->action == AlterTableAction::ENABLE_TRIGGER ? 8 : 9);
+            current_result_->writeByte(stmt->trigger_all ? 1 : 0);
+            if (stmt->trigger_all) {
+                current_result_->writeString("");
+            } else {
+                writeStringId(stmt->trigger_name);
+            }
+            break;
+        }
+        case AlterTableAction::SET_STATISTICS: {
+            if (stmt->column_name == StringPool::INVALID_ID || !stmt->has_statistics_target) {
+                current_result_->addError("ALTER TABLE SET STATISTICS requires column name and target");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(10);  // SET_STATISTICS
+            writeStringId(stmt->column_name);
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->statistics_target));
+            break;
+        }
+        case AlterTableAction::SET_STORAGE: {
+            if (stmt->column_name == StringPool::INVALID_ID || stmt->storage_type == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE SET STORAGE requires column name and storage type");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(11);  // SET_STORAGE
+            writeStringId(stmt->column_name);
+            writeStringId(stmt->storage_type);
+            break;
+        }
+        case AlterTableAction::INHERIT:
+        case AlterTableAction::NO_INHERIT: {
+            if (!stmt->has_inherit_parent || stmt->inherit_parent == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE INHERIT/NO INHERIT requires parent table");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(
+                stmt->action == AlterTableAction::INHERIT ? 12 : 13);
+            writeStringId(stmt->inherit_parent);
+            break;
+        }
+        case AlterTableAction::VALIDATE_CONSTRAINT: {
+            if (stmt->constraint_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE VALIDATE requires constraint name");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(14);  // VALIDATE_CONSTRAINT
+            writeStringId(stmt->constraint_name);
             break;
         }
         default:
@@ -4854,9 +5016,46 @@ void BytecodeGeneratorV2::generateColumnRef(ResolvedColumnRefExpr* expr) {
 }
 
 void BytecodeGeneratorV2::generateBinaryExpr(ResolvedBinaryExpr* expr) {
+    if (expr->op == BinaryOp::JSON_EXISTS_ANY || expr->op == BinaryOp::JSON_EXISTS_ALL) {
+        auto* array_expr = dynamic_cast<ResolvedArrayExpr*>(expr->right);
+        if (array_expr && !array_expr->has_subquery) {
+            if (array_expr->elements.empty()) {
+                current_result_->writeOpcode(sblr::Opcode::LITERAL_BOOLEAN);
+                current_result_->writeByte(expr->op == BinaryOp::JSON_EXISTS_ALL ? 1 : 0);
+                return;
+            }
+            bool first = true;
+            for (auto* element : array_expr->elements) {
+                generateExpression(expr->left);
+                generateExpression(element);
+                current_result_->writeExtendedOpcode(
+                    sblr::ExtendedOpcode::EXT_FUNC_JSON_HAS_KEY);
+                current_result_->writeByte(2);
+
+                if (!first) {
+                    current_result_->writeOpcode(
+                        expr->op == BinaryOp::JSON_EXISTS_ANY
+                            ? sblr::Opcode::EXPR_OR
+                            : sblr::Opcode::EXPR_AND);
+                }
+                first = false;
+            }
+            return;
+        }
+    }
+
     // Generate operands first (postfix notation)
     generateExpression(expr->left);
     generateExpression(expr->right);
+
+    if (expr->op == BinaryOp::JSON_EXISTS ||
+        expr->op == BinaryOp::JSON_EXISTS_ANY ||
+        expr->op == BinaryOp::JSON_EXISTS_ALL) {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_JSON_HAS_KEY);
+        current_result_->writeByte(2);
+        return;
+    }
 
     if (expr->op == BinaryOp::CONCAT) {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_CONCAT);
@@ -4866,6 +5065,54 @@ void BytecodeGeneratorV2::generateBinaryExpr(ResolvedBinaryExpr* expr) {
 
     if (expr->op == BinaryOp::DIV_INT) {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_EXPR_DIV_INT);
+        return;
+    }
+
+    if (expr->op == BinaryOp::POWER) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_FUNC_POWER);
+        current_result_->writeByte(2);
+        return;
+    }
+
+    if (expr->op == BinaryOp::BIT_AND) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_AND);
+        current_result_->writeByte(2);
+        return;
+    }
+    if (expr->op == BinaryOp::BIT_OR) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_OR);
+        current_result_->writeByte(2);
+        return;
+    }
+    if (expr->op == BinaryOp::BIT_XOR) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_XOR);
+        current_result_->writeByte(2);
+        return;
+    }
+    if (expr->op == BinaryOp::SHIFT_LEFT) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_SHIFT_LEFT);
+        current_result_->writeByte(2);
+        return;
+    }
+    if (expr->op == BinaryOp::SHIFT_RIGHT) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_BIT_SHIFT_RIGHT);
+        current_result_->writeByte(2);
+        return;
+    }
+
+    if (expr->op == BinaryOp::ARRAY_OVERLAP) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ARRAY_OVERLAP);
+        current_result_->writeByte(2);
+        return;
+    }
+    if (expr->op == BinaryOp::ARRAY_CONTAINS) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINS);
+        current_result_->writeByte(2);
+        return;
+    }
+    if (expr->op == BinaryOp::ARRAY_CONTAINED_BY) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINED_BY);
+        current_result_->writeByte(2);
         return;
     }
 
@@ -5111,6 +5358,38 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     } else if (func_name == "CURRENT_TIME") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_CURRENT_TIME);
+        write_arg_count();
+    } else if (func_name == "CURRENT_USER") {
+        if (arg_count != 0) {
+            current_result_->addError("CURRENT_USER expects 0 arguments");
+            return;
+        }
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_CURRENT_USER);
+        write_arg_count();
+    } else if (func_name == "CURRENT_ROLE") {
+        if (arg_count != 0) {
+            current_result_->addError("CURRENT_ROLE expects 0 arguments");
+            return;
+        }
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_CURRENT_ROLE);
+        write_arg_count();
+    } else if (func_name == "CURRENT_CONNECTION") {
+        if (arg_count != 0) {
+            current_result_->addError("CURRENT_CONNECTION expects 0 arguments");
+            return;
+        }
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_CURRENT_CONNECTION);
+        write_arg_count();
+    } else if (func_name == "CURRENT_TRANSACTION") {
+        if (arg_count != 0) {
+            current_result_->addError("CURRENT_TRANSACTION expects 0 arguments");
+            return;
+        }
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_CURRENT_TRANSACTION);
         write_arg_count();
     } else if (func_name == "TO_CHAR") {
         current_result_->writeExtendedOpcode(

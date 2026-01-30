@@ -16,6 +16,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/page_manager.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <memory>
 #include <cstring>
@@ -30,7 +31,7 @@ protected:
     void SetUp() override
     {
         // Create temporary database
-        test_db_path_ = "/tmp/test_heap_ownership.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_heap_ownership", ".db");
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove(test_db_path_);

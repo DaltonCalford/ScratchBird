@@ -344,6 +344,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         // Security keywords
         {"user", TokenType::KW_USER},
         {"role", TokenType::KW_ROLE},
+        {"policy", TokenType::KW_POLICY},
         {"group", TokenType::KW_GROUP},
         {"public", TokenType::KW_PUBLIC},
         {"privileges", TokenType::KW_PRIVILEGES},
@@ -385,6 +386,8 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         // Misc keywords
         {"verbose", TokenType::KW_VERBOSE},
         {"force", TokenType::KW_FORCE},
+        {"enable", TokenType::KW_ENABLE},
+        {"disable", TokenType::KW_DISABLE},
         {"match", TokenType::KW_MATCH},
         {"partial", TokenType::KW_PARTIAL},
         {"simple", TokenType::KW_SIMPLE},

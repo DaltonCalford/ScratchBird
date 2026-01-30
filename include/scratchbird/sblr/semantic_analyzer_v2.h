@@ -329,6 +329,7 @@ private:
     ResolvedStatement* analyzeCreateIndex(CreateIndexStmt* stmt);
     ResolvedStatement* analyzeCreateView(CreateViewStmt* stmt);
     ResolvedStatement* analyzeCreateSequence(CreateSequenceStmt* stmt);
+    ResolvedStatement* analyzeAlterSequence(AlterSequenceStmt* stmt);
     ResolvedStatement* analyzeCreateSchema(CreateSchemaStmt* stmt);
     ResolvedStatement* analyzeDropSchema(DropSchemaStmt* stmt);
     ResolvedStatement* analyzeAlterSchema(AlterSchemaStmt* stmt);

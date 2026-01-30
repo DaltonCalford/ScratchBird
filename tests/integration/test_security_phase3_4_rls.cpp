@@ -26,6 +26,7 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "test_helpers.h"
 
 #include <filesystem>
 #include <memory>
@@ -49,7 +50,8 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        test_db_path = "/tmp/test_security_phase3_4_rls.db";
+        test_db_path =
+            scratchbird::testing::uniqueTestDbPath("test_security_phase3_4_rls", ".db");
 
         // Remove old test database if exists
         if (std::filesystem::exists(test_db_path))

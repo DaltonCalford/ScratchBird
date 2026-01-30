@@ -62,7 +62,9 @@
       "Bash(/home/dcalford/CliWork/ScratchBird/wiki/scripts/sync-to-wiki.sh:*)",
       "WebFetch(domain:www.metabase.com)",
       "Bash(xargs ls:*)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(git -C /home/dcalford/CliWork/ScratchBird log --oneline)",
+      "Bash(git -C /home/dcalford/CliWork/ScratchBird log --oneline --since=\"30 days ago\")"
     ]
   }
 }

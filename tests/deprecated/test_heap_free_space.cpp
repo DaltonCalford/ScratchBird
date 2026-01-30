@@ -8,11 +8,13 @@
 #include "include/scratchbird/core/buffer_pool.h"
 #include "include/scratchbird/core/page_manager.h"
 #include "include/scratchbird/core/ondisk.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 int main()
 {
@@ -45,18 +47,18 @@ int main()
     {
         std::cout << "Test 3: Heap page free space calculation... ";
 
-        const char *db_path = "/tmp/test_heap_free_space.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_heap_free_space", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             return 1;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             return 1;
@@ -136,7 +138,7 @@ int main()
 
         db.buffer_pool()->unpinPage(page_id, false, &ctx);
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
 
         std::cout << "PASSED" << std::endl;
         std::cout << "  - Initial free space: " << initial_free_space << " bytes ✅" << std::endl;
@@ -150,18 +152,18 @@ int main()
     {
         std::cout << "Test 4: Fill page to capacity (boundary test)... ";
 
-        const char *db_path = "/tmp/test_heap_capacity.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_heap_capacity", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             return 1;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             return 1;
@@ -242,7 +244,7 @@ int main()
 
         db.buffer_pool()->unpinPage(page_id, false, &ctx);
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
 
         std::cout << "PASSED" << std::endl;
         std::cout << "  - Inserted " << tuples_inserted << " tuples ✅" << std::endl;

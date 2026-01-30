@@ -3,6 +3,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@ class StoredCodeDependencyTest : public ::testing::Test
 {
 protected:
     std::string test_db_path;
+    std::string udr_path_;
     Database *db = nullptr;
     CatalogManager *catalog = nullptr;
     ID schema_id;
@@ -21,6 +23,7 @@ protected:
     void SetUp() override
     {
         test_db_path = "/tmp/test_code_dep_" + std::to_string(getpid()) + ".sbdb";
+        udr_path_ = scratchbird::testing::uniqueTestDbPath("libudr", ".so");
         std::remove(test_db_path.c_str());
 
         ErrorContext ctx;
@@ -144,7 +147,7 @@ protected:
         ErrorContext ctx;
         ID udr_id;
         Status status = catalog->createUDR(schema_id, udr_name,
-                                           "/tmp/libudr.so", "entry",
+                                           udr_path_, "entry",
                                            CatalogManager::UDRType::FUNCTION,
                                            "signature", udr_id, &ctx);
         EXPECT_EQ(status, Status::OK) << "Failed to create UDR: " << ctx.message;

@@ -21,9 +21,11 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include "gtest/gtest.h"
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 using namespace scratchbird::core;
@@ -31,8 +33,9 @@ using namespace scratchbird::core;
 // Helper: Create a Database instance for testing
 Database* createTestDatabase()
 {
-    const char* test_db_path = "/tmp/test_columnstore_rle.db";
-    std::remove(test_db_path);
+    std::string test_db_path =
+        scratchbird::testing::uniqueTestDbPath("test_columnstore_rle", ".db");
+    std::remove(test_db_path.c_str());
 
     ErrorContext ctx;
     Status status = Database::create(test_db_path, 8192, &ctx);

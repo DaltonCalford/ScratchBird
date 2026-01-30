@@ -936,43 +936,45 @@ CreateTableStmt* Parser::parseCreateTable(bool or_replace, TempTableType temp_ty
         return stmt;
     }
 
-    // Parse column definitions and constraints
-    if (!expect(TokenType::LEFT_PAREN, "Expected '(' after table name")) {
+    // Parse column definitions and constraints (optional for CREATE TABLE AS SELECT)
+    if (match(TokenType::LEFT_PAREN)) {
+        ParseModeGuard colGuard(state_, ParseMode::COLUMN_DEF);
+
+        // Parse comma-separated list of columns and constraints
+        bool first = true;
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            if (!first) {
+                if (!expect(TokenType::COMMA, "Expected ',' between column definitions")) {
+                    break;
+                }
+            }
+            first = false;
+
+            // Check if this is a table constraint
+            if (checkContextual("CONSTRAINT") ||
+                checkContextual("PRIMARY") ||
+                checkContextual("UNIQUE") ||
+                checkContextual("FOREIGN") ||
+                checkContextual("CHECK")) {
+                TableConstraint* constraint = parseTableConstraint();
+                if (constraint) {
+                    stmt->constraints.push_back(constraint);
+                }
+            } else {
+                // Column definition
+                ColumnDef* col = parseColumnDef();
+                if (col) {
+                    stmt->columns.push_back(col);
+                }
+            }
+        }
+
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after column definitions");
+    } else if (!check(TokenType::KW_AS) && !checkContextual("AS") &&
+               !check(TokenType::KW_SELECT) && !check(TokenType::KW_WITH)) {
+        error("Expected '(' or AS/SELECT after table name");
         return stmt;
     }
-
-    ParseModeGuard colGuard(state_, ParseMode::COLUMN_DEF);
-
-    // Parse comma-separated list of columns and constraints
-    bool first = true;
-    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
-        if (!first) {
-            if (!expect(TokenType::COMMA, "Expected ',' between column definitions")) {
-                break;
-            }
-        }
-        first = false;
-
-        // Check if this is a table constraint
-        if (checkContextual("CONSTRAINT") ||
-            checkContextual("PRIMARY") ||
-            checkContextual("UNIQUE") ||
-            checkContextual("FOREIGN") ||
-            checkContextual("CHECK")) {
-            TableConstraint* constraint = parseTableConstraint();
-            if (constraint) {
-                stmt->constraints.push_back(constraint);
-            }
-        } else {
-            // Column definition
-            ColumnDef* col = parseColumnDef();
-            if (col) {
-                stmt->columns.push_back(col);
-            }
-        }
-    }
-
-    expect(TokenType::RIGHT_PAREN, "Expected ')' after column definitions");
 
     // Parse optional table options
     bool has_on_commit = false;
@@ -1027,6 +1029,22 @@ CreateTableStmt* Parser::parseCreateTable(bool or_replace, TempTableType temp_ty
             expect(TokenType::RIGHT_PAREN, "Expected ')' after partition columns");
         } else {
             break;  // Unknown option, stop parsing
+        }
+    }
+
+    if (match(TokenType::KW_AS) || matchContextual("AS")) {
+        if (check(TokenType::KW_WITH)) {
+            stmt->as_query = parseSelectWithClause();
+        } else if (match(TokenType::KW_SELECT)) {
+            stmt->as_query = parseSelect();
+        } else {
+            error("Expected SELECT after AS in CREATE TABLE");
+        }
+    } else if (check(TokenType::KW_SELECT) || check(TokenType::KW_WITH)) {
+        if (check(TokenType::KW_WITH)) {
+            stmt->as_query = parseSelectWithClause();
+        } else if (match(TokenType::KW_SELECT)) {
+            stmt->as_query = parseSelect();
         }
     }
 
@@ -3401,8 +3419,11 @@ CreateTriggerStmt* Parser::parseCreateTrigger(bool or_replace) {
         stmt->timing = TriggerTiming::BEFORE;
     } else if (matchContextual("AFTER")) {
         stmt->timing = TriggerTiming::AFTER;
+    } else if (matchContextual("INSTEAD")) {
+        expectContextual("OF", "Expected OF after INSTEAD");
+        stmt->timing = TriggerTiming::INSTEAD_OF;
     } else {
-        error("Expected BEFORE or AFTER in CREATE TRIGGER");
+        error("Expected BEFORE, AFTER, or INSTEAD OF in CREATE TRIGGER");
     }
 
     stmt->event_mask = 0;
@@ -4789,6 +4810,79 @@ AlterTableStmt* Parser::parseAlterTable() {
             stmt->column_name = expectIdentifier("Expected column name");
             if (matchContextual("CASCADE")) stmt->cascade = true;
         }
+    } else if (matchContextual("ALTER")) {
+        if (matchContextual("COLUMN")) {
+            stmt->column_name = expectIdentifier("Expected column name");
+        } else {
+            stmt->column_name = expectIdentifier("Expected column name");
+        }
+
+        bool handled = false;
+        if (matchContextual("SET")) {
+            if (matchContextual("STATISTICS")) {
+                stmt->action = AlterTableAction::SET_STATISTICS;
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("Expected integer after SET STATISTICS");
+                } else {
+                    stmt->statistics_target = static_cast<int32_t>(current().value.int_value);
+                    stmt->has_statistics_target = true;
+                    advance();
+                }
+                handled = true;
+            } else if (matchContextual("STORAGE")) {
+                stmt->action = AlterTableAction::SET_STORAGE;
+                if (!isIdentifier()) {
+                    error("Expected storage type after SET STORAGE");
+                } else {
+                    stmt->storage_type = currentIdentifier();
+                    advance();
+                }
+                handled = true;
+            } else if (matchContextual("DATA")) {
+                expectContextual("TYPE", "Expected TYPE after SET DATA");
+                stmt->action = AlterTableAction::ALTER_COLUMN;
+                auto* col = arena_.create<ColumnDef>();
+                col->name = stmt->column_name;
+                col->type = parseTypeName();
+                stmt->column = col;
+                handled = true;
+            }
+        } else if (matchContextual("TYPE")) {
+            stmt->action = AlterTableAction::ALTER_COLUMN;
+            auto* col = arena_.create<ColumnDef>();
+            col->name = stmt->column_name;
+            col->type = parseTypeName();
+            stmt->column = col;
+            handled = true;
+        }
+        if (!handled) {
+            error("Expected SET STATISTICS, SET STORAGE, or TYPE after ALTER COLUMN");
+        }
+    } else if (matchContextual("ATTACH")) {
+        expectContextual("PARTITION", "Expected PARTITION after ATTACH");
+        stmt->action = AlterTableAction::ATTACH_PARTITION;
+        stmt->partition_path = parseSchemaPath(state_);
+        if (matchContextual("FOR")) {
+            size_t bounds_start = previous().span.start.offset;
+            expectContextual("VALUES", "Expected VALUES after FOR");
+
+            while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
+                advance();
+            }
+            if (previous().span.length > 0 && bounds_start < lexer_.input().size()) {
+                size_t bounds_end = previous().span.start.offset + previous().span.length;
+                if (bounds_end > bounds_start) {
+                    std::string_view input = lexer_.input();
+                    std::string bounds(input.substr(bounds_start, bounds_end - bounds_start));
+                    stmt->partition_bounds = stringPool().intern(bounds);
+                    stmt->has_partition_bounds = true;
+                }
+            }
+        }
+    } else if (matchContextual("DETACH")) {
+        expectContextual("PARTITION", "Expected PARTITION after DETACH");
+        stmt->action = AlterTableAction::DETACH_PARTITION;
+        stmt->partition_path = parseSchemaPath(state_);
     } else if (matchContextual("RENAME")) {
         if (matchContextual("COLUMN")) {
             stmt->action = AlterTableAction::RENAME_COLUMN;
@@ -4812,16 +4906,48 @@ AlterTableStmt* Parser::parseAlterTable() {
             stmt->action = AlterTableAction::SET_SCHEMA;
             stmt->target_schema = parseSchemaPath(state_);
         }
+    } else if (matchContextual("INHERIT")) {
+        stmt->action = AlterTableAction::INHERIT;
+        stmt->inherit_parent = parseSchemaPath(state_);
+        stmt->has_inherit_parent = !stmt->inherit_parent.isEmpty();
+    } else if (matchContextual("NO")) {
+        if (matchContextual("INHERIT")) {
+            stmt->action = AlterTableAction::NO_INHERIT;
+            stmt->inherit_parent = parseSchemaPath(state_);
+            stmt->has_inherit_parent = !stmt->inherit_parent.isEmpty();
+        }
     } else if (matchContextual("ENABLE")) {
-        expectContextual("ROW", "Expected ROW after ENABLE");
-        expectContextual("LEVEL", "Expected LEVEL after ROW");
-        expectContextual("SECURITY", "Expected SECURITY after LEVEL");
-        stmt->action = AlterTableAction::ENABLE_RLS;
+        if (matchContextual("TRIGGER")) {
+            stmt->action = AlterTableAction::ENABLE_TRIGGER;
+            if (matchContextual("ALL")) {
+                stmt->trigger_all = true;
+            } else {
+                stmt->trigger_name = expectIdentifier("Expected trigger name");
+            }
+        } else {
+            expectContextual("ROW", "Expected ROW after ENABLE");
+            expectContextual("LEVEL", "Expected LEVEL after ROW");
+            expectContextual("SECURITY", "Expected SECURITY after LEVEL");
+            stmt->action = AlterTableAction::ENABLE_RLS;
+        }
     } else if (matchContextual("DISABLE")) {
-        expectContextual("ROW", "Expected ROW after DISABLE");
-        expectContextual("LEVEL", "Expected LEVEL after ROW");
-        expectContextual("SECURITY", "Expected SECURITY after LEVEL");
-        stmt->action = AlterTableAction::DISABLE_RLS;
+        if (matchContextual("TRIGGER")) {
+            stmt->action = AlterTableAction::DISABLE_TRIGGER;
+            if (matchContextual("ALL")) {
+                stmt->trigger_all = true;
+            } else {
+                stmt->trigger_name = expectIdentifier("Expected trigger name");
+            }
+        } else {
+            expectContextual("ROW", "Expected ROW after DISABLE");
+            expectContextual("LEVEL", "Expected LEVEL after ROW");
+            expectContextual("SECURITY", "Expected SECURITY after LEVEL");
+            stmt->action = AlterTableAction::DISABLE_RLS;
+        }
+    } else if (matchContextual("VALIDATE")) {
+        stmt->action = AlterTableAction::VALIDATE_CONSTRAINT;
+        matchContextual("CONSTRAINT");
+        stmt->constraint_name = expectIdentifier("Expected constraint name");
     }
 
     stmt->span = makeSpan(start);
@@ -6788,7 +6914,7 @@ Expression* Parser::parseNotExpr() {
 }
 
 Expression* Parser::parseComparisonExpr() {
-    Expression* left = parseAddExpr();
+    Expression* left = parseBitOrExpr();
 
     // IS NULL / IS NOT NULL / IS TRUE / IS FALSE / IS UNKNOWN
     if (match(TokenType::KW_IS)) {
@@ -6825,7 +6951,7 @@ Expression* Parser::parseComparisonExpr() {
             auto* expr = arena_.create<BinaryExpr>();
             expr->op = is_not ? BinaryOp::EQ : BinaryOp::NE;  // IS DISTINCT FROM = not equal (null-safe)
             expr->left = left;
-            expr->right = parseAddExpr();
+            expr->right = parseBitOrExpr();
             return expr;
         }
 
@@ -6952,28 +7078,72 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
     }
     if (match(TokenType::TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH_CI;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH_CI;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+
+    if (match(TokenType::QUESTION_MARK)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::JSON_EXISTS;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::QUESTION_PIPE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::JSON_EXISTS_ANY;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::QUESTION_AMPERSAND)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::JSON_EXISTS_ALL;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+
+    if (match(TokenType::AT_GREATER)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::ARRAY_CONTAINS;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::LESS_AT)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::ARRAY_CONTAINED_BY;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::DOUBLE_AMPERSAND)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::ARRAY_OVERLAP;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
         return expr;
     }
 
@@ -6992,7 +7162,7 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = op;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
     }
 
@@ -7000,7 +7170,7 @@ Expression* Parser::parseComparisonExpr() {
 }
 
 Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
-    left = parseAddExprWithLeft(left);
+    left = parseBitOrExprWithLeft(left);
 
     if (match(TokenType::KW_IS)) {
         bool is_not = match(TokenType::KW_NOT);
@@ -7033,7 +7203,7 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
             auto* expr = arena_.create<BinaryExpr>();
             expr->op = is_not ? BinaryOp::EQ : BinaryOp::NE;
             expr->left = left;
-            expr->right = parseAddExpr();
+            expr->right = parseBitOrExpr();
             return expr;
         }
 
@@ -7152,28 +7322,72 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
     }
     if (match(TokenType::TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH_CI;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH_CI;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+
+    if (match(TokenType::QUESTION_MARK)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::JSON_EXISTS;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::QUESTION_PIPE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::JSON_EXISTS_ANY;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::QUESTION_AMPERSAND)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::JSON_EXISTS_ALL;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+
+    if (match(TokenType::AT_GREATER)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::ARRAY_CONTAINS;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::LESS_AT)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::ARRAY_CONTAINED_BY;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        return expr;
+    }
+    if (match(TokenType::DOUBLE_AMPERSAND)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::ARRAY_OVERLAP;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
         return expr;
     }
 
@@ -7191,8 +7405,102 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = op;
         expr->left = left;
-        expr->right = parseAddExpr();
+        expr->right = parseBitOrExpr();
         return expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseBitOrExpr() {
+    Expression* left = parseBitAndExpr();
+
+    while (match(TokenType::PIPE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::BIT_OR;
+        expr->left = left;
+        expr->right = parseBitAndExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseBitOrExprWithLeft(Expression* left) {
+    left = parseBitAndExprWithLeft(left);
+
+    while (match(TokenType::PIPE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::BIT_OR;
+        expr->left = left;
+        expr->right = parseBitAndExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseBitAndExpr() {
+    Expression* left = parseShiftExpr();
+
+    while (match(TokenType::AMPERSAND)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::BIT_AND;
+        expr->left = left;
+        expr->right = parseShiftExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseBitAndExprWithLeft(Expression* left) {
+    left = parseShiftExprWithLeft(left);
+
+    while (match(TokenType::AMPERSAND)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::BIT_AND;
+        expr->left = left;
+        expr->right = parseShiftExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseShiftExpr() {
+    Expression* left = parseAddExpr();
+
+    while (true) {
+        BinaryOp op;
+        if (match(TokenType::SHIFT_LEFT)) op = BinaryOp::SHIFT_LEFT;
+        else if (match(TokenType::SHIFT_RIGHT)) op = BinaryOp::SHIFT_RIGHT;
+        else break;
+
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = op;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseShiftExprWithLeft(Expression* left) {
+    left = parseAddExprWithLeft(left);
+
+    while (true) {
+        BinaryOp op;
+        if (match(TokenType::SHIFT_LEFT)) op = BinaryOp::SHIFT_LEFT;
+        else if (match(TokenType::SHIFT_RIGHT)) op = BinaryOp::SHIFT_RIGHT;
+        else break;
+
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = op;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        left = expr;
     }
 
     return left;
@@ -7239,7 +7547,7 @@ Expression* Parser::parseAddExprWithLeft(Expression* left) {
 }
 
 Expression* Parser::parseMulExpr() {
-    Expression* left = parseUnaryExpr();
+    Expression* left = parsePowerExpr();
 
     while (true) {
         BinaryOp op;
@@ -7256,7 +7564,7 @@ Expression* Parser::parseMulExpr() {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = op;
         expr->left = left;
-        expr->right = parseUnaryExpr();
+        expr->right = parsePowerExpr();
         left = expr;
     }
 
@@ -7279,14 +7587,37 @@ Expression* Parser::parseMulExprWithLeft(Expression* left) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = op;
         expr->left = left;
-        expr->right = parseUnaryExpr();
+        expr->right = parsePowerExpr();
         left = expr;
     }
 
     return left;
 }
 
+Expression* Parser::parsePowerExpr() {
+    Expression* left = parseUnaryExpr();
+
+    if (match(TokenType::CARET)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::POWER;
+        expr->left = left;
+        expr->right = parsePowerExpr();
+        return expr;
+    }
+
+    return left;
+}
+
 Expression* Parser::parseUnaryExpr() {
+    if (match(TokenType::PLUS)) {
+        return parseUnaryExpr();
+    }
+    if (match(TokenType::TILDE)) {
+        auto* expr = arena_.create<UnaryExpr>();
+        expr->op = UnaryOp::BIT_NOT;
+        expr->operand = parseUnaryExpr();
+        return expr;
+    }
     if (match(TokenType::MINUS)) {
         auto* expr = arena_.create<UnaryExpr>();
         expr->op = UnaryOp::NEGATE;
@@ -7351,6 +7682,27 @@ Expression* Parser::parsePrimaryExpr() {
             expect(TokenType::RIGHT_PAREN, "Expected ')'");
             expr = inner;
         }
+    }
+
+    if (!expr && matchContextual("CURRENT_USER")) {
+        auto* fn = arena_.create<FunctionCallExpr>();
+        fn->function_path.components.push_back(stringPool().intern("CURRENT_USER"));
+        expr = fn;
+    }
+    if (!expr && matchContextual("CURRENT_ROLE")) {
+        auto* fn = arena_.create<FunctionCallExpr>();
+        fn->function_path.components.push_back(stringPool().intern("CURRENT_ROLE"));
+        expr = fn;
+    }
+    if (!expr && matchContextual("CURRENT_CONNECTION")) {
+        auto* fn = arena_.create<FunctionCallExpr>();
+        fn->function_path.components.push_back(stringPool().intern("CURRENT_CONNECTION"));
+        expr = fn;
+    }
+    if (!expr && matchContextual("CURRENT_TRANSACTION")) {
+        auto* fn = arena_.create<FunctionCallExpr>();
+        fn->function_path.components.push_back(stringPool().intern("CURRENT_TRANSACTION"));
+        expr = fn;
     }
 
     // Column reference or function call

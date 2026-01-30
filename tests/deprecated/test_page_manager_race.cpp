@@ -5,6 +5,7 @@
 
 #include "include/scratchbird/core/database.h"
 #include "include/scratchbird/core/page_manager.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -13,24 +14,25 @@
 #include <cstdio>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 int main()
 {
     std::cout << "=== Testing Issue 1.18: Page Manager Race Condition ===" << std::endl;
     std::cout << std::endl;
 
-    const char *db_path = "/tmp/test_page_manager_race.sbrd";
-    std::remove(db_path);
+    std::string db_path = uniqueTestShortPath("test_page_manager_race", ".sbrd");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
-    if (Database::create(db_path, 8192, &ctx) != Status::OK)
+    if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
     {
         std::cout << "FAILED (create): " << ctx.message << std::endl;
         return 1;
     }
 
     Database db;
-    if (db.open(db_path, &ctx) != Status::OK)
+    if (db.open(db_path.c_str(), &ctx) != Status::OK)
     {
         std::cout << "FAILED (open): " << ctx.message << std::endl;
         return 1;
@@ -219,7 +221,7 @@ int main()
     }
 
     db.close();
-    std::remove(db_path);
+    std::remove(db_path.c_str());
 
     std::cout << std::endl;
     std::cout << "=== All tests PASSED ===" << std::endl;

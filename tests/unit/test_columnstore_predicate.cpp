@@ -19,6 +19,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include "gtest/gtest.h"
 #include <cstdio>
 #include <cstring>
@@ -26,15 +27,16 @@
 #include <cstdlib>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 // Helper: Create a Database instance for testing
 Database* createTestDatabase()
 {
-    const char* test_db_path = "/tmp/test_columnstore_predicate.db";
-    std::remove(test_db_path);
+    std::string test_db_path = uniqueTestDbPath("test_columnstore_predicate");
+    std::remove(test_db_path.c_str());
 
     ErrorContext ctx;
-    Status status = Database::create(test_db_path, 8192, &ctx);
+    Status status = Database::create(test_db_path.c_str(), 8192, &ctx);
     if (status != Status::OK)
     {
         fprintf(stderr, "Failed to create test database: %s\n", ctx.message.c_str());
@@ -42,7 +44,7 @@ Database* createTestDatabase()
     }
 
     Database* db = new Database();
-    status = db->open(test_db_path, &ctx);
+    status = db->open(test_db_path.c_str(), &ctx);
     if (status != Status::OK)
     {
         fprintf(stderr, "Failed to open test database: %s\n", ctx.message.c_str());

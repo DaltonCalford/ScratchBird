@@ -20,6 +20,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace scratchbird::catalog {
@@ -874,7 +875,89 @@ private:
         return Status::OK;
     }
 
-    Status queryDb(VirtualResultSet& /* results */, ErrorContext* /* ctx */) {
+    Status queryDb(VirtualResultSet& results, ErrorContext* ctx) {
+        if (!catalog_manager_) {
+            return Status::OK;
+        }
+
+        std::unordered_map<ID, std::string, IDHash> schema_names;
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        if (catalog_manager_->listSchemas(schemas, ctx) == Status::OK) {
+            for (const auto& schema : schemas) {
+                schema_names.emplace(schema.schema_id, schemaName(schema));
+            }
+        }
+
+        std::unordered_map<ID, std::string, IDHash> user_names;
+        std::vector<CatalogManager::UserInfo> users;
+        if (catalog_manager_->listUsers(users, ctx) == Status::OK) {
+            for (const auto& user : users) {
+                user_names.emplace(user.user_id, user.username);
+            }
+        }
+
+        std::unordered_map<ID, std::string, IDHash> role_names;
+        std::vector<CatalogManager::RoleInfo> roles;
+        if (catalog_manager_->listRoles(roles, ctx) == Status::OK) {
+            for (const auto& role : roles) {
+                role_names.emplace(role.role_id, role.role_name);
+            }
+        }
+
+        std::unordered_map<ID, std::string, IDHash> group_names;
+        std::vector<CatalogManager::GroupInfo> groups;
+        if (catalog_manager_->listGroups(groups, ctx) == Status::OK) {
+            for (const auto& group : groups) {
+                group_names.emplace(group.group_id, group.group_name);
+            }
+        }
+
+        auto grantee_name = [&](const CatalogManager::PermissionInfo& perm) -> std::string {
+            switch (perm.grantee_type) {
+                case CatalogManager::GranteeType::USER: {
+                    auto it = user_names.find(perm.grantee_id);
+                    return it == user_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::ROLE: {
+                    auto it = role_names.find(perm.grantee_id);
+                    return it == role_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::GROUP: {
+                    auto it = group_names.find(perm.grantee_id);
+                    return it == group_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::PUBLIC:
+                default:
+                    return "PUBLIC";
+            }
+        };
+
+        std::vector<CatalogManager::PermissionInfo> perms;
+        if (catalog_manager_->listPermissions(perms, ctx) != Status::OK) {
+            return Status::OK;
+        }
+
+        for (const auto& perm : perms) {
+            if (perm.object_type != CatalogManager::PermissionObjectType::SCHEMA) {
+                continue;
+            }
+            auto schema_it = schema_names.find(perm.object_id);
+            if (schema_it == schema_names.end()) {
+                continue;
+            }
+            std::string user = grantee_name(perm);
+            if (user.empty()) {
+                continue;
+            }
+            VirtualRow row;
+            row.columns = {
+                {"Host", TypedValue::makeVarchar("%")},
+                {"Db", TypedValue::makeVarchar(schema_it->second)},
+                {"User", TypedValue::makeVarchar(user)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
         return Status::OK;
     }
 
@@ -930,11 +1013,279 @@ private:
         return Status::OK;
     }
 
-    Status queryTablesPriv(VirtualResultSet& /* results */, ErrorContext* /* ctx */) {
+    Status queryTablesPriv(VirtualResultSet& results, ErrorContext* ctx) {
+        if (!catalog_manager_) {
+            return Status::OK;
+        }
+
+        std::unordered_map<ID, std::string, IDHash> user_names;
+        std::vector<CatalogManager::UserInfo> users;
+        if (catalog_manager_->listUsers(users, ctx) == Status::OK) {
+            for (const auto& user : users) {
+                user_names.emplace(user.user_id, user.username);
+            }
+        }
+
+        std::unordered_map<ID, std::string, IDHash> role_names;
+        std::vector<CatalogManager::RoleInfo> roles;
+        if (catalog_manager_->listRoles(roles, ctx) == Status::OK) {
+            for (const auto& role : roles) {
+                role_names.emplace(role.role_id, role.role_name);
+            }
+        }
+
+        std::unordered_map<ID, std::string, IDHash> group_names;
+        std::vector<CatalogManager::GroupInfo> groups;
+        if (catalog_manager_->listGroups(groups, ctx) == Status::OK) {
+            for (const auto& group : groups) {
+                group_names.emplace(group.group_id, group.group_name);
+            }
+        }
+
+        auto grantee_name = [&](const CatalogManager::PermissionInfo& perm) -> std::string {
+            switch (perm.grantee_type) {
+                case CatalogManager::GranteeType::USER: {
+                    auto it = user_names.find(perm.grantee_id);
+                    return it == user_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::ROLE: {
+                    auto it = role_names.find(perm.grantee_id);
+                    return it == role_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::GROUP: {
+                    auto it = group_names.find(perm.grantee_id);
+                    return it == group_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::PUBLIC:
+                default:
+                    return "PUBLIC";
+            }
+        };
+
+        auto privilege_list = [](uint32_t privs) -> std::string {
+            std::vector<std::string> names;
+            auto add = [&](CatalogManager::Privilege priv, const char* name) {
+                if ((privs & static_cast<uint32_t>(priv)) != 0) {
+                    names.emplace_back(name);
+                }
+            };
+            add(CatalogManager::Privilege::SELECT, "Select");
+            add(CatalogManager::Privilege::INSERT, "Insert");
+            add(CatalogManager::Privilege::UPDATE, "Update");
+            add(CatalogManager::Privilege::DELETE, "Delete");
+            add(CatalogManager::Privilege::REFERENCES, "References");
+            add(CatalogManager::Privilege::TRIGGER, "Trigger");
+            add(CatalogManager::Privilege::TRUNCATE, "Truncate");
+
+            std::string out;
+            for (size_t i = 0; i < names.size(); ++i) {
+                if (i > 0) {
+                    out.append(", ");
+                }
+                out.append(names[i]);
+            }
+            return out;
+        };
+
+        std::unordered_map<ID, CatalogManager::TableInfo, IDHash> tables_by_id;
+        std::unordered_map<ID, std::string, IDHash> schema_names;
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        if (catalog_manager_->listSchemas(schemas, ctx) == Status::OK) {
+            for (const auto& schema : schemas) {
+                schema_names.emplace(schema.schema_id, schemaName(schema));
+                std::vector<CatalogManager::TableInfo> tables;
+                if (catalog_manager_->listTables(schema.schema_id, tables, ctx) == Status::OK) {
+                    for (const auto& table : tables) {
+                        tables_by_id.emplace(table.table_id, table);
+                    }
+                }
+            }
+        }
+
+        struct ColumnKeyHash {
+            size_t operator()(const std::string& key) const {
+                return std::hash<std::string>()(key);
+            }
+        };
+
+        std::unordered_map<std::string, uint32_t, ColumnKeyHash> column_privs;
+        for (const auto& table_entry : tables_by_id) {
+            std::vector<CatalogManager::ColumnPermissionInfo> col_perms;
+            if (catalog_manager_->getColumnPermissions(table_entry.first, col_perms, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& perm : col_perms) {
+                std::string key = table_entry.first.toString() + "|" +
+                                  perm.grantee_id.toString() + "|" +
+                                  std::to_string(static_cast<uint8_t>(perm.grantee_type));
+                column_privs[key] |= perm.privileges;
+            }
+        }
+
+        std::vector<CatalogManager::PermissionInfo> perms;
+        if (catalog_manager_->listPermissions(perms, ctx) != Status::OK) {
+            return Status::OK;
+        }
+
+        for (const auto& perm : perms) {
+            if (perm.object_type != CatalogManager::PermissionObjectType::TABLE) {
+                continue;
+            }
+            auto table_it = tables_by_id.find(perm.object_id);
+            if (table_it == tables_by_id.end()) {
+                continue;
+            }
+            std::string user = grantee_name(perm);
+            if (user.empty()) {
+                continue;
+            }
+            std::string schema_name;
+            auto schema_it = schema_names.find(table_it->second.schema_id);
+            if (schema_it != schema_names.end()) {
+                schema_name = schema_it->second;
+            }
+
+            std::string key = perm.object_id.toString() + "|" +
+                              perm.grantee_id.toString() + "|" +
+                              std::to_string(static_cast<uint8_t>(perm.grantee_type));
+            uint32_t column_priv_mask = 0;
+            auto col_it = column_privs.find(key);
+            if (col_it != column_privs.end()) {
+                column_priv_mask = col_it->second;
+            }
+
+            VirtualRow row;
+            row.columns = {
+                {"Host", TypedValue::makeVarchar("%")},
+                {"Db", TypedValue::makeVarchar(schema_name)},
+                {"User", TypedValue::makeVarchar(user)},
+                {"Table_name", TypedValue::makeVarchar(table_it->second.table_name)},
+                {"Table_priv", TypedValue::makeText(privilege_list(perm.privileges))},
+                {"Column_priv", TypedValue::makeText(privilege_list(column_priv_mask))},
+                {"Timestamp", TypedValue()}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
         return Status::OK;
     }
 
-    Status queryColumnsPriv(VirtualResultSet& /* results */, ErrorContext* /* ctx */) {
+    Status queryColumnsPriv(VirtualResultSet& results, ErrorContext* ctx) {
+        if (!catalog_manager_) {
+            return Status::OK;
+        }
+
+        std::unordered_map<ID, std::string, IDHash> user_names;
+        std::vector<CatalogManager::UserInfo> users;
+        if (catalog_manager_->listUsers(users, ctx) == Status::OK) {
+            for (const auto& user : users) {
+                user_names.emplace(user.user_id, user.username);
+            }
+        }
+
+        std::unordered_map<ID, std::string, IDHash> role_names;
+        std::vector<CatalogManager::RoleInfo> roles;
+        if (catalog_manager_->listRoles(roles, ctx) == Status::OK) {
+            for (const auto& role : roles) {
+                role_names.emplace(role.role_id, role.role_name);
+            }
+        }
+
+        std::unordered_map<ID, std::string, IDHash> group_names;
+        std::vector<CatalogManager::GroupInfo> groups;
+        if (catalog_manager_->listGroups(groups, ctx) == Status::OK) {
+            for (const auto& group : groups) {
+                group_names.emplace(group.group_id, group.group_name);
+            }
+        }
+
+        auto grantee_name = [&](const CatalogManager::ColumnPermissionInfo& perm) -> std::string {
+            switch (perm.grantee_type) {
+                case CatalogManager::GranteeType::USER: {
+                    auto it = user_names.find(perm.grantee_id);
+                    return it == user_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::ROLE: {
+                    auto it = role_names.find(perm.grantee_id);
+                    return it == role_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::GROUP: {
+                    auto it = group_names.find(perm.grantee_id);
+                    return it == group_names.end() ? std::string() : it->second;
+                }
+                case CatalogManager::GranteeType::PUBLIC:
+                default:
+                    return "PUBLIC";
+            }
+        };
+
+        auto privilege_list = [](uint32_t privs) -> std::string {
+            std::vector<std::string> names;
+            auto add = [&](CatalogManager::Privilege priv, const char* name) {
+                if ((privs & static_cast<uint32_t>(priv)) != 0) {
+                    names.emplace_back(name);
+                }
+            };
+            add(CatalogManager::Privilege::SELECT, "Select");
+            add(CatalogManager::Privilege::INSERT, "Insert");
+            add(CatalogManager::Privilege::UPDATE, "Update");
+            add(CatalogManager::Privilege::REFERENCES, "References");
+
+            std::string out;
+            for (size_t i = 0; i < names.size(); ++i) {
+                if (i > 0) {
+                    out.append(", ");
+                }
+                out.append(names[i]);
+            }
+            return out;
+        };
+
+        std::unordered_map<ID, CatalogManager::TableInfo, IDHash> tables_by_id;
+        std::unordered_map<ID, std::string, IDHash> schema_names;
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        if (catalog_manager_->listSchemas(schemas, ctx) == Status::OK) {
+            for (const auto& schema : schemas) {
+                schema_names.emplace(schema.schema_id, schemaName(schema));
+                std::vector<CatalogManager::TableInfo> tables;
+                if (catalog_manager_->listTables(schema.schema_id, tables, ctx) == Status::OK) {
+                    for (const auto& table : tables) {
+                        tables_by_id.emplace(table.table_id, table);
+                    }
+                }
+            }
+        }
+
+        for (const auto& table_entry : tables_by_id) {
+            std::vector<CatalogManager::ColumnPermissionInfo> col_perms;
+            if (catalog_manager_->getColumnPermissions(table_entry.first, col_perms, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& perm : col_perms) {
+                std::string user = grantee_name(perm);
+                if (user.empty()) {
+                    continue;
+                }
+                std::string schema_name;
+                auto schema_it = schema_names.find(table_entry.second.schema_id);
+                if (schema_it != schema_names.end()) {
+                    schema_name = schema_it->second;
+                }
+
+                VirtualRow row;
+                row.columns = {
+                    {"Host", TypedValue::makeVarchar("%")},
+                    {"Db", TypedValue::makeVarchar(schema_name)},
+                    {"User", TypedValue::makeVarchar(user)},
+                    {"Table_name", TypedValue::makeVarchar(table_entry.second.table_name)},
+                    {"Column_name", TypedValue::makeVarchar(perm.column_name)},
+                    {"Column_priv", TypedValue::makeText(privilege_list(perm.privileges))},
+                    {"Timestamp", TypedValue()}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+
         return Status::OK;
     }
 

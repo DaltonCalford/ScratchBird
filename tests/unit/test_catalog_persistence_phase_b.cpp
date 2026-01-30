@@ -4,6 +4,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/types.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -14,7 +15,8 @@ class CatalogPersistencePhaseBTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_catalog_persistence_phase_b.db";
+        test_db_path_ =
+            scratchbird::testing::uniqueTestDbPath("test_catalog_persistence_phase_b", ".db");
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove(test_db_path_);

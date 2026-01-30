@@ -7,10 +7,12 @@
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/connection_context.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <cstring>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 /**
  * Test suite for index entry updates during cross-page tuple relocations
@@ -24,6 +26,8 @@ class IndexUpdatesCrossPageTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        test_db_path_ = uniqueTestDbPath("test_index_updates_crosspage");
+
         // Clean up any existing test database
         if (std::filesystem::exists(test_db_path_))
         {
@@ -129,7 +133,7 @@ protected:
         return *reinterpret_cast<const uint32_t*>(tuple.data());
     }
 
-    const std::string test_db_path_ = "/tmp/test_index_updates_crosspage.db";
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
     ID schema_id_;
     ID table_id_;

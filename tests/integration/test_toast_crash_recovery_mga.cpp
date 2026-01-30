@@ -10,6 +10,7 @@
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/vacuum.h"
 #include "scratchbird/core/toast.h"
+#include "test_helpers.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,7 +22,8 @@ class ToastCrashRecoveryMGATest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        db_path_ = "/tmp/test_toast_crash_recovery_mga.db";
+        db_path_ =
+            scratchbird::testing::uniqueTestDbPath("test_toast_crash_recovery_mga", ".db");
 
         // Create test database
         ErrorContext ctx;
@@ -52,6 +54,10 @@ protected:
         if (db_)
         {
             db_->close();
+        }
+        if (!db_path_.empty())
+        {
+            std::remove(db_path_.c_str());
         }
     }
 
@@ -99,6 +105,7 @@ protected:
     TransactionManager* tm_;
     GarbageCollector* gc_;
     Vacuum* vacuum_;
+    std::string db_path_;
 };
 
 // =============================================================================
@@ -564,4 +571,3 @@ TEST_F(ToastCrashRecoveryMGATest, TIPStatePersistence)
 // =============================================================================
 // Main
 // =============================================================================
-

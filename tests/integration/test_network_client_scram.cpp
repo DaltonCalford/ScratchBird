@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "test_helpers.h"
 #include "scratchbird/client/connection.h"
 #include "scratchbird/client/network_client.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -77,17 +78,14 @@ uint16_t reservePort() {
 } // namespace
 
 TEST(NetworkClientScramTest, ScramAuthSuccessAndFailure) {
-    std::filesystem::create_directories("build/database");
-    std::filesystem::create_directories("build/ipc_tests");
-
-    std::string db_path = "build/database/native_listener_scram.sbdb";
+    std::string db_path = scratchbird::testing::uniqueTestDbPath("native_listener_scram", ".sbdb");
     std::error_code ec;
     std::filesystem::remove(db_path, ec);
 
     ServerConfig server_cfg{};
     server_cfg.database_path = db_path;
     server_cfg.ipc_method = IPCMethod::UNIX_SOCKET;
-    server_cfg.ipc_path = scratchbird::server::getIPCPath(db_path, server_cfg.ipc_method);
+    server_cfg.ipc_path = scratchbird::testing::uniqueTestSocketPath("sb_scram_ipc");
     std::filesystem::remove(server_cfg.ipc_path, ec);
     server_cfg.auto_create_db = true;
     server_cfg.accept_timeout_ms = 50;
@@ -112,7 +110,7 @@ TEST(NetworkClientScramTest, ScramAuthSuccessAndFailure) {
     uint16_t port = reservePort();
     ASSERT_GT(port, 0u);
 
-    std::string control_dir = "build/ipc_tests/native_listener_scram";
+    std::string control_dir = scratchbird::testing::uniqueTestDirPath("sb_scram_ctl");
     std::filesystem::create_directories(control_dir);
 
     const char* path_env = std::getenv("PATH");

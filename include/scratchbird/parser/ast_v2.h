@@ -44,6 +44,7 @@ class Statement;
 class Expression;
 class ASTVisitor;
 struct WindowSpec;
+class SelectStmt;
 
 // =============================================================================
 // AST Node Kinds
@@ -55,6 +56,7 @@ enum class ASTKind : uint16_t {
     CreateIndexStmt,
     CreateViewStmt,
     CreateSequenceStmt,
+    AlterSequenceStmt,
     CreateSchemaStmt,
     DropSchemaStmt,
     AlterSchemaStmt,
@@ -611,6 +613,9 @@ public:
     bool is_partitioned = false;
     StringPool::StringId partition_by = StringPool::INVALID_ID;  // RANGE, LIST, HASH
     std::vector<StringPool::StringId> partition_columns;
+
+    // CREATE TABLE AS SELECT
+    SelectStmt* as_query = nullptr;
 };
 
 /**
@@ -744,6 +749,24 @@ public:
 };
 
 /**
+ * ALTER SEQUENCE statement
+ */
+class AlterSequenceStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterSequenceStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    SchemaPath sequence_path;
+
+    std::optional<int64_t> increment_by;
+    std::optional<int64_t> min_value;
+    std::optional<int64_t> max_value;
+    std::optional<int64_t> restart_with;
+    std::optional<int64_t> cache;
+    std::optional<bool> cycle;
+};
+
+/**
  * Routine parameter definition (procedures/functions)
  */
 enum class RoutineParamMode : uint8_t {
@@ -801,7 +824,8 @@ public:
 
 enum class TriggerTiming : uint8_t {
     BEFORE = 0,
-    AFTER = 1
+    AFTER = 1,
+    INSTEAD_OF = 2
 };
 
 enum class TriggerEvent : uint8_t {
@@ -1524,6 +1548,12 @@ enum class AlterDatabaseAction : uint8_t {
     SET_OWNER = 2,
     ADD_ALIAS = 3,
     DROP_ALIAS = 4,
+    SET_OPTIONS = 5,
+};
+
+struct AlterDatabaseOption {
+    StringPool::StringId key = StringPool::INVALID_ID;
+    StringPool::StringId value = StringPool::INVALID_ID;
 };
 
 class AlterDatabaseStmt : public Statement {
@@ -1536,6 +1566,7 @@ public:
     StringPool::StringId new_name = StringPool::INVALID_ID;
     StringPool::StringId owner = StringPool::INVALID_ID;
     StringPool::StringId alias = StringPool::INVALID_ID;
+    std::vector<AlterDatabaseOption> options;
 };
 
 /**
@@ -1554,6 +1585,15 @@ enum class AlterTableAction : uint8_t {
     SET_SCHEMA,
     ENABLE_RLS,
     DISABLE_RLS,
+    ATTACH_PARTITION,
+    DETACH_PARTITION,
+    ENABLE_TRIGGER,
+    DISABLE_TRIGGER,
+    SET_STATISTICS,
+    SET_STORAGE,
+    INHERIT,
+    NO_INHERIT,
+    VALIDATE_CONSTRAINT,
 };
 
 /**
@@ -1584,11 +1624,31 @@ public:
     StringPool::StringId constraint_name = StringPool::INVALID_ID;
     bool cascade = false;
 
+    // For ENABLE/DISABLE TRIGGER
+    StringPool::StringId trigger_name = StringPool::INVALID_ID;
+    bool trigger_all = false;
+
+    // For SET STATISTICS
+    int32_t statistics_target = 0;
+    bool has_statistics_target = false;
+
+    // For SET STORAGE
+    StringPool::StringId storage_type = StringPool::INVALID_ID;
+
     // For SET TABLESPACE
     SchemaPath tablespace;
 
     // For SET SCHEMA
     SchemaPath target_schema;
+
+    // For ATTACH/DETACH PARTITION
+    SchemaPath partition_path;
+    StringPool::StringId partition_bounds = StringPool::INVALID_ID;
+    bool has_partition_bounds = false;
+
+    // For INHERIT/NO INHERIT
+    SchemaPath inherit_parent;
+    bool has_inherit_parent = false;
 };
 
 /**
@@ -2511,6 +2571,7 @@ enum class BinaryOp : uint8_t {
     // JSON
     JSON_EXTRACT, JSON_EXTRACT_TEXT,
     JSON_HASH_EXTRACT, JSON_HASH_EXTRACT_TEXT,
+    JSON_EXISTS, JSON_EXISTS_ANY, JSON_EXISTS_ALL,
     // Array
     ARRAY_CONTAINS, ARRAY_CONTAINED_BY, ARRAY_OVERLAP,
 };
@@ -3596,6 +3657,7 @@ public:
     virtual void visit(CreateIndexStmt* stmt) = 0;
     virtual void visit(CreateViewStmt* stmt) = 0;
     virtual void visit(CreateSequenceStmt* stmt) = 0;
+    virtual void visit(AlterSequenceStmt* stmt) = 0;
     virtual void visit(CreateSchemaStmt* stmt) = 0;
     virtual void visit(DropSchemaStmt* stmt) = 0;
     virtual void visit(AlterSchemaStmt* stmt) = 0;

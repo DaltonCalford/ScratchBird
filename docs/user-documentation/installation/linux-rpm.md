@@ -36,6 +36,43 @@ sudo systemctl start scratchbird
 
 ---
 
+## Package Options
+
+If you install from a repository (recommended for production), ScratchBird is
+split into modular packages:
+
+**Core**
+- `scratchbird-server` (server + service)
+- `scratchbird-tools` (CLI tools + `sb_setup`)
+- `scratchbird-client-libs` (native client libraries)
+- `scratchbird-dev` (headers/SDK)
+- `scratchrobin` (GUI)
+
+**Emulation listeners**
+- `scratchbird-emulation-pg`
+- `scratchbird-emulation-mysql`
+- `scratchbird-emulation-firebird`
+
+**Connectivity**
+- `scratchbird-odbc`
+- `scratchbird-jdbc`
+
+**Language drivers**
+- `scratchbird-driver-go`, `scratchbird-driver-python`, `scratchbird-driver-node`
+- `scratchbird-driver-dotnet`, `scratchbird-driver-jdbc`, `scratchbird-driver-php`
+- `scratchbird-driver-ruby`, `scratchbird-driver-r`, `scratchbird-driver-rust`
+- `scratchbird-driver-pascal`
+
+**Meta packages**
+- `scratchbird` (server + tools + client libs)
+- `scratchbird-emulation-all`
+- `scratchbird-drivers-all`
+
+Full installer feature matrix: see
+[Installer Features + Config Generator](../../specifications/deployment/INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md).
+
+---
+
 ## Step-by-Step Installation
 
 ### 1. Prerequisites
@@ -99,6 +136,13 @@ sudo vi /etc/scratchbird/sb_server.conf
 ```
 
 See [Configuration Reference](../configuration/sb_server.conf.md) for all options.
+
+You can also run the post-install configuration wizard to add/remove features,
+set ports, and tune performance:
+
+```bash
+sudo sb_setup --interactive
+```
 
 ### 6. Start the Service
 

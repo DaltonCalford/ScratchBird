@@ -5,11 +5,13 @@
 
 #include "include/scratchbird/core/page_manager.h"
 #include "include/scratchbird/core/database.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <limits>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 int main()
 {
@@ -19,18 +21,18 @@ int main()
     // Test 1: Normal extension works
     {
         std::cout << "Test 1: Normal extension... ";
-        const char *db_path = "/tmp/test_overflow_1.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_overflow_1", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             return 1;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             return 1;
@@ -54,25 +56,25 @@ int main()
         }
 
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
         std::cout << "PASSED" << std::endl;
     }
 
     // Test 2: Huge extension is rejected (overflow protection)
     {
         std::cout << "Test 2: Overflow detection... ";
-        const char *db_path = "/tmp/test_overflow_2.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_overflow_2", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             return 1;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             return 1;
@@ -108,25 +110,25 @@ int main()
         }
 
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
         std::cout << "PASSED" << std::endl;
     }
 
     // Test 3: Multiple small extensions work correctly
     {
         std::cout << "Test 3: Multiple extensions... ";
-        const char *db_path = "/tmp/test_overflow_3.sbrd";
-        std::remove(db_path);
+        std::string db_path = uniqueTestShortPath("test_overflow_3", ".sbrd");
+        std::remove(db_path.c_str());
 
         ErrorContext ctx;
-        if (Database::create(db_path, 8192, &ctx) != Status::OK)
+        if (Database::create(db_path.c_str(), 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
             return 1;
         }
 
         Database db;
-        if (db.open(db_path, &ctx) != Status::OK)
+        if (db.open(db_path.c_str(), &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
             return 1;
@@ -153,7 +155,7 @@ int main()
         }
 
         db.close();
-        std::remove(db_path);
+        std::remove(db_path.c_str());
         std::cout << "PASSED" << std::endl;
     }
 

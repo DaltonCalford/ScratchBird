@@ -22,25 +22,27 @@
 #include <vector>
 #include <chrono>
 #include <atomic>
+#include "test_helpers.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/error_context.h"
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class TSANBufferPoolTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "/tmp/test_tsan_buffer_pool.db";
-        std::remove(test_db_path_);
+        test_db_path_ = uniqueTestDbPath("test_tsan_buffer_pool");
+        std::remove(test_db_path_.c_str());
 
         ErrorContext ctx;
-        Status status = Database::create(test_db_path_, 8192, &ctx);
+        Status status = Database::create(test_db_path_.c_str(), 8192, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();
-        status = db_->open(test_db_path_, &ctx);
+        status = db_->open(test_db_path_.c_str(), &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         pool_ = db_->buffer_pool();
@@ -59,10 +61,10 @@ protected:
         if (db_) {
             db_->close();
         }
-        std::remove(test_db_path_);
+        std::remove(test_db_path_.c_str());
     }
 
-    const char* test_db_path_;
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
     BufferPool* pool_;
 };
