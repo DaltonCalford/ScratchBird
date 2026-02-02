@@ -1,5 +1,8 @@
 # SBLR Type/Literal Opcode Coverage Gaps (Alpha)
 
+Status: Complete (implementation); tests pending
+Last Updated: 2026-02-02
+
 ## Purpose
 Document SBLR type-marker and literal-opcode gaps that prevent full datatype
 coverage in the executor, with emphasis on emulated-engine requirements.

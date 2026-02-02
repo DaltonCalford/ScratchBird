@@ -1,4 +1,10 @@
 # Scheduler and Job Runner Audit
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 ## Scope
 - Alpha scheduler specification:

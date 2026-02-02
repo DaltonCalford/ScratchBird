@@ -1,81 +1,51 @@
-# ODBC Connector Implementation
+# ODBC Client Implementation
 
-ODBC connector UDR for Remote Database UDR.
+ODBC connector for Remote Database UDR.
 
-**See**: [11-Remote-Database-UDR-Specification.md](11-Remote-Database-UDR-Specification.md) for overview.
+## 1. Scope
+- ODBC 3.8 API
+- Embedded driver manager shipped in UDR bundle
+- Drivers bundled in the UDR (no host install required)
 
----
+## 2. Architecture
+- UDR loads embedded driver manager (e.g., unixODBC compatible interface)
+- Driver is selected by DSN or DRIVER= in connection string
+- ODBC handles are managed per connection:
+  - SQLHENV (environment)
+  - SQLHDBC (connection)
+  - SQLHSTMT (statement)
 
-## Overview
-
-Implements an embedded ODBC 3.8 driver manager and a curated set of bundled
-ODBC drivers inside the UDR package. No system-level ODBC libraries are
-required on the host OS.
-
-**Protocol**: ODBC 3.8 API (driver manager + drivers in UDR bundle)  
-**Library**: None (embedded in UDR package)  
-**Supported Targets**: Drivers shipped in the bundle (initial set: PostgreSQL,
-MySQL, MSSQL)
-
----
-
-## Key Functions
-
-### Connection Management
-```c
-void* create_odbc_connection(RemoteConnectionPoolConfig* config);
-bool validate_odbc_connection(void* handle);
-void destroy_odbc_connection(void* handle);
+## 3. Connection String
+Example options:
+```
+DRIVER={PostgreSQL};SERVER=host;PORT=5432;DATABASE=db;UID=user;PWD=pass;SSLmode=require
 ```
 
-### Query Execution
-```c
-RemoteResultSet* execute_odbc_query(void* handle, const char* sql, IStatus* status);
-void* prepare_odbc_statement(void* handle, const char* sql, IStatus* status);
-RemoteResultSet* execute_odbc_prepared(void* handle, void* stmt, IMessageBuffer* params, IStatus* status);
-```
+## 4. Execution Model
+- Use SQLPrepare/SQLBindParameter/SQLExecute for prepared statements
+- Use SQLExecDirect for ad-hoc SQL
+- Result sets read via SQLFetch / SQLGetData
+- Fetch size via SQL_ATTR_ROW_ARRAY_SIZE
 
-### Schema Introspection
-```c
-List<RemoteTableMetadata*>* list_odbc_tables(void* handle, const char* schema, IStatus* status);
-RemoteTableMetadata* get_odbc_table_metadata(void* handle, const char* schema, const char* table, IStatus* status);
-```
+## 5. Transactions
+- Autocommit controlled by SQL_ATTR_AUTOCOMMIT
+- Explicit transactions via SQLEndTran
 
-The metadata feed must be sufficient to mount schemas and drive the migration
-workflow described in 11-Remote-Database-UDR-Specification.md.
+## 6. Error Mapping
+- Use SQLGetDiagRec for SQLSTATE and native error
+- Map to ScratchBird error catalog
 
----
+## 7. Type Mapping
+- SQL type info via SQLDescribeCol and SQLGetTypeInfo
+- Map ODBC types to ScratchBird types (int, numeric, char, binary, date/time)
 
-## Connection Options
+## 8. Required Capabilities
+- prepared statements
+- parameter binding
+- paging (row array fetch)
+- cancellation (SQLCancel/SQLCancelHandle)
+- schema introspection (SQLTables, SQLColumns, SQLStatistics)
 
-Supported options (REGISTER REMOTE DATABASE):
-- `protocol = 'odbc'`
-- `driver_name` (matches a bundled driver identifier)
-- `dsn` (optional DSN label)
-- `host`, `port`, `database`, `username`, `password`
-- TLS options (if supported by the bundled driver)
+## 9. References
+- https://learn.microsoft.com/en-us/sql/odbc/reference/odbc-programmer-s-reference
 
----
-
-## Driver Packaging Rules
-
-- All ODBC components ship within the UDR bundle.
-- No dynamic loading of system ODBC drivers.
-- Bundled drivers must be signed and listed in the UDR manifest.
-- Each driver declares supported server versions.
-
----
-
-## Limitations
-
-- Only bundled drivers are available in Beta.
-- For databases with native wire‑protocol connectors, the native connector is
-  preferred. ODBC is for compatibility or mixed environments.
-
----
-
-## Type Mapping
-
-ODBC types are mapped via standard SQL type codes (SQL_INTEGER, SQL_VARCHAR,
-SQL_VARBINARY, etc.) to ScratchBird internal types. Driver-specific overrides
-are allowed where required.

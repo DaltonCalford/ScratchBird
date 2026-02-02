@@ -1,4 +1,10 @@
 # ScratchBird Competitive Feature Gaps (SQL Server, Oracle, Snowflake)
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 Scope: This report compares the DeepDiveResearch notes against current ScratchBird specs under `ScratchBird/docs/specifications`. It tracks features that are missing, only lightly specified, or clearly less mature than the reference engines.
 

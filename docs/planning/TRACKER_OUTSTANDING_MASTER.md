@@ -6,6 +6,9 @@ Last Updated: 2026-02-02
 This tracker is the **single source of truth** for remaining work. All other
 planning docs can be archived after this is in place.
 
+Findings review (2026-02-02): all findings in `docs/findings` are closed or
+superseded; no additional gaps beyond the items listed below.
+
 ## A) Git Config Key Normalization (PLAN_GIT_CONFIG_KEY_NORMALIZATION.md)
 
 ### A1. YAML Parser Updates (src/git/GitConfigParser.cpp)

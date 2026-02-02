@@ -1,7 +1,7 @@
 # Driver-Visible Server Features (Gaps + Extensions)
 
-Status: Draft
-Last Updated: 2026-01-31
+Status: Complete
+Last Updated: 2026-02-02
 
 ## Purpose
 
@@ -34,8 +34,6 @@ Catalog/metadata (minimum for BI tools):
 
 ## Known Gaps / Not Yet Supported in Server
 
-These are intentionally disabled in drivers until server support exists.
-
 (None at this time.)
 
 ## Resolved Gaps
@@ -64,16 +62,8 @@ These are intentionally disabled in drivers until server support exists.
 
 ## Optional Extensions (Nice-to-Have)
 
-Each item is optional but unlocks higher-level UX or tool compatibility.
-
-1. Holdable/named portals (server cursors)
-   - Capability: cursor survives transaction boundaries; scrollable cursors.
-   - Driver impact: scrollable ResultSet support for JDBC/.NET.
-
-2. Richer metadata views
-   - Capability: domains/enums, check constraints, expression indexes,
-     partitioning metadata, table stats.
-   - Driver impact: BI tools show accurate schema + indexing details.
+These have been implemented as part of the required driver-visible feature set.
+No optional gaps remain for Alpha.
 
 ## Conformance Test Extensions (Optional)
 

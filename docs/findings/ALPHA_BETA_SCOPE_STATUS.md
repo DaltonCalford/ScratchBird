@@ -4,7 +4,7 @@ This document summarizes **what remains for Alpha** and **what is scoped for
 Beta**, based on current planning/specs. It is intended as input to the
 implementation plan and official roadmap updates.
 
-Last updated: 2026-02-XX (doc-only)
+Last updated: 2026-02-02 (code-verified)
 
 ---
 
@@ -16,13 +16,13 @@ Status legend: Open | In Progress | Done
 | --- | --- | --- | --- |
 | Engine core | Tablespace routing defaults (table root pages + default tablespace resolution) | Done | `ScratchBird/docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` (WS‑2) |
 | Engine core | Index migration safety for SPGIST/BITMAP/COLUMNSTORE/LSM (TID/GPID update paths) | Done | `ScratchBird/docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md` (WS‑3) |
-| Engine core | Expression/partial index root allocation still uses primary tablespace | Open | Code: `ScratchBird/src/core/catalog_manager.cpp:7642` |
+| Engine core | Expression/partial index root allocation tablespace-aware | Done | Code: `ScratchBird/src/core/catalog_manager.cpp:7758` |
 | Engine core | Monitoring parity: remaining MON$ placeholders wired to sys.* | Done | Code: `ScratchBird/src/catalog/sys_catalog.cpp:173` |
 | Engine core | Backup/restore parity across tablespaces + catalogs | Done | Code: `ScratchBird/src/core/backup_manager.cpp:723` |
-| Parser/PSQL | V2 parser completeness (DDL/DML/utility/PSQL) | Done | `ScratchBird/docs/planning/PLAN_V2_PARSER_COMPLETION.md` |
-| PSQL runtime | PSQL bytecode emission + executor parity (FOR/CASE/SUSPEND/etc) | Done | `ScratchBird/docs/planning/PLAN_V2_PARSER_COMPLETION.md` |
-| Resources | Timezones/Charsets/Collations data + loaders + catalog persistence | Open | `ScratchBird/docs/planning/RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN.md` |
-| Indexes | Inverted GC purge, IVF, Zone Maps, GPID/TID format checks | Done | `ScratchBird/docs/planning/TRACKER_INDEX_SPEC_GAPS.md` |
+| Parser/PSQL | V2 parser completeness (DDL/DML/utility/PSQL) | Done | `ScratchBird/docs/planning/completed/PLAN_V2_PARSER_COMPLETION_finished.md` |
+| PSQL runtime | PSQL bytecode emission + executor parity (FOR/CASE/SUSPEND/etc) | Done | `ScratchBird/docs/planning/completed/PLAN_V2_PARSER_COMPLETION_finished.md` |
+| Resources | Timezones/Charsets/Collations data + loaders + catalog persistence | Done | `ScratchBird/docs/planning/completed/RESOURCES_I18N_TIMEZONE_REMEDIATION_PLAN_finished.md` |
+| Indexes | Inverted GC purge, IVF, Zone Maps, GPID/TID format checks | Done | `ScratchBird/docs/planning/completed/TRACKER_INDEX_SPEC_GAPS_finished.md` |
 
 ### Resolved Since Last Sync
 

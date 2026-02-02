@@ -1,4 +1,10 @@
 # Alpha Specification Implementation Audit (Deep Pass)
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 Date: 2026-01-20  
 Scope: Alpha-only. ScratchBird source is read-only; audit is evidence-based (file/line).

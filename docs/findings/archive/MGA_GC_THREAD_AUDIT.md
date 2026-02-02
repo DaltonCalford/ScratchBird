@@ -1,4 +1,10 @@
 # MGA Garbage Collection Thread Audit
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 ## Scope
 - Transaction GC thread and configuration in `ScratchBird/docs/specifications/transaction/TRANSACTION_MAIN.md`.

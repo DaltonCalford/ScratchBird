@@ -1,81 +1,104 @@
 # MySQL Client Implementation
 
-MySQL wire protocol client adapter for Remote Database UDR.
+MySQL/MariaDB wire protocol client adapter for Remote Database UDR.
 
-**See**: [11-Remote-Database-UDR-Specification.md](11-Remote-Database-UDR-Specification.md) for overview.
+See: 11-Remote-Database-UDR-Specification.md and wire_protocols/mysql_wire_protocol.md
 
----
+## 1. Scope
+- Protocol: MySQL client/server protocol (4.1+)
+- Supported MySQL: 5.7, 8.0
+- Supported MariaDB: 10.3+
+- Transport: TCP with optional TLS
+- No libmysql usage; ScratchBird implements protocol directly
 
-## Overview
+## 2. Connection and Authentication
 
-Implements MySQL wire protocol client directly (no external client
-libraries required).
+### 2.1 Handshake
+1. Server sends Initial Handshake packet:
+   - protocol version, server version, connection id
+   - auth-plugin data part 1 + capability flags
+2. Client sends Handshake Response 41:
+   - capability flags, max packet size, charset
+   - username, auth response, database (optional), auth plugin name
+3. Optional TLS:
+   - If CLIENT_SSL set, send SSLRequest then start TLS and resend Handshake
 
-**Protocol**: MySQL Client/Server Protocol  
-**Library**: None (ScratchBird native client)  
-**Supported Versions**: MySQL 5.7, 8.0+, MariaDB 10.x
+### 2.2 Auth Plugins
+Required support:
+- caching_sha2_password (MySQL 8 default)
+- mysql_native_password (legacy)
 
----
+For caching_sha2_password:
+- Prefer TLS; otherwise use RSA key exchange for full auth
 
-## Key Functions
+### 2.3 Session Settings
+Support per-server options:
+- sql_mode
+- time_zone
+- character_set_results
+- autocommit (default true)
 
-### Connection Management
-```c
-void* create_mysql_connection(RemoteConnectionPoolConfig* config);
-bool validate_mysql_connection(void* handle);
-void destroy_mysql_connection(void* handle);
-```
+## 3. Command Phase
 
-### Query Execution
-```c
-RemoteResultSet* execute_mysql_query(void* handle, const char* sql, IStatus* status);
-void* prepare_mysql_statement(void* handle, const char* sql, IStatus* status);
-RemoteResultSet* execute_mysql_prepared(void* handle, void* stmt, IMessageBuffer* params, IStatus* status);
-```
+### 3.1 Simple Query
+- COM_QUERY with SQL text
+- Resultset: column definitions + row data (text protocol)
+- Terminator: OK packet or EOF (depending on CLIENT_DEPRECATE_EOF)
 
-### Schema Introspection
-```c
-List<RemoteTableMetadata*>* list_mysql_tables(void* handle, const char* schema, IStatus* status);
-RemoteTableMetadata* get_mysql_table_metadata(void* handle, const char* schema, const char* table, IStatus* status);
-```
+### 3.2 Prepared Statements
+- COM_STMT_PREPARE -> returns statement id + param/column metadata
+- COM_STMT_EXECUTE -> binary protocol rows
+- COM_STMT_FETCH -> cursor paging (if CLIENT_CURSOR_TYPE_READ_ONLY)
+- COM_STMT_CLOSE -> free server resources
 
----
+### 3.3 Pagination
+- Use COM_STMT_FETCH for scrollable cursor support
+- For simple queries, prefer LIMIT/OFFSET pushdown
 
-## Implementation Notes
+### 3.4 Streaming and Bulk
+- MySQL LOAD DATA LOCAL INFILE is disabled by default
+- If enabled, the adapter must stream file data from client and honor
+  allow_passthrough + file permissions
 
-**Connection Parameters:**
-- host
-- port
-- database
-- username
-- password
+## 4. Cancellation
+- Use KILL QUERY <thread_id> or COM_PROCESS_KILL on server thread id
+- Thread id is provided in Initial Handshake
 
-**Type Mapping:**
-| MySQL Type | Internal Type |
-|-----------|---------------|
-| TINYINT | INT8 |
-| SMALLINT | INT16 |
-| INT | INT32 |
-| BIGINT | INT64 |
-| FLOAT | FLOAT |
-| DOUBLE | DOUBLE |
-| VARCHAR(n) | STRING |
-| TEXT | STRING |
-| BLOB | BYTES |
-| DATETIME | TIMESTAMP |
-| DECIMAL(p,s) | DECIMAL |
+## 5. Transactions
+- BEGIN/COMMIT/ROLLBACK supported
+- Savepoints: SAVEPOINT / ROLLBACK TO SAVEPOINT
 
-**Authentication:**
-- mysql_native_password
-- caching_sha2_password (MySQL 8.0+)
-- SSL/TLS
+## 6. Error Mapping
+- ERR packet includes SQLSTATE (5 chars) and error code
+- Map to ScratchBird error catalog
 
-**Build Requirements:** None (protocol client is bundled with the UDR).
+## 7. Type Mapping (Minimum)
+- TINYINT/SMALLINT/INT/BIGINT -> INT
+- FLOAT/DOUBLE -> FLOAT/DOUBLE
+- DECIMAL -> DECIMAL
+- CHAR/VARCHAR/TEXT -> STRING
+- BLOB/VARBINARY -> BYTES
+- DATE/DATETIME/TIMESTAMP -> DATE/TIMESTAMP
+- TIME -> TIME
+- JSON -> JSON
+- ENUM/SET -> STRING (or ENUM if strict_types)
 
-**Special Considerations:**
-- Handle MySQL's unsigned integer types
-- DATETIME vs TIMESTAMP timezone handling
-- TEXT/BLOB size limits
-- Character set conversion (UTF-8)
+Unsupported types map to STRING unless strict_types is enabled.
 
-See main specification for complete usage examples.
+## 8. Schema Introspection
+Use information_schema:
+- schemata, tables, columns, statistics
+- table_constraints, key_column_usage, referential_constraints
+- routines, parameters, triggers
+
+## 9. Required Capabilities
+- prepared statements
+- paging with COM_STMT_FETCH
+- cancellation
+- schema introspection
+
+## 10. References
+- https://dev.mysql.com/doc/dev/mysql-server/latest/PAGE_PROTOCOL.html
+- https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets.html
+- https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_command_phase.html
+

@@ -1,87 +1,84 @@
-# MS SQL Server Client Implementation
+# MSSQL Client Implementation
 
-**Scope Note:** MSSQL/TDS adapter work is a Beta requirement. This document
-defines the native TDS client implementation.
+MSSQL/TDS wire protocol client adapter for Remote Database UDR.
 
-MS SQL Server (TDS protocol) client adapter for Remote Database UDR.
+See: 11-Remote-Database-UDR-Specification.md and wire_protocols/tds_wire_protocol.md
 
-**See**: [11-Remote-Database-UDR-Specification.md](11-Remote-Database-UDR-Specification.md) for overview.
+## 1. Scope
+- Protocol: TDS 7.4 (SQL Server 2012+)
+- Transport: TCP with optional TLS
+- Authentication: SQL Login (Windows/SSPI optional in Beta)
 
----
+## 2. Connection and Authentication
 
-## Overview
+### 2.1 Prelogin
+- Send PRELOGIN packet with version, encryption, instance, thread id
+- If encryption required, negotiate TLS before LOGIN7
 
-Implements TDS (Tabular Data Stream) protocol client directly (no external
-client libraries required).
+### 2.2 Login7
+- Send LOGIN7 with:
+  - user, password (obfuscated per TDS rules)
+  - database
+  - client/app/host info
+  - optional feature extensions
+- Expect ENVCHANGE tokens and LOGINACK
 
-**Protocol**: TDS 7.0 - 7.4  
-**Library**: None (ScratchBird native client)  
-**Supported Versions**: SQL Server 2016 - 2022, Azure SQL Database
+## 3. Command Execution
 
----
+### 3.1 SQL Batch
+- Use SQL Batch token for ad-hoc SQL text
+- Results are a stream of tokens:
+  - COLMETADATA
+  - ROW
+  - DONE/DONEPROC/DONEINPROC
 
-## Key Functions
+### 3.2 RPC / Prepared Statements
+- Use RPC for parameterized calls (sp_executesql)
+- Parameter metadata must include type, length, precision/scale
 
-### Connection Management
-```c
-void* create_mssql_connection(RemoteConnectionPoolConfig* config);
-bool validate_mssql_connection(void* handle);
-void destroy_mssql_connection(void* handle);
-```
+### 3.3 Pagination
+- Prefer OFFSET/FETCH pushdown
+- Cursor support is optional for Alpha
 
-### Query Execution
-```c
-RemoteResultSet* execute_mssql_query(void* handle, const char* sql, IStatus* status);
-void* prepare_mssql_statement(void* handle, const char* sql, IStatus* status);
-RemoteResultSet* execute_mssql_prepared(void* handle, void* stmt, IMessageBuffer* params, IStatus* status);
-```
+## 4. Cancellation
+- Send ATTENTION packet on a dedicated interrupt channel
+- Expect a DONE token with status indicating cancel
 
-### Schema Introspection
-```c
-List<RemoteTableMetadata*>* list_mssql_tables(void* handle, const char* schema, IStatus* status);
-RemoteTableMetadata* get_mssql_table_metadata(void* handle, const char* schema, const char* table, IStatus* status);
-```
+## 5. Transactions
+- BEGIN TRAN / COMMIT / ROLLBACK
+- Savepoints via SAVE TRAN / ROLLBACK TRAN savepoint
 
----
+## 6. Error Mapping
+- ERROR token includes number, state, class, message
+- Map to ScratchBird error catalog
 
-## Implementation Notes
+## 7. Type Mapping (Minimum)
+- tinyint/smallint/int/bigint -> INT
+- float/real -> FLOAT/DOUBLE
+- decimal/numeric -> DECIMAL
+- bit -> BOOL
+- char/varchar/nchar/nvarchar -> STRING
+- binary/varbinary/image -> BYTES
+- date/datetime/datetime2 -> DATE/TIMESTAMP
+- time -> TIME
+- uniqueidentifier -> UUID
 
-**Connection Parameters:**
-- host
-- port
-- database
-- username
-- password
-- tds_version (default 7.4)
-- encrypt (true/false)
+Unsupported types map to STRING unless strict_types is enabled.
 
-**Type Mapping:**
-| SQL Server Type | Internal Type |
-|----------------|---------------|
-| TINYINT | INT8 |
-| SMALLINT | INT16 |
-| INT | INT32 |
-| BIGINT | INT64 |
-| REAL | FLOAT |
-| FLOAT | DOUBLE |
-| NVARCHAR(n) | STRING |
-| VARBINARY | BYTES |
-| DATETIME2 | TIMESTAMP |
-| BIT | BOOL |
-| DECIMAL(p,s) | DECIMAL |
+## 8. Schema Introspection
+Use sys.* catalogs:
+- sys.schemas, sys.tables, sys.views
+- sys.columns, sys.types
+- sys.indexes, sys.index_columns
+- sys.foreign_keys, sys.foreign_key_columns
+- sys.procedures, sys.triggers
 
-**Authentication:**
-- SQL Server Authentication (username/password)
-- Windows Authentication (Kerberos)
-- Azure AD Authentication
+## 9. Required Capabilities
+- SQL batch execution
+- parameterized execution (sp_executesql)
+- cancellation (ATTENTION)
+- schema introspection
 
-**Build Requirements:** None (protocol client is bundled with the UDR).
+## 10. References
+- https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/
 
-**Special Considerations:**
-- Unicode handling (NVARCHAR vs VARCHAR)
-- Case sensitivity settings (collation)
-- Batch separators (GO statements)
-- Transaction isolation levels
-- SET NOCOUNT ON for performance
-
-See main specification for complete usage examples.

@@ -1,4 +1,10 @@
 # Tablespace Decisions and Scope (Alpha)
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 ## Decisions (Locked)
 - IDs: tablespace 0 is primary, tablespace 1 is reserved (future), custom tablespaces are 2..65535.

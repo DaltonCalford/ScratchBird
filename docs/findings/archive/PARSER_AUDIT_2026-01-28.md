@@ -1,4 +1,10 @@
 # Parser Audit (2026-01-28)
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 ## Scope
 Audit of Firebird/MySQL/PostgreSQL emulated parsers against current specs and

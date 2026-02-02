@@ -41,6 +41,45 @@ ship as separate UDR packages.
 - All connectors are subject to the UDR signing/verification policy and
   per‑server allowlists.
 
+## Compatibility Contract (Canonical)
+Remote Database UDRs are passthrough connectors. They MUST implement full
+protocol flows for the target database so that remote SQL executes with native
+semantics on the remote server. ScratchBird does not rewrite or emulate the
+remote SQL dialect; it only:
+- Establishes authenticated connections
+- Sends SQL/parameters and receives results
+- Maps remote types to ScratchBird types
+- Enforces allow_ddl/allow_dml/allow_psql/allow_passthrough
+
+If a remote feature depends on a specific wire-protocol capability (prepared
+statements, cursors, COPY/LOAD, cancellation), the connector must implement
+that capability to claim full compatibility.
+
+## Required Protocol Capabilities (per connector)
+All connectors must implement, at minimum:
+- Startup + authentication (including TLS where supported)
+- Simple query execution
+- Prepared statements with parameter binding
+- Cursor/paging (portal for PostgreSQL, COM_STMT_FETCH for MySQL)
+- Cancellation semantics
+- Schema introspection
+- Error mapping to ScratchBird SQLSTATE
+
+Optional (but recommended for full fidelity):
+- COPY/streaming (PostgreSQL)
+- Batch execution where supported (Firebird protocol 17+)
+- Server notifications/events (PostgreSQL LISTEN/NOTIFY, Firebird events)
+
+## Canonical Implementation Specs
+- 11a-Connection-Pool-Implementation.md
+- 11b-PostgreSQL-Client-Implementation.md
+- 11c-MySQL-Client-Implementation.md
+- 11d-MSSQL-Client-Implementation.md
+- 11e-Firebird-Client-Implementation.md
+- 11f-ODBC-Client-Implementation.md
+- 11g-JDBC-Client-Implementation.md
+- 11i-ScratchBird-Client-Implementation.md
+
 ## Architecture
 
 ```

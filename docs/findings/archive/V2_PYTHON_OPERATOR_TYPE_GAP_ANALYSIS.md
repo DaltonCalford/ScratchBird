@@ -1,4 +1,10 @@
 # V2 vs Python Operator and Type Gap Analysis (PSQL Migration)
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 ## Scope and Sources
 - V2 operator grammar: `ScratchBird/docs/specifications/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md`.

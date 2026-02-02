@@ -1,4 +1,10 @@
 # Emulated Parser Full Audit (PostgreSQL/MySQL/Firebird)
+Status: Superseded (implementation verified)
+Last Updated: 2026-02-02
+
+Note: All gaps called out here are closed. Track any remaining work in
+`docs/planning/TRACKER_OUTSTANDING_MASTER.md`.
+
 
 **Date:** 2026-02-02
 **Scope:** PostgreSQL, MySQL, and Firebird emulated parsers (lexer + parser + bytecode emission + catalog emulation) against their specs.
