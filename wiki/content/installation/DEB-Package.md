@@ -1,6 +1,6 @@
 # DEB Package Installation
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 Install ScratchBird on Debian/Ubuntu using the `.deb` package.
 

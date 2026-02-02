@@ -1,7 +1,7 @@
 # C# / .NET Driver Guide
 
 **Status:** Complete
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -11,12 +11,12 @@ ScratchBird supports multiple connection protocols for C# and .NET applications:
 
 | Protocol | Port | Driver | Best For |
 |----------|------|--------|----------|
-| PostgreSQL | 5432 | Npgsql | Most applications (recommended) |
+| Native | 3092 | ScratchBird.Data (SBWP v1.1) | Full ScratchBird feature set |
+| PostgreSQL | 5432 | Npgsql | Ecosystem compatibility |
 | MySQL | 3306 | MySqlConnector | MySQL compatibility |
 | Firebird | 3050 | FirebirdSql.Data.FirebirdClient | Firebird migration |
-| Native | 3092 | ScratchBird.Data (future) | Direct access |
 
-**Recommendation:** Use **Npgsql** (PostgreSQL protocol) for most applications. It offers the best feature support, performance, and .NET integration.
+**Recommendation:** Use **ScratchBird.Data** for full SBWP v1.1 feature coverage. Use Npgsql/MySqlConnector/Firebird drivers only when you need emulation compatibility.
 
 ---
 
@@ -25,6 +25,10 @@ ScratchBird supports multiple connection protocols for C# and .NET applications:
 ### Installation
 
 ```bash
+# ScratchBird native driver (build from repo)
+# dotnet build ScratchBird-driver/dotnet/src/ScratchBird.Data/ScratchBird.Data.csproj
+# NuGet distribution will be published once the installation utility is finalized.
+
 # Npgsql (PostgreSQL protocol - recommended)
 dotnet add package Npgsql
 
@@ -40,27 +44,39 @@ dotnet add package Pomelo.EntityFrameworkCore.MySql
 dotnet add package FirebirdSql.EntityFrameworkCore.Firebird
 ```
 
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add the native driver pack later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-driver-dotnet` or the `scratchbird-drivers-all` meta package. On Linux, run with `sudo`.
+
 ### First Connection
 
 ```csharp
-using Npgsql;
+using ScratchBird.Data;
 
-// Quick connection test
-var connectionString = "Host=localhost;Port=5432;Database=scratchbird;Username=app_user;Password=secret";
-
-await using var conn = new NpgsqlConnection(connectionString);
+var connectionString = "scratchbird://app_user:secret@localhost:3092/scratchbird";
+await using var conn = new ScratchBirdConnection(connectionString);
 await conn.OpenAsync();
 
-await using var cmd = new NpgsqlCommand("SELECT version()", conn);
+await using var cmd = new ScratchBirdCommand("SELECT 1", conn);
 var version = await cmd.ExecuteScalarAsync();
 Console.WriteLine($"Connected to: {version}");
 ```
 
+The native driver uses SBWP v1.1 with server-side prepare/bind and binary-only
+parameters. Wrapper types for JSONB/RANGE/GEOMETRY are exposed by the driver API.
+
 ---
 
-## Part 2: Npgsql (PostgreSQL Protocol)
+## Part 2: Npgsql (PostgreSQL Protocol - Emulation)
 
-Npgsql is the recommended driver for ScratchBird, offering the most complete feature support and best .NET integration.
+Npgsql is the recommended driver for **PostgreSQL emulation**, offering strong .NET integration when
+you need ecosystem compatibility on port 5432.
 
 ### Connection Strings
 

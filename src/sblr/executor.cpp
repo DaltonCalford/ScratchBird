@@ -166,6 +166,49 @@ namespace scratchbird
                                                   const std::string& dialect,
                                                   const std::string& alias,
                                                   core::ErrorContext* ctx);
+            struct PartitionBound
+            {
+                enum class Kind
+                {
+                    DEFAULT,
+                    LIST,
+                    RANGE
+                };
+                Kind kind = Kind::DEFAULT;
+                std::vector<std::vector<std::string>> list_values;
+                std::vector<std::string> range_start;
+                std::vector<std::string> range_end;
+                bool has_start = false;
+                bool has_end = false;
+            };
+            bool loadTableMetadata(core::CatalogManager* catalog,
+                                   const core::CatalogManager::TableInfo& table_info,
+                                   json& metadata_out,
+                                   core::ErrorContext* ctx);
+            bool resolveTableByQualifiedName(core::CatalogManager* catalog,
+                                             const core::ID& default_schema_id,
+                                             const std::string& qualified_name,
+                                             core::CatalogManager::TableInfo& table_info_out,
+                                             core::ErrorContext* ctx);
+            std::vector<core::CatalogManager::TableInfo> collectPartitionChildren(
+                core::CatalogManager* catalog,
+                const core::CatalogManager::TableInfo& parent,
+                const json& parent_meta,
+                core::ErrorContext* ctx);
+            std::vector<core::CatalogManager::TableInfo> collectInheritanceChildren(
+                core::CatalogManager* catalog,
+                const core::CatalogManager::TableInfo& parent,
+                core::ErrorContext* ctx);
+            std::vector<core::CatalogManager::TableInfo> collectExpandedTables(
+                core::CatalogManager* catalog,
+                const core::CatalogManager::TableInfo& base_table,
+                core::ErrorContext* ctx);
+            bool parsePartitionBounds(const std::string& bounds_text, PartitionBound& bound_out);
+            std::string normalizePartitionLiteral(const std::string& input);
+            bool parseNumericLiteral(const std::string& input, int64_t& out);
+            bool parseDoubleLiteral(const std::string& input, double& out);
+            bool parseSblrExpressionList(const std::vector<uint8_t>& data,
+                                         std::vector<std::vector<uint8_t>>& expressions_out);
             bool userHasRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx,
                              const core::ID& role_id);
             core::Status findFunctionById(core::CatalogManager* catalog,
@@ -1735,7 +1778,14 @@ namespace scratchbird
             {
                 throw std::runtime_error("Row column count mismatch");
             }
-            rows_.push_back(std::move(row));
+            if (row_callback_)
+            {
+                row_callback_(row);
+            }
+            if (store_rows_)
+            {
+                rows_.push_back(std::move(row));
+            }
         }
 
         void ResultSet::print(std::ostream &out) const
@@ -3039,6 +3089,11 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_UDR))
                         {
                             executeDropUdr();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_DEFAULT_PRIVILEGES))
+                        {
+                            executeAlterDefaultPrivileges();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_GRANT_PRIVILEGE))
@@ -5100,6 +5155,12 @@ namespace scratchbird
                 }
             }
 
+            std::string schema_name_fallback;
+            if (schema_components.size() == 1)
+            {
+                schema_name_fallback = schema_components.front();
+            }
+
             core::ObjectPath schema_path;
             schema_path.type = path.type;
             schema_path.no_search_path = path.no_search_path;
@@ -5119,6 +5180,16 @@ namespace scratchbird
                                                 schema_id_out,
                                                 resolved_type,
                                                 ctx);
+            if (status != core::Status::OK && !schema_name_fallback.empty())
+            {
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext fallback_ctx;
+                if (catalog->getSchema(schema_name_fallback, schema_info, &fallback_ctx) == core::Status::OK)
+                {
+                    schema_id_out = schema_info.schema_id;
+                    return core::Status::OK;
+                }
+            }
             return status;
         }
 
@@ -6331,6 +6402,7 @@ namespace scratchbird
             std::string partition_strategy;
             std::vector<std::string> partition_columns;
             std::vector<std::string> inherit_parents;
+            std::vector<core::CatalogManager::TableInfo> inherit_parent_infos;
             bool has_ctas = false;
             std::vector<uint8_t> ctas_bytecode;
 
@@ -6516,6 +6588,67 @@ namespace scratchbird
                 error("Failed to get schema for table '" + table_name + "'");
             }
             LOG_INFO(EXECUTOR, "CREATE TABLE schema loaded: %s", schema_info.schema_name.c_str());
+
+            if (!inherit_parents.empty())
+            {
+                std::unordered_set<std::string> seen_columns;
+                for (const auto& col : columns)
+                {
+                    seen_columns.insert(core::IdentifierUtils::toUpper(col.column_name));
+                }
+
+                std::vector<core::CatalogManager::ColumnInfo> inherited_columns;
+                for (const auto& parent_name : inherit_parents)
+                {
+                    core::CatalogManager::TableInfo parent_info;
+                    core::ErrorContext parent_ctx;
+                    if (!resolveTableByQualifiedName(db_->catalog_manager(),
+                                                     schema_id,
+                                                     parent_name,
+                                                     parent_info,
+                                                     &parent_ctx))
+                    {
+                        std::string err_msg = "INHERITS parent not found: " + parent_name;
+                        if (!parent_ctx.message.empty())
+                        {
+                            err_msg += ": " + parent_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    inherit_parent_infos.push_back(parent_info);
+
+                    std::vector<core::CatalogManager::ColumnInfo> parent_columns;
+                    if (db_->catalog_manager()->getColumns(parent_info.table_id,
+                                                           parent_columns,
+                                                           &parent_ctx) != core::Status::OK)
+                    {
+                        error("Failed to load columns for INHERITS parent: " + parent_name);
+                    }
+
+                    for (auto& col : parent_columns)
+                    {
+                        std::string key = core::IdentifierUtils::toUpper(col.column_name);
+                        if (seen_columns.count(key))
+                        {
+                            error("INHERITS parent column conflicts with child column: " + col.column_name);
+                        }
+                        seen_columns.insert(key);
+                        inherited_columns.push_back(std::move(col));
+                    }
+                }
+
+                if (!inherited_columns.empty())
+                {
+                    columns.insert(columns.begin(),
+                                   inherited_columns.begin(),
+                                   inherited_columns.end());
+                }
+
+                for (size_t i = 0; i < columns.size(); ++i)
+                {
+                    columns[i].ordinal = static_cast<uint16_t>(i);
+                }
+            }
 
             if (tablespace_name.empty())
             {
@@ -6738,6 +6871,20 @@ namespace scratchbird
                 if (!inherit_parents.empty())
                 {
                     metadata["inherits"] = inherit_parents;
+                    if (!inherit_parent_infos.empty())
+                    {
+                        json inherits_refs = json::array();
+                        for (size_t i = 0; i < inherit_parent_infos.size(); ++i)
+                        {
+                            json entry = json::object();
+                            entry["name"] = (i < inherit_parents.size())
+                                                ? inherit_parents[i]
+                                                : inherit_parent_infos[i].table_name;
+                            entry["id"] = inherit_parent_infos[i].table_id.toString();
+                            inherits_refs.push_back(std::move(entry));
+                        }
+                        metadata["inherits_refs"] = std::move(inherits_refs);
+                    }
                 }
                 json mysql_opts = json::object();
                 for (const auto& opt : table_options)
@@ -7012,6 +7159,21 @@ namespace scratchbird
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_id);
+
+            if (temp_type == 0)
+            {
+                core::CatalogManager::TableInfo created_info;
+                if (db_->catalog_manager()->getTable(table_id, created_info, &table_ctx) == core::Status::OK)
+                {
+                    core::ErrorContext priv_ctx;
+                    db_->catalog_manager()->applyDefaultPrivileges(
+                        created_info.schema_id,
+                        core::CatalogManager::PermissionObjectType::TABLE,
+                        table_id,
+                        getCurrentUserID(),
+                        &priv_ctx);
+                }
+            }
 
             LOG_INFO(EXECUTOR, "CREATE TABLE completed: %s", resolved_table_name.c_str());
         }
@@ -7298,14 +7460,31 @@ namespace scratchbird
             std::vector<core::Expression *> expressions;
             core::Expression *predicate = nullptr;
 
+            bool expressions_are_sblr = false;
+            std::vector<std::vector<uint8_t>> sblr_expressions;
             if (index_info.is_expression_index)
             {
-                expressions_unique = core::ExpressionSerializer::deserializeList(
-                    index_info.expression_data.data(),
-                    index_info.expression_data.size());
-                for (auto& expr : expressions_unique)
+                if (parseSblrExpressionList(index_info.expression_data, sblr_expressions))
                 {
-                    expressions.push_back(expr.get());
+                    expressions_are_sblr = true;
+                }
+                else
+                {
+                    try
+                    {
+                        expressions_unique = core::ExpressionSerializer::deserializeList(
+                            index_info.expression_data.data(),
+                            index_info.expression_data.size());
+                        for (auto& expr : expressions_unique)
+                        {
+                            expressions.push_back(expr.get());
+                        }
+                    }
+                    catch (...)
+                    {
+                        expressions_are_sblr = true;
+                        sblr_expressions.push_back(index_info.expression_data);
+                    }
                 }
             }
 
@@ -7402,20 +7581,37 @@ namespace scratchbird
 
                 if (index_info.is_expression_index)
                 {
-                    // Expression index - evaluate expressions
-                    for (auto *expr : expressions)
+                    if (expressions_are_sblr)
                     {
-                        try
+                        for (const auto& expr_bytes : sblr_expressions)
                         {
-                            index_stats_.expression_evaluations++;  // Task 17 MGA Phase 2.2
-                            Value key_val = evaluator.evaluate(expr, row_values);
-                            key_values.push_back(key_val);
+                            bool ok = false;
+                            index_stats_.expression_evaluations++;
+                            Value key_val = evaluateExpressionBytecode(expr_bytes, row_values, columns, ok);
+                            if (!ok)
+                            {
+                                expr_error = true;
+                                break;
+                            }
+                            key_values.push_back(std::move(key_val));
                         }
-                        catch (const std::exception &e)
+                    }
+                    else
+                    {
+                        for (auto *expr : expressions)
                         {
-                            // Expression evaluation error - skip row
-                            expr_error = true;
-                            break;
+                            try
+                            {
+                                index_stats_.expression_evaluations++;  // Task 17 MGA Phase 2.2
+                                Value key_val = evaluator.evaluate(expr, row_values);
+                                key_values.push_back(key_val);
+                            }
+                            catch (const std::exception &e)
+                            {
+                                // Expression evaluation error - skip row
+                                expr_error = true;
+                                break;
+                            }
                         }
                     }
                 }
@@ -7591,14 +7787,31 @@ namespace scratchbird
                 std::vector<core::Expression *> expressions;
                 core::Expression *predicate = nullptr;
 
+                bool expressions_are_sblr = false;
+                std::vector<std::vector<uint8_t>> sblr_expressions;
                 if (index_info.is_expression_index)
                 {
-                    expressions_unique = core::ExpressionSerializer::deserializeList(
-                        index_info.expression_data.data(),
-                        index_info.expression_data.size());
-                    for (auto& expr : expressions_unique)
+                    if (parseSblrExpressionList(index_info.expression_data, sblr_expressions))
                     {
-                        expressions.push_back(expr.get());
+                        expressions_are_sblr = true;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            expressions_unique = core::ExpressionSerializer::deserializeList(
+                                index_info.expression_data.data(),
+                                index_info.expression_data.size());
+                            for (auto& expr : expressions_unique)
+                            {
+                                expressions.push_back(expr.get());
+                            }
+                        }
+                        catch (...)
+                        {
+                            expressions_are_sblr = true;
+                            sblr_expressions.push_back(index_info.expression_data);
+                        }
                     }
                 }
 
@@ -7654,18 +7867,35 @@ namespace scratchbird
                 bool skip_index = false;
                 if (index_info.is_expression_index)
                 {
-                    for (auto *expr : expressions)
+                    if (expressions_are_sblr)
                     {
-                        try
+                        for (const auto& expr_bytes : sblr_expressions)
                         {
-                            index_stats_.expression_evaluations++;  // Task 17 MGA Phase 2.2
-                            key_values.push_back(evaluator.evaluate(expr, row_values));
+                            bool ok = false;
+                            index_stats_.expression_evaluations++;
+                            key_values.push_back(evaluateExpressionBytecode(expr_bytes, row_values, all_columns, ok));
+                            if (!ok)
+                            {
+                                skip_index = true;
+                                break;
+                            }
                         }
-                        catch (...)
+                    }
+                    else
+                    {
+                        for (auto *expr : expressions)
                         {
-                            // Error - skip this index
-                            skip_index = true;
-                            break;
+                            try
+                            {
+                                index_stats_.expression_evaluations++;  // Task 17 MGA Phase 2.2
+                                key_values.push_back(evaluator.evaluate(expr, row_values));
+                            }
+                            catch (...)
+                            {
+                                // Error - skip this index
+                                skip_index = true;
+                                break;
+                            }
                         }
                     }
                 }
@@ -7746,14 +7976,31 @@ namespace scratchbird
                 std::vector<core::Expression *> expressions;
                 core::Expression *predicate = nullptr;
 
+                bool expressions_are_sblr = false;
+                std::vector<std::vector<uint8_t>> sblr_expressions;
                 if (index_info.is_expression_index)
                 {
-                    expressions_unique = core::ExpressionSerializer::deserializeList(
-                        index_info.expression_data.data(),
-                        index_info.expression_data.size());
-                    for (auto& expr : expressions_unique)
+                    if (parseSblrExpressionList(index_info.expression_data, sblr_expressions))
                     {
-                        expressions.push_back(expr.get());
+                        expressions_are_sblr = true;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            expressions_unique = core::ExpressionSerializer::deserializeList(
+                                index_info.expression_data.data(),
+                                index_info.expression_data.size());
+                            for (auto& expr : expressions_unique)
+                            {
+                                expressions.push_back(expr.get());
+                            }
+                        }
+                        catch (...)
+                        {
+                            expressions_are_sblr = true;
+                            sblr_expressions.push_back(index_info.expression_data);
+                        }
                     }
                 }
 
@@ -7808,16 +8055,33 @@ namespace scratchbird
                     std::vector<Value> old_key_vals;
                     if (index_info.is_expression_index)
                     {
-                        for (auto *expr : expressions)
+                        if (expressions_are_sblr)
                         {
-                            try
+                            for (const auto& expr_bytes : sblr_expressions)
                             {
-                                old_key_vals.push_back(evaluator.evaluate(expr, old_values));
+                                bool ok = false;
+                                old_key_vals.push_back(
+                                    evaluateExpressionBytecode(expr_bytes, old_values, all_columns, ok));
+                                if (!ok)
+                                {
+                                    in_old = false;
+                                    break;
+                                }
                             }
-                            catch (...)
+                        }
+                        else
+                        {
+                            for (auto *expr : expressions)
                             {
-                                in_old = false;
-                                break;
+                                try
+                                {
+                                    old_key_vals.push_back(evaluator.evaluate(expr, old_values));
+                                }
+                                catch (...)
+                                {
+                                    in_old = false;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -7847,16 +8111,33 @@ namespace scratchbird
                     std::vector<Value> new_key_vals;
                     if (index_info.is_expression_index)
                     {
-                        for (auto *expr : expressions)
+                        if (expressions_are_sblr)
                         {
-                            try
+                            for (const auto& expr_bytes : sblr_expressions)
                             {
-                                new_key_vals.push_back(evaluator.evaluate(expr, new_values));
+                                bool ok = false;
+                                new_key_vals.push_back(
+                                    evaluateExpressionBytecode(expr_bytes, new_values, all_columns, ok));
+                                if (!ok)
+                                {
+                                    in_new = false;
+                                    break;
+                                }
                             }
-                            catch (...)
+                        }
+                        else
+                        {
+                            for (auto *expr : expressions)
                             {
-                                in_new = false;
-                                break;
+                                try
+                                {
+                                    new_key_vals.push_back(evaluator.evaluate(expr, new_values));
+                                }
+                                catch (...)
+                                {
+                                    in_new = false;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -7962,14 +8243,31 @@ namespace scratchbird
                 std::vector<core::Expression *> expressions;
                 core::Expression *predicate = nullptr;
 
+                bool expressions_are_sblr = false;
+                std::vector<std::vector<uint8_t>> sblr_expressions;
                 if (index_info.is_expression_index)
                 {
-                    expressions_unique = core::ExpressionSerializer::deserializeList(
-                        index_info.expression_data.data(),
-                        index_info.expression_data.size());
-                    for (auto& expr : expressions_unique)
+                    if (parseSblrExpressionList(index_info.expression_data, sblr_expressions))
                     {
-                        expressions.push_back(expr.get());
+                        expressions_are_sblr = true;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            expressions_unique = core::ExpressionSerializer::deserializeList(
+                                index_info.expression_data.data(),
+                                index_info.expression_data.size());
+                            for (auto& expr : expressions_unique)
+                            {
+                                expressions.push_back(expr.get());
+                            }
+                        }
+                        catch (...)
+                        {
+                            expressions_are_sblr = true;
+                            sblr_expressions.push_back(index_info.expression_data);
+                        }
                     }
                 }
 
@@ -8023,16 +8321,33 @@ namespace scratchbird
                 bool skip_index = false;
                 if (index_info.is_expression_index)
                 {
-                    for (auto *expr : expressions)
+                    if (expressions_are_sblr)
                     {
-                        try
+                        for (const auto& expr_bytes : sblr_expressions)
                         {
-                            key_values.push_back(evaluator.evaluate(expr, row_values));
+                            bool ok = false;
+                            key_values.push_back(
+                                evaluateExpressionBytecode(expr_bytes, row_values, all_columns, ok));
+                            if (!ok)
+                            {
+                                skip_index = true;
+                                break;
+                            }
                         }
-                        catch (...)
+                    }
+                    else
+                    {
+                        for (auto *expr : expressions)
                         {
-                            skip_index = true;
-                            break;
+                            try
+                            {
+                                key_values.push_back(evaluator.evaluate(expr, row_values));
+                            }
+                            catch (...)
+                            {
+                                skip_index = true;
+                                break;
+                            }
                         }
                     }
                 }
@@ -8929,6 +9244,51 @@ namespace scratchbird
                     json parent_meta = load_table_metadata(table_info);
                     json child_meta = load_table_metadata(partition_info);
 
+                    if (table_info.table_id == partition_info.table_id)
+                    {
+                        throw std::runtime_error("Cannot attach table to itself as partition");
+                    }
+
+                    if (!parent_meta.contains("partition") || !parent_meta["partition"].is_object())
+                    {
+                        throw std::runtime_error("Parent table is not partitioned");
+                    }
+
+                    if (child_meta.contains("partition_parent") &&
+                        child_meta["partition_parent"].is_string())
+                    {
+                        std::string existing_parent = child_meta["partition_parent"].get<std::string>();
+                        if (!existing_parent.empty() && existing_parent != table_name)
+                        {
+                            throw std::runtime_error("Partition table already attached to another parent");
+                        }
+                    }
+
+                    PartitionBound bound;
+                    if (!partition_bounds.empty() && !parsePartitionBounds(partition_bounds, bound))
+                    {
+                        throw std::runtime_error("Invalid partition bounds");
+                    }
+
+                    std::vector<core::CatalogManager::ColumnInfo> parent_columns;
+                    std::vector<core::CatalogManager::ColumnInfo> child_columns;
+                    if (db_->catalog_manager()->getColumns(table_info.table_id, parent_columns, &part_ctx) != core::Status::OK ||
+                        db_->catalog_manager()->getColumns(partition_info.table_id, child_columns, &part_ctx) != core::Status::OK)
+                    {
+                        throw std::runtime_error("Failed to load columns for partition validation");
+                    }
+                    if (parent_columns.size() != child_columns.size())
+                    {
+                        throw std::runtime_error("Partition columns do not match parent table");
+                    }
+                    for (size_t i = 0; i < parent_columns.size(); ++i)
+                    {
+                        if (parent_columns[i].column_name != child_columns[i].column_name)
+                        {
+                            throw std::runtime_error("Partition columns do not match parent table");
+                        }
+                    }
+
                     if (!parent_meta.contains("partition")) {
                         parent_meta["partition"] = json::object();
                     }
@@ -8938,11 +9298,12 @@ namespace scratchbird
                     }
 
                     bool exists = false;
-                    for (const auto& entry : partition_meta["children"])
+                    for (auto& entry : partition_meta["children"])
                     {
                         if (entry.contains("name") && entry["name"] == partition_name)
                         {
                             exists = true;
+                            entry["bounds"] = partition_bounds;
                             break;
                         }
                     }
@@ -8988,6 +9349,7 @@ namespace scratchbird
                     }
 
                     json parent_meta = load_table_metadata(table_info);
+                    bool found = false;
                     if (parent_meta.contains("partition") &&
                         parent_meta["partition"].contains("children"))
                     {
@@ -8999,6 +9361,7 @@ namespace scratchbird
                             {
                                 if (entry.contains("name") && entry["name"] == partition_name)
                                 {
+                                    found = true;
                                     continue;
                                 }
                                 updated.push_back(entry);
@@ -9006,11 +9369,19 @@ namespace scratchbird
                             children = std::move(updated);
                         }
                     }
+                    if (!found)
+                    {
+                        throw std::runtime_error("Partition is not attached to this table");
+                    }
 
                     json child_meta = load_table_metadata(partition_info);
                     if (child_meta.contains("partition_parent"))
                     {
                         child_meta.erase("partition_parent");
+                    }
+                    else
+                    {
+                        throw std::runtime_error("Partition table is not attached");
                     }
 
                     persist_table_metadata(table_info.table_id, parent_meta);
@@ -9119,6 +9490,32 @@ namespace scratchbird
                         inherits = json::array();
                     }
 
+                    if (!metadata.contains("inherits_refs"))
+                    {
+                        metadata["inherits_refs"] = json::array();
+                    }
+                    auto& inherits_refs = metadata["inherits_refs"];
+                    if (!inherits_refs.is_array())
+                    {
+                        inherits_refs = json::array();
+                    }
+
+                    core::CatalogManager::TableInfo parent_info;
+                    core::ErrorContext parent_ctx;
+                    if (!resolveTableByQualifiedName(db_->catalog_manager(),
+                                                     table_info.schema_id,
+                                                     parent_name,
+                                                     parent_info,
+                                                     &parent_ctx))
+                    {
+                        std::string err_msg = "INHERITS parent not found: " + parent_name;
+                        if (!parent_ctx.message.empty())
+                        {
+                            err_msg += ": " + parent_ctx.message;
+                        }
+                        throw std::runtime_error(err_msg);
+                    }
+
                     if (action == 12)
                     {
                         bool exists = false;
@@ -9134,6 +9531,29 @@ namespace scratchbird
                         {
                             inherits.push_back(parent_name);
                         }
+
+                        bool ref_exists = false;
+                        for (const auto& entry : inherits_refs)
+                        {
+                            if (!entry.is_object())
+                            {
+                                continue;
+                            }
+                            if (entry.contains("id") &&
+                                entry["id"].is_string() &&
+                                entry["id"].get<std::string>() == parent_info.table_id.toString())
+                            {
+                                ref_exists = true;
+                                break;
+                            }
+                        }
+                        if (!ref_exists)
+                        {
+                            json ref_entry = json::object();
+                            ref_entry["name"] = parent_name;
+                            ref_entry["id"] = parent_info.table_id.toString();
+                            inherits_refs.push_back(std::move(ref_entry));
+                        }
                     }
                     else
                     {
@@ -9147,6 +9567,28 @@ namespace scratchbird
                             updated.push_back(entry);
                         }
                         inherits = std::move(updated);
+
+                        json updated_refs = json::array();
+                        for (const auto& entry : inherits_refs)
+                        {
+                            if (entry.is_object())
+                            {
+                                if (entry.contains("id") &&
+                                    entry["id"].is_string() &&
+                                    entry["id"].get<std::string>() == parent_info.table_id.toString())
+                                {
+                                    continue;
+                                }
+                                if (entry.contains("name") &&
+                                    entry["name"].is_string() &&
+                                    entry["name"].get<std::string>() == parent_name)
+                                {
+                                    continue;
+                                }
+                            }
+                            updated_refs.push_back(entry);
+                        }
+                        inherits_refs = std::move(updated_refs);
                     }
 
                     persist_table_metadata(table_info.table_id, metadata);
@@ -9882,6 +10324,11 @@ namespace scratchbird
                     err_msg += ": " + ctx.message;
                 }
                 error(err_msg);
+            }
+
+            if (path.type == core::PathType::UNQUALIFIED)
+            {
+                path.type = core::PathType::ABSOLUTE;
             }
 
             core::CatalogManager::ResolveOptions opts;
@@ -10988,6 +11435,18 @@ namespace scratchbird
             recordObjectDefinition(is_type ? core::CatalogManager::ObjectType::COMPOSITE_TYPE
                                             : core::CatalogManager::ObjectType::DOMAIN,
                                    domain_id);
+
+            core::DomainInfo domain_info;
+            if (domain_mgr->getDomain(domain_id, domain_info, &ctx) == core::Status::OK)
+            {
+                core::ErrorContext priv_ctx;
+                db_->catalog_manager()->applyDefaultPrivileges(
+                    domain_info.schema_id,
+                    core::CatalogManager::PermissionObjectType::DOMAIN,
+                    domain_id,
+                    getCurrentUserID(),
+                    &priv_ctx);
+            }
         }
 
         void Executor::executeComment()
@@ -12561,6 +13020,14 @@ namespace scratchbird
                 {
                     recordObjectDefinition(core::CatalogManager::ObjectType::SEQUENCE,
                                            seq_info.sequence_id);
+
+                    core::ErrorContext priv_ctx;
+                    db_->catalog_manager()->applyDefaultPrivileges(
+                        schema_id,
+                        core::CatalogManager::PermissionObjectType::SEQUENCE,
+                        seq_info.sequence_id,
+                        getCurrentUserID(),
+                        &priv_ctx);
                 }
             }
 
@@ -13016,6 +13483,14 @@ namespace scratchbird
                 if (db_->catalog_manager()->getView(schema_id, resolved_view_name, stored_view, &ctx) == core::Status::OK)
                 {
                     recordObjectDefinition(core::CatalogManager::ObjectType::VIEW, stored_view.view_id);
+
+                    core::ErrorContext priv_ctx;
+                    db_->catalog_manager()->applyDefaultPrivileges(
+                        schema_id,
+                        core::CatalogManager::PermissionObjectType::VIEW,
+                        stored_view.view_id,
+                        getCurrentUserID(),
+                        &priv_ctx);
                 }
             }
 
@@ -14551,6 +15026,95 @@ namespace scratchbird
                 return false;
             };
 
+            json table_meta;
+            bool is_partition_child = false;
+            std::string partition_strategy;
+            std::vector<std::string> partition_columns;
+            struct PartitionChildSpec {
+                std::string name;
+                std::string bounds;
+                PartitionBound bound;
+                bool has_bound = false;
+                bool is_default = false;
+                core::CatalogManager::TableInfo table_info;
+            };
+            std::vector<PartitionChildSpec> partition_children;
+            std::vector<size_t> partition_col_indices;
+
+            if (!is_view && loadTableMetadata(db_->catalog_manager(), table_info, table_meta, &err_ctx))
+            {
+                if (table_meta.contains("partition_parent"))
+                {
+                    is_partition_child = true;
+                }
+                if (!is_partition_child &&
+                    table_meta.contains("partition") &&
+                    table_meta["partition"].is_object())
+                {
+                    const auto& partition = table_meta["partition"];
+                    if (partition.contains("strategy") && partition["strategy"].is_string())
+                    {
+                        partition_strategy = partition["strategy"].get<std::string>();
+                    }
+                    if (partition.contains("columns") && partition["columns"].is_array())
+                    {
+                        for (const auto& col : partition["columns"])
+                        {
+                            if (col.is_string())
+                            {
+                                partition_columns.push_back(col.get<std::string>());
+                            }
+                        }
+                    }
+                    if (partition.contains("children") && partition["children"].is_array())
+                    {
+                        for (const auto& entry : partition["children"])
+                        {
+                            if (!entry.contains("name") || !entry["name"].is_string())
+                            {
+                                continue;
+                            }
+                            PartitionChildSpec child;
+                            child.name = entry["name"].get<std::string>();
+                            if (entry.contains("bounds") && entry["bounds"].is_string())
+                            {
+                                child.bounds = entry["bounds"].get<std::string>();
+                                child.has_bound = parsePartitionBounds(child.bounds, child.bound);
+                                child.is_default = child.has_bound &&
+                                                   child.bound.kind == PartitionBound::Kind::DEFAULT;
+                            }
+                            core::CatalogManager::TableInfo child_info;
+                            if (resolveTableByQualifiedName(db_->catalog_manager(),
+                                                            table_info.schema_id,
+                                                            child.name,
+                                                            child_info,
+                                                            &err_ctx))
+                            {
+                                child.table_info = child_info;
+                                partition_children.push_back(std::move(child));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!partition_columns.empty())
+            {
+                for (const auto& col_name : partition_columns)
+                {
+                    auto it = std::find_if(all_columns.begin(), all_columns.end(),
+                                           [&](const auto& col) { return col.column_name == col_name; });
+                    if (it == all_columns.end())
+                    {
+                        error("Partition column not found: " + col_name);
+                    }
+                    partition_col_indices.push_back(
+                        static_cast<size_t>(std::distance(all_columns.begin(), it)));
+                }
+            }
+
+            std::unordered_set<core::ID, core::IDHash> touched_tables;
+
             auto process_insert_row = [&](const std::vector<Value>& input_values,
                                           bool allow_default_values) -> bool {
                 if (!input_values.empty() && input_values.size() != col_indices.size())
@@ -14755,6 +15319,216 @@ namespace scratchbird
                         error(err_msg);
                     }
                     row_values[i] = std::move(coerced);
+                }
+
+                core::CatalogManager::TableInfo target_table_info = table_info;
+                core::ID target_table_id = table_id;
+                if (!is_partition_child && !partition_children.empty())
+                {
+                    if (partition_col_indices.empty())
+                    {
+                        error("Partitioned table requires partition columns");
+                    }
+
+                    auto values_match = [&](const Value& value,
+                                            const std::string& literal,
+                                            core::DataType type) -> bool {
+                        if (value.isNull())
+                        {
+                            return false;
+                        }
+                        if (type == core::DataType::INT8 || type == core::DataType::INT16 ||
+                            type == core::DataType::INT32 || type == core::DataType::INT64 ||
+                            type == core::DataType::UINT8 || type == core::DataType::UINT16 ||
+                            type == core::DataType::UINT32 || type == core::DataType::UINT64)
+                        {
+                            int64_t literal_val = 0;
+                            if (!parseNumericLiteral(literal, literal_val))
+                            {
+                                return false;
+                            }
+                            return value.toInt64() == literal_val;
+                        }
+                        if (type == core::DataType::FLOAT32 || type == core::DataType::FLOAT64 ||
+                            type == core::DataType::DECIMAL)
+                        {
+                            double literal_val = 0.0;
+                            if (!parseDoubleLiteral(literal, literal_val))
+                            {
+                                return false;
+                            }
+                            return std::fabs(value.toDouble() - literal_val) < 1e-9;
+                        }
+                        std::string normalized = normalizePartitionLiteral(literal);
+                        return value.toString() == normalized;
+                    };
+
+                    auto compare_values = [&](const Value& left, const std::string& right_literal,
+                                              core::DataType type) -> int {
+                        if (left.isNull())
+                        {
+                            return -1;
+                        }
+                        if (type == core::DataType::INT8 || type == core::DataType::INT16 ||
+                            type == core::DataType::INT32 || type == core::DataType::INT64 ||
+                            type == core::DataType::UINT8 || type == core::DataType::UINT16 ||
+                            type == core::DataType::UINT32 || type == core::DataType::UINT64)
+                        {
+                            int64_t literal_val = 0;
+                            if (!parseNumericLiteral(right_literal, literal_val))
+                            {
+                                return 0;
+                            }
+                            int64_t left_val = left.toInt64();
+                            if (left_val < literal_val) return -1;
+                            if (left_val > literal_val) return 1;
+                            return 0;
+                        }
+                        if (type == core::DataType::FLOAT32 || type == core::DataType::FLOAT64 ||
+                            type == core::DataType::DECIMAL)
+                        {
+                            double literal_val = 0.0;
+                            if (!parseDoubleLiteral(right_literal, literal_val))
+                            {
+                                return 0;
+                            }
+                            double left_val = left.toDouble();
+                            if (left_val < literal_val) return -1;
+                            if (left_val > literal_val) return 1;
+                            return 0;
+                        }
+                        std::string normalized = normalizePartitionLiteral(right_literal);
+                        std::string left_val = left.toString();
+                        if (left_val < normalized) return -1;
+                        if (left_val > normalized) return 1;
+                        return 0;
+                    };
+
+                    auto tuple_matches = [&](const PartitionChildSpec& child,
+                                             const std::vector<Value>& row_vals) -> bool {
+                        if (child.is_default || !child.has_bound)
+                        {
+                            return false;
+                        }
+                        if (child.bound.kind == PartitionBound::Kind::LIST)
+                        {
+                            for (const auto& tuple_values : child.bound.list_values)
+                            {
+                                if (tuple_values.size() != partition_col_indices.size())
+                                {
+                                    continue;
+                                }
+                                bool matches = true;
+                                for (size_t i = 0; i < partition_col_indices.size(); ++i)
+                                {
+                                    size_t col_idx = partition_col_indices[i];
+                                    core::DataType type = static_cast<core::DataType>(all_columns[col_idx].data_type);
+                                    if (!values_match(row_vals[col_idx], tuple_values[i], type))
+                                    {
+                                        matches = false;
+                                        break;
+                                    }
+                                }
+                                if (matches)
+                                {
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }
+                        if (child.bound.kind == PartitionBound::Kind::RANGE)
+                        {
+                            if (child.bound.range_start.size() != partition_col_indices.size() ||
+                                child.bound.range_end.size() != partition_col_indices.size())
+                            {
+                                return false;
+                            }
+                            bool lower_ok = true;
+                            bool upper_ok = true;
+                            if (child.bound.has_start)
+                            {
+                                for (size_t i = 0; i < partition_col_indices.size(); ++i)
+                                {
+                                    size_t col_idx = partition_col_indices[i];
+                                    core::DataType type = static_cast<core::DataType>(all_columns[col_idx].data_type);
+                                    int cmp = compare_values(row_vals[col_idx], child.bound.range_start[i], type);
+                                    if (cmp < 0)
+                                    {
+                                        lower_ok = false;
+                                        break;
+                                    }
+                                    if (cmp > 0)
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                            if (child.bound.has_end)
+                            {
+                                for (size_t i = 0; i < partition_col_indices.size(); ++i)
+                                {
+                                    size_t col_idx = partition_col_indices[i];
+                                    core::DataType type = static_cast<core::DataType>(all_columns[col_idx].data_type);
+                                    int cmp = compare_values(row_vals[col_idx], child.bound.range_end[i], type);
+                                    if (cmp < 0)
+                                    {
+                                        break;
+                                    }
+                                    if (cmp >= 0)
+                                    {
+                                        upper_ok = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            return lower_ok && upper_ok;
+                        }
+                        return false;
+                    };
+
+                    const PartitionChildSpec* matched = nullptr;
+                    const PartitionChildSpec* default_child = nullptr;
+                    for (const auto& child : partition_children)
+                    {
+                        if (child.is_default)
+                        {
+                            default_child = &child;
+                            continue;
+                        }
+                        if (tuple_matches(child, row_values))
+                        {
+                            if (matched)
+                            {
+                                error("PARTITION_AMBIGUOUS: multiple partitions match row");
+                            }
+                            matched = &child;
+                        }
+                    }
+                    if (!matched && default_child)
+                    {
+                        matched = default_child;
+                    }
+                    if (!matched)
+                    {
+                        if (partition_strategy == "HASH" || partition_strategy == "KEY")
+                        {
+                            size_t hash_value = 0;
+                            for (size_t idx : partition_col_indices)
+                            {
+                                hash_value ^= std::hash<std::string>{}(row_values[idx].toString());
+                            }
+                            if (!partition_children.empty())
+                            {
+                                matched = &partition_children[hash_value % partition_children.size()];
+                            }
+                        }
+                    }
+                    if (!matched)
+                    {
+                        error("PARTITION_NOT_FOUND: no partition for row");
+                    }
+                    target_table_info = matched->table_info;
+                    target_table_id = target_table_info.table_id;
                 }
 
                 auto* domain_mgr = db_->domain_manager();
@@ -15905,8 +16679,8 @@ namespace scratchbird
                 uint32_t page_id;
                 uint16_t item_id;
                 auto insert_status = db_->storage_engine()->insertTuple(
-                    table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()), &page_id,
-                    &item_id, nullptr);
+                        target_table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()), &page_id,
+                        &item_id, nullptr);
 
                 if (insert_status != core::Status::OK)
                 {
@@ -15924,7 +16698,7 @@ namespace scratchbird
 
                     core::ErrorContext uniq_ctx;
                     auto uniq_status = domain_mgr->registerUniqueValue(col.domain_id,
-                                                                      table_id,
+                                                                      target_table_id,
                                                                       col.column_id,
                                                                       row_tid,
                                                                       row_values[i],
@@ -15942,11 +16716,12 @@ namespace scratchbird
                     }
                 }
 
-                updateIndexesOnInsert(xid, table_id, table_info, all_columns, page_id, item_id, row_values);
+                updateIndexesOnInsert(xid, target_table_id, target_table_info, all_columns,
+                                      page_id, item_id, row_values);
 
                 std::vector<core::CatalogManager::TriggerInfo> after_triggers;
                 trigger_status = db_->catalog_manager()->listTriggersForTable(
-                    table_id,
+                    target_table_id,
                     core::CatalogManager::TriggerEvent::INSERT,
                     core::CatalogManager::TriggerTiming::AFTER,
                     after_triggers,
@@ -15959,11 +16734,12 @@ namespace scratchbird
                     {
                         if (!trigger.enabled) continue;
 
-                        TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
+                        TriggerContext ctx(trigger, nullptr, &row_values, target_table_info, all_columns);
                         fireTrigger(ctx);
                     }
                 }
 
+                touched_tables.insert(target_table_id);
                 emit_returning_row(row_values);
                 return true;
             };
@@ -15980,7 +16756,10 @@ namespace scratchbird
 
             if (affected_count > 0)
             {
-                QueryResultCacheManager::getInstance().invalidateTable(table_id);
+                for (const auto& id : touched_tables)
+                {
+                    QueryResultCacheManager::getInstance().invalidateTable(id);
+                }
             }
             last_affected_rows_ = affected_count;
         }
@@ -16205,6 +16984,115 @@ namespace scratchbird
                 if (status != core::Status::OK)
                 {
                     error("Failed to get table columns");
+                }
+            }
+
+            json partition_meta;
+            bool has_partitioning = false;
+            bool is_partition_child = false;
+            std::string partition_strategy;
+            std::vector<std::string> partition_columns;
+            std::vector<size_t> partition_col_indices;
+            core::CatalogManager::TableInfo partition_parent_info = table_info;
+
+            struct PartitionChildSpec {
+                std::string name;
+                std::string bounds;
+                PartitionBound bound;
+                bool has_bound = false;
+                bool is_default = false;
+                core::CatalogManager::TableInfo table_info;
+            };
+            std::vector<PartitionChildSpec> partition_children;
+
+            if (!is_view)
+            {
+                if (loadTableMetadata(db_->catalog_manager(), table_info, partition_meta, &err_ctx))
+                {
+                    if (partition_meta.contains("partition_parent") && partition_meta["partition_parent"].is_string())
+                    {
+                        is_partition_child = true;
+                        std::string parent_name = partition_meta["partition_parent"].get<std::string>();
+                        core::CatalogManager::TableInfo parent_info;
+                        if (!resolveTableByQualifiedName(db_->catalog_manager(),
+                                                         table_info.schema_id,
+                                                         parent_name,
+                                                         parent_info,
+                                                         &err_ctx))
+                        {
+                            error("Failed to resolve partition parent table: " + parent_name);
+                        }
+                        partition_parent_info = parent_info;
+                        partition_meta.clear();
+                        if (!loadTableMetadata(db_->catalog_manager(), parent_info, partition_meta, &err_ctx))
+                        {
+                            error("Failed to load partition metadata for parent table: " + parent_name);
+                        }
+                    }
+
+                    if (partition_meta.contains("partition") && partition_meta["partition"].is_object())
+                    {
+                        const auto& partition = partition_meta["partition"];
+                        if (partition.contains("strategy") && partition["strategy"].is_string())
+                        {
+                            partition_strategy = partition["strategy"].get<std::string>();
+                        }
+                        if (partition.contains("columns") && partition["columns"].is_array())
+                        {
+                            for (const auto& col : partition["columns"])
+                            {
+                                if (col.is_string())
+                                {
+                                    partition_columns.push_back(col.get<std::string>());
+                                }
+                            }
+                        }
+                        if (partition.contains("children") && partition["children"].is_array())
+                        {
+                            for (const auto& entry : partition["children"])
+                            {
+                                if (!entry.contains("name") || !entry["name"].is_string())
+                                {
+                                    continue;
+                                }
+                                PartitionChildSpec child;
+                                child.name = entry["name"].get<std::string>();
+                                if (entry.contains("bounds") && entry["bounds"].is_string())
+                                {
+                                    child.bounds = entry["bounds"].get<std::string>();
+                                    child.has_bound = parsePartitionBounds(child.bounds, child.bound);
+                                    child.is_default = child.has_bound &&
+                                                       child.bound.kind == PartitionBound::Kind::DEFAULT;
+                                }
+                                core::CatalogManager::TableInfo child_info;
+                                if (resolveTableByQualifiedName(db_->catalog_manager(),
+                                                                partition_parent_info.schema_id,
+                                                                child.name,
+                                                                child_info,
+                                                                &err_ctx))
+                                {
+                                    child.table_info = child_info;
+                                    partition_children.push_back(std::move(child));
+                                }
+                            }
+                        }
+                        has_partitioning = !partition_children.empty();
+                    }
+                }
+            }
+
+            if (!partition_columns.empty())
+            {
+                for (const auto& col_name : partition_columns)
+                {
+                    auto it = std::find_if(all_columns.begin(), all_columns.end(),
+                                           [&](const auto& col) { return col.column_name == col_name; });
+                    if (it == all_columns.end())
+                    {
+                        error("Partition column not found: " + col_name);
+                    }
+                    partition_col_indices.push_back(
+                        static_cast<size_t>(std::distance(all_columns.begin(), it)));
                 }
             }
 
@@ -16788,22 +17676,47 @@ namespace scratchbird
                     error("Failed to get columns for table " + load_table_name);
                 }
 
-                auto scan_iter = db_->storage_engine()->createScan(load_table_id, nullptr);
-                if (!scan_iter)
-                {
-                    error("Failed to create table scan iterator");
-                }
-
                 std::vector<std::vector<Value>> rows;
-                core::Tuple tuple;
-                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                auto expanded_tables = collectExpandedTables(db_->catalog_manager(), load_table_info, &load_ctx);
+                if (expanded_tables.empty())
                 {
-                    std::vector<Value> row_values;
-                    if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                    expanded_tables.push_back(load_table_info);
+                }
+                for (const auto& target : expanded_tables)
+                {
+                    std::vector<core::CatalogManager::ColumnInfo> target_columns;
+                    if (db_->catalog_manager()->getColumns(target.table_id, target_columns, nullptr) != core::Status::OK)
                     {
-                        continue;
+                        error("Failed to get columns for table " + target.table_name);
                     }
-                    rows.push_back(std::move(row_values));
+                    if (target_columns.size() < columns.size())
+                    {
+                        error("INHERITS requires child tables to include parent columns");
+                    }
+                    for (size_t i = 0; i < columns.size(); ++i)
+                    {
+                        if (columns[i].column_name != target_columns[i].column_name)
+                        {
+                            error("INHERITS requires child tables to prefix parent column order");
+                        }
+                    }
+
+                    auto scan_iter = db_->storage_engine()->createScan(target.table_id, nullptr);
+                    if (!scan_iter)
+                    {
+                        error("Failed to create table scan iterator");
+                    }
+
+                    core::Tuple tuple;
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                    {
+                        std::vector<Value> row_values;
+                        if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                        {
+                            continue;
+                        }
+                        rows.push_back(std::move(row_values));
+                    }
                 }
 
                 out.ref = ref;
@@ -16877,12 +17790,14 @@ namespace scratchbird
                 combined_columns_template = all_columns;
             }
 
-            // Create table scan iterator
-            auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
-            if (!scan_iter)
+            core::ID base_table_id = table_id;
+            core::CatalogManager::TableInfo base_table_info = table_info;
+            auto target_tables = collectExpandedTables(db_->catalog_manager(), table_info, &err_ctx);
+            if (target_tables.empty())
             {
-                error("Failed to create table scan iterator");
+                target_tables.push_back(table_info);
             }
+            std::unordered_set<core::ID, core::IDHash> updated_tables;
 
             auto build_combined_rows = [&](const std::vector<Value>& base_row,
                                            std::vector<std::vector<Value>>& out_rows) {
@@ -17054,42 +17969,422 @@ namespace scratchbird
                 return false;
             };
 
+            auto values_match = [&](const Value& value,
+                                    const std::string& literal,
+                                    core::DataType type) -> bool {
+                if (value.isNull())
+                {
+                    return false;
+                }
+                if (type == core::DataType::INT8 || type == core::DataType::INT16 ||
+                    type == core::DataType::INT32 || type == core::DataType::INT64 ||
+                    type == core::DataType::UINT8 || type == core::DataType::UINT16 ||
+                    type == core::DataType::UINT32 || type == core::DataType::UINT64)
+                {
+                    int64_t literal_val = 0;
+                    if (!parseNumericLiteral(literal, literal_val))
+                    {
+                        return false;
+                    }
+                    return value.toInt64() == literal_val;
+                }
+                if (type == core::DataType::FLOAT32 || type == core::DataType::FLOAT64 ||
+                    type == core::DataType::DECIMAL)
+                {
+                    double literal_val = 0.0;
+                    if (!parseDoubleLiteral(literal, literal_val))
+                    {
+                        return false;
+                    }
+                    return std::fabs(value.toDouble() - literal_val) < 1e-9;
+                }
+                std::string normalized = normalizePartitionLiteral(literal);
+                return value.toString() == normalized;
+            };
+
+            auto compare_values = [&](const Value& left,
+                                      const std::string& right_literal,
+                                      core::DataType type) -> int {
+                if (left.isNull())
+                {
+                    return -1;
+                }
+                if (type == core::DataType::INT8 || type == core::DataType::INT16 ||
+                    type == core::DataType::INT32 || type == core::DataType::INT64 ||
+                    type == core::DataType::UINT8 || type == core::DataType::UINT16 ||
+                    type == core::DataType::UINT32 || type == core::DataType::UINT64)
+                {
+                    int64_t literal_val = 0;
+                    if (!parseNumericLiteral(right_literal, literal_val))
+                    {
+                        return 0;
+                    }
+                    int64_t left_val = left.toInt64();
+                    if (left_val < literal_val) return -1;
+                    if (left_val > literal_val) return 1;
+                    return 0;
+                }
+                if (type == core::DataType::FLOAT32 || type == core::DataType::FLOAT64 ||
+                    type == core::DataType::DECIMAL)
+                {
+                    double literal_val = 0.0;
+                    if (!parseDoubleLiteral(right_literal, literal_val))
+                    {
+                        return 0;
+                    }
+                    double left_val = left.toDouble();
+                    if (left_val < literal_val) return -1;
+                    if (left_val > literal_val) return 1;
+                    return 0;
+                }
+                std::string normalized = normalizePartitionLiteral(right_literal);
+                std::string left_val = left.toString();
+                if (left_val < normalized) return -1;
+                if (left_val > normalized) return 1;
+                return 0;
+            };
+
+            auto select_partition_target = [&](const std::vector<Value>& row_vals,
+                                               const core::CatalogManager::TableInfo& current_table,
+                                               core::CatalogManager::TableInfo& out_info) -> bool {
+                if (!has_partitioning || partition_children.empty())
+                {
+                    out_info = current_table;
+                    return true;
+                }
+                if (partition_col_indices.empty())
+                {
+                    error("Partitioned table requires partition columns");
+                }
+
+                auto tuple_matches = [&](const PartitionChildSpec& child) -> bool {
+                    if (child.is_default || !child.has_bound)
+                    {
+                        return false;
+                    }
+                    if (child.bound.kind == PartitionBound::Kind::LIST)
+                    {
+                        for (const auto& tuple_values : child.bound.list_values)
+                        {
+                            if (tuple_values.size() != partition_col_indices.size())
+                            {
+                                continue;
+                            }
+                            bool matches = true;
+                            for (size_t i = 0; i < partition_col_indices.size(); ++i)
+                            {
+                                size_t col_idx = partition_col_indices[i];
+                                core::DataType type =
+                                    static_cast<core::DataType>(all_columns[col_idx].data_type);
+                                if (!values_match(row_vals[col_idx], tuple_values[i], type))
+                                {
+                                    matches = false;
+                                    break;
+                                }
+                            }
+                            if (matches)
+                            {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                    if (child.bound.kind == PartitionBound::Kind::RANGE)
+                    {
+                        if (child.bound.range_start.size() != partition_col_indices.size() ||
+                            child.bound.range_end.size() != partition_col_indices.size())
+                        {
+                            return false;
+                        }
+                        bool lower_ok = true;
+                        bool upper_ok = true;
+                        if (child.bound.has_start)
+                        {
+                            for (size_t i = 0; i < partition_col_indices.size(); ++i)
+                            {
+                                size_t col_idx = partition_col_indices[i];
+                                core::DataType type =
+                                    static_cast<core::DataType>(all_columns[col_idx].data_type);
+                                int cmp = compare_values(row_vals[col_idx], child.bound.range_start[i], type);
+                                if (cmp < 0)
+                                {
+                                    lower_ok = false;
+                                    break;
+                                }
+                                if (cmp > 0)
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        if (child.bound.has_end)
+                        {
+                            for (size_t i = 0; i < partition_col_indices.size(); ++i)
+                            {
+                                size_t col_idx = partition_col_indices[i];
+                                core::DataType type =
+                                    static_cast<core::DataType>(all_columns[col_idx].data_type);
+                                int cmp = compare_values(row_vals[col_idx], child.bound.range_end[i], type);
+                                if (cmp < 0)
+                                {
+                                    break;
+                                }
+                                if (cmp >= 0)
+                                {
+                                    upper_ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        return lower_ok && upper_ok;
+                    }
+                    return false;
+                };
+
+                const PartitionChildSpec* matched = nullptr;
+                const PartitionChildSpec* default_child = nullptr;
+                for (const auto& child : partition_children)
+                {
+                    if (child.is_default)
+                    {
+                        default_child = &child;
+                        continue;
+                    }
+                    if (tuple_matches(child))
+                    {
+                        if (matched)
+                        {
+                            error("PARTITION_AMBIGUOUS: multiple partitions match row");
+                        }
+                        matched = &child;
+                    }
+                }
+                if (!matched && default_child)
+                {
+                    matched = default_child;
+                }
+                if (!matched)
+                {
+                    if (partition_strategy == "HASH" || partition_strategy == "KEY")
+                    {
+                        size_t hash_value = 0;
+                        for (size_t idx : partition_col_indices)
+                        {
+                            hash_value ^= std::hash<std::string>{}(row_vals[idx].toString());
+                        }
+                        if (!partition_children.empty())
+                        {
+                            matched = &partition_children[hash_value % partition_children.size()];
+                        }
+                    }
+                }
+                if (!matched)
+                {
+                    error("PARTITION_NOT_FOUND: no partition for row");
+                }
+                out_info = matched->table_info;
+                return true;
+            };
+
             // Scan all tuples and update matching ones
             int affected_count = 0;
             core::Tuple tuple;
 
-            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            for (const auto& target_table : target_tables)
             {
-                // Deserialize current tuple data
-                std::vector<Value> row_values;
-                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                table_id = target_table.table_id;
+                table_info = target_table;
+                updated_tables.insert(table_id);
+
+                std::vector<core::CatalogManager::ColumnInfo> target_columns;
+                if (db_->catalog_manager()->getColumns(table_id, target_columns, nullptr) != core::Status::OK)
                 {
-                    continue; // Skip malformed tuples
+                    error("Failed to get columns for table " + table_info.table_name);
+                }
+                if (target_columns.size() < all_columns.size())
+                {
+                    error("INHERITS requires child tables to include parent columns");
+                }
+                for (size_t i = 0; i < all_columns.size(); ++i)
+                {
+                    if (all_columns[i].column_name != target_columns[i].column_name)
+                    {
+                        error("INHERITS requires child tables to prefix parent column order");
+                    }
                 }
 
-                std::vector<std::vector<Value>> combined_rows;
-                build_combined_rows(row_values, combined_rows);
+                auto resolve_target_column_index = [&](const std::string& name) -> size_t {
+                    auto it = std::find_if(target_columns.begin(), target_columns.end(),
+                                           [&](const auto& c) { return c.column_name == name; });
+                    if (it == target_columns.end())
+                    {
+                        error("Column not found: " + name);
+                    }
+                    return static_cast<size_t>(std::distance(target_columns.begin(), it));
+                };
 
-                bool should_update = false;
-                std::vector<Value> combined_eval_row;
+                auto find_conflict_row_target = [&](const std::vector<size_t>& key_indices,
+                                                    const std::vector<Value>& candidate_values,
+                                                    const core::TID& exclude_tid) -> bool {
+                    for (size_t idx : key_indices)
+                    {
+                        if (candidate_values[idx].isNull())
+                        {
+                            return false;
+                        }
+                    }
 
-                for (auto& combined_row : combined_rows)
+                    auto conflict_scan = db_->storage_engine()->createScan(table_id, nullptr);
+                    if (!conflict_scan)
+                    {
+                        return false;
+                    }
+
+                    core::Tuple conflict_tuple;
+                    while (conflict_scan->next(&conflict_tuple, nullptr) == core::Status::OK)
+                    {
+                        if (conflict_tuple.tid == exclude_tid)
+                        {
+                            continue;
+                        }
+
+                        std::vector<Value> existing_values;
+                        if (!deserializeTuple(conflict_tuple.data, conflict_tuple.data_size,
+                                              target_columns, existing_values))
+                        {
+                            continue;
+                        }
+
+                        bool match = true;
+                        for (size_t idx : key_indices)
+                        {
+                            if (!valuesEqual(candidate_values[idx], existing_values[idx]))
+                            {
+                                match = false;
+                                break;
+                            }
+                        }
+
+                        if (match)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                };
+
+                auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+                if (!scan_iter)
                 {
-                    bool matches = true;
-                    if (has_where)
+                    error("Failed to create table scan iterator");
+                }
+
+                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                {
+                    // Deserialize current tuple data
+                    std::vector<Value> row_values_full;
+                    if (!deserializeTuple(tuple.data, tuple.data_size, target_columns, row_values_full))
+                    {
+                        continue; // Skip malformed tuples
+                    }
+                    if (row_values_full.size() < all_columns.size())
+                    {
+                        error("INHERITS requires child rows to include parent columns");
+                    }
+
+                    std::vector<Value> row_values(row_values_full.begin(),
+                                                  row_values_full.begin() + all_columns.size());
+
+                    std::vector<std::vector<Value>> combined_rows;
+                    build_combined_rows(row_values, combined_rows);
+
+                    bool should_update = false;
+                    std::vector<Value> combined_eval_row;
+
+                    for (auto& combined_row : combined_rows)
+                    {
+                        bool matches = true;
+                        if (has_where)
+                        {
+                            size_t saved_pc = pc_;
+                            pc_ = where_start_pc;
+                            current_row_values_ = &combined_row;
+                            current_row_columns_ = &combined_columns_template;
+
+                            try
+                            {
+                                Value where_result = evaluateExpressionRange(where_end_pc);
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = saved_pc;
+                                matches = where_result.toBoolean();
+                            }
+                            catch (...)
+                            {
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = saved_pc;
+                                throw;
+                            }
+                        }
+
+                        if (matches)
+                        {
+                            should_update = true;
+                            combined_eval_row = std::move(combined_row);
+                            break;
+                        }
+                    }
+
+                    if (!should_update)
+                    {
+                        continue;
+                    }
+
+                    // Security Phase 3.5: Row-Level Security USING enforcement for UPDATE
+                    // Check if user can see/modify this row (old row values)
+                    if (!checkRLSPolicies(table_id, row_values_full, target_columns,
+                                         core::CatalogManager::PolicyType::UPDATE,
+                                         false /* is_using, not with_check */))
+                    {
+                        // Row not visible to user - skip update
+                        continue;
+                    }
+
+                    // Wave 2: Save old row values for triggers
+                    std::vector<Value> old_row_values_full = row_values_full;
+                    std::vector<Value> old_row_values = row_values;
+
+                    // Evaluate assignments and update row values
+                    for (const auto &assign : assignments)
                     {
                         size_t saved_pc = pc_;
-                        pc_ = where_start_pc;
-                        current_row_values_ = &combined_row;
+                        pc_ = assign.expr_start_pc;
+
+                        // Set up row context for column references in assignment expression
+                        current_row_values_ = &combined_eval_row;
                         current_row_columns_ = &combined_columns_template;
 
                         try
                         {
-                            Value where_result = evaluateExpressionRange(where_end_pc);
+                            Value new_value = evaluateExpressionRange(assign.expr_end_pc);
+
                             current_row_values_ = nullptr;
                             current_row_columns_ = nullptr;
+
                             pc_ = saved_pc;
-                            matches = where_result.toBoolean();
+
+                            // Update the row value
+                            row_values[assign.column_index] = new_value;
+                            if (assign.column_index < row_values_full.size())
+                            {
+                                row_values_full[assign.column_index] = row_values[assign.column_index];
+                            }
+                            if (assign.column_index < combined_eval_row.size())
+                            {
+                                combined_eval_row[assign.column_index] = row_values[assign.column_index];
+                            }
                         }
                         catch (...)
                         {
@@ -17100,104 +18395,49 @@ namespace scratchbird
                         }
                     }
 
-                    if (matches)
+                    for (const auto& assign : assignments)
                     {
-                        should_update = true;
-                        combined_eval_row = std::move(combined_row);
-                        break;
-                    }
-                }
-
-                if (!should_update)
-                {
-                    continue;
-                }
-
-                // Security Phase 3.5: Row-Level Security USING enforcement for UPDATE
-                // Check if user can see/modify this row (old row values)
-                if (!checkRLSPolicies(table_id, row_values, all_columns,
-                                     core::CatalogManager::PolicyType::UPDATE,
-                                     false /* is_using, not with_check */))
-                {
-                    // Row not visible to user - skip update
-                    continue;
-                }
-
-                // Wave 2: Save old row values for triggers
-                std::vector<Value> old_row_values = row_values;
-
-                // Evaluate assignments and update row values
-                for (const auto &assign : assignments)
-                {
-                    size_t saved_pc = pc_;
-                    pc_ = assign.expr_start_pc;
-
-                    // Set up row context for column references in assignment expression
-                    current_row_values_ = &combined_eval_row;
-                    current_row_columns_ = &combined_columns_template;
-
-                    try
-                    {
-                        Value new_value = evaluateExpressionRange(assign.expr_end_pc);
-
-                        current_row_values_ = nullptr;
-                        current_row_columns_ = nullptr;
-
-                        pc_ = saved_pc;
-
-                        // Update the row value
-                        row_values[assign.column_index] = new_value;
-                        if (assign.column_index < combined_eval_row.size())
+                        size_t col_idx = assign.column_index;
+                        const auto& col = target_columns[col_idx];
+                        if (!col.is_array || row_values_full[col_idx].isNull())
                         {
-                            combined_eval_row[assign.column_index] = row_values[assign.column_index];
+                            continue;
+                        }
+
+                        core::TypedValue coerced;
+                        core::ErrorContext cast_ctx;
+                        if (!coerceValueForColumn(row_values_full[col_idx], col,
+                                                  coerced, &cast_ctx))
+                        {
+                            std::string err_msg = "Type mismatch for column '" + col.column_name + "'";
+                            if (!cast_ctx.message.empty())
+                            {
+                                err_msg += ": " + cast_ctx.message;
+                            }
+                            if (!cast_ctx.violating_value.empty())
+                            {
+                                err_msg += " (value: " + cast_ctx.violating_value + ")";
+                            }
+                            error(err_msg);
+                        }
+                        row_values_full[col_idx] = std::move(coerced);
+                        if (col_idx < row_values.size())
+                        {
+                            row_values[col_idx] = row_values_full[col_idx];
                         }
                     }
-                    catch (...)
-                    {
-                        current_row_values_ = nullptr;
-                        current_row_columns_ = nullptr;
-                        pc_ = saved_pc;
-                        throw;
-                    }
-                }
 
-                for (const auto& assign : assignments)
-                {
-                    const auto& col = all_columns[assign.column_index];
-                    if (!col.is_array || row_values[assign.column_index].isNull())
+                    auto* domain_mgr = db_->domain_manager();
+                    if (!domain_mgr)
                     {
-                        continue;
+                        error("Domain manager unavailable for domain enforcement");
                     }
-
-                    core::TypedValue coerced;
-                    core::ErrorContext cast_ctx;
-                    if (!coerceValueForColumn(row_values[assign.column_index], col,
-                                              coerced, &cast_ctx))
-                    {
-                        std::string err_msg = "Type mismatch for column '" + col.column_name + "'";
-                        if (!cast_ctx.message.empty())
-                        {
-                            err_msg += ": " + cast_ctx.message;
-                        }
-                        if (!cast_ctx.violating_value.empty())
-                        {
-                            err_msg += " (value: " + cast_ctx.violating_value + ")";
-                        }
-                        error(err_msg);
-                    }
-                    row_values[assign.column_index] = std::move(coerced);
-                }
-
-                auto* domain_mgr = db_->domain_manager();
-                if (!domain_mgr)
-                {
-                    error("Domain manager unavailable for domain enforcement");
-                }
 
                 // Plan 03B: Apply normalization and quality pipelines to updated domain columns
                 for (const auto& assign : assignments)
                 {
-                    const auto& col = all_columns[assign.column_index];
+                    size_t col_idx = assign.column_index;
+                    const auto& col = target_columns[col_idx];
                     if (col.domain_id == core::ID())
                     {
                         continue;
@@ -17205,7 +18445,7 @@ namespace scratchbird
 
                     core::ErrorContext domain_ctx;
                     auto norm_status = domain_mgr->applyNormalization(col.domain_id,
-                                                                     row_values[assign.column_index],
+                                                                     row_values_full[col_idx],
                                                                      this,
                                                                      &domain_ctx);
                     if (norm_status != core::Status::OK)
@@ -17221,7 +18461,7 @@ namespace scratchbird
 
                     core::QualityResult quality_result;
                     auto quality_status = domain_mgr->executeQualityPipeline(col.domain_id,
-                                                                            row_values[assign.column_index],
+                                                                            row_values_full[col_idx],
                                                                             this,
                                                                             quality_result,
                                                                             &domain_ctx);
@@ -17239,7 +18479,7 @@ namespace scratchbird
 
                 // Security Phase 3.5: Row-Level Security WITH CHECK enforcement for UPDATE
                 // Check if new row values pass policies (after assignments)
-                if (!checkRLSPolicies(table_id, row_values, all_columns,
+                if (!checkRLSPolicies(table_id, row_values_full, target_columns,
                                      core::CatalogManager::PolicyType::UPDATE,
                                      true /* is_with_check */))
                 {
@@ -17249,8 +18489,9 @@ namespace scratchbird
                 // ALPHA Phase A+: Enforce NOT NULL constraints on updated columns (Nov 19, 2025)
                 for (const auto& assign : assignments)
                 {
-                    const auto& col = all_columns[assign.column_index];
-                    if (!col.nullable && row_values[assign.column_index].isNull())
+                    size_t col_idx = assign.column_index;
+                    const auto& col = target_columns[col_idx];
+                    if (!col.nullable && row_values_full[col_idx].isNull())
                     {
                         error("NOT NULL constraint violation: cannot set NULL value in column '" + col.column_name + "'");
                     }
@@ -17259,8 +18500,9 @@ namespace scratchbird
                 // ALPHA Phase A+: Enforce data type validation on updated columns (Nov 19, 2025)
                 for (const auto& assign : assignments)
                 {
-                    const auto& col = all_columns[assign.column_index];
-                    const auto& val = row_values[assign.column_index];
+                    size_t col_idx = assign.column_index;
+                    const auto& col = target_columns[col_idx];
+                    const auto& val = row_values_full[col_idx];
 
                     if (val.isNull())
                     {
@@ -17283,22 +18525,26 @@ namespace scratchbird
                         error(err_msg);
                     }
 
-                    row_values[assign.column_index] = std::move(coerced);
+                    row_values_full[col_idx] = std::move(coerced);
+                    if (col_idx < row_values.size())
+                    {
+                        row_values[col_idx] = row_values_full[col_idx];
+                    }
                 }
 
                 uint64_t xid = db_->storage_engine()->getCurrentXid();
 
                 // Plan 03B Task 3.2: Enforce global domain uniqueness for updated values
-                for (size_t i = 0; i < all_columns.size(); i++)
+                for (size_t i = 0; i < target_columns.size(); i++)
                 {
-                    const auto& col = all_columns[i];
+                    const auto& col = target_columns[i];
                     if (col.domain_id == core::ID())
                     {
                         continue;
                     }
 
-                    const auto& old_val = old_row_values[i];
-                    const auto& new_val = row_values[i];
+                    const auto& old_val = old_row_values_full[i];
+                    const auto& new_val = row_values_full[i];
 
                     if (new_val.isNull())
                     {
@@ -17342,7 +18588,8 @@ namespace scratchbird
             // Plan 03B: Execute domain validation functions for updated columns
             for (const auto& assign : assignments)
                 {
-                    const auto& col = all_columns[assign.column_index];
+                    size_t col_idx = assign.column_index;
+                    const auto& col = target_columns[col_idx];
                     if (col.domain_id == core::ID())
                     {
                         continue;
@@ -17351,7 +18598,7 @@ namespace scratchbird
                     bool is_valid = true;
                     core::ErrorContext val_ctx;
                     auto val_status = domain_mgr->validateValue(col.domain_id,
-                                                               row_values[assign.column_index],
+                                                               row_values_full[col_idx],
                                                                this,
                                                                is_valid,
                                                                &val_ctx);
@@ -17380,7 +18627,8 @@ namespace scratchbird
             // Plan 03B: Enforce domain constraints for updated columns
             for (const auto& assign : assignments)
             {
-                const auto& col = all_columns[assign.column_index];
+                size_t col_idx = assign.column_index;
+                const auto& col = target_columns[col_idx];
                 if (col.domain_id == core::ID())
                 {
                     continue;
@@ -17388,7 +18636,7 @@ namespace scratchbird
 
                 core::ErrorContext constraint_ctx;
                 auto constraint_status = domain_mgr->validateValue(col.domain_id,
-                                                                  row_values[assign.column_index],
+                                                                  row_values_full[col_idx],
                                                                   &constraint_ctx);
                 if (constraint_status != core::Status::OK)
                 {
@@ -17405,17 +18653,18 @@ namespace scratchbird
             // ALPHA Phase A+: Enforce PRIMARY KEY constraints on updated columns (Nov 19, 2025)
             for (const auto& assign : assignments)
             {
-                const auto& col = all_columns[assign.column_index];
+                size_t col_idx = assign.column_index;
+                const auto& col = target_columns[col_idx];
                     if (col.is_primary_key)
                     {
                         // PRIMARY KEY = NOT NULL + UNIQUE
-                        if (row_values[assign.column_index].isNull())
+                        if (row_values_full[col_idx].isNull())
                         {
                             error("PRIMARY KEY constraint violation: cannot set NULL value in PRIMARY KEY column '" + col.column_name + "'");
                         }
                         // Check uniqueness
-                        if (checkUniqueViolationForUpdate(table_id, col, row_values[assign.column_index],
-                                                         all_columns, tuple.tid))
+                        if (checkUniqueViolationForUpdate(table_id, col, row_values_full[col_idx],
+                                                         target_columns, tuple.tid))
                         {
                             error("PRIMARY KEY constraint violation: duplicate value in column '" + col.column_name + "'");
                         }
@@ -17425,11 +18674,12 @@ namespace scratchbird
                 // ALPHA Phase A: Enforce CHECK constraints on updated columns
                 for (const auto& assign : assignments)
                 {
-                    const auto& col = all_columns[assign.column_index];
+                    size_t col_idx = assign.column_index;
+                    const auto& col = target_columns[col_idx];
                     if (!col.check_expr.empty() || col.check_expr_oid != 0)
                     {
                         // Column has a CHECK constraint - evaluate it
-                        if (!evaluateCheckConstraint(col, row_values, all_columns))
+                        if (!evaluateCheckConstraint(col, row_values_full, target_columns))
                         {
                             error("CHECK constraint violation on column '" + col.column_name + "'");
                         }
@@ -17439,17 +18689,18 @@ namespace scratchbird
                 // ALPHA Phase A: Enforce UNIQUE constraints on updated columns
                 for (const auto& assign : assignments)
                 {
-                    const auto& col = all_columns[assign.column_index];
+                    size_t col_idx = assign.column_index;
+                    const auto& col = target_columns[col_idx];
                     // Skip if already checked as PRIMARY KEY
                     if (col.is_primary_key) continue;
 
-                    if (col.is_unique && !row_values[assign.column_index].isNull())
+                    if (col.is_unique && !row_values_full[col_idx].isNull())
                     {
                         // Column has a UNIQUE constraint and new value is not NULL
                         // Check if the new value already exists in another row
                         // Note: We need to exclude the current row from the check
-                        if (checkUniqueViolationForUpdate(table_id, col, row_values[assign.column_index],
-                                                         all_columns, tuple.tid))
+                        if (checkUniqueViolationForUpdate(table_id, col, row_values_full[col_idx],
+                                                         target_columns, tuple.tid))
                         {
                             error("UNIQUE constraint violation on column '" + col.column_name + "'");
                         }
@@ -17460,7 +18711,7 @@ namespace scratchbird
                 updated_columns.reserve(assignments.size());
                 for (const auto& assign : assignments)
                 {
-                    updated_columns.insert(all_columns[assign.column_index].column_name);
+                    updated_columns.insert(target_columns[assign.column_index].column_name);
                 }
 
                 std::vector<core::CatalogManager::ConstraintInfo> table_constraints;
@@ -17472,7 +18723,7 @@ namespace scratchbird
                         {
                             continue;
                         }
-                        if (!evaluateTableCheckConstraint(constraint, row_values, all_columns))
+                        if (!evaluateTableCheckConstraint(constraint, row_values_full, target_columns))
                         {
                             std::string label = constraint.constraint_name.empty()
                                 ? "CHECK constraint"
@@ -17509,8 +18760,8 @@ namespace scratchbird
 
                         if (constraint.column_names.size() == 1)
                         {
-                            size_t idx = resolve_column_index(constraint.column_names[0]);
-                            const auto& col = all_columns[idx];
+                            size_t idx = resolve_target_column_index(constraint.column_names[0]);
+                            const auto& col = target_columns[idx];
                             if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY &&
                                 col.is_primary_key)
                             {
@@ -17531,11 +18782,11 @@ namespace scratchbird
                         {
                             size_t idx = resolve_column_index(name);
                             indices.push_back(idx);
-                            if (row_values[idx].isNull())
+                            if (row_values_full[idx].isNull())
                             {
                                 has_null = true;
                             }
-                            if (!valuesEqual(old_row_values[idx], row_values[idx]))
+                            if (!valuesEqual(old_row_values_full[idx], row_values_full[idx]))
                             {
                                 changed = true;
                             }
@@ -17559,7 +18810,7 @@ namespace scratchbird
                             continue;
                         }
 
-                        if (find_conflict_row(indices, row_values, tuple.tid))
+                        if (find_conflict_row_target(indices, row_values_full, tuple.tid))
                         {
                             std::string label = constraint.constraint_name.empty()
                                 ? "composite key"
@@ -17576,7 +18827,7 @@ namespace scratchbird
                     }
                 }
 
-                enforceUniqueIndexes(table_id, row_values, all_columns, table_constraints, &tuple.tid);
+                enforceUniqueIndexes(table_id, row_values_full, target_columns, table_constraints, &tuple.tid);
 
                 // ALPHA Phase A: Enforce FOREIGN KEY constraints on updated columns
                 // Get all FKs for this table (where this table is the child)
@@ -17593,7 +18844,7 @@ namespace scratchbird
                         bool fk_updated = false;
                         for (const auto& assign : assignments)
                         {
-                            const auto& col_name = all_columns[assign.column_index].column_name;
+                            const auto& col_name = target_columns[assign.column_index].column_name;
                             if (std::find(fk.child_columns.begin(), fk.child_columns.end(), col_name)
                                 != fk.child_columns.end())
                             {
@@ -17608,11 +18859,11 @@ namespace scratchbird
                             std::vector<Value> fk_values;
                             for (const auto& col_name : fk.child_columns)
                             {
-                                for (size_t i = 0; i < all_columns.size(); i++)
+                                for (size_t i = 0; i < target_columns.size(); i++)
                                 {
-                                    if (all_columns[i].column_name == col_name)
+                                    if (target_columns[i].column_name == col_name)
                                     {
-                                        fk_values.push_back(row_values[i]);
+                                        fk_values.push_back(row_values_full[i]);
                                         break;
                                     }
                                 }
@@ -17637,7 +18888,7 @@ namespace scratchbird
                 // Serialize updated tuple data (same format as INSERT)
                 std::vector<uint8_t> new_tuple_data;
                 core::ErrorContext serialize_ctx;
-                if (!serializeTupleFromValues(row_values, all_columns, new_tuple_data, &serialize_ctx))
+                if (!serializeTupleFromValues(row_values_full, target_columns, new_tuple_data, &serialize_ctx))
                 {
                     std::string err_msg = "Failed to serialize tuple for UPDATE";
                     if (!serialize_ctx.message.empty())
@@ -17682,7 +18933,7 @@ namespace scratchbird
                     {
                         if (!trig.enabled) continue;
 
-                        TriggerContext ctx(trig, &old_row_values, &row_values, table_info, all_columns);
+                        TriggerContext ctx(trig, &old_row_values_full, &row_values_full, table_info, target_columns);
                         should_continue = fireTrigger(ctx);
 
                         if (!should_continue)
@@ -17700,32 +18951,87 @@ namespace scratchbird
 
                 // P1-6: Apply foreign key actions BEFORE update (cascade to child tables)
                 // This must happen before the actual update so child rows can detect FK column changes
-                applyFKActionOnUpdate(table_id, old_row_values, row_values, all_columns);
+                applyFKActionOnUpdate(table_id, old_row_values_full, row_values_full, target_columns);
 
                 // Call StorageEngine::updateTuple with MGA versioning
                 uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
                 uint16_t item_id = core::getSlot(tuple.tid);
-                uint32_t new_page_id;
-                uint16_t new_item_id;
+                core::TID old_tid(page_id, item_id);
+                core::TID new_tid;
 
-                auto update_status = db_->storage_engine()->updateTuple(
-                    table_id, page_id, item_id,
-                    new_tuple_data.data(), new_tuple_data.size(),
-                    &new_page_id, &new_item_id, nullptr);
-
-                if (update_status != core::Status::OK)
+                core::CatalogManager::TableInfo routed_table_info = table_info;
+                core::ID routed_table_id = table_id;
+                if (has_partitioning && !partition_children.empty())
                 {
-                    error("Failed to update tuple in storage");
+                    select_partition_target(row_values, table_info, routed_table_info);
+                    routed_table_id = routed_table_info.table_id;
                 }
 
-                // Task 17 Phase 7: Update expression/filtered indexes
-                core::TID old_tid(page_id, item_id);
-                core::TID new_tid(new_page_id, new_item_id);
+                if (routed_table_id != table_id)
+                {
+                    if (!checkRLSPolicies(routed_table_id, row_values_full, target_columns,
+                                          core::CatalogManager::PolicyType::INSERT,
+                                          true /* is_with_check */))
+                    {
+                        error("Row-level security policy violation: UPDATE partition migration WITH CHECK failed");
+                    }
+
+                    uint32_t ins_page_id;
+                    uint16_t ins_item_id;
+                    auto insert_status = db_->storage_engine()->insertTuple(
+                        routed_table_id,
+                        new_tuple_data.data(),
+                        static_cast<uint32_t>(new_tuple_data.size()),
+                        &ins_page_id,
+                        &ins_item_id,
+                        nullptr);
+
+                    if (insert_status != core::Status::OK)
+                    {
+                        error("Failed to insert tuple into target partition");
+                    }
+
+                    new_tid = core::TID(ins_page_id, ins_item_id);
+
+                    updateIndexesOnInsert(xid, routed_table_id, routed_table_info,
+                                          target_columns, ins_page_id, ins_item_id, row_values_full);
+                    updateIndexesOnDelete(xid, table_id, table_info,
+                                          target_columns, old_row_values_full, old_tid);
+
+                    auto delete_status = db_->storage_engine()->deleteTuple(
+                        table_id, old_tid, nullptr);
+                    if (delete_status != core::Status::OK)
+                    {
+                        error("Failed to delete tuple during partition migration");
+                    }
+
+                    updated_tables.insert(routed_table_id);
+                }
+                else
+                {
+                    uint32_t new_page_id;
+                    uint16_t new_item_id;
+                    auto update_status = db_->storage_engine()->updateTuple(
+                        table_id, page_id, item_id,
+                        new_tuple_data.data(), new_tuple_data.size(),
+                        &new_page_id, &new_item_id, nullptr);
+
+                    if (update_status != core::Status::OK)
+                    {
+                        error("Failed to update tuple in storage");
+                    }
+
+                    new_tid = core::TID(new_page_id, new_item_id);
+
+                    // Task 17 MGA Phase 1.1: Pass current transaction ID
+                    updateIndexesOnUpdate(xid, table_id, table_info, target_columns,
+                                          old_row_values_full, row_values_full, old_tid, new_tid);
+                }
 
                 // Plan 03B Task 3.2: Update domain uniqueness entries for new tuple version
-                for (size_t i = 0; i < all_columns.size(); i++)
+                for (size_t i = 0; i < target_columns.size(); i++)
                 {
-                    const auto& col = all_columns[i];
+                    const auto& col = target_columns[i];
                     if (col.domain_id == core::ID())
                     {
                         continue;
@@ -17736,7 +19042,7 @@ namespace scratchbird
                                                                        table_id,
                                                                        col.column_id,
                                                                        old_tid,
-                                                                       old_row_values[i],
+                                                                       old_row_values_full[i],
                                                                        xid,
                                                                        &uniq_ctx);
                     if (del_status != core::Status::OK)
@@ -17754,7 +19060,7 @@ namespace scratchbird
                                                                       table_id,
                                                                       col.column_id,
                                                                       new_tid,
-                                                                      row_values[i],
+                                                                      row_values_full[i],
                                                                       xid,
                                                                       &uniq_ctx);
                     if (ins_status != core::Status::OK)
@@ -17768,9 +19074,6 @@ namespace scratchbird
                         error(err_msg);
                     }
                 }
-
-                // Task 17 MGA Phase 1.1: Pass current transaction ID
-                updateIndexesOnUpdate(xid, table_id, table_info, all_columns, old_row_values, row_values, old_tid, new_tid);
 
                 // Wave 2: Fire AFTER UPDATE triggers
                 std::vector<core::CatalogManager::TriggerInfo> after_triggers;
@@ -17788,21 +19091,27 @@ namespace scratchbird
                     {
                         if (!trig.enabled) continue;
 
-                        TriggerContext ctx(trig, &old_row_values, &row_values, table_info, all_columns);
+                        TriggerContext ctx(trig, &old_row_values_full, &row_values_full, table_info, target_columns);
                         fireTrigger(ctx);  // AFTER triggers don't prevent operation
                     }
                 }
 
                 affected_count++;
 
-                emit_returning_row(row_values);
+                    emit_returning_row(row_values);
+                }
             }
+            table_id = base_table_id;
+            table_info = base_table_info;
 
             // Note: Index updates are handled automatically by StorageEngine
             // in the updateTuple() method for MGA architecture
 
             // P2-19: Invalidate cached query results for this table
-            QueryResultCacheManager::getInstance().invalidateTable(table_id);
+            for (const auto& id : updated_tables)
+            {
+                QueryResultCacheManager::getInstance().invalidateTable(id);
+            }
             last_affected_rows_ = affected_count;
         }
 
@@ -18504,22 +19813,47 @@ namespace scratchbird
                     error("Failed to get columns for table " + load_table_name);
                 }
 
-                auto scan_iter = db_->storage_engine()->createScan(load_table_id, nullptr);
-                if (!scan_iter)
-                {
-                    error("Failed to create table scan iterator");
-                }
-
                 std::vector<std::vector<Value>> rows;
-                core::Tuple tuple;
-                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                auto expanded_tables = collectExpandedTables(db_->catalog_manager(), load_table_info, &load_ctx);
+                if (expanded_tables.empty())
                 {
-                    std::vector<Value> row_values;
-                    if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                    expanded_tables.push_back(load_table_info);
+                }
+                for (const auto& target : expanded_tables)
+                {
+                    std::vector<core::CatalogManager::ColumnInfo> target_columns;
+                    if (db_->catalog_manager()->getColumns(target.table_id, target_columns, nullptr) != core::Status::OK)
                     {
-                        continue;
+                        error("Failed to get columns for table " + target.table_name);
                     }
-                    rows.push_back(std::move(row_values));
+                    if (target_columns.size() < columns.size())
+                    {
+                        error("INHERITS requires child tables to include parent columns");
+                    }
+                    for (size_t i = 0; i < columns.size(); ++i)
+                    {
+                        if (columns[i].column_name != target_columns[i].column_name)
+                        {
+                            error("INHERITS requires child tables to prefix parent column order");
+                        }
+                    }
+
+                    auto scan_iter = db_->storage_engine()->createScan(target.table_id, nullptr);
+                    if (!scan_iter)
+                    {
+                        error("Failed to create table scan iterator");
+                    }
+
+                    core::Tuple tuple;
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                    {
+                        std::vector<Value> row_values;
+                        if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                        {
+                            continue;
+                        }
+                        rows.push_back(std::move(row_values));
+                    }
                 }
 
                 out.ref = ref;
@@ -18593,12 +19927,14 @@ namespace scratchbird
                 combined_columns_template = all_columns;
             }
 
-            // Create table scan iterator
-            auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
-            if (!scan_iter)
+            core::ID base_table_id = table_id;
+            core::CatalogManager::TableInfo base_table_info = table_info;
+            auto target_tables = collectExpandedTables(db_->catalog_manager(), table_info, &err_ctx);
+            if (target_tables.empty())
             {
-                error("Failed to create table scan iterator");
+                target_tables.push_back(table_info);
             }
+            std::unordered_set<core::ID, core::IDHash> deleted_tables;
 
             auto build_combined_rows = [&](const std::vector<Value>& base_row,
                                            std::vector<std::vector<Value>>& out_rows) {
@@ -18714,67 +20050,96 @@ namespace scratchbird
             int affected_count = 0;
             core::Tuple tuple;
 
-            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            for (const auto& target_table : target_tables)
             {
-                // Deserialize tuple data for WHERE evaluation
-                std::vector<Value> row_values;
-                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                table_id = target_table.table_id;
+                table_info = target_table;
+                deleted_tables.insert(table_id);
+
+                std::vector<core::CatalogManager::ColumnInfo> target_columns;
+                if (db_->catalog_manager()->getColumns(table_id, target_columns, nullptr) != core::Status::OK)
                 {
-                    continue; // Skip malformed tuples
+                    error("Failed to get columns for table " + table_info.table_name);
                 }
-
-                std::vector<std::vector<Value>> combined_rows;
-                build_combined_rows(row_values, combined_rows);
-
-                bool should_delete = false;
-                for (auto& combined_row : combined_rows)
+                if (target_columns.size() < all_columns.size())
                 {
-                    bool matches = true;
-                    if (has_where)
+                    error("INHERITS requires child tables to include parent columns");
+                }
+                for (size_t i = 0; i < all_columns.size(); ++i)
+                {
+                    if (all_columns[i].column_name != target_columns[i].column_name)
                     {
-                        size_t saved_pc = pc_;
-                        pc_ = where_start_pc;
-                        current_row_values_ = &combined_row;
-                        current_row_columns_ = &combined_columns_template;
-
-                        try
-                        {
-                            Value where_result = evaluateExpressionRange(where_end_pc);
-                            current_row_values_ = nullptr;
-                            current_row_columns_ = nullptr;
-                            pc_ = saved_pc;
-                            matches = where_result.toBoolean();
-                        }
-                        catch (...)
-                        {
-                            current_row_values_ = nullptr;
-                            current_row_columns_ = nullptr;
-                            pc_ = saved_pc;
-                            throw;
-                        }
-                    }
-
-                    if (matches)
-                    {
-                        should_delete = true;
-                        break;
+                        error("INHERITS requires child tables to prefix parent column order");
                     }
                 }
 
-                if (!should_delete)
+                auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+                if (!scan_iter)
                 {
-                    continue;
+                    error("Failed to create table scan iterator");
                 }
 
-                // Security Phase 3.5: Row-Level Security USING enforcement for DELETE
-                // Check if user can see/delete this row
-                if (!checkRLSPolicies(table_id, row_values, all_columns,
-                                     core::CatalogManager::PolicyType::DELETE,
-                                     false /* is_using, not with_check */))
+                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
                 {
-                    // Row not visible to user - skip deletion
-                    continue;
-                }
+                    // Deserialize tuple data for WHERE evaluation
+                    std::vector<Value> row_values;
+                    if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                    {
+                        continue; // Skip malformed tuples
+                    }
+
+                    std::vector<std::vector<Value>> combined_rows;
+                    build_combined_rows(row_values, combined_rows);
+
+                    bool should_delete = false;
+                    for (auto& combined_row : combined_rows)
+                    {
+                        bool matches = true;
+                        if (has_where)
+                        {
+                            size_t saved_pc = pc_;
+                            pc_ = where_start_pc;
+                            current_row_values_ = &combined_row;
+                            current_row_columns_ = &combined_columns_template;
+
+                            try
+                            {
+                                Value where_result = evaluateExpressionRange(where_end_pc);
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = saved_pc;
+                                matches = where_result.toBoolean();
+                            }
+                            catch (...)
+                            {
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = saved_pc;
+                                throw;
+                            }
+                        }
+
+                        if (matches)
+                        {
+                            should_delete = true;
+                            break;
+                        }
+                    }
+
+                    if (!should_delete)
+                    {
+                        continue;
+                    }
+
+                    // Security Phase 3.5: Row-Level Security USING enforcement for DELETE
+                    // Check if user can see/delete this row
+                    if (!checkRLSPolicies(table_id, row_values, all_columns,
+                                         core::CatalogManager::PolicyType::DELETE,
+                                         false /* is_using, not with_check */))
+                    {
+                        // Row not visible to user - skip deletion
+                        continue;
+                    }
 
                 // Wave 2: Fire BEFORE DELETE triggers
                 std::vector<core::CatalogManager::TriggerInfo> before_triggers;
@@ -18891,15 +20256,21 @@ namespace scratchbird
 
                 affected_count++;
 
-                emit_returning_row(row_values);
+                    emit_returning_row(row_values);
+                }
             }
+            table_id = base_table_id;
+            table_info = base_table_info;
 
             // Note: Index cleanup is handled automatically by StorageEngine
             // in the deleteTuple() method for MGA architecture
 
             // P2-19: Invalidate cached query results for this table
             if (affected_count > 0) {
-                QueryResultCacheManager::getInstance().invalidateTable(table_id);
+                for (const auto& id : deleted_tables)
+                {
+                    QueryResultCacheManager::getInstance().invalidateTable(id);
+                }
             }
             last_affected_rows_ = affected_count;
         }
@@ -21940,7 +23311,17 @@ namespace scratchbird
                     core::DataType type1 = val1.type();
                     core::DataType type2 = val2.type();
 
-                    if (type1 == core::DataType::VARCHAR || type2 == core::DataType::VARCHAR)
+                    auto is_textual = [](core::DataType t) {
+                        return t == core::DataType::VARCHAR ||
+                               t == core::DataType::TEXT ||
+                               t == core::DataType::CHAR ||
+                               t == core::DataType::UUID ||
+                               t == core::DataType::JSON ||
+                               t == core::DataType::JSONB ||
+                               t == core::DataType::XML;
+                    };
+
+                    if (is_textual(type1) || is_textual(type2))
                     {
                         // String comparison (use collation-aware comparison)
                         std::string str1 = val1.toString();
@@ -24160,8 +25541,6 @@ namespace scratchbird
                     }
                 }
 
-                last_select_table_ids_.insert(table_info.table_id);
-
                 // Check SELECT permission on table (skip for emulated schemas)
                 bool skip_permission_check = current_schema_set_;
                 bool has_table_select = skip_permission_check || checkPermission(
@@ -24289,17 +25668,51 @@ namespace scratchbird
                     projections.push_back(std::move(proj));
                 }
 
-                bool use_fulltext_index = false;
-                bool skip_where_eval = false;
-                std::vector<core::TID> fulltext_tids;
+                bool has_fulltext_predicate = false;
+                std::string ft_column;
+                size_t query_start = 0;
+                size_t query_end = 0;
 
                 if (has_where)
                 {
-                    std::string ft_column;
-                    size_t query_start = 0;
-                    size_t query_end = 0;
                     if (extractFullTextPredicate(where_start_pc, where_end_pc,
                                                  ft_column, query_start, query_end))
+                    {
+                        has_fulltext_predicate = true;
+                    }
+                }
+
+                auto expanded_tables = collectExpandedTables(db_->catalog_manager(), table_info, &err_ctx);
+                if (expanded_tables.empty())
+                {
+                    expanded_tables.push_back(table_info);
+                }
+
+                for (const auto& target_table : expanded_tables)
+                {
+                    std::vector<core::CatalogManager::ColumnInfo> target_columns;
+                    if (db_->catalog_manager()->getColumns(target_table.table_id, target_columns, nullptr)
+                        != core::Status::OK)
+                    {
+                        error("Failed to get table columns for table " + target_table.table_name);
+                    }
+                    if (target_columns.size() < all_columns.size())
+                    {
+                        error("INHERITS requires child tables to include parent columns");
+                    }
+                    for (size_t i = 0; i < all_columns.size(); ++i)
+                    {
+                        if (all_columns[i].column_name != target_columns[i].column_name)
+                        {
+                            error("INHERITS requires child tables to prefix parent column order");
+                        }
+                    }
+
+                    bool use_fulltext_index = false;
+                    bool skip_where_eval = false;
+                    std::vector<core::TID> fulltext_tids;
+
+                    if (has_fulltext_predicate)
                     {
                         std::string ft_column_upper = normalize_name(ft_column);
                         auto col_it = std::find_if(all_columns.begin(), all_columns.end(),
@@ -24310,7 +25723,7 @@ namespace scratchbird
                         if (col_it != all_columns.end())
                         {
                             core::CatalogManager::IndexInfo ft_index;
-                            if (findFullTextIndexForColumn(table_info.table_id, col_it->column_id, ft_index))
+                            if (findFullTextIndexForColumn(target_table.table_id, col_it->column_id, ft_index))
                             {
                                 std::vector<uint8_t> key_bytes;
                                 if (buildFullTextQueryKey(query_start, query_end, key_bytes))
@@ -24337,95 +25750,97 @@ namespace scratchbird
                             }
                         }
                     }
-                }
 
-                auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
-                if (!scan_iter && !use_fulltext_index)
-                {
-                    error("Failed to create table scan iterator");
-                }
-
-                core::Tuple tuple;
-                auto emit_row = [&](const core::Tuple& tuple_in) {
-                    std::vector<Value> row_values;
-                    if (!deserializeTuple(tuple_in.data, tuple_in.data_size, all_columns, row_values))
+                    auto scan_iter = db_->storage_engine()->createScan(target_table.table_id, nullptr);
+                    if (!scan_iter && !use_fulltext_index)
                     {
-                        return;
+                        error("Failed to create table scan iterator");
                     }
 
-                    if (!checkRLSPolicies(table_info.table_id, row_values, all_columns,
-                                          core::CatalogManager::PolicyType::SELECT,
-                                          false /* is_with_check */))
-                    {
-                        return;
-                    }
-
-                    if (has_where && !skip_where_eval)
-                    {
-                        size_t saved_pc = pc_;
-                        pc_ = where_start_pc;
-                        current_row_values_ = &row_values;
-                        current_row_columns_ = &all_columns;
-
-                        Value where_result = evaluateExpressionRange(where_end_pc);
-
-                        current_row_values_ = nullptr;
-                        current_row_columns_ = nullptr;
-                        pc_ = saved_pc;
-
-                        if (!where_result.toBoolean())
+                    core::Tuple tuple;
+                    auto emit_row = [&](const core::Tuple& tuple_in) {
+                        std::vector<Value> row_values;
+                        if (!deserializeTuple(tuple_in.data, tuple_in.data_size, all_columns, row_values))
                         {
                             return;
                         }
-                    }
 
-                    std::vector<Value> result_row;
-                    for (const auto& proj : projections)
-                    {
-                        if (proj.kind == SelectItemInfo::Kind::STAR ||
-                            proj.kind == SelectItemInfo::Kind::TABLE_STAR)
+                        if (!checkRLSPolicies(target_table.table_id, row_values, all_columns,
+                                              core::CatalogManager::PolicyType::SELECT,
+                                              false /* is_with_check */))
                         {
-                            for (size_t idx : proj.column_indices)
-                            {
-                                result_row.push_back(row_values[idx]);
-                            }
+                            return;
                         }
-                        else
+
+                        if (has_where && !skip_where_eval)
                         {
                             size_t saved_pc = pc_;
-                            pc_ = proj.expr_start;
+                            pc_ = where_start_pc;
                             current_row_values_ = &row_values;
                             current_row_columns_ = &all_columns;
-                            Value value = evaluateExpressionRange(proj.expr_end);
+
+                            Value where_result = evaluateExpressionRange(where_end_pc);
+
                             current_row_values_ = nullptr;
                             current_row_columns_ = nullptr;
                             pc_ = saved_pc;
-                            result_row.push_back(std::move(value));
+
+                            if (!where_result.toBoolean())
+                            {
+                                return;
+                            }
                         }
-                    }
 
-                    current_result_set_->addRow(std::move(result_row));
-                };
-
-                if (use_fulltext_index)
-                {
-                    core::ErrorContext tuple_ctx;
-                    for (const auto& tid : fulltext_tids)
-                    {
-                        if (db_->storage_engine()->getTuple(table_info.table_id, tid, &tuple, &tuple_ctx)
-                            != core::Status::OK)
+                        std::vector<Value> result_row;
+                        for (const auto& proj : projections)
                         {
-                            continue;
+                            if (proj.kind == SelectItemInfo::Kind::STAR ||
+                                proj.kind == SelectItemInfo::Kind::TABLE_STAR)
+                            {
+                                for (size_t idx : proj.column_indices)
+                                {
+                                    result_row.push_back(row_values[idx]);
+                                }
+                            }
+                            else
+                            {
+                                size_t saved_pc = pc_;
+                                pc_ = proj.expr_start;
+                                current_row_values_ = &row_values;
+                                current_row_columns_ = &all_columns;
+                                Value value = evaluateExpressionRange(proj.expr_end);
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = saved_pc;
+                                result_row.push_back(std::move(value));
+                            }
                         }
-                        emit_row(tuple);
-                    }
-                }
-                else
-                {
-                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+
+                        current_result_set_->addRow(std::move(result_row));
+                    };
+
+                    if (use_fulltext_index)
                     {
-                        emit_row(tuple);
+                        core::ErrorContext tuple_ctx;
+                        for (const auto& tid : fulltext_tids)
+                        {
+                            if (db_->storage_engine()->getTuple(target_table.table_id, tid, &tuple, &tuple_ctx)
+                                != core::Status::OK)
+                            {
+                                continue;
+                            }
+                            emit_row(tuple);
+                        }
                     }
+                    else
+                    {
+                        while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                        {
+                            emit_row(tuple);
+                        }
+                    }
+
+                    last_select_table_ids_.insert(target_table.table_id);
                 }
             }
             else
@@ -24513,29 +25928,55 @@ namespace scratchbird
                         error("Failed to get columns for table " + table_name);
                     }
 
-                    auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
-                    if (!scan_iter)
-                    {
-                        error("Failed to create table scan iterator");
-                    }
-
                     std::vector<std::vector<Value>> rows;
-                    core::Tuple tuple;
-                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                    auto expanded_tables = collectExpandedTables(db_->catalog_manager(), table_info, &err_ctx);
+                    if (expanded_tables.empty())
                     {
-                        std::vector<Value> row_values;
-                        if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                        expanded_tables.push_back(table_info);
+                    }
+                    for (const auto& target : expanded_tables)
+                    {
+                        std::vector<core::CatalogManager::ColumnInfo> target_columns;
+                        if (db_->catalog_manager()->getColumns(target.table_id, target_columns, nullptr) != core::Status::OK)
                         {
-                            continue;
+                            error("Failed to get columns for table " + target.table_name);
                         }
-                        if (!isZeroUuid(table_id) &&
-                            !checkRLSPolicies(table_id, row_values, columns,
-                                              core::CatalogManager::PolicyType::SELECT,
-                                              false /* is_with_check */))
+                        if (target_columns.size() < columns.size())
                         {
-                            continue;
+                            error("INHERITS requires child tables to include parent columns");
                         }
-                        rows.push_back(std::move(row_values));
+                        for (size_t i = 0; i < columns.size(); ++i)
+                        {
+                            if (columns[i].column_name != target_columns[i].column_name)
+                            {
+                                error("INHERITS requires child tables to prefix parent column order");
+                            }
+                        }
+
+                        auto scan_iter = db_->storage_engine()->createScan(target.table_id, nullptr);
+                        if (!scan_iter)
+                        {
+                            error("Failed to create table scan iterator");
+                        }
+
+                        core::Tuple tuple;
+                        while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                        {
+                            std::vector<Value> row_values;
+                            if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                            {
+                                continue;
+                            }
+                            if (!isZeroUuid(target.table_id) &&
+                                !checkRLSPolicies(target.table_id, row_values, columns,
+                                                  core::CatalogManager::PolicyType::SELECT,
+                                                  false /* is_with_check */))
+                            {
+                                continue;
+                            }
+                            rows.push_back(std::move(row_values));
+                        }
+                        last_select_table_ids_.insert(target.table_id);
                     }
 
                     out.ref = ref;
@@ -41615,6 +43056,132 @@ namespace scratchbird
             deleteObjectDefinition(core::CatalogManager::ObjectType::UDR, udr_id);
         }
 
+        void Executor::executeAlterDefaultPrivileges()
+        {
+            uint8_t action = readByte();
+            std::string grantor_name = readString();
+            uint8_t object_type_byte = readByte();
+            uint32_t privileges = readInt32();
+            uint8_t grantee_type_byte = readByte();
+            std::string grantee_name = readString();
+            uint8_t flags = readByte();
+            bool with_grant_option = flags & 0x01;
+
+            uint32_t schema_count = readInt32();
+            std::vector<std::string> schema_names;
+            schema_names.reserve(schema_count);
+            for (uint32_t i = 0; i < schema_count; ++i)
+            {
+                schema_names.push_back(readString());
+            }
+
+            core::CatalogManager::PermissionObjectType object_type =
+                static_cast<core::CatalogManager::PermissionObjectType>(object_type_byte);
+            core::CatalogManager::GranteeType grantee_type =
+                static_cast<core::CatalogManager::GranteeType>(grantee_type_byte);
+
+            core::ErrorContext err_ctx;
+
+            core::ID grantor_id{};
+            if (grantor_name.empty())
+            {
+                grantor_id = getCurrentUserID();
+            }
+            else
+            {
+                core::CatalogManager::RoleInfo role_info;
+                if (db_->catalog_manager()->getRoleByName(grantor_name, role_info, &err_ctx) == core::Status::OK)
+                {
+                    grantor_id = role_info.role_id;
+                }
+                else
+                {
+                    core::CatalogManager::UserInfo user_info;
+                    if (db_->catalog_manager()->getUserByName(grantor_name, user_info, &err_ctx) == core::Status::OK)
+                    {
+                        grantor_id = user_info.user_id;
+                    }
+                    else
+                    {
+                        error("Grantor not found: " + grantor_name);
+                    }
+                }
+            }
+
+            core::ID grantee_id{};
+            if (grantee_type == core::CatalogManager::GranteeType::PUBLIC)
+            {
+                grantee_id = core::ID{};
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::USER)
+            {
+                core::CatalogManager::UserInfo user_info;
+                if (db_->catalog_manager()->getUserByName(grantee_name, user_info, &err_ctx) != core::Status::OK)
+                {
+                    error("Grantee user not found: " + grantee_name);
+                }
+                grantee_id = user_info.user_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::ROLE)
+            {
+                core::CatalogManager::RoleInfo role_info;
+                if (db_->catalog_manager()->getRoleByName(grantee_name, role_info, &err_ctx) != core::Status::OK)
+                {
+                    error("Grantee role not found: " + grantee_name);
+                }
+                grantee_id = role_info.role_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::GROUP)
+            {
+                core::CatalogManager::GroupInfo group_info;
+                if (db_->catalog_manager()->getGroupByName(grantee_name, group_info, &err_ctx) != core::Status::OK)
+                {
+                    error("Grantee group not found: " + grantee_name);
+                }
+                grantee_id = group_info.group_id;
+            }
+
+            for (const auto& schema_name : schema_names)
+            {
+                std::string resolved_schema;
+                core::ID schema_id{};
+                core::ErrorContext schema_ctx;
+                if (resolveSchemaIdForQualifiedName(schema_name, resolved_schema, schema_id, &schema_ctx, false)
+                    != core::Status::OK)
+                {
+                    std::string err_msg = "Schema not found for ALTER DEFAULT PRIVILEGES: " + schema_name;
+                    if (!schema_ctx.message.empty())
+                    {
+                        err_msg += ": " + schema_ctx.message;
+                    }
+                    error(err_msg);
+                }
+
+                core::Status status;
+                if (action == 1)
+                {
+                    status = db_->catalog_manager()->grantDefaultPrivilege(
+                        schema_id, grantor_id, object_type, grantee_id, grantee_type,
+                        privileges, with_grant_option, &err_ctx);
+                }
+                else
+                {
+                    status = db_->catalog_manager()->revokeDefaultPrivilege(
+                        schema_id, grantor_id, object_type, grantee_id, grantee_type,
+                        privileges, &err_ctx);
+                }
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "ALTER DEFAULT PRIVILEGES failed";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+        }
+
         void Executor::executeGrantPrivilege()
         {
             // Decode bytecode
@@ -49374,6 +50941,53 @@ namespace scratchbird
             }
         }
 
+        Value Executor::evaluateExpressionBytecode(const std::vector<uint8_t>& expr_bytecode,
+                                                   const std::vector<Value>& row_values,
+                                                   const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                                   bool& ok)
+        {
+            ok = false;
+            if (expr_bytecode.empty())
+            {
+                ok = true;
+                return Value::makeNull();
+            }
+
+            size_t saved_pc = pc_;
+            const uint8_t* saved_bytecode = bytecode_;
+            size_t saved_bytecode_size = bytecode_size_;
+            const std::vector<Value>* saved_values = current_row_values_;
+            const std::vector<core::CatalogManager::ColumnInfo>* saved_columns = current_row_columns_;
+
+            bytecode_ = expr_bytecode.data();
+            bytecode_size_ = expr_bytecode.size();
+            pc_ = 0;
+            current_row_values_ = &row_values;
+            current_row_columns_ = &columns;
+
+            try
+            {
+                Value result = evaluateExpressionRange(bytecode_size_);
+                ok = true;
+
+                bytecode_ = saved_bytecode;
+                bytecode_size_ = saved_bytecode_size;
+                pc_ = saved_pc;
+                current_row_values_ = saved_values;
+                current_row_columns_ = saved_columns;
+                return result;
+            }
+            catch (...)
+            {
+                bytecode_ = saved_bytecode;
+                bytecode_size_ = saved_bytecode_size;
+                pc_ = saved_pc;
+                current_row_values_ = saved_values;
+                current_row_columns_ = saved_columns;
+                return Value::makeNull();
+            }
+        }
+
         // ALPHA Phase A: Evaluate DEFAULT value expression for a column
         // For now, supports simple constant defaults (numbers, strings, booleans, NULL)
         // Future: Support function calls like NOW(), CURRENT_USER, etc.
@@ -50292,21 +51906,31 @@ namespace scratchbird
                 std::vector<core::Expression*> expressions;
                 core::Expression* predicate = nullptr;
 
+                bool expressions_are_sblr = false;
+                std::vector<std::vector<uint8_t>> sblr_expressions;
                 if (index_info.is_expression_index)
                 {
-                    try
+                    if (parseSblrExpressionList(index_info.expression_data, sblr_expressions))
                     {
-                        expressions_unique = core::ExpressionSerializer::deserializeList(
-                            index_info.expression_data.data(),
-                            index_info.expression_data.size());
-                        for (auto& expr : expressions_unique)
-                        {
-                            expressions.push_back(expr.get());
-                        }
+                        expressions_are_sblr = true;
                     }
-                    catch (...)
+                    else
                     {
-                        continue;
+                        try
+                        {
+                            expressions_unique = core::ExpressionSerializer::deserializeList(
+                                index_info.expression_data.data(),
+                                index_info.expression_data.size());
+                            for (auto& expr : expressions_unique)
+                            {
+                                expressions.push_back(expr.get());
+                            }
+                        }
+                        catch (...)
+                        {
+                            expressions_are_sblr = true;
+                            sblr_expressions.push_back(index_info.expression_data);
+                        }
                     }
                 }
 
@@ -50357,15 +51981,31 @@ namespace scratchbird
                     key_out.clear();
                     if (index_info.is_expression_index)
                     {
-                        for (auto* expr : expressions)
+                        if (expressions_are_sblr)
                         {
-                            try
+                            for (const auto& expr_bytes : sblr_expressions)
                             {
-                                key_out.push_back(evaluator.evaluate(expr, values));
+                                bool ok = false;
+                                key_out.push_back(
+                                    evaluateExpressionBytecode(expr_bytes, values, all_columns, ok));
+                                if (!ok)
+                                {
+                                    return false;
+                                }
                             }
-                            catch (...)
+                        }
+                        else
+                        {
+                            for (auto* expr : expressions)
                             {
-                                return false;
+                                try
+                                {
+                                    key_out.push_back(evaluator.evaluate(expr, values));
+                                }
+                                catch (...)
+                                {
+                                    return false;
+                                }
                             }
                         }
                     }
@@ -55274,6 +56914,557 @@ namespace scratchbird
                 return normalized;
             }
 
+            std::string trimWhitespace(const std::string& input)
+            {
+                size_t start = 0;
+                while (start < input.size() &&
+                       std::isspace(static_cast<unsigned char>(input[start])))
+                {
+                    ++start;
+                }
+                if (start >= input.size())
+                {
+                    return "";
+                }
+                size_t end = input.size();
+                while (end > start &&
+                       std::isspace(static_cast<unsigned char>(input[end - 1])))
+                {
+                    --end;
+                }
+                return input.substr(start, end - start);
+            }
+
+            std::string stripStringLiteral(const std::string& input)
+            {
+                std::string trimmed = trimWhitespace(input);
+                if (trimmed.size() >= 2 && trimmed.front() == '\'' && trimmed.back() == '\'')
+                {
+                    std::string value = trimmed.substr(1, trimmed.size() - 2);
+                    std::string unescaped;
+                    unescaped.reserve(value.size());
+                    for (size_t i = 0; i < value.size(); ++i)
+                    {
+                        if (value[i] == '\'' && i + 1 < value.size() && value[i + 1] == '\'')
+                        {
+                            unescaped.push_back('\'');
+                            ++i;
+                        }
+                        else
+                        {
+                            unescaped.push_back(value[i]);
+                        }
+                    }
+                    return unescaped;
+                }
+                return trimmed;
+            }
+
+            std::string normalizePartitionLiteral(const std::string& input)
+            {
+                std::string trimmed = trimWhitespace(input);
+                std::string upper = scratchbird::core::IdentifierUtils::toUpper(trimmed);
+                if (upper.rfind("DATE", 0) == 0 || upper.rfind("TIME", 0) == 0 ||
+                    upper.rfind("TIMESTAMP", 0) == 0)
+                {
+                    size_t quote_pos = trimmed.find('\'');
+                    if (quote_pos != std::string::npos)
+                    {
+                        return stripStringLiteral(trimmed.substr(quote_pos));
+                    }
+                    size_t space = trimmed.find(' ');
+                    if (space != std::string::npos)
+                    {
+                        return stripStringLiteral(trimmed.substr(space + 1));
+                    }
+                }
+                return stripStringLiteral(trimmed);
+            }
+
+            bool parseNumericLiteral(const std::string& input, int64_t& out)
+            {
+                std::string trimmed = trimWhitespace(input);
+                if (trimmed.empty())
+                {
+                    return false;
+                }
+                try
+                {
+                    size_t idx = 0;
+                    long long value = std::stoll(trimmed, &idx, 10);
+                    if (idx != trimmed.size())
+                    {
+                        return false;
+                    }
+                    out = static_cast<int64_t>(value);
+                    return true;
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            }
+
+            bool parseDoubleLiteral(const std::string& input, double& out)
+            {
+                std::string trimmed = trimWhitespace(input);
+                if (trimmed.empty())
+                {
+                    return false;
+                }
+                try
+                {
+                    size_t idx = 0;
+                    double value = std::stod(trimmed, &idx);
+                    if (idx != trimmed.size())
+                    {
+                        return false;
+                    }
+                    out = value;
+                    return true;
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            }
+
+            std::vector<std::string> splitTopLevel(const std::string& text)
+            {
+                std::vector<std::string> parts;
+                std::string current;
+                int depth = 0;
+                bool in_quote = false;
+                for (size_t i = 0; i < text.size(); ++i)
+                {
+                    char ch = text[i];
+                    if (ch == '\'' && (i == 0 || text[i - 1] != '\\'))
+                    {
+                        in_quote = !in_quote;
+                        current.push_back(ch);
+                        continue;
+                    }
+                    if (!in_quote)
+                    {
+                        if (ch == '(')
+                        {
+                            depth++;
+                        }
+                        else if (ch == ')' && depth > 0)
+                        {
+                            depth--;
+                        }
+                        else if (ch == ',' && depth == 0)
+                        {
+                            parts.push_back(trimWhitespace(current));
+                            current.clear();
+                            continue;
+                        }
+                    }
+                    current.push_back(ch);
+                }
+                if (!current.empty())
+                {
+                    parts.push_back(trimWhitespace(current));
+                }
+                return parts;
+            }
+
+            bool parsePartitionBounds(const std::string& bounds_text, PartitionBound& bound_out)
+            {
+                std::string trimmed = trimWhitespace(bounds_text);
+                std::string upper = scratchbird::core::IdentifierUtils::toUpper(trimmed);
+                if (upper.find("DEFAULT") != std::string::npos)
+                {
+                    bound_out.kind = PartitionBound::Kind::DEFAULT;
+                    return true;
+                }
+
+                auto find_keyword = [&](const std::string& keyword) -> size_t {
+                    size_t pos = upper.find(keyword);
+                    if (pos == std::string::npos)
+                    {
+                        return pos;
+                    }
+                    return pos;
+                };
+
+                size_t in_pos = find_keyword("IN");
+                size_t from_pos = find_keyword("FROM");
+                size_t to_pos = find_keyword("TO");
+
+                auto extract_paren_content = [&](size_t start_pos, std::string& out) -> bool {
+                    size_t open_pos = trimmed.find('(', start_pos);
+                    if (open_pos == std::string::npos)
+                    {
+                        return false;
+                    }
+                    int depth = 0;
+                    for (size_t i = open_pos; i < trimmed.size(); ++i)
+                    {
+                        if (trimmed[i] == '(')
+                        {
+                            depth++;
+                        }
+                        else if (trimmed[i] == ')')
+                        {
+                            depth--;
+                            if (depth == 0)
+                            {
+                                out = trimmed.substr(open_pos + 1, i - open_pos - 1);
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+                if (in_pos != std::string::npos)
+                {
+                    std::string list_content;
+                    if (!extract_paren_content(in_pos, list_content))
+                    {
+                        return false;
+                    }
+                    bound_out.kind = PartitionBound::Kind::LIST;
+                    auto items = splitTopLevel(list_content);
+                    for (const auto& item : items)
+                    {
+                        std::string value = trimWhitespace(item);
+                        if (value.empty())
+                        {
+                            continue;
+                        }
+                        if (value.front() == '(' && value.back() == ')')
+                        {
+                            std::string inner = value.substr(1, value.size() - 2);
+                            bound_out.list_values.push_back(splitTopLevel(inner));
+                        }
+                        else
+                        {
+                            bound_out.list_values.push_back({value});
+                        }
+                    }
+                    return true;
+                }
+
+                if (from_pos != std::string::npos && to_pos != std::string::npos)
+                {
+                    std::string from_content;
+                    std::string to_content;
+                    if (!extract_paren_content(from_pos, from_content) ||
+                        !extract_paren_content(to_pos, to_content))
+                    {
+                        return false;
+                    }
+                    bound_out.kind = PartitionBound::Kind::RANGE;
+                    bound_out.range_start = splitTopLevel(from_content);
+                    bound_out.range_end = splitTopLevel(to_content);
+                    bound_out.has_start = !bound_out.range_start.empty();
+                    bound_out.has_end = !bound_out.range_end.empty();
+                    return true;
+                }
+
+                return false;
+            }
+
+            bool parseSblrExpressionList(const std::vector<uint8_t>& data,
+                                         std::vector<std::vector<uint8_t>>& expressions_out)
+            {
+                expressions_out.clear();
+                if (data.size() < 8)
+                {
+                    return false;
+                }
+                if (data[0] != 'S' || data[1] != 'B' || data[2] != 'L' || data[3] != 'R')
+                {
+                    return false;
+                }
+
+                auto read_u32 = [&](size_t offset, uint32_t& out) -> bool {
+                    if (offset + 4 > data.size())
+                    {
+                        return false;
+                    }
+                    out = static_cast<uint32_t>(data[offset]) |
+                          (static_cast<uint32_t>(data[offset + 1]) << 8) |
+                          (static_cast<uint32_t>(data[offset + 2]) << 16) |
+                          (static_cast<uint32_t>(data[offset + 3]) << 24);
+                    return true;
+                };
+
+                size_t pos = 4;
+                uint32_t count = 0;
+                if (!read_u32(pos, count))
+                {
+                    return false;
+                }
+                pos += 4;
+
+                expressions_out.reserve(count);
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    uint32_t len = 0;
+                    if (!read_u32(pos, len))
+                    {
+                        return false;
+                    }
+                    pos += 4;
+                    if (pos + len > data.size())
+                    {
+                        return false;
+                    }
+                    auto start = static_cast<std::vector<uint8_t>::difference_type>(pos);
+                    auto end = static_cast<std::vector<uint8_t>::difference_type>(pos + len);
+                    expressions_out.emplace_back(data.begin() + start,
+                                                 data.begin() + end);
+                    pos += len;
+                }
+
+                return pos == data.size();
+            }
+
+            bool loadTableMetadata(core::CatalogManager* catalog,
+                                   const core::CatalogManager::TableInfo& table_info,
+                                   json& metadata_out,
+                                   core::ErrorContext* ctx)
+            {
+                metadata_out = json::object();
+                if (!catalog || table_info.storage_params_oid == 0)
+                {
+                    return false;
+                }
+                std::string params;
+                if (catalog->loadStringFromToast(table_info.storage_params_oid, 0, params, ctx) != core::Status::OK ||
+                    params.empty())
+                {
+                    return false;
+                }
+                try
+                {
+                    metadata_out = json::parse(params);
+                }
+                catch (...)
+                {
+                    metadata_out = json::object();
+                    return false;
+                }
+                return true;
+            }
+
+            bool resolveTableByQualifiedName(core::CatalogManager* catalog,
+                                             const core::ID& default_schema_id,
+                                             const std::string& qualified_name,
+                                             core::CatalogManager::TableInfo& table_info_out,
+                                             core::ErrorContext* ctx)
+            {
+                if (!catalog)
+                {
+                    return false;
+                }
+                std::string normalized = normalizeSchemaPath(qualified_name);
+                auto components = splitSchemaComponents(normalized);
+                if (components.empty())
+                {
+                    return false;
+                }
+                std::string table_name = components.back();
+                if (components.size() == 1)
+                {
+                    if (catalog->getTable(default_schema_id, table_name, table_info_out, ctx) != core::Status::OK)
+                    {
+                        return false;
+                    }
+                    return true;
+                }
+
+                std::vector<std::string> schema_components = components;
+                schema_components.pop_back();
+                std::string schema_path = joinSchemaComponents(schema_components, 0);
+                core::CatalogManager::SchemaInfo schema_info;
+                if (catalog->getSchema(schema_path, schema_info, ctx) != core::Status::OK)
+                {
+                    return false;
+                }
+                if (catalog->getTable(schema_info.schema_id, table_name, table_info_out, ctx) != core::Status::OK)
+                {
+                    return false;
+                }
+                return true;
+            }
+
+            std::vector<core::CatalogManager::TableInfo> collectPartitionChildren(
+                core::CatalogManager* catalog,
+                const core::CatalogManager::TableInfo& parent,
+                const json& parent_meta,
+                core::ErrorContext* ctx)
+            {
+                std::vector<core::CatalogManager::TableInfo> children;
+                if (!catalog)
+                {
+                    return children;
+                }
+                if (!parent_meta.contains("partition") || !parent_meta["partition"].is_object())
+                {
+                    return children;
+                }
+                const auto& partition = parent_meta["partition"];
+                if (!partition.contains("children") || !partition["children"].is_array())
+                {
+                    return children;
+                }
+
+                for (const auto& entry : partition["children"])
+                {
+                    if (!entry.contains("name"))
+                    {
+                        continue;
+                    }
+                    std::string name = entry["name"].get<std::string>();
+                    core::CatalogManager::TableInfo child_info;
+                    if (!resolveTableByQualifiedName(catalog, parent.schema_id, name, child_info, ctx))
+                    {
+                        continue;
+                    }
+                    children.push_back(std::move(child_info));
+                }
+                return children;
+            }
+
+            std::vector<core::CatalogManager::TableInfo> collectInheritanceChildren(
+                core::CatalogManager* catalog,
+                const core::CatalogManager::TableInfo& parent,
+                core::ErrorContext* ctx)
+            {
+                std::vector<core::CatalogManager::TableInfo> children;
+                if (!catalog)
+                {
+                    return children;
+                }
+                std::vector<core::CatalogManager::SchemaInfo> schemas;
+                if (catalog->listSchemas(schemas, ctx) != core::Status::OK)
+                {
+                    return children;
+                }
+
+                for (const auto& schema : schemas)
+                {
+                    std::vector<core::CatalogManager::TableInfo> tables;
+                    if (catalog->listTables(schema.schema_id, tables, ctx) != core::Status::OK)
+                    {
+                        continue;
+                    }
+                    for (const auto& table : tables)
+                    {
+                        if (table.table_id == parent.table_id)
+                        {
+                            continue;
+                        }
+                        json meta;
+                        if (!loadTableMetadata(catalog, table, meta, ctx))
+                        {
+                            continue;
+                        }
+                        bool matches = false;
+                        if (meta.contains("inherits_refs") && meta["inherits_refs"].is_array())
+                        {
+                            for (const auto& entry : meta["inherits_refs"])
+                            {
+                                if (!entry.is_object())
+                                {
+                                    continue;
+                                }
+                                if (entry.contains("id") && entry["id"].is_string())
+                                {
+                                    core::ID parent_id;
+                                    if (parseUuidText(entry["id"].get<std::string>(), parent_id) &&
+                                        parent_id == parent.table_id)
+                                    {
+                                        matches = true;
+                                        break;
+                                    }
+                                }
+                                if (entry.contains("name") && entry["name"].is_string())
+                                {
+                                    std::string parent_name = entry["name"].get<std::string>();
+                                    core::CatalogManager::TableInfo parent_info;
+                                    if (resolveTableByQualifiedName(catalog, table.schema_id,
+                                                                    parent_name, parent_info, ctx) &&
+                                        parent_info.table_id == parent.table_id)
+                                    {
+                                        matches = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!matches &&
+                            meta.contains("inherits") && meta["inherits"].is_array())
+                        {
+                            for (const auto& entry : meta["inherits"])
+                            {
+                                if (!entry.is_string())
+                                {
+                                    continue;
+                                }
+                                std::string parent_name = entry.get<std::string>();
+                                core::CatalogManager::TableInfo parent_info;
+                                if (resolveTableByQualifiedName(catalog, table.schema_id,
+                                                                parent_name, parent_info, ctx) &&
+                                    parent_info.table_id == parent.table_id)
+                                {
+                                    matches = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (matches)
+                        {
+                            children.push_back(table);
+                        }
+                    }
+                }
+                return children;
+            }
+
+            std::vector<core::CatalogManager::TableInfo> collectExpandedTables(
+                core::CatalogManager* catalog,
+                const core::CatalogManager::TableInfo& base_table,
+                core::ErrorContext* ctx)
+            {
+                std::vector<core::CatalogManager::TableInfo> expanded;
+                if (!catalog)
+                {
+                    return expanded;
+                }
+                expanded.push_back(base_table);
+
+                json meta;
+                loadTableMetadata(catalog, base_table, meta, ctx);
+
+                auto partition_children = collectPartitionChildren(catalog, base_table, meta, ctx);
+                auto inherit_children = collectInheritanceChildren(catalog, base_table, ctx);
+
+                std::unordered_set<core::ID, core::IDHash> seen;
+                seen.insert(base_table.table_id);
+                for (auto& child : partition_children)
+                {
+                    if (seen.insert(child.table_id).second)
+                    {
+                        expanded.push_back(std::move(child));
+                    }
+                }
+                for (auto& child : inherit_children)
+                {
+                    if (seen.insert(child.table_id).second)
+                    {
+                        expanded.push_back(std::move(child));
+                    }
+                }
+                return expanded;
+            }
+
             std::vector<std::string> splitSchemaComponents(const std::string& path)
             {
                 std::vector<std::string> components;
@@ -55336,7 +57527,7 @@ namespace scratchbird
                 core::PathType type = path.type;
                 if (type == core::PathType::UNQUALIFIED)
                 {
-                    type = core::PathType::CURRENT;
+                    type = core::PathType::ABSOLUTE;
                 }
 
                 if (type == core::PathType::ABSOLUTE)
@@ -55972,6 +58163,14 @@ namespace scratchbird
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::FUNCTION, info.function_id);
+
+            core::ErrorContext priv_ctx;
+            db_->catalog_manager()->applyDefaultPrivileges(
+                schema_id,
+                core::CatalogManager::PermissionObjectType::FUNCTION,
+                info.function_id,
+                getCurrentUserID(),
+                &priv_ctx);
         }
 
         void Executor::executeCreateProcedureStatement()
@@ -56060,6 +58259,14 @@ namespace scratchbird
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::PROCEDURE, info.procedure_id);
+
+            core::ErrorContext priv_ctx;
+            db_->catalog_manager()->applyDefaultPrivileges(
+                schema_id,
+                core::CatalogManager::PermissionObjectType::PROCEDURE,
+                info.procedure_id,
+                getCurrentUserID(),
+                &priv_ctx);
         }
 
         void Executor::executeCreatePackageStatement()
@@ -57518,7 +59725,7 @@ namespace scratchbird
             }
             else if (format_raw == static_cast<uint8_t>(CopyOptions::Format::BINARY))
             {
-                error("COPY FORMAT BINARY is not supported");
+                options.format = CopyOptions::Format::BINARY;
             }
             else
             {
@@ -57682,6 +59889,191 @@ namespace scratchbird
                 return escape_text_field(value);
             };
 
+            auto is_binary_column = [](const core::CatalogManager::ColumnInfo& col) {
+                auto type = static_cast<core::DataType>(col.data_type);
+                switch (type)
+                {
+                    case core::DataType::BINARY:
+                    case core::DataType::VARBINARY:
+                    case core::DataType::BLOB:
+                    case core::DataType::BYTEA:
+                        return true;
+                    default:
+                        return false;
+                }
+            };
+
+            auto write_le16 = [](std::ostream* out, uint16_t value) {
+                char buf[2];
+                buf[0] = static_cast<char>(value & 0xFF);
+                buf[1] = static_cast<char>((value >> 8) & 0xFF);
+                out->write(buf, sizeof(buf));
+            };
+
+            auto write_le32 = [](std::ostream* out, uint32_t value) {
+                char buf[4];
+                buf[0] = static_cast<char>(value & 0xFF);
+                buf[1] = static_cast<char>((value >> 8) & 0xFF);
+                buf[2] = static_cast<char>((value >> 16) & 0xFF);
+                buf[3] = static_cast<char>((value >> 24) & 0xFF);
+                out->write(buf, sizeof(buf));
+            };
+
+            auto write_binary_row = [&](const std::vector<Value>& values,
+                                        const std::vector<core::CatalogManager::ColumnInfo>& cols,
+                                        std::ostream* out,
+                                        uint64_t& bytes_out) {
+                const uint16_t column_count = static_cast<uint16_t>(values.size());
+                const uint16_t null_bytes = static_cast<uint16_t>((column_count + 7) / 8);
+                std::vector<uint8_t> null_bitmap(null_bytes, 0);
+                for (size_t i = 0; i < values.size(); ++i)
+                {
+                    if (values[i].isNull())
+                    {
+                        null_bitmap[i / 8] |= static_cast<uint8_t>(1U << (i % 8));
+                    }
+                }
+
+                write_le16(out, column_count);
+                write_le16(out, null_bytes);
+                out->write(reinterpret_cast<const char*>(null_bitmap.data()), null_bitmap.size());
+                bytes_out += sizeof(uint16_t) * 2 + null_bitmap.size();
+
+                for (size_t i = 0; i < values.size(); ++i)
+                {
+                    if (values[i].isNull())
+                    {
+                        continue;
+                    }
+
+                    std::vector<uint8_t> payload;
+                    if (i < cols.size() && is_binary_column(cols[i]))
+                    {
+                        const auto& data = values[i].getBinary();
+                        payload.assign(data.begin(), data.end());
+                    }
+                    else
+                    {
+                        std::string text = values[i].toString();
+                        payload.assign(text.begin(), text.end());
+                    }
+
+                    write_le32(out, static_cast<uint32_t>(payload.size()));
+                    if (!payload.empty())
+                    {
+                        out->write(reinterpret_cast<const char*>(payload.data()), payload.size());
+                    }
+                    bytes_out += sizeof(uint32_t) + payload.size();
+                }
+            };
+
+            auto read_binary_row = [&](std::istream& in,
+                                       const std::vector<core::CatalogManager::ColumnInfo>& cols,
+                                       std::vector<Value>& values_out,
+                                       std::string& err,
+                                       uint64_t& bytes_out) -> bool {
+                auto peek = in.peek();
+                if (peek == std::char_traits<char>::eof())
+                {
+                    return false;
+                }
+
+                auto read_exact = [&](uint8_t* buffer, size_t len) -> bool {
+                    in.read(reinterpret_cast<char*>(buffer), static_cast<std::streamsize>(len));
+                    if (in.gcount() != static_cast<std::streamsize>(len))
+                    {
+                        err = "COPY BINARY truncated row";
+                        return false;
+                    }
+                    bytes_out += len;
+                    return true;
+                };
+
+                auto read_u16 = [&](uint16_t& out) -> bool {
+                    uint8_t buf[2];
+                    if (!read_exact(buf, sizeof(buf))) return false;
+                    out = static_cast<uint16_t>(buf[0]) |
+                          (static_cast<uint16_t>(buf[1]) << 8);
+                    return true;
+                };
+
+                auto read_u32 = [&](uint32_t& out) -> bool {
+                    uint8_t buf[4];
+                    if (!read_exact(buf, sizeof(buf))) return false;
+                    out = static_cast<uint32_t>(buf[0]) |
+                          (static_cast<uint32_t>(buf[1]) << 8) |
+                          (static_cast<uint32_t>(buf[2]) << 16) |
+                          (static_cast<uint32_t>(buf[3]) << 24);
+                    return true;
+                };
+
+                auto read_i32 = [&](int32_t& out) -> bool {
+                    uint32_t u = 0;
+                    if (!read_u32(u)) return false;
+                    out = static_cast<int32_t>(u);
+                    return true;
+                };
+
+                uint16_t column_count = 0;
+                uint16_t null_bytes = 0;
+                if (!read_u16(column_count) || !read_u16(null_bytes))
+                {
+                    return false;
+                }
+                if (column_count != cols.size())
+                {
+                    err = "COPY BINARY column count mismatch";
+                    return false;
+                }
+                std::vector<uint8_t> null_bitmap(null_bytes, 0);
+                if (null_bytes > 0)
+                {
+                    if (!read_exact(null_bitmap.data(), null_bitmap.size()))
+                    {
+                        return false;
+                    }
+                }
+
+                values_out.clear();
+                values_out.reserve(column_count);
+                for (size_t i = 0; i < column_count; ++i)
+                {
+                    bool is_null = (null_bitmap[i / 8] >> (i % 8)) & 0x1;
+                    if (is_null)
+                    {
+                        values_out.push_back(Value::makeNull());
+                        continue;
+                    }
+
+                    int32_t len = 0;
+                    if (!read_i32(len))
+                    {
+                        return false;
+                    }
+                    if (len < 0)
+                    {
+                        values_out.push_back(Value::makeNull());
+                        continue;
+                    }
+                    std::vector<uint8_t> payload(static_cast<size_t>(len));
+                    if (len > 0 && !read_exact(payload.data(), payload.size()))
+                    {
+                        return false;
+                    }
+
+                    if (i < cols.size() && is_binary_column(cols[i]))
+                    {
+                        values_out.push_back(Value::makeVarbinary(payload));
+                    }
+                    else
+                    {
+                        std::string text(payload.begin(), payload.end());
+                        values_out.push_back(Value::makeVarchar(text));
+                    }
+                }
+                return true;
+            };
+
             auto require_copy_file_privilege = [&](const std::string& file_target) {
                 if (file_target.empty() ||
                     file_target == "STDIN" ||
@@ -57750,6 +60142,11 @@ namespace scratchbird
                 pc_ += query_len;
 
                 std::unique_ptr<ResultSet> query_results;
+                size_t row_count = 0;
+                uint64_t bytes_total = 0;
+                bool header_written = false;
+                bool columns_initialized = false;
+                std::vector<core::CatalogManager::ColumnInfo> query_columns;
                 {
                     auto saved_result_set = std::move(current_result_set_);
                     auto saved_table = current_table_;
@@ -57762,6 +60159,57 @@ namespace scratchbird
                     pc_ = 0;
 
                     current_result_set_ = std::make_unique<ResultSet>();
+                    ResultSet* result_set_ptr = current_result_set_.get();
+                    current_result_set_->setStoreRows(false);
+                    current_result_set_->setRowCallback(
+                        [&](const std::vector<Value>& row) {
+                            if (options.format == CopyOptions::Format::BINARY)
+                            {
+                                if (!columns_initialized)
+                                {
+                                    query_columns.clear();
+                                    query_columns.reserve(result_set_ptr->columnCount());
+                                    for (size_t c = 0; c < result_set_ptr->columnCount(); ++c)
+                                    {
+                                        core::CatalogManager::ColumnInfo col;
+                                        col.column_name = result_set_ptr->columnName(c);
+                                        col.data_type = static_cast<uint16_t>(result_set_ptr->columnType(c));
+                                        query_columns.push_back(std::move(col));
+                                    }
+                                    columns_initialized = true;
+                                }
+                                write_binary_row(row, query_columns, out, bytes_total);
+                            }
+                            else
+                            {
+                                if (options.header && !header_written)
+                                {
+                                    std::string line;
+                                    for (size_t c = 0; c < result_set_ptr->columnCount(); ++c)
+                                    {
+                                        if (c > 0) line.push_back(options.delimiter);
+                                        line += format_field(result_set_ptr->columnName(c), false);
+                                    }
+                                    line.push_back('\n');
+                                    bytes_total += line.size();
+                                    (*out) << line;
+                                    header_written = true;
+                                }
+
+                                std::string line;
+                                for (size_t c = 0; c < row.size(); ++c)
+                                {
+                                    const auto& val = row[c];
+                                    std::string text = val.isNull() ? std::string() : val.toString();
+                                    if (c > 0) line.push_back(options.delimiter);
+                                    line += format_field(text, val.isNull());
+                                }
+                                line.push_back('\n');
+                                bytes_total += line.size();
+                                (*out) << line;
+                            }
+                            row_count++;
+                        });
 
                     Opcode query_op = static_cast<Opcode>(readByte());
                     if (query_op == Opcode::SELECT)
@@ -57782,38 +60230,19 @@ namespace scratchbird
                     current_result_set_ = std::move(saved_result_set);
                 }
 
-                size_t row_count = 0;
-                uint64_t bytes_total = 0;
-                if (query_results)
+                if (options.format != CopyOptions::Format::BINARY &&
+                    options.header && !header_written && query_results)
                 {
-                    if (options.header)
+                    std::string line;
+                    for (size_t c = 0; c < query_results->columnCount(); ++c)
                     {
-                        std::string line;
-                        for (size_t c = 0; c < query_results->columnCount(); ++c)
-                        {
-                            if (c > 0) line.push_back(options.delimiter);
-                            line += format_field(query_results->columnName(c), false);
-                        }
-                        line.push_back('\n');
-                        bytes_total += line.size();
-                        (*out) << line;
+                        if (c > 0) line.push_back(options.delimiter);
+                        line += format_field(query_results->columnName(c), false);
                     }
-
-                    for (size_t r = 0; r < query_results->rowCount(); ++r)
-                    {
-                        std::string line;
-                        for (size_t c = 0; c < query_results->columnCount(); ++c)
-                        {
-                            const auto& val = query_results->getValue(r, c);
-                            std::string text = val.isNull() ? std::string() : val.toString();
-                            if (c > 0) line.push_back(options.delimiter);
-                            line += format_field(text, val.isNull());
-                        }
-                        line.push_back('\n');
-                        bytes_total += line.size();
-                        (*out) << line;
-                        row_count++;
-                    }
+                    line.push_back('\n');
+                    bytes_total += line.size();
+                    (*out) << line;
+                    header_written = true;
                 }
 
                 last_affected_rows_ = static_cast<int64_t>(row_count);
@@ -57953,39 +60382,70 @@ namespace scratchbird
                 core::Tuple tuple;
                 size_t row_count = 0;
                 uint64_t bytes_total = 0;
-                if (options.header)
+                std::vector<core::CatalogManager::ColumnInfo> copy_columns;
+                copy_columns.reserve(col_indices.size());
+                for (size_t idx : col_indices)
                 {
-                    std::string line;
-                    for (size_t i = 0; i < col_indices.size(); ++i)
-                    {
-                        const auto& col_name = all_columns[col_indices[i]].column_name;
-                        if (i > 0) line.push_back(options.delimiter);
-                        line += format_field(col_name, false);
-                    }
-                    line.push_back('\n');
-                    bytes_total += line.size();
-                    (*out) << line;
+                    copy_columns.push_back(all_columns[idx]);
                 }
-                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
-                {
-                    std::vector<Value> row_values;
-                    if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
-                    {
-                        continue;
-                    }
 
-                    std::string line;
-                    for (size_t i = 0; i < col_indices.size(); ++i)
+                if (options.format == CopyOptions::Format::BINARY)
+                {
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
                     {
-                        const auto& val = row_values[col_indices[i]];
-                        std::string text = val.isNull() ? std::string() : val.toString();
-                        if (i > 0) line.push_back(options.delimiter);
-                        line += format_field(text, val.isNull());
+                        std::vector<Value> row_values;
+                        if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                        {
+                            continue;
+                        }
+
+                        std::vector<Value> selected_values;
+                        selected_values.reserve(col_indices.size());
+                        for (size_t idx : col_indices)
+                        {
+                            selected_values.push_back(row_values[idx]);
+                        }
+
+                        write_binary_row(selected_values, copy_columns, out, bytes_total);
+                        row_count++;
                     }
-                    line.push_back('\n');
-                    bytes_total += line.size();
-                    (*out) << line;
-                    row_count++;
+                }
+                else
+                {
+                    if (options.header)
+                    {
+                        std::string line;
+                        for (size_t i = 0; i < col_indices.size(); ++i)
+                        {
+                            const auto& col_name = all_columns[col_indices[i]].column_name;
+                            if (i > 0) line.push_back(options.delimiter);
+                            line += format_field(col_name, false);
+                        }
+                        line.push_back('\n');
+                        bytes_total += line.size();
+                        (*out) << line;
+                    }
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                    {
+                        std::vector<Value> row_values;
+                        if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                        {
+                            continue;
+                        }
+
+                        std::string line;
+                        for (size_t i = 0; i < col_indices.size(); ++i)
+                        {
+                            const auto& val = row_values[col_indices[i]];
+                            std::string text = val.isNull() ? std::string() : val.toString();
+                            if (i > 0) line.push_back(options.delimiter);
+                            line += format_field(text, val.isNull());
+                        }
+                        line.push_back('\n');
+                        bytes_total += line.size();
+                        (*out) << line;
+                        row_count++;
+                    }
                 }
 
                 last_affected_rows_ = static_cast<int64_t>(row_count);
@@ -58998,96 +61458,171 @@ namespace scratchbird
                 uint32_t error_count = 0;
                 bool skipped_header = false;
                 ScopedBulkWriteMode bulk_scope(core::ConnectionContext::getCurrent());
-                while (std::getline(*in, line))
+                if (options.format == CopyOptions::Format::BINARY)
                 {
-                    bytes_total += line.size() + 1;
-                    if (!line.empty() && line.back() == '\r')
+                    std::vector<core::CatalogManager::ColumnInfo> copy_columns;
+                    copy_columns.reserve(col_indices.size());
+                    for (size_t idx : col_indices)
                     {
-                        line.pop_back();
+                        copy_columns.push_back(all_columns[idx]);
                     }
-
-                    if (options.header && !skipped_header)
+                    while (true)
                     {
-                        skipped_header = true;
-                        continue;
-                    }
-
-                    try
-                    {
-                        std::vector<ParsedField> fields;
-                        std::string parse_error;
-                        if (options.format == CopyOptions::Format::CSV)
+                        try
                         {
-                            if (!parse_csv_line(line, fields, parse_error))
+                            std::vector<Value> input_values;
+                            std::string parse_error;
+                            if (!read_binary_row(*in, copy_columns, input_values, parse_error, bytes_total))
                             {
-                                error(parse_error.empty() ? "COPY CSV parse error" : parse_error);
-                            }
-                        }
-                        else
-                        {
-                            parse_text_line(line, fields);
-                        }
-
-                        if (fields.size() != col_indices.size())
-                        {
-                            error("COPY row has " + std::to_string(fields.size()) +
-                                  " columns; expected " + std::to_string(col_indices.size()));
-                        }
-
-                        std::vector<Value> input_values;
-                        input_values.reserve(fields.size());
-                        for (const auto& field : fields)
-                        {
-                            if (field.is_null)
-                            {
-                                input_values.push_back(Value::makeNull());
-                            }
-                            else
-                            {
-                                input_values.push_back(Value::makeVarchar(field.value));
-                            }
-                        }
-
-                        if (process_copy_row(input_values))
-                        {
-                            affected_count++;
-                            if (options.batch_size > 0 &&
-                                (affected_count % static_cast<int>(options.batch_size) == 0))
-                            {
-                                auto* page_mgr = db_ ? db_->page_manager() : nullptr;
-                                if (page_mgr)
+                                if (!parse_error.empty())
                                 {
-                                    core::ErrorContext flush_ctx;
-                                    auto flush_status = page_mgr->flush(&flush_ctx);
-                                    if (flush_status != core::Status::OK)
+                                    error(parse_error);
+                                }
+                                break;
+                            }
+
+                            if (input_values.size() != col_indices.size())
+                            {
+                                error("COPY row has " + std::to_string(input_values.size()) +
+                                      " columns; expected " + std::to_string(col_indices.size()));
+                            }
+
+                            if (process_copy_row(input_values))
+                            {
+                                affected_count++;
+                                if (options.batch_size > 0 &&
+                                    (affected_count % static_cast<int>(options.batch_size) == 0))
+                                {
+                                    auto* page_mgr = db_ ? db_->page_manager() : nullptr;
+                                    if (page_mgr)
                                     {
-                                        std::string err_msg = "COPY batch flush failed";
-                                        if (!flush_ctx.message.empty())
+                                        core::ErrorContext flush_ctx;
+                                        auto flush_status = page_mgr->flush(&flush_ctx);
+                                        if (flush_status != core::Status::OK)
                                         {
-                                            err_msg += ": " + flush_ctx.message;
+                                            std::string err_msg = "COPY batch flush failed";
+                                            if (!flush_ctx.message.empty())
+                                            {
+                                                err_msg += ": " + flush_ctx.message;
+                                            }
+                                            error(err_msg);
                                         }
-                                        error(err_msg);
                                     }
                                 }
                             }
                         }
-                    }
-                    catch (const std::exception& ex)
-                    {
-                        if (options.on_error == CopyOptions::OnError::SKIP)
+                        catch (const std::exception& ex)
                         {
-                            error_count++;
-                            if (copy_metrics.errors)
+                            if (options.on_error == CopyOptions::OnError::SKIP)
                             {
-                                copy_metrics.errors->inc(1.0);
+                                error_count++;
+                                if (copy_metrics.errors)
+                                {
+                                    copy_metrics.errors->inc(1.0);
+                                }
+                                if (options.max_errors > 0 && error_count > options.max_errors)
+                                {
+                                    error("COPY MAX_ERRORS exceeded: " + std::string(ex.what()));
+                                }
+                                continue;
                             }
-                            if (options.max_errors > 0 && error_count > options.max_errors)
-                            {
-                                error("COPY MAX_ERRORS exceeded: " + std::string(ex.what()));
-                            }
+                            throw;
+                        }
+                    }
+                }
+                else
+                {
+                    while (std::getline(*in, line))
+                    {
+                        bytes_total += line.size() + 1;
+                        if (!line.empty() && line.back() == '\r')
+                        {
+                            line.pop_back();
+                        }
+
+                        if (options.header && !skipped_header)
+                        {
+                            skipped_header = true;
                             continue;
                         }
-                        throw;
+
+                        try
+                        {
+                            std::vector<ParsedField> fields;
+                            std::string parse_error;
+                            if (options.format == CopyOptions::Format::CSV)
+                            {
+                                if (!parse_csv_line(line, fields, parse_error))
+                                {
+                                    error(parse_error.empty() ? "COPY CSV parse error" : parse_error);
+                                }
+                            }
+                            else
+                            {
+                                parse_text_line(line, fields);
+                            }
+
+                            if (fields.size() != col_indices.size())
+                            {
+                                error("COPY row has " + std::to_string(fields.size()) +
+                                      " columns; expected " + std::to_string(col_indices.size()));
+                            }
+
+                            std::vector<Value> input_values;
+                            input_values.reserve(fields.size());
+                            for (const auto& field : fields)
+                            {
+                                if (field.is_null)
+                                {
+                                    input_values.push_back(Value::makeNull());
+                                }
+                                else
+                                {
+                                    input_values.push_back(Value::makeVarchar(field.value));
+                                }
+                            }
+
+                            if (process_copy_row(input_values))
+                            {
+                                affected_count++;
+                                if (options.batch_size > 0 &&
+                                    (affected_count % static_cast<int>(options.batch_size) == 0))
+                                {
+                                    auto* page_mgr = db_ ? db_->page_manager() : nullptr;
+                                    if (page_mgr)
+                                    {
+                                        core::ErrorContext flush_ctx;
+                                        auto flush_status = page_mgr->flush(&flush_ctx);
+                                        if (flush_status != core::Status::OK)
+                                        {
+                                            std::string err_msg = "COPY batch flush failed";
+                                            if (!flush_ctx.message.empty())
+                                            {
+                                                err_msg += ": " + flush_ctx.message;
+                                            }
+                                            error(err_msg);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            if (options.on_error == CopyOptions::OnError::SKIP)
+                            {
+                                error_count++;
+                                if (copy_metrics.errors)
+                                {
+                                    copy_metrics.errors->inc(1.0);
+                                }
+                                if (options.max_errors > 0 && error_count > options.max_errors)
+                                {
+                                    error("COPY MAX_ERRORS exceeded: " + std::string(ex.what()));
+                                }
+                                continue;
+                            }
+                            throw;
+                        }
                     }
                 }
 

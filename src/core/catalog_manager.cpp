@@ -441,10 +441,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         ID policy_toast_table_id;     // UUID for policy expression TOAST storage
         uint32_t column_permissions_page; // Page containing column permissions table
+        uint32_t default_privileges_page; // Page containing default privileges table
         uint32_t object_permissions_page; // Page containing object permissions table
         uint32_t policies_page;       // Page containing row-level security policies table
 
-        uint8_t reserved[3760];       // Padding for 4KB page (336 bytes used)
+        uint8_t reserved[3756];       // Padding for 4KB page (340 bytes used)
     };
 
     // Schema record on disk
@@ -828,6 +829,22 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID grantor_id;        // User UUID of grantor
 
         uint8_t reserved[6];
+        uint64_t created_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    struct DefaultPrivilegeRecord
+    {
+        ID default_privilege_id;
+        ID schema_id;
+        ID grantor_id;
+        uint8_t object_type;
+        ID grantee_id;
+        uint8_t grantee_type;
+        uint32_t privileges;
+        uint8_t grant_option;
+        uint8_t reserved[7];
         uint64_t created_time;
         uint32_t is_valid;
         uint32_t padding;
@@ -1784,6 +1801,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
+        // Default privileges table
+        status = pm->allocatePage(default_privileges_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        heap->header.page_id = default_privileges_table_page_;
+        status = db_->write_page(default_privileges_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Security Phase 3.1: Allocate and initialize object permissions page
         status = pm->allocatePage(object_permissions_table_page_, ctx);
         if (status != Status::OK)
@@ -2536,6 +2566,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     return status;
                 }
                 status = backfill_catalog_page(column_permissions_table_page_, "column_permissions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(default_privileges_table_page_, "default_privileges");
                 if (status != Status::OK)
                 {
                     return status;
@@ -7262,44 +7297,112 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                    (static_cast<uint32_t>(data[3]) << 24);
         };
 
-        const uint8_t COLUMN_REF_OPCODE = 0x41;
-        size_t pos = 0;
-
-        while (pos < bytecode.size())
-        {
-            uint8_t opcode = bytecode[pos];
-            pos++;
-
-            if (opcode == COLUMN_REF_OPCODE)
+        auto readUVarint = [](const uint8_t* data, size_t len, uint64_t& out, size_t& bytes_read) -> bool {
+            out = 0;
+            bytes_read = 0;
+            uint64_t shift = 0;
+            while (bytes_read < len && bytes_read < 10)
             {
-                // COLUMN_REF format: [qualifier_len][qualifier][name_len][name]
-                if (pos + 4 > bytecode.size()) break;
-
-                // Read qualifier length and skip qualifier
-                uint32_t qual_len = readUInt32(&bytecode[pos]);
-                pos += 4;
-                if (pos + qual_len > bytecode.size()) break;
-                pos += qual_len;  // Skip qualifier
-
-                // Read column name
-                if (pos + 4 > bytecode.size()) break;
-                uint32_t name_len = readUInt32(&bytecode[pos]);
-                pos += 4;
-                if (pos + name_len > bytecode.size()) break;
-
-                std::string col_name(reinterpret_cast<const char*>(&bytecode[pos]), name_len);
-                pos += name_len;
-
-                // Add if not already in list
-                if (std::find(column_names_out.begin(), column_names_out.end(), col_name) == column_names_out.end())
+                uint8_t byte = data[bytes_read];
+                out |= static_cast<uint64_t>(byte & 0x7F) << shift;
+                ++bytes_read;
+                if ((byte & 0x80) == 0)
                 {
-                    column_names_out.push_back(col_name);
+                    return true;
+                }
+                shift += 7;
+            }
+            return false;
+        };
+
+        const uint8_t COLUMN_REF_OPCODE = 0x41;
+
+        auto add_column = [&](const std::string& col_name) {
+            if (std::find(column_names_out.begin(), column_names_out.end(), col_name) == column_names_out.end())
+            {
+                column_names_out.push_back(col_name);
+            }
+        };
+
+        auto scan_sblr = [&](const uint8_t* data, size_t len) {
+            size_t pos = 0;
+            while (pos < len)
+            {
+                uint8_t opcode = data[pos++];
+                if (opcode == COLUMN_REF_OPCODE)
+                {
+                    uint64_t name_len = 0;
+                    size_t bytes_read = 0;
+                    if (!readUVarint(data + pos, len - pos, name_len, bytes_read))
+                    {
+                        break;
+                    }
+                    pos += bytes_read;
+                    if (pos + name_len > len)
+                    {
+                        break;
+                    }
+                    std::string col_name(reinterpret_cast<const char*>(data + pos),
+                                         static_cast<size_t>(name_len));
+                    pos += name_len;
+                    add_column(col_name);
+                }
+                // For other opcodes, we don't know the exact length without a full parser.
+                // Continue scanning byte-by-byte.
+            }
+        };
+
+        auto scan_legacy = [&](const uint8_t* data, size_t len) {
+            size_t pos = 0;
+            while (pos < len)
+            {
+                uint8_t opcode = data[pos];
+                pos++;
+
+                if (opcode == COLUMN_REF_OPCODE)
+                {
+                    // COLUMN_REF format: [qualifier_len][qualifier][name_len][name]
+                    if (pos + 4 > len) break;
+
+                    uint32_t qual_len = readUInt32(&data[pos]);
+                    pos += 4;
+                    if (pos + qual_len > len) break;
+                    pos += qual_len;
+
+                    if (pos + 4 > len) break;
+                    uint32_t name_len = readUInt32(&data[pos]);
+                    pos += 4;
+                    if (pos + name_len > len) break;
+
+                    std::string col_name(reinterpret_cast<const char*>(&data[pos]), name_len);
+                    pos += name_len;
+                    add_column(col_name);
                 }
             }
-            // For other opcodes, we don't know the exact length without a full parser
-            // Since expressions are typically short, we'll continue scanning byte by byte
-            // This is safe because COLUMN_REF (0x41) doesn't appear in string data
+        };
+
+        if (bytecode.size() >= 8 &&
+            bytecode[0] == 'S' && bytecode[1] == 'B' &&
+            bytecode[2] == 'L' && bytecode[3] == 'R')
+        {
+            size_t pos = 4;
+            uint32_t count = readUInt32(&bytecode[pos]);
+            pos += 4;
+            for (uint32_t i = 0; i < count && pos + 4 <= bytecode.size(); ++i)
+            {
+                uint32_t len = readUInt32(&bytecode[pos]);
+                pos += 4;
+                if (pos + len > bytecode.size())
+                {
+                    break;
+                }
+                scan_sblr(&bytecode[pos], len);
+                pos += len;
+            }
+            return;
         }
+
+        scan_legacy(bytecode.data(), bytecode.size());
     }
 
     auto CatalogManager::getColumn(const ID &table_id, const std::string &column_name,
@@ -7924,6 +8027,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->triggers_page = triggers_table_page_;
         root->permissions_page = permissions_table_page_;
         root->column_permissions_page = column_permissions_table_page_;
+        root->default_privileges_page = default_privileges_table_page_;
         root->object_permissions_page = object_permissions_table_page_;
         root->policies_page = policies_table_page_;
         root->statistics_page = statistics_table_page_;
@@ -8029,6 +8133,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         triggers_table_page_ = root->triggers_page;
         permissions_table_page_ = root->permissions_page;
         column_permissions_table_page_ = root->column_permissions_page;
+        default_privileges_table_page_ = root->default_privileges_page;
         object_permissions_table_page_ = root->object_permissions_page;
         policies_table_page_ = root->policies_page;
         statistics_table_page_ = root->statistics_page;
@@ -31693,6 +31798,169 @@ auto CatalogManager::listPermissions(std::vector<PermissionInfo>& permissions_ou
 
     return readRecordsToVector<PermissionRecord, PermissionInfo>(
         permissions_table_page_, permissions_out, filter, converter, ctx);
+}
+
+auto CatalogManager::grantDefaultPrivilege(const ID& schema_id,
+                                           const ID& grantor_id,
+                                           PermissionObjectType object_type,
+                                           const ID& grantee_id,
+                                           GranteeType grantee_type,
+                                           uint32_t privileges,
+                                           bool grant_option,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (default_privileges_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Default privileges table not initialized");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto predicate = [&](const DefaultPrivilegeRecord& rec) {
+        return rec.is_valid &&
+               rec.schema_id == schema_id &&
+               rec.grantor_id == grantor_id &&
+               rec.object_type == static_cast<uint8_t>(object_type) &&
+               rec.grantee_id == grantee_id &&
+               rec.grantee_type == static_cast<uint8_t>(grantee_type);
+    };
+
+    auto result = findRecordInHeapPage<DefaultPrivilegeRecord>(default_privileges_table_page_, predicate, ctx);
+    if (result.status == Status::OK)
+    {
+        DefaultPrivilegeRecord updated = result.record;
+        updated.privileges |= privileges;
+        if (grant_option)
+        {
+            updated.grant_option = 1;
+        }
+
+        Status status = updateRecordInHeapPage(default_privileges_table_page_, result.slot_index,
+                                               updated, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update default privileges record");
+        }
+        return status;
+    }
+
+    DefaultPrivilegeRecord record;
+    memset(&record, 0, sizeof(DefaultPrivilegeRecord));
+    record.default_privilege_id = generateUuidV7();
+    record.schema_id = schema_id;
+    record.grantor_id = grantor_id;
+    record.object_type = static_cast<uint8_t>(object_type);
+    record.grantee_id = grantee_id;
+    record.grantee_type = static_cast<uint8_t>(grantee_type);
+    record.privileges = privileges;
+    record.grant_option = grant_option ? 1 : 0;
+    record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    record.is_valid = 1;
+
+    Status status = writeRecordToHeapPage(default_privileges_table_page_, record, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write default privileges record");
+    }
+    return status;
+}
+
+auto CatalogManager::revokeDefaultPrivilege(const ID& schema_id,
+                                            const ID& grantor_id,
+                                            PermissionObjectType object_type,
+                                            const ID& grantee_id,
+                                            GranteeType grantee_type,
+                                            uint32_t privileges,
+                                            ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    auto predicate = [&](const DefaultPrivilegeRecord& rec) {
+        return rec.is_valid &&
+               rec.schema_id == schema_id &&
+               rec.grantor_id == grantor_id &&
+               rec.object_type == static_cast<uint8_t>(object_type) &&
+               rec.grantee_id == grantee_id &&
+               rec.grantee_type == static_cast<uint8_t>(grantee_type);
+    };
+
+    auto result = findRecordInHeapPage<DefaultPrivilegeRecord>(default_privileges_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::OK;
+    }
+
+    DefaultPrivilegeRecord updated = result.record;
+    updated.privileges &= ~privileges;
+    if (updated.privileges == 0)
+    {
+        return deleteRecordFromHeapPage<DefaultPrivilegeRecord>(default_privileges_table_page_,
+                                                               predicate, ctx);
+    }
+
+    return updateRecordInHeapPage(default_privileges_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::listDefaultPrivileges(const ID& schema_id,
+                                           const ID& grantor_id,
+                                           PermissionObjectType object_type,
+                                           std::vector<DefaultPrivilegeInfo>& defaults_out,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    defaults_out.clear();
+
+    auto filter = [&](const DefaultPrivilegeRecord& rec) {
+        return rec.is_valid &&
+               rec.schema_id == schema_id &&
+               rec.grantor_id == grantor_id &&
+               rec.object_type == static_cast<uint8_t>(object_type);
+    };
+
+    auto converter = [](const DefaultPrivilegeRecord& rec, DefaultPrivilegeInfo& info) {
+        info.default_privilege_id = rec.default_privilege_id;
+        info.schema_id = rec.schema_id;
+        info.grantor_id = rec.grantor_id;
+        info.object_type = static_cast<PermissionObjectType>(rec.object_type);
+        info.grantee_id = rec.grantee_id;
+        info.grantee_type = static_cast<GranteeType>(rec.grantee_type);
+        info.privileges = rec.privileges;
+        info.grant_option = rec.grant_option != 0;
+        info.created_time = rec.created_time;
+    };
+
+    return readRecordsToVector<DefaultPrivilegeRecord, DefaultPrivilegeInfo>(
+        default_privileges_table_page_, defaults_out, filter, converter, ctx);
+}
+
+auto CatalogManager::applyDefaultPrivileges(const ID& schema_id,
+                                            PermissionObjectType object_type,
+                                            const ID& object_id,
+                                            const ID& grantor_id,
+                                            ErrorContext* ctx) -> Status
+{
+    std::vector<DefaultPrivilegeInfo> defaults;
+    Status status = listDefaultPrivileges(schema_id, grantor_id, object_type, defaults, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    for (const auto& def : defaults)
+    {
+        Status grant_status = grantPermission(object_id, object_type,
+                                             def.grantee_id, def.grantee_type,
+                                             def.privileges, def.grant_option,
+                                             def.grantor_id, ctx);
+        if (grant_status != Status::OK)
+        {
+            return grant_status;
+        }
+    }
+
+    return Status::OK;
 }
 
 // ============================================================================

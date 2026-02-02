@@ -1,6 +1,6 @@
 # Glossary
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 Database and ScratchBird terminology reference.
 

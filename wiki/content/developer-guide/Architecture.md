@@ -2,7 +2,7 @@
 
 **Purpose:** Defines ScratchBird's architectural layers, component boundaries, trust model, and where different types of work belong.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

@@ -1,7 +1,7 @@
 # ODBC Driver Guide
 
 **Status:** Complete
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -14,9 +14,9 @@ ODBC (Open Database Connectivity) provides a standard interface for connecting t
 | PostgreSQL | 5432 | psqlODBC | Most applications (recommended) |
 | MySQL | 3306 | MySQL ODBC Connector | MySQL compatibility |
 | Firebird | 3050 | Firebird ODBC | Firebird migration |
-| Native | 3092 | ScratchBird ODBC (future) | Direct access |
+| Native | 3092 | (not yet available) | Direct access |
 
-**Recommendation:** Use **psqlODBC** (PostgreSQL ODBC driver) for most ODBC connections. It offers the best compatibility with ScratchBird's features.
+**Recommendation:** Use **psqlODBC** (PostgreSQL ODBC driver) for most ODBC connections. Native ODBC is planned, but currently emulation ports (5432/3306/3050) are the supported path.
 
 ---
 
@@ -38,6 +38,16 @@ choco install psqlodbc
 Invoke-WebRequest -Uri "https://ftp.postgresql.org/pub/odbc/versions/msi/psqlodbc_16_00_0000-x64.msi" -OutFile "psqlodbc.msi"
 Start-Process msiexec.exe -ArgumentList "/i", "psqlodbc.msi", "/quiet" -Wait
 ```
+
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add ODBC support later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-odbc` (or `scratchbird-drivers-all` if you want the full driver set). On Linux, run with `sudo`.
 
 ### Installing MySQL ODBC Connector
 

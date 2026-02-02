@@ -1,6 +1,6 @@
 # Transactions
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ScratchBird uses a Firebird-style Multi-Generational Architecture (MGA/MVCC). Each
 row can have multiple versions, and visibility is decided by transaction IDs
@@ -101,18 +101,18 @@ COMMIT;
 ScratchBird plans to support two-phase commit (2PC) with PREPARE TRANSACTION,
 COMMIT PREPARED, and ROLLBACK PREPARED for distributed workloads.
 
-## Current Alpha implementation status
+## Implementation status
 
-Per the transaction specifications, the Alpha codebase currently provides:
+The Alpha codebase implements:
 
-- Basic 32-bit XID tracking only.
-- No MGA/MVCC implementation.
-- No distributed transactions.
-- No lock manager (uses std::mutex for page-level locking).
-- No savepoints.
-- Single-threaded operation.
+- Full MGA/MVCC with back-versioning and TIP-based visibility
+- 64-bit transaction IDs with proper wraparound handling
+- Lock manager with deadlock detection
+- Savepoint support (SAVEPOINT, ROLLBACK TO, RELEASE)
+- Multi-threaded operation with proper concurrency control
+- Garbage collection (sweep) for version chain cleanup
 
-These are the primary gaps to close before full MGA parity.
+Distributed transactions (2PC) are planned for Beta.
 
 ## References
 

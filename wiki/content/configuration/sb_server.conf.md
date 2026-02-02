@@ -1,6 +1,6 @@
 # sb_server.conf
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 This page will document the server configuration file. For now, use:
 - `docs/specifications/deployment/SYSTEMD_SERVICE_SPECIFICATION.md`

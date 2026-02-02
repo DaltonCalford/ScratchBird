@@ -2,7 +2,7 @@
 
 **Purpose:** Documents the ScratchBird core engine - the sole authority for SBLR validation, security enforcement, and query execution.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

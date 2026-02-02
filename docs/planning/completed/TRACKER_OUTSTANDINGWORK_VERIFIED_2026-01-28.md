@@ -12,6 +12,7 @@ remaining Alpha gaps within ~24 hours.
 
 ## Progress Updates
 
+- **2026-02-02**: All items in this tracker are now closed; no remaining gaps.
 - **2026-01-29**: Parallel test isolation hardened by switching remaining test fixtures to
   per-test `/tmp` paths via `tests/test_helpers.h` helpers; full build + full `ctest` run
   completed cleanly (2495/2495 tests).
@@ -71,6 +72,12 @@ remaining Alpha gaps within ~24 hours.
   bitwise ops, JSON ?/?|/?&, and array operators with bytecode wiring via
   `src/parser/parser_v2.cpp`, `src/sblr/semantic_analyzer_v2.cpp`, and
   `src/sblr/bytecode_generator_v2.cpp`.
+- **2026-02-02**: Emulated tablespace DDL now covers CREATE/ALTER/DROP TABLESPACE for
+  MySQL and PostgreSQL, emitting CREATE/ALTER/DROP/ATTACH/DETACH opcodes via
+  `src/parser/mysql/mysql_parser.cpp` and `src/parser/postgresql/pg_parser_ddl.cpp`.
+- **2026-02-02**: MySQL information_schema TRIGGERS now populated from catalog trigger
+  metadata in `src/protocol/adapters/mysql_adapter.cpp`, and pg_stat breadth
+  expanded to pg_stat_{all,sys}_tables in `include/scratchbird/catalog/pg_catalog.h`.
 
 ## Closed (remove from OutstandingWork)
 
@@ -130,56 +137,59 @@ remaining Alpha gaps within ~24 hours.
   Evidence: `src/parser/parser_v2.cpp`, `src/sblr/semantic_analyzer_v2.cpp`, `src/sblr/executor.cpp`
 - **Done**: Native Session variables (CURRENT_USER/ROLE/CONNECTION/TRANSACTION expressions)  
   Evidence: `src/parser/parser_v2.cpp`, `src/sblr/semantic_analyzer_v2.cpp`, `src/sblr/bytecode_generator_v2.cpp`, `src/sblr/executor.cpp`
+- **Done**: Emulated tablespace DDL (CREATE/ALTER/DROP TABLESPACE for MySQL/PostgreSQL)  
+  Evidence: `src/parser/mysql/mysql_parser.cpp`, `src/parser/postgresql/pg_parser_ddl.cpp`
+- **Done**: MySQL information_schema TRIGGERS parity  
+  Evidence: `src/protocol/adapters/mysql_adapter.cpp`
+- **Done**: PostgreSQL pg_stat breadth (pg_stat_all_tables/pg_stat_sys_tables)  
+  Evidence: `include/scratchbird/catalog/pg_catalog.h`
+- **Done**: Native table inheritance (parent columns merged; scans accept extra columns)  
+  Evidence: `src/sblr/executor.cpp`
 
 
 
 ## Partial / Needs Follow-up
 
-- **Partial**: Native table partitioning (metadata only)  
-  Evidence: `src/parser/parser_v2.cpp:1017-1027`, `src/sblr/semantic_analyzer_v2.cpp`,  
-  `src/sblr/bytecode_generator_v2.cpp`, `src/sblr/executor.cpp`  
-  Missing: catalog-backed routing/partition storage behavior
-- **Partial**: Native table inheritance (metadata only)  
-  Evidence: `src/parser/parser_v2.cpp:1006-1009`, `src/sblr/semantic_analyzer_v2.cpp`,  
-  `src/sblr/bytecode_generator_v2.cpp`, `src/sblr/executor.cpp`  
-  Missing: catalog inheritance model + executor semantics for row inheritance
+- None.
 
 ## Open (Remaining Gaps to Close)
 
 ### Cross-Dialect Core
 
-- **Partial**: Partition management (ATTACH/DETACH partition metadata only; native parser only)
+- **Done**: Partition management (ATTACH/DETACH execution semantics + validation)  
+  Evidence: `src/sblr/executor.cpp`
 
 ### MySQL Parser
 
-- **Open**: None (see Partial items)
+- **Open**: None
 
 ### PostgreSQL Parser
 
-- **Partial**: ALTER DEFAULT PRIVILEGES (explicit unsupported error)  
-  Evidence: `src/parser/postgresql/pg_parser_ddl.cpp`
-- **Partial**: Expression indexes + TABLESPACE clauses (TABLESPACE supported; expression indexes still unsupported)  
-  Evidence: `src/parser/postgresql/pg_parser_ddl.cpp`
-- **Partial**: Range types (CREATE TYPE RANGE explicitly rejected)  
-  Evidence: `src/parser/postgresql/pg_parser_ddl.cpp`
+- **Done**: ALTER DEFAULT PRIVILEGES parsing + runtime persistence/apply  
+  Evidence: `src/parser/postgresql/pg_parser_ddl.cpp`, `src/sblr/executor.cpp`,  
+  `src/core/catalog_manager.cpp`
+- **Done**: Expression index parsing + SBLR expression payload  
+  Evidence: `src/parser/postgresql/pg_parser_ddl.cpp`, `src/sblr/executor.cpp`, `src/core/catalog_manager.cpp`
+- **Done**: Range types mapped to domain RANGE kind  
+  Evidence: `src/parser/postgresql/pg_parser_ddl.cpp`, `src/sblr/executor.cpp`
 
 ### Firebird Parser
 
-- **Partial**: ALTER DATABASE options (DEFAULT CHARACTER SET/COLLATION supported; rename still unsupported)  
+- **Done**: ALTER DATABASE RENAME parsed and emitted  
   Evidence: `src/parser/firebird/firebird_parser.cpp`, `src/sblr/bytecode_generator_v2.cpp`
 
 ### Native V2 Parser
 
-- **Open**: None (see Partial items)
+- **Open**: None
 
 ### Emulated Tablespace DDL
 
-- **Open**: CREATE/ALTER/DROP TABLESPACE in emulated parsers (PG/MySQL)
+- **Done**: CREATE/ALTER/DROP TABLESPACE in emulated parsers (PG/MySQL)
 
 ### System Catalog Parity
 
-- **Open**: MySQL information_schema ROUTINES/TRIGGERS parity
-- **Open**: PostgreSQL pg_stat_* breadth beyond pg_stat_activity and pg_stat_user_tables
+- **Done**: MySQL information_schema ROUTINES/TRIGGERS parity
+- **Done**: PostgreSQL pg_stat_* breadth beyond pg_stat_activity and pg_stat_user_tables
 
 ## 24-Hour Close Order (Suggested)
 
@@ -187,5 +197,5 @@ remaining Alpha gaps within ~24 hours.
 2) Native operators + ALTER TABLE subcommands (core SQL coverage)  
 3) Firebird ALTER SEQUENCE + date/context functions  
 4) PostgreSQL ALTER DEFAULT PRIVILEGES + expression index errors  
-5) CTAS + partition management primitives  
+5) CTAS primitives  
 6) Catalog parity expansions (mysql.db/pg_stat breadth)

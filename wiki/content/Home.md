@@ -3,7 +3,7 @@
 # Welcome to ScratchBird Wiki
 
 **Version:** Alpha
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 > 🎯 **ScratchBird** is a high-performance database that implements **Firebird's Multi-Generational Architecture (MGA)** transaction model with modern features including vector search, advanced indexing, and comprehensive SQL support.
 
@@ -36,6 +36,9 @@
 - [Go](drivers/Go.md) - database/sql, GORM, sqlx
 - [PHP](drivers/PHP.md) - PDO, mysqli, WordPress
 - [Pascal/Delphi](drivers/Pascal-Delphi.md) - FireDAC, IBX, Zeos, Lazarus
+- [Ruby](drivers/Ruby.md) - Sequel, ActiveRecord
+- [Rust](drivers/Rust.md) - Tokio, async services
+- [R](drivers/R.md) - DBI, analytics
 
 ### 🔄 Migration Guides
 - [From Firebird](migration/From-Firebird.md) - **Critical for MGA users**
@@ -56,8 +59,8 @@ ScratchBird is a **modern relational database** that combines:
 - **Automatic Garbage Collection** - Reclaim space from old record versions
 
 ### ⚡ Modern Performance Features
-- **Vector Search** - Native pgvector-compatible vector operations with HNSW indexing
-- **Advanced Indexing** - B-tree, Hash, GiST, GIN, SP-GiST, BRIN, R-tree, Bitmap, LSM-Tree, HNSW, Columnstore, Full-text, Inverted
+- **Vector Search** - Native pgvector-compatible vector operations with HNSW and IVF indexing
+- **Advanced Indexing** - B-tree, Hash, GiST, GIN, SP-GiST, BRIN, R-tree, Bitmap, LSM-Tree, HNSW, IVF, Columnstore, Full-text, Inverted, Zone Map
 - **Bloom Filters** - Attachable to B-tree, Hash, and GIN indexes for accelerated lookups
 - **TOAST/LOB Storage** - Efficient large object handling with visibility tracking
 - **Zone Maps (BRIN)** - Fast data pruning for analytical queries
@@ -127,6 +130,8 @@ ScratchBird is a **modern relational database** that combines:
 - **Bitmap** - Bitmap indexes for low-cardinality columns
 - **LSM-Tree** - Write-optimized indexing with compaction, block cache, and Bloom filters
 - **HNSW** - Hierarchical Navigable Small World graphs for vector similarity search
+- **IVF** - Inverted File index for memory-efficient vector search
+- **Zone Map** - Min/max metadata per block for fast data skipping
 - **Columnstore** - Columnar indexes for analytical queries
 - **Full-text** - Dedicated full-text search index with tsvector/tsquery
 - **Inverted** - General-purpose inverted indexes
@@ -233,13 +238,16 @@ ScratchBird supports all major programming languages:
 
 | Language | Driver | ORM Support | Status |
 |----------|--------|-------------|--------|
-| **Python** | [scratchbird](drivers/Python.md) | SQLAlchemy, Django | 🚧 Planned |
-| **Node.js** | [scratchbird](drivers/NodeJS-TypeScript.md) | Prisma, TypeORM | 🚧 Planned |
-| **Java** | [JDBC](drivers/Java-JDBC.md) | Hibernate, JPA | 🚧 Planned |
-| **C#/.NET** | [ADO.NET](drivers/CSharp-DotNet.md) | EF Core | 🚧 Planned |
-| **Go** | [database/sql](drivers/Go.md) | GORM, sqlx | 🚧 Planned |
-| **PHP** | [PDO](drivers/PHP.md) | Laravel, WordPress | 🚧 Planned |
-| **Pascal/Delphi** | [FireDAC](drivers/Pascal-Delphi.md) | IBX, Zeos | 🚧 Planned |
+| **Python** | [scratchbird](drivers/Python.md) | SQLAlchemy, Django | ✅ Native (SBWP v1.1) |
+| **Node.js** | [scratchbird](drivers/NodeJS-TypeScript.md) | Prisma, TypeORM | ✅ Native (SBWP v1.1) |
+| **Java** | [JDBC](drivers/Java-JDBC.md) | Hibernate, JPA | ✅ Native (SBWP v1.1) |
+| **C#/.NET** | [ADO.NET](drivers/CSharp-DotNet.md) | EF Core | ✅ Native (SBWP v1.1) |
+| **Go** | [database/sql](drivers/Go.md) | GORM, sqlx | ✅ Native (SBWP v1.1) |
+| **PHP** | [PDO](drivers/PHP.md) | Laravel, WordPress | ✅ Native (SBWP v1.1) |
+| **Pascal/Delphi** | [FireDAC](drivers/Pascal-Delphi.md) | IBX, Zeos | ✅ Native (SBWP v1.1) |
+| **Ruby** | [scratchbird](drivers/Ruby.md) | Sequel, ActiveRecord | ✅ Native (SBWP v1.1) |
+| **Rust** | [scratchbird](drivers/Rust.md) | Tokio, SeaORM | ✅ Native (SBWP v1.1) |
+| **R** | [scratchbird](drivers/R.md) | DBI | ✅ Native (SBWP v1.1) |
 
 ---
 
@@ -305,13 +313,13 @@ ScratchBird supports all major programming languages:
 - ✅ Garbage collection and sweep management
 - ✅ Buffer pool, page management, compressed pages
 - ✅ Job scheduler for background tasks
-- 🚧 Language drivers (Python, Node.js, Java, C#, Go, PHP, Pascal)
+- ✅ Language drivers (Python, Node.js, Java, C#, Go, PHP, Pascal)
 - 🚧 BI tool integration (ODBC, Tableau, Power BI)
 - 🚧 Kubernetes operator
 
 ### Beta
 - Production stability hardening
-- Complete language driver suite
+- App-specific drivers (Metabase, Superset) and BI tooling
 - Streaming connectors (Kafka, Spark)
 - Performance optimization
 
@@ -353,4 +361,4 @@ ScratchBird is open-source software licensed under [LICENSE_TYPE].
 
 ---
 
-*Last updated: 2026-01-28 | Wiki version synced with codebase*
+*Last updated: 2026-01-30 | Wiki version synced with codebase*

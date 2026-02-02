@@ -3,7 +3,7 @@
 # PostgreSQL - System Catalog Surface
 
 **Status:** Alpha documentation
-**Last Updated:** 2026-01-19
+**Last Updated:** 2026-01-30
 
 > Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
 > Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.

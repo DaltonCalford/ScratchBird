@@ -73,6 +73,8 @@ Notes:
 | Bitmap | Implemented (Alpha) | Yes | No | No | No | No | No |
 | LSM-Tree | Implemented (Alpha) - with compaction and block cache | No | No | No | No | No | No |
 | HNSW (vector) | Implemented (Alpha) | Varies | Varies | Varies | Yes (pgvector) | No | No |
+| IVF (vector) | Implemented (Alpha) | Varies | Varies | Varies | Yes (pgvector) | No | No |
+| Zone Map | Implemented (Alpha) | Yes | No | No | No | No | No |
 | Columnstore index | Implemented (Alpha) | Yes | Yes | No | No | No | No |
 | Full-text index | Implemented (Alpha) | Yes | Yes | Yes | Yes (GIN+tsvector) | No | No |
 | Inverted index | Implemented (Alpha) | Yes | Partial | Partial | Yes (GIN) | No | No |

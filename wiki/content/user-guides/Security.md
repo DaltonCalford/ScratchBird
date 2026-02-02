@@ -1,6 +1,6 @@
 # Security
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ScratchBird enforces security in the engine. Parsers and listeners are treated as
 untrusted and cannot bypass authentication, authorization, or auditing.

@@ -1,6 +1,6 @@
 # Operators
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 This page summarizes ScratchBird operators, their purpose, and examples.
 Operator availability can vary by dialect; see language guides for per-dialect

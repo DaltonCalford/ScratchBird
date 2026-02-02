@@ -2673,6 +2673,12 @@ namespace scratchbird::core
                                                const std::vector<uint16_t>& param_types,
                                                ErrorContext* ctx)
     {
+        auto now_micros = []() -> int64_t {
+            return static_cast<int64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+        };
+
         // Check if name already exists
         if (prepared_statements_.find(name) != prepared_statements_.end())
         {
@@ -2700,6 +2706,8 @@ namespace scratchbird::core
         stmt.param_count = param_types.size();
         stmt.created_at = std::chrono::steady_clock::now();
         stmt.last_used = stmt.created_at;
+        stmt.created_at_micros = now_micros();
+        stmt.last_used_micros = stmt.created_at_micros;
         stmt.execution_count = 0;
 
         prepared_statements_[name] = std::move(stmt);
@@ -2747,6 +2755,9 @@ namespace scratchbird::core
         {
             it->second.last_used = std::chrono::steady_clock::now();
             it->second.execution_count++;
+            it->second.last_used_micros = static_cast<int64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
         }
     }
 
@@ -2762,6 +2773,28 @@ namespace scratchbird::core
             total_bytes += stmt.bytecode.size();
             total_bytes += stmt.param_types.size() * sizeof(uint16_t);
             total_bytes += sizeof(PreparedStatement);  // Struct overhead
+        }
+    }
+
+    void ConnectionContext::listPreparedStatements(std::vector<PreparedStatementInfo>& out) const
+    {
+        out.clear();
+        out.reserve(prepared_statements_.size());
+
+        for (const auto& [name, stmt] : prepared_statements_)
+        {
+            PreparedStatementInfo info;
+            info.name = name;
+            info.sql_text = stmt.sql_text;
+            info.param_count = stmt.param_count;
+            info.execution_count = stmt.execution_count;
+            info.created_at_micros = stmt.created_at_micros;
+            info.last_used_micros = stmt.last_used_micros;
+            info.memory_bytes = name.size() + stmt.sql_text.size() +
+                stmt.bytecode.size() +
+                stmt.param_types.size() * sizeof(uint16_t) +
+                sizeof(PreparedStatement);
+            out.push_back(std::move(info));
         }
     }
 
@@ -2787,6 +2820,12 @@ namespace scratchbird::core
 
         // Evict it
         prepared_statements_.erase(oldest_it);
+
+        auto& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
+        if (metrics.statement_cache_evictions_total) {
+            metrics.statement_cache_evictions_total->inc(1.0);
+        }
     }
 
 } // namespace scratchbird::core

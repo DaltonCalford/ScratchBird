@@ -1,6 +1,6 @@
 # Installation Issues
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ## AppImage Will Not Run
 - Ensure FUSE is available: `sudo modprobe fuse`

@@ -1152,6 +1152,7 @@ namespace scratchbird
             EXT_CREATE_POLICY = 0xD7,  // CREATE POLICY policy_name ON table_name
             EXT_DROP_POLICY = 0xD8,  // DROP POLICY [IF EXISTS] policy_name ON table_name
             EXT_ALTER_TABLE_RLS = 0xD9,  // ALTER TABLE table_name {ENABLE|DISABLE|FORCE|NO FORCE} ROW LEVEL SECURITY
+            EXT_ALTER_DEFAULT_PRIVILEGES = 0x01A0, // ALTER DEFAULT PRIVILEGES
             EXT_FUNC_SIN = 0xDA,  // SIN(x) - sine in radians
             EXT_FUNC_COS = 0xDB,  // COS(x) - cosine in radians
             EXT_FUNC_TAN = 0xDC,  // TAN(x) - tangent in radians

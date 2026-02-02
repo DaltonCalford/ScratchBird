@@ -178,6 +178,7 @@ enum class ASTKind : uint16_t {
     // Expressions
     LiteralExpr,
     ColumnRefExpr,
+    ParameterExpr,
     BinaryExpr,
     UnaryExpr,
     FunctionCallExpr,
@@ -2554,6 +2555,19 @@ public:
 };
 
 /**
+ * Parameter placeholder expression ($1, :name)
+ */
+class ParameterExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::ParameterExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool is_named = false;
+    uint32_t index = 0;
+    StringPool::StringId name = StringPool::INVALID_ID;
+};
+
+/**
  * Binary operator types
  */
 enum class BinaryOp : uint8_t {
@@ -3779,6 +3793,7 @@ public:
     // Expressions
     virtual void visit(LiteralExpr* expr) = 0;
     virtual void visit(ColumnRefExpr* expr) = 0;
+    virtual void visit(ParameterExpr* expr) = 0;
     virtual void visit(BinaryExpr* expr) = 0;
     virtual void visit(UnaryExpr* expr) = 0;
     virtual void visit(FunctionCallExpr* expr) = 0;

@@ -2277,6 +2277,10 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
              "seq_in_index INT, column_name TEXT, collation TEXT, cardinality BIGINT, index_type TEXT)");
     safeExec("CREATE TABLE IF NOT EXISTS " + info_table("routines") + " ("
              "routine_schema TEXT, routine_name TEXT, routine_type TEXT, data_type TEXT)");
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("triggers") + " ("
+             "trigger_schema TEXT, trigger_name TEXT, event_manipulation TEXT, "
+             "event_object_schema TEXT, event_object_table TEXT, "
+             "action_statement TEXT, action_timing TEXT)");
 
     std::string delete_existing = "DELETE FROM " + info_table("schemata") + " "
                                   "WHERE schema_name = '" + escapeLiteral(db_name) + "'";
@@ -2293,6 +2297,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     safeExec("DELETE FROM " + info_table("key_column_usage") + " WHERE constraint_schema IN ('information_schema')");
     safeExec("DELETE FROM " + info_table("referential_constraints") + " WHERE constraint_schema IN ('information_schema')");
     safeExec("DELETE FROM " + info_table("statistics") + " WHERE table_schema IN ('information_schema')");
+    safeExec("DELETE FROM " + info_table("triggers") + " WHERE trigger_schema IN ('information_schema')");
 
     auto insertTable = [&](const std::string& name) {
         std::string sql = "INSERT INTO " + info_table("tables") + " "
@@ -2383,6 +2388,15 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     insertColumn("routines", 2, "routine_name", "varchar", "YES", 256);
     insertColumn("routines", 3, "routine_type", "varchar", "YES", 16);
     insertColumn("routines", 4, "data_type", "varchar", "YES", 64);
+
+    insertTable("triggers");
+    insertColumn("triggers", 1, "trigger_schema", "varchar", "YES", 256);
+    insertColumn("triggers", 2, "trigger_name", "varchar", "YES", 256);
+    insertColumn("triggers", 3, "event_manipulation", "varchar", "YES", 16);
+    insertColumn("triggers", 4, "event_object_schema", "varchar", "YES", 256);
+    insertColumn("triggers", 5, "event_object_table", "varchar", "YES", 256);
+    insertColumn("triggers", 6, "action_statement", "varchar", "YES", 1024);
+    insertColumn("triggers", 7, "action_timing", "varchar", "YES", 16);
 
     // Copy real catalog projections into the emulated schema if available
     auto toString = [](const protocol::ProtocolCodec::ColumnValue& cv) {
@@ -2550,6 +2564,81 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
             numberOrNull(toString(row[8])) + ")";
         safeExec(sql);
     });
+
+    auto* db = engineDatabase();
+    auto* catalog = db ? db->catalog_manager() : nullptr;
+    if (catalog) {
+        auto normalize_schema_name = [&](const std::string& raw) {
+            std::string prefix = base_schema;
+            if (raw.rfind(prefix, 0) == 0) {
+                std::string rest = raw.substr(prefix.size());
+                if (!rest.empty() && rest.front() == '.') {
+                    rest.erase(0, 1);
+                }
+                if (rest.empty()) {
+                    return db_name;
+                }
+                return rest;
+            }
+            return raw;
+        };
+
+        std::vector<core::CatalogManager::SchemaInfo> schemas;
+        if (catalog->listSchemas(schemas, ctx) == core::Status::OK) {
+            std::string insert_prefix_triggers = "INSERT INTO " + info_table("triggers") + " "
+                "(trigger_schema, trigger_name, event_manipulation, event_object_schema, "
+                "event_object_table, action_statement, action_timing) VALUES ";
+
+            for (const auto& schema : schemas) {
+                std::string schema_name = normalize_schema_name(schema.full_path.empty()
+                                                                  ? schema.schema_name
+                                                                  : schema.full_path);
+                std::vector<core::CatalogManager::TableInfo> tables;
+                if (catalog->listTables(schema.schema_id, tables, ctx) != core::Status::OK) {
+                    continue;
+                }
+                for (const auto& table : tables) {
+                    std::vector<core::CatalogManager::TriggerInfo> triggers;
+                    if (catalog->listAllTriggersForTable(table.table_id, triggers, ctx) != core::Status::OK) {
+                        continue;
+                    }
+                    for (const auto& trigger : triggers) {
+                        auto timing = [&]() -> std::string {
+                            switch (trigger.timing) {
+                                case core::CatalogManager::TriggerTiming::BEFORE: return "BEFORE";
+                                case core::CatalogManager::TriggerTiming::AFTER: return "AFTER";
+                                case core::CatalogManager::TriggerTiming::INSTEAD_OF: return "INSTEAD OF";
+                                default: return "BEFORE";
+                            }
+                        }();
+                        auto emit_trigger_row = [&](const std::string& event_name) {
+                            std::string sql = insert_prefix_triggers + "('" +
+                                escapeLiteral(schema_name) + "','" +
+                                escapeLiteral(trigger.trigger_name) + "','" +
+                                escapeLiteral(event_name) + "','" +
+                                escapeLiteral(schema_name) + "','" +
+                                escapeLiteral(table.table_name) + "','" +
+                                escapeLiteral(trigger.procedure_name) + "','" +
+                                escapeLiteral(timing) + "')";
+                            safeExec(sql);
+                        };
+                        if (trigger.event_mask & (1u << static_cast<uint8_t>(
+                                core::CatalogManager::TriggerEvent::INSERT))) {
+                            emit_trigger_row("INSERT");
+                        }
+                        if (trigger.event_mask & (1u << static_cast<uint8_t>(
+                                core::CatalogManager::TriggerEvent::UPDATE))) {
+                            emit_trigger_row("UPDATE");
+                        }
+                        if (trigger.event_mask & (1u << static_cast<uint8_t>(
+                                core::CatalogManager::TriggerEvent::DELETE))) {
+                            emit_trigger_row("DELETE");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     information_schema_bootstrapped_ = true;
 }

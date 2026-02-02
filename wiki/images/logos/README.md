@@ -1,7 +1,7 @@
 # ScratchBird Logos and Branding
 
 **Source:** `/docs/Artwork/`
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-30
 
 ---
 

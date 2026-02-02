@@ -340,7 +340,7 @@ SSTableWriter::SSTableWriter(const std::string &file_path, size_t block_size, Co
       num_entries_(0),
       data_offset_(0),
       compression_type_(compression),
-      compressor_(CompressionFactory::create(compression))
+      compressor_(LsmCompressionFactory::create(compression))
 {
 }
 
@@ -856,13 +856,13 @@ Status SSTableReader::open(ErrorContext *ctx)
         pos += sizeof(compression_byte);
 
         compression_type_ = static_cast<CompressionType>(compression_byte);
-        compressor_ = CompressionFactory::create(compression_type_);
+        compressor_ = LsmCompressionFactory::create(compression_type_);
     }
     else
     {
         // Older SSTable without compression info - assume no compression
         compression_type_ = CompressionType::NONE;
-        compressor_ = CompressionFactory::create(CompressionType::NONE);
+        compressor_ = LsmCompressionFactory::create(CompressionType::NONE);
     }
 
     size_t remaining = (pos <= footer.size()) ? (footer.size() - pos) : 0;

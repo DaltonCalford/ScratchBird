@@ -1136,6 +1136,19 @@ public:
             uint64_t created_time = 0;
         };
 
+        struct DefaultPrivilegeInfo
+        {
+            ID default_privilege_id;
+            ID schema_id;
+            ID grantor_id;
+            PermissionObjectType object_type;
+            ID grantee_id;
+            GranteeType grantee_type;
+            uint32_t privileges;
+            bool grant_option = false;
+            uint64_t created_time = 0;
+        };
+
         // Security Phase 3.3: Column-level permission information
         struct ColumnPermissionInfo
         {
@@ -3006,6 +3019,36 @@ public:
         auto listPermissions(std::vector<PermissionInfo>& permissions_out,
                              ErrorContext* ctx = nullptr) -> Status;
 
+        // Default privilege operations
+        auto grantDefaultPrivilege(const ID& schema_id,
+                                   const ID& grantor_id,
+                                   PermissionObjectType object_type,
+                                   const ID& grantee_id,
+                                   GranteeType grantee_type,
+                                   uint32_t privileges,
+                                   bool grant_option,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto revokeDefaultPrivilege(const ID& schema_id,
+                                    const ID& grantor_id,
+                                    PermissionObjectType object_type,
+                                    const ID& grantee_id,
+                                    GranteeType grantee_type,
+                                    uint32_t privileges,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto listDefaultPrivileges(const ID& schema_id,
+                                   const ID& grantor_id,
+                                   PermissionObjectType object_type,
+                                   std::vector<DefaultPrivilegeInfo>& defaults_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto applyDefaultPrivileges(const ID& schema_id,
+                                    PermissionObjectType object_type,
+                                    const ID& object_id,
+                                    const ID& grantor_id,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
         // Security Phase 3.3: Column-level permission operations
         auto grantColumnPermission(const ID& table_id, const std::string& column_name,
                                   const ID& grantee_id, GranteeType grantee_type,
@@ -4273,6 +4316,7 @@ public:
         uint32_t triggers_table_page_ = 0;       // Will be allocated during init
         uint32_t permissions_table_page_ = 0;    // Will be allocated during init
         uint32_t column_permissions_table_page_ = 0; // Security Phase 3.3: Column-level permissions
+        uint32_t default_privileges_table_page_ = 0; // Default privileges
         uint32_t policies_table_page_ = 0;       // Security Phase 3.4: Row-level security policies
         uint32_t object_permissions_table_page_ = 0; // Security Phase 3.1: SQL object permissions
         uint32_t statistics_table_page_ = 0;     // Will be allocated during init

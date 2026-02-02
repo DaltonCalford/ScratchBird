@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's security architecture - authentication methods, authorization model, encryption, and audit.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

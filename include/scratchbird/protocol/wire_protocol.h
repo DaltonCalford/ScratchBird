@@ -33,9 +33,9 @@ namespace protocol {
 /// Protocol magic bytes: "SBDB" (ScratchBird DataBase)
 constexpr uint32_t PROTOCOL_MAGIC = 0x42444253;  // "SBDB" in little-endian
 
-/// Current protocol version (1.0)
+/// Current protocol version (1.1)
 constexpr uint16_t PROTOCOL_VERSION_MAJOR = 1;
-constexpr uint16_t PROTOCOL_VERSION_MINOR = 0;
+constexpr uint16_t PROTOCOL_VERSION_MINOR = 1;
 constexpr uint16_t PROTOCOL_VERSION = (PROTOCOL_VERSION_MAJOR << 8) | PROTOCOL_VERSION_MINOR;
 
 /// Maximum message payload size (16 MB)
@@ -98,6 +98,8 @@ enum class MessageType : uint8_t {
     AUTH_REQUEST        = 0x10,
     AUTH_RESPONSE       = 0x11,
     AUTH_CHALLENGE      = 0x12,  // For future challenge-response auth
+    SUBSCRIBE           = 0x13,
+    UNSUBSCRIBE         = 0x14,
 
     // Query execution (0x20-0x2F)
     QUERY               = 0x20,
@@ -127,6 +129,9 @@ enum class MessageType : uint8_t {
     ROW_DATA            = 0x51,
     END_OF_RESULTS      = 0x52,
     COMMAND_COMPLETE    = 0x53,
+    PORTAL_SUSPENDED    = 0x4D,
+    NOTIFICATION        = 0x54,
+    QUERY_PROGRESS      = 0x5C,
 
     // Administrative (0x60-0x6F)
     SHUTDOWN            = 0x60,
@@ -177,11 +182,26 @@ static_assert(sizeof(MessageHeader) == 12, "MessageHeader must be 12 bytes");
 /// Message flags (for future use)
 enum class MessageFlags : uint8_t {
     NONE            = 0x00,
-    COMPRESSED      = 0x01,  // Payload is compressed (future)
+    COMPRESSED      = 0x01,  // Payload is compressed
     ENCRYPTED       = 0x02,  // Payload is encrypted (future)
     CONTINUATION    = 0x04,  // Message continues in next packet
     LAST_FRAGMENT   = 0x08   // Last fragment of a multi-packet message
 };
+
+/// Connection capability flags
+constexpr uint16_t CONNECT_FLAG_ZSTD_COMPRESSION = 0x0001;
+constexpr uint16_t CONNECT_FLAG_COPY             = 0x0002;
+constexpr uint16_t CONNECT_FLAG_LOB_STREAM       = 0x0004;
+constexpr uint16_t CONNECT_FLAG_PORTAL_PAGING    = 0x0008;
+constexpr uint16_t CONNECT_FLAG_NOTIFICATIONS    = 0x0010;
+constexpr uint16_t CONNECT_FLAG_PROGRESS         = 0x0020;
+
+constexpr uint16_t CONNECT_FLAG_BASE_CAPABILITIES =
+    CONNECT_FLAG_COPY |
+    CONNECT_FLAG_LOB_STREAM |
+    CONNECT_FLAG_PORTAL_PAGING |
+    CONNECT_FLAG_PROGRESS |
+    CONNECT_FLAG_NOTIFICATIONS;
 
 // ============================================================================
 // Data Type Encoding
@@ -476,6 +496,55 @@ struct TransactionStatusPayload {
 #pragma pack(pop)
 
 /**
+ * SUBSCRIBE payload
+ */
+#pragma pack(push, 1)
+struct SubscribePayload {
+    uint8_t subscribe_type;
+    uint8_t reserved[3];
+    uint32_t channel_length;
+    // channel bytes...
+    uint32_t filter_length;
+    // filter bytes...
+};
+#pragma pack(pop)
+
+/**
+ * UNSUBSCRIBE payload
+ */
+#pragma pack(push, 1)
+struct UnsubscribePayload {
+    uint32_t channel_length;
+    // channel bytes...
+};
+#pragma pack(pop)
+
+/**
+ * NOTIFICATION payload
+ */
+#pragma pack(push, 1)
+struct NotificationPayload {
+    uint32_t process_id;
+    uint32_t channel_length;
+    // channel bytes...
+    uint32_t payload_length;
+    // payload bytes...
+    uint8_t change_type;
+    uint64_t row_id;
+};
+#pragma pack(pop)
+
+/**
+ * QUERY_PROGRESS payload
+ */
+#pragma pack(push, 1)
+struct QueryProgressPayload {
+    uint64_t rows_processed;
+    uint64_t bytes_processed;
+};
+#pragma pack(pop)
+
+/**
  * PING/PONG payload
  */
 #pragma pack(push, 1)
@@ -620,22 +689,26 @@ public:
 
     static Message buildConnectRequest(const std::string& database,
                                        const std::string& client_name,
-                                       uint32_t client_pid);
+                                       uint32_t client_pid,
+                                       uint16_t client_flags = 0);
 
     static core::Status parseConnectRequest(const Message& msg,
                                             std::string& database,
                                             std::string& client_name,
                                             uint32_t& client_pid,
+                                            uint16_t* client_flags_out = nullptr,
                                             core::ErrorContext* ctx = nullptr);
 
     static Message buildConnectResponse(bool success,
                                         const uint8_t session_id[16],
-                                        const std::string& error_message = "");
+                                        const std::string& error_message = "",
+                                        uint16_t server_flags = 0);
 
     static core::Status parseConnectResponse(const Message& msg,
                                              bool& success,
                                              uint8_t session_id[16],
                                              std::string& error_message,
+                                             uint16_t* server_flags_out = nullptr,
                                              core::ErrorContext* ctx = nullptr);
 
     // ========================================
@@ -751,6 +824,9 @@ public:
      */
     struct ColumnValue {
         bool is_null = true;
+        bool is_stream = false;
+        uint64_t stream_id = 0;
+        uint64_t stream_length = 0;
         std::vector<uint8_t> data;
 
         ColumnValue() = default;
@@ -766,6 +842,10 @@ public:
         static ColumnValue fromString(const std::string& value);
         static ColumnValue fromBool(bool value);
         static ColumnValue fromBytes(const uint8_t* data, size_t length);
+        static ColumnValue fromStream(uint64_t stream_id,
+                                      uint64_t stream_length,
+                                      const uint8_t* data,
+                                      size_t length);
     };
 
     static Message buildRowData(const std::vector<ColumnValue>& values);
@@ -783,6 +863,41 @@ public:
                                              std::string& command_tag,
                                              int64_t& rows_affected,
                                              core::ErrorContext* ctx = nullptr);
+
+    static Message buildSubscribe(uint8_t subscribe_type,
+                                  const std::string& channel,
+                                  const std::string& filter);
+    static core::Status parseSubscribe(const Message& msg,
+                                       uint8_t& subscribe_type,
+                                       std::string& channel,
+                                       std::string& filter,
+                                       core::ErrorContext* ctx = nullptr);
+
+    static Message buildUnsubscribe(const std::string& channel);
+    static core::Status parseUnsubscribe(const Message& msg,
+                                         std::string& channel,
+                                         core::ErrorContext* ctx = nullptr);
+
+    static Message buildNotification(uint32_t process_id,
+                                     const std::string& channel,
+                                     const std::vector<uint8_t>& payload,
+                                     uint8_t change_type,
+                                     uint64_t row_id);
+    static core::Status parseNotification(const Message& msg,
+                                          uint32_t& process_id,
+                                          std::string& channel,
+                                          std::vector<uint8_t>& payload,
+                                          uint8_t& change_type,
+                                          uint64_t& row_id,
+                                          core::ErrorContext* ctx = nullptr);
+
+    static Message buildQueryProgress(uint64_t rows_processed,
+                                      uint64_t bytes_processed);
+
+    static core::Status parseQueryProgress(const Message& msg,
+                                           uint64_t& rows_processed,
+                                           uint64_t& bytes_processed,
+                                           core::ErrorContext* ctx = nullptr);
 
     // ========================================
     // COPY Messages

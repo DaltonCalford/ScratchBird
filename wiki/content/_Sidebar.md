@@ -66,6 +66,9 @@
 - [Go](drivers/Go)
 - [PHP](drivers/PHP)
 - [Pascal/Delphi](drivers/Pascal-Delphi)
+- [Ruby](drivers/Ruby)
+- [Rust](drivers/Rust)
+- [R](drivers/R)
 - [ODBC](drivers/ODBC)
 
 ---

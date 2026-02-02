@@ -1,6 +1,6 @@
 # Sequences
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 Sequences (generators) produce unique numeric values, typically for primary keys
 and identity columns. ScratchBird favors SQL-style syntax for sequence access.

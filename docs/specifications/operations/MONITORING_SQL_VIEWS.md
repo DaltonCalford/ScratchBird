@@ -188,6 +188,9 @@ Extended metrics for emulation (required for parity views):
 - page_buffers
 - next_transaction
 - oldest_transaction (from scratchbird_mga_oldest_active_transaction)
+- query_progress_rows
+- query_progress_bytes
+- query_progress_last_update_micros
 
 Mapping guidance:
 - Values should be sourced from the in-process metrics registry described in

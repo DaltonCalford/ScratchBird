@@ -292,12 +292,13 @@ bool Message::validateHeader(const MessageHeader& header) {
 
 Message ProtocolCodec::buildConnectRequest(const std::string& database,
                                            const std::string& client_name,
-                                           uint32_t client_pid) {
+                                           uint32_t client_pid,
+                                           uint16_t client_flags) {
     Message msg(MessageType::CONNECT_REQUEST);
     msg.reservePayload(sizeof(ConnectRequestPayload));
 
     msg.writeUInt16(PROTOCOL_VERSION);
-    msg.writeUInt16(0);  // client_flags (reserved)
+    msg.writeUInt16(client_flags);
     msg.writeUInt32(client_pid);
     msg.writeNullTerminatedString(database, 256);
     msg.writeNullTerminatedString(client_name, 64);
@@ -310,11 +311,13 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
                                                 std::string& database,
                                                 std::string& client_name,
                                                 uint32_t& client_pid,
+                                                uint16_t* client_flags_out,
                                                 core::ErrorContext* ctx) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
 
-    uint16_t version, flags;
+    uint16_t version = 0;
+    uint16_t flags = 0;
     if (!m.readUInt16(version) || !m.readUInt16(flags) || !m.readUInt32(client_pid)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Truncated CONNECT_REQUEST");
@@ -328,18 +331,23 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
         return core::Status::PROTOCOL_VIOLATION;
     }
 
+    if (client_flags_out) {
+        *client_flags_out = flags;
+    }
+
     return core::Status::OK;
 }
 
 Message ProtocolCodec::buildConnectResponse(bool success,
                                             const uint8_t session_id[16],
-                                            const std::string& error_message) {
+                                            const std::string& error_message,
+                                            uint16_t server_flags) {
     Message msg(MessageType::CONNECT_RESPONSE);
     msg.reservePayload(sizeof(ConnectResponsePayload));
 
     msg.writeUInt8(success ? 0 : 1);
     msg.writeUInt16(PROTOCOL_VERSION);
-    msg.writeUInt16(0);  // server_flags
+    msg.writeUInt16(server_flags);
     msg.writeBytes(session_id, 16);
     msg.writeNullTerminatedString("ScratchBird", 64);
     msg.writeNullTerminatedString("1.0.0-alpha1", 32);
@@ -355,6 +363,7 @@ core::Status ProtocolCodec::parseConnectResponse(const Message& msg,
                                                  bool& success,
                                                  uint8_t session_id[16],
                                                  std::string& error_message,
+                                                 uint16_t* server_flags_out,
                                                  core::ErrorContext* ctx) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
@@ -370,6 +379,9 @@ core::Status ProtocolCodec::parseConnectResponse(const Message& msg,
     }
 
     success = (status == 0);
+    if (server_flags_out) {
+        *server_flags_out = flags;
+    }
 
     // Skip server name and version
     std::string server_name, server_version;
@@ -838,7 +850,24 @@ ProtocolCodec::ColumnValue ProtocolCodec::ColumnValue::fromBool(bool value) {
 ProtocolCodec::ColumnValue ProtocolCodec::ColumnValue::fromBytes(const uint8_t* data, size_t length) {
     ColumnValue cv;
     cv.is_null = false;
-    cv.data.assign(data, data + length);
+    if (data && length > 0) {
+        cv.data.assign(data, data + length);
+    }
+    return cv;
+}
+
+ProtocolCodec::ColumnValue ProtocolCodec::ColumnValue::fromStream(uint64_t stream_id,
+                                                                  uint64_t stream_length,
+                                                                  const uint8_t* data,
+                                                                  size_t length) {
+    ColumnValue cv;
+    cv.is_null = false;
+    cv.is_stream = true;
+    cv.stream_id = stream_id;
+    cv.stream_length = stream_length;
+    if (data && length > 0) {
+        cv.data.assign(data, data + length);
+    }
     return cv;
 }
 
@@ -850,6 +879,10 @@ Message ProtocolCodec::buildRowData(const std::vector<ColumnValue>& values) {
     for (const auto& val : values) {
         if (val.is_null) {
             msg.writeInt32(-1);  // NULL indicator
+        } else if (val.is_stream) {
+            msg.writeInt32(-2);
+            msg.writeUInt64(val.stream_id);
+            msg.writeUInt64(val.stream_length);
         } else {
             msg.writeInt32(static_cast<int32_t>(val.data.size()));
             if (!val.data.empty()) {
@@ -887,7 +920,25 @@ core::Status ProtocolCodec::parseRowData(const Message& msg,
 
         ColumnValue val;
         if (length < 0) {
-            val.is_null = true;
+            if (length == -1) {
+                val.is_null = true;
+            } else if (length == -2) {
+                uint64_t stream_id = 0;
+                uint64_t stream_length = 0;
+                if (!m.readUInt64(stream_id) || !m.readUInt64(stream_length)) {
+                    SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                      "Truncated ROW_DATA stream reference");
+                    return core::Status::PROTOCOL_VIOLATION;
+                }
+                val.is_null = false;
+                val.is_stream = true;
+                val.stream_id = stream_id;
+                val.stream_length = stream_length;
+            } else {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Invalid ROW_DATA column length");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
         } else {
             val.is_null = false;
             val.data.resize(static_cast<size_t>(length));
@@ -918,6 +969,191 @@ Message ProtocolCodec::buildCommandComplete(const std::string& command_tag,
     return msg;
 }
 
+Message ProtocolCodec::buildSubscribe(uint8_t subscribe_type,
+                                      const std::string& channel,
+                                      const std::string& filter) {
+    Message msg(MessageType::SUBSCRIBE);
+    msg.writeUInt8(subscribe_type);
+    msg.writeUInt8(0);
+    msg.writeUInt8(0);
+    msg.writeUInt8(0);
+    msg.writeUInt32(static_cast<uint32_t>(channel.size()));
+    if (!channel.empty()) {
+        msg.writeBytes(channel.data(), channel.size());
+    }
+    msg.writeUInt32(static_cast<uint32_t>(filter.size()));
+    if (!filter.empty()) {
+        msg.writeBytes(filter.data(), filter.size());
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseSubscribe(const Message& msg,
+                                           uint8_t& subscribe_type,
+                                           std::string& channel,
+                                           std::string& filter,
+                                           core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint8_t reserved[3] = {0, 0, 0};
+    uint32_t channel_length = 0;
+    uint32_t filter_length = 0;
+    if (!m.readUInt8(subscribe_type) ||
+        !m.readBytes(reserved, sizeof(reserved)) ||
+        !m.readUInt32(channel_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated SUBSCRIBE");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    channel.clear();
+    if (channel_length > 0) {
+        channel.resize(channel_length);
+        if (!m.readBytes(channel.data(), channel_length)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated SUBSCRIBE channel");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
+    if (!m.readUInt32(filter_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated SUBSCRIBE filter length");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    filter.clear();
+    if (filter_length > 0) {
+        filter.resize(filter_length);
+        if (!m.readBytes(filter.data(), filter_length)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated SUBSCRIBE filter");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildUnsubscribe(const std::string& channel) {
+    Message msg(MessageType::UNSUBSCRIBE);
+    msg.writeUInt32(static_cast<uint32_t>(channel.size()));
+    if (!channel.empty()) {
+        msg.writeBytes(channel.data(), channel.size());
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseUnsubscribe(const Message& msg,
+                                             std::string& channel,
+                                             core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint32_t channel_length = 0;
+    if (!m.readUInt32(channel_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated UNSUBSCRIBE");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    channel.clear();
+    if (channel_length > 0) {
+        channel.resize(channel_length);
+        if (!m.readBytes(channel.data(), channel_length)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated UNSUBSCRIBE channel");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildNotification(uint32_t process_id,
+                                         const std::string& channel,
+                                         const std::vector<uint8_t>& payload,
+                                         uint8_t change_type,
+                                         uint64_t row_id) {
+    Message msg(MessageType::NOTIFICATION);
+    msg.writeUInt32(process_id);
+    msg.writeUInt32(static_cast<uint32_t>(channel.size()));
+    if (!channel.empty()) {
+        msg.writeBytes(channel.data(), channel.size());
+    }
+    msg.writeUInt32(static_cast<uint32_t>(payload.size()));
+    if (!payload.empty()) {
+        msg.writeBytes(payload.data(), payload.size());
+    }
+    msg.writeUInt8(change_type);
+    msg.writeUInt64(row_id);
+    return msg;
+}
+
+core::Status ProtocolCodec::parseNotification(const Message& msg,
+                                              uint32_t& process_id,
+                                              std::string& channel,
+                                              std::vector<uint8_t>& payload,
+                                              uint8_t& change_type,
+                                              uint64_t& row_id,
+                                              core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint32_t channel_length = 0;
+    uint32_t payload_length = 0;
+    if (!m.readUInt32(process_id) ||
+        !m.readUInt32(channel_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated NOTIFICATION header");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    channel.clear();
+    if (channel_length > 0) {
+        channel.resize(channel_length);
+        if (!m.readBytes(channel.data(), channel_length)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated NOTIFICATION channel");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
+    if (!m.readUInt32(payload_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated NOTIFICATION payload length");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    payload.clear();
+    if (payload_length > 0) {
+        payload.resize(payload_length);
+        if (!m.readBytes(payload.data(), payload_length)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated NOTIFICATION payload");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
+    if (!m.readUInt8(change_type) || !m.readUInt64(row_id)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated NOTIFICATION tail");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildQueryProgress(uint64_t rows_processed,
+                                          uint64_t bytes_processed) {
+    Message msg(MessageType::QUERY_PROGRESS);
+    msg.reservePayload(sizeof(QueryProgressPayload));
+    msg.writeUInt64(rows_processed);
+    msg.writeUInt64(bytes_processed);
+    return msg;
+}
+
 core::Status ProtocolCodec::parseCommandComplete(const Message& msg,
                                                  std::string& command_tag,
                                                  int64_t& rows_affected,
@@ -935,6 +1171,21 @@ core::Status ProtocolCodec::parseCommandComplete(const Message& msg,
     return core::Status::OK;
 }
 
+core::Status ProtocolCodec::parseQueryProgress(const Message& msg,
+                                               uint64_t& rows_processed,
+                                               uint64_t& bytes_processed,
+                                               core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    if (!m.readUInt64(rows_processed) || !m.readUInt64(bytes_processed)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated QUERY_PROGRESS");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    return core::Status::OK;
+}
 // COPY Messages
 
 Message ProtocolCodec::buildCopyInResponse(CopyFormat format,
@@ -1375,6 +1626,8 @@ const char* messageTypeToString(MessageType type) {
         case MessageType::AUTH_REQUEST:       return "AUTH_REQUEST";
         case MessageType::AUTH_RESPONSE:      return "AUTH_RESPONSE";
         case MessageType::AUTH_CHALLENGE:     return "AUTH_CHALLENGE";
+        case MessageType::SUBSCRIBE:          return "SUBSCRIBE";
+        case MessageType::UNSUBSCRIBE:        return "UNSUBSCRIBE";
         case MessageType::QUERY:              return "QUERY";
         case MessageType::QUERY_RESULT:       return "QUERY_RESULT";
         case MessageType::QUERY_ERROR:        return "QUERY_ERROR";
@@ -1396,6 +1649,9 @@ const char* messageTypeToString(MessageType type) {
         case MessageType::ROW_DATA:           return "ROW_DATA";
         case MessageType::END_OF_RESULTS:     return "END_OF_RESULTS";
         case MessageType::COMMAND_COMPLETE:   return "COMMAND_COMPLETE";
+        case MessageType::PORTAL_SUSPENDED:   return "PORTAL_SUSPENDED";
+        case MessageType::NOTIFICATION:       return "NOTIFICATION";
+        case MessageType::QUERY_PROGRESS:     return "QUERY_PROGRESS";
         case MessageType::SHUTDOWN:           return "SHUTDOWN";
         case MessageType::PING:               return "PING";
         case MessageType::PONG:               return "PONG";

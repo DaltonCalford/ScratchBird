@@ -450,11 +450,14 @@ private:
     void parseCreateIndex();
     void parseCreateView();
     void parseCreateDatabase();
+    void parseCreateTablespace();
     void parseCreateUser();
     void parseCreateRole();
     void parseAlterUser();
+    void parseAlterTablespace();
     void parseDropUser();
     void parseDropRole();
+    void parseDropTablespace();
     void parseCreateProcedure();
     void parseCreateFunction();
     void parseCreateTrigger();

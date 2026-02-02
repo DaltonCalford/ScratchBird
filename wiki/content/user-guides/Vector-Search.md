@@ -1,6 +1,6 @@
 # Vector Search
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -12,7 +12,7 @@ ScratchBird provides vector search capabilities for building AI-powered applicat
 - Vector data types
 - Creating vector columns
 - Similarity search operations
-- HNSW indexing
+- HNSW and IVF indexing
 - Use cases and examples
 
 ---
@@ -333,6 +333,61 @@ SELECT * FROM documents
 WHERE status = 'active'
 ORDER BY embedding <=> $1
 LIMIT 10;
+```
+
+---
+
+## Part 4b: IVF Indexing
+
+### What is IVF?
+
+IVF (Inverted File) is an alternative vector index that partitions vectors into clusters. It uses less memory than HNSW but may have slightly lower recall for the same query latency.
+
+### When to Use IVF vs HNSW
+
+| Factor | HNSW | IVF |
+|--------|------|-----|
+| Memory usage | Higher | Lower |
+| Query latency | Very fast | Fast |
+| Recall accuracy | Higher | Good |
+| Build time | Slower | Faster |
+| Best for | High-recall needs | Memory-constrained |
+
+### Creating IVF Index
+
+```sql
+-- Basic IVF index for cosine distance
+CREATE INDEX idx_documents_ivf ON documents
+USING ivf (embedding vector_cosine_ops);
+
+-- With custom parameters
+CREATE INDEX idx_documents_ivf ON documents
+USING ivf (embedding vector_cosine_ops)
+WITH (
+    lists = 100,     -- Number of clusters (default: sqrt(rows))
+    probes = 10      -- Clusters to search (default: 1)
+);
+```
+
+### IVF Parameters
+
+| Parameter | Description | Guideline |
+|-----------|-------------|-----------|
+| `lists` | Number of clusters | sqrt(rows) to rows/1000 |
+| `probes` | Clusters to search at query time | Higher = better recall, slower |
+
+### Tuning IVF Searches
+
+```sql
+-- Increase probes for better recall
+SET ivf.probes = 20;
+
+SELECT id, title
+FROM documents
+ORDER BY embedding <=> $1
+LIMIT 10;
+
+RESET ivf.probes;
 ```
 
 ---

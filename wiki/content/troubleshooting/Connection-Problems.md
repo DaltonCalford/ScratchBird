@@ -1,7 +1,7 @@
 # Connection Problems
 
 **Status:** Complete
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -605,7 +605,7 @@ Ensure you're using the correct driver for the port:
 | 5432 | PostgreSQL | psycopg2, pg, Npgsql, pgx |
 | 3306 | MySQL | mysql-connector, mysql2, MySqlConnector |
 | 3050 | Firebird | fdb, node-firebird, FirebirdClient |
-| 3092 | Native | libscratchbird (future) |
+| 3092 | Native | ScratchBird native drivers (SBWP v1.1) |
 
 **Solution:**
 

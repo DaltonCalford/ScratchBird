@@ -1,7 +1,7 @@
 # ScratchBird Logo Usage Guide
 
 **Quick Reference for Documentation Authors**
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-30
 
 ---
 

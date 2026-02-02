@@ -1362,7 +1362,10 @@ void BytecodeGeneratorV2::generateCreateTable(ResolvedCreateTableStmt* stmt) {
 
     // Write table name with TABLE_REF opcode
     current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
-    writeTableRefPayload(core::ID{}, stmt->table_name, false, StringPool::INVALID_ID);
+    StringPool::StringId table_ref = stmt->table_path != StringPool::INVALID_ID
+        ? stmt->table_path
+        : stmt->table_name;
+    writeTableRefPayload(core::ID{}, table_ref, false, StringPool::INVALID_ID);
 
     // Write BEGIN_LIST opcode for columns
     current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
@@ -4925,6 +4928,11 @@ void BytecodeGeneratorV2::generateExpression(ResolvedExpression* expr) {
     } else if (auto* var = dynamic_cast<ResolvedVariableExpr*>(expr)) {
         current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_VAR_LOAD);
         writeStringId(var->name);
+    } else if (auto* param = dynamic_cast<ResolvedParameterExpr*>(expr)) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_PLACEHOLDER);
+        uint16_t position = static_cast<uint16_t>(param->index);
+        current_result_->writeInt16(position);
+        current_result_->writeInt16(0);
     } else if (auto* col = dynamic_cast<ResolvedColumnRefExpr*>(expr)) {
         generateColumnRef(col);
     } else if (auto* binary = dynamic_cast<ResolvedBinaryExpr*>(expr)) {

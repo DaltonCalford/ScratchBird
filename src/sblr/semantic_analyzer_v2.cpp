@@ -2500,6 +2500,13 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
         }
 
         status = catalog_.getTable(schema_id, table_name, table_info);
+        if (status != Status::OK) {
+            if (auto virtual_ref = resolve_virtual_table(resolved_schema_path,
+                                                        table_name,
+                                                        resolved_schema_path + "." + table_name)) {
+                return virtual_ref;
+            }
+        }
     }
 
     auto resolve_view_in_schema = [&](const ID& schema_id, ResolvedTableRef& out) -> bool {
@@ -4339,6 +4346,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateTable(CreateTableStmt* stmt)
                 break;
         }
     }
+
+    resolved->table_path = internString(schemaPathToString(stmt->table_path, string_pool_));
 
     // Resolve schema from table path
     if (stmt->table_path.components.size() >= 2) {
@@ -8236,10 +8245,6 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCopy(CopyStmt* stmt) {
             }
         }
 
-        if (opts.format == ResolvedCopyOptions::Format::BINARY) {
-            error(stmt->span, "COPY FORMAT BINARY is not supported");
-        }
-
         if (stmt->options.batch_size_set) {
             if (stmt->options.batch_size <= 0) {
                 error(stmt->span, "COPY BATCH_SIZE must be greater than 0");
@@ -8411,6 +8416,8 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeExpression(Expression* expr) {
             return analyzeLiteral(static_cast<LiteralExpr*>(expr));
         case ASTKind::ColumnRefExpr:
             return analyzeColumnRef(static_cast<ColumnRefExpr*>(expr));
+        case ASTKind::ParameterExpr:
+            return analyzeParameter(static_cast<ParameterExpr*>(expr));
         case ASTKind::BinaryExpr:
             return analyzeBinaryExpr(static_cast<BinaryExpr*>(expr));
         case ASTKind::UnaryExpr:
@@ -8534,6 +8541,17 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeColumnRef(ColumnRefExpr* expr) {
     resolved->type.data_type = resolved_col->data_type;
     resolved->type.is_nullable = resolved_col->is_nullable;
 
+    return resolved;
+}
+
+ResolvedExpression* SemanticAnalyzerV2::analyzeParameter(ParameterExpr* expr) {
+    auto* resolved = arena_.create<ResolvedParameterExpr>();
+    resolved->span = expr->span;
+    resolved->is_named = expr->is_named;
+    resolved->index = expr->index;
+    resolved->name = expr->name;
+    resolved->type.data_type = DataType::UNKNOWN;
+    resolved->type.is_nullable = true;
     return resolved;
 }
 

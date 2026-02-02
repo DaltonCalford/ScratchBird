@@ -314,9 +314,12 @@ private:
     void parseCreateType();
     void parseCreateDomain();
     void parseCreatePolicy();
+    void parseCreateTablespace();
     void parseAlterDomain();
     void parseDropDomain();
     void parseDropPolicy();
+    void parseAlterTablespace();
+    void parseDropTablespace();
     ColumnDef parseColumnDef();
     PgDataType parseDataType();
     IndexDef parseIndexDef();

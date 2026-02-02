@@ -217,6 +217,9 @@ public:
     Counter* query_rows_returned_total;      // Rows returned by SELECT
     Counter* query_rows_affected_total;      // Rows affected by DML
     Gauge* query_currently_running;         // In-flight statements
+    Gauge* query_progress_rows;             // Rows processed for current query
+    Gauge* query_progress_bytes;            // Bytes processed for current query
+    Gauge* query_progress_last_update_micros; // Last progress update timestamp
 
     // Transaction metrics
     Counter* transactions_total;             // Total transactions

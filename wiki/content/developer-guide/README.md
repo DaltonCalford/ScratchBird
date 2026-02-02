@@ -2,7 +2,7 @@
 
 **Purpose:** Comprehensive guide to ScratchBird's internal architecture, design principles, and implementation details for contributors and maintainers.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

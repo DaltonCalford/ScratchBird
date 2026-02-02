@@ -127,7 +127,7 @@ ctest --test-dir build --output-on-failure
 ```
 src/
 ├── catalog/        Catalog management and sys.* views
-├── cli/            Command-line tools (sb_admin, sb_isql)
+├── cli/            Command-line tools (sb_admin, sb_isql, sbdriver-conformance)
 ├── client/         Client libraries
 ├── core/           Core engine, catalog, transactions, scheduler
 ├── executor/       Query execution

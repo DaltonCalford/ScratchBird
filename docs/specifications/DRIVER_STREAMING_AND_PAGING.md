@@ -25,6 +25,13 @@ Drivers must request binary format for all columns when streaming.
 - Drivers should support repeated EXECUTE calls to fetch subsequent pages.
 - Where possible, drivers should expose a `fetch_size` (rows per page) option.
 
+## SBWP LOB Streaming
+
+- Large values may be returned as streamed columns (length = -2 in DATA_ROW).
+- Drivers must consume the corresponding `STREAM_READY` / `STREAM_DATA` /
+  `STREAM_END` frames and assemble the byte payload before exposing the value.
+- Streamed payloads are binary and must not be re-encoded.
+
 ## SQLSTATE Codes (Streaming/Paging)
 
 - 57014: query canceled

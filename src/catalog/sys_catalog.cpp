@@ -6,16 +6,25 @@
 
 #include "scratchbird/catalog/sys_catalog.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/lsm_compression.h"
+#include "scratchbird/protocol/wire_protocol.h"
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <unordered_map>
+#include <nlohmann/json.hpp>
 
 namespace scratchbird::catalog {
 
 namespace {
+
+using json = nlohmann::json;
 
 bool isZeroId(const core::ID& id) {
     for (uint8_t byte : id.bytes) {
@@ -42,6 +51,140 @@ core::TypedValue textValueOrNull(const std::string& value, core::DataType type) 
         return core::TypedValue::makeText(value);
     }
     return core::TypedValue::makeVarchar(value);
+}
+
+std::string joinNames(const std::vector<std::string>& values) {
+    std::string joined;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i != 0) {
+            joined.append(",");
+        }
+        joined.append(values[i]);
+    }
+    return joined;
+}
+
+std::string indexStateToString(uint8_t state) {
+    switch (static_cast<core::CatalogManager::IndexState>(state)) {
+        case core::CatalogManager::IndexState::BUILDING: return "BUILDING";
+        case core::CatalogManager::IndexState::ACTIVE: return "ACTIVE";
+        case core::CatalogManager::IndexState::RETIRED: return "RETIRED";
+        case core::CatalogManager::IndexState::FAILED: return "FAILED";
+        case core::CatalogManager::IndexState::INACTIVE: return "INACTIVE";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string constraintTypeToString(core::CatalogManager::ConstraintType type) {
+    switch (type) {
+        case core::CatalogManager::ConstraintType::PRIMARY_KEY: return "PRIMARY_KEY";
+        case core::CatalogManager::ConstraintType::UNIQUE: return "UNIQUE";
+        case core::CatalogManager::ConstraintType::CHECK: return "CHECK";
+        case core::CatalogManager::ConstraintType::FOREIGN_KEY: return "FOREIGN_KEY";
+        case core::CatalogManager::ConstraintType::NOT_NULL: return "NOT_NULL";
+        case core::CatalogManager::ConstraintType::EXCLUSION: return "EXCLUSION";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string domainTypeToString(core::DomainType type) {
+    switch (type) {
+        case core::DomainType::BASIC: return "BASIC";
+        case core::DomainType::RECORD: return "RECORD";
+        case core::DomainType::ENUM: return "ENUM";
+        case core::DomainType::SET: return "SET";
+        case core::DomainType::VARIANT: return "VARIANT";
+        case core::DomainType::RANGE: return "RANGE";
+        case core::DomainType::BASE: return "BASE";
+        case core::DomainType::SHELL: return "SHELL";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string fkActionToString(core::CatalogManager::FKAction action) {
+    switch (action) {
+        case core::CatalogManager::FKAction::NO_ACTION: return "NO_ACTION";
+        case core::CatalogManager::FKAction::RESTRICT: return "RESTRICT";
+        case core::CatalogManager::FKAction::CASCADE: return "CASCADE";
+        case core::CatalogManager::FKAction::SET_NULL: return "SET_NULL";
+        case core::CatalogManager::FKAction::SET_DEFAULT: return "SET_DEFAULT";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string fkMatchToString(core::CatalogManager::FKMatchType match) {
+    switch (match) {
+        case core::CatalogManager::FKMatchType::SIMPLE: return "SIMPLE";
+        case core::CatalogManager::FKMatchType::FULL: return "FULL";
+        case core::CatalogManager::FKMatchType::PARTIAL: return "PARTIAL";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string tableTypeToString(core::CatalogManager::TableType type) {
+    switch (type) {
+        case core::CatalogManager::TableType::HEAP: return "HEAP";
+        case core::CatalogManager::TableType::INDEX: return "INDEX";
+        case core::CatalogManager::TableType::TEMPORARY: return "TEMPORARY";
+        case core::CatalogManager::TableType::EXTERNAL: return "EXTERNAL";
+        case core::CatalogManager::TableType::MATERIALIZED_VIEW: return "MATERIALIZED_VIEW";
+        case core::CatalogManager::TableType::TOAST: return "TOAST";
+        default: return "UNKNOWN";
+    }
+}
+
+bool loadTableMetadata(core::CatalogManager* catalog,
+                       const core::CatalogManager::TableInfo& table_info,
+                       json& metadata_out,
+                       core::ErrorContext* ctx) {
+    metadata_out = json::object();
+    if (!catalog || table_info.storage_params_oid == 0) {
+        return false;
+    }
+    std::string params;
+    if (catalog->loadStringFromToast(table_info.storage_params_oid, 0, params, ctx) != core::Status::OK ||
+        params.empty()) {
+        return false;
+    }
+    try {
+        metadata_out = json::parse(params);
+    } catch (...) {
+        metadata_out = json::object();
+        return false;
+    }
+    return true;
+}
+
+
+std::string classifyStatementType(const std::string& sql) {
+    size_t pos = 0;
+    while (pos < sql.size() && std::isspace(static_cast<unsigned char>(sql[pos]))) {
+        ++pos;
+    }
+    std::string keyword;
+    while (pos < sql.size() && std::isalpha(static_cast<unsigned char>(sql[pos]))) {
+        keyword.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(sql[pos]))));
+        ++pos;
+    }
+    if (keyword.empty()) {
+        return "UNKNOWN";
+    }
+    if (keyword == "SELECT" || keyword == "WITH") {
+        return "SELECT";
+    }
+    if (keyword == "INSERT") {
+        return "INSERT";
+    }
+    if (keyword == "UPDATE") {
+        return "UPDATE";
+    }
+    if (keyword == "DELETE") {
+        return "DELETE";
+    }
+    if (keyword == "CREATE" || keyword == "ALTER" || keyword == "DROP") {
+        return "DDL";
+    }
+    return keyword;
 }
 
 core::TypedValue timeValueOrNull(uint64_t value) {
@@ -172,6 +315,16 @@ std::string jobRunStateToString(core::CatalogManager::JobRunState state) {
 
 void SysCatalogHandler::initializeTableNames() {
     table_names_ = {
+        "schemas",
+        "tables",
+        "columns",
+        "indexes",
+        "index_columns",
+        "constraints",
+        "foreign_keys",
+        "primary_keys",
+        "types",
+        "domains",
         "sessions",
         "context_variables",
         "transactions",
@@ -181,6 +334,7 @@ void SysCatalogHandler::initializeTableNames() {
         "cache_stats",
         "buffer_pool_stats",
         "statement_cache",
+        "server_capabilities",
         "jobs",
         "job_runs",
         "job_dependencies",
@@ -190,6 +344,131 @@ void SysCatalogHandler::initializeTableNames() {
 
 const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     const std::string& table_name) const {
+    static const ColumnDefs kSchemasColumns = {
+        {"schema_id", DataType::UUID, false},
+        {"schema_name", DataType::TEXT, false},
+        {"owner_id", DataType::UUID, true},
+        {"default_tablespace_id", DataType::INT32, true},
+        {"default_charset", DataType::INT32, true},
+        {"default_collation_id", DataType::INT32, true},
+        {"is_valid", DataType::BOOLEAN, true}
+    };
+
+    static const ColumnDefs kTablesColumns = {
+        {"table_id", DataType::UUID, false},
+        {"schema_id", DataType::UUID, false},
+        {"table_name", DataType::TEXT, false},
+        {"table_type", DataType::TEXT, true},
+        {"owner_id", DataType::UUID, true},
+        {"tablespace_id", DataType::INT32, true},
+        {"row_count", DataType::INT64, true},
+        {"has_toast", DataType::BOOLEAN, true},
+        {"toast_table_id", DataType::UUID, true},
+        {"is_valid", DataType::BOOLEAN, true},
+        {"partition_strategy", DataType::TEXT, true},
+        {"partition_columns", DataType::TEXT, true},
+        {"partition_parent_name", DataType::TEXT, true},
+        {"is_partition_child", DataType::BOOLEAN, true}
+    };
+
+    static const ColumnDefs kColumnsColumns = {
+        {"column_id", DataType::UUID, false},
+        {"table_id", DataType::UUID, false},
+        {"column_name", DataType::TEXT, false},
+        {"data_type_id", DataType::INT32, true},
+        {"data_type_name", DataType::TEXT, true},
+        {"ordinal_position", DataType::INT32, true},
+        {"is_nullable", DataType::BOOLEAN, true},
+        {"default_value", DataType::TEXT, true},
+        {"domain_id", DataType::UUID, true},
+        {"collation_id", DataType::INT32, true},
+        {"charset_id", DataType::INT32, true},
+        {"is_identity", DataType::BOOLEAN, true},
+        {"is_generated", DataType::BOOLEAN, true},
+        {"generation_expression", DataType::TEXT, true},
+        {"is_valid", DataType::BOOLEAN, true}
+    };
+
+    static const ColumnDefs kIndexesColumns = {
+        {"index_id", DataType::UUID, false},
+        {"table_id", DataType::UUID, false},
+        {"index_name", DataType::TEXT, false},
+        {"index_type", DataType::TEXT, true},
+        {"is_unique", DataType::BOOLEAN, true},
+        {"is_expression", DataType::BOOLEAN, true},
+        {"is_partial", DataType::BOOLEAN, true},
+        {"expression_sql", DataType::TEXT, true},
+        {"predicate_sql", DataType::TEXT, true},
+        {"state", DataType::TEXT, true},
+        {"tablespace_id", DataType::INT32, true},
+        {"is_valid", DataType::BOOLEAN, true}
+    };
+
+    static const ColumnDefs kIndexColumnsColumns = {
+        {"index_id", DataType::UUID, false},
+        {"column_id", DataType::UUID, true},
+        {"column_name", DataType::TEXT, true},
+        {"ordinal_position", DataType::INT32, true},
+        {"is_included", DataType::BOOLEAN, true}
+    };
+
+    static const ColumnDefs kConstraintsColumns = {
+        {"constraint_id", DataType::UUID, false},
+        {"table_id", DataType::UUID, false},
+        {"constraint_name", DataType::TEXT, false},
+        {"constraint_type", DataType::TEXT, true},
+        {"is_deferrable", DataType::BOOLEAN, true},
+        {"initially_deferred", DataType::BOOLEAN, true},
+        {"is_enabled", DataType::BOOLEAN, true},
+        {"is_validated", DataType::BOOLEAN, true},
+        {"check_expression", DataType::TEXT, true}
+    };
+
+    static const ColumnDefs kForeignKeysColumns = {
+        {"fk_id", DataType::UUID, false},
+        {"fk_name", DataType::TEXT, false},
+        {"child_table_id", DataType::UUID, false},
+        {"parent_table_id", DataType::UUID, false},
+        {"child_columns", DataType::TEXT, true},
+        {"parent_columns", DataType::TEXT, true},
+        {"on_delete", DataType::TEXT, true},
+        {"on_update", DataType::TEXT, true},
+        {"match_type", DataType::TEXT, true},
+        {"is_enabled", DataType::BOOLEAN, true},
+        {"is_deferrable", DataType::BOOLEAN, true},
+        {"initially_deferred", DataType::BOOLEAN, true}
+    };
+
+    static const ColumnDefs kPrimaryKeysColumns = {
+        {"constraint_id", DataType::UUID, false},
+        {"table_id", DataType::UUID, false},
+        {"constraint_name", DataType::TEXT, false},
+        {"column_names", DataType::TEXT, true}
+    };
+
+    static const ColumnDefs kTypesColumns = {
+        {"type_id", DataType::INT32, false},
+        {"type_name", DataType::TEXT, false},
+        {"is_builtin", DataType::BOOLEAN, true}
+    };
+
+    static const ColumnDefs kDomainsColumns = {
+        {"domain_id", DataType::UUID, false},
+        {"schema_id", DataType::UUID, false},
+        {"domain_name", DataType::TEXT, false},
+        {"domain_type", DataType::TEXT, true},
+        {"base_type_id", DataType::INT32, true},
+        {"base_type_name", DataType::TEXT, true},
+        {"precision", DataType::INT32, true},
+        {"scale", DataType::INT32, true},
+        {"is_nullable", DataType::BOOLEAN, true},
+        {"default_value", DataType::TEXT, true},
+        {"parent_domain_id", DataType::UUID, true},
+        {"is_enum", DataType::BOOLEAN, true},
+        {"enum_labels", DataType::TEXT, true},
+        {"collation_name", DataType::TEXT, true}
+    };
+
     static const ColumnDefs kJobsColumns = {
         {"job_uuid", DataType::UUID, false},
         {"job_name", DataType::VARCHAR, false},
@@ -219,6 +498,36 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"state", DataType::VARCHAR, true}
     };
 
+    if (equalsCaseInsensitive(table_name, "schemas")) {
+        return &kSchemasColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "tables")) {
+        return &kTablesColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "columns")) {
+        return &kColumnsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "indexes")) {
+        return &kIndexesColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "index_columns")) {
+        return &kIndexColumnsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "constraints")) {
+        return &kConstraintsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "foreign_keys")) {
+        return &kForeignKeysColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "primary_keys")) {
+        return &kPrimaryKeysColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "types")) {
+        return &kTypesColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "domains")) {
+        return &kDomainsColumns;
+    }
     static const ColumnDefs kJobRunsColumns = {
         {"job_run_uuid", DataType::UUID, false},
         {"job_uuid", DataType::UUID, false},
@@ -289,6 +598,11 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"avg_execution_time_ms", DataType::INT64, true},
         {"memory_bytes", DataType::INT64, true},
         {"plan_memory_bytes", DataType::INT64, true}
+    };
+
+    static const ColumnDefs kServerCapabilitiesColumns = {
+        {"capability", DataType::TEXT, false},
+        {"enabled", DataType::BOOLEAN, false}
     };
 
     static const ColumnDefs kSessionsColumns = {
@@ -404,6 +718,9 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     if (equalsCaseInsensitive(table_name, "statement_cache")) {
         return &kStatementCacheColumns;
     }
+    if (equalsCaseInsensitive(table_name, "server_capabilities")) {
+        return &kServerCapabilitiesColumns;
+    }
     if (equalsCaseInsensitive(table_name, "jobs")) {
         return &kJobsColumns;
     }
@@ -471,6 +788,36 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     setResultColumns(*def, results);
 
+    if (equalsCaseInsensitive(table_name, "schemas")) {
+        return querySchemas(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "tables")) {
+        return queryTables(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "columns")) {
+        return queryColumns(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "indexes")) {
+        return queryIndexes(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "index_columns")) {
+        return queryIndexColumns(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "constraints")) {
+        return queryConstraints(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "foreign_keys")) {
+        return queryForeignKeys(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "primary_keys")) {
+        return queryPrimaryKeys(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "types")) {
+        return queryTypes(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "domains")) {
+        return queryDomains(results, ctx);
+    }
     if (equalsCaseInsensitive(table_name, "sessions")) {
         return querySessions(results, ctx);
     }
@@ -497,6 +844,9 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "statement_cache")) {
         return queryStatementCache(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "server_capabilities")) {
+        return queryServerCapabilities(results, ctx);
     }
     if (equalsCaseInsensitive(table_name, "jobs")) {
         return queryJobs(results, ctx);
@@ -558,6 +908,544 @@ Status SysCatalogHandler::listSchemas(std::vector<std::string>& schema_names,
                                       ErrorContext* /* ctx */) {
     schema_names.clear();
     schema_names.push_back("sys");
+    return Status::OK;
+}
+
+Status SysCatalogHandler::querySchemas(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        VirtualRow row;
+        row.columns = {
+            {"schema_id", uuidValueOrNull(schema.schema_id)},
+            {"schema_name", textValueOrNull(schema.full_path.empty() ? schema.schema_name : schema.full_path,
+                                            DataType::TEXT)},
+            {"owner_id", uuidValueOrNull(schema.owner_id)},
+            {"default_tablespace_id", schema.default_tablespace_id == 0
+                                          ? core::TypedValue::makeNull(DataType::INT32)
+                                          : core::TypedValue::makeInt32(
+                                                static_cast<int32_t>(schema.default_tablespace_id))},
+            {"default_charset", schema.default_charset == 0
+                                     ? core::TypedValue::makeNull(DataType::INT32)
+                                     : core::TypedValue::makeInt32(
+                                           static_cast<int32_t>(schema.default_charset))},
+            {"default_collation_id", schema.default_collation_id == 0
+                                        ? core::TypedValue::makeNull(DataType::INT32)
+                                        : core::TypedValue::makeInt32(
+                                              static_cast<int32_t>(schema.default_collation_id))},
+            {"is_valid", core::TypedValue::makeBoolean(true)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryTables(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<core::CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, ctx) != Status::OK) {
+            continue;
+        }
+        for (const auto& table : tables) {
+            std::string partition_strategy;
+            std::string partition_columns;
+            std::string partition_parent;
+            bool is_partition_child = false;
+
+            json meta;
+            if (loadTableMetadata(catalog_manager_, table, meta, ctx)) {
+                if (meta.contains("partition") && meta["partition"].is_object()) {
+                    const auto& partition = meta["partition"];
+                    if (partition.contains("strategy") && partition["strategy"].is_string()) {
+                        partition_strategy = partition["strategy"].get<std::string>();
+                    }
+                    if (partition.contains("columns") && partition["columns"].is_array()) {
+                        std::vector<std::string> cols;
+                        for (const auto& col : partition["columns"]) {
+                            if (col.is_string()) {
+                                cols.push_back(col.get<std::string>());
+                            }
+                        }
+                        partition_columns = joinNames(cols);
+                    }
+                }
+                if (meta.contains("partition_parent") && meta["partition_parent"].is_string()) {
+                    partition_parent = meta["partition_parent"].get<std::string>();
+                    is_partition_child = !partition_parent.empty();
+                }
+            }
+
+            VirtualRow row;
+            row.columns = {
+                {"table_id", uuidValueOrNull(table.table_id)},
+                {"schema_id", uuidValueOrNull(table.schema_id)},
+                {"table_name", textValueOrNull(table.table_name, DataType::TEXT)},
+                {"table_type", textValueOrNull(tableTypeToString(table.table_type), DataType::TEXT)},
+                {"owner_id", uuidValueOrNull(table.owner_id)},
+                {"tablespace_id", table.tablespace_id == 0
+                                     ? core::TypedValue::makeNull(DataType::INT32)
+                                     : core::TypedValue::makeInt32(
+                                           static_cast<int32_t>(table.tablespace_id))},
+                {"row_count", core::TypedValue::makeInt64(static_cast<int64_t>(table.row_count))},
+                {"has_toast", core::TypedValue::makeBoolean(table.has_toast)},
+                {"toast_table_id", uuidValueOrNull(table.toast_table_id)},
+                {"is_valid", core::TypedValue::makeBoolean(true)},
+                {"partition_strategy", textValueOrNull(partition_strategy, DataType::TEXT)},
+                {"partition_columns", textValueOrNull(partition_columns, DataType::TEXT)},
+                {"partition_parent_name", textValueOrNull(partition_parent, DataType::TEXT)},
+                {"is_partition_child", core::TypedValue::makeBoolean(is_partition_child)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryColumns(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<core::CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, ctx) != Status::OK) {
+            continue;
+        }
+        for (const auto& table : tables) {
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            if (catalog_manager_->getColumns(table.table_id, columns, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& col : columns) {
+                std::string default_value = col.default_value;
+                if (default_value.empty() && col.default_value_oid != 0) {
+                    catalog_manager_->loadStringFromToast(col.default_value_oid, 0, default_value, ctx);
+                }
+                std::string generation_expr = col.generation_expression;
+                if (generation_expr.empty() && col.generation_expr_oid != 0) {
+                    catalog_manager_->loadStringFromToast(col.generation_expr_oid, 0, generation_expr, ctx);
+                }
+
+                VirtualRow row;
+                row.columns = {
+                    {"column_id", uuidValueOrNull(col.column_id)},
+                    {"table_id", uuidValueOrNull(col.table_id)},
+                    {"column_name", textValueOrNull(col.column_name, DataType::TEXT)},
+                    {"data_type_id", core::TypedValue::makeInt32(static_cast<int32_t>(col.data_type))},
+                    {"data_type_name", textValueOrNull(core::TypeSystem::getTypeName(
+                                                            static_cast<core::DataType>(col.data_type)),
+                                                       DataType::TEXT)},
+                    {"ordinal_position", core::TypedValue::makeInt32(static_cast<int32_t>(col.ordinal))},
+                    {"is_nullable", core::TypedValue::makeBoolean(col.nullable)},
+                    {"default_value", textValueOrNull(default_value, DataType::TEXT)},
+                    {"domain_id", uuidValueOrNull(col.domain_id)},
+                    {"collation_id", col.collation_id == 0
+                                         ? core::TypedValue::makeNull(DataType::INT32)
+                                         : core::TypedValue::makeInt32(
+                                               static_cast<int32_t>(col.collation_id))},
+                    {"charset_id", col.charset == 0
+                                      ? core::TypedValue::makeNull(DataType::INT32)
+                                      : core::TypedValue::makeInt32(
+                                            static_cast<int32_t>(col.charset))},
+                    {"is_identity", core::TypedValue::makeBoolean(col.is_identity)},
+                    {"is_generated", core::TypedValue::makeBoolean(col.is_generated)},
+                    {"generation_expression", textValueOrNull(generation_expr, DataType::TEXT)},
+                    {"is_valid", core::TypedValue::makeBoolean(true)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryIndexes(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<core::CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, ctx) != Status::OK) {
+            continue;
+        }
+        for (const auto& table : tables) {
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            if (catalog_manager_->listIndexesForTable(table.table_id, indexes, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& index : indexes) {
+                std::string expression_sql;
+                if (!index.expression_strings.empty()) {
+                    expression_sql = joinNames(index.expression_strings);
+                }
+                VirtualRow row;
+                row.columns = {
+                    {"index_id", uuidValueOrNull(index.index_id)},
+                    {"table_id", uuidValueOrNull(index.table_id)},
+                    {"index_name", textValueOrNull(index.index_name, DataType::TEXT)},
+                    {"index_type", textValueOrNull(core::indexTypeToString(index.index_type), DataType::TEXT)},
+                    {"is_unique", core::TypedValue::makeBoolean(index.is_unique)},
+                    {"is_expression", core::TypedValue::makeBoolean(index.is_expression_index)},
+                    {"is_partial", core::TypedValue::makeBoolean(index.is_partial_index)},
+                    {"expression_sql", textValueOrNull(expression_sql, DataType::TEXT)},
+                    {"predicate_sql", textValueOrNull(index.predicate_string, DataType::TEXT)},
+                    {"state", textValueOrNull(indexStateToString(index.state), DataType::TEXT)},
+                    {"tablespace_id", index.tablespace_id == 0
+                                         ? core::TypedValue::makeNull(DataType::INT32)
+                                         : core::TypedValue::makeInt32(
+                                               static_cast<int32_t>(index.tablespace_id))},
+                    {"is_valid", core::TypedValue::makeBoolean(true)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryIndexColumns(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<core::CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, ctx) != Status::OK) {
+            continue;
+        }
+        for (const auto& table : tables) {
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            if (catalog_manager_->getColumns(table.table_id, columns, ctx) != Status::OK) {
+                continue;
+            }
+            std::unordered_map<core::ID, std::string, core::IDHash> column_names;
+            for (const auto& col : columns) {
+                column_names.emplace(col.column_id, col.column_name);
+            }
+
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            if (catalog_manager_->listIndexesForTable(table.table_id, indexes, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& index : indexes) {
+                int32_t ordinal = 1;
+                for (const auto& col_id : index.column_ids) {
+                    auto it = column_names.find(col_id);
+                    VirtualRow row;
+                    row.columns = {
+                        {"index_id", uuidValueOrNull(index.index_id)},
+                        {"column_id", uuidValueOrNull(col_id)},
+                        {"column_name", it == column_names.end()
+                                            ? core::TypedValue::makeNull(DataType::TEXT)
+                                            : textValueOrNull(it->second, DataType::TEXT)},
+                        {"ordinal_position", core::TypedValue::makeInt32(ordinal++)},
+                        {"is_included", core::TypedValue::makeBoolean(false)}
+                    };
+                    results.rows.push_back(std::move(row));
+                }
+                for (const auto& col_id : index.include_column_ids) {
+                    auto it = column_names.find(col_id);
+                    VirtualRow row;
+                    row.columns = {
+                        {"index_id", uuidValueOrNull(index.index_id)},
+                        {"column_id", uuidValueOrNull(col_id)},
+                        {"column_name", it == column_names.end()
+                                            ? core::TypedValue::makeNull(DataType::TEXT)
+                                            : textValueOrNull(it->second, DataType::TEXT)},
+                        {"ordinal_position", core::TypedValue::makeInt32(ordinal++)},
+                        {"is_included", core::TypedValue::makeBoolean(true)}
+                    };
+                    results.rows.push_back(std::move(row));
+                }
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryConstraints(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<core::CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, ctx) != Status::OK) {
+            continue;
+        }
+        for (const auto& table : tables) {
+            std::vector<core::CatalogManager::ConstraintInfo> constraints;
+            if (catalog_manager_->getConstraintsForTable(table.table_id, constraints, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& constraint : constraints) {
+                std::string check_expression = constraint.check_expression;
+                if (check_expression.empty() && constraint.check_expr_oid != 0) {
+                    catalog_manager_->loadStringFromToast(constraint.check_expr_oid, 0,
+                                                          check_expression, ctx);
+                }
+                VirtualRow row;
+                row.columns = {
+                    {"constraint_id", uuidValueOrNull(constraint.constraint_id)},
+                    {"table_id", uuidValueOrNull(constraint.table_id)},
+                    {"constraint_name", textValueOrNull(constraint.constraint_name, DataType::TEXT)},
+                    {"constraint_type", textValueOrNull(constraintTypeToString(constraint.constraint_type),
+                                                        DataType::TEXT)},
+                    {"is_deferrable", core::TypedValue::makeBoolean(constraint.is_deferrable)},
+                    {"initially_deferred", core::TypedValue::makeBoolean(constraint.initially_deferred)},
+                    {"is_enabled", core::TypedValue::makeBoolean(constraint.is_enabled)},
+                    {"is_validated", core::TypedValue::makeBoolean(constraint.is_validated)},
+                    {"check_expression", textValueOrNull(check_expression, DataType::TEXT)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryForeignKeys(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<core::CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, ctx) != Status::OK) {
+            continue;
+        }
+        for (const auto& table : tables) {
+            std::vector<core::CatalogManager::ForeignKeyInfo> fks;
+            if (catalog_manager_->getForeignKeysForTable(table.table_id, fks, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& fk : fks) {
+                VirtualRow row;
+                row.columns = {
+                    {"fk_id", uuidValueOrNull(fk.fk_id)},
+                    {"fk_name", textValueOrNull(fk.fk_name, DataType::TEXT)},
+                    {"child_table_id", uuidValueOrNull(fk.child_table_id)},
+                    {"parent_table_id", uuidValueOrNull(fk.parent_table_id)},
+                    {"child_columns", textValueOrNull(joinNames(fk.child_columns), DataType::TEXT)},
+                    {"parent_columns", textValueOrNull(joinNames(fk.parent_columns), DataType::TEXT)},
+                    {"on_delete", textValueOrNull(fkActionToString(fk.on_delete), DataType::TEXT)},
+                    {"on_update", textValueOrNull(fkActionToString(fk.on_update), DataType::TEXT)},
+                    {"match_type", textValueOrNull(fkMatchToString(fk.match_type), DataType::TEXT)},
+                    {"is_enabled", core::TypedValue::makeBoolean(fk.is_enabled)},
+                    {"is_deferrable", core::TypedValue::makeBoolean(fk.is_deferrable)},
+                    {"initially_deferred", core::TypedValue::makeBoolean(fk.initially_deferred)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryPrimaryKeys(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<core::CatalogManager::TableInfo> tables;
+        if (catalog_manager_->listTables(schema.schema_id, tables, ctx) != Status::OK) {
+            continue;
+        }
+        for (const auto& table : tables) {
+            std::vector<core::CatalogManager::ConstraintInfo> constraints;
+            if (catalog_manager_->getConstraintsForTable(table.table_id, constraints, ctx) != Status::OK) {
+                continue;
+            }
+            for (const auto& constraint : constraints) {
+                if (constraint.constraint_type != core::CatalogManager::ConstraintType::PRIMARY_KEY) {
+                    continue;
+                }
+                VirtualRow row;
+                row.columns = {
+                    {"constraint_id", uuidValueOrNull(constraint.constraint_id)},
+                    {"table_id", uuidValueOrNull(constraint.table_id)},
+                    {"constraint_name", textValueOrNull(constraint.constraint_name, DataType::TEXT)},
+                    {"column_names", textValueOrNull(joinNames(constraint.column_names), DataType::TEXT)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryTypes(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    static const core::DataType kTypes[] = {
+        core::DataType::UNKNOWN,
+        core::DataType::INT8,
+        core::DataType::INT16,
+        core::DataType::INT32,
+        core::DataType::INT64,
+        core::DataType::INT128,
+        core::DataType::UINT8,
+        core::DataType::UINT16,
+        core::DataType::UINT32,
+        core::DataType::UINT64,
+        core::DataType::UINT128,
+        core::DataType::FLOAT32,
+        core::DataType::FLOAT64,
+        core::DataType::DECIMAL,
+        core::DataType::MONEY,
+        core::DataType::DECFLOAT16,
+        core::DataType::DECFLOAT34,
+        core::DataType::CHAR,
+        core::DataType::VARCHAR,
+        core::DataType::TEXT,
+        core::DataType::BINARY,
+        core::DataType::VARBINARY,
+        core::DataType::BLOB,
+        core::DataType::BYTEA,
+        core::DataType::DATE,
+        core::DataType::TIME,
+        core::DataType::TIMESTAMP,
+        core::DataType::INTERVAL,
+        core::DataType::BOOLEAN,
+        core::DataType::UUID,
+        core::DataType::JSON,
+        core::DataType::JSONB,
+        core::DataType::XML,
+        core::DataType::VECTOR,
+        core::DataType::POINT,
+        core::DataType::LINESTRING,
+        core::DataType::POLYGON,
+        core::DataType::MULTIPOINT,
+        core::DataType::MULTILINESTRING,
+        core::DataType::MULTIPOLYGON,
+        core::DataType::GEOMETRYCOLLECTION,
+        core::DataType::ARRAY,
+        core::DataType::COMPOSITE,
+        core::DataType::TSVECTOR,
+        core::DataType::TSQUERY,
+        core::DataType::INT4RANGE,
+        core::DataType::INT8RANGE,
+        core::DataType::NUMRANGE,
+        core::DataType::TSRANGE,
+        core::DataType::TSTZRANGE,
+        core::DataType::DATERANGE,
+        core::DataType::INET,
+        core::DataType::CIDR,
+        core::DataType::MACADDR,
+        core::DataType::MACADDR8,
+        core::DataType::VARIANT,
+        core::DataType::NULL_TYPE
+    };
+
+    for (const auto& type : kTypes) {
+        VirtualRow row;
+        row.columns = {
+            {"type_id", core::TypedValue::makeInt32(static_cast<int32_t>(type))},
+            {"type_name", textValueOrNull(core::TypeSystem::getTypeName(type), DataType::TEXT)},
+            {"is_builtin", core::TypedValue::makeBoolean(true)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryDomains(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+    std::vector<core::DomainInfo> domains;
+    Status status = catalog_manager_->listDomains(core::ID{}, domains, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& domain : domains) {
+        std::vector<core::EnumValue> enum_values = domain.enum_values;
+        std::sort(enum_values.begin(), enum_values.end(),
+                  [](const core::EnumValue& a, const core::EnumValue& b) {
+                      return a.position < b.position;
+                  });
+        std::vector<std::string> enum_labels;
+        enum_labels.reserve(enum_values.size());
+        for (const auto& val : enum_values) {
+            enum_labels.push_back(val.label);
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"domain_id", uuidValueOrNull(domain.domain_id)},
+            {"schema_id", uuidValueOrNull(domain.schema_id)},
+            {"domain_name", textValueOrNull(domain.domain_name, DataType::TEXT)},
+            {"domain_type", textValueOrNull(domainTypeToString(domain.domain_type), DataType::TEXT)},
+            {"base_type_id", core::TypedValue::makeInt32(static_cast<int32_t>(domain.base_type))},
+            {"base_type_name", textValueOrNull(core::TypeSystem::getTypeName(domain.base_type),
+                                               DataType::TEXT)},
+            {"precision", core::TypedValue::makeInt32(static_cast<int32_t>(domain.precision))},
+            {"scale", core::TypedValue::makeInt32(static_cast<int32_t>(domain.scale))},
+            {"is_nullable", core::TypedValue::makeBoolean(domain.nullable)},
+            {"default_value", textValueOrNull(domain.default_value, DataType::TEXT)},
+            {"parent_domain_id", uuidValueOrNull(domain.parent_domain_id)},
+            {"is_enum", core::TypedValue::makeBoolean(domain.domain_type == core::DomainType::ENUM)},
+            {"enum_labels", textValueOrNull(joinNames(enum_labels), DataType::TEXT)},
+            {"collation_name", textValueOrNull(domain.collation_name, DataType::TEXT)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
     return Status::OK;
 }
 
@@ -1258,6 +2146,21 @@ Status SysCatalogHandler::queryPerformance(VirtualResultSet& results, ErrorConte
                 metrics.query_currently_running->get({metric_db}),
                 "count");
     }
+    if (metrics.query_progress_rows) {
+        add_row("query_progress_rows",
+                metrics.query_progress_rows->get({metric_db}),
+                "count");
+    }
+    if (metrics.query_progress_bytes) {
+        add_row("query_progress_bytes",
+                metrics.query_progress_bytes->get({metric_db}),
+                "bytes");
+    }
+    if (metrics.query_progress_last_update_micros) {
+        add_row("query_progress_last_update_micros",
+                metrics.query_progress_last_update_micros->get({metric_db}),
+                "micros");
+    }
     if (metrics.transactions_total) {
         add_row("transactions_total", metrics.transactions_total->get(default_database), "count");
     }
@@ -1565,6 +2468,78 @@ Status SysCatalogHandler::queryBufferPoolStats(VirtualResultSet& results, ErrorC
 }
 
 Status SysCatalogHandler::queryStatementCache(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    std::string db_name;
+    if (catalog_manager_ && catalog_manager_->database()) {
+        db_name = baseNameFromPath(catalog_manager_->database()->path());
+    }
+
+    auto* conn_ctx = core::ConnectionContext::getCurrent();
+    if (!conn_ctx) {
+        return Status::OK;
+    }
+
+    std::vector<core::ConnectionContext::PreparedStatementInfo> statements;
+    conn_ctx->listPreparedStatements(statements);
+
+    for (const auto& stmt : statements) {
+        VirtualRow row;
+        row.columns = {
+            {"database_name", textValueOrNull(db_name, DataType::TEXT)},
+            {"sql_text", textValueOrNull(stmt.sql_text, DataType::TEXT)},
+            {"fingerprint", textValueOrNull(stmt.name, DataType::TEXT)},
+            {"statement_type", textValueOrNull(classifyStatementType(stmt.sql_text),
+                                               DataType::TEXT)},
+            {"hit_count", core::TypedValue::makeInt64(static_cast<int64_t>(stmt.execution_count))},
+            {"miss_count", core::TypedValue::makeInt64(0)},
+            {"execution_count", core::TypedValue::makeInt64(static_cast<int64_t>(stmt.execution_count))},
+            {"error_count", core::TypedValue::makeInt64(0)},
+            {"created_at", stmt.created_at_micros > 0
+                               ? core::TypedValue::makeTimestamp(stmt.created_at_micros)
+                               : core::TypedValue::makeNull(DataType::TIMESTAMP)},
+            {"last_accessed", stmt.last_used_micros > 0
+                                  ? core::TypedValue::makeTimestamp(stmt.last_used_micros)
+                                  : core::TypedValue::makeNull(DataType::TIMESTAMP)},
+            {"last_executed", stmt.last_used_micros > 0
+                                  ? core::TypedValue::makeTimestamp(stmt.last_used_micros)
+                                  : core::TypedValue::makeNull(DataType::TIMESTAMP)},
+            {"avg_execution_time_ms", core::TypedValue::makeNull(DataType::INT64)},
+            {"memory_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(stmt.memory_bytes))},
+            {"plan_memory_bytes", core::TypedValue::makeInt64(0)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryServerCapabilities(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    uint16_t capabilities = protocol::CONNECT_FLAG_BASE_CAPABILITIES;
+    if (core::isCompressionSupported(core::CompressionType::ZSTD)) {
+        capabilities |= protocol::CONNECT_FLAG_ZSTD_COMPRESSION;
+    }
+
+    struct CapabilityDef {
+        const char* name;
+        uint16_t flag;
+    };
+
+    static const CapabilityDef kCapabilities[] = {
+        {"compression", protocol::CONNECT_FLAG_ZSTD_COMPRESSION},
+        {"copy", protocol::CONNECT_FLAG_COPY},
+        {"lob_stream", protocol::CONNECT_FLAG_LOB_STREAM},
+        {"portal_paging", protocol::CONNECT_FLAG_PORTAL_PAGING},
+        {"notifications", protocol::CONNECT_FLAG_NOTIFICATIONS},
+        {"progress", protocol::CONNECT_FLAG_PROGRESS}
+    };
+
+    for (const auto& capability : kCapabilities) {
+        VirtualRow row;
+        row.columns = {
+            {"capability", core::TypedValue::makeText(capability.name)},
+            {"enabled", core::TypedValue::makeBool((capabilities & capability.flag) != 0)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
     return Status::OK;
 }
 

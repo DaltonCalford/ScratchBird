@@ -455,6 +455,7 @@ uint32_t runSession(const ParserConfig& config,
             need_read = true;
             continue;
         }
+        std::cerr << "[parser_debug] handleData status=" << static_cast<int>(status) << "\n";
 
         adapter->sendError(&conn, "Protocol error");
         flushWrites(conn);
@@ -525,6 +526,7 @@ int runParser(const ParserConfig& config) {
         std::cerr << "HELLO rejected: " << reason << "\n";
         return 2;
     }
+    std::cerr << "[parser_debug] HELLO_ACK accepted worker_id=" << worker_id << "\n";
 
     bool busy = false;
     while (!g_shutdown.load(std::memory_order_acquire)) {
@@ -539,6 +541,9 @@ int runParser(const ParserConfig& config) {
 
         auto type = static_cast<scratchbird::network::ControlPlaneMessageType>(
             msg.header.message_type);
+        std::cerr << "[parser_debug] control msg type=" << static_cast<int>(type)
+                  << " req=" << msg.header.request_id
+                  << " recv_fd=" << recv_fd << "\n";
 
         if (type == scratchbird::network::ControlPlaneMessageType::HEALTH_CHECK) {
             scratchbird::network::ControlPlaneMessage report;
@@ -614,8 +619,14 @@ int runParser(const ParserConfig& config) {
             scratchbird::network::sendControlPlaneMessage(*control, ack,
                                                           scratchbird::network::INVALID_SOCKET_VALUE,
                                                           0, nullptr);
+            std::cerr << "[parser_debug] handoff ack sent req=" << msg.header.request_id
+                      << " conn_id=" << info.connection_id << "\n";
 
+            std::cerr << "[parser_debug] session start conn_id=" << info.connection_id
+                      << " fd=" << recv_fd << "\n";
             uint32_t last_error = runSession(config, info, recv_fd);
+            std::cerr << "[parser_debug] session end conn_id=" << info.connection_id
+                      << " last_error=" << last_error << "\n";
             busy = false;
             scratchbird::network::ControlPlaneMessage report;
             report.header.message_type = static_cast<uint16_t>(

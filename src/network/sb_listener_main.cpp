@@ -253,6 +253,8 @@ public:
             socket->close();
             return;
         }
+        std::cerr << "[listener_debug] HELLO from worker pid=" << pid
+                  << " id=" << worker_id << " proto=" << proto << "\n";
 
         scratchbird::network::ControlPlaneMessage ack;
         ack.header.message_type = static_cast<uint16_t>(
@@ -302,6 +304,8 @@ public:
             workers_.push_back(worker);
             updateMetricsLocked();
         }
+        std::cerr << "[listener_debug] worker registered id=" << worker->worker_id
+                  << " pid=" << worker->worker_pid << " total=" << workers_.size() << "\n";
 
         worker->reader_thread = std::thread([this, worker]() {
             readerLoop(worker);
@@ -326,6 +330,8 @@ public:
                             std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count(),
                             {config_.protocol, SB_LISTENER_NAME});
                     }
+                    std::cerr << "[listener_debug] acquire worker id=" << worker->worker_id
+                              << " pid=" << worker->worker_pid << "\n";
                     return worker;
                 }
             }
@@ -335,10 +341,12 @@ public:
             }
 
             if (timeout.count() == 0) {
+                std::cerr << "[listener_debug] acquire worker timeout (0ms)\n";
                 return nullptr;
             }
             auto now = std::chrono::steady_clock::now();
             if (now - start >= timeout) {
+                std::cerr << "[listener_debug] acquire worker timed out\n";
                 return nullptr;
             }
             cv_.wait_for(lock, std::chrono::milliseconds(50));
@@ -355,6 +363,10 @@ public:
         msg.header.request_id = nextRequestId();
         msg.payload = buildHandoffPayload(msg.header.request_id, client_addr, tls_active);
         msg.header.payload_len = msg.payload.size();
+        std::cerr << "[listener_debug] handoff req=" << msg.header.request_id
+                  << " worker_id=" << worker->worker_id
+                  << " pid=" << worker->worker_pid
+                  << " fd=" << client_fd << "\n";
 
         auto start = std::chrono::steady_clock::now();
         {
@@ -369,6 +381,8 @@ public:
             *worker->control, msg, client_fd, worker->worker_pid, &ctx);
 
         if (status != scratchbird::core::Status::OK) {
+            std::cerr << "[listener_debug] handoff send failed req="
+                      << msg.header.request_id << " err=" << ctx.message << "\n";
             markWorkerFault(worker, "error");
             return false;
         }
@@ -377,6 +391,8 @@ public:
         bool acked = worker->cv.wait_for(lock, std::chrono::seconds(2), [&worker]() {
             return worker->last_ack_ready;
         });
+        std::cerr << "[listener_debug] handoff ack req=" << msg.header.request_id
+                  << " acked=" << acked << " ok=" << worker->last_ack_ok << "\n";
 
         auto elapsed = std::chrono::steady_clock::now() - start;
         if (handoff_histogram_) {
@@ -390,11 +406,8 @@ public:
             return false;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(worker->mutex);
-            worker->session_active = true;
-            worker->session_start = std::chrono::steady_clock::now();
-        }
+        worker->session_active = true;
+        worker->session_start = std::chrono::steady_clock::now();
         return true;
     }
 
@@ -606,6 +619,9 @@ private:
             auto status = scratchbird::network::receiveControlPlaneMessage(*worker->control,
                                                                            msg, nullptr, &ctx);
             if (status != scratchbird::core::Status::OK) {
+                std::cerr << "[listener_debug] reader error worker_id="
+                          << worker->worker_id << " pid=" << worker->worker_pid
+                          << " err=" << ctx.message << "\n";
                 bool recycle_requested = false;
                 {
                     std::lock_guard<std::mutex> lock(worker->mutex);
@@ -626,6 +642,9 @@ private:
             }
             auto type = static_cast<scratchbird::network::ControlPlaneMessageType>(
                 msg.header.message_type);
+            std::cerr << "[listener_debug] reader msg type=" << static_cast<int>(type)
+                      << " req=" << msg.header.request_id
+                      << " worker_id=" << worker->worker_id << "\n";
             if (type == scratchbird::network::ControlPlaneMessageType::HANDOFF_ACK) {
                 handleHandoffAck(worker, msg);
             } else if (type == scratchbird::network::ControlPlaneMessageType::HEALTH_REPORT) {
@@ -1285,8 +1304,9 @@ int runListener(const ListenerConfig& config) {
         accept_total->inc(1.0, label);
         open_connections->inc(1.0, label);
 
-        std::cout << "Accepted connection from " << client_addr.host
-                  << ":" << client_addr.port << "\n";
+        std::cerr << "[listener_debug] accepted client "
+                  << client_addr.host << ":" << client_addr.port
+                  << " fd=" << client->getFd() << "\n";
         if (!pool_enabled) {
             reject_total->inc(1.0, {config.protocol, SB_LISTENER_NAME, "error"});
             client->close();

@@ -1,7 +1,7 @@
 # Driver Comparison
 
 **Status:** Complete
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -10,10 +10,10 @@
 This guide compares all available drivers and connection methods for ScratchBird, helping you choose the right approach for your application.
 
 **Quick Recommendation:**
-- **Web applications**: Use your language's PostgreSQL driver (psycopg2, pg, Npgsql, pgx)
-- **Enterprise/Desktop**: Consider ODBC or native drivers (FireDAC, JDBC)
-- **Migrating from Firebird/MySQL**: Use the corresponding protocol for compatibility
-- **BI Tools**: Use ODBC with psqlODBC driver
+- **ScratchBird native drivers (SBWP v1.1)**: Preferred for full feature access on port 3092.
+- **Web applications**: Use native drivers when possible; fall back to PostgreSQL drivers for ecosystem tools.
+- **Enterprise/Desktop**: Use native JDBC/.NET/Pascal drivers; ODBC for BI tools.
+- **Migrating from Firebird/MySQL**: Use those protocols for compatibility during cutover.
 
 ---
 
@@ -23,10 +23,10 @@ ScratchBird supports multiple wire protocols, allowing connections from various 
 
 | Protocol | Port | Best For | Compatibility |
 |----------|------|----------|---------------|
-| **PostgreSQL** | 5432 | Most applications (recommended) | Full PostgreSQL client ecosystem |
+| **Native (SBWP v1.1)** | 3092 | Full ScratchBird feature set | ScratchBird native drivers |
+| **PostgreSQL** | 5432 | Ecosystem compatibility | PostgreSQL client ecosystem |
 | **MySQL** | 3306 | MySQL migrations, MySQL-native apps | MySQL client ecosystem |
 | **Firebird** | 3050 | Firebird migrations, legacy apps | Firebird client ecosystem |
-| **Native** | 3092 | Direct access, future drivers | ScratchBird-specific clients |
 
 ---
 
@@ -36,14 +36,21 @@ ScratchBird supports multiple wire protocols, allowing connections from various 
 
 | Language | Recommended Driver | Protocol | Use Case |
 |----------|-------------------|----------|----------|
-| Python | psycopg2 / asyncpg | PostgreSQL | Web apps, data science |
-| Node.js | pg / pg-promise | PostgreSQL | REST APIs, real-time apps |
-| Java | PostgreSQL JDBC | PostgreSQL | Enterprise, Spring Boot |
-| C# / .NET | Npgsql | PostgreSQL | ASP.NET, desktop apps |
-| Go | pgx | PostgreSQL | Microservices, CLI tools |
-| PHP | PDO (pgsql) | PostgreSQL | Web apps, Laravel/Symfony |
-| Delphi | FireDAC | PostgreSQL/Firebird | Desktop apps, RAD |
-| Any | ODBC | PostgreSQL | BI tools, Excel, Access |
+| Python | scratchbird (native) | Native (3092) | Full ScratchBird feature set |
+| Node.js | scratchbird (native) | Native (3092) | Full ScratchBird feature set |
+| Java | ScratchBird JDBC | Native (3092) | Enterprise, Spring Boot |
+| C# / .NET | ScratchBird.Data | Native (3092) | ASP.NET, desktop apps |
+| Go | scratchbird-go | Native (3092) | Microservices, CLI tools |
+| PHP | ScratchBird PDO | Native (3092) | Web apps, Laravel/Symfony |
+| Delphi | ScratchBird Pascal/Delphi | Native (3092) | Desktop apps, RAD |
+| Ruby | scratchbird | Native (3092) | Scripting, web apps |
+| Rust | scratchbird | Native (3092) | Async services, CLIs |
+| R | scratchbird | Native (3092) | Analytics, notebooks |
+| Any | ODBC (psqlODBC) | PostgreSQL (5432) | BI tools, Excel, Access |
+
+**Note:** The tables below compare **emulation drivers** (PostgreSQL/MySQL/Firebird). Use native
+ScratchBird drivers for full SBWP feature coverage (binary prepare/bind, wrapper types, and
+driver-level parity).
 
 ---
 

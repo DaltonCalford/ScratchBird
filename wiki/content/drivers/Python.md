@@ -3,7 +3,7 @@
 # Python Driver Guide
 
 **Status:** Alpha documentation
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -13,21 +13,49 @@ Python applications can connect to ScratchBird through multiple protocols:
 
 | Protocol | Port | Library | Best For |
 |----------|------|---------|----------|
-| PostgreSQL | 5432 | psycopg2, psycopg3, asyncpg | Most Python apps |
+| Native | 3092 | scratchbird (SBWP v1.1) | Full ScratchBird feature set |
+| PostgreSQL | 5432 | psycopg2, psycopg3, asyncpg | Ecosystem compatibility |
 | MySQL | 3306 | mysql-connector-python, PyMySQL | MySQL migrations |
 | Firebird | 3050 | fdb, firebird-driver | Firebird migrations |
-| Native | 3092 | (future) scratchbird-python | Full feature access |
 
-**Recommendation:** Use **psycopg2** or **psycopg3** via the PostgreSQL protocol for the best balance of features, performance, and ecosystem compatibility.
+**Recommendation:** Use the **ScratchBird native driver** for full SBWP v1.1 feature coverage. Use PostgreSQL/MySQL/Firebird drivers only when you need emulation compatibility.
 
 ---
+
+## ScratchBird Native Driver (SBWP v1.1)
+
+### Installation
+
+```bash
+pip install scratchbird
+```
+
+### Basic Connection
+
+```python
+import scratchbird
+
+conn = scratchbird.connect("scratchbird://user:pass@localhost:3092/mydb")
+cur = conn.cursor()
+cur.execute("SELECT 1")
+print(cur.fetchone())
+cur.close()
+conn.close()
+```
+
+The native driver uses SBWP v1.1 with server-side prepare/bind and binary-only parameters. Wrapper
+types for JSONB/RANGE/GEOMETRY are exposed by the driver API. Use it when you want full ScratchBird
+feature access on port 3092.
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-# Recommended: psycopg2 (PostgreSQL protocol)
+# Native ScratchBird driver (recommended)
+pip install scratchbird
+
+# PostgreSQL drivers (emulation)
 pip install psycopg2-binary
 
 # Or psycopg3 (newer, async support)
@@ -39,6 +67,16 @@ pip install mysql-connector-python
 # Or for async PostgreSQL
 pip install asyncpg
 ```
+
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add the native driver pack later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-driver-python` or the `scratchbird-drivers-all` meta package. On Linux, run with `sudo`.
 
 ### Basic Connection
 
@@ -957,4 +995,3 @@ conn = psycopg2.connect(
 - [First Connection](../getting-started/first-connection.md) - Getting started guide
 - [Connection Problems](../troubleshooting/Connection-Problems.md) - Troubleshooting
 - [Web App Tutorial (Flask)](../tutorials/Web-App-Python-Flask.md) - Full Flask example
-

@@ -718,7 +718,20 @@ namespace scratchbird::core
             size_t param_count;                         // Number of parameters
             std::chrono::steady_clock::time_point created_at;  // When prepared
             std::chrono::steady_clock::time_point last_used;   // Last execution time
+            int64_t created_at_micros = 0;              // Wall clock time (micros)
+            int64_t last_used_micros = 0;               // Wall clock time (micros)
             uint64_t execution_count;                   // Times executed
+        };
+
+        struct PreparedStatementInfo
+        {
+            std::string name;
+            std::string sql_text;
+            size_t param_count = 0;
+            uint64_t execution_count = 0;
+            int64_t created_at_micros = 0;
+            int64_t last_used_micros = 0;
+            size_t memory_bytes = 0;
         };
 
         /**
@@ -762,6 +775,11 @@ namespace scratchbird::core
          * @param total_bytes Output: approximate memory usage
          */
         void getPreparedStatementStats(size_t& count, size_t& total_bytes) const;
+
+        /**
+         * List prepared statements for monitoring.
+         */
+        void listPreparedStatements(std::vector<PreparedStatementInfo>& out) const;
 
         /**
          * Set maximum number of cached prepared statements

@@ -1,6 +1,6 @@
 # Triggers
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 Triggers are database callbacks that fire automatically on DML, DDL, or session
 events. They are compiled to SBLR and executed by the engine with full security

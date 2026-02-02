@@ -129,6 +129,12 @@ public:
         if (equalsCaseInsensitive(table_name, "pg_stat_user_tables")) {
             return queryPgStatUserTables(results, ctx);
         }
+        if (equalsCaseInsensitive(table_name, "pg_stat_all_tables")) {
+            return queryPgStatAllTables(results, ctx);
+        }
+        if (equalsCaseInsensitive(table_name, "pg_stat_sys_tables")) {
+            return queryPgStatSysTables(results, ctx);
+        }
         if (equalsCaseInsensitive(table_name, "pg_locks")) {
             return queryPgLocks(results, ctx);
         }
@@ -214,7 +220,8 @@ private:
             "pg_enum", "pg_constraint", "pg_index", "pg_proc",
             "pg_trigger", "pg_authid", "pg_roles", "pg_database",
             "pg_tablespace", "pg_settings", "pg_locks", "pg_inherits",
-            "pg_stat_user_tables", "pg_stat_activity"
+            "pg_stat_user_tables", "pg_stat_all_tables", "pg_stat_sys_tables",
+            "pg_stat_activity"
         };
     }
 
@@ -235,6 +242,12 @@ private:
 
     static std::string schemaName(const CatalogManager::SchemaInfo& schema) {
         return schema.full_path.empty() ? schema.schema_name : schema.full_path;
+    }
+
+    static bool isSystemSchemaName(const std::string& name) {
+        return equalsCaseInsensitive(name, "pg_catalog") ||
+               equalsCaseInsensitive(name, "information_schema") ||
+               equalsCaseInsensitive(name, "sys");
     }
 
     static int64_t pgBuiltinTypeOid(DataType type) {
@@ -577,7 +590,7 @@ private:
             {"query", DataType::TEXT, true},
             {"backend_type", DataType::VARCHAR, true}
         };
-        static const ColumnDefs pg_stat_user_tables_cols = {
+        static const ColumnDefs pg_stat_tables_cols = {
             {"relid", DataType::INT64, false},
             {"schemaname", DataType::VARCHAR, false},
             {"relname", DataType::VARCHAR, false},
@@ -630,7 +643,9 @@ private:
         if (equalsCaseInsensitive(table_name, "pg_database")) return &pg_database_cols;
         if (equalsCaseInsensitive(table_name, "pg_tablespace")) return &pg_tablespace_cols;
         if (equalsCaseInsensitive(table_name, "pg_stat_activity")) return &pg_stat_activity_cols;
-        if (equalsCaseInsensitive(table_name, "pg_stat_user_tables")) return &pg_stat_user_tables_cols;
+        if (equalsCaseInsensitive(table_name, "pg_stat_user_tables")) return &pg_stat_tables_cols;
+        if (equalsCaseInsensitive(table_name, "pg_stat_all_tables")) return &pg_stat_tables_cols;
+        if (equalsCaseInsensitive(table_name, "pg_stat_sys_tables")) return &pg_stat_tables_cols;
         if (equalsCaseInsensitive(table_name, "pg_locks")) return &pg_locks_cols;
         if (equalsCaseInsensitive(table_name, "pg_settings")) return &pg_settings_cols;
         if (equalsCaseInsensitive(table_name, "pg_inherits")) return &pg_inherits_cols;
@@ -1486,7 +1501,8 @@ private:
         return Status::OK;
     }
 
-    Status queryPgStatUserTables(VirtualResultSet& results, ErrorContext* ctx) {
+    Status queryPgStatTables(VirtualResultSet& results, ErrorContext* ctx,
+                             bool include_system, bool include_user) {
         if (!catalog_manager_) {
             return Status::OK;
         }
@@ -1509,6 +1525,13 @@ private:
 
         for (const auto& schema : schemas) {
             std::string schema_name = schemaName(schema);
+            bool is_system = isSystemSchemaName(schema_name);
+            if (is_system && !include_system) {
+                continue;
+            }
+            if (!is_system && !include_user) {
+                continue;
+            }
             std::vector<CatalogManager::TableInfo> tables;
             status = catalog_manager_->listTables(schema.schema_id, tables, ctx);
             if (status != Status::OK) {
@@ -1551,6 +1574,18 @@ private:
         }
 
         return Status::OK;
+    }
+
+    Status queryPgStatUserTables(VirtualResultSet& results, ErrorContext* ctx) {
+        return queryPgStatTables(results, ctx, false, true);
+    }
+
+    Status queryPgStatAllTables(VirtualResultSet& results, ErrorContext* ctx) {
+        return queryPgStatTables(results, ctx, true, true);
+    }
+
+    Status queryPgStatSysTables(VirtualResultSet& results, ErrorContext* ctx) {
+        return queryPgStatTables(results, ctx, true, false);
     }
 
     Status queryPgLocks(VirtualResultSet& results, ErrorContext* ctx) {

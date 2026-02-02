@@ -1,6 +1,6 @@
 # Functions Reference
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -29,7 +29,73 @@ Functions that operate on multiple rows to return a single value.
 | `VAR_POP(expr)` | Variance (population) | `SELECT VAR_POP(score) FROM results` |
 | `CORR(x, y)` | Correlation coefficient | `SELECT CORR(x, y) FROM points` |
 | `COVAR_POP(x, y)` | Population covariance | `SELECT COVAR_POP(x, y) FROM points` |
+| `COVAR_SAMP(x, y)` | Sample covariance | `SELECT COVAR_SAMP(x, y) FROM points` |
 | `ARRAY_AGG(expr)` | Aggregate into array | `SELECT ARRAY_AGG(name) FROM users` |
+| `STRING_AGG(expr, delimiter)` | Concatenate strings with delimiter | `SELECT STRING_AGG(name, ', ') FROM users` |
+
+### Regression Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `REGR_SLOPE(y, x)` | Slope of least-squares fit | `SELECT REGR_SLOPE(y, x) FROM points` |
+| `REGR_INTERCEPT(y, x)` | Y-intercept of least-squares fit | `SELECT REGR_INTERCEPT(y, x) FROM points` |
+| `REGR_COUNT(y, x)` | Count of non-null pairs | `SELECT REGR_COUNT(y, x) FROM points` |
+| `REGR_R2(y, x)` | Coefficient of determination | `SELECT REGR_R2(y, x) FROM points` |
+| `REGR_AVGX(y, x)` | Average of x values | `SELECT REGR_AVGX(y, x) FROM points` |
+| `REGR_AVGY(y, x)` | Average of y values | `SELECT REGR_AVGY(y, x) FROM points` |
+| `REGR_SXX(y, x)` | Sum of squares of x | `SELECT REGR_SXX(y, x) FROM points` |
+| `REGR_SYY(y, x)` | Sum of squares of y | `SELECT REGR_SYY(y, x) FROM points` |
+| `REGR_SXY(y, x)` | Sum of products | `SELECT REGR_SXY(y, x) FROM points` |
+
+---
+
+## Window Functions
+
+Window functions operate over a set of rows related to the current row.
+
+### Ranking Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `ROW_NUMBER()` | Sequential row number | `SELECT ROW_NUMBER() OVER (ORDER BY id)` |
+| `RANK()` | Rank with gaps for ties | `SELECT RANK() OVER (ORDER BY score DESC)` |
+| `DENSE_RANK()` | Rank without gaps | `SELECT DENSE_RANK() OVER (ORDER BY score DESC)` |
+| `NTILE(n)` | Divide into n buckets | `SELECT NTILE(4) OVER (ORDER BY score)` |
+| `CUME_DIST()` | Cumulative distribution | `SELECT CUME_DIST() OVER (ORDER BY score)` |
+| `PERCENT_RANK()` | Relative rank (0-1) | `SELECT PERCENT_RANK() OVER (ORDER BY score)` |
+
+### Navigation Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `LAG(expr[, offset[, default]])` | Value from previous row | `SELECT LAG(price, 1) OVER (ORDER BY date)` |
+| `LEAD(expr[, offset[, default]])` | Value from next row | `SELECT LEAD(price, 1) OVER (ORDER BY date)` |
+| `FIRST_VALUE(expr)` | First value in frame | `SELECT FIRST_VALUE(price) OVER (ORDER BY date)` |
+| `LAST_VALUE(expr)` | Last value in frame | `SELECT LAST_VALUE(price) OVER (ORDER BY date)` |
+| `NTH_VALUE(expr, n)` | Nth value in frame | `SELECT NTH_VALUE(price, 2) OVER (ORDER BY date)` |
+
+### Aggregate Functions as Windows
+
+All aggregate functions (SUM, AVG, COUNT, MIN, MAX, etc.) can be used with OVER clauses:
+
+```sql
+SELECT
+    date,
+    amount,
+    SUM(amount) OVER (ORDER BY date) AS running_total,
+    AVG(amount) OVER (ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS moving_avg
+FROM transactions;
+```
+
+### Frame Specifications
+
+Window frames support ROWS, RANGE, and GROUPS modes:
+
+| Frame Type | Description |
+|------------|-------------|
+| `ROWS BETWEEN ... AND ...` | Physical row offset |
+| `RANGE BETWEEN ... AND ...` | Logical value offset |
+| `GROUPS BETWEEN ... AND ...` | Peer group offset |
 
 ---
 
@@ -175,6 +241,29 @@ Functions that operate on multiple rows to return a single value.
 | `ST_ASBINARY(geom)` | Convert to WKB | `SELECT ST_ASBINARY(geom)` |
 | `ST_GEOMETRYTYPE(geom)` | Get geometry type | `SELECT ST_GEOMETRYTYPE(geom)` |
 | `ST_ISVALID(geom)` | Check validity | `SELECT ST_ISVALID(geom)` |
+
+---
+
+## Text Search Functions
+
+Functions for full-text search using TSVECTOR and TSQUERY types.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `TO_TSVECTOR(config, text)` | Convert text to tsvector | `SELECT TO_TSVECTOR('english', 'hello world')` |
+| `TO_TSQUERY(config, query)` | Convert text to tsquery | `SELECT TO_TSQUERY('english', 'hello & world')` |
+| `PLAINTO_TSQUERY(config, text)` | Plain text to tsquery | `SELECT PLAINTO_TSQUERY('english', 'hello world')` |
+| `PHRASETO_TSQUERY(config, text)` | Phrase to tsquery | `SELECT PHRASETO_TSQUERY('english', 'hello world')` |
+| `TSVECTOR_CONCAT(a, b)` | Concatenate tsvectors | `SELECT tsvec1 || tsvec2` |
+| `TS_RANK(vector, query)` | Rank document by query | `SELECT TS_RANK(doc_vector, query)` |
+| `TS_RANK_CD(vector, query)` | Cover density ranking | `SELECT TS_RANK_CD(doc_vector, query)` |
+| `TS_HEADLINE(config, doc, query)` | Highlight matches | `SELECT TS_HEADLINE('english', doc, query)` |
+
+The `@@` operator matches tsvector against tsquery:
+
+```sql
+SELECT * FROM documents WHERE doc_vector @@ TO_TSQUERY('english', 'search & term');
+```
 
 ---
 

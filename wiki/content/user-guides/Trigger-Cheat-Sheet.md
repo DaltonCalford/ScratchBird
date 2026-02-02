@@ -1,6 +1,6 @@
 # Trigger Cheat Sheet
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 Quick reference for trigger syntax, timing, and context variables.
 

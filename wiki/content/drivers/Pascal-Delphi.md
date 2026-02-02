@@ -1,7 +1,7 @@
 # Pascal / Delphi Driver Guide
 
 **Status:** Complete
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -11,14 +11,39 @@ ScratchBird supports multiple connection protocols for Delphi and Free Pascal ap
 
 | Protocol | Port | Component | Best For |
 |----------|------|-----------|----------|
-| PostgreSQL | 5432 | FireDAC (TFDConnection) | RAD Studio applications (recommended) |
+| Native | 3092 | ScratchBird Pascal/Delphi (SBWP v1.1) | Full ScratchBird feature set |
+| PostgreSQL | 5432 | FireDAC (TFDConnection) | Ecosystem compatibility |
 | MySQL | 3306 | FireDAC, Zeos | MySQL compatibility |
 | Firebird | 3050 | FireDAC, IBX, FIBPlus | Firebird migration, legacy apps |
-| Native | 3092 | ScratchBird.Data (future) | Direct access |
 
-**Recommendation:** Use **FireDAC** with PostgreSQL protocol for RAD Studio applications. For legacy Firebird applications, the Firebird protocol provides seamless migration.
+**Recommendation:** Use the **ScratchBird Pascal/Delphi native driver** for full SBWP v1.1 feature coverage. Use FireDAC/IBX/Zeos only when you need emulation compatibility.
 
 ---
+
+## ScratchBird Native Driver (SBWP v1.1)
+
+### Quick Start
+
+```pascal
+uses
+  ScratchBird.Client;
+
+var
+  Client: TScratchBirdClient;
+begin
+  Client := TScratchBirdClient.Create;
+  try
+    Client.Connect('scratchbird://app_user:secret@localhost:3092/scratchbird');
+    Client.ExecSQL('SELECT 1');
+  finally
+    Client.Free;
+  end;
+end;
+```
+
+Adapters are provided for FireDAC, IBX, Zeos, and SQLdb to reuse existing datasets while
+still using the native ScratchBird protocol.
+The native driver uses SBWP v1.1 with server-side prepare/bind and binary-only parameters.
 
 ## Part 1: Quick Start
 
@@ -51,6 +76,16 @@ begin
 end;
 ```
 
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add the native driver pack later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-driver-pascal` or the `scratchbird-drivers-all` meta package. On Linux, run with `sudo`.
+
 ### First Query
 
 ```pascal
@@ -73,7 +108,8 @@ end;
 
 ## Part 2: FireDAC (PostgreSQL Protocol)
 
-FireDAC is the recommended database access framework for RAD Studio, offering high performance and rich features.
+FireDAC is the recommended database access framework for RAD Studio when using **emulation**
+protocols (PostgreSQL/MySQL/Firebird).
 
 ### Connection Configuration
 
@@ -1291,7 +1327,7 @@ DriverID=FB;Server=localhost;Port=3050;Database=scratchbird;User_Name=SYSDBA;Pas
 
 | Component | Framework | Protocol | Best For |
 |-----------|-----------|----------|----------|
-| TFDConnection/TFDQuery | FireDAC | All | RAD Studio (recommended) |
+| TFDConnection/TFDQuery | FireDAC | All | RAD Studio (emulation) |
 | TIBDatabase/TIBQuery | IBX | Firebird | Legacy apps |
 | TZConnection/TZQuery | Zeos | All | Cross-platform |
 | TPQConnection/TSQLQuery | SQLdb | PostgreSQL | Free Pascal |

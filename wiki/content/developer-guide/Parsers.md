@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's SQL parser architecture - how each dialect is handled by its own parser that generates SBLR bytecode.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's transaction system using Firebird-style Multi-Generational Architecture (MGA) - NOT PostgreSQL MVCC.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

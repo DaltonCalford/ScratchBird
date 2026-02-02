@@ -1,6 +1,6 @@
 # FAQ
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ## General
 
@@ -12,8 +12,9 @@ MySQL SQL dialects through separate parsers.
 
 ### What stage of development is ScratchBird in?
 ScratchBird is in Alpha. The core engine, transaction model, indexing, parser
-infrastructure, and security subsystems are implemented and tested. Language
-drivers and some operational tooling are still in progress.
+infrastructure, and security subsystems are implemented and tested. Native
+language drivers are available for core languages; some operational tooling
+remains in progress.
 
 ### How is ScratchBird different from PostgreSQL or MySQL?
 ScratchBird uses Firebird's Multi-Generational Architecture (MGA) for

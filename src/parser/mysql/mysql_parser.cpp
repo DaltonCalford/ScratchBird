@@ -3941,6 +3941,10 @@ void Parser::parseCreateStmt() {
         parseCreateDatabase();
         return;
     }
+    if (matchIdentifierKeyword("TABLESPACE")) {
+        parseCreateTablespace();
+        return;
+    }
     if (matchKeyword(TokenType::KW_USER)) {
         parseCreateUser();
         return;
@@ -4166,6 +4170,10 @@ void Parser::parseAlterStmt() {
             emitString(opt.first);
             emitString(opt.second);
         }
+        return;
+    }
+    if (matchIdentifierKeyword("TABLESPACE")) {
+        parseAlterTablespace();
         return;
     }
     if (matchKeyword(TokenType::KW_USER)) {
@@ -4817,6 +4825,10 @@ void Parser::parseDropStmt() {
         }
         db_path += db_name;
         emitString(db_path);
+        return;
+    }
+    if (matchIdentifierKeyword("TABLESPACE")) {
+        parseDropTablespace();
         return;
     }
     if (matchIdentifierKeyword("PREPARE")) {
@@ -6594,6 +6606,268 @@ void Parser::parseCreateDatabase() {
         emitString(opt.second);
     }
     emitU32(0);  // alias count
+}
+
+void Parser::parseCreateTablespace() {
+    std::string tablespace_name = parseIdentifier();
+
+    auto parse_path_value = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto view = lexer_.stringPool().get(current_token_.value.string_id);
+            std::string value(view.data(), view.size());
+            advance();
+            return value;
+        }
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            return parseIdentifier();
+        }
+        if (isNonReservedKeyword(current_token_.type)) {
+            std::string value = tokenToString(current_token_.type);
+            advance();
+            return value;
+        }
+        return "";
+    };
+
+    std::string location;
+    if (matchKeyword(TokenType::KW_ADD) || matchIdentifierKeyword("ADD")) {
+        if (!matchIdentifierKeyword("DATAFILE") && !matchIdentifierKeyword("FILE")) {
+            error("Expected DATAFILE after ADD in CREATE TABLESPACE");
+            synchronize();
+            return;
+        }
+        location = parse_path_value();
+    } else if (matchIdentifierKeyword("DATAFILE") || matchIdentifierKeyword("LOCATION")) {
+        location = parse_path_value();
+    } else if (check(TokenType::STRING_LITERAL)) {
+        location = parse_path_value();
+    }
+
+    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+        if (match(TokenType::LEFT_PAREN)) {
+            int depth = 1;
+            while (depth > 0 && !check(TokenType::END_OF_FILE)) {
+                if (match(TokenType::LEFT_PAREN)) {
+                    depth++;
+                } else if (match(TokenType::RIGHT_PAREN)) {
+                    depth--;
+                } else {
+                    advance();
+                }
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_ENGINE) || matchIdentifierKeyword("FILE_BLOCK_SIZE") ||
+            matchIdentifierKeyword("EXTENT_SIZE") || matchIdentifierKeyword("INITIAL_SIZE") ||
+            matchIdentifierKeyword("AUTOEXTEND_SIZE") || matchIdentifierKeyword("MAX_SIZE") ||
+            matchIdentifierKeyword("NODEGROUP") || matchIdentifierKeyword("USE_LOGFILE_GROUP")) {
+            match(TokenType::EQUAL);
+            if (check(TokenType::INTEGER_LITERAL) || check(TokenType::STRING_LITERAL) ||
+                check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                isNonReservedKeyword(current_token_.type)) {
+                parse_path_value();
+                continue;
+            }
+        }
+        if (!match(TokenType::COMMA)) {
+            break;
+        }
+    }
+
+    if (location.empty()) {
+        error("CREATE TABLESPACE requires a DATAFILE or LOCATION path");
+        synchronize();
+        return;
+    }
+
+    emit(sblr::Opcode::CREATE_TABLESPACE);
+    emitString(tablespace_name);
+    emitString(location);
+    emitByte(0);   // autoextend disabled
+    emitU32(0);    // autoextend size
+    emitU32(0);    // max size
+    emitU32(0);    // prealloc
+}
+
+void Parser::parseAlterTablespace() {
+    std::string tablespace_name = parseIdentifier();
+
+    if (matchKeyword(TokenType::KW_RENAME) || matchIdentifierKeyword("RENAME")) {
+        consumeKeyword(TokenType::KW_TO, "Expected TO after RENAME");
+        std::string new_name = parseIdentifier();
+        emit(sblr::Opcode::ALTER_TABLESPACE);
+        emitString(tablespace_name);
+        emitU32(1);
+        emitByte(3);  // RENAME_TO
+        emitString(new_name);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_ADD) || matchIdentifierKeyword("ADD")) {
+        if (!matchIdentifierKeyword("DATAFILE") && !matchIdentifierKeyword("FILE")) {
+            error("Expected DATAFILE after ADD in ALTER TABLESPACE");
+            synchronize();
+            return;
+        }
+        std::string file_path;
+        if (check(TokenType::STRING_LITERAL)) {
+            auto view = lexer_.stringPool().get(current_token_.value.string_id);
+            file_path.assign(view.data(), view.size());
+            advance();
+        } else {
+            file_path = parseIdentifier();
+        }
+        emit(sblr::Opcode::ATTACH_TABLESPACE);
+        emitString(file_path);
+        emitString(tablespace_name);
+        emitByte(1);  // validate
+        emitByte(0);  // allow mismatch
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_DROP) || matchIdentifierKeyword("DROP")) {
+        if (matchIdentifierKeyword("DATAFILE") || matchIdentifierKeyword("FILE")) {
+            if (check(TokenType::STRING_LITERAL)) {
+                advance();
+            } else if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+                parseIdentifier();
+            }
+        }
+        emit(sblr::Opcode::DETACH_TABLESPACE);
+        emitString(tablespace_name);
+        emitByte(0);  // force
+        return;
+    }
+
+    bool is_reset = false;
+    if (matchKeyword(TokenType::KW_RESET) || matchIdentifierKeyword("RESET")) {
+        is_reset = true;
+    } else if (matchKeyword(TokenType::KW_SET) || matchIdentifierKeyword("SET")) {
+        is_reset = false;
+    } else {
+        error("Expected RENAME, ADD/DROP DATAFILE, or SET/RESET for ALTER TABLESPACE");
+        synchronize();
+        return;
+    }
+
+    std::vector<uint8_t> actions;
+    std::vector<uint8_t> bool_values;
+    std::vector<uint32_t> size_values;
+
+    auto read_option_name = [&]() -> std::string {
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            return parseIdentifier();
+        }
+        if (isNonReservedKeyword(current_token_.type)) {
+            std::string name = tokenToString(current_token_.type);
+            advance();
+            return name;
+        }
+        return "";
+    };
+
+    do {
+        std::string opt = read_option_name();
+        if (opt.empty()) {
+            error("Expected tablespace option name");
+            synchronize();
+            return;
+        }
+        std::transform(opt.begin(), opt.end(), opt.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        match(TokenType::EQUAL);
+
+        if (opt == "AUTOEXTEND") {
+            actions.push_back(0);
+            if (is_reset) {
+                bool_values.push_back(0);
+            } else if (matchKeyword(TokenType::KW_ON)) {
+                bool_values.push_back(1);
+            } else if (matchKeyword(TokenType::KW_OFF)) {
+                bool_values.push_back(0);
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                bool_values.push_back(current_token_.value.int_value != 0 ? 1 : 0);
+                advance();
+            } else {
+                error("Expected ON/OFF for AUTOEXTEND");
+                synchronize();
+                return;
+            }
+        } else if (opt == "AUTOEXTEND_SIZE") {
+            actions.push_back(1);
+            if (is_reset) {
+                size_values.push_back(0);
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                size_values.push_back(static_cast<uint32_t>(current_token_.value.int_value));
+                advance();
+            } else {
+                error("Expected integer for AUTOEXTEND_SIZE");
+                synchronize();
+                return;
+            }
+        } else if (opt == "MAX_SIZE" || opt == "MAXSIZE") {
+            actions.push_back(2);
+            if (is_reset) {
+                size_values.push_back(0);
+            } else if (matchKeyword(TokenType::KW_UNLIMITED)) {
+                size_values.push_back(0);
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                size_values.push_back(static_cast<uint32_t>(current_token_.value.int_value));
+                advance();
+            } else {
+                error("Expected integer or UNLIMITED for MAX_SIZE");
+                synchronize();
+                return;
+            }
+        } else {
+            error("Unsupported ALTER TABLESPACE option: " + opt);
+            synchronize();
+            return;
+        }
+    } while (match(TokenType::COMMA));
+
+    if (actions.empty()) {
+        error("ALTER TABLESPACE requires at least one option");
+        synchronize();
+        return;
+    }
+
+    emit(sblr::Opcode::ALTER_TABLESPACE);
+    emitString(tablespace_name);
+    emitU32(static_cast<uint32_t>(actions.size()));
+
+    size_t bool_idx = 0;
+    size_t size_idx = 0;
+    for (uint8_t action : actions) {
+        emitByte(action);
+        if (action == 0) {
+            emitByte(bool_values[bool_idx++]);
+        } else if (action == 1 || action == 2) {
+            emitU32(size_values[size_idx++]);
+        }
+    }
+}
+
+void Parser::parseDropTablespace() {
+    bool if_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_exists = true;
+    }
+    std::string tablespace_name = parseIdentifier();
+    (void)if_exists;
+
+    bool force = false;
+    if (matchIdentifierKeyword("ENGINE")) {
+        parseIdentifier();
+    }
+    if (matchKeyword(TokenType::KW_FORCE) || matchIdentifierKeyword("FORCE")) {
+        force = true;
+    }
+
+    emit(sblr::Opcode::DROP_TABLESPACE);
+    emitString(tablespace_name);
+    emitByte(force ? 1 : 0);
 }
 
 void Parser::parseCreateProcedure() {

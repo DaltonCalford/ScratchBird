@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's storage engine - MGA-first design, buffer pool, heap pages, and indexing architecture.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -243,6 +243,8 @@ INDEXES UNCHANGED - still point to Page 5, Line 3
 | Columnstore | `columnstore.cpp`, `columnstore_index.cpp` |
 | Full-text | `fulltext_index.cpp` |
 | Inverted | `inverted_index.cpp` |
+| IVF (vector) | `ivf_index.cpp` |
+| Zone Map | `zonemap_index.cpp` |
 | Bloom filter | Attachable to B-tree, Hash, GIN via `bloom_filter.cpp` |
 
 ### Index Factory

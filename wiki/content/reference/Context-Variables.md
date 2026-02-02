@@ -1,6 +1,6 @@
 # Context Variables
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 This page lists ScratchBird context variables (zero-argument context functions
 and trigger-only variables) and where they apply.

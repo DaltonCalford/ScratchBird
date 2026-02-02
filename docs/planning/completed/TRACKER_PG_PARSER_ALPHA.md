@@ -16,6 +16,8 @@
 - 2026-02-02: Aligned MERGE payload shape (target/source strings, length-prefixed expressions) and fixed JOIN TABLE_REF emission in `src/parser/postgresql/pg_parser_dml.cpp:360-1490`.
 - 2026-01-28: Verified CREATE TABLE/VIEW/ALTER TABLE payloads align with executor expectations and SELECT/INSERT/UPDATE/DELETE payloads remain compatible (`src/parser/postgresql/pg_parser_ddl.cpp`, `src/parser/postgresql/pg_parser_dml.cpp`).
 - 2026-01-28: Explicitly rejected JSONPATH and network types in PostgreSQL type emission (`src/parser/postgresql/pg_parser.cpp`).
+- 2026-02-02: Added expression index payloads with INCLUDE and SBLR expression lists in `src/parser/postgresql/pg_parser_ddl.cpp:1206-1325`.
+- 2026-02-02: CREATE TYPE RANGE now emits RANGE domain payloads in `src/parser/postgresql/pg_parser_ddl.cpp:2216-2258`.
 
 ## High Priority (Alpha)
 
@@ -24,5 +26,5 @@
 - [x] Document/implement array domain type encoding (TYPE_DOMAIN array flag) (`src/parser/postgresql/pg_parser.cpp:645-651`).
 - [x] GRANT/REVOKE ON ALL bytecode support or explicit error in spec (`src/parser/postgresql/pg_parser_misc.cpp:588, 715`).
 
-- [ ] Expression indexes + INCLUDE clause support. (`src/parser/postgresql/pg_parser_ddl.cpp:1000-1080`).
-- [ ] CREATE TYPE RANGE support. (`src/parser/postgresql/pg_parser_ddl.cpp:1973`).
+- [x] Expression indexes + INCLUDE clause support. (`src/parser/postgresql/pg_parser_ddl.cpp:1206-1325`).
+- [x] CREATE TYPE RANGE support. (`src/parser/postgresql/pg_parser_ddl.cpp:2216-2258`).

@@ -127,6 +127,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"conflict", TokenType::KW_CONFLICT},
         {"nothing", TokenType::KW_NOTHING},
         {"set", TokenType::KW_SET},
+        {"reset", TokenType::KW_RESET},
         {"only", TokenType::KW_ONLY},
 
         // DDL keywords
@@ -141,6 +142,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"procedure", TokenType::KW_PROCEDURE},
         {"trigger", TokenType::KW_TRIGGER},
         {"type", TokenType::KW_TYPE},
+        {"types", TokenType::KW_TYPES},
         {"domain", TokenType::KW_DOMAIN},
         {"constraint", TokenType::KW_CONSTRAINT},
         {"column", TokenType::KW_COLUMN},
@@ -159,6 +161,8 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"check", TokenType::KW_CHECK},
         {"cascade", TokenType::KW_CASCADE},
         {"restrict", TokenType::KW_RESTRICT},
+        {"location", TokenType::KW_LOCATION},
+        {"unlimited", TokenType::KW_UNLIMITED},
         {"no", TokenType::KW_NO},
         {"action", TokenType::KW_ACTION},
         {"initially", TokenType::KW_INITIALLY},

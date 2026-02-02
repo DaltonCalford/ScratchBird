@@ -7625,7 +7625,14 @@ Expression* Parser::parseUnaryExpr() {
         return expr;
     }
 
-    return parsePrimaryExpr();
+    Expression* expr = parsePrimaryExpr();
+    while (expr && match(TokenType::DOUBLE_COLON)) {
+        auto* cast = arena_.create<CastExpr>();
+        cast->expr = expr;
+        cast->target_type = parseTypeName();
+        expr = cast;
+    }
+    return expr;
 }
 
 Expression* Parser::parsePrimaryExpr() {
@@ -7645,6 +7652,23 @@ Expression* Parser::parsePrimaryExpr() {
 
     if (!expr && matchContextual("ALTER_ELEMENT")) {
         expr = parseAlterElementExpr();
+    }
+
+    if (!expr && check(TokenType::PARAMETER)) {
+        auto* param = arena_.create<ParameterExpr>();
+        std::string_view text = state_.getTokenText(current());
+        if (!text.empty() && text.front() == ':') {
+            param->is_named = true;
+            if (current().value.string_id != StringPool::INVALID_ID) {
+                param->name = current().value.string_id;
+            } else {
+                param->name = stringPool().intern(text.substr(1));
+            }
+        } else {
+            param->index = current().value.param_index;
+        }
+        advance();
+        expr = param;
     }
 
     // CAST expression

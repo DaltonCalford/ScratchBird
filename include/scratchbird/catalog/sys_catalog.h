@@ -89,6 +89,17 @@ private:
     Status queryCacheStats(VirtualResultSet& results, ErrorContext* ctx);
     Status queryBufferPoolStats(VirtualResultSet& results, ErrorContext* ctx);
     Status queryStatementCache(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryServerCapabilities(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySchemas(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryTables(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryColumns(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryIndexes(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryIndexColumns(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryConstraints(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryForeignKeys(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryPrimaryKeys(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryTypes(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryDomains(VirtualResultSet& results, ErrorContext* ctx);
 };
 
 } // namespace scratchbird::catalog

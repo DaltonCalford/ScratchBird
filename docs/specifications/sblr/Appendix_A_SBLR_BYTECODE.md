@@ -439,7 +439,8 @@ Unless noted, `value_stack_offset` is counted from the top of the execution stac
   - `query_bytes` is a compact stream statement with no VERSION/END sentinel.
   - The embedded query must begin with SELECT.
   - COPY (SELECT ...) only supports TO and does not allow a column list.
-  - `format`/`delimiter`/`null_string`/`header` are honored by the executor; BINARY is rejected in Alpha.
+  - `format`/`delimiter`/`null_string`/`header` are honored by the executor; BINARY uses
+    length-prefixed row framing (compatible with SBWP DATA_ROW payloads).
 
 ### 7.6 Utility Extended Opcodes (selected)
 

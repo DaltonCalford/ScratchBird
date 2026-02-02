@@ -1,7 +1,7 @@
 # Wiki Documentation Improvement Tracker
 
 **Created:** 2026-01-18
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 **Overall Status:** COMPLETE - All Priority Items Resolved
 
 ---
@@ -17,10 +17,10 @@
 | Migration | 5 | 5 | 0 | 0 | 100% |
 | User Guides | 4 | 4 | 0 | 0 | 100% |
 | Language Guides | 15 | 15 | 0 | 0 | 100% |
-| Drivers | 9 | 9 | 0 | 0 | 100% |
+| Drivers | 12 | 12 | 0 | 0 | 100% |
 | Troubleshooting | 4 | 4 | 0 | 0 | 100% |
 | Reference | 7 | 7 | 0 | 0 | 100% |
-| **TOTAL** | **64** | **64** | **0** | **0** | **100%** |
+| **TOTAL** | **67** | **67** | **0** | **0** | **100%** |
 
 ---
 
@@ -164,6 +164,9 @@
 | `drivers/PHP.md` | 1465 lines | Full examples | COMPLETE | Claude | PDO, mysqli, Laravel, Symfony |
 | `drivers/Pascal-Delphi.md` | 1320 lines | Full examples | COMPLETE | Claude | FireDAC, IBX, Zeos, Free Pascal |
 | `drivers/ODBC.md` | 898 lines | Full examples | COMPLETE | Claude | Windows, Linux, macOS, Excel, Power BI |
+| `drivers/Ruby.md` | New | Full examples | COMPLETE | Claude | ScratchBird native Ruby driver |
+| `drivers/Rust.md` | New | Full examples | COMPLETE | Claude | ScratchBird native Rust driver |
+| `drivers/R.md` | New | Full examples | COMPLETE | Claude | ScratchBird native R driver |
 | `drivers/Driver-Comparison.md` | 444 lines | Feature matrix | COMPLETE | Claude | Full protocol/driver comparison, decision matrix |
 
 ---
@@ -207,6 +210,7 @@
 | 006 | 2026-01-18 | MySQL | Multiple | Stubbed status, brief | RESOLVED | Phase 6 - 3 files rewritten |
 | 006a | 2026-01-19 | Firebird | DML/Catalog | Stub files in DML sections | RESOLVED | Phase 6 - 3 files rewritten |
 | 007 | 2026-01-18 | Drivers | 8 driver files | Missing code examples | RESOLVED | Phase 7 - All 8 driver files rewritten (900-1500+ lines each) |
+| 007b | 2026-01-30 | Drivers | Ruby/Rust/R | Missing native driver pages | RESOLVED | Added Ruby, Rust, and R driver guides |
 | 007a | 2026-01-20 | Drivers | Driver-Comparison.md | Was a 15-line stub | RESOLVED | Rewritten to 444 lines with full comparison matrix |
 | 008 | 2026-01-18 | Troubleshooting | 3 files | Under 20 lines each | RESOLVED | All 3 files rewritten (885L, 792L, 938L) |
 | 009 | 2026-01-20 | Reference | All files | Reference docs exist but Alpha | CLOSED | Verified - all reference docs have substantial content |
@@ -238,7 +242,7 @@
 | 2026-01-19 | Claude | Phase 5 COMPLETE: 4 user guide files written (Backup-Restore, Performance-Tuning, Vector-Search, README) |
 | 2026-01-19 | Claude | Phase 6 PARTIAL: 10 language guide files written (PostgreSQL: 06, 07, 09, 13; MySQL: 09, 11, 13; Firebird: 06, 07, 13) |
 | 2026-01-20 | Claude | **AUDIT**: Full wiki documentation review completed. Major discoveries: |
-| | | - Phase 7 (Drivers): 8 of 9 files COMPLETE (Python 961L, NodeJS 1053L, Java 1019L, C# 1579L, Go 1541L, PHP 1465L, Pascal/Delphi 1320L, ODBC 898L). Only Driver-Comparison.md remains a stub (15L) |
+| | | - Phase 7 (Drivers): 12 of 12 files COMPLETE (Python, NodeJS, Java, C#, Go, PHP, Pascal/Delphi, ODBC, Ruby, Rust, R, Driver-Comparison). |
 | | | - Phase 8 (Troubleshooting): 3 files still stubs (Connection-Problems 13L, Performance-Issues 13L, Common-Errors 16L) |
 | | | - Phase 9 (Reference): All files have substantial content (Error-Codes 100+L, Data-Types 100+L, Glossary 100+L, etc.) |
 | | | - Overall completion updated from 64% to 89% (57 of 64 files complete) |
@@ -249,4 +253,4 @@
 | | | - Performance-Issues.md: Rewritten to 792 lines (slow queries, indexes, buffer pool, locks, tuning checklist) |
 | | | - Common-Errors.md: Rewritten to 938 lines (error catalog by category with causes and solutions) |
 | | | - **DOCUMENTATION 100% COMPLETE** (64 of 64 files) |
-
+| 2026-01-30 | Claude | Added Ruby, Rust, and R driver pages; updated driver counts (67 of 67 files) |

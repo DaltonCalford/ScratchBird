@@ -7,7 +7,10 @@
  */
 
 #include "scratchbird/protocol/adapters/native_adapter.h"
+#include "scratchbird/client/sql_helpers.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/lsm_compression.h"
+#include "scratchbird/core/telemetry.h"
 #include "scratchbird/server/ipc_server.h"
 
 #include <algorithm>
@@ -20,11 +23,160 @@
 #include <streambuf>
 #include <thread>
 #include <chrono>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace scratchbird {
 namespace protocol {
 
 namespace {
+
+uint64_t estimateRowBytes(const std::vector<ProtocolCodec::ColumnValue>& values) {
+    uint64_t total = 0;
+    for (const auto& value : values) {
+        if (value.is_null) {
+            continue;
+        }
+        if (value.is_stream) {
+            total += value.stream_length;
+        } else {
+            total += value.data.size();
+        }
+    }
+    return total;
+}
+
+uint64_t nowMicros() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+uint32_t getProcessId() {
+#ifdef _WIN32
+    return static_cast<uint32_t>(::_getpid());
+#else
+    return static_cast<uint32_t>(::getpid());
+#endif
+}
+
+bool parseNotifyStatement(const std::string& sql,
+                          std::string& channel,
+                          std::vector<uint8_t>& payload,
+                          std::string& error) {
+    auto skip_space = [&](size_t& pos) {
+        while (pos < sql.size() && std::isspace(static_cast<unsigned char>(sql[pos]))) {
+            ++pos;
+        }
+    };
+
+    auto match_keyword = [&](const char* keyword, size_t& pos_out) -> bool {
+        size_t pos = 0;
+        skip_space(pos);
+        size_t len = std::strlen(keyword);
+        if (pos + len > sql.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < len; ++i) {
+            if (std::toupper(static_cast<unsigned char>(sql[pos + i])) !=
+                std::toupper(static_cast<unsigned char>(keyword[i]))) {
+                return false;
+            }
+        }
+        size_t next = pos + len;
+        if (next < sql.size() && !std::isspace(static_cast<unsigned char>(sql[next])) &&
+            sql[next] != '(') {
+            return false;
+        }
+        pos_out = next;
+        return true;
+    };
+
+    auto parse_string = [&](size_t& pos, std::string& out) -> bool {
+        skip_space(pos);
+        if (pos >= sql.size()) {
+            return false;
+        }
+        char quote = sql[pos];
+        if (quote != '\'' && quote != '"') {
+            return false;
+        }
+        ++pos;
+        std::string value;
+        while (pos < sql.size() && sql[pos] != quote) {
+            value.push_back(sql[pos++]);
+        }
+        if (pos >= sql.size()) {
+            return false;
+        }
+        ++pos;
+        out = std::move(value);
+        return true;
+    };
+
+    auto parse_identifier = [&](size_t& pos, std::string& out) -> bool {
+        skip_space(pos);
+        if (pos >= sql.size()) {
+            return false;
+        }
+        if (sql[pos] == '"' || sql[pos] == '\'') {
+            return parse_string(pos, out);
+        }
+        size_t start = pos;
+        while (pos < sql.size()) {
+            char c = sql[pos];
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '$') {
+                break;
+            }
+            ++pos;
+        }
+        if (pos == start) {
+            return false;
+        }
+        out.assign(sql.begin() + static_cast<std::ptrdiff_t>(start),
+                   sql.begin() + static_cast<std::ptrdiff_t>(pos));
+        return true;
+    };
+
+    size_t pos = 0;
+    bool is_notify = match_keyword("NOTIFY", pos);
+    bool is_post_event = false;
+    if (!is_notify) {
+        is_post_event = match_keyword("POST_EVENT", pos);
+        if (!is_post_event) {
+            return false;
+        }
+    }
+
+    if (!parse_identifier(pos, channel)) {
+        error = "Missing notification channel";
+        return true;
+    }
+
+    payload.clear();
+    skip_space(pos);
+    if (is_notify) {
+        if (pos < sql.size() && sql[pos] == ',') {
+            ++pos;
+            std::string payload_text;
+            if (!parse_string(pos, payload_text)) {
+                error = "Invalid notification payload";
+                return true;
+            }
+            payload.assign(payload_text.begin(), payload_text.end());
+        }
+    }
+
+    if (payload.size() > 8000) {
+        error = "Notification payload too large";
+        return true;
+    }
+
+    return true;
+}
 
 class CopyOutStreambuf : public std::streambuf {
 public:
@@ -112,6 +264,29 @@ private:
     bool done_ = false;
 };
 
+size_t countParameterPlaceholders(const std::string& sql) {
+    size_t max_index = 0;
+    for (size_t i = 0; i < sql.size(); ++i) {
+        if (sql[i] != '$') {
+            continue;
+        }
+        size_t j = i + 1;
+        if (j >= sql.size() || !std::isdigit(static_cast<unsigned char>(sql[j]))) {
+            continue;
+        }
+        size_t value = 0;
+        while (j < sql.size() && std::isdigit(static_cast<unsigned char>(sql[j]))) {
+            value = value * 10 + static_cast<size_t>(sql[j] - '0');
+            ++j;
+        }
+        if (value > max_index) {
+            max_index = value;
+        }
+        i = j;
+    }
+    return max_index;
+}
+
 } // namespace
 
 // ============================================================================
@@ -164,9 +339,31 @@ core::Status NativeAdapter::parseMessage(network::Connection* conn) {
 
     // Parse complete message
     current_message_ = Message(static_cast<MessageType>(header.type));
+    current_message_.setFlags(header.flags);
     if (header.payload_length > 0) {
         const uint8_t* payload_start = buffer.data() + sizeof(MessageHeader);
-        current_message_.setPayload(payload_start, header.payload_length);
+        if (header.flags & static_cast<uint8_t>(MessageFlags::COMPRESSED)) {
+            if (!compression_enabled_ || !wire_compressor_) {
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            constexpr size_t kCompressionHeaderSize = sizeof(uint32_t) + sizeof(uint8_t) + 3;
+            if (header.payload_length < kCompressionHeaderSize) {
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            uint32_t uncompressed_size = 0;
+            std::memcpy(&uncompressed_size, payload_start, sizeof(uint32_t));
+            const uint8_t* compressed_start = payload_start + kCompressionHeaderSize;
+            size_t compressed_len = header.payload_length - kCompressionHeaderSize;
+            std::vector<uint8_t> compressed(compressed_start,
+                                            compressed_start + compressed_len);
+            std::vector<uint8_t> decompressed;
+            if (!wire_compressor_->decompress(compressed, &decompressed, uncompressed_size)) {
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            current_message_.setPayload(decompressed.data(), decompressed.size());
+        } else {
+            current_message_.setPayload(payload_start, header.payload_length);
+        }
     }
 
     // Consume from read buffer
@@ -189,6 +386,12 @@ core::Status NativeAdapter::processMessage(network::Connection* conn) {
 
         case MessageType::AUTH_REQUEST:
             return handleAuthRequest(conn);
+
+        case MessageType::SUBSCRIBE:
+            return handleSubscribe(conn);
+
+        case MessageType::UNSUBSCRIBE:
+            return handleUnsubscribe(conn);
 
         case MessageType::QUERY:
             return handleQuery(conn);
@@ -273,8 +476,50 @@ core::Status NativeAdapter::sendQueryResult(network::Connection* conn,
         // Send row description
         sendRowDescription(conn, result.columns);
 
+        const size_t stream_threshold = config_.lob_stream_threshold_bytes;
+
         for (const auto& row : result.rows) {
-            sendRowData(conn, row);
+            std::vector<ProtocolCodec::ColumnValue> row_values = row;
+            struct StreamPayload {
+                uint64_t stream_id = 0;
+                std::vector<uint8_t> data;
+            };
+            std::vector<StreamPayload> streams;
+
+            if (stream_threshold > 0) {
+                for (size_t i = 0; i < row_values.size(); ++i) {
+                    auto& val = row_values[i];
+                    if (val.is_null || val.is_stream) {
+                        continue;
+                    }
+                    if (val.data.size() < stream_threshold) {
+                        continue;
+                    }
+                    StreamPayload payload;
+                    payload.stream_id = next_stream_id_++;
+                    payload.data = std::move(val.data);
+                    val = ProtocolCodec::ColumnValue::fromStream(
+                        payload.stream_id,
+                        static_cast<uint64_t>(payload.data.size()),
+                        nullptr,
+                        0);
+                    streams.push_back(std::move(payload));
+                }
+            }
+
+            sendRowData(conn, row_values);
+
+            for (const auto& stream : streams) {
+                std::string error;
+                if (!sendStreamPayload(conn, stream.stream_id,
+                                       stream.data.data(),
+                                       stream.data.size(),
+                                       error)) {
+                    sendQueryError(conn, static_cast<uint32_t>(core::Status::IO_ERROR),
+                                   "08006", error.empty() ? "Stream send failed" : error);
+                    return core::Status::IO_ERROR;
+                }
+            }
         }
     }
 
@@ -307,16 +552,21 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
     std::string client_name;
     core::ErrorContext ctx;
     uint32_t client_pid = 0;
+    uint16_t client_flags = 0;
     auto status = ProtocolCodec::parseConnectRequest(current_message_,
                                                      database,
                                                      client_name,
                                                      client_pid,
+                                                     &client_flags,
                                                      &ctx);
     if (status != core::Status::OK) {
         sendConnectResponse(conn, false,
                             ctx.message.empty() ? "Invalid CONNECT_REQUEST" : ctx.message);
         return sendBuffer(conn);
     }
+    std::cerr << "[native_debug] CONNECT_REQUEST db='" << database
+              << "' client='" << client_name << "' pid=" << client_pid
+              << " flags=0x" << std::hex << client_flags << std::dec << "\n";
 
     (void)client_name;
 
@@ -327,7 +577,23 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
 
     client_version_ = PROTOCOL_VERSION;
 
-    sendConnectResponse(conn, true);
+    bool wants_compression = (client_flags & CONNECT_FLAG_ZSTD_COMPRESSION) != 0;
+    bool wants_progress = (client_flags & CONNECT_FLAG_PROGRESS) != 0;
+    bool compression_supported = config_.enable_compression &&
+                                 core::isCompressionSupported(core::CompressionType::ZSTD);
+    compression_enabled_ = wants_compression && compression_supported;
+    progress_enabled_ = wants_progress;
+    if (compression_enabled_) {
+        wire_compressor_ = core::LsmCompressionFactory::create(core::CompressionType::ZSTD);
+    }
+
+    uint16_t server_flags = CONNECT_FLAG_BASE_CAPABILITIES;
+    if (compression_supported) {
+        server_flags |= CONNECT_FLAG_ZSTD_COMPRESSION;
+    }
+    sendConnectResponse(conn, true, "", server_flags);
+    std::cerr << "[native_debug] CONNECT_RESPONSE ok=1 flags=0x"
+              << std::hex << server_flags << std::dec << "\n";
     native_state_ = NativeProtocolState::AUTHENTICATING;
 
     return sendBuffer(conn);
@@ -335,6 +601,7 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
 
 core::Status NativeAdapter::handleDisconnect(network::Connection* conn) {
     native_state_ = NativeProtocolState::CLOSING;
+    subscribed_channels_.clear();
     conn->close(network::CloseReason::CLIENT_DISCONNECT);
     return core::Status::OK;
 }
@@ -433,12 +700,44 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
 
     bool from_stdin = false;
     bool to_stdout = false;
-    if (parseCopyQuery(query, from_stdin, to_stdout)) {
+    CopyFormat copy_format = CopyFormat::TEXT;
+    if (parseCopyQuery(query, from_stdin, to_stdout, &copy_format)) {
         QueryContext copy_ctx;
         copy_ctx.query = query;
-        auto status = handleCopyQuery(conn, copy_ctx, from_stdin, to_stdout);
+        auto status = handleCopyQuery(conn, copy_ctx, from_stdin, to_stdout, copy_format);
         native_state_ = NativeProtocolState::READY;
         return status;
+    }
+
+    std::string notify_channel;
+    std::vector<uint8_t> notify_payload;
+    std::string notify_error;
+    if (parseNotifyStatement(query, notify_channel, notify_payload, notify_error)) {
+        if (!notify_error.empty()) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(core::Status::INVALID_ARGUMENT),
+                           "42000",
+                           notify_error);
+        } else if (connection_ctx_ && !connection_ctx_->isSuperuser()) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(core::Status::PERMISSION_DENIED),
+                           "42501",
+                           "Permission denied for NOTIFY");
+        } else if (subscribed_channels_.find(notify_channel) != subscribed_channels_.end()) {
+            sendNotification(conn,
+                             getProcessId(),
+                             notify_channel,
+                             notify_payload,
+                             0,
+                             0);
+            sendCommandComplete(conn, "NOTIFY", 0);
+            sendEndOfResults(conn);
+        } else {
+            sendCommandComplete(conn, "NOTIFY", 0);
+            sendEndOfResults(conn);
+        }
+        native_state_ = NativeProtocolState::READY;
+        return sendBuffer(conn);
     }
 
     // Execute query
@@ -451,7 +750,10 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
             auto exec_status = executeRemoteQuery(query, &bytecode, result);
             if (exec_status != core::Status::OK) {
                 native_state_ = NativeProtocolState::READY;
-                sendQueryResult(conn, result);
+                auto send_status = sendQueryResult(conn, result);
+                if (send_status != core::Status::OK) {
+                    return send_status;
+                }
                 return sendBuffer(conn);
             }
         } else {
@@ -468,16 +770,22 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
         auto exec_status = executeRemoteQuery(query, nullptr, result);
         if (exec_status != core::Status::OK) {
             native_state_ = NativeProtocolState::READY;
-            sendQueryResult(conn, result);
+            auto send_status = sendQueryResult(conn, result);
+            if (send_status != core::Status::OK) {
+                return send_status;
+            }
             return sendBuffer(conn);
         }
     } else {
         executeQuery(query_ctx, result);
     }
 
-    sendQueryResult(conn, result);
+    auto send_status = sendQueryResult(conn, result);
     native_state_ = NativeProtocolState::READY;
 
+    if (send_status != core::Status::OK) {
+        return send_status;
+    }
     return sendBuffer(conn);
 }
 
@@ -496,11 +804,16 @@ core::Status NativeAdapter::handlePrepare(network::Connection* conn) {
 
     // Create prepared statement
     uint32_t stmt_id = next_stmt_id_++;
-    native_prepared_statements_[stmt_id] = query;
 
     // Also register with base class
     std::vector<int32_t> param_types;
-    prepareStatement(std::to_string(stmt_id), query, param_types);
+    auto status = prepareStatement(std::to_string(stmt_id), query, param_types);
+    if (status != core::Status::OK) {
+        sendPrepareResponse(conn, stmt_id, false, "Failed to prepare statement");
+        return sendBuffer(conn);
+    }
+
+    native_prepared_statements_[stmt_id] = query;
 
     sendPrepareResponse(conn, stmt_id, true);
     return sendBuffer(conn);
@@ -529,39 +842,119 @@ core::Status NativeAdapter::handleExecute(network::Connection* conn) {
 
     // Read parameters (if any)
     uint16_t param_count = current_message_.readUInt16();
+    std::vector<ProtocolCodec::ColumnValue> param_values;
+    param_values.reserve(param_count);
     for (uint16_t i = 0; i < param_count; ++i) {
         bool is_null = current_message_.readUInt8() != 0;
         if (is_null) {
             ctx.parameter_values.push_back("");
             ctx.parameter_nulls.push_back(true);
+            param_values.emplace_back(nullptr);
         } else {
-            ctx.parameter_values.push_back(current_message_.readLengthPrefixedString());
+            std::string value = current_message_.readLengthPrefixedString();
+            ctx.parameter_values.push_back(value);
             ctx.parameter_nulls.push_back(false);
+            param_values.push_back(ProtocolCodec::ColumnValue::fromString(value));
         }
+    }
+
+    const size_t expected_params = countParameterPlaceholders(ctx.query);
+    if (param_count > 0 || expected_params > 0) {
+        std::cerr << "[native_debug] execute stmt_id=" << stmt_id
+                  << " expected=" << expected_params
+                  << " got=" << param_count
+                  << " sql=\"" << ctx.query << "\"\n";
+    }
+    if (param_count != expected_params) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::INVALID_ARGUMENT),
+                       "07001",
+                       "Parameter count mismatch");
+        native_state_ = NativeProtocolState::READY;
+        return sendBuffer(conn);
+    }
+
+    uint32_t max_rows = 0;
+    std::string portal_name;
+    bool backward = false;
+    if (current_message_.getRemainingBytes() >= sizeof(uint32_t)) {
+        max_rows = current_message_.readUInt32();
+        if (current_message_.getRemainingBytes() >= sizeof(uint32_t)) {
+            uint32_t portal_len = current_message_.readUInt32();
+            if (portal_len > 0) {
+                std::string portal;
+                if (current_message_.readString(portal, portal_len)) {
+                    portal_name = std::move(portal);
+                }
+            }
+        }
+        if (current_message_.getRemainingBytes() >= sizeof(uint8_t)) {
+            backward = (current_message_.readUInt8() != 0);
+        }
+    }
+
+    const std::string portal_key = portal_name.empty()
+        ? ("stmt_" + std::to_string(stmt_id))
+        : portal_name;
+    auto portal_it = portals_.find(portal_key);
+    if (portal_it != portals_.end() && !portal_it->second.completed) {
+        auto status = sendPortalResults(conn, portal_it->second, max_rows, backward);
+        if (portal_it->second.completed) {
+            portals_.erase(portal_it);
+        }
+        native_state_ = NativeProtocolState::READY;
+        return sendBuffer(conn);
     }
 
     bool from_stdin = false;
     bool to_stdout = false;
-    if (parseCopyQuery(ctx.query, from_stdin, to_stdout)) {
-        auto status = handleCopyQuery(conn, ctx, from_stdin, to_stdout);
+    CopyFormat copy_format = CopyFormat::TEXT;
+    if (parseCopyQuery(ctx.query, from_stdin, to_stdout, &copy_format)) {
+        auto status = handleCopyQuery(conn, ctx, from_stdin, to_stdout, copy_format);
         native_state_ = NativeProtocolState::READY;
         return status;
     }
 
     ResultContext result;
     if (!config_.engine_endpoint.empty()) {
-        auto exec_status = executeRemoteQuery(ctx.query, nullptr, result);
+        ctx.query = it->second;
+        std::string exec_query = client::substituteParameters(ctx.query, param_values);
+        auto exec_status = executeRemoteQuery(exec_query, nullptr, result);
+        if (exec_status != core::Status::OK) {
+            native_state_ = NativeProtocolState::READY;
+            auto send_status = sendQueryResult(conn, result);
+            if (send_status != core::Status::OK) {
+                return send_status;
+            }
+            return sendBuffer(conn);
+        }
+    } else {
+        auto exec_status = executePrepared(ctx.statement_name, ctx, result);
         if (exec_status != core::Status::OK) {
             native_state_ = NativeProtocolState::READY;
             return sendBuffer(conn);
         }
-    } else {
-        executeQuery(ctx, result);
     }
 
-    sendQueryResult(conn, result);
+    PortalState portal;
+    portal.statement_name = ctx.statement_name;
+    portal.columns = result.columns;
+    portal.rows = result.rows;
+    portal.command_tag = result.command_tag;
+    portal.rows_affected = result.rows_affected;
+    portal.completed = false;
+    portals_[portal_key] = std::move(portal);
+
+    auto& active_portal = portals_[portal_key];
+    auto status = sendPortalResults(conn, active_portal, max_rows, backward);
+    if (active_portal.completed) {
+        portals_.erase(portal_key);
+    }
     native_state_ = NativeProtocolState::READY;
 
+    if (status != core::Status::OK) {
+        return status;
+    }
     return sendBuffer(conn);
 }
 
@@ -571,6 +964,7 @@ core::Status NativeAdapter::handleCloseStatement(network::Connection* conn) {
     uint32_t stmt_id = current_message_.readUInt32();
     native_prepared_statements_.erase(stmt_id);
     closePrepared(std::to_string(stmt_id));
+    portals_.erase("stmt_" + std::to_string(stmt_id));
 
     // No response for close
     (void)conn;
@@ -589,10 +983,18 @@ core::Status NativeAdapter::handleDescribe(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    // For now, return empty description
-    // TODO: Actually describe the statement
     std::vector<ProtocolCodec::ColumnInfo> columns;
-    sendDescribeResponse(conn, stmt_id, columns, 0);
+    uint16_t param_count = 0;
+    if (connection_ctx_) {
+        auto* prepared = connection_ctx_->getPreparedStatement(std::to_string(stmt_id));
+        if (prepared) {
+            param_count = static_cast<uint16_t>(prepared->param_count);
+        }
+    }
+    if (param_count == 0) {
+        param_count = static_cast<uint16_t>(countParameterPlaceholders(it->second));
+    }
+    sendDescribeResponse(conn, stmt_id, columns, param_count);
 
     return sendBuffer(conn);
 }
@@ -695,27 +1097,128 @@ core::Status NativeAdapter::handleStatusRequest(network::Connection* conn) {
     return sendBuffer(conn);
 }
 
+core::Status NativeAdapter::handleSubscribe(network::Connection* conn) {
+    current_message_.resetReadPosition();
+    uint8_t subscribe_type = 0;
+    std::string channel;
+    std::string filter;
+    core::ErrorContext ctx;
+    auto status = ProtocolCodec::parseSubscribe(current_message_,
+                                                subscribe_type,
+                                                channel,
+                                                filter,
+                                                &ctx);
+    if (status != core::Status::OK) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(status),
+                       "42000",
+                       ctx.message.empty() ? "Invalid SUBSCRIBE" : ctx.message);
+        return sendBuffer(conn);
+    }
+
+    if (connection_ctx_ && !connection_ctx_->isSuperuser()) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::PERMISSION_DENIED),
+                       "42501",
+                       "Permission denied for SUBSCRIBE");
+        return sendBuffer(conn);
+    }
+
+    if (subscribe_type != 0) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::NOT_SUPPORTED),
+                       "0A000",
+                       "Unsupported subscription type");
+        return sendBuffer(conn);
+    }
+
+    if (channel.empty()) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::INVALID_ARGUMENT),
+                       "22023",
+                       "SUBSCRIBE requires a channel");
+        return sendBuffer(conn);
+    }
+
+    (void)filter;
+    subscribed_channels_.insert(channel);
+    sendCommandComplete(conn, "SUBSCRIBE", 0);
+    sendEndOfResults(conn);
+    return sendBuffer(conn);
+}
+
+core::Status NativeAdapter::handleUnsubscribe(network::Connection* conn) {
+    current_message_.resetReadPosition();
+    std::string channel;
+    core::ErrorContext ctx;
+    auto status = ProtocolCodec::parseUnsubscribe(current_message_, channel, &ctx);
+    if (status != core::Status::OK) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(status),
+                       "42000",
+                       ctx.message.empty() ? "Invalid UNSUBSCRIBE" : ctx.message);
+        return sendBuffer(conn);
+    }
+
+    if (connection_ctx_ && !connection_ctx_->isSuperuser()) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::PERMISSION_DENIED),
+                       "42501",
+                       "Permission denied for UNSUBSCRIBE");
+        return sendBuffer(conn);
+    }
+
+    if (!channel.empty()) {
+        subscribed_channels_.erase(channel);
+    }
+    sendCommandComplete(conn, "UNSUBSCRIBE", 0);
+    sendEndOfResults(conn);
+    return sendBuffer(conn);
+}
+
 // ============================================================================
 // Message Sending
 // ============================================================================
 
 void NativeAdapter::sendMessage(network::Connection* conn, const Message& msg) {
-    // Write header
+    if (compression_enabled_ && wire_compressor_ && msg.getPayloadLength() > 0) {
+        std::vector<uint8_t> input(msg.getPayloadData(),
+                                   msg.getPayloadData() + msg.getPayloadLength());
+        std::vector<uint8_t> compressed;
+        if (wire_compressor_->compress(input, &compressed)) {
+            constexpr size_t kCompressionHeaderSize = sizeof(uint32_t) + sizeof(uint8_t) + 3;
+            size_t compressed_payload_len = compressed.size() + kCompressionHeaderSize;
+            if (compressed_payload_len < msg.getPayloadLength()) {
+                MessageHeader header = msg.getHeader();
+                header.flags |= static_cast<uint8_t>(MessageFlags::COMPRESSED);
+                header.payload_length = static_cast<uint32_t>(compressed_payload_len);
+                writeToBuffer(conn, &header, sizeof(MessageHeader));
+                uint32_t uncompressed_size = static_cast<uint32_t>(input.size());
+                uint8_t compression_header[kCompressionHeaderSize] = {};
+                std::memcpy(compression_header, &uncompressed_size, sizeof(uint32_t));
+                compression_header[sizeof(uint32_t)] = 3;
+                writeToBuffer(conn, compression_header, sizeof(compression_header));
+                writeToBuffer(conn, compressed.data(), compressed.size());
+                return;
+            }
+        }
+    }
+
     const MessageHeader& header = msg.getHeader();
     writeToBuffer(conn, &header, sizeof(MessageHeader));
-
-    // Write payload
     if (msg.getPayloadLength() > 0) {
         writeToBuffer(conn, msg.getPayloadData(), msg.getPayloadLength());
     }
 }
 
 void NativeAdapter::sendConnectResponse(network::Connection* conn, bool success,
-                                         const std::string& error_msg) {
+                                         const std::string& error_msg,
+                                         uint16_t server_flags) {
     Message msg = ProtocolCodec::buildConnectResponse(
         success,
         session_id_,
-        error_msg
+        error_msg,
+        server_flags
     );
     sendMessage(conn, msg);
 }
@@ -756,6 +1259,45 @@ void NativeAdapter::sendCommandComplete(network::Connection* conn, const std::st
                                          int64_t rows_affected) {
     Message msg = ProtocolCodec::buildCommandComplete(tag, rows_affected);
     sendMessage(conn, msg);
+}
+
+void NativeAdapter::sendPortalSuspended(network::Connection* conn) {
+    Message msg(MessageType::PORTAL_SUSPENDED);
+    sendMessage(conn, msg);
+}
+
+void NativeAdapter::sendNotification(network::Connection* conn,
+                                     uint32_t process_id,
+                                     const std::string& channel,
+                                     const std::vector<uint8_t>& payload,
+                                     uint8_t change_type,
+                                     uint64_t row_id) {
+    Message msg = ProtocolCodec::buildNotification(process_id, channel, payload,
+                                                   change_type, row_id);
+    sendMessage(conn, msg);
+}
+
+void NativeAdapter::sendQueryProgress(network::Connection* conn,
+                                      uint64_t rows_processed,
+                                      uint64_t bytes_processed) {
+    if (!progress_enabled_) {
+        return;
+    }
+    Message msg = ProtocolCodec::buildQueryProgress(rows_processed, bytes_processed);
+    sendMessage(conn, msg);
+
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+    if (metrics.query_progress_rows) {
+        metrics.query_progress_rows->set(static_cast<double>(rows_processed), {database_name_});
+    }
+    if (metrics.query_progress_bytes) {
+        metrics.query_progress_bytes->set(static_cast<double>(bytes_processed), {database_name_});
+    }
+    if (metrics.query_progress_last_update_micros) {
+        metrics.query_progress_last_update_micros->set(static_cast<double>(nowMicros()),
+                                                       {database_name_});
+    }
 }
 
 void NativeAdapter::sendPrepareResponse(network::Connection* conn, uint32_t stmt_id,
@@ -799,6 +1341,66 @@ void NativeAdapter::sendTransactionStatus(network::Connection* conn, bool in_tra
 void NativeAdapter::sendPong(network::Connection* conn, uint64_t timestamp, uint32_t sequence) {
     Message msg = ProtocolCodec::buildPong(timestamp, sequence);
     sendMessage(conn, msg);
+}
+
+core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
+                                              PortalState& portal,
+                                              uint32_t max_rows,
+                                              bool backward) {
+    if (!portal.columns.empty()) {
+        sendRowDescription(conn, portal.columns);
+    }
+
+    size_t remaining = 0;
+    if (backward) {
+        remaining = portal.fetch_pos;
+    } else {
+        remaining = portal.rows.size() > portal.fetch_pos
+            ? portal.rows.size() - portal.fetch_pos
+            : 0;
+    }
+    size_t to_send = remaining;
+    if (max_rows > 0) {
+        to_send = std::min<size_t>(to_send, max_rows);
+    }
+
+    if (to_send == 0) {
+        sendPortalSuspended(conn);
+        return core::Status::OK;
+    }
+
+    if (backward) {
+        size_t start = portal.fetch_pos - to_send;
+        for (size_t i = 0; i < to_send; ++i) {
+            const auto& row = portal.rows[start + i];
+            sendRowData(conn, row);
+            portal.rows_sent++;
+            portal.bytes_sent += estimateRowBytes(row);
+        }
+        sendQueryProgress(conn, portal.rows_sent, portal.bytes_sent);
+        portal.fetch_pos = start;
+        sendPortalSuspended(conn);
+        return core::Status::OK;
+    }
+
+    for (size_t i = 0; i < to_send; ++i) {
+        const auto& row = portal.rows[portal.fetch_pos + i];
+        sendRowData(conn, row);
+        portal.rows_sent++;
+        portal.bytes_sent += estimateRowBytes(row);
+    }
+    sendQueryProgress(conn, portal.rows_sent, portal.bytes_sent);
+    portal.fetch_pos += to_send;
+
+    if (portal.fetch_pos < portal.rows.size()) {
+        sendPortalSuspended(conn);
+        return core::Status::OK;
+    }
+
+    sendCommandComplete(conn, portal.command_tag, portal.rows_affected);
+    sendEndOfResults(conn);
+    portal.completed = true;
+    return core::Status::OK;
 }
 
 void NativeAdapter::sendStatusResponse(network::Connection* conn) {
@@ -926,7 +1528,7 @@ core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
 // ============================================================================
 
 core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const QueryContext& ctx,
-                                            bool from_stdin, bool to_stdout) {
+                                            bool from_stdin, bool to_stdout, CopyFormat format) {
     if (from_stdin) {
         native_state_ = NativeProtocolState::COPY_IN;
     } else if (to_stdout) {
@@ -939,6 +1541,26 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
 
     copy_stream_id_ = next_stream_id_++;
     copy_total_bytes_ = 0;
+
+    const std::string direction = from_stdin ? "from" : "to";
+    const bool record_metrics = !config_.engine_endpoint.empty();
+    struct CopyMetricGuard {
+        const NativeAdapter* adapter;
+        bool enabled;
+        std::string direction;
+        uint64_t rows = 0;
+        const uint64_t* bytes_ptr = nullptr;
+        bool success = false;
+        std::chrono::steady_clock::time_point start;
+
+        ~CopyMetricGuard() {
+            if (!enabled || !adapter || !bytes_ptr) {
+                return;
+            }
+            adapter->recordCopyMetrics(direction, rows, *bytes_ptr, !success, start);
+        }
+    } copy_metrics_guard{this, record_metrics, direction, 0, &copy_total_bytes_, false,
+                         std::chrono::steady_clock::now()};
 
     if (!config_.engine_endpoint.empty()) {
         core::ErrorContext remote_ctx;
@@ -958,7 +1580,7 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
             copy_in_window_bytes_ = 0;
             copy_in_low_watermark_ = copy_in_window_grant_ / 2;
 
-            sendMessage(conn, ProtocolCodec::buildCopyInResponse(CopyFormat::TEXT, {}));
+            sendMessage(conn, ProtocolCodec::buildCopyInResponse(format, {}));
             sendMessage(conn, ProtocolCodec::buildStreamReady(copy_stream_id_, 0, 0));
             sendMessage(conn, ProtocolCodec::buildStreamControl(StreamControlType::START,
                                                                 copy_in_window_grant_, 0));
@@ -988,6 +1610,8 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
                 return flushWriteBuffer(conn);
             }
             auto rows = result.rows_affected;
+            copy_metrics_guard.rows = static_cast<uint64_t>(rows);
+            copy_metrics_guard.success = true;
             sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,
                                                             static_cast<uint64_t>(rows),
                                                             copy_total_bytes_));
@@ -1001,7 +1625,7 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
         copy_out_window_bytes_ = 0;
         copy_out_paused_ = false;
 
-        sendMessage(conn, ProtocolCodec::buildCopyOutResponse(CopyFormat::TEXT, {}));
+        sendMessage(conn, ProtocolCodec::buildCopyOutResponse(format, {}));
         sendMessage(conn, ProtocolCodec::buildStreamReady(copy_stream_id_, 0, 0));
         auto status_flush = flushWriteBuffer(conn);
         if (status_flush != core::Status::OK) {
@@ -1030,6 +1654,8 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
         }
         sendMessage(conn, ProtocolCodec::buildCopyDone());
         auto rows = result.rows_affected;
+        copy_metrics_guard.rows = static_cast<uint64_t>(rows);
+        copy_metrics_guard.success = true;
         sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,
                                                         static_cast<uint64_t>(rows),
                                                         copy_total_bytes_));
@@ -1053,7 +1679,7 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
         copy_in_window_bytes_ = 0;
         copy_in_low_watermark_ = copy_in_window_grant_ / 2;
 
-        sendMessage(conn, ProtocolCodec::buildCopyInResponse(CopyFormat::TEXT, {}));
+        sendMessage(conn, ProtocolCodec::buildCopyInResponse(format, {}));
         sendMessage(conn, ProtocolCodec::buildStreamReady(copy_stream_id_, 0, 0));
         sendMessage(conn, ProtocolCodec::buildStreamControl(StreamControlType::START,
                                                             copy_in_window_grant_, 0));
@@ -1093,6 +1719,8 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
         }
 
         auto rows = executor_ ? executor_->getLastAffectedRows() : 0;
+        copy_metrics_guard.rows = static_cast<uint64_t>(rows);
+        copy_metrics_guard.success = true;
         sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,
                                                         static_cast<uint64_t>(rows),
                                                         copy_total_bytes_));
@@ -1106,7 +1734,7 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
     copy_out_window_bytes_ = 0;
     copy_out_paused_ = false;
 
-    sendMessage(conn, ProtocolCodec::buildCopyOutResponse(CopyFormat::TEXT, {}));
+    sendMessage(conn, ProtocolCodec::buildCopyOutResponse(format, {}));
     sendMessage(conn, ProtocolCodec::buildStreamReady(copy_stream_id_, 0, 0));
     auto status_flush = flushWriteBuffer(conn);
     if (status_flush != core::Status::OK) {
@@ -1146,6 +1774,8 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
     sendMessage(conn, ProtocolCodec::buildCopyDone());
 
     auto rows = executor_ ? executor_->getLastAffectedRows() : 0;
+    copy_metrics_guard.rows = static_cast<uint64_t>(rows);
+    copy_metrics_guard.success = true;
     sendMessage(conn, ProtocolCodec::buildStreamEnd(copy_stream_id_,
                                                     static_cast<uint64_t>(rows),
                                                     copy_total_bytes_));
@@ -1210,9 +1840,13 @@ core::Status NativeAdapter::receiveMessageBlocking(network::Connection* conn, Me
     }
 }
 
-bool NativeAdapter::parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout) const {
+bool NativeAdapter::parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout,
+                                   CopyFormat* format_out) const {
     from_stdin = false;
     to_stdout = false;
+    if (format_out) {
+        *format_out = CopyFormat::TEXT;
+    }
 
     auto trim_left = [](const std::string& input) {
         size_t pos = 0;
@@ -1247,7 +1881,45 @@ bool NativeAdapter::parseCopyQuery(const std::string& sql, bool& from_stdin, boo
     if (upper.find("TO STDOUT") != std::string::npos) {
         to_stdout = true;
     }
+
+    if (format_out) {
+        auto format_pos = upper.find("FORMAT");
+        if (format_pos != std::string::npos) {
+            if (upper.find("BINARY", format_pos) != std::string::npos) {
+                *format_out = CopyFormat::BINARY;
+            } else if (upper.find("TEXT", format_pos) != std::string::npos) {
+                *format_out = CopyFormat::TEXT;
+            } else if (upper.find("CSV", format_pos) != std::string::npos) {
+                *format_out = CopyFormat::TEXT;
+            }
+        }
+    }
     return from_stdin || to_stdout;
+}
+
+void NativeAdapter::recordCopyMetrics(const std::string& direction,
+                                      uint64_t rows,
+                                      uint64_t bytes,
+                                      bool error,
+                                      const std::chrono::steady_clock::time_point& start_time) const {
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    if (metrics.copy_rows_total && rows > 0) {
+        metrics.copy_rows_total->inc(static_cast<double>(rows), {direction});
+    }
+    if (metrics.copy_bytes_total && bytes > 0) {
+        metrics.copy_bytes_total->inc(static_cast<double>(bytes), {direction});
+    }
+    if (metrics.copy_errors_total && error) {
+        metrics.copy_errors_total->inc(1.0);
+    }
+    if (metrics.copy_duration_seconds) {
+        auto end_time = std::chrono::steady_clock::now();
+        double duration_seconds =
+            std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time).count();
+        metrics.copy_duration_seconds->observe(duration_seconds, {direction});
+    }
 }
 
 bool NativeAdapter::waitForCopyOutWindow(network::Connection* conn, std::string& error) {
@@ -1298,6 +1970,108 @@ bool NativeAdapter::waitForCopyOutWindow(network::Connection* conn, std::string&
                 error = "Unexpected message during COPY OUT";
                 return false;
         }
+    }
+    return true;
+}
+
+bool NativeAdapter::waitForStreamWindow(network::Connection* conn, std::string& error) {
+    while (stream_window_bytes_ == 0 || stream_paused_) {
+        Message msg;
+        auto status = receiveMessageBlocking(conn, msg);
+        if (status != core::Status::OK) {
+            error = "Failed to receive STREAM_CONTROL for stream";
+            return false;
+        }
+
+        switch (msg.getType()) {
+            case MessageType::STREAM_CONTROL: {
+                StreamControlType control;
+                uint32_t window = 0;
+                uint32_t timeout_ms = 0;
+                if (ProtocolCodec::parseStreamControl(msg, control, window, timeout_ms) != core::Status::OK) {
+                    error = "Malformed STREAM_CONTROL message";
+                    return false;
+                }
+                (void)timeout_ms;
+                switch (control) {
+                    case StreamControlType::START:
+                    case StreamControlType::RESUME:
+                    case StreamControlType::ACK:
+                        stream_window_bytes_ += window;
+                        stream_paused_ = false;
+                        break;
+                    case StreamControlType::PAUSE:
+                        stream_paused_ = true;
+                        break;
+                    case StreamControlType::CANCEL:
+                        error = "Stream canceled by client";
+                        return false;
+                }
+                break;
+            }
+            case MessageType::QUERY_CANCEL:
+                error = "Stream canceled by client";
+                return false;
+            default:
+                error = "Unexpected message during stream";
+                return false;
+        }
+    }
+    return true;
+}
+
+bool NativeAdapter::sendStreamPayload(network::Connection* conn, uint64_t stream_id,
+                                      const uint8_t* data, size_t len, std::string& error) {
+    stream_window_bytes_ = 0;
+    stream_paused_ = false;
+
+    sendMessage(conn, ProtocolCodec::buildStreamReady(stream_id, 0, len));
+    auto status = flushWriteBuffer(conn);
+    if (status != core::Status::OK) {
+        error = "Failed to send STREAM_READY";
+        return false;
+    }
+
+    size_t chunk_limit = config_.write_buffer_size;
+    if (config_.max_message_size > sizeof(MessageHeader)) {
+        chunk_limit = std::min(chunk_limit, config_.max_message_size - sizeof(MessageHeader));
+    }
+    if (chunk_limit == 0) {
+        chunk_limit = 4096;
+    }
+
+    size_t offset = 0;
+    while (offset < len) {
+        if (stream_window_bytes_ == 0 || stream_paused_) {
+            if (!waitForStreamWindow(conn, error)) {
+                return false;
+            }
+        }
+
+        size_t chunk = len - offset;
+        if (stream_window_bytes_ > 0) {
+            chunk = std::min<size_t>(chunk, stream_window_bytes_);
+        }
+        chunk = std::min(chunk, chunk_limit);
+
+        sendMessage(conn, ProtocolCodec::buildStreamData(stream_id, 0, data + offset, chunk));
+        status = flushWriteBuffer(conn);
+        if (status != core::Status::OK) {
+            error = "Failed to send STREAM_DATA";
+            return false;
+        }
+
+        stream_window_bytes_ = (stream_window_bytes_ > chunk)
+            ? (stream_window_bytes_ - static_cast<uint32_t>(chunk))
+            : 0;
+        offset += chunk;
+    }
+
+    sendMessage(conn, ProtocolCodec::buildStreamEnd(stream_id, 0, len));
+    status = flushWriteBuffer(conn);
+    if (status != core::Status::OK) {
+        error = "Failed to send STREAM_END";
+        return false;
     }
     return true;
 }

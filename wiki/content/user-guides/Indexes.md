@@ -1,6 +1,6 @@
 # Indexes
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ScratchBird supports multiple index types, all designed to respect MGA visibility
 (xmin/xmax + TIP checks) and stable tuple identifiers (TIDs). This page focuses
@@ -187,6 +187,20 @@ Use instead of B-tree when:
 
 Notes:
 - Higher memory overhead; excellent query speed.
+
+### IVF (Inverted File)
+
+How it works:
+- Partitions vector space into clusters with centroid-based lookup.
+- Two-phase search: find nearest centroids, then search within partitions.
+
+Use instead of B-tree when:
+- You need vector search with lower memory overhead than HNSW.
+- Dataset is very large and approximate results are acceptable.
+
+Notes:
+- Requires training phase to establish centroids.
+- Trade-off between recall and search speed via nprobe parameter.
 
 ### R-Tree
 

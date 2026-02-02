@@ -1,6 +1,6 @@
 # Contributing
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ScratchBird development follows strict architectural boundaries and audit
 processes. Please review these before contributing:

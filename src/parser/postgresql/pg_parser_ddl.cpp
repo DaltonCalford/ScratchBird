@@ -195,6 +195,8 @@ void Parser::parseCreateStmt() {
         parseCreateType();
     } else if (matchKeyword(TokenType::KW_DOMAIN)) {
         parseCreateDomain();
+    } else if (matchKeyword(TokenType::KW_TABLESPACE)) {
+        parseCreateTablespace();
     } else if (matchKeyword(TokenType::KW_POLICY)) {
         parseCreatePolicy();
     } else if (matchKeyword(TokenType::KW_ROLE)) {
@@ -702,6 +704,42 @@ void Parser::parseCreatePolicy() {
     }
 }
 
+void Parser::parseCreateTablespace() {
+    std::string tablespace_name = parseIdentifier();
+
+    if (matchKeyword(TokenType::KW_OWNER)) {
+        parseIdentifier();  // Owner ignored for emulation
+    }
+
+    consumeKeyword(TokenType::KW_LOCATION, "Expected LOCATION for CREATE TABLESPACE");
+    if (!check(TokenType::STRING_LITERAL)) {
+        error("Expected string literal for tablespace LOCATION");
+        synchronize();
+        return;
+    }
+    std::string location(lexer_.stringPool().get(current_token_.value.string_id));
+    advance();
+
+    if (matchKeyword(TokenType::KW_WITH)) {
+        if (match(TokenType::LEFT_PAREN)) {
+            while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            if (check(TokenType::RIGHT_PAREN)) {
+                advance();
+            }
+        }
+    }
+
+    emit(sblr::Opcode::CREATE_TABLESPACE);
+    emitString(tablespace_name);
+    emitString(location);
+    emitByte(0);   // autoextend disabled
+    emitU32(0);    // autoextend size
+    emitU32(0);    // max size
+    emitU32(0);    // prealloc
+}
+
 ColumnDef Parser::parseColumnDef() {
     ColumnDef col;
     col.name = parseIdentifier();
@@ -1162,22 +1200,43 @@ void Parser::parseCreateIndex() {
         }
     }
 
-    // Column list
+    // Column/expression list
     consume(TokenType::LEFT_PAREN, "Expected (");
     std::vector<std::string> columns;
-    bool has_expressions = false;
+    std::vector<std::vector<uint8_t>> expression_list;
+    bool all_simple_columns = true;
+
+    auto decode_simple_column = [](const std::vector<uint8_t>& expr_bytes, std::string& column_out) {
+        if (expr_bytes.empty()) {
+            return false;
+        }
+        size_t pc = 0;
+        if (expr_bytes[pc++] != static_cast<uint8_t>(sblr::Opcode::COLUMN_REF)) {
+            return false;
+        }
+        uint64_t len = 0;
+        size_t bytes_read = 0;
+        if (!sblr::readUVarint(expr_bytes.data() + pc, expr_bytes.size() - pc, len, bytes_read)) {
+            return false;
+        }
+        pc += bytes_read;
+        if (pc + len != expr_bytes.size()) {
+            return false;
+        }
+        column_out.assign(reinterpret_cast<const char*>(expr_bytes.data() + pc),
+                          static_cast<size_t>(len));
+        return true;
+    };
 
     do {
-        if (match(TokenType::LEFT_PAREN)) {
-            has_expressions = true;
-            bool prev_emit = emit_enabled_;
-            emit_enabled_ = false;
-            parseExpression();
-            emit_enabled_ = prev_emit;
-            consume(TokenType::RIGHT_PAREN, "Expected )");
+        std::vector<uint8_t> expr_bytes = captureExpressionBytecode();
+        std::string column_name;
+        if (decode_simple_column(expr_bytes, column_name)) {
+            columns.push_back(column_name);
         } else {
-            columns.push_back(parseIdentifier());
+            all_simple_columns = false;
         }
+        expression_list.push_back(std::move(expr_bytes));
 
         if (matchKeyword(TokenType::KW_COLLATE)) {
             parseIdentifier();
@@ -1221,9 +1280,25 @@ void Parser::parseCreateIndex() {
         tablespace_name = parseIdentifier();
     }
 
-    bool emit_expressions = false;
-    if (has_expressions) {
-        error("PostgreSQL expression indexes are not supported in current bytecode yet");
+    bool emit_expressions = !all_simple_columns;
+    std::vector<uint8_t> expression_data;
+    if (emit_expressions) {
+        auto write_u32 = [&](uint32_t value) {
+            expression_data.push_back(static_cast<uint8_t>(value & 0xFF));
+            expression_data.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+            expression_data.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+            expression_data.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+        };
+        expression_data.reserve(8);
+        expression_data.push_back('S');
+        expression_data.push_back('B');
+        expression_data.push_back('L');
+        expression_data.push_back('R');
+        write_u32(static_cast<uint32_t>(expression_list.size()));
+        for (const auto& expr : expression_list) {
+            write_u32(static_cast<uint32_t>(expr.size()));
+            expression_data.insert(expression_data.end(), expr.begin(), expr.end());
+        }
     }
     emit(sblr::Opcode::CREATE_INDEX);
     emitString(index_name);
@@ -1243,7 +1318,12 @@ void Parser::parseCreateIndex() {
     emitByte(emit_expressions ? 1 : 0);
     emitByte(has_predicate ? 1 : 0);
     if (emit_expressions) {
-        emitU32(0);
+        emitU32(static_cast<uint32_t>(expression_data.size()));
+        if (emit_enabled_) {
+            bytecode_.insert(bytecode_.end(),
+                             expression_data.begin(),
+                             expression_data.end());
+        }
         emitU32(0);
     }
     if (has_predicate) {
@@ -2134,8 +2214,62 @@ void Parser::parseCreateType() {
     }
 
     if (matchKeyword(TokenType::KW_RANGE)) {
-        error("PostgreSQL CREATE TYPE RANGE is not supported in ScratchBird parser");
-        synchronize();
+        PgDataType subtype;
+        subtype.kind = PgDataType::Kind::INTEGER;
+        std::string subtype_collation;
+        std::string subtype_opclass;
+        std::string canonical_func;
+        std::string subtype_diff_func;
+        bool multirange = false;
+
+        if (match(TokenType::LEFT_PAREN)) {
+            do {
+                std::string opt = parseIdentifier();
+                std::string opt_lower = opt;
+                std::transform(opt_lower.begin(), opt_lower.end(), opt_lower.begin(), ::tolower);
+                if (match(TokenType::EQUAL)) {
+                    // consume '='
+                }
+                if (opt_lower == "subtype") {
+                    subtype = parseDataType();
+                } else if (opt_lower == "subtype_opclass") {
+                    subtype_opclass = parseQualifiedName();
+                } else if (opt_lower == "collation") {
+                    subtype_collation = parseQualifiedName();
+                } else if (opt_lower == "canonical") {
+                    canonical_func = parseQualifiedName();
+                } else if (opt_lower == "subtype_diff") {
+                    subtype_diff_func = parseQualifiedName();
+                } else if (opt_lower == "multirange_type_name") {
+                    parseQualifiedName();
+                    multirange = true;
+                } else {
+                    // Unknown option - consume an identifier or data type to move on
+                    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+                        parseIdentifier();
+                    } else {
+                        parseExpression();
+                    }
+                }
+            } while (match(TokenType::COMMA));
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+
+        emit_domain_header(static_cast<uint8_t>(parser::v2::DomainKind::RANGE));
+        emit_type_ref(subtype);
+        emitString(subtype_collation);
+        emitString(subtype_opclass);
+        emitString(canonical_func);
+        emitString(subtype_diff_func);
+        emitByte(multirange ? 1 : 0);
+
+        emitByte(1);  // nullable
+        emitString("");  // default
+        emitString("");  // collation
+        emitU32(0);  // constraints
+        emitByte(0);  // no inherits
+        emitString("postgresql");
+        emitString("");
         return;
     }
 
@@ -2480,6 +2614,11 @@ void Parser::parseAlterDomain() {
 void Parser::parseAlterStmt() {
     consume(TokenType::KW_ALTER, "Expected ALTER");
 
+    if (matchKeyword(TokenType::KW_TABLESPACE)) {
+        parseAlterTablespace();
+        return;
+    }
+
     auto emit_string16 = [&](std::string_view str) {
         if (str.size() > std::numeric_limits<uint16_t>::max()) {
             error("Identifier length exceeds 16-bit limit");
@@ -2651,7 +2790,160 @@ void Parser::parseAlterStmt() {
 
     if (matchKeyword(TokenType::KW_DEFAULT)) {
         consumeKeyword(TokenType::KW_PRIVILEGES, "Expected PRIVILEGES after DEFAULT");
-        error("ALTER DEFAULT PRIVILEGES is not supported yet");
+        std::string grantor_name;
+        if (matchKeyword(TokenType::KW_FOR)) {
+            if (matchKeyword(TokenType::KW_ROLE) || matchKeyword(TokenType::KW_USER)) {
+                grantor_name = parseIdentifier();
+            } else {
+                grantor_name = parseIdentifier();
+            }
+        }
+        std::vector<std::string> schema_names;
+        if (matchKeyword(TokenType::KW_IN)) {
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA after IN");
+            do {
+                schema_names.push_back(parseQualifiedName());
+            } while (match(TokenType::COMMA));
+        }
+        if (schema_names.empty()) {
+            schema_names.push_back(default_schema_.empty() ? "public" : default_schema_);
+        }
+
+        auto parse_privilege_list = [&]() {
+            uint32_t privileges = 0;
+            if (matchKeyword(TokenType::KW_ALL)) {
+                matchKeyword(TokenType::KW_PRIVILEGES);
+                privileges = static_cast<uint32_t>(core::CatalogManager::Privilege::ALL);
+                return privileges;
+            }
+            do {
+                if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+                    std::string priv = parseIdentifier();
+                    std::string lower = priv;
+                    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                    if (lower == "select") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT);
+                    else if (lower == "insert") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT);
+                    else if (lower == "update") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE);
+                    else if (lower == "delete") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE);
+                    else if (lower == "truncate") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::TRUNCATE);
+                    else if (lower == "references") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::REFERENCES);
+                    else if (lower == "trigger") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::TRIGGER);
+                    else if (lower == "execute") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE);
+                    else if (lower == "usage") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE);
+                    else if (lower == "create") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE);
+                    else if (lower == "connect") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::CONNECT);
+                    else if (lower == "temporary") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::TEMPORARY);
+                    else if (lower == "copy") privileges |= static_cast<uint32_t>(core::CatalogManager::Privilege::COPY_FILE);
+                    else error("Unsupported privilege in ALTER DEFAULT PRIVILEGES");
+                } else {
+                    advance();
+                }
+            } while (match(TokenType::COMMA));
+            return privileges;
+        };
+
+        auto parse_object_type = [&]() {
+            if (matchKeyword(TokenType::KW_TABLES)) {
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::TABLE);
+            }
+            if (matchKeyword(TokenType::KW_SEQUENCES)) {
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SEQUENCE);
+            }
+            if (matchKeyword(TokenType::KW_FUNCTIONS)) {
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::FUNCTION);
+            }
+            if (matchKeyword(TokenType::KW_TYPES)) {
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::DOMAIN);
+            }
+            if (matchKeyword(TokenType::KW_SCHEMAS)) {
+                return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::SCHEMA);
+            }
+            parseIdentifier();
+            return static_cast<uint8_t>(core::CatalogManager::PermissionObjectType::TABLE);
+        };
+
+        auto parse_grantees = [&]() {
+            core::CatalogManager::GranteeType grantee_type = core::CatalogManager::GranteeType::USER;
+            std::string grantee_name;
+            if (matchKeyword(TokenType::KW_PUBLIC)) {
+                grantee_type = core::CatalogManager::GranteeType::PUBLIC;
+            } else if (matchKeyword(TokenType::KW_GROUP)) {
+                grantee_type = core::CatalogManager::GranteeType::GROUP;
+                grantee_name = parseIdentifier();
+            } else if (matchKeyword(TokenType::KW_ROLE)) {
+                grantee_type = core::CatalogManager::GranteeType::ROLE;
+                grantee_name = parseIdentifier();
+            } else {
+                grantee_name = parseIdentifier();
+            }
+            if (match(TokenType::COMMA)) {
+                error("ALTER DEFAULT PRIVILEGES supports a single grantee in current bytecode");
+                parseIdentifier();
+            }
+            return std::make_pair(grantee_type, grantee_name);
+        };
+
+        if (matchKeyword(TokenType::KW_GRANT)) {
+            uint32_t privileges = parse_privilege_list();
+            consumeKeyword(TokenType::KW_ON, "Expected ON");
+            uint8_t object_type = parse_object_type();
+            consumeKeyword(TokenType::KW_TO, "Expected TO");
+            auto grantee = parse_grantees();
+            bool with_grant_option = false;
+            if (matchKeyword(TokenType::KW_WITH)) {
+                consumeKeyword(TokenType::KW_GRANT, "Expected GRANT");
+                consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
+                with_grant_option = true;
+            }
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DEFAULT_PRIVILEGES));
+            emitByte(1);
+            emitString(grantor_name);
+            emitByte(object_type);
+            emitU32(privileges);
+            emitByte(static_cast<uint8_t>(grantee.first));
+            emitString(grantee.second);
+            emitByte(with_grant_option ? 1 : 0);
+            emitU32(static_cast<uint32_t>(schema_names.size()));
+            for (const auto& schema : schema_names) {
+                emitString(schema);
+            }
+            return;
+        }
+        if (matchKeyword(TokenType::KW_REVOKE)) {
+            bool grant_option_for = false;
+            if (matchKeyword(TokenType::KW_GRANT)) {
+                consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
+                consumeKeyword(TokenType::KW_FOR, "Expected FOR");
+                grant_option_for = true;
+            }
+            uint32_t privileges = parse_privilege_list();
+            consumeKeyword(TokenType::KW_ON, "Expected ON");
+            uint8_t object_type = parse_object_type();
+            consumeKeyword(TokenType::KW_FROM, "Expected FROM");
+            auto grantee = parse_grantees();
+            if (matchKeyword(TokenType::KW_CASCADE)) {
+                // optional
+            } else {
+                matchKeyword(TokenType::KW_RESTRICT);
+            }
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DEFAULT_PRIVILEGES));
+            emitByte(2);
+            emitString(grantor_name);
+            emitByte(object_type);
+            emitU32(privileges);
+            emitByte(static_cast<uint8_t>(grantee.first));
+            emitString(grantee.second);
+            emitByte(grant_option_for ? 1 : 0);
+            emitU32(static_cast<uint32_t>(schema_names.size()));
+            for (const auto& schema : schema_names) {
+                emitString(schema);
+            }
+            return;
+        }
+
+        error("Expected GRANT or REVOKE in ALTER DEFAULT PRIVILEGES");
         return;
     }
 
@@ -3003,6 +3295,134 @@ void Parser::parseAlterStmt() {
     error("ALTER statement for this object type not yet implemented");
 }
 
+void Parser::parseAlterTablespace() {
+    std::string tablespace_name = parseIdentifier();
+
+    std::vector<parser::v2::TablespaceAlterAction> actions;
+    std::vector<uint32_t> size_values;
+    std::vector<std::string> rename_values;
+    std::vector<uint8_t> bool_values;
+
+    if (matchKeyword(TokenType::KW_RENAME)) {
+        consumeKeyword(TokenType::KW_TO, "Expected TO after RENAME");
+        std::string new_name = parseIdentifier();
+        actions.push_back(parser::v2::TablespaceAlterAction::RENAME_TO);
+        rename_values.push_back(new_name);
+    } else {
+        bool is_reset = false;
+        bool set_reset = false;
+        if (matchKeyword(TokenType::KW_SET)) {
+            is_reset = false;
+            set_reset = true;
+        } else if (matchKeyword(TokenType::KW_RESET)) {
+            is_reset = true;
+            set_reset = true;
+        }
+        if (!set_reset) {
+            error("Expected RENAME or SET/RESET for ALTER TABLESPACE");
+            synchronize();
+            return;
+        }
+        if (match(TokenType::LEFT_PAREN)) {
+            do {
+                std::string option = parseIdentifier();
+                std::string lower = option;
+                std::transform(lower.begin(), lower.end(), lower.begin(),
+                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                if (match(TokenType::EQUAL)) {
+                    if (lower == "autoextend") {
+                        uint8_t enabled = 1;
+                        if (matchKeyword(TokenType::KW_OFF) || matchKeyword(TokenType::KW_FALSE)) {
+                            enabled = 0;
+                        } else if (matchKeyword(TokenType::KW_ON) || matchKeyword(TokenType::KW_TRUE)) {
+                            enabled = 1;
+                        }
+                        actions.push_back(parser::v2::TablespaceAlterAction::SET_AUTOEXTEND);
+                        bool_values.push_back(enabled);
+                    } else if (lower == "autoextend_size" || lower == "autoextend_size_mb") {
+                        if (!check(TokenType::INTEGER_LITERAL)) {
+                            error("Expected integer for autoextend_size");
+                        } else {
+                            actions.push_back(parser::v2::TablespaceAlterAction::SET_AUTOEXTEND_SIZE);
+                            size_values.push_back(static_cast<uint32_t>(current_token_.value.int_value));
+                            advance();
+                        }
+                    } else if (lower == "maxsize") {
+                        if (check(TokenType::INTEGER_LITERAL)) {
+                            actions.push_back(parser::v2::TablespaceAlterAction::SET_MAXSIZE);
+                            size_values.push_back(static_cast<uint32_t>(current_token_.value.int_value));
+                            advance();
+                        } else if (matchKeyword(TokenType::KW_UNLIMITED)) {
+                            actions.push_back(parser::v2::TablespaceAlterAction::SET_MAXSIZE);
+                            size_values.push_back(0);
+                        } else {
+                            error("Expected integer or UNLIMITED for maxsize");
+                        }
+                    }
+                } else if (is_reset && lower == "autoextend") {
+                    actions.push_back(parser::v2::TablespaceAlterAction::SET_AUTOEXTEND);
+                    bool_values.push_back(0);
+                }
+            } while (match(TokenType::COMMA));
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+    }
+
+    emit(sblr::Opcode::ALTER_TABLESPACE);
+    emitString(tablespace_name);
+    emitU32(static_cast<uint32_t>(actions.size()));
+
+    size_t size_idx = 0;
+    size_t rename_idx = 0;
+    size_t bool_idx = 0;
+    for (const auto& action : actions) {
+        emitByte(static_cast<uint8_t>(action));
+        switch (action) {
+            case parser::v2::TablespaceAlterAction::SET_AUTOEXTEND:
+                emitByte(bool_values[bool_idx++]);
+                break;
+            case parser::v2::TablespaceAlterAction::SET_AUTOEXTEND_SIZE:
+            case parser::v2::TablespaceAlterAction::SET_MAXSIZE:
+                emitU32(size_values[size_idx++]);
+                break;
+            case parser::v2::TablespaceAlterAction::RENAME_TO:
+                emitString(rename_values[rename_idx++]);
+                break;
+            default:
+                emitByte(0);
+                break;
+        }
+    }
+}
+
+void Parser::parseDropTablespace() {
+    bool if_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_exists = true;
+    }
+    std::string tablespace_name = parseIdentifier();
+
+    bool force = false;
+    if (matchKeyword(TokenType::KW_WITH)) {
+        if (match(TokenType::LEFT_PAREN)) {
+            do {
+                if (matchKeyword(TokenType::KW_FORCE)) {
+                    force = true;
+                } else {
+                    parseIdentifier();
+                }
+            } while (match(TokenType::COMMA));
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+    }
+    (void)if_exists;
+
+    emit(sblr::Opcode::DROP_TABLESPACE);
+    emitString(tablespace_name);
+    emitByte(force ? 1 : 0);
+}
+
 // ============================================================================
 // DROP Statement
 // ============================================================================
@@ -3086,6 +3506,11 @@ void Parser::parseDropStmt() {
 
     if (matchKeyword(TokenType::KW_DOMAIN)) {
         parseDropDomain();
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_TABLESPACE)) {
+        parseDropTablespace();
         return;
     }
 

@@ -257,10 +257,10 @@ size_t ZstdCompressor::getMaxCompressedSize(size_t input_size) const
 }
 
 // ============================================================================
-// CompressionFactory Implementation
+// LsmCompressionFactory Implementation
 // ============================================================================
 
-std::unique_ptr<Compressor> CompressionFactory::create(CompressionType type)
+std::unique_ptr<Compressor> LsmCompressionFactory::create(CompressionType type)
 {
     switch (type)
     {
@@ -288,7 +288,7 @@ std::unique_ptr<Compressor> CompressionFactory::create(CompressionType type)
     }
 }
 
-CompressionType CompressionFactory::fromString(const std::string& name)
+CompressionType LsmCompressionFactory::fromString(const std::string& name)
 {
     std::string lower_name = name;
     std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
@@ -307,7 +307,7 @@ CompressionType CompressionFactory::fromString(const std::string& name)
     }
 }
 
-std::string CompressionFactory::toString(CompressionType type)
+std::string LsmCompressionFactory::toString(CompressionType type)
 {
     switch (type)
     {
@@ -319,6 +319,29 @@ std::string CompressionFactory::toString(CompressionType type)
             return "zstd";
         default:
             return "unknown";
+    }
+}
+
+bool isCompressionSupported(CompressionType type)
+{
+    switch (type)
+    {
+        case CompressionType::NONE:
+            return true;
+        case CompressionType::SNAPPY:
+#if HAS_SNAPPY
+            return true;
+#else
+            return false;
+#endif
+        case CompressionType::ZSTD:
+#if HAS_ZSTD
+            return true;
+#else
+            return false;
+#endif
+        default:
+            return false;
     }
 }
 

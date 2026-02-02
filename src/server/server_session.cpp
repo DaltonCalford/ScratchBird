@@ -540,7 +540,7 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
     uint32_t client_pid;
 
     core::Status status = protocol::ProtocolCodec::parseConnectRequest(
-        msg, database, client_name, client_pid, ctx);
+        msg, database, client_name, client_pid, nullptr, ctx);
 
     if (status != core::Status::OK) {
         sendError("Invalid connect request");
@@ -552,8 +552,8 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
     // Check if database is open
     if (!database_->is_open()) {
         // Send failure response
-        protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
-            false, session_id_, "Database is not open");
+    protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
+        false, session_id_, "Database is not open");
         protocol_session_->sendMessage(response, ctx);
         return core::Status::IO_ERROR;
     }

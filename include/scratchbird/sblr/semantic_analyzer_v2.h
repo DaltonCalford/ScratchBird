@@ -428,6 +428,7 @@ private:
 
     ResolvedExpression* analyzeLiteral(LiteralExpr* expr);
     ResolvedExpression* analyzeColumnRef(ColumnRefExpr* expr);
+    ResolvedExpression* analyzeParameter(ParameterExpr* expr);
 
     // PSQL helpers
     ResolvedPsqlStatement* analyzePsqlStatement(Statement* stmt);

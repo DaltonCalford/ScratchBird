@@ -307,7 +307,7 @@ TEST_F(ProtocolCodecTest, ConnectRequest) {
     uint32_t client_pid;
     ErrorContext ctx;
 
-    Status status = ProtocolCodec::parseConnectRequest(msg, database, client_name, client_pid, &ctx);
+    Status status = ProtocolCodec::parseConnectRequest(msg, database, client_name, client_pid, nullptr, &ctx);
     EXPECT_EQ(status, Status::OK) << ctx.message;
     EXPECT_EQ(database, "testdb");
     EXPECT_EQ(client_name, "test_client");
@@ -323,7 +323,7 @@ TEST_F(ProtocolCodecTest, ConnectResponse) {
     std::string error_message;
     ErrorContext ctx;
 
-    Status status = ProtocolCodec::parseConnectResponse(msg, success, parsed_session_id, error_message, &ctx);
+    Status status = ProtocolCodec::parseConnectResponse(msg, success, parsed_session_id, error_message, nullptr, &ctx);
     EXPECT_EQ(status, Status::OK) << ctx.message;
     EXPECT_TRUE(success);
     EXPECT_EQ(std::memcmp(session_id_, parsed_session_id, 16), 0);
@@ -337,7 +337,7 @@ TEST_F(ProtocolCodecTest, ConnectResponseFailure) {
     std::string error_message;
     ErrorContext ctx;
 
-    Status status = ProtocolCodec::parseConnectResponse(msg, success, parsed_session_id, error_message, &ctx);
+    Status status = ProtocolCodec::parseConnectResponse(msg, success, parsed_session_id, error_message, nullptr, &ctx);
     EXPECT_EQ(status, Status::OK) << ctx.message;
     EXPECT_FALSE(success);
     EXPECT_EQ(error_message, "Database not found");
@@ -761,7 +761,7 @@ TEST_F(ProtocolSessionTest, FullHandshake) {
 
     std::string db, client_name;
     uint32_t pid;
-    ProtocolCodec::parseConnectRequest(received, db, client_name, pid, &ctx);
+    ProtocolCodec::parseConnectRequest(received, db, client_name, pid, nullptr, &ctx);
     EXPECT_EQ(db, "testdb");
 
     uint8_t session_id[16];
@@ -776,7 +776,7 @@ TEST_F(ProtocolSessionTest, FullHandshake) {
     bool success;
     uint8_t recv_session_id[16];
     std::string error_msg;
-    ProtocolCodec::parseConnectResponse(received, success, recv_session_id, error_msg, &ctx);
+    ProtocolCodec::parseConnectResponse(received, success, recv_session_id, error_msg, nullptr, &ctx);
     EXPECT_TRUE(success);
 
     // 4. Client sends AUTH_REQUEST

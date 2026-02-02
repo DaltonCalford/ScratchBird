@@ -170,7 +170,7 @@ private:
  *
  * Creates compressor instances based on type.
  */
-class CompressionFactory
+class LsmCompressionFactory
 {
 public:
     /**
@@ -194,6 +194,11 @@ public:
      */
     static std::string toString(CompressionType type);
 };
+
+/**
+ * Check if a compression type is supported in this build.
+ */
+bool isCompressionSupported(CompressionType type);
 
 } // namespace core
 } // namespace scratchbird

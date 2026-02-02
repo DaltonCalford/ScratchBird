@@ -486,6 +486,21 @@ void ScratchBirdMetrics::initialize() {
         "Number of currently running statements",
         {"database"});
 
+    query_progress_rows = reg.registerGauge(
+        "scratchbird_query_progress_rows",
+        "Rows processed for current query",
+        {"database"});
+
+    query_progress_bytes = reg.registerGauge(
+        "scratchbird_query_progress_bytes",
+        "Bytes processed for current query",
+        {"database"});
+
+    query_progress_last_update_micros = reg.registerGauge(
+        "scratchbird_query_progress_last_update_micros",
+        "Last progress update timestamp in microseconds",
+        {"database"});
+
     // Transaction metrics
     transactions_total = reg.registerCounter(
         "scratchbird_transactions_total",

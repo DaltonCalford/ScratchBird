@@ -358,6 +358,11 @@ struct StartupMessage {
 #define FEATURE_CHECKSUMS       (1ULL << 11)  // Message checksums
 ```
 
+Note: The native CONNECT_REQUEST/CONNECT_RESPONSE handshake uses 16-bit
+capability flags (CONNECT_FLAG_*) to advertise supported features. The server
+returns its capability set in CONNECT_RESPONSE; compression is only enabled
+when both client and server advertise the compression flag.
+
 ### 5.2.1 NEGOTIATE_VERSION Message
 
 Server response when the requested protocol/features differ:
@@ -784,13 +789,28 @@ struct DataRow {
     uint8_t null_bitmap[];
 
     // Column values (only for non-null columns)
-    // Each value prefixed with 4-byte length (-1 indicates NULL in binary)
+    // Each value prefixed with 4-byte length
     struct ColumnValue {
-        int32_t length;  // -1 for NULL, else byte count
+        int32_t length;  // -1 for NULL, -2 for streamed, else byte count
         uint8_t data[];  // Column data
     } values[];
 };
 ```
+
+If `length == -2`, the value is streamed out-of-band:
+
+```c
+struct StreamedColumnValue {
+    int32_t length;        // -2
+    uint64_t stream_id;    // Stream identifier
+    uint64_t stream_length; // Total byte length (0 if unknown)
+};
+```
+
+The client must read the referenced value from the subsequent
+`STREAM_READY` / `STREAM_DATA` / `STREAM_END` frames for the same
+`stream_id`. Streamed values are binary payloads and must not be
+re-encoded.
 
 ### 7.5 COPY Protocol Messages
 
@@ -839,6 +859,10 @@ struct CopyFail {
     char     error[];
 };
 ```
+
+Notes:
+- For `format = BINARY`, the COPY data stream is a sequence of DATA_ROW payloads
+  (row framing without the DATA_ROW header).
 
 ---
 
@@ -1087,6 +1111,7 @@ struct ExecuteMessage {
     char     portal_name[];  // Empty for unnamed
 
     uint32_t max_rows;        // 0 = unlimited
+    uint8_t  fetch_backward; // 0 = forward, 1 = backward
 };
 ```
 
@@ -1516,7 +1541,7 @@ struct StreamData {
     uint64_t stream_id;
     uint32_t chunk_rows;
     uint32_t chunk_bytes;
-    uint8_t  data[];        // Packed DATA_ROW frames or binary COPY rows
+    uint8_t  data[];        // Packed DATA_ROW frames, binary COPY rows, or LOB bytes
 };
 
 struct StreamEnd {
@@ -1528,6 +1553,20 @@ struct StreamEnd {
 };
 ```
 
+### 12.4 QUERY_PROGRESS Message
+
+```c
+struct QueryProgress {
+    MessageHeader header;  // msg_type = 0x5C
+
+    uint64_t rows_processed;
+    uint64_t bytes_processed;
+};
+```
+
+Server emits QUERY_PROGRESS only when the client advertises
+`CONNECT_FLAG_PROGRESS` during CONNECT_REQUEST.
+
 ---
 
 ## 13. Notification Protocol
@@ -1536,7 +1575,7 @@ struct StreamEnd {
 
 ```c
 struct SubscribeMessage {
-    MessageHeader header;  // msg_type = 0x11
+    MessageHeader header;  // msg_type = 0x13
 
     uint8_t  subscribe_type;  // See below
     uint8_t  reserved[3];
@@ -1558,12 +1597,15 @@ struct SubscribeMessage {
 
 ```c
 struct UnsubscribeMessage {
-    MessageHeader header;  // msg_type = 0x12
+    MessageHeader header;  // msg_type = 0x14
 
     uint32_t channel_length;
     char     channel[];
 };
 ```
+
+Note: The current native implementation uses msg_type 0x13/0x14 for
+SUBSCRIBE/UNSUBSCRIBE (see `include/scratchbird/protocol/wire_protocol.h`).
 
 ### 13.2 NOTIFICATION Message
 
@@ -2036,6 +2078,11 @@ uint64_t features |= FEATURE_COMPRESSION;
 
 // Server responds with accepted features
 // If FEATURE_COMPRESSION is set, both sides can compress
+//
+// Native SBWP implementation note:
+// - CONNECT_REQUEST.client_flags includes CONNECT_FLAG_ZSTD_COMPRESSION (0x0001)
+// - CONNECT_RESPONSE.server_flags echoes CONNECT_FLAG_ZSTD_COMPRESSION when accepted
+// These flags map to FEATURE_COMPRESSION for negotiation.
 
 // Per-message decision:
 // - Small messages (<1KB): no compression

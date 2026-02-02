@@ -1,6 +1,6 @@
 # SQL Syntax Reference
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

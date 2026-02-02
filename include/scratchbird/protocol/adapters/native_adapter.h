@@ -11,8 +11,10 @@
 #pragma once
 
 #include "scratchbird/client/connection.h"
+#include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
 #include "scratchbird/protocol/wire_protocol.h"
+#include <unordered_set>
 
 namespace scratchbird {
 namespace protocol {
@@ -103,9 +105,11 @@ private:
     core::Status handleRollbackTo(network::Connection* conn);
     core::Status handlePing(network::Connection* conn);
     core::Status handleStatusRequest(network::Connection* conn);
+    core::Status handleSubscribe(network::Connection* conn);
+    core::Status handleUnsubscribe(network::Connection* conn);
 
     core::Status handleCopyQuery(network::Connection* conn, const QueryContext& ctx,
-                                 bool from_stdin, bool to_stdout);
+                                 bool from_stdin, bool to_stdout, CopyFormat format);
     core::Status ensureRemoteClient(core::ErrorContext* ctx);
     core::Status executeRemoteQuery(const std::string& sql,
                                     const std::vector<uint8_t>* bytecode,
@@ -116,7 +120,8 @@ private:
     // ========================================================================
 
     void sendConnectResponse(network::Connection* conn, bool success,
-                             const std::string& error_msg = "");
+                             const std::string& error_msg = "",
+                             uint16_t server_flags = 0);
     void sendAuthResponse(network::Connection* conn,
                           AuthStatus status,
                           uint32_t user_id,
@@ -131,6 +136,16 @@ private:
     void sendEndOfResults(network::Connection* conn);
     void sendCommandComplete(network::Connection* conn, const std::string& tag,
                              int64_t rows_affected);
+    void sendPortalSuspended(network::Connection* conn);
+    void sendQueryProgress(network::Connection* conn,
+                           uint64_t rows_processed,
+                           uint64_t bytes_processed);
+    void sendNotification(network::Connection* conn,
+                          uint32_t process_id,
+                          const std::string& channel,
+                          const std::vector<uint8_t>& payload,
+                          uint8_t change_type,
+                          uint64_t row_id);
     void sendPrepareResponse(network::Connection* conn, uint32_t stmt_id, bool success,
                              const std::string& error_msg = "");
     void sendDescribeResponse(network::Connection* conn, uint32_t stmt_id,
@@ -148,13 +163,40 @@ private:
     core::Status flushWriteBuffer(network::Connection* conn);
     core::Status receiveMessageBlocking(network::Connection* conn, Message& msg);
 
-    bool parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout) const;
+    bool parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout,
+                        CopyFormat* format_out) const;
+    void recordCopyMetrics(const std::string& direction,
+                           uint64_t rows,
+                           uint64_t bytes,
+                           bool error,
+                           const std::chrono::steady_clock::time_point& start_time) const;
     bool sendCopyOutChunk(network::Connection* conn, const uint8_t* data, size_t len,
                           std::string& error);
     bool readCopyInChunk(network::Connection* conn, std::string& out, bool& done,
                          std::string& error);
     bool waitForCopyOutWindow(network::Connection* conn, std::string& error);
     core::Status grantCopyInWindow(network::Connection* conn, uint32_t window_bytes);
+    bool waitForStreamWindow(network::Connection* conn, std::string& error);
+    bool sendStreamPayload(network::Connection* conn, uint64_t stream_id,
+                           const uint8_t* data, size_t len, std::string& error);
+
+    struct PortalState {
+        std::string statement_name;
+        std::vector<ProtocolCodec::ColumnInfo> columns;
+        std::vector<std::vector<ProtocolCodec::ColumnValue>> rows;
+        size_t fetch_pos = 0;
+        uint64_t rows_sent = 0;
+        uint64_t bytes_sent = 0;
+        uint64_t last_progress_micros = 0;
+        bool completed = false;
+        std::string command_tag;
+        int64_t rows_affected = 0;
+    };
+
+    core::Status sendPortalResults(network::Connection* conn,
+                                   PortalState& portal,
+                                   uint32_t max_rows,
+                                   bool backward);
 
     // ========================================================================
     // State
@@ -172,6 +214,8 @@ private:
     // Prepared statements (id -> query)
     uint32_t next_stmt_id_ = 1;
     std::unordered_map<uint32_t, std::string> native_prepared_statements_;
+    std::unordered_map<std::string, PortalState> portals_;
+    std::unordered_set<std::string> subscribed_channels_;
 
     // COPY streaming state
     uint64_t next_stream_id_ = 1;
@@ -182,9 +226,15 @@ private:
     uint32_t copy_in_window_grant_ = 0;
     uint32_t copy_in_low_watermark_ = 0;
     bool copy_out_paused_ = false;
+    uint32_t stream_window_bytes_ = 0;
+    bool stream_paused_ = false;
 
     client::ConnectionConfig client_config_;
     std::unique_ptr<client::Connection> client_;
+
+    bool compression_enabled_ = false;
+    std::unique_ptr<core::Compressor> wire_compressor_;
+    bool progress_enabled_ = false;
 };
 
 } // namespace protocol

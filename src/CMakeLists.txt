@@ -34,6 +34,11 @@ if(LZ4_FOUND)
     target_link_libraries(scratchbird_core PUBLIC ${LZ4_LIBRARIES})
 endif()
 
+if(ZSTD_FOUND)
+    target_include_directories(scratchbird_core PUBLIC ${ZSTD_INCLUDE_DIRS})
+    target_link_libraries(scratchbird_core PUBLIC ${ZSTD_LIBRARIES})
+endif()
+
 if(GEOS_FOUND)
     target_include_directories(scratchbird_core PUBLIC ${GEOS_INCLUDE_DIRS})
     target_link_libraries(scratchbird_core PUBLIC ${GEOS_LIBRARIES})
@@ -187,6 +192,12 @@ if(PROJ_FOUND)
 endif()
 if(GEOS_FOUND)
     target_link_libraries(scratchbird_link_group INTERFACE ${GEOS_LIBRARIES})
+endif()
+if(ZSTD_FOUND)
+    target_link_libraries(scratchbird_link_group INTERFACE ${ZSTD_LIBRARIES})
+endif()
+if(OPENSSL_FOUND)
+    target_link_libraries(scratchbird_link_group INTERFACE OpenSSL::SSL OpenSSL::Crypto)
 endif()
 
 
@@ -826,6 +837,25 @@ set_target_properties(sb_isql PROPERTIES
 
 message(STATUS "CLI tool: sb_isql (interactive SQL shell)")
 
+# sbdriver-conformance - Driver conformance adapter
+add_executable(sbdriver-conformance cli/sbdriver_conformance.cpp)
+
+target_link_libraries(sbdriver-conformance PRIVATE
+    scratchbird_client
+    scratchbird_protocol
+    scratchbird_server
+    nlohmann_json::nlohmann_json
+    scratchbird_link_group
+)
+
+set_target_properties(sbdriver-conformance PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sbdriver-conformance (driver conformance adapter)")
+
 # sb_verify - Database Verification Tool
 add_executable(sb_verify cli/sb_verify.cpp)
 
@@ -940,7 +970,7 @@ set_target_properties(sb_my_isql PROPERTIES
 message(STATUS "CLI tool: sb_my_isql (MySQL SQL shell)")
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security sb_admin scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_odbc_driver scratchbird_testing
+install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sbdriver-conformance sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security sb_admin scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_odbc_driver scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

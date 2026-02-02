@@ -1,6 +1,6 @@
 # Data Types
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ScratchBird provides a rich type system including domains, arrays, spatial, JSON,
 vector, and temporal types. The canonical on-disk encoding for heap storage is
@@ -41,6 +41,19 @@ Unsigned variants are available (UINT8 to UINT128) with ranges 0 to (2^N - 1).
 
 - Stored as INT64 (8 bytes), scaled by 10^-4.
 
+### DECFLOAT (IEEE-754 Decimal Floating Point)
+
+| Type | Bytes | Notes |
+| --- | --- | --- |
+| DECFLOAT16 | 8 | IEEE-754 Decimal64, 16 significant digits |
+| DECFLOAT34 | 16 | IEEE-754 Decimal128, 34 significant digits |
+
+## Boolean
+
+| Type | Bytes | Notes |
+| --- | --- | --- |
+| BOOLEAN | 1 | TRUE/FALSE/NULL (0x00, 0x01, null bitmap) |
+
 ## Character and binary types
 
 | Type | Storage | Notes |
@@ -64,6 +77,7 @@ ScratchBird stores temporal values normalized to UTC plus the original offset.
 | DATE | int32 MJD + int32 offset_seconds | MJD is UTC date; offset preserved |
 | TIME | int64 micros + int32 offset_seconds | Micros since midnight UTC |
 | TIMESTAMP | int64 micros + int32 offset_seconds | Micros since Unix epoch UTC |
+| INTERVAL | int32 months + int32 days + int64 micros | ISO 8601 interval components |
 
 The default time-of-day for DATE is configured by
 `server.time.date_default_time` (default 00:00:00).
@@ -85,6 +99,53 @@ The default time-of-day for DATE is configured by
 
 - Spatial types (POINT, LINESTRING, POLYGON, MULTI*) follow TypedValue layouts.
 - VECTOR stores float32 elements as a binary payload with length prefix.
+
+### Spatial types
+
+| Type | Description |
+| --- | --- |
+| POINT | Single coordinate (X, Y) |
+| LINESTRING | Ordered sequence of points |
+| POLYGON | Closed ring with optional holes |
+| MULTIPOINT | Collection of points |
+| MULTILINESTRING | Collection of linestrings |
+| MULTIPOLYGON | Collection of polygons |
+| GEOMETRYCOLLECTION | Heterogeneous geometry collection |
+
+All spatial types support SRID (Spatial Reference ID) for coordinate system definition.
+
+## Range types
+
+Range types represent a range of values with optional inclusive/exclusive bounds.
+
+| Type | Element Type | Notes |
+| --- | --- | --- |
+| INT4RANGE | INT32 | Range of 32-bit integers |
+| INT8RANGE | INT64 | Range of 64-bit integers |
+| NUMRANGE | DECIMAL/FLOAT64 | Range of numeric values |
+| TSRANGE | TIMESTAMP | Range of timestamps (without timezone) |
+| TSTZRANGE | TIMESTAMP WITH TIME ZONE | Range of timestamps (with timezone) |
+| DATERANGE | DATE | Range of dates |
+
+Range operations: `@>` (contains), `<@` (contained by), `&&` (overlaps), `-|-` (adjacent).
+
+## Network types
+
+| Type | Bytes | Notes |
+| --- | --- | --- |
+| INET | variable | IPv4 or IPv6 address with optional subnet mask |
+| CIDR | variable | IPv4 or IPv6 network in strict CIDR notation |
+| MACADDR | 6 | EUI-48 MAC address |
+| MACADDR8 | 8 | EUI-64 MAC address |
+
+## Text search types
+
+| Type | Description |
+| --- | --- |
+| TSVECTOR | Document representation as sorted list of lexemes with positions |
+| TSQUERY | Search expression with boolean operators (AND, OR, NOT, FOLLOWED BY) |
+
+Used with full-text search indexes (GIN-based) and the `@@` match operator.
 
 ## EXTRACT and ALTER_ELEMENT
 

@@ -3,7 +3,7 @@
 # Java JDBC Driver Guide
 
 **Status:** Alpha documentation
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -13,21 +13,61 @@ Java applications can connect to ScratchBird through JDBC using several drivers:
 
 | Protocol | Port | Driver | Best For |
 |----------|------|--------|----------|
-| PostgreSQL | 5432 | PostgreSQL JDBC | Most Java apps |
+| Native | 3092 | ScratchBird JDBC (SBWP v1.1) | Full ScratchBird feature set |
+| PostgreSQL | 5432 | PostgreSQL JDBC | Ecosystem compatibility |
 | MySQL | 3306 | MySQL Connector/J | MySQL migrations |
 | Firebird | 3050 | Jaybird | Firebird migrations |
-| Native | 3092 | (future) ScratchBird JDBC | Full feature access |
 
-**Recommendation:** Use **PostgreSQL JDBC** driver via port 5432 for the best ecosystem compatibility.
+**Recommendation:** Use the **ScratchBird native JDBC driver** for full SBWP v1.1 feature coverage. Use PostgreSQL/MySQL/Firebird JDBC drivers only when you need emulation compatibility.
 
 ---
+
+## ScratchBird Native JDBC Driver (SBWP v1.1)
+
+### Build/Install
+
+Build the driver JAR from the ScratchBird-driver repository:
+
+```bash
+cd ScratchBird-driver/jdbc
+./gradlew build
+```
+
+Add `jdbc/build/libs/*.jar` to your project classpath.
+Maven coordinates will be published once the installation utility distribution is finalized.
+
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add the native driver pack later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-driver-jdbc` or the `scratchbird-drivers-all` meta package. On Linux, run with `sudo`.
+
+### Basic Connection
+
+```java
+import java.sql.Connection;
+import java.sql.DriverManager;
+
+Connection conn = DriverManager.getConnection(
+    "jdbc:scratchbird://localhost:3092/mydb",
+    "user",
+    "password"
+);
+```
+
+The native JDBC driver speaks SBWP v1.1 with server-side prepare/bind and binary-only parameters.
+Wrapper types for JSONB/RANGE/GEOMETRY are exposed by the driver API.
 
 ## Quick Start
 
 ### Maven Dependencies
 
 ```xml
-<!-- PostgreSQL JDBC (Recommended) -->
+<!-- PostgreSQL JDBC (Emulation) -->
 <dependency>
     <groupId>org.postgresql</groupId>
     <artifactId>postgresql</artifactId>
@@ -59,7 +99,7 @@ Java applications can connect to ScratchBird through JDBC using several drivers:
 ### Gradle Dependencies
 
 ```groovy
-// PostgreSQL JDBC
+// PostgreSQL JDBC (Emulation)
 implementation 'org.postgresql:postgresql:42.7.1'
 
 // MySQL Connector/J
@@ -1016,4 +1056,3 @@ String url = "jdbc:postgresql://localhost:5432/scratchbird?ssl=true&sslmode=requ
 - [Driver Comparison](Driver-Comparison.md) - Compare all drivers
 - [First Connection](../getting-started/first-connection.md) - Getting started guide
 - [Connection Problems](../troubleshooting/Connection-Problems.md) - Troubleshooting
-

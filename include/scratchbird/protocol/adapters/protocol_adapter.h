@@ -53,10 +53,11 @@ struct ProtocolAdapterConfig {
     size_t read_buffer_size = 65536;        // 64KB read buffer
     size_t write_buffer_size = 65536;       // 64KB write buffer
     size_t max_message_size = 16 * 1024 * 1024;  // 16MB max message
+    size_t lob_stream_threshold_bytes = 256 * 1024;  // Stream LOBs larger than this
 
     // Feature flags
     bool enable_ssl = false;                // Enable TLS/SSL
-    bool enable_compression = false;        // Enable compression
+    bool enable_compression = true;         // Enable compression
     bool strict_protocol = true;            // Strict protocol validation
 
     // Authentication

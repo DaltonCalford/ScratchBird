@@ -148,6 +148,7 @@ void CloseCursorStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 void LiteralExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ColumnRefExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ParameterExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void BinaryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void UnaryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void FunctionCallExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }

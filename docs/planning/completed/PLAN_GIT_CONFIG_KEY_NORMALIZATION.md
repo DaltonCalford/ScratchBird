@@ -1,5 +1,8 @@
 # Plan: Git Config Key Normalization
 
+Status: Not Started (code)
+Last Updated: 2026-02-02
+
 ## Objective
 
 Normalize Git integration configuration keys across `.scratchbird.yml` and

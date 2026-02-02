@@ -1,7 +1,7 @@
 # PHP Driver Guide
 
 **Status:** Complete
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -11,12 +11,12 @@ ScratchBird supports multiple connection protocols for PHP applications:
 
 | Protocol | Port | Extension/Driver | Best For |
 |----------|------|------------------|----------|
-| PostgreSQL | 5432 | PDO_PGSQL, pgsql | Most applications (recommended) |
+| Native | 3092 | ScratchBird PDO (SBWP v1.1) | Full ScratchBird feature set |
+| PostgreSQL | 5432 | PDO_PGSQL, pgsql | Ecosystem compatibility |
 | MySQL | 3306 | PDO_MYSQL, mysqli | MySQL compatibility |
 | Firebird | 3050 | PDO_FIREBIRD, interbase | Firebird migration |
-| Native | 3092 | scratchbird-php (future) | Direct access |
 
-**Recommendation:** Use **PDO with pgsql** (PostgreSQL protocol) for most applications. It offers the best balance of features, security, and portability.
+**Recommendation:** Use the **ScratchBird PDO driver** for full SBWP v1.1 feature coverage. Use PDO_PGSQL/PDO_MYSQL/PDO_FIREBIRD only when you need emulation compatibility.
 
 ---
 
@@ -25,6 +25,9 @@ ScratchBird supports multiple connection protocols for PHP applications:
 ### Installation
 
 ```bash
+# ScratchBird native driver (from repo)
+# composer install
+
 # Ubuntu/Debian
 sudo apt install php-pgsql php-mysql php-pdo
 
@@ -39,33 +42,43 @@ brew install php
 php -m | grep -E "pgsql|mysql|pdo"
 ```
 
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add the native driver pack later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-driver-php` or the `scratchbird-drivers-all` meta package. On Linux, run with `sudo`.
+
 ### First Connection
 
 ```php
 <?php
 
-$dsn = "pgsql:host=localhost;port=5432;dbname=scratchbird";
-$user = "app_user";
-$password = "secret";
+use ScratchBird\PDO\ScratchBirdPDO;
+
+$dsn = "scratchbird://app_user:secret@localhost:3092/scratchbird";
 
 try {
-    $pdo = new PDO($dsn, $user, $password, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
+    $pdo = new ScratchBirdPDO($dsn);
 
-    $stmt = $pdo->query("SELECT version()");
-    $version = $stmt->fetchColumn();
-    echo "Connected to: $version\n";
+    $stmt = $pdo->query("SELECT 1");
+    $one = $stmt->fetchColumn();
+    echo "Connected: $one\n";
 
 } catch (PDOException $e) {
     die("Connection failed: " . $e->getMessage());
 }
 ```
 
+The native driver uses SBWP v1.1 with server-side prepare/bind and binary-only
+parameters. Wrapper types for JSONB/RANGE/GEOMETRY are exposed by the driver API.
+
 ---
 
-## Part 2: PDO (PostgreSQL Protocol)
+## Part 2: PDO (PostgreSQL Protocol - Emulation)
 
 PDO is the recommended database abstraction layer for PHP, providing a consistent interface across databases.
 

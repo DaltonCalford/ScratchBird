@@ -3,7 +3,7 @@
 # Node.js / TypeScript Driver Guide
 
 **Status:** Alpha documentation
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -13,21 +13,55 @@ Node.js applications can connect to ScratchBird through multiple protocols:
 
 | Protocol | Port | Library | Best For |
 |----------|------|---------|----------|
-| PostgreSQL | 5432 | pg, postgres.js | Most Node.js apps |
+| Native | 3092 | scratchbird (SBWP v1.1) | Full ScratchBird feature set |
+| PostgreSQL | 5432 | pg, postgres.js | Ecosystem compatibility |
 | MySQL | 3306 | mysql2, mysql | MySQL migrations |
 | Firebird | 3050 | node-firebird | Firebird migrations |
-| Native | 3092 | (future) scratchbird | Full feature access |
 
-**Recommendation:** Use **pg** (node-postgres) or **postgres.js** via the PostgreSQL protocol for the best ecosystem compatibility.
+**Recommendation:** Use the **ScratchBird native driver** for full SBWP v1.1 feature coverage. Use PostgreSQL/MySQL/Firebird drivers only when you need emulation compatibility.
 
 ---
+
+## ScratchBird Native Driver (SBWP v1.1)
+
+### Installation
+
+```bash
+npm install scratchbird
+```
+
+### Basic Connection (TypeScript)
+
+```typescript
+import { Client } from "scratchbird";
+
+const client = new Client({
+  host: "localhost",
+  port: 3092,
+  database: "scratchbird",
+  user: "app_user",
+  password: "secret"
+});
+
+await client.connect();
+const result = await client.query("SELECT 1");
+console.log(result.rows);
+await client.end();
+```
+
+The native driver uses SBWP v1.1 with server-side prepare/bind and binary-only parameters. Wrapper
+types for JSONB/RANGE/GEOMETRY are exposed by the driver API. Use it when you want full ScratchBird
+feature access on port 3092.
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-# Recommended: pg (node-postgres)
+# Native ScratchBird driver (recommended)
+npm install scratchbird
+
+# PostgreSQL drivers (emulation)
 npm install pg
 npm install --save-dev @types/pg  # For TypeScript
 
@@ -40,6 +74,16 @@ npm install mysql2
 # Or Prisma ORM
 npm install prisma @prisma/client
 ```
+
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add the native driver pack later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-driver-node` or the `scratchbird-drivers-all` meta package. On Linux, run with `sudo`.
 
 ### Basic Connection (JavaScript)
 
@@ -1050,4 +1094,3 @@ const result = await pool.query({
 - [First Connection](../getting-started/first-connection.md) - Getting started guide
 - [Connection Problems](../troubleshooting/Connection-Problems.md) - Troubleshooting
 - [Web App Tutorial (Express)](../tutorials/Web-App-NodeJS-Express.md) - Full Express example
-

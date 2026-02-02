@@ -26,6 +26,7 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include <vector>
 #include <memory>
+#include <functional>
 #include <variant>
 #include <stack>
 #include <optional>
@@ -74,6 +75,15 @@ namespace scratchbird
 
             // Row data
             void addRow(std::vector<Value> row);
+            using RowCallback = std::function<void(const std::vector<Value>&)>;
+            void setRowCallback(RowCallback cb)
+            {
+                row_callback_ = std::move(cb);
+            }
+            void setStoreRows(bool store)
+            {
+                store_rows_ = store;
+            }
             size_t rowCount() const
             {
                 return rows_.size();
@@ -90,6 +100,8 @@ namespace scratchbird
             std::vector<std::string> column_names_;
             std::vector<core::DataType> column_types_;
             std::vector<std::vector<Value>> rows_;
+            RowCallback row_callback_;
+            bool store_rows_ = true;
         };
 
         // Execution result
@@ -908,6 +920,7 @@ namespace scratchbird
             void executeComment();             // Execute COMMENT
             void executeGrantPrivilege();    // Execute GRANT privilege
             void executeRevokePrivilege();   // Execute REVOKE privilege
+            void executeAlterDefaultPrivileges(); // Execute ALTER DEFAULT PRIVILEGES
             void executeGrantRole();         // Execute GRANT role
             void executeRevokeRole();        // Execute REVOKE role
             void executeSetRole();           // Execute SET ROLE / RESET ROLE
@@ -1043,6 +1056,12 @@ namespace scratchbird
             bool evaluatePolicyExpression(const std::vector<uint8_t>& expr_bytecode,
                                         const std::vector<Value>& row_values,
                                         const std::vector<core::CatalogManager::ColumnInfo>& columns);
+
+            // Evaluate expression bytecode with row context and return Value
+            Value evaluateExpressionBytecode(const std::vector<uint8_t>& expr_bytecode,
+                                             const std::vector<Value>& row_values,
+                                             const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                             bool& ok);
 
             // SECURITY ENHANCEMENT (MEDIUM-3): Query execution limit checks
             void checkQueryLimits();              // Check all query limits, throw if exceeded

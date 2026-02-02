@@ -1,6 +1,6 @@
 # PostgreSQL Clients
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 Use PostgreSQL clients against ScratchBird's PostgreSQL listener (port 5432).
 

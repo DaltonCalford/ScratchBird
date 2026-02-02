@@ -3,7 +3,7 @@
 **Purpose:** Source repository for ScratchBird's wiki documentation
 **Sync Target:** GitHub Wiki at https://github.com/scratchbird/scratchbird.wiki
 **Status:** Alpha documentation (in progress)
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-30
 
 ---
 

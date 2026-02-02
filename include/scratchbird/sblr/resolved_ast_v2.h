@@ -226,6 +226,15 @@ struct ResolvedVariableExpr : public ResolvedExpression {
     StringPool::StringId name = StringPool::INVALID_ID;
 };
 
+/**
+ * Resolved parameter placeholder expression
+ */
+struct ResolvedParameterExpr : public ResolvedExpression {
+    bool is_named = false;
+    uint32_t index = 0;
+    StringPool::StringId name = StringPool::INVALID_ID;
+};
+
 // =============================================================================
 // PSQL Resolved Statements
 // =============================================================================
@@ -998,6 +1007,7 @@ struct ResolvedBaseOptions {
 struct ResolvedCreateTableStmt : public ResolvedStatement {
     ResolvedSchemaRef schema;
     StringPool::StringId table_name;
+    StringPool::StringId table_path = StringPool::INVALID_ID;
     bool if_not_exists = false;
     bool or_replace = false;
     TempTableType temp_type = TempTableType::NONE;

@@ -1,5 +1,8 @@
 # SBLR Type Opcode Remediation Plan (Alpha)
 
+Status: In Progress (tests pending)
+Last Updated: 2026-02-02
+
 ## Purpose
 Provide a tracked plan to ensure **full SBLR/executor type coverage** so all
 native and emulated-engine datatypes can be encoded, decoded, and executed.

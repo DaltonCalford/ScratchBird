@@ -62,6 +62,15 @@ if(NOT LZ4_FOUND)
     endif()
 endif()
 
+# If ZSTD not found via pkg-config, try to find it manually
+if(NOT ZSTD_FOUND)
+    find_path(ZSTD_INCLUDE_DIRS NAMES zstd.h)
+    find_library(ZSTD_LIBRARIES NAMES zstd)
+    if(ZSTD_INCLUDE_DIRS AND ZSTD_LIBRARIES)
+        set(ZSTD_FOUND TRUE)
+    endif()
+endif()
+
 # If GEOS not found via pkg-config, try to find it manually
 if(NOT GEOS_FOUND)
     find_path(GEOS_INCLUDE_DIRS NAMES geos_c.h)
@@ -86,6 +95,12 @@ if(LZ4_FOUND)
     message(STATUS "LZ4 compression support: ENABLED")
 else()
     message(STATUS "LZ4 compression support: DISABLED (install liblz4-dev to enable)")
+endif()
+
+if(ZSTD_FOUND)
+    message(STATUS "ZSTD compression support: ENABLED")
+else()
+    message(STATUS "ZSTD compression support: DISABLED (install libzstd-dev to enable)")
 endif()
 
 # Define macro if GEOS is available (Phase 2 Wave 3: Spatial Functions)

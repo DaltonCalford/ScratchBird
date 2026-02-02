@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/client/network_client.h"
+#include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/client/driver_config.h"
 #include "scratchbird/client/sql_helpers.h"
 #include "scratchbird/security/scram_auth.h"
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <unordered_map>
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -571,10 +573,16 @@ core::Status NetworkClient::connect(const NetworkClientConfig& config,
     }
 
     // CONNECT_REQUEST
+    uint16_t client_flags = protocol::CONNECT_FLAG_BASE_CAPABILITIES;
+    if (config_.enable_compression &&
+        core::isCompressionSupported(core::CompressionType::ZSTD)) {
+        client_flags |= protocol::CONNECT_FLAG_ZSTD_COMPRESSION;
+    }
     auto connect_msg = protocol::ProtocolCodec::buildConnectRequest(
         config_.database,
         config_.application_name,
-        getProcessId()
+        getProcessId(),
+        client_flags
     );
 
     auto status = sendMessage(connect_msg, ctx);
@@ -597,12 +605,18 @@ core::Status NetworkClient::connect(const NetworkClientConfig& config,
 
     bool success = false;
     std::string error_msg;
+    uint16_t server_flags = 0;
     status = protocol::ProtocolCodec::parseConnectResponse(
-        response, success, session_id_, error_msg, ctx
+        response, success, session_id_, error_msg, &server_flags, ctx
     );
     if (status != core::Status::OK || !success) {
         last_error_ = error_msg.empty() ? "Connection refused" : error_msg;
         return core::Status::CONNECTION_FAILURE;
+    }
+
+    compression_enabled_ = (client_flags & server_flags & protocol::CONNECT_FLAG_ZSTD_COMPRESSION) != 0;
+    if (compression_enabled_) {
+        wire_compressor_ = core::LsmCompressionFactory::create(core::CompressionType::ZSTD);
     }
 
     if (!config_.username.empty()) {
@@ -803,10 +817,21 @@ void NetworkClient::disconnect() {
     socket_.reset();
     connected_ = false;
     in_transaction_ = false;
+    compression_enabled_ = false;
+    wire_compressor_.reset();
 }
 
 bool NetworkClient::isConnected() const {
     return connected_ && socket_ && socket_->isOpen();
+}
+
+void NetworkClient::resetQueryProgress() {
+    query_progress_ = QueryProgressSnapshot{};
+}
+
+void NetworkClient::drainNotifications(std::vector<Notification>& out) {
+    out.clear();
+    out.swap(notifications_);
 }
 
 core::Status NetworkClient::executeQuery(const std::string& sql,
@@ -826,6 +851,8 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
         last_error_ = "Not connected";
         return core::Status::CONNECTION_FAILURE;
     }
+
+    resetQueryProgress();
 
     auto query_msg = protocol::ProtocolCodec::buildQuery(session_id_, sql, 0);
     auto status = sendMessage(query_msg, ctx);
@@ -1020,6 +1047,40 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
         return core::Status::OK;
     };
 
+    struct StreamBuffer {
+        std::vector<uint8_t> data;
+        uint64_t expected_bytes = 0;
+        bool complete = false;
+    };
+    std::unordered_map<uint64_t, StreamBuffer> stream_buffers;
+    std::unordered_map<uint64_t, std::vector<std::pair<size_t, size_t>>> stream_bindings;
+    uint32_t stream_window = 0;
+
+    auto apply_stream_data = [&](uint64_t stream_id) {
+        auto buffer_it = stream_buffers.find(stream_id);
+        if (buffer_it == stream_buffers.end() || !buffer_it->second.complete) {
+            return;
+        }
+        auto binding_it = stream_bindings.find(stream_id);
+        if (binding_it == stream_bindings.end()) {
+            return;
+        }
+        const auto& data = buffer_it->second.data;
+        for (const auto& binding : binding_it->second) {
+            if (binding.first >= results.rows.size()) {
+                continue;
+            }
+            auto& row = results.rows[binding.first];
+            if (binding.second >= row.size()) {
+                continue;
+            }
+            row[binding.second].data = data;
+            row[binding.second].is_stream = false;
+        }
+        stream_bindings.erase(binding_it);
+        stream_buffers.erase(buffer_it);
+    };
+
     while (true) {
         protocol::Message response;
         status = receiveMessage(response, ctx);
@@ -1052,6 +1113,18 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
             case protocol::MessageType::ROW_DATA: {
                 std::vector<protocol::ProtocolCodec::ColumnValue> values;
                 protocol::ProtocolCodec::parseRowData(response, values, ctx);
+                const size_t row_index = results.rows.size();
+                for (size_t i = 0; i < values.size(); ++i) {
+                    if (!values[i].is_stream) {
+                        continue;
+                    }
+                    stream_bindings[values[i].stream_id].push_back({row_index, i});
+                    auto buffer_it = stream_buffers.find(values[i].stream_id);
+                    if (buffer_it != stream_buffers.end() && buffer_it->second.complete) {
+                        values[i].data = buffer_it->second.data;
+                        values[i].is_stream = false;
+                    }
+                }
                 results.rows.push_back(std::move(values));
                 break;
             }
@@ -1065,7 +1138,32 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
                 results.rows_affected = rows_affected;
                 break;
             }
+            case protocol::MessageType::QUERY_PROGRESS: {
+                uint64_t rows = 0;
+                uint64_t bytes = 0;
+                protocol::ProtocolCodec::parseQueryProgress(response, rows, bytes, ctx);
+                query_progress_.rows_processed = rows;
+                query_progress_.bytes_processed = bytes;
+                query_progress_.updated_at_micros = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
+                break;
+            }
+            case protocol::MessageType::NOTIFICATION: {
+                Notification note;
+                protocol::ProtocolCodec::parseNotification(response,
+                                                           note.process_id,
+                                                           note.channel,
+                                                           note.payload,
+                                                           note.change_type,
+                                                           note.row_id,
+                                                           ctx);
+                notifications_.push_back(std::move(note));
+                break;
+            }
             case protocol::MessageType::END_OF_RESULTS:
+                return core::Status::OK;
+            case protocol::MessageType::PORTAL_SUSPENDED:
                 return core::Status::OK;
 
             case protocol::MessageType::COPY_IN_RESPONSE: {
@@ -1088,9 +1186,70 @@ core::Status NetworkClient::executeQuery(const std::string& sql,
                 last_error_ = message.empty() ? "COPY failed" : message;
                 return core::Status::INTERNAL_ERROR;
             }
-            case protocol::MessageType::STREAM_END:
-            case protocol::MessageType::STREAM_READY:
+            case protocol::MessageType::STREAM_READY: {
+                uint64_t stream_id = 0;
+                uint64_t total_rows = 0;
+                uint64_t estimated_bytes = 0;
+                protocol::ProtocolCodec::parseStreamReady(response, stream_id,
+                                                          total_rows, estimated_bytes, ctx);
+                (void)total_rows;
+                stream_window = copy_window;
+                auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                    protocol::StreamControlType::START, stream_window, 0);
+                status = sendMessage(ctrl, ctx);
+                if (status != core::Status::OK) {
+                    last_error_ = "Failed to send STREAM_CONTROL";
+                    return status;
+                }
+                auto& buffer = stream_buffers[stream_id];
+                buffer.expected_bytes = estimated_bytes;
                 break;
+            }
+            case protocol::MessageType::STREAM_DATA: {
+                uint64_t stream_id = 0;
+                uint32_t chunk_rows = 0;
+                const uint8_t* data = nullptr;
+                size_t len = 0;
+                protocol::ProtocolCodec::parseStreamData(
+                    response, stream_id, chunk_rows, &data, &len, ctx);
+                (void)chunk_rows;
+                if (data && len > 0) {
+                    auto& buffer = stream_buffers[stream_id];
+                    buffer.data.insert(buffer.data.end(), data, data + len);
+                }
+                if (stream_window > 0) {
+                    if (len >= stream_window) {
+                        stream_window = 0;
+                    } else {
+                        stream_window -= static_cast<uint32_t>(len);
+                    }
+                }
+                if (stream_window == 0) {
+                    stream_window = copy_window;
+                    auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                        protocol::StreamControlType::ACK, stream_window, 0);
+                    status = sendMessage(ctrl, ctx);
+                    if (status != core::Status::OK) {
+                        last_error_ = "Failed to send STREAM_CONTROL ACK";
+                        return status;
+                    }
+                }
+                break;
+            }
+            case protocol::MessageType::STREAM_END: {
+                uint64_t stream_id = 0;
+                uint64_t total_rows = 0;
+                uint64_t total_bytes = 0;
+                protocol::ProtocolCodec::parseStreamEnd(response, stream_id,
+                                                        total_rows, total_bytes, ctx);
+                (void)total_rows;
+                (void)total_bytes;
+                auto& buffer = stream_buffers[stream_id];
+                buffer.complete = true;
+                apply_stream_data(stream_id);
+                stream_window = 0;
+                break;
+            }
 
             case protocol::MessageType::TRANSACTION_STATUS: {
                 if (response.getPayloadSize() >= sizeof(protocol::TransactionStatusPayload)) {
@@ -1133,6 +1292,426 @@ core::Status NetworkClient::executePrepared(NetworkPreparedStatement& stmt,
 
     std::string sql = substituteParameters(stmt.sql_, stmt.params_, stmt.param_types_);
     return executeQuery(sql, results, ctx);
+}
+
+core::Status NetworkClient::prepareServerStatement(const std::string& sql,
+                                                   uint32_t& stmt_id,
+                                                   core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    protocol::Message msg(protocol::MessageType::PREPARE);
+    msg.writeLengthPrefixedString(sql);
+    auto status = sendMessage(msg, ctx);
+    if (status != core::Status::OK) {
+        last_error_ = "Failed to send PREPARE";
+        return status;
+    }
+
+    protocol::Message response;
+    status = receiveMessage(response, ctx);
+    if (status != core::Status::OK) {
+        last_error_ = "Failed to receive PREPARE response";
+        return status;
+    }
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        std::string message;
+        status = mapQueryError(response, message, ctx);
+        last_error_ = message;
+        return status;
+    }
+    if (response.getType() != protocol::MessageType::PREPARE_RESPONSE) {
+        last_error_ = "Unexpected PREPARE response";
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    response.resetReadOffset();
+    uint8_t success = 0;
+    if (!response.readUInt8(success)) {
+        last_error_ = "Malformed PREPARE response";
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (success) {
+        stmt_id = response.readUInt32();
+        return core::Status::OK;
+    }
+    std::string error_message = response.readLengthPrefixedString();
+    last_error_ = error_message.empty() ? "PREPARE failed" : error_message;
+    return core::Status::INTERNAL_ERROR;
+}
+
+core::Status NetworkClient::executeServerStatement(
+    uint32_t stmt_id,
+    const std::vector<protocol::ProtocolCodec::ColumnValue>& params,
+    NetworkResultSet& results,
+    uint32_t max_rows,
+    bool backward,
+    bool* portal_suspended_out,
+    core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    resetQueryProgress();
+
+    if (portal_suspended_out) {
+        *portal_suspended_out = false;
+    }
+    results.columns.clear();
+    results.rows.clear();
+    results.rows_affected = 0;
+    results.command_tag.clear();
+
+    protocol::Message msg(protocol::MessageType::EXECUTE);
+    msg.writeUInt32(stmt_id);
+    msg.writeUInt16(static_cast<uint16_t>(params.size()));
+    for (const auto& param : params) {
+        if (param.is_null) {
+            msg.writeUInt8(1);
+        } else {
+            msg.writeUInt8(0);
+            std::string value(param.data.begin(), param.data.end());
+            msg.writeLengthPrefixedString(value);
+        }
+    }
+    msg.writeUInt32(max_rows);
+    msg.writeUInt32(0);
+    msg.writeUInt8(backward ? 1 : 0);
+
+    auto status = sendMessage(msg, ctx);
+    if (status != core::Status::OK) {
+        last_error_ = "Failed to send EXECUTE";
+        return status;
+    }
+
+    struct StreamBuffer {
+        std::vector<uint8_t> data;
+        uint64_t expected_bytes = 0;
+        bool complete = false;
+    };
+    std::unordered_map<uint64_t, StreamBuffer> stream_buffers;
+    std::unordered_map<uint64_t, std::vector<std::pair<size_t, size_t>>> stream_bindings;
+    uint32_t stream_window = 0;
+
+    auto apply_stream_data = [&](uint64_t stream_id) {
+        auto buffer_it = stream_buffers.find(stream_id);
+        if (buffer_it == stream_buffers.end() || !buffer_it->second.complete) {
+            return;
+        }
+        auto binding_it = stream_bindings.find(stream_id);
+        if (binding_it == stream_bindings.end()) {
+            return;
+        }
+        const auto& data = buffer_it->second.data;
+        for (const auto& binding : binding_it->second) {
+            if (binding.first >= results.rows.size()) {
+                continue;
+            }
+            auto& row = results.rows[binding.first];
+            if (binding.second >= row.size()) {
+                continue;
+            }
+            row[binding.second].data = data;
+            row[binding.second].is_stream = false;
+        }
+        stream_bindings.erase(binding_it);
+        stream_buffers.erase(buffer_it);
+    };
+
+    while (true) {
+        protocol::Message response;
+        status = receiveMessage(response, ctx);
+        if (status != core::Status::OK) {
+            last_error_ = "Failed to receive EXECUTE response";
+            return status;
+        }
+
+        switch (response.getType()) {
+            case protocol::MessageType::QUERY_ERROR: {
+                std::string message;
+                status = mapQueryError(response, message, ctx);
+                last_error_ = message;
+                return status;
+            }
+            case protocol::MessageType::ROW_DESCRIPTION: {
+                std::vector<protocol::ProtocolCodec::ColumnInfo> cols;
+                protocol::ProtocolCodec::parseRowDescription(response, cols, ctx);
+                results.columns.clear();
+                results.columns.reserve(cols.size());
+                for (const auto& col : cols) {
+                    NetworkColumn out;
+                    out.name = col.name;
+                    out.type = col.type;
+                    out.type_modifier = col.type_modifier;
+                    results.columns.push_back(std::move(out));
+                }
+                break;
+            }
+            case protocol::MessageType::ROW_DATA: {
+                std::vector<protocol::ProtocolCodec::ColumnValue> values;
+                protocol::ProtocolCodec::parseRowData(response, values, ctx);
+                const size_t row_index = results.rows.size();
+                for (size_t i = 0; i < values.size(); ++i) {
+                    if (!values[i].is_stream) {
+                        continue;
+                    }
+                    stream_bindings[values[i].stream_id].push_back({row_index, i});
+                    auto buffer_it = stream_buffers.find(values[i].stream_id);
+                    if (buffer_it != stream_buffers.end() && buffer_it->second.complete) {
+                        values[i].data = buffer_it->second.data;
+                        values[i].is_stream = false;
+                    }
+                }
+                results.rows.push_back(std::move(values));
+                break;
+            }
+            case protocol::MessageType::COMMAND_COMPLETE: {
+                std::string tag;
+                int64_t rows_affected = 0;
+                protocol::ProtocolCodec::parseCommandComplete(
+                    response, tag, rows_affected, ctx
+                );
+                results.command_tag = tag;
+                results.rows_affected = rows_affected;
+                break;
+            }
+            case protocol::MessageType::QUERY_PROGRESS: {
+                uint64_t rows = 0;
+                uint64_t bytes = 0;
+                protocol::ProtocolCodec::parseQueryProgress(response, rows, bytes, ctx);
+                query_progress_.rows_processed = rows;
+                query_progress_.bytes_processed = bytes;
+                query_progress_.updated_at_micros = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
+                break;
+            }
+            case protocol::MessageType::NOTIFICATION: {
+                Notification note;
+                protocol::ProtocolCodec::parseNotification(response,
+                                                           note.process_id,
+                                                           note.channel,
+                                                           note.payload,
+                                                           note.change_type,
+                                                           note.row_id,
+                                                           ctx);
+                notifications_.push_back(std::move(note));
+                break;
+            }
+            case protocol::MessageType::PORTAL_SUSPENDED:
+                if (portal_suspended_out) {
+                    *portal_suspended_out = true;
+                }
+                return core::Status::OK;
+            case protocol::MessageType::END_OF_RESULTS:
+                return core::Status::OK;
+            case protocol::MessageType::STREAM_READY: {
+                uint64_t stream_id = 0;
+                uint64_t total_rows = 0;
+                uint64_t estimated_bytes = 0;
+                protocol::ProtocolCodec::parseStreamReady(response, stream_id,
+                                                          total_rows, estimated_bytes, ctx);
+                (void)total_rows;
+                stream_window = config_.copy_window_bytes == 0 ? 65536 : config_.copy_window_bytes;
+                auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                    protocol::StreamControlType::START, stream_window, 0);
+                status = sendMessage(ctrl, ctx);
+                if (status != core::Status::OK) {
+                    last_error_ = "Failed to send STREAM_CONTROL";
+                    return status;
+                }
+                auto& buffer = stream_buffers[stream_id];
+                buffer.expected_bytes = estimated_bytes;
+                break;
+            }
+            case protocol::MessageType::STREAM_DATA: {
+                uint64_t stream_id = 0;
+                uint32_t chunk_rows = 0;
+                const uint8_t* data = nullptr;
+                size_t len = 0;
+                protocol::ProtocolCodec::parseStreamData(
+                    response, stream_id, chunk_rows, &data, &len, ctx);
+                (void)chunk_rows;
+                if (data && len > 0) {
+                    auto& buffer = stream_buffers[stream_id];
+                    buffer.data.insert(buffer.data.end(), data, data + len);
+                }
+                if (stream_window > 0) {
+                    if (len >= stream_window) {
+                        stream_window = 0;
+                    } else {
+                        stream_window -= static_cast<uint32_t>(len);
+                    }
+                }
+                if (stream_window == 0) {
+                    stream_window = config_.copy_window_bytes == 0 ? 65536 : config_.copy_window_bytes;
+                    auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                        protocol::StreamControlType::ACK, stream_window, 0);
+                    status = sendMessage(ctrl, ctx);
+                    if (status != core::Status::OK) {
+                        last_error_ = "Failed to send STREAM_CONTROL ACK";
+                        return status;
+                    }
+                }
+                break;
+            }
+            case protocol::MessageType::STREAM_END: {
+                uint64_t stream_id = 0;
+                uint64_t total_rows = 0;
+                uint64_t total_bytes = 0;
+                protocol::ProtocolCodec::parseStreamEnd(response, stream_id,
+                                                        total_rows, total_bytes, ctx);
+                (void)total_rows;
+                (void)total_bytes;
+                auto& buffer = stream_buffers[stream_id];
+                buffer.complete = true;
+                apply_stream_data(stream_id);
+                stream_window = 0;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+}
+
+core::Status NetworkClient::closeServerStatement(uint32_t stmt_id,
+                                                 core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    protocol::Message msg(protocol::MessageType::CLOSE_STATEMENT);
+    msg.writeUInt32(stmt_id);
+    auto status = sendMessage(msg, ctx);
+    if (status != core::Status::OK) {
+        last_error_ = "Failed to send CLOSE_STATEMENT";
+    }
+    return status;
+}
+
+core::Status NetworkClient::sendQueryCancel(core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    protocol::Message msg(protocol::MessageType::QUERY_CANCEL);
+    auto status = sendMessage(msg, ctx);
+    if (status != core::Status::OK) {
+        last_error_ = "Failed to send QUERY_CANCEL";
+    }
+    return status;
+}
+
+core::Status NetworkClient::subscribeNotifications(uint8_t subscribe_type,
+                                                   const std::string& channel,
+                                                   const std::string& filter,
+                                                   core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    auto msg = protocol::ProtocolCodec::buildSubscribe(subscribe_type, channel, filter);
+    auto status = sendMessage(msg, ctx);
+    if (status != core::Status::OK) {
+        last_error_ = "Failed to send SUBSCRIBE";
+        return status;
+    }
+
+    bool saw_complete = false;
+    while (true) {
+        protocol::Message response;
+        status = receiveMessage(response, ctx);
+        if (status != core::Status::OK) {
+            last_error_ = "Failed to receive SUBSCRIBE response";
+            return status;
+        }
+        switch (response.getType()) {
+            case protocol::MessageType::QUERY_ERROR: {
+                std::string message;
+                status = mapQueryError(response, message, ctx);
+                last_error_ = message;
+                return status;
+            }
+            case protocol::MessageType::COMMAND_COMPLETE:
+                saw_complete = true;
+                break;
+            case protocol::MessageType::END_OF_RESULTS:
+                return saw_complete ? core::Status::OK : core::Status::OK;
+            case protocol::MessageType::NOTIFICATION: {
+                Notification note;
+                protocol::ProtocolCodec::parseNotification(response,
+                                                           note.process_id,
+                                                           note.channel,
+                                                           note.payload,
+                                                           note.change_type,
+                                                           note.row_id,
+                                                           ctx);
+                notifications_.push_back(std::move(note));
+                break;
+            }
+            default:
+                break;
+        }
+    }
+}
+
+core::Status NetworkClient::unsubscribeNotifications(const std::string& channel,
+                                                     core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    auto msg = protocol::ProtocolCodec::buildUnsubscribe(channel);
+    auto status = sendMessage(msg, ctx);
+    if (status != core::Status::OK) {
+        last_error_ = "Failed to send UNSUBSCRIBE";
+        return status;
+    }
+
+    bool saw_complete = false;
+    while (true) {
+        protocol::Message response;
+        status = receiveMessage(response, ctx);
+        if (status != core::Status::OK) {
+            last_error_ = "Failed to receive UNSUBSCRIBE response";
+            return status;
+        }
+        switch (response.getType()) {
+            case protocol::MessageType::QUERY_ERROR: {
+                std::string message;
+                status = mapQueryError(response, message, ctx);
+                last_error_ = message;
+                return status;
+            }
+            case protocol::MessageType::COMMAND_COMPLETE:
+                saw_complete = true;
+                break;
+            case protocol::MessageType::END_OF_RESULTS:
+                return saw_complete ? core::Status::OK : core::Status::OK;
+            case protocol::MessageType::NOTIFICATION: {
+                Notification note;
+                protocol::ProtocolCodec::parseNotification(response,
+                                                           note.process_id,
+                                                           note.channel,
+                                                           note.payload,
+                                                           note.change_type,
+                                                           note.row_id,
+                                                           ctx);
+                notifications_.push_back(std::move(note));
+                break;
+            }
+            default:
+                break;
+        }
+    }
 }
 
 core::Status NetworkClient::beginTransaction(core::ErrorContext* ctx) {
@@ -1221,9 +1800,37 @@ core::Status NetworkClient::sendMessage(const protocol::Message& msg,
     }
 
     std::vector<uint8_t> buffer;
-    auto status = msg.serialize(buffer);
-    if (status != core::Status::OK) {
-        return status;
+    if (compression_enabled_ && wire_compressor_ && msg.getPayloadLength() > 0) {
+        std::vector<uint8_t> input(msg.getPayloadData(),
+                                   msg.getPayloadData() + msg.getPayloadLength());
+        std::vector<uint8_t> compressed;
+        if (wire_compressor_->compress(input, &compressed)) {
+            constexpr size_t kCompressionHeaderSize = sizeof(uint32_t) + sizeof(uint8_t) + 3;
+            size_t compressed_payload_len = compressed.size() + kCompressionHeaderSize;
+            if (compressed_payload_len < msg.getPayloadLength()) {
+                protocol::MessageHeader header = msg.getHeader();
+                header.flags |= static_cast<uint8_t>(protocol::MessageFlags::COMPRESSED);
+                header.payload_length = static_cast<uint32_t>(compressed_payload_len);
+                buffer.resize(sizeof(protocol::MessageHeader) + compressed_payload_len);
+                std::memcpy(buffer.data(), &header, sizeof(protocol::MessageHeader));
+                uint32_t uncompressed_size = static_cast<uint32_t>(input.size());
+                uint8_t compression_header[kCompressionHeaderSize] = {};
+                std::memcpy(compression_header, &uncompressed_size, sizeof(uint32_t));
+                compression_header[sizeof(uint32_t)] = 3;
+                std::memcpy(buffer.data() + sizeof(protocol::MessageHeader),
+                            compression_header,
+                            sizeof(compression_header));
+                std::memcpy(buffer.data() + sizeof(protocol::MessageHeader) + kCompressionHeaderSize,
+                            compressed.data(),
+                            compressed.size());
+            }
+        }
+    }
+    if (buffer.empty()) {
+        auto status = msg.serialize(buffer);
+        if (status != core::Status::OK) {
+            return status;
+        }
     }
 
     if (tls_active_ && tls_conn_) {
@@ -1271,7 +1878,33 @@ core::Status NetworkClient::receiveMessage(protocol::Message& msg,
         if (status != core::Status::OK) {
             return status;
         }
-        msg.setPayload(payload_buf.data(), header.payload_length);
+
+        if (header.flags & static_cast<uint8_t>(protocol::MessageFlags::COMPRESSED)) {
+            if (!compression_enabled_ || !wire_compressor_) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Compressed message received without negotiation");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            constexpr size_t kCompressionHeaderSize = sizeof(uint32_t) + sizeof(uint8_t) + 3;
+            if (payload_buf.size() < kCompressionHeaderSize) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Compressed payload truncated");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            uint32_t uncompressed_size = 0;
+            std::memcpy(&uncompressed_size, payload_buf.data(), sizeof(uint32_t));
+            std::vector<uint8_t> compressed(payload_buf.begin() + kCompressionHeaderSize,
+                                            payload_buf.end());
+            std::vector<uint8_t> decompressed;
+            if (!wire_compressor_->decompress(compressed, &decompressed, uncompressed_size)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Failed to decompress message payload");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            msg.setPayload(decompressed.data(), decompressed.size());
+        } else {
+            msg.setPayload(payload_buf.data(), header.payload_length);
+        }
     }
 
     return core::Status::OK;

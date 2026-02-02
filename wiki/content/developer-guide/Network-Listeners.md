@@ -2,7 +2,7 @@
 
 **Purpose:** Documents ScratchBird's network listener architecture - how connections are accepted, routed to parsers, and managed.
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 

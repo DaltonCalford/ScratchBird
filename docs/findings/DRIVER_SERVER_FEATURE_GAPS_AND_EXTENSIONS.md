@@ -1,7 +1,7 @@
 # Driver-Visible Server Features (Gaps + Extensions)
 
 Status: Draft
-Last Updated: 2026-01-30
+Last Updated: 2026-01-31
 
 ## Purpose
 
@@ -36,43 +36,41 @@ Catalog/metadata (minimum for BI tools):
 
 These are intentionally disabled in drivers until server support exists.
 
+(None at this time.)
+
+## Resolved Gaps
+
 1. Compression (zstd)
-   - Drivers reject `compression=zstd` with SQLSTATE 0A000.
-   - Requires: negotiated compression flag + per-message compress/decompress.
+   - Negotiated compression flag + per-message compress/decompress implemented.
+   - Conformance test gated by `SB_CONFORMANCE_FEATURES=compression`.
+2. COPY/Bulk streaming
+   - Binary/text COPY with stream flow control.
+   - Conformance test gated by `SB_CONFORMANCE_FEATURES=copy`.
+3. Large object streaming
+   - Streamed LOB values via STREAM_READY/DATA/END with ROW_DATA references.
+   - Conformance test gated by `SB_CONFORMANCE_FEATURES=lob_stream`.
+4. Prepared statement cache + stats
+   - Per-connection LRU cache with execution tracking in sys.statement_cache.
+5. Capability negotiation flags
+   - Server capabilities advertised in CONNECT_RESPONSE and sys.server_capabilities.
+6. Query progress + metrics frames
+   - QUERY_PROGRESS frames with rows/bytes and sys.performance progress metrics.
+7. Event/notification channel
+   - SUBSCRIBE/UNSUBSCRIBE + NOTIFICATION over SBWP with conformance test.
+8. Conformance adapter build
+   - `sbdriver-conformance` builds cleanly against current link deps.
+9. Richer sys.* metadata views
+   - sys.schemas/tables/columns/indexes/index_columns/types/domains/constraints/foreign_keys/primary_keys wired.
 
 ## Optional Extensions (Nice-to-Have)
 
 Each item is optional but unlocks higher-level UX or tool compatibility.
 
-1. COPY/Bulk streaming
-   - Capability: high-throughput ingest/export (binary COPY).
-   - Driver impact: Go/JDBC/.NET can stream without row-by-row overhead.
-
-2. Large object streaming
-   - Capability: chunked BLOB/CLOB transfer without full buffering.
-   - Driver impact: avoids memory spikes for large payloads.
-
-3. Server-side prepared statement cache + stats
-   - Capability: reuse plans across executes; optional plan stats view.
-   - Driver impact: JDBC `prepareThreshold` becomes meaningful.
-
-4. Holdable/named portals (server cursors)
+1. Holdable/named portals (server cursors)
    - Capability: cursor survives transaction boundaries; scrollable cursors.
    - Driver impact: scrollable ResultSet support for JDBC/.NET.
 
-5. Capability negotiation flags
-   - Capability: server advertises optional features (compression, COPY, etc.).
-   - Driver impact: drivers can auto-enable when supported.
-
-6. Query progress + metrics frames
-   - Capability: live progress frames or sys.* progress views.
-   - Driver impact: UI progress bars + smarter cancel decisions.
-
-7. Event/notification channel
-   - Capability: LISTEN/NOTIFY style or SBWP push frames.
-   - Driver impact: async notifications for UI tools.
-
-8. Richer metadata views
+2. Richer metadata views
    - Capability: domains/enums, check constraints, expression indexes,
      partitioning metadata, table stats.
    - Driver impact: BI tools show accurate schema + indexing details.
@@ -84,6 +82,7 @@ Once a capability lands, add a gated conformance test:
 - COPY: import/export with row count check
 - Large objects: stream + checksum
 - Portals: scroll/holdable cursor behaviors
+- Progress: progress frame validation
 - Eventing: LISTEN/NOTIFY round-trip
 
 These should be gated by environment variables in the harness.

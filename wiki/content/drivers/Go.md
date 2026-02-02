@@ -1,7 +1,7 @@
 # Go Driver Guide
 
 **Status:** Complete
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -11,12 +11,12 @@ ScratchBird supports multiple connection protocols for Go applications:
 
 | Protocol | Port | Driver | Best For |
 |----------|------|--------|----------|
-| PostgreSQL | 5432 | pgx, lib/pq | Most applications (recommended) |
+| Native | 3092 | scratchbird-go (SBWP v1.1) | Full ScratchBird feature set |
+| PostgreSQL | 5432 | pgx, lib/pq | Ecosystem compatibility |
 | MySQL | 3306 | go-sql-driver/mysql | MySQL compatibility |
 | Firebird | 3050 | nakagami/firebirdsql | Firebird migration |
-| Native | 3092 | scratchbird-go (future) | Direct access |
 
-**Recommendation:** Use **pgx** (PostgreSQL protocol) for most applications. It offers the best performance, features, and Go integration.
+**Recommendation:** Use **scratchbird-go** for full SBWP v1.1 feature coverage. Use pgx/lib/pq only when you need emulation compatibility.
 
 ---
 
@@ -25,6 +25,9 @@ ScratchBird supports multiple connection protocols for Go applications:
 ### Installation
 
 ```bash
+# ScratchBird native driver (recommended)
+go get github.com/scratchbird/scratchbird-go
+
 # pgx v5 (PostgreSQL protocol - recommended)
 go get github.com/jackc/pgx/v5
 
@@ -42,43 +45,51 @@ go get gorm.io/gorm
 go get gorm.io/driver/postgres
 ```
 
+### Install via sb_setup (Installer Utility)
+
+If you installed ScratchBird with the installer, you can add the native driver pack later:
+
+```bash
+sb_setup --interactive
+```
+
+Select `scratchbird-driver-go` or the `scratchbird-drivers-all` meta package. On Linux, run with `sudo`.
+
 ### First Connection
 
 ```go
 package main
 
 import (
-    "context"
-    "fmt"
     "log"
 
-    "github.com/jackc/pgx/v5"
+    "database/sql"
+    _ "github.com/scratchbird/scratchbird-go"
 )
 
 func main() {
-    ctx := context.Background()
-
-    conn, err := pgx.Connect(ctx, "postgres://app_user:secret@localhost:5432/scratchbird")
+    db, err := sql.Open("scratchbird", "scratchbird://app_user:secret@localhost:3092/scratchbird")
     if err != nil {
         log.Fatal(err)
     }
-    defer conn.Close(ctx)
+    defer db.Close()
 
-    var version string
-    err = conn.QueryRow(ctx, "SELECT version()").Scan(&version)
-    if err != nil {
+    var one int
+    if err := db.QueryRow("SELECT 1").Scan(&one); err != nil {
         log.Fatal(err)
     }
-
-    fmt.Printf("Connected to: %s\n", version)
 }
 ```
 
+The native driver uses SBWP v1.1 with server-side prepare/bind and binary-only
+parameters. Wrapper types for JSONB/RANGE/GEOMETRY are exposed by the driver API.
+
 ---
 
-## Part 2: pgx (PostgreSQL Protocol)
+## Part 2: pgx (PostgreSQL Protocol - Emulation)
 
-pgx is the recommended driver for ScratchBird, offering native PostgreSQL protocol support with excellent performance.
+pgx is the recommended driver for **PostgreSQL emulation**, offering excellent performance when you
+need compatibility with the PostgreSQL ecosystem.
 
 ### Connection Options
 
@@ -1510,7 +1521,7 @@ SYSDBA:masterkey@localhost:3050/scratchbird
 
 | Module | Protocol | Purpose |
 |--------|----------|---------|
-| github.com/jackc/pgx/v5 | PostgreSQL | Native driver (recommended) |
+| github.com/jackc/pgx/v5 | PostgreSQL | Emulation driver (recommended) |
 | github.com/lib/pq | PostgreSQL | database/sql compatible |
 | github.com/go-sql-driver/mysql | MySQL | MySQL driver |
 | github.com/nakagami/firebirdsql | Firebird | Firebird driver |

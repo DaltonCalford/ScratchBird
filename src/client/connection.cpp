@@ -910,7 +910,7 @@ public:
         bool success;
         std::string error_msg;
         status = protocol::ProtocolCodec::parseConnectResponse(
-            response, success, session_id_, error_msg, ctx
+            response, success, session_id_, error_msg, nullptr, ctx
         );
         if (!isOk(status) || !success) {
             last_error_ = error_msg.empty() ? "Connection refused" : error_msg;
@@ -1253,6 +1253,43 @@ public:
             return core::Status::OK;
         };
 
+        struct StreamBuffer {
+            std::vector<uint8_t> data;
+            uint64_t expected_bytes = 0;
+            bool complete = false;
+        };
+        std::unordered_map<uint64_t, StreamBuffer> stream_buffers;
+        std::unordered_map<uint64_t, std::vector<std::pair<size_t, size_t>>> stream_bindings;
+        uint32_t stream_window = 0;
+
+        auto apply_stream_data = [&](uint64_t stream_id) {
+            if (!results) {
+                return;
+            }
+            auto buffer_it = stream_buffers.find(stream_id);
+            if (buffer_it == stream_buffers.end() || !buffer_it->second.complete) {
+                return;
+            }
+            auto binding_it = stream_bindings.find(stream_id);
+            if (binding_it == stream_bindings.end()) {
+                return;
+            }
+            const auto& data = buffer_it->second.data;
+            for (const auto& binding : binding_it->second) {
+                if (binding.first >= results->impl_->rows_.size()) {
+                    continue;
+                }
+                auto& row = results->impl_->rows_[binding.first];
+                if (binding.second >= row.size()) {
+                    continue;
+                }
+                row[binding.second].data = data;
+                row[binding.second].is_stream = false;
+            }
+            stream_bindings.erase(binding_it);
+            stream_buffers.erase(buffer_it);
+        };
+
         while (true) {
             protocol::Message response;
             status = protocol_session_->receiveMessage(response, ctx);
@@ -1298,6 +1335,18 @@ public:
                     if (results) {
                         std::vector<protocol::ProtocolCodec::ColumnValue> values;
                         protocol::ProtocolCodec::parseRowData(response, values, ctx);
+                        const size_t row_index = results->impl_->rows_.size();
+                        for (size_t i = 0; i < values.size(); ++i) {
+                            if (!values[i].is_stream) {
+                                continue;
+                            }
+                            stream_bindings[values[i].stream_id].push_back({row_index, i});
+                            auto buffer_it = stream_buffers.find(values[i].stream_id);
+                            if (buffer_it != stream_buffers.end() && buffer_it->second.complete) {
+                                values[i].data = buffer_it->second.data;
+                                values[i].is_stream = false;
+                            }
+                        }
                         results->impl_->rows_.push_back(std::move(values));
                     }
                     break;
@@ -1317,6 +1366,12 @@ public:
                 }
 
                 case protocol::MessageType::END_OF_RESULTS: {
+                    if (results) {
+                        results->impl_->row_count_ = static_cast<int64_t>(results->impl_->rows_.size());
+                    }
+                    return core::Status::OK;
+                }
+                case protocol::MessageType::PORTAL_SUSPENDED: {
                     if (results) {
                         results->impl_->row_count_ = static_cast<int64_t>(results->impl_->rows_.size());
                     }
@@ -1343,9 +1398,74 @@ public:
                     last_error_ = message.empty() ? "COPY failed" : message;
                     return core::Status::INTERNAL_ERROR;
                 }
-                case protocol::MessageType::STREAM_END:
-                case protocol::MessageType::STREAM_READY:
+                case protocol::MessageType::STREAM_READY: {
+                    uint64_t stream_id = 0;
+                    uint64_t total_rows = 0;
+                    uint64_t estimated_bytes = 0;
+                    protocol::ProtocolCodec::parseStreamReady(response, stream_id,
+                                                              total_rows, estimated_bytes, ctx);
+                    (void)total_rows;
+                    stream_window = copy_window;
+                    auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                        protocol::StreamControlType::START, stream_window, 0);
+                    status = protocol_session_->sendMessage(ctrl, ctx);
+                    if (!isOk(status)) {
+                        last_error_ = "Failed to send STREAM_CONTROL";
+                        return status;
+                    }
+                    if (results) {
+                        auto& buffer = stream_buffers[stream_id];
+                        buffer.expected_bytes = estimated_bytes;
+                    }
                     break;
+                }
+                case protocol::MessageType::STREAM_DATA: {
+                    uint64_t stream_id = 0;
+                    uint32_t chunk_rows = 0;
+                    const uint8_t* data = nullptr;
+                    size_t len = 0;
+                    protocol::ProtocolCodec::parseStreamData(
+                        response, stream_id, chunk_rows, &data, &len, ctx);
+                    (void)chunk_rows;
+                    if (results && data && len > 0) {
+                        auto& buffer = stream_buffers[stream_id];
+                        buffer.data.insert(buffer.data.end(), data, data + len);
+                    }
+                    if (stream_window > 0) {
+                        if (len >= stream_window) {
+                            stream_window = 0;
+                        } else {
+                            stream_window -= static_cast<uint32_t>(len);
+                        }
+                    }
+                    if (stream_window == 0) {
+                        stream_window = copy_window;
+                        auto ctrl = protocol::ProtocolCodec::buildStreamControl(
+                            protocol::StreamControlType::ACK, stream_window, 0);
+                        status = protocol_session_->sendMessage(ctrl, ctx);
+                        if (!isOk(status)) {
+                            last_error_ = "Failed to send STREAM_CONTROL ACK";
+                            return status;
+                        }
+                    }
+                    break;
+                }
+                case protocol::MessageType::STREAM_END: {
+                    uint64_t stream_id = 0;
+                    uint64_t total_rows = 0;
+                    uint64_t total_bytes = 0;
+                    protocol::ProtocolCodec::parseStreamEnd(response, stream_id,
+                                                            total_rows, total_bytes, ctx);
+                    (void)total_rows;
+                    (void)total_bytes;
+                    if (results) {
+                        auto& buffer = stream_buffers[stream_id];
+                        buffer.complete = true;
+                        apply_stream_data(stream_id);
+                    }
+                    stream_window = 0;
+                    break;
+                }
 
                 case protocol::MessageType::TRANSACTION_STATUS: {
                     // NET-L1: Parse transaction status and update connection state

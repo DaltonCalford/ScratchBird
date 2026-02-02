@@ -11,7 +11,9 @@
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "scratchbird/core/telemetry.h"
 
+#include <cctype>
 #include <cstring>
 
 namespace scratchbird {
@@ -31,6 +33,29 @@ const char* dialectTagForProtocol(network::ProtocolType type) {
         default:
             return "scratchbird";
     }
+}
+
+size_t countParameterPlaceholders(const std::string& sql) {
+    size_t max_index = 0;
+    for (size_t i = 0; i < sql.size(); ++i) {
+        if (sql[i] != '$') {
+            continue;
+        }
+        size_t j = i + 1;
+        if (j >= sql.size() || !std::isdigit(static_cast<unsigned char>(sql[j]))) {
+            continue;
+        }
+        size_t value = 0;
+        while (j < sql.size() && std::isdigit(static_cast<unsigned char>(sql[j]))) {
+            value = value * 10 + static_cast<size_t>(sql[j] - '0');
+            ++j;
+        }
+        if (value > max_index) {
+            max_index = value;
+        }
+        i = j;
+    }
+    return max_index;
 }
 } // namespace
 
@@ -213,30 +238,96 @@ core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultCont
 
 core::Status ProtocolAdapter::prepareStatement(const std::string& name,
                                                const std::string& query,
-                                               std::vector<int32_t>& /*param_types*/) {
-    prepared_statements_[name] = query;
+                                               std::vector<int32_t>& param_types) {
+    auto param_count = countParameterPlaceholders(query);
+    param_types.assign(param_count, 0);
+
+    if (!config_.engine_endpoint.empty()) {
+        prepared_statements_[name] = query;
+        return core::Status::OK;
+    }
+
+    core::ErrorContext ctx;
+    auto status = ensureEngine(&ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    status = compileQuery(query, bytecode, compile_error);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    if (connection_ctx_) {
+        std::vector<uint16_t> param_types_u16(param_count, 0);
+        status = connection_ctx_->prepareStatement(name, query, bytecode, param_types_u16, &ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    } else {
+        prepared_statements_[name] = query;
+    }
+
     return core::Status::OK;
 }
 
 core::Status ProtocolAdapter::executePrepared(const std::string& name,
                                                const QueryContext& params,
                                                ResultContext& result) {
-    auto it = prepared_statements_.find(name);
-    if (it == prepared_statements_.end()) {
-        result.has_error = true;
-        result.error_code = static_cast<uint32_t>(core::Status::NOT_FOUND);
-        result.sqlstate = "26000";  // Invalid SQL statement name
-        result.error_message = "Prepared statement not found: " + name;
-        return core::Status::NOT_FOUND;
+    core::ScratchBirdMetrics& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    if (config_.engine_endpoint.empty()) {
+        core::ErrorContext ctx;
+        auto status = ensureEngine(&ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "58000";
+            result.error_message = ctx.message;
+            return status;
+        }
     }
 
-    // Execute with the stored query
-    QueryContext ctx = params;
-    ctx.query = it->second;
-    return executeQuery(ctx, result);
+    if (connection_ctx_) {
+        auto* prepared = connection_ctx_->getPreparedStatement(name);
+        if (prepared) {
+            if (metrics.statement_cache_hits_total) {
+                metrics.statement_cache_hits_total->inc(1.0);
+            }
+            QueryContext ctx = params;
+            ctx.query = prepared->sql_text;
+            auto status = executeBytecode(ctx.query, prepared->bytecode, result, nullptr);
+            connection_ctx_->recordStatementExecution(name);
+            return status;
+        }
+        if (metrics.statement_cache_misses_total) {
+            metrics.statement_cache_misses_total->inc(1.0);
+        }
+    }
+
+    auto it = prepared_statements_.find(name);
+    if (it != prepared_statements_.end()) {
+        QueryContext ctx = params;
+        ctx.query = it->second;
+        return executeQuery(ctx, result);
+    }
+
+    result.has_error = true;
+    result.error_code = static_cast<uint32_t>(core::Status::NOT_FOUND);
+    result.sqlstate = "26000";  // Invalid SQL statement name
+    result.error_message = "Prepared statement not found: " + name;
+    return core::Status::NOT_FOUND;
 }
 
 core::Status ProtocolAdapter::closePrepared(const std::string& name) {
+    if (connection_ctx_) {
+        core::ErrorContext ctx;
+        connection_ctx_->deallocatePreparedStatement(name, &ctx);
+    }
+
     auto it = prepared_statements_.find(name);
     if (it != prepared_statements_.end()) {
         prepared_statements_.erase(it);

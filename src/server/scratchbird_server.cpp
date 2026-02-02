@@ -67,6 +67,11 @@ core::Status ScratchBirdServer::start(core::ErrorContext* ctx) {
     // Open database
     core::Status status = openDatabase(ctx);
     if (status != core::Status::OK) {
+        if (ctx && !ctx->message.empty()) {
+            log("Failed to open database: " + ctx->message);
+        } else {
+            log("Failed to open database");
+        }
         state_ = ServerState::STOPPED;
         return status;
     }
@@ -74,6 +79,11 @@ core::Status ScratchBirdServer::start(core::ErrorContext* ctx) {
     // Start IPC listener
     status = startListener(ctx);
     if (status != core::Status::OK) {
+        if (ctx && !ctx->message.empty()) {
+            log("Failed to start IPC listener: " + ctx->message);
+        } else {
+            log("Failed to start IPC listener");
+        }
         database_->close();
         state_ = ServerState::STOPPED;
         return status;

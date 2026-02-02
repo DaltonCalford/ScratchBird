@@ -1,6 +1,6 @@
 # Getting Started
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-30
 
 ---
 
@@ -246,7 +246,9 @@ After completing the getting started guide:
 
 ### Build Applications
 - [Tutorials](tutorials/README.md) - Step-by-step application guides
-- [Driver Documentation](drivers/README.md) - Language-specific drivers
+- [Driver Documentation](drivers/Driver-Comparison.md) - Language-specific drivers
+  - If you installed ScratchBird with the installer, you can add driver packs later via:
+    `sb_setup --interactive` (select the driver packages you want)
 
 ### Administration
 - [CLI Tools](cli-tools/README.md) - Command-line utilities
@@ -264,4 +266,3 @@ After completing the getting started guide:
 - **Documentation:** Browse the [wiki](Home.md)
 - **Issues:** Report bugs at [GitHub Issues](https://github.com/scratchbird/scratchbird/issues)
 - **Discussions:** Ask questions in [GitHub Discussions](https://github.com/scratchbird/scratchbird/discussions)
-
