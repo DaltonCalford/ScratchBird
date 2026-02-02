@@ -950,6 +950,7 @@ src/CMakeLists.txt                  # Add new source files
 - [MySQL 8.0 SQL Statements](https://dev.mysql.com/doc/refman/8.0/en/sql-statements.html)
 - [INFORMATION_SCHEMA Tables](https://dev.mysql.com/doc/refman/8.0/en/information-schema.html)
 - [Performance Schema Tables](https://dev.mysql.com/doc/refman/8.0/en/performance-schema.html)
+- MySQL Emulation Protocol Behavior: `docs/specifications/wire_protocols/MYSQL_EMULATION_BEHAVIOR.md`
 - SBLR Opcodes: `include/scratchbird/sblr/opcodes.h`
 - Schema Architecture: `docs/specifications/SCHEMA_ARCHITECTURE.md`
 - Emulated Parser Spec: `docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md`

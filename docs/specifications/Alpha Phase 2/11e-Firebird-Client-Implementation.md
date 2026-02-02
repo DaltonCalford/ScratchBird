@@ -5,7 +5,8 @@ Firebird wire protocol client adapter for Remote Database UDR.
 See: 11-Remote-Database-UDR-Specification.md and wire_protocols/firebird_wire_protocol.md
 
 ## 1. Scope
-- Protocol: Firebird remote protocol v10-17 (Firebird 1.0-4.0+)
+- Protocol: Firebird remote protocol v10-17 (Firebird 1.0-5.0)
+  - Primary target: Firebird 5.0
 - Transport: TCP with optional encryption
 - Authentication: SRP (Firebird 3+), legacy password
 
@@ -77,4 +78,3 @@ Use RDB$ system tables:
 ## 10. References
 - wire_protocols/firebird_wire_protocol.md
 - https://raw.githubusercontent.com/FirebirdSQL/firebird/master/src/remote/protocol.h
-

@@ -37,7 +37,7 @@ ScratchBird has been split into multiple repositories for parallel development:
 | Repository                  | Description                                                                            | Link                                                          |
 | --------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | **ScratchBird** (this repo) | Core database engine - storage, transactions, SBLR runtime, parsers, network layer     | You are here                                                  |
-| **ScratchBird-driver**      | Language drivers for client connectivity (ODBC, JDBC, Python, Node.js, Go, Rust, etc.) | [GitHub](https://github.com/DaltonCalford/ScratchBird-driver) |
+| **ScratchBird-driver**      | Language drivers and CLI tools (ODBC/JDBC/Python/Node.js/Go/Rust, sb_admin, sb_isql)   | [GitHub](https://github.com/DaltonCalford/ScratchBird-driver) |
 | **ScratchRobin**            | GUI database management and administration tools                                       | [GitHub](https://github.com/DaltonCalford/ScratchRobin)       |
 
 ---
@@ -52,23 +52,7 @@ ScratchBird has been split into multiple repositories for parallel development:
 - Listener/pool/parser/server process operational with socket handoff per dialect
 - Shared SBLR cache with per-connection compile caches
 
-### Engine Core Alpha Workstreams (Complete)
-
-All workstreams tracked in `docs/planning/ENGINE_CORE_ALPHA_COMPLETION_PLAN.md`:
-
-| Workstream                  | Status | Description                                                 |
-| --------------------------- | ------ | ----------------------------------------------------------- |
-| WS-1 Catalog Bootstrap      | Done   | Root paths updated; migration/repair pass added             |
-| WS-2 Tablespace Routing     | Done   | GPID wiring, tablespace header v2, file catalog integration |
-| WS-3 Index Migration Safety | Done   | TID updates for all index types                             |
-| WS-4 Scheduler/Job System   | Done   | Secure job runner, cron scheduling, dependency management   |
-| WS-5 Constraint Enforcement | Done   | PK/FK/UNIQUE/CHECK/NOT NULL enforcement                     |
-| WS-6 Security Enforcement   | Done   | View definer checks, RLS SELECT enforcement                 |
-| WS-7 Monitoring Parity      | Done   | sys.* views and MON$ sources                                |
-| WS-8 Backup/Restore         | Done   | Multi-tablespace coverage validation                        |
-| WS-9 Cache/Buffer Plan      | Done   | Cache and buffer remediation                                |
-
-Latest full test run: 2495 tests, 0 failures (2026-01-30).
+Latest full test run: 2470 tests, 6 failures (2026-02-03).
 
 ### Beta (Deferred)
 
@@ -76,7 +60,7 @@ Latest full test run: 2495 tests, 0 failures (2026-01-30).
 - Backup/ETL orchestration and NoSQL extensions beyond Alpha vectors
 - Post-gold protocol expansions (e.g., TDS/MSSQL)
 
-> Driver development has moved to [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver). GUI tools are in [ScratchRobin](https://github.com/DaltonCalford/ScratchRobin).
+> Drivers and CLI tools have moved to [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver). GUI tools are in [ScratchRobin](https://github.com/DaltonCalford/ScratchRobin).
 
 ---
 
@@ -127,7 +111,6 @@ ctest --test-dir build --output-on-failure
 ```
 src/
 ├── catalog/        Catalog management and sys.* views
-├── cli/            Command-line tools (sb_admin, sb_isql, sbdriver-conformance)
 ├── client/         Client libraries
 ├── core/           Core engine, catalog, transactions, scheduler
 ├── executor/       Query execution
@@ -136,7 +119,6 @@ src/
 ├── git/            Version control integration
 ├── index/          Index structures (14 types)
 ├── network/        Network layer and wire protocols
-├── odbc/           ODBC driver
 ├── optimizer/      Query optimizer
 ├── parser/         SQL parsers (V2, Firebird, PostgreSQL, MySQL)
 ├── pool/           Connection and buffer pooling
@@ -184,7 +166,6 @@ src/
 - **Firebird Protocol** - Full wire compatibility
 - **PostgreSQL Protocol** - Full wire compatibility
 - **MySQL Protocol** - Full wire compatibility
-- **ODBC** - ODBC 3.x driver (in progress)
 
 ---
 
@@ -205,26 +186,18 @@ ctest --test-dir build -R integration # Integration tests
 ctest --test-dir build -R benchmark   # Benchmarks
 ```
 
-Recent full suite: 2495 tests, 0 failures (2026-01-30).
-
-### Test Results (January 30, 2026)
-
-| Metric    | Value |
-| --------- | ----- |
-| Tests run | 2,495 |
-| Failures  | 0     |
-| Skips     | 0     |
+Recent full suite: 2470 tests, 6 failures (2026-02-03).
 
 ### Test File Breakdown
 
 | Category            | Files    |
 | ------------------- | -------- |
-| Unit tests          | 74       |
-| Integration tests   | 71       |
+| Unit tests          | 71       |
+| Integration tests   | 67       |
 | Stress tests        | 6        |
 | Benchmarks          | 3        |
 | SQL compatibility   | 13,303   |
-| **Total C++ tests** | **350**  |
+| **Total C++ tests** | **343**  |
 
 Compatibility suites exist for PostgreSQL, MySQL, Firebird, and ScratchBird native; see `tests/compatibility/`.
 
@@ -244,15 +217,15 @@ Compatibility suites exist for PostgreSQL, MySQL, Firebird, and ScratchBird nati
 
 ### Documentation Directories
 
-- **docs/specifications/** - Technical specifications (508 files)
+- **docs/specifications/** - Technical specifications (495 files)
   - **Cluster Specification Work/** - Beta cluster architecture
   - **Security Design Specification/** - Security architecture
   - **beta_requirements/** - Beta requirements tracking
-- **docs/planning/** - Implementation plans and workstream trackers (36 files)
+- **docs/planning/** - Implementation plans and workstream trackers (41 files)
 - **docs/findings/** - Analysis and investigation reports
 - **docs/design/** - Architecture and design documents
 - **docs/development/** - Development guides and procedures
-- **wiki/** - User-facing documentation (159 pages)
+- **wiki/** - User-facing documentation (145 pages)
 
 ---
 
@@ -285,11 +258,11 @@ See `docs/specifications/Cluster Specification Work/SBCLUSTER-SUMMARY.md` for co
 
 ```
 ScratchBird/
-├── src/                    Source code (610 files)
-├── include/                Public headers (396 files)
-├── tests/                  Test suite (350 C++ files + 13,303 SQL files)
-├── docs/                   Documentation (1,947 files)
-├── wiki/                   User documentation (159 pages)
+├── src/                    Source code (586 files)
+├── include/                Public headers (388 files)
+├── tests/                  Test suite (343 C++ files + 13,303 SQL files)
+├── docs/                   Documentation (1,926 files)
+├── wiki/                   User documentation (145 pages)
 ├── scripts/                Automation scripts
 ├── tools/                  Development tools
 ├── MGA_RULES.md            MGA architecture rules (CRITICAL)
@@ -366,20 +339,19 @@ Licensed under the [Initial Developer's Public License Version 1.0 (IPL 1.0)](ht
 
 ## Project Statistics
 
-**Quick Stats (snapshot as of January 30, 2026):**
+**Quick Stats (snapshot as of February 2, 2026):**
 
 | Metric                  | Value                             |
 | ----------------------- | --------------------------------- |
-| Production source files | 610                               |
-| Production LOC          | 420,581                           |
-| Test C++ files          | 350                               |
-| Test LOC                | 120,393                           |
+| Production source files | 586                               |
+| Production LOC          | 411,226                           |
+| Test C++ files          | 343                               |
 | SQL compatibility files | 13,303                            |
-| Documentation files     | 1,947                             |
-| Wiki pages              | 159                               |
-| Git commits             | 1,646                             |
-| Commits (last 30 days)  | 124                               |
-| CTest results           | 2,495 passed, 0 failed, 0 skipped |
+| Documentation files     | 1,926                             |
+| Wiki pages              | 145                               |
+| Git commits             | 1,650                             |
+| Commits (last 30 days)  | 92                                |
+| CTest results           | 2,470 passed, 6 failed, 0 skipped |
 
 Run `./scripts/generate-all-stats.sh` to regenerate `PROJECT_STATS.md` and related reports.
 
@@ -389,5 +361,5 @@ Run `./scripts/generate-all-stats.sh` to regenerate `PROJECT_STATS.md` and relat
 - **Driver Repository:** https://github.com/DaltonCalford/ScratchBird-driver
 - **GUI Tools:** https://github.com/DaltonCalford/ScratchRobin
 
-**Last Updated:** January 30, 2026
+**Last Updated:** February 3, 2026
 **Next Milestone:** Pre-Beta audit and verification; driver work at [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver)

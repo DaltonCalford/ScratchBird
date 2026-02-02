@@ -231,3 +231,6 @@ struct protocol_parser {
 - [RFC 5802](https://tools.ietf.org/html/rfc5802) - SCRAM-SHA authentication
 - [RFC 2743](https://tools.ietf.org/html/rfc2743) - GSSAPI
 - [RFC 7519](https://tools.ietf.org/html/rfc7519) - JSON Web Token (JWT)
+- PostgreSQL Emulation Behavior: `docs/specifications/wire_protocols/POSTGRESQL_EMULATION_BEHAVIOR.md`
+- MySQL Emulation Behavior: `docs/specifications/wire_protocols/MYSQL_EMULATION_BEHAVIOR.md`
+- Firebird Emulation Behavior: `docs/specifications/wire_protocols/FIREBIRD_EMULATION_BEHAVIOR.md`

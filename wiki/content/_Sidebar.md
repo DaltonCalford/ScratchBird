@@ -25,10 +25,10 @@
 ### 🧰 Command Line Tools
 - [Overview](cli-tools/README)
 - [sb_server](cli-tools/sb-server)
-- [sb_isql](cli-tools/sb-isql)
-- [sb_fb_isql](cli-tools/sb-fb-isql)
-- [sb_pg_isql](cli-tools/sb-pg-isql)
-- [sb_my_isql](cli-tools/sb-my-isql)
+- [sb_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-isql)
+- [sb_fb_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-fb-isql)
+- [sb_pg_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-pg-isql)
+- [sb_my_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-my-isql)
 - [sb_security](cli-tools/sb-security)
 - [sb_backup](cli-tools/sb-backup)
 - [sb_verify](cli-tools/sb-verify)
@@ -59,17 +59,7 @@
 ---
 
 ### 💻 Drivers
-- [Python](drivers/Python)
-- [Node.js/TypeScript](drivers/NodeJS-TypeScript)
-- [Java JDBC](drivers/Java-JDBC)
-- [C#/.NET](drivers/CSharp-DotNet)
-- [Go](drivers/Go)
-- [PHP](drivers/PHP)
-- [Pascal/Delphi](drivers/Pascal-Delphi)
-- [Ruby](drivers/Ruby)
-- [Rust](drivers/Rust)
-- [R](drivers/R)
-- [ODBC](drivers/ODBC)
+- [Driver docs (ScratchBird-driver)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/Drivers)
 
 ---
 

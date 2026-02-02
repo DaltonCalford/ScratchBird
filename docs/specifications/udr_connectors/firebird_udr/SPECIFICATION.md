@@ -4,7 +4,7 @@ Status: Draft (Target). This specification defines the Firebird UDR that
 connects using the native Firebird wire protocol without vendor drivers.
 
 ## Scope
-- Supported Firebird versions: 2.5, 3.0, 4.0, 5.0.
+- Supported Firebird versions: 2.5, 3.0, 4.0, 5.0 (primary target: 5.0).
 - Uses Firebird wire protocol (see wire_protocols/firebird_wire_protocol.md).
 - Supports pass-through DDL/DML/PSQL via sys.remote_exec/remote_query.
 

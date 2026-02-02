@@ -1,10 +1,10 @@
 # Firebird Wire Protocol Specification
 
-## Protocol Version: 10-13 (Firebird 1.0-4.0)
+## Protocol Version: 10-17 (Firebird 1.0-5.0)
 
 ## Overview
 
-Firebird uses a packet-based protocol with XDR (External Data Representation) encoding for platform independence. The protocol operates over TCP/IP on port 3050 by default.
+Firebird uses a packet-based protocol with XDR (External Data Representation) encoding for platform independence. The protocol operates over TCP/IP on port 3050 by default. This specification targets Firebird 5.0 behavior for emulation and remote UDR connections.
 
 ## XDR Encoding
 

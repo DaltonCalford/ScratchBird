@@ -10,6 +10,9 @@
 
 ## References
 - `docs/specifications/SCHEMA_PATH_RESOLUTION.md`
+- `docs/specifications/wire_protocols/POSTGRESQL_EMULATION_BEHAVIOR.md`
+- `docs/specifications/wire_protocols/MYSQL_EMULATION_BEHAVIOR.md`
+- `docs/specifications/wire_protocols/FIREBIRD_EMULATION_BEHAVIOR.md`
 
 ---
 

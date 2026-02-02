@@ -1,3 +1,12 @@
+/*
+ * ScratchBird
+ * Copyright (c) 2025-2026 Dalton Calford
+ *
+ * Licensed under the Initial Developer's Public License Version 1.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
+ */
 // test_transaction_advanced.cpp - Tests for Phase 3 Task 3.6 Advanced Transaction Features
 // Tests RESERVING clause, LOCK TIMEOUT, and SET TRANSACTION syntax
 

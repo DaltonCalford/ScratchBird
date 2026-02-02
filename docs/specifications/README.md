@@ -98,7 +98,7 @@ Key network specs:
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**drivers/**](drivers/) | Database drivers & emulation | JDBC, ODBC, Firebird, PostgreSQL, MySQL, MSSQL (post-gold) specs | ✅ Organized |
+| **Drivers (moved)** | Database drivers & emulation | Specs now live in ScratchBird-driver (`docs/specifications/drivers/`) | ✅ Organized |
 | [**beta_requirements/**](beta_requirements/) | Beta drivers & integrations | 140+ specs | ✅ Excellent |
 | └─ [drivers/](beta_requirements/drivers/) | Language drivers | 11 driver specs (P0: 7) | ✅ Specified |
 | └─ [orms/](beta_requirements/orms-frameworks/) | ORM frameworks | 12 ORM integrations | ✅ Specified |
@@ -349,7 +349,7 @@ Administrative tools and interfaces:
 - [SB_VERIFY_CLI_SPECIFICATION.md](tools/SB_VERIFY_CLI_SPECIFICATION.md) (new) - sb_verify CLI
 - [SB_SECURITY_CLI_SPECIFICATION.md](tools/SB_SECURITY_CLI_SPECIFICATION.md) (new) - sb_security CLI
 - [SB_TOOLING_NETWORK_SPEC.md](tools/SB_TOOLING_NETWORK_SPEC.md) (new) - Remote tooling support
-- [FlameRobin_Specification_for_AI.md](drivers/FlameRobin_Specification_for_AI.md) (442 lines) - FlameRobin integration
+- FlameRobin and driver specs moved to ScratchBird-driver (`docs/specifications/drivers/`)
 - [PROMETHEUS_METRICS_REFERENCE.md](operations/PROMETHEUS_METRICS_REFERENCE.md) (824 lines) - Metrics export
 - [LISTENER_POOL_METRICS.md](operations/LISTENER_POOL_METRICS.md) (new) - Listener/pool metrics
 - [OID_MAPPING_STRATEGY.md](operations/OID_MAPPING_STRATEGY.md) - PostgreSQL OID mapping strategy

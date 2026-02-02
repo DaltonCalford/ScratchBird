@@ -100,7 +100,7 @@ Reference for ScratchBird command-line utilities.
 |------|-------------|
 | [Overview](tools/index.md) | Tools introduction |
 | [sb_server](tools/sb-server.md) | Database server daemon |
-| [sb_isql](tools/sb-isql.md) | Interactive SQL shell |
+| sb_isql | Interactive SQL shell (see ScratchBird-driver docs) |
 | [sb_admin](tools/sb-admin.md) | Administration CLI |
 | [sb_verify](tools/sb-verify.md) | Database verification |
 | [sb_backup](tools/sb-backup.md) | Backup and restore |
@@ -116,8 +116,8 @@ Connect to ScratchBird from various clients and applications.
 | [PostgreSQL Clients](connectivity/postgresql-clients.md) | psql, pgAdmin, DBeaver |
 | [MySQL Clients](connectivity/mysql-clients.md) | mysql, MySQL Workbench |
 | [Firebird Clients](connectivity/firebird-clients.md) | FlameRobin, IBExpert |
-| [ODBC Driver](connectivity/odbc.md) | ODBC connectivity |
-| [JDBC Driver](connectivity/jdbc.md) | Java connectivity |
+| ODBC Driver | ODBC connectivity (see ScratchBird-driver docs) |
+| JDBC Driver | Java connectivity (see ScratchBird-driver docs) |
 | [Native Client](connectivity/native-client.md) | ScratchBird client library |
 
 ### Reference

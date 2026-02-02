@@ -10,7 +10,8 @@ Specifications for client library APIs, connection pooling, and programmatic dat
 
 ## Specifications in this Directory
 
-- **[CLIENT_LIBRARY_API_SPECIFICATION.md](CLIENT_LIBRARY_API_SPECIFICATION.md)** - Client library API design
+- **Client library API design** now lives in ScratchBird-driver
+  (`docs/specifications/api/CLIENT_LIBRARY_API_SPECIFICATION.md`)
 - **[CONNECTION_POOLING_SPECIFICATION.md](CONNECTION_POOLING_SPECIFICATION.md)** - Connection pooling architecture
 
 ## Key Features

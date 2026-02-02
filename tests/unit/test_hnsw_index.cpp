@@ -1,3 +1,12 @@
+/*
+ * ScratchBird
+ * Copyright (c) 2025-2026 Dalton Calford
+ *
+ * Licensed under the Initial Developer's Public License Version 1.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
+ */
 // PHASE 4A TASK 4A.2.7: Unit tests for HNSW Index
 #include <gtest/gtest.h>
 #include "scratchbird/core/hnsw_index.h"

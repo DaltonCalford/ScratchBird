@@ -1630,6 +1630,7 @@ src/CMakeLists.txt                  # Add new source files
 - [PostgreSQL System Catalogs](https://www.postgresql.org/docs/current/catalogs.html)
 - [PL/pgSQL](https://www.postgresql.org/docs/current/plpgsql.html)
 - [PostgreSQL Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)
+- PostgreSQL Emulation Protocol Behavior: `docs/specifications/wire_protocols/POSTGRESQL_EMULATION_BEHAVIOR.md`
 - SBLR Opcodes: `include/scratchbird/sblr/opcodes.h`
 - Schema Architecture: `docs/specifications/SCHEMA_ARCHITECTURE.md`
 - Emulated Parser Spec: `docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md`

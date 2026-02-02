@@ -404,6 +404,10 @@ message(STATUS "Server library: scratchbird_server (IPC + session management)")
 file(GLOB_RECURSE SCRATCHBIRD_PROTOCOL_SOURCES
     protocol/*.cpp
 )
+list(APPEND SCRATCHBIRD_PROTOCOL_SOURCES
+    client/connection.cpp
+    client/sql_helpers.cpp
+)
 
 add_library(scratchbird_protocol STATIC
     ${SCRATCHBIRD_PROTOCOL_SOURCES}
@@ -437,76 +441,6 @@ target_link_libraries(scratchbird_server PUBLIC
 if(SCRATCHBIRD_WITH_COMPILER)
     target_link_libraries(scratchbird_server PUBLIC scratchbird_compiler)
 endif()
-
-# ==============================================================================
-# Client Library: scratchbird_client (Local Server Architecture - Phase 4)
-# ==============================================================================
-# Client library for connecting to ScratchBird server
-# Provides Connection, ResultSet, PreparedStatement, and ConnectionPool classes
-
-file(GLOB SCRATCHBIRD_CLIENT_SOURCES
-    client/*.cpp
-)
-
-add_library(scratchbird_client STATIC
-    ${SCRATCHBIRD_CLIENT_SOURCES}
-)
-
-target_include_directories(scratchbird_client PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
-
-target_link_libraries(scratchbird_client PUBLIC
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_network
-    scratchbird_security
-    scratchbird_core
-)
-
-# Thread support for connection pooling
-target_link_libraries(scratchbird_client PUBLIC Threads::Threads)
-
-set_target_properties(scratchbird_client PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
-
-message(STATUS "Client library: scratchbird_client (connection, result sets, pooling)")
-
-# ==============================================================================
-# Shared Client Library: libscratchbird (Alpha ODBC bridge)
-# ==============================================================================
-# Shared wrapper around scratchbird_client for driver integration
-
-add_library(scratchbird_lib SHARED
-    ${SCRATCHBIRD_CLIENT_SOURCES}
-)
-
-target_include_directories(scratchbird_lib PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
-
-target_link_libraries(scratchbird_lib PUBLIC
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_network
-    scratchbird_security
-    scratchbird_core
-    Threads::Threads
-)
-
-set_target_properties(scratchbird_lib PROPERTIES
-    OUTPUT_NAME scratchbird
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
-
-message(STATUS "Shared client library: libscratchbird (network client wrapper)")
 
 # ==============================================================================
 # Pool Library: scratchbird_pool (Alpha 3 Phase 3.6)
@@ -575,57 +509,6 @@ set_target_properties(scratchbird_fdw PROPERTIES
 )
 
 message(STATUS "FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)")
-
-# ==============================================================================
-# ODBC Library: scratchbird_odbc (Alpha 3 Phase 3.8)
-# ==============================================================================
-# ODBC driver for client connectivity and odbc_fdw for external database access
-# Components: ODBC 3.8 API, connection strings, type mapping, catalog functions
-
-file(GLOB SCRATCHBIRD_ODBC_SOURCES
-    odbc/*.cpp
-)
-
-add_library(scratchbird_odbc STATIC
-    ${SCRATCHBIRD_ODBC_SOURCES}
-)
-
-target_include_directories(scratchbird_odbc PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
-
-# Thread support for connection management
-find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_odbc PUBLIC Threads::Threads scratchbird_core scratchbird_lib)
-
-set_target_properties(scratchbird_odbc PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
-
-add_library(scratchbird_odbc_driver SHARED
-    ${SCRATCHBIRD_ODBC_SOURCES}
-)
-
-target_include_directories(scratchbird_odbc_driver PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
-
-target_link_libraries(scratchbird_odbc_driver PUBLIC Threads::Threads scratchbird_core scratchbird_lib)
-
-target_compile_definitions(scratchbird_odbc_driver PRIVATE SCRATCHBIRD_ODBC_EXPORTS)
-
-set_target_properties(scratchbird_odbc_driver PROPERTIES
-    OUTPUT_NAME scratchbird_odbc
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
-
-message(STATUS "ODBC library: scratchbird_odbc (ODBC 3.8 driver)")
 
 # ==============================================================================
 # Testing Library: scratchbird_testing (Alpha 3 Phase 3.12)
@@ -747,7 +630,7 @@ target_compile_definitions(sb_parser_native PRIVATE
     SB_PARSER_PROTOCOL="scratchbird"
     SB_PARSER_NAME="sb_parser_native"
 )
-target_link_libraries(sb_parser_native PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
+target_link_libraries(sb_parser_native PRIVATE scratchbird_protocol scratchbird_core)
 set_target_properties(sb_parser_native PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -759,7 +642,7 @@ target_compile_definitions(sb_parser_pg PRIVATE
     SB_PARSER_PROTOCOL="postgresql"
     SB_PARSER_NAME="sb_parser_pg"
 )
-target_link_libraries(sb_parser_pg PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
+target_link_libraries(sb_parser_pg PRIVATE scratchbird_protocol scratchbird_core)
 set_target_properties(sb_parser_pg PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -771,7 +654,7 @@ target_compile_definitions(sb_parser_mysql PRIVATE
     SB_PARSER_PROTOCOL="mysql"
     SB_PARSER_NAME="sb_parser_mysql"
 )
-target_link_libraries(sb_parser_mysql PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
+target_link_libraries(sb_parser_mysql PRIVATE scratchbird_protocol scratchbird_core)
 set_target_properties(sb_parser_mysql PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -783,7 +666,7 @@ target_compile_definitions(sb_parser_fb PRIVATE
     SB_PARSER_PROTOCOL="firebird"
     SB_PARSER_NAME="sb_parser_fb"
 )
-target_link_libraries(sb_parser_fb PRIVATE scratchbird_protocol scratchbird_client scratchbird_core)
+target_link_libraries(sb_parser_fb PRIVATE scratchbird_protocol scratchbird_core)
 set_target_properties(sb_parser_fb PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -815,162 +698,8 @@ set_target_properties(sb_charset_loader PROPERTIES
     CXX_EXTENSIONS NO
 )
 
-# ==============================================================================
-# CLI Tools (CLI Administration Suite)
-# ==============================================================================
-
-# sb_isql - Interactive SQL Shell
-add_executable(sb_isql cli/sb_isql.cpp)
-
-target_link_libraries(sb_isql PRIVATE
-    scratchbird_client
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_link_group
-)
-
-set_target_properties(sb_isql PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_isql (interactive SQL shell)")
-
-# sbdriver-conformance - Driver conformance adapter
-add_executable(sbdriver-conformance cli/sbdriver_conformance.cpp)
-
-target_link_libraries(sbdriver-conformance PRIVATE
-    scratchbird_client
-    scratchbird_protocol
-    scratchbird_server
-    nlohmann_json::nlohmann_json
-    scratchbird_link_group
-)
-
-set_target_properties(sbdriver-conformance PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sbdriver-conformance (driver conformance adapter)")
-
-# sb_verify - Database Verification Tool
-add_executable(sb_verify cli/sb_verify.cpp)
-
-target_link_libraries(sb_verify PRIVATE
-    scratchbird_link_group
-)
-
-set_target_properties(sb_verify PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_verify (database verification)")
-
-# sb_backup - Backup/Restore Tool
-add_executable(sb_backup cli/sb_backup.cpp)
-
-target_link_libraries(sb_backup PRIVATE
-    scratchbird_link_group
-)
-
-set_target_properties(sb_backup PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_backup (backup/restore)")
-
-# sb_security - Security Administration Tool
-add_executable(sb_security cli/sb_security.cpp)
-
-target_link_libraries(sb_security PRIVATE
-    scratchbird_client
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_link_group
-)
-
-set_target_properties(sb_security PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_security (security administration)")
-
-# sb_admin - Administration Tool
-add_executable(sb_admin cli/sb_admin.cpp)
-
-target_link_libraries(sb_admin PRIVATE
-    scratchbird_client
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_link_group
-)
-
-set_target_properties(sb_admin PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_admin (administration)")
-
-# sb_fb_isql - Firebird Interactive SQL Shell
-add_executable(sb_fb_isql cli/sb_fb_isql.cpp)
-
-target_link_libraries(sb_fb_isql PRIVATE
-    scratchbird_link_group
-)
-
-set_target_properties(sb_fb_isql PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_fb_isql (Firebird SQL shell)")
-
-# sb_pg_isql - PostgreSQL Interactive SQL Shell
-add_executable(sb_pg_isql cli/sb_pg_isql.cpp)
-
-target_link_libraries(sb_pg_isql PRIVATE
-    scratchbird_fdw
-    scratchbird_link_group
-)
-
-set_target_properties(sb_pg_isql PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_pg_isql (PostgreSQL SQL shell)")
-
-# sb_my_isql - MySQL Interactive SQL Shell
-add_executable(sb_my_isql cli/sb_my_isql.cpp)
-
-target_link_libraries(sb_my_isql PRIVATE
-    scratchbird_fdw
-    scratchbird_link_group
-)
-
-set_target_properties(sb_my_isql PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-)
-
-message(STATUS "CLI tool: sb_my_isql (MySQL SQL shell)")
-
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sbdriver-conformance sb_fb_isql sb_pg_isql sb_my_isql sb_verify sb_backup sb_security sb_admin scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_lib scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_odbc_driver scratchbird_testing
+install(TARGETS scratchbird sb_server sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_pool scratchbird_fdw scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

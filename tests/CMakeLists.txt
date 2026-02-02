@@ -217,10 +217,8 @@ target_link_libraries(scratchbird_tests
     ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_protocol
     scratchbird_pool
-    scratchbird_client
     scratchbird_server
     scratchbird_network
-    scratchbird_odbc
     GTest::gtest
     GTest::gtest_main
 )
@@ -434,60 +432,6 @@ add_test(NAME WireProtocolTests COMMAND test_wire_protocol)
 set_tests_properties(WireProtocolTests PROPERTIES
     LABELS "integration;server;protocol;wire"
     TIMEOUT 60
-    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
-)
-
-# Client Library Tests (Local Server Architecture - Phase 4)
-# ==============================================================================
-add_executable(test_client_connection unit/test_client_connection.cpp)
-target_link_libraries(test_client_connection
-    scratchbird_client
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME ClientConnectionTests COMMAND test_client_connection)
-set_tests_properties(ClientConnectionTests PROPERTIES
-    LABELS "integration;client;connection;pool"
-    TIMEOUT 120
-    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
-)
-
-# C API Client Tests
-add_executable(test_client_c_api unit/test_c_client_api.cpp)
-target_link_libraries(test_client_c_api
-    scratchbird_client
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME ClientCApiTests COMMAND test_client_c_api)
-set_tests_properties(ClientCApiTests PROPERTIES
-    LABELS "integration;client;c_api"
-    TIMEOUT 120
-    ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
-)
-
-# Client-Server Integration Tests (Local Server Architecture - Phase 4/5)
-# ==============================================================================
-# NOTE: These tests spawn a real sb_server process
-add_executable(test_client_server_integration integration/test_client_server_integration.cpp)
-target_link_libraries(test_client_server_integration
-    scratchbird_client
-    scratchbird_protocol
-    scratchbird_server
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME ClientServerIntegrationTests COMMAND test_client_server_integration)
-set_tests_properties(ClientServerIntegrationTests PROPERTIES
-    LABELS "integration;client;server"
-    TIMEOUT 120
     ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
@@ -1779,42 +1723,6 @@ add_test(NAME ShadowIndexRebuild COMMAND test_shadow_index_rebuild)
 set_tests_properties(ShadowIndexRebuild PROPERTIES
     LABELS "integration;index;shadow;rebuild;versioning;plan01"
     TIMEOUT 60
-)
-
-# ==============================================================================
-# Compatibility Tests (vendored external suites)
-# ==============================================================================
-set(FIREBIRD_COMPAT_SCRIPT
-    "${CMAKE_SOURCE_DIR}/tests/compatibility/firebird/scripts/run_firebird_ctest.sh"
-)
-add_test(NAME CompatibilityFirebird COMMAND "${FIREBIRD_COMPAT_SCRIPT}")
-set_tests_properties(CompatibilityFirebird PROPERTIES
-    LABELS "compatibility;firebird"
-    TIMEOUT 300
-    ENVIRONMENT
-        "SCRATCHBIRD_FB_ISQL=$<TARGET_FILE:sb_fb_isql>;SCRATCHBIRD_FB_CTEST_LIST=${CMAKE_SOURCE_DIR}/tests/compatibility/firebird/config/ctest_list.txt"
-)
-
-set(POSTGRES_COMPAT_SCRIPT
-    "${CMAKE_SOURCE_DIR}/tests/compatibility/postgresql/scripts/run_postgresql_ctest.sh"
-)
-add_test(NAME CompatibilityPostgreSQL COMMAND "${POSTGRES_COMPAT_SCRIPT}")
-set_tests_properties(CompatibilityPostgreSQL PROPERTIES
-    LABELS "compatibility;postgresql"
-    TIMEOUT 300
-    ENVIRONMENT
-        "SCRATCHBIRD_PG_ISQL=$<TARGET_FILE:sb_pg_isql>;SCRATCHBIRD_PG_CTEST_LIST=${CMAKE_SOURCE_DIR}/tests/compatibility/postgresql/config/ctest_list.txt"
-)
-
-set(MYSQL_COMPAT_SCRIPT
-    "${CMAKE_SOURCE_DIR}/tests/compatibility/mysql/scripts/run_mysql_ctest.sh"
-)
-add_test(NAME CompatibilityMySQL COMMAND "${MYSQL_COMPAT_SCRIPT}")
-set_tests_properties(CompatibilityMySQL PROPERTIES
-    LABELS "compatibility;mysql"
-    TIMEOUT 300
-    ENVIRONMENT
-        "SCRATCHBIRD_MY_ISQL=$<TARGET_FILE:sb_my_isql>;SCRATCHBIRD_MY_CTEST_LIST=${CMAKE_SOURCE_DIR}/tests/compatibility/mysql/config/ctest_list.txt"
 )
 
 # Aggregate target for building all test executables.
