@@ -2290,9 +2290,8 @@ Statement* Parser::parseAlterDatabase() {
     }
 
     if (matchKeyword(TokenType::KW_RENAME)) {
-        consume(TokenType::KW_TO, "Expected TO after RENAME");
-        stmt->action = ast::AlterDatabaseAction::RENAME;
-        stmt->new_name = parseIdentifier();
+        // Firebird does not support ALTER DATABASE ... RENAME TO ...
+        error("ALTER DATABASE RENAME is not supported in Firebird");
         return stmt;
     }
 

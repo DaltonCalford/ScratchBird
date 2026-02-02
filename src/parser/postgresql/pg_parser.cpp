@@ -62,6 +62,7 @@ bool Parser::isNonReservedKeyword(TokenType type) const {
         case TokenType::KW_PRIOR:
         case TokenType::KW_ABSOLUTE:
         case TokenType::KW_RELATIVE:
+        case TokenType::KW_LOCATION:
             return true;
         default:
             return false;
@@ -99,6 +100,7 @@ static std::string tokenToString(TokenType type) {
         case TokenType::KW_PRIOR: return "prior";
         case TokenType::KW_ABSOLUTE: return "absolute";
         case TokenType::KW_RELATIVE: return "relative";
+        case TokenType::KW_LOCATION: return "location";
         default: return "";
     }
 }

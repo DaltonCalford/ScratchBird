@@ -513,8 +513,6 @@ void Parser::parseCreateTable() {
     // TABLESPACE
     if (matchKeyword(TokenType::KW_TABLESPACE)) {
         tablespace_name = parseIdentifier();
-        error("TABLESPACE clauses are not supported in emulated parsers");
-        tablespace_name.clear();
     }
 
     if (matchKeyword(TokenType::KW_PARTITION)) {
@@ -1710,7 +1708,7 @@ void Parser::parseCreateDatabase() {
             } else if (matchKeyword(TokenType::KW_TABLESPACE)) {
                 match(TokenType::EQUAL);
                 std::string value = parseIdentifier();
-                error("TABLESPACE options are not supported in emulated parsers");
+                options.emplace_back("tablespace", value);
             } else {
                 break;
             }

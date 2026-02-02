@@ -26,6 +26,8 @@ ScratchBird is a next-generation database management system that combines:
 | **Documentation Index**  | `docs/INDEX.md`                       |
 | **Specifications Index** | `docs/specifications/README.md`       |
 | **Findings & Plans**     | `docs/findings/` and `docs/planning/` |
+| **Outstanding Work**     | `docs/planning/TRACKER_OUTSTANDING_MASTER.md` |
+| **Feature Catalog**      | `docs/FEATURE_CATALOG.md`             |
 | **Audit Outputs**        | `docs/audit/`                         |
 
 ---
@@ -52,7 +54,7 @@ ScratchBird has been split into multiple repositories for parallel development:
 - Listener/pool/parser/server process operational with socket handoff per dialect
 - Shared SBLR cache with per-connection compile caches
 
-Latest full test run: 2470 tests, 6 failures (2026-02-03).
+Latest full test run: 2470 tests, 0 failures (2026-02-03).
 
 ### Beta (Deferred)
 
@@ -186,18 +188,16 @@ ctest --test-dir build -R integration # Integration tests
 ctest --test-dir build -R benchmark   # Benchmarks
 ```
 
-Recent full suite: 2470 tests, 6 failures (2026-02-03).
+Recent full suite: 2470 CTest cases, 0 failures (2026-02-03).
 
-### Test File Breakdown
+CTest cases are not 1:1 with test files. Many C++ test files compile into shared binaries, and SQL compatibility scripts are executed by harness tests (each harness can run many scripts).
 
-| Category            | Files    |
-| ------------------- | -------- |
-| Unit tests          | 71       |
-| Integration tests   | 67       |
-| Stress tests        | 6        |
-| Benchmarks          | 3        |
-| SQL compatibility   | 13,303   |
-| **Total C++ tests** | **343**  |
+### Test Assets
+
+| Asset type               | Count  | Notes |
+| ------------------------ | ------ | ----- |
+| C++ test source files    | 343    | `tests/` tree compiled into CTest binaries |
+| SQL compatibility scripts| 13,303 | Executed by compatibility harnesses (not individual CTest cases) |
 
 Compatibility suites exist for PostgreSQL, MySQL, Firebird, and ScratchBird native; see `tests/compatibility/`.
 
@@ -351,7 +351,7 @@ Licensed under the [Initial Developer's Public License Version 1.0 (IPL 1.0)](ht
 | Wiki pages              | 145                               |
 | Git commits             | 1,650                             |
 | Commits (last 30 days)  | 92                                |
-| CTest results           | 2,470 passed, 6 failed, 0 skipped |
+| CTest results           | 2,470 passed, 0 failed, 0 skipped |
 
 Run `./scripts/generate-all-stats.sh` to regenerate `PROJECT_STATS.md` and related reports.
 

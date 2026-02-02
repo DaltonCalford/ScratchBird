@@ -193,6 +193,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"identity", TokenType::KW_IDENTITY},
         {"stored", TokenType::KW_STORED},
         {"replace", TokenType::KW_REPLACE},
+        {"tablespace", TokenType::KW_TABLESPACE},
 
         // Type keywords
         {"smallint", TokenType::KW_SMALLINT},

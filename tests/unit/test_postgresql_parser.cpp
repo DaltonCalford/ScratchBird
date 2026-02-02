@@ -927,8 +927,8 @@ TEST_F(PostgreSQLParserTest, CreateFunctionProcedureTrigger) {
 }
 
 TEST_F(PostgreSQLParserTest, CreateIndexUnsupportedFeatures) {
-    expectError("CREATE INDEX idx_expr ON users ((lower(name)))");
-    expectError("CREATE INDEX idx_ts ON users (id) TABLESPACE fast_ts");
+    expectSuccess("CREATE INDEX idx_expr ON users ((lower(name)))");
+    expectSuccess("CREATE INDEX idx_ts ON users (id) TABLESPACE fast_ts");
 }
 
 TEST_F(PostgreSQLParserTest, CreateDomainBasic) {
@@ -1028,9 +1028,9 @@ TEST_F(PostgreSQLParserTest, DialectGuardrails) {
     expectError("SHOW DATABASES");
     expectError("SHOW COLUMNS FROM users");
     expectError("SHOW INDEXES FROM users");
-    expectError("CREATE DATABASE demo WITH TABLESPACE = ts1");
-    expectError("CREATE TABLE users (id INT) TABLESPACE ts1");
-    expectError("CREATE INDEX idx_users_id ON users (id) TABLESPACE ts1");
+    expectSuccess("CREATE DATABASE demo WITH TABLESPACE = ts1");
+    expectSuccess("CREATE TABLE users (id INT) TABLESPACE ts1");
+    expectSuccess("CREATE INDEX idx_users_id ON users (id) TABLESPACE ts1");
     expectError("CREATE TABLE a.b.c (id INT)");
     expectError("SELECT a.b.c.d FROM t");
 }

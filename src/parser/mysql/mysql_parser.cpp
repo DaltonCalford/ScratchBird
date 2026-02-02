@@ -7432,7 +7432,8 @@ void Parser::parseSetStmt() {
         };
 
         if (check(TokenType::INTEGER_LITERAL) || check(TokenType::KW_ON) ||
-            identifierEquals("ON") || identifierEquals("OFF")) {
+            check(TokenType::KW_OFF) || identifierEquals("ON") ||
+            identifierEquals("OFF")) {
             uint8_t mode = 0;
             if (check(TokenType::INTEGER_LITERAL)) {
                 int64_t value = current_token_.value.int_value;
@@ -7446,7 +7447,7 @@ void Parser::parseSetStmt() {
                 }
             } else if (matchKeyword(TokenType::KW_ON) || matchIdentifierKeyword("ON")) {
                 mode = 1;
-            } else if (matchIdentifierKeyword("OFF")) {
+            } else if (matchKeyword(TokenType::KW_OFF) || matchIdentifierKeyword("OFF")) {
                 mode = 0;
             } else {
                 error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
