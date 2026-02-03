@@ -1,831 +1,458 @@
-# Security Administration
+# Security
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
----
 
-## Overview
+Secure your ScratchBird installation.
 
-Security is fundamental to protecting your data. This guide covers authentication, authorization, encryption, network security, and security best practices for ScratchBird deployments.
-
-**Topics covered:**
-- Authentication methods
-- TLS/SSL encryption
-- Network security
-- Audit logging
-- Security hardening
 
 ---
 
-## Part 1: Authentication
+## Security Checklist
 
-### Authentication Methods
+### Initial Setup
 
-ScratchBird supports multiple authentication methods:
+- [ ] Change default admin password
+- [ ] Configure host-based authentication
+- [ ] Enable SSL/TLS
+- [ ] Set up firewall rules
+- [ ] Create application-specific users
+- [ ] Review default privileges
 
-| Method | Description | Use Case |
-|--------|-------------|----------|
-| `scram-sha-256` | SCRAM-SHA-256 (recommended) | Default, high security |
-| `password` | MD5 or SCRAM-SHA-256 hashed password | Legacy compatibility |
-| `cert` | TLS client certificate | Certificate-based auth |
-| `ldap` | LDAP/Active Directory | Enterprise directory auth |
-| `kerberos` | Kerberos/GSSAPI | Enterprise SSO |
-| `oauth` | OAuth 2.0 | Token-based auth |
-| `saml` | SAML federation | Federated identity |
-| `mfa` | Multi-factor authentication | Two-factor auth |
-| `trust` | No authentication | Local development only |
-| `reject` | Reject all connections | Blocking specific hosts |
+### Ongoing
 
-### Password Authentication
+- [ ] Regular password rotation
+- [ ] Audit user access
+- [ ] Monitor for suspicious activity
+- [ ] Keep software updated
+- [ ] Test backup restoration
+- [ ] Review logs
 
-**Configure password encryption** in `sb_server.conf`:
+---
+
+## Authentication Security
+
+### Strong Passwords
+
+Configure minimum requirements:
+
+```ini
+# sb_server.conf
+[authentication]
+password_min_length = 12
+password_hash = argon2id
+max_failed_attempts = 5
+lockout_duration = 300
+```
+
+### Use SCRAM-SHA-256
+
+Never use MD5 or trust in production:
+
 ```ini
 [authentication]
-# Use SCRAM-SHA-256 (recommended)
-password_encryption = scram-sha-256
-
-# Or use MD5 (legacy compatibility)
-# password_encryption = md5
+methods = scram-sha-256
 ```
 
-**Set user password:**
-```sql
--- Create user with password
-CREATE USER app_user WITH PASSWORD 'SecureP@ssw0rd!';
+### Host-Based Authentication
 
--- Change existing password
-ALTER USER app_user WITH PASSWORD 'NewSecureP@ssw0rd!';
-```
-
-### Host-Based Authentication (sb_hba.conf)
-
-The `sb_hba.conf` file controls which hosts can connect and how they authenticate.
-
-**File location:** `/etc/scratchbird/sb_hba.conf`
-
-**Format:**
-```
-# TYPE    DATABASE    USER        ADDRESS           METHOD
-local     all         all                           peer
-host      all         all         127.0.0.1/32      scram-sha-256
-host      all         all         ::1/128           scram-sha-256
-host      all         all         192.168.1.0/24    scram-sha-256
-hostssl   all         all         0.0.0.0/0         scram-sha-256
-```
-
-**Field descriptions:**
-
-| Field | Options | Description |
-|-------|---------|-------------|
-| TYPE | local, host, hostssl, hostnossl | Connection type |
-| DATABASE | all, db_name, @file | Database(s) to match |
-| USER | all, user_name, +group, @file | User(s) to match |
-| ADDRESS | IP/CIDR, hostname, all | Client address |
-| METHOD | trust, reject, scram-sha-256, md5, cert, ldap | Auth method |
-
-**Example configurations:**
+Restrict connections by IP:
 
 ```
-# Local connections via Unix socket - use peer auth
-local   all             all                                     peer
+# hba.conf
+# Reject admin from remote
+host    all   admin     0.0.0.0/0        reject
 
-# IPv4 local connections - password required
-host    all             all             127.0.0.1/32            scram-sha-256
+# Localhost only for superuser
+local   all   postgres                   peer
+host    all   postgres  127.0.0.1/32     scram-sha-256
 
-# IPv6 local connections
-host    all             all             ::1/128                 scram-sha-256
+# Application from specific subnet
+host    mydb  appuser   10.0.0.0/8       scram-sha-256
 
-# Internal network - password required
-host    all             all             10.0.0.0/8              scram-sha-256
-host    all             all             192.168.0.0/16          scram-sha-256
-
-# Specific database from specific subnet
-host    production      app_user        10.1.5.0/24             scram-sha-256
-
-# Replication connections
-host    replication     repl_user       10.1.10.0/24            scram-sha-256
-
-# SSL required for all external connections
-hostssl all             all             0.0.0.0/0               scram-sha-256
-
-# Reject all other connections
-host    all             all             0.0.0.0/0               reject
+# SSL required from elsewhere
+hostssl all   all       0.0.0.0/0        scram-sha-256
 ```
 
-### LDAP Authentication
+### Disable Remote Superuser
 
-**Configure LDAP** in `sb_hba.conf`:
-```
-host    all    all    0.0.0.0/0    ldap ldapserver=ldap.example.com ldapbasedn="dc=example,dc=com" ldapbinddn="cn=admin,dc=example,dc=com" ldapbindpasswd="secret" ldapsearchattribute=uid
-```
-
-**LDAP options:**
-
-| Option | Description |
-|--------|-------------|
-| `ldapserver` | LDAP server hostname |
-| `ldapport` | LDAP port (default: 389, 636 for SSL) |
-| `ldaptls` | Use STARTTLS (1 = yes) |
-| `ldapbasedn` | Base DN for searches |
-| `ldapbinddn` | DN to bind for searches |
-| `ldapbindpasswd` | Password for bind DN |
-| `ldapsearchattribute` | Attribute to match username |
-
-### Certificate Authentication
-
-**Configure client certificate auth:**
-
-1. **Generate certificates** (see TLS section)
-
-2. **Configure sb_hba.conf:**
-```
-hostssl    all    all    0.0.0.0/0    cert clientcert=verify-full
-```
-
-3. **Map certificate CN to database user:**
-```
-# In sb_ident.conf
-cert_map    /CN=app_user    app_user
-cert_map    /CN=admin       admin
+```ini
+# sb_server.conf
+[authentication]
+allow_superuser_remote = false
 ```
 
 ---
 
-## Part 2: TLS/SSL Encryption
+## Encryption
 
-### Generate Certificates
+### Enable TLS
 
-**Create CA and server certificates:**
-
-```bash
-#!/bin/bash
-# Generate ScratchBird SSL certificates
-
-CERT_DIR="/etc/scratchbird/certs"
-mkdir -p "$CERT_DIR"
-cd "$CERT_DIR"
-
-# Generate CA private key
-openssl genrsa -out ca.key 4096
-
-# Generate CA certificate
-openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 \
-    -out ca.crt \
-    -subj "/C=US/ST=State/L=City/O=Organization/CN=ScratchBird CA"
-
-# Generate server private key
-openssl genrsa -out server.key 2048
-
-# Generate server CSR
-openssl req -new -key server.key \
-    -out server.csr \
-    -subj "/C=US/ST=State/L=City/O=Organization/CN=db.example.com"
-
-# Create server certificate extension file
-cat > server.ext << EOF
-authorityKeyIdentifier=keyid,issuer
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = db.example.com
-DNS.2 = localhost
-IP.1 = 127.0.0.1
-IP.2 = 192.168.1.10
-EOF
-
-# Sign server certificate
-openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key \
-    -CAcreateserial -out server.crt -days 365 -sha256 \
-    -extfile server.ext
-
-# Set permissions
-chmod 600 server.key ca.key
-chmod 644 server.crt ca.crt
-chown scratchbird:scratchbird server.key server.crt ca.crt
-
-# Cleanup
-rm server.csr server.ext
-
-echo "Certificates generated in $CERT_DIR"
-```
-
-### Configure TLS
-
-**Edit `sb_server.conf`:**
 ```ini
+# sb_server.conf
 [ssl]
 enabled = true
-cert_file = /etc/scratchbird/certs/server.crt
-key_file = /etc/scratchbird/certs/server.key
-ca_file = /etc/scratchbird/certs/ca.crt
-
-# Optional: Require client certificates
-# client_cert = require
-
-# TLS version (minimum)
-min_protocol_version = TLSv1.2
-
-# Cipher suites (example for high security)
-ciphers = ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305
+cert_file = /etc/scratchbird/ssl/server.crt
+key_file = /etc/scratchbird/ssl/server.key
+min_protocol = TLSv1.2
 ```
 
-### Verify TLS Configuration
+### Require SSL for Remote
+
+```
+# hba.conf
+# Non-SSL connections only from localhost
+hostnossl   all   all   127.0.0.1/32   scram-sha-256
+
+# All others require SSL
+hostssl     all   all   0.0.0.0/0      scram-sha-256
+```
+
+### Encrypt Backups
 
 ```bash
-# Test TLS connection
-openssl s_client -connect localhost:5432 -starttls postgres
-
-# Check certificate details
-openssl x509 -in /etc/scratchbird/certs/server.crt -text -noout
-
-# Verify certificate chain
-openssl verify -CAfile /etc/scratchbird/certs/ca.crt /etc/scratchbird/certs/server.crt
+# Encrypt backup
+sb_backup create mydb - | \
+    gpg --encrypt -r admin@example.com > backup.sbdb.gpg
 ```
 
-### Client TLS Connection
+### Data at Rest
+
+Consider full-disk encryption for production:
 
 ```bash
-# Connect with SSL verification
-sb_isql "host=db.example.com port=5432 dbname=mydb user=admin sslmode=verify-full sslrootcert=/path/to/ca.crt"
-
-# With client certificate
-sb_isql "host=db.example.com port=5432 dbname=mydb user=admin sslmode=verify-full sslcert=/path/to/client.crt sslkey=/path/to/client.key sslrootcert=/path/to/ca.crt"
-```
-
-**SSL modes:**
-
-| Mode | Description |
-|------|-------------|
-| `disable` | No SSL |
-| `allow` | Try SSL, fallback to non-SSL |
-| `prefer` | Try SSL first (default) |
-| `require` | Require SSL, no cert verification |
-| `verify-ca` | Require SSL, verify CA |
-| `verify-full` | Require SSL, verify CA and hostname |
-
----
-
-## Part 3: Authorization
-
-### Role-Based Access Control
-
-**Create roles:**
-```sql
--- Create roles
-CREATE ROLE readonly;
-CREATE ROLE readwrite;
-CREATE ROLE admin_role;
-
--- Grant privileges to roles
-GRANT CONNECT ON DATABASE mydb TO readonly;
-GRANT USAGE ON SCHEMA public TO readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly;
-
-GRANT CONNECT ON DATABASE mydb TO readwrite;
-GRANT USAGE ON SCHEMA public TO readwrite;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO readwrite;
-
--- Admin role
-GRANT ALL PRIVILEGES ON DATABASE mydb TO admin_role;
-GRANT ALL PRIVILEGES ON SCHEMA public TO admin_role;
-```
-
-**Assign roles to users:**
-```sql
--- Create users and assign roles
-CREATE USER report_user WITH PASSWORD 'password';
-GRANT readonly TO report_user;
-
-CREATE USER app_user WITH PASSWORD 'password';
-GRANT readwrite TO app_user;
-
-CREATE USER dba_user WITH PASSWORD 'password';
-GRANT admin_role TO dba_user;
-```
-
-### Schema-Based Isolation
-
-```sql
--- Create schemas for different applications
-CREATE SCHEMA app1;
-CREATE SCHEMA app2;
-
--- Create users with schema access
-CREATE USER app1_user WITH PASSWORD 'password';
-CREATE USER app2_user WITH PASSWORD 'password';
-
--- Grant schema-specific access
-GRANT USAGE ON SCHEMA app1 TO app1_user;
-GRANT ALL ON ALL TABLES IN SCHEMA app1 TO app1_user;
-
-GRANT USAGE ON SCHEMA app2 TO app2_user;
-GRANT ALL ON ALL TABLES IN SCHEMA app2 TO app2_user;
-
--- Set default search path
-ALTER USER app1_user SET search_path TO app1, public;
-ALTER USER app2_user SET search_path TO app2, public;
-```
-
-### Row-Level Security (RLS)
-
-```sql
--- Enable RLS on table
-ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
-
--- Create policy: users can only see their own documents
-CREATE POLICY user_documents ON documents
-    FOR ALL
-    USING (owner_id = current_user_id())
-    WITH CHECK (owner_id = current_user_id());
-
--- Create policy: admins can see all documents
-CREATE POLICY admin_all_documents ON documents
-    FOR ALL
-    TO admin_role
-    USING (true);
-
--- Force RLS for table owner too
-ALTER TABLE documents FORCE ROW LEVEL SECURITY;
-```
-
-### Column-Level Permissions
-
-```sql
--- Grant select on specific columns
-GRANT SELECT (id, name, email) ON users TO readonly;
-
--- Revoke access to sensitive columns
-REVOKE SELECT (password_hash, ssn) ON users FROM PUBLIC;
-```
-
----
-
-## Part 4: Network Security
-
-### Firewall Configuration
-
-**Linux (iptables):**
-```bash
-# Allow connections from internal network only
-iptables -A INPUT -p tcp --dport 3092 -s 10.0.0.0/8 -j ACCEPT
-iptables -A INPUT -p tcp --dport 3092 -s 192.168.0.0/16 -j ACCEPT
-iptables -A INPUT -p tcp --dport 3092 -j DROP
-
-# Allow PostgreSQL protocol
-iptables -A INPUT -p tcp --dport 5432 -s 10.0.0.0/8 -j ACCEPT
-iptables -A INPUT -p tcp --dport 5432 -j DROP
-
-# Save rules
-iptables-save > /etc/iptables/rules.v4
-```
-
-**Linux (ufw):**
-```bash
-# Allow from specific subnet
-ufw allow from 10.0.0.0/8 to any port 3092
-ufw allow from 10.0.0.0/8 to any port 5432
-
-# Deny all other database connections
-ufw deny 3092
-ufw deny 5432
-```
-
-### Bind Address Configuration
-
-**Restrict listening address** in `sb_server.conf`:
-```ini
-[network]
-# Listen only on internal interface
-bind_address = 10.0.1.5
-
-# Or listen on multiple specific addresses
-# bind_address = 10.0.1.5,192.168.1.5
-
-# Never use 0.0.0.0 in production without firewall
-# bind_address = 0.0.0.0  # DANGEROUS
-```
-
-### Connection Limits
-
-```ini
-[server]
-# Maximum connections
-max_connections = 100
-
-# Connection timeout (seconds)
-connection_timeout = 30
-
-# Idle session timeout (0 = disabled)
-idle_session_timeout = 3600
-```
-
-**Per-user connection limits:**
-```sql
--- Limit connections per user
-ALTER USER app_user CONNECTION LIMIT 20;
-
--- Limit connections per database
-ALTER DATABASE mydb CONNECTION LIMIT 50;
-```
-
----
-
-## Part 5: Audit Logging
-
-### Enable Audit Logging
-
-**Configure in `sb_server.conf`:**
-```ini
-[logging]
-level = info
-
-# Log all connections
-log_connections = true
-log_disconnections = true
-
-# Log DDL statements
-log_statement = ddl
-
-# Log all statements (use with caution - performance impact)
-# log_statement = all
-
-# Log slow queries
-log_slow_queries = true
-slow_query_threshold = 1000  # milliseconds
-
-[audit]
-enabled = true
-log_file = /var/log/scratchbird/audit.log
-
-# What to audit
-audit_ddl = true
-audit_dml = true
-audit_dcl = true
-audit_read = false  # Can be noisy
-
-# Audit specific users
-# audit_users = admin,app_user
-```
-
-### Audit Log Format
-
-```json
-{"timestamp":"2026-01-19T10:30:45.123Z","event":"LOGIN","user":"admin","database":"mydb","client_ip":"192.168.1.100","success":true}
-{"timestamp":"2026-01-19T10:30:46.456Z","event":"DDL","user":"admin","database":"mydb","statement":"CREATE TABLE users (...)","success":true}
-{"timestamp":"2026-01-19T10:30:47.789Z","event":"DML","user":"app_user","database":"mydb","statement":"INSERT INTO users VALUES (...)","rows_affected":1,"success":true}
-{"timestamp":"2026-01-19T10:30:48.012Z","event":"LOGIN_FAILED","user":"hacker","database":"mydb","client_ip":"1.2.3.4","reason":"password authentication failed"}
-```
-
-### Audit Analysis Queries
-
-```sql
--- Create audit log table for analysis
-CREATE TABLE sb_admin.audit_log (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    event_type VARCHAR(20) NOT NULL,
-    username VARCHAR(100),
-    database_name VARCHAR(100),
-    client_ip INET,
-    statement TEXT,
-    success BOOLEAN,
-    details JSONB
-);
-
--- Import audit logs (example)
-COPY sb_admin.audit_log (timestamp, event_type, username, database_name, client_ip, statement, success, details)
-FROM PROGRAM 'cat /var/log/scratchbird/audit.log | jq -r ''[.timestamp, .event, .user, .database, .client_ip, .statement, .success, .]|@csv'''
-WITH (FORMAT csv);
-
--- Failed login attempts
-SELECT
-    client_ip,
-    username,
-    COUNT(*) AS attempts,
-    MIN(timestamp) AS first_attempt,
-    MAX(timestamp) AS last_attempt
-FROM sb_admin.audit_log
-WHERE event_type = 'LOGIN_FAILED'
-AND timestamp > NOW() - INTERVAL '24 hours'
-GROUP BY client_ip, username
-ORDER BY attempts DESC;
-
--- DDL changes by user
-SELECT
-    username,
-    DATE_TRUNC('day', timestamp) AS day,
-    COUNT(*) AS ddl_count
-FROM sb_admin.audit_log
-WHERE event_type = 'DDL'
-GROUP BY username, DATE_TRUNC('day', timestamp)
-ORDER BY day DESC, ddl_count DESC;
-```
-
----
-
-## Part 6: Data Protection
-
-### Encryption at Rest
-
-**Full disk encryption:**
-```bash
-# Using LUKS for data directory
-cryptsetup luksFormat /dev/sdb1
-cryptsetup luksOpen /dev/sdb1 scratchbird_data
+# Linux LUKS
+cryptsetup luksFormat /dev/sdb
+cryptsetup open /dev/sdb scratchbird_data
 mkfs.ext4 /dev/mapper/scratchbird_data
 mount /dev/mapper/scratchbird_data /var/lib/scratchbird
 ```
 
-**Column-level encryption:**
-```sql
--- Using pgcrypto extension
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+---
 
--- Encrypt sensitive data
-INSERT INTO users (name, ssn_encrypted)
-VALUES ('John Doe', pgp_sym_encrypt('123-45-6789', 'encryption_key'));
+## Network Security
 
--- Decrypt when needed
-SELECT name, pgp_sym_decrypt(ssn_encrypted::bytea, 'encryption_key') AS ssn
-FROM users
-WHERE id = 1;
+### Firewall Configuration
+
+**Linux (UFW):**
+```bash
+# Allow only specific IPs
+sudo ufw allow from 10.0.0.0/8 to any port 5432
+sudo ufw deny 5432
 ```
 
-### Data Masking
+**Linux (firewalld):**
+```bash
+sudo firewall-cmd --add-rich-rule='rule family="ipv4" source address="10.0.0.0/8" port protocol="tcp" port="5432" accept' --permanent
+sudo firewall-cmd --reload
+```
 
-```sql
--- Create masking function
-CREATE OR REPLACE FUNCTION mask_email(email TEXT)
-RETURNS TEXT AS $$
-BEGIN
-    RETURN REGEXP_REPLACE(email, '(^[^@]{2})[^@]*(@.*)', '\1***\2');
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+### Bind to Specific Interface
 
--- Create masking function for SSN
-CREATE OR REPLACE FUNCTION mask_ssn(ssn TEXT)
-RETURNS TEXT AS $$
-BEGIN
-    RETURN 'XXX-XX-' || RIGHT(ssn, 4);
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+```ini
+# sb_server.conf
+[network]
+# Only listen on internal interface
+bind_address = 10.0.1.5
 
--- Create view with masked data for non-privileged users
-CREATE VIEW users_masked AS
-SELECT
-    id,
-    name,
-    mask_email(email) AS email,
-    mask_ssn(ssn) AS ssn,
-    created_at
-FROM users;
+# Or localhost only
+bind_address = 127.0.0.1
+```
 
--- Grant access to masked view
-GRANT SELECT ON users_masked TO readonly;
+### Disable Unused Protocols
+
+```ini
+# sb_server.conf
+[network]
+native_port = 3092
+pg_port = 5432
+mysql_port = 0    # Disabled
+fb_port = 0       # Disabled
 ```
 
 ---
 
-## Part 7: Security Hardening
+## Access Control
 
-### Hardening Checklist
+### Principle of Least Privilege
 
-**Authentication:**
-- [ ] Use SCRAM-SHA-256 for password authentication
-- [ ] Configure strict sb_hba.conf rules
-- [ ] Disable trust authentication
-- [ ] Implement password policies
-- [ ] Enable account lockout after failed attempts
-
-**Network:**
-- [ ] Enable TLS for all connections
-- [ ] Bind to specific interface (not 0.0.0.0)
-- [ ] Configure firewall rules
-- [ ] Use hostssl in sb_hba.conf
-- [ ] Disable unnecessary protocols
-
-**Authorization:**
-- [ ] Follow principle of least privilege
-- [ ] Use roles instead of direct grants
-- [ ] Implement row-level security where needed
-- [ ] Remove default/public grants
-- [ ] Audit privilege assignments
-
-**Monitoring:**
-- [ ] Enable audit logging
-- [ ] Monitor for failed login attempts
-- [ ] Alert on suspicious activity
-- [ ] Review logs regularly
-- [ ] Monitor for unauthorized schema changes
-
-### Remove Default Permissions
+Create specific users with minimal permissions:
 
 ```sql
--- Revoke default public access
-REVOKE ALL ON DATABASE mydb FROM PUBLIC;
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+-- Read-only user
+CREATE USER reporter WITH PASSWORD 'secure_pass';
+GRANT CONNECT ON DATABASE analytics TO reporter;
+GRANT USAGE ON SCHEMA public TO reporter;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO reporter;
 
--- Explicitly grant what's needed
-GRANT CONNECT ON DATABASE mydb TO app_user;
-GRANT USAGE ON SCHEMA public TO app_user;
+-- Application user (CRUD only)
+CREATE USER webapp WITH PASSWORD 'secure_pass';
+GRANT CONNECT ON DATABASE myapp TO webapp;
+GRANT USAGE ON SCHEMA public TO webapp;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO webapp;
 ```
 
-### Secure Configuration
+### Row-Level Security
 
-**`sb_server.conf` security settings:**
+Restrict data access at row level:
+
+```sql
+-- Enable RLS
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Users see only their own data
+CREATE POLICY customer_isolation ON customers
+    USING (owner_id = current_user_id());
+```
+
+### Column-Level Permissions
+
+Hide sensitive columns:
+
+```sql
+-- Grant access to non-sensitive columns
+GRANT SELECT (id, name, email) ON users TO analyst;
+-- Analyst cannot see: password_hash, ssn, etc.
+```
+
+---
+
+## Audit Logging
+
+### Enable Connection Logging
+
 ```ini
-[server]
-# Disable superuser remote connections
-superuser_reserved_connections = 3
-
-[authentication]
-# Strong password hashing
-password_encryption = scram-sha-256
-
-# Password policy (if supported)
-password_min_length = 12
-password_require_uppercase = true
-password_require_lowercase = true
-password_require_digit = true
-password_require_special = true
-
-[ssl]
-enabled = true
-min_protocol_version = TLSv1.2
-
+# sb_server.conf
 [logging]
 log_connections = true
 log_disconnections = true
-log_statement = ddl
-
-[security]
-# Disable dangerous functions
-allow_system_commands = false
 ```
 
-### Security Testing
+### Enable Statement Logging
 
-**Test authentication:**
-```bash
-# Test without credentials (should fail)
-sb_isql -H localhost -U nobody -d mydb
-# Expected: authentication failed
-
-# Test with wrong password (should fail)
-sb_isql -H localhost -U admin -d mydb -W wrongpassword
-# Expected: password authentication failed
-
-# Test from blocked network (should fail)
-sb_isql -H db.example.com -U admin -d mydb
-# Expected: connection refused (if not in sb_hba.conf)
+```ini
+[logging]
+log_statement = all  # none, ddl, mod, all
 ```
 
-**Test TLS:**
-```bash
-# Verify TLS is required
-sb_isql "host=db.example.com dbname=mydb user=admin sslmode=disable"
-# Expected: SSL required
+### Audit Sensitive Operations
 
-# Verify certificate validation
-sb_isql "host=db.example.com dbname=mydb user=admin sslmode=verify-full sslrootcert=/wrong/ca.crt"
-# Expected: certificate verification failed
+```sql
+-- Create audit table
+CREATE TABLE audit_log (
+    id SERIAL PRIMARY KEY,
+    event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    user_name TEXT,
+    operation TEXT,
+    table_name TEXT,
+    old_data JSONB,
+    new_data JSONB
+);
+
+-- Create audit trigger
+CREATE OR REPLACE FUNCTION audit_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO audit_log (user_name, operation, table_name, old_data, new_data)
+    VALUES (
+        current_user,
+        TG_OP,
+        TG_TABLE_NAME,
+        CASE WHEN TG_OP = 'DELETE' THEN row_to_json(OLD)::jsonb END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN row_to_json(NEW)::jsonb END
+    );
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply to sensitive tables
+CREATE TRIGGER audit_users
+    AFTER INSERT OR UPDATE OR DELETE ON users
+    FOR EACH ROW EXECUTE FUNCTION audit_trigger();
 ```
 
 ---
 
-## Part 8: Incident Response
+## SQL Injection Prevention
 
-### Detecting Breaches
+### Use Parameterized Queries
 
-**Monitor for signs of compromise:**
+**Good:**
+```python
+cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+```
+
+**Bad:**
+```python
+cursor.execute(f"SELECT * FROM users WHERE id = {user_id}")
+```
+
+### Validate Input
+
+```python
+# Validate expected format
+if not user_id.isdigit():
+    raise ValueError("Invalid user ID")
+```
+
+### Limit Database Permissions
+
+Application users should not have DDL rights:
 
 ```sql
--- Unusual login patterns
-SELECT
-    usename,
-    client_addr,
-    COUNT(*) AS logins,
-    MIN(backend_start) AS first_login,
-    MAX(backend_start) AS last_login
+-- No CREATE, DROP, ALTER
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO webapp;
+```
+
+---
+
+## Security Monitoring
+
+### Failed Login Monitoring
+
+```bash
+# Check for brute force attempts
+grep "authentication failed" /var/log/scratchbird/sb_server.log | \
+    awk '{print $NF}' | sort | uniq -c | sort -rn
+```
+
+### Long-Running Queries
+
+```sql
+-- Potential attack indicator
+SELECT pid, usename, query_start, query
 FROM pg_stat_activity
-WHERE backend_start > NOW() - INTERVAL '1 hour'
-GROUP BY usename, client_addr
-ORDER BY logins DESC;
-
--- Check for new superusers
-SELECT usename, usecreatedb, usesuper
-FROM pg_user
-WHERE usesuper = true;
-
--- Check for new database objects
-SELECT
-    schemaname,
-    tablename,
-    tableowner
-FROM pg_tables
-WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-ORDER BY tablename;
-
--- Check for privilege escalation
-SELECT
-    grantee,
-    privilege_type,
-    table_schema,
-    table_name
-FROM information_schema.table_privileges
-WHERE grantee NOT IN ('postgres', 'admin')
-AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE');
+WHERE state = 'active'
+  AND NOW() - query_start > INTERVAL '10 minutes';
 ```
 
-### Response Procedures
+### Unusual Patterns
 
-**Immediate response:**
+Monitor for:
+- Login from new IPs
+- After-hours activity
+- Unusual query patterns
+- Bulk data access
+
+---
+
+## Security Hardening
+
+### File Permissions
+
 ```bash
-# 1. Block suspicious IP
-iptables -I INPUT -s 1.2.3.4 -j DROP
+# Config files
+chmod 600 /etc/scratchbird/sb_server.conf
+chmod 600 /etc/scratchbird/hba.conf
+chown scratchbird:scratchbird /etc/scratchbird/*
 
-# 2. Terminate suspicious connections
-sb_isql -U admin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE client_addr = '1.2.3.4'"
+# SSL keys
+chmod 600 /etc/scratchbird/ssl/server.key
+chmod 644 /etc/scratchbird/ssl/server.crt
 
-# 3. Lock compromised account
-sb_isql -U admin -c "ALTER USER compromised_user NOLOGIN"
-
-# 4. Capture evidence
-cp /var/log/scratchbird/audit.log /evidence/audit_$(date +%Y%m%d_%H%M%S).log
-sb_isql -U admin -c "SELECT * FROM pg_stat_activity" > /evidence/connections.txt
+# Data directory
+chmod 700 /var/lib/scratchbird
+chown -R scratchbird:scratchbird /var/lib/scratchbird
 ```
 
-**Post-incident:**
-```sql
--- Change all passwords
-ALTER USER admin WITH PASSWORD 'new_secure_password';
-ALTER USER app_user WITH PASSWORD 'new_secure_password';
+### Systemd Hardening
 
--- Review and revoke suspicious grants
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM suspicious_user;
-DROP USER suspicious_user;
+The default service file includes:
 
--- Check for backdoors
-SELECT proname, prosrc FROM pg_proc WHERE proname LIKE '%backdoor%' OR prosrc LIKE '%/bin/%';
+```ini
+[Service]
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+MemoryDenyWriteExecute=true
+```
+
+### Kernel Security
+
+```bash
+# /etc/sysctl.d/99-scratchbird.conf
+# Prevent IP spoofing
+net.ipv4.conf.all.rp_filter = 1
+
+# SYN flood protection
+net.ipv4.tcp_syncookies = 1
+
+# Disable ICMP redirects
+net.ipv4.conf.all.accept_redirects = 0
 ```
 
 ---
 
-## Quick Reference
+## Incident Response
 
-### Common Security Commands
+### Suspicious Activity Detected
 
-```sql
--- Create user with password
-CREATE USER app_user WITH PASSWORD 'SecureP@ssw0rd!';
+1. **Capture evidence:**
+   ```bash
+   # Snapshot connections
+   psql -c "SELECT * FROM pg_stat_activity" > incident_$(date +%s).log
+   ```
 
--- Grant role
-GRANT readonly TO app_user;
+2. **Isolate if necessary:**
+   ```bash
+   # Block suspicious IP
+   sudo ufw deny from 1.2.3.4
+   ```
 
--- Revoke privileges
-REVOKE ALL ON DATABASE mydb FROM PUBLIC;
+3. **Kill suspicious sessions:**
+   ```sql
+   SELECT pg_terminate_backend(pid)
+   FROM pg_stat_activity
+   WHERE client_addr = '1.2.3.4';
+   ```
 
--- Enable RLS
-ALTER TABLE sensitive_data ENABLE ROW LEVEL SECURITY;
+4. **Review audit logs**
 
--- Check user privileges
-SELECT * FROM information_schema.table_privileges WHERE grantee = 'app_user';
-```
+5. **Document and report**
 
-### sb_hba.conf Quick Reference
+### Data Breach Response
 
-```
-# Local Unix socket
-local   all    all                    peer
-
-# Localhost
-host    all    all    127.0.0.1/32    scram-sha-256
-
-# Internal network (SSL required)
-hostssl all    all    10.0.0.0/8      scram-sha-256
-
-# Reject everything else
-host    all    all    0.0.0.0/0       reject
-```
-
-### SSL Modes
-
-| Mode | Encryption | Server Cert | Hostname |
-|------|------------|-------------|----------|
-| disable | No | No | No |
-| require | Yes | No | No |
-| verify-ca | Yes | Yes | No |
-| verify-full | Yes | Yes | Yes |
+1. Contain the breach
+2. Assess scope
+3. Notify affected parties
+4. Preserve evidence
+5. Remediate vulnerabilities
+6. Review and improve
 
 ---
 
-## See Also
+## Compliance
 
-- [User Management](user-management.md)
+### Password Policies
+
+| Requirement | Configuration |
+|-------------|---------------|
+| Minimum length | `password_min_length = 12` |
+| Complexity | Application-enforced |
+| Rotation | Policy + user education |
+| History | Not reusing recent passwords |
+
+### Access Logging
+
+Maintain logs for required retention period:
+
+```bash
+# Log rotation with retention
+/var/log/scratchbird/*.log {
+    daily
+    rotate 365
+    compress
+    delaycompress
+    notifempty
+}
+```
+
+---
+
+## Next Steps
+
+- [Configure SSL/TLS](../configuration/ssl-setup.md)
+- [Set up authentication](../configuration/hba.conf.md)
+- [User management](user-management.md)
 - [Monitoring](monitoring.md)
-- [Troubleshooting](troubleshooting.md)
-- [Backup and Restore](backup-restore.md)
-

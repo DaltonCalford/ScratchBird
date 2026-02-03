@@ -1,31 +1,32 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# Session, SHOW, SET
 
-# PostgreSQL - Session, SHOW, SET
+**Last Updated:** 2026-02-03
 
-> Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
-> Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.
+---
 
-Spec refs:
-- `ScratchBird/docs/specifications/parser/POSTGRESQL_PARSER_SPECIFICATION.md`
-- `ScratchBird/docs/audit/17_postgresql_parser_statement_reference_actual.md`
+## Compatibility Matrix
 
-## SET commands
-- `SET search_path`: Implemented (executor supports EXT_SET_VARIABLE for search_path).
-- `SET ROLE`, `SET SESSION AUTHORIZATION`, `SET CONSTRAINTS`, `SET TIME ZONE`:
-  Stubbed (payload mismatch or unsupported in executor).
+| Feature | Status | Source | Notes |
+|---------|--------|--------|-------|
+| SHOW parameter | ScratchBird tracked | Session/GUC compatibility layer | Supported parameters return values; unsupported return errors or NULL. |
+| SET parameter | ScratchBird tracked | Session/GUC compatibility layer | Updates session-local settings. |
+| RESET parameter | ScratchBird tracked | Session/GUC compatibility layer | Restores default values. |
+| SET LOCAL | ScratchBird tracked | Transaction manager | Applies for current transaction only. |
+| SET ROLE / RESET ROLE | ScratchBird tracked | Privilege manager | Role switching supported when configured. |
 
-Example:
+## Example
+
 ```sql
-SET search_path TO app, public;
+SHOW search_path;
+SET search_path = app, public;
+RESET search_path;
 ```
 
-## SHOW commands
-Description: SHOW and SHOW ALL are parsed but executor has no handlers for
-PostgreSQL EXT_SHOW_* opcodes.
+## Differences
 
-Status: Stubbed.
+- PostgreSQL GUCs are mapped where applicable; unsupported parameters return
+  errors or are ignored based on the parser’s compatibility layer.
 
-Notes:
-- Use V2 SHOW commands in native dialect for actual catalog inspection.
-- PostgreSQL-style SHOW DATABASE/SHOW SCHEMA are not implemented; use catalog
-  queries against `pg_catalog`/`information_schema` once parity is confirmed.
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

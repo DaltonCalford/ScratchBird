@@ -1,242 +1,294 @@
 # Indexes
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-ScratchBird supports multiple index types, all designed to respect MGA visibility
-(xmin/xmax + TIP checks) and stable tuple identifiers (TIDs). This page focuses
-on how each index works, when to use it instead of a B-tree, and what to expect
-from its storage and behavior.
 
-## Core DDL
+Create an index for faster queries.
 
-```
-CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] index_name
-    ON table_name [USING method]
-    (column_or_expression [ASC|DESC] [NULLS FIRST|LAST], ...)
-    [INCLUDE (column_list)]
-    [WHERE predicate]
-    [TABLESPACE tablespace_name];
-```
 
-Examples:
+---
 
-```
-CREATE INDEX idx_users_email ON users (email);
-CREATE INDEX idx_users_email_lower ON users (LOWER(email));
-CREATE INDEX idx_orders_active ON orders (order_date) WHERE status = 'ACTIVE';
+## Syntax
+
+```sql
+CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ IF NOT EXISTS ] index_name
+    ON table_name [ USING method ]
+    ( column_name [ ASC | DESC ] [ NULLS { FIRST | LAST } ], ... )
+    [ INCLUDE ( column_name, ... ) ]
+    [ WHERE predicate ];
 ```
 
-## Index type guide
+---
 
-### B-tree (default)
+## Index Types
 
-How it works:
-- Balanced tree with ordered keys and linked leaf pages.
-- Supports range scans and ordered retrieval efficiently.
+ScratchBird supports 11 index types:
 
-Use instead of B-tree when:
-- You do not need ordering or range scans and want faster equality lookups (Hash).
-- You need multi-value containment or text search (GIN/Inverted).
-- The table is physically correlated and very large (BRIN).
+| Type | Use Case |
+|------|----------|
+| `BTREE` | General purpose (default) |
+| `HASH` | Equality comparisons |
+| `GIN` | Full-text search, arrays, JSON |
+| `GIST` | Spatial data, ranges |
+| `BRIN` | Large tables with natural ordering |
+| `SP-GIST` | Non-balanced structures |
+| `BLOOM` | Multi-column equality |
+| `RTREE` | Legacy spatial |
+| `BITMAP` | Low-cardinality columns |
+| `PARTIAL` | Filtered indexes |
+| `COVERING` | Index-only scans |
 
-Notes:
-- Best general-purpose index for mixed workloads.
+---
 
-### Hash
+## Examples
 
-How it works:
-- Extendible hashing with bucket pages and overflow chains.
+### Basic Index
 
-Use instead of B-tree when:
-- You only need equality lookups on high-cardinality columns.
+```sql
+CREATE INDEX idx_users_email ON users(email);
+```
 
-Notes:
-- No range scans or ORDER BY support.
+### Unique Index
 
-### GIN (Generalized Inverted Index)
+```sql
+CREATE UNIQUE INDEX idx_users_email_unique ON users(email);
+```
 
-How it works:
-- Maps keys to posting lists of TIDs (entry tree + posting trees).
+### Composite Index
 
-Use instead of B-tree when:
-- You need containment on arrays or JSON, or multi-key membership queries.
+```sql
+CREATE INDEX idx_orders_user_date ON orders(user_id, created_at);
+```
 
-Notes:
-- Higher write amplification; best for multi-value columns.
+### Specify Type
 
-### Inverted index (full-text)
+```sql
+-- Hash for equality only
+CREATE INDEX idx_users_email_hash ON users USING HASH (email);
 
-How it works:
-- Token dictionary plus posting lists for terms; tuned for text search.
+-- GIN for full-text
+CREATE INDEX idx_posts_content ON posts USING GIN (to_tsvector('english', content));
 
-Use instead of B-tree when:
-- You need relevance-ranked full-text search or token-based filtering.
+-- GIN for JSON
+CREATE INDEX idx_data_json ON documents USING GIN (data jsonb_path_ops);
 
-Notes:
-- Expect larger index size than B-tree; optimized for text workloads.
+-- BRIN for time-series
+CREATE INDEX idx_logs_created ON logs USING BRIN (created_at);
+```
 
-### GiST (Generalized Search Tree)
+### Partial Index
 
-How it works:
-- Extensible tree with custom predicates and consistent/penalty/picksplit logic.
+Index only matching rows:
 
-Use instead of B-tree when:
-- You need custom predicates (spatial, geometric, range-like types).
+```sql
+-- Only active users
+CREATE INDEX idx_users_email_active ON users(email)
+WHERE active = TRUE;
 
-Notes:
-- Predicate quality dictates performance.
+-- Only pending orders
+CREATE INDEX idx_orders_pending ON orders(created_at)
+WHERE status = 'pending';
+```
 
-### SP-GiST (Space-Partitioned GiST)
+### Covering Index
 
-How it works:
-- Space-partitioning tree with non-overlapping partitions.
+Include extra columns for index-only scans:
 
-Use instead of B-tree when:
-- You need prefix, trie, quadtree, or point spatial indexing.
+```sql
+CREATE INDEX idx_orders_customer ON orders(customer_id)
+INCLUDE (total, status);
+```
 
-Notes:
-- Useful for partitionable key spaces (points, prefixes, IP ranges).
+### Expression Index
 
-### BRIN (Block Range Index)
+Index computed values:
 
-How it works:
-- Stores min/max summaries per block range.
+```sql
+-- Lowercase email
+CREATE INDEX idx_users_email_lower ON users(LOWER(email));
 
-Use instead of B-tree when:
-- Data is physically correlated (time-series, append-only logs).
+-- Date part
+CREATE INDEX idx_orders_month ON orders(DATE_TRUNC('month', created_at));
 
-Notes:
-- Lossy (returns candidate blocks); requires heap recheck.
-- Extremely small compared to B-tree.
+-- JSON field
+CREATE INDEX idx_docs_title ON documents((data->>'title'));
+```
 
-### Bitmap
+### Descending Order
 
-How it works:
-- One bitmap per distinct value; combines via AND/OR.
+```sql
+CREATE INDEX idx_orders_recent ON orders(created_at DESC);
 
-Use instead of B-tree when:
-- Column has low cardinality (status flags, dimensions) and analytic filters.
+CREATE INDEX idx_scores_rank ON scores(score DESC NULLS LAST);
+```
 
-Notes:
-- Great for warehousing-style queries with many predicates.
+### Concurrent Creation
 
-### LSM-Tree (Log-Structured Merge Tree)
+Build without blocking writes:
 
-How it works:
-- Writes go to a memtable and are flushed to SSTables with compaction.
+```sql
+CREATE INDEX CONCURRENTLY idx_large_table ON large_table(column);
+```
 
-Use instead of B-tree when:
-- You need very high write throughput or time-series ingest.
+---
 
-Notes:
-- Reads can touch multiple levels; compaction handles cleanup.
+## When to Use Each Type
 
-### Columnstore
+### BTREE (Default)
 
-How it works:
-- Column-oriented segments with compression and per-segment statistics.
+Best for:
+- Equality (`=`)
+- Range queries (`<`, `>`, `BETWEEN`)
+- Sorting (`ORDER BY`)
+- Pattern matching (`LIKE 'prefix%'`)
 
-Use instead of B-tree when:
-- OLAP workloads scan a few columns over many rows.
+```sql
+CREATE INDEX idx_price ON products(price);
+-- Supports: price = 100, price > 50, price BETWEEN 10 AND 50
+```
 
-Notes:
-- Append-oriented; best for analytics and reporting.
+### HASH
 
-### Zone maps
+Best for:
+- Equality only (`=`)
+- Slightly faster than BTREE for pure equality
 
-How it works:
-- Min/max metadata per block or segment for data skipping.
+```sql
+CREATE INDEX idx_code USING HASH ON products(product_code);
+-- Supports: product_code = 'ABC123'
+-- Does NOT support: product_code LIKE 'ABC%'
+```
 
-Use instead of B-tree when:
-- Large scans benefit from pruning with minimal overhead.
+### GIN
 
-Notes:
-- Often paired with columnstore or sorted data.
+Best for:
+- Full-text search
+- Array containment (`@>`, `<@`)
+- JSON containment
 
-### Bloom filter (auxiliary)
+```sql
+-- Full-text
+CREATE INDEX idx_search ON articles USING GIN (to_tsvector('english', body));
 
-How it works:
-- Probabilistic membership test (fast negative checks).
+-- Array
+CREATE INDEX idx_tags ON posts USING GIN (tags);
+-- Supports: tags @> ARRAY['tech']
 
-Use instead of B-tree when:
-- You want to reduce wasted lookups in another index (B-tree, Hash, GIN, LSM).
+-- JSONB
+CREATE INDEX idx_data ON events USING GIN (data);
+-- Supports: data @> '{"type": "click"}'
+```
 
-Notes:
-- Not a primary index; can return false positives but no false negatives.
+### GIST
 
-### Full-text index
+Best for:
+- Spatial queries
+- Range types
+- Complex overlapping
 
-How it works:
-- Dedicated full-text search index using tsvector and tsquery types.
-- Integrates with GIN for posting list storage and fast lookups.
+```sql
+-- Geometry (with GEOS)
+CREATE INDEX idx_location ON places USING GIST (location);
 
-Use instead of B-tree when:
-- You need ranked full-text search with tsvector/tsquery operations.
+-- Range types
+CREATE INDEX idx_period ON events USING GIST (validity_period);
+```
 
-Notes:
-- Works with the text search configuration system (`ts_config`).
-- Implementation: `fulltext_index.cpp`, `tsvector.cpp`, `tsquery.cpp`, `ts_operations.cpp`.
+### BRIN
 
-### HNSW (Hierarchical Navigable Small World)
+Best for:
+- Very large tables
+- Naturally ordered data (timestamps, auto-increment)
+- Small index size
 
-How it works:
-- Multi-layer proximity graph for approximate nearest neighbor search.
+```sql
+CREATE INDEX idx_logs_time ON logs USING BRIN (created_at);
+-- Table should be physically ordered by created_at
+```
 
-Use instead of B-tree when:
-- You need high-recall vector search with low latency.
+---
 
-Notes:
-- Higher memory overhead; excellent query speed.
+## Index Management
 
-### IVF (Inverted File)
+### List Indexes
 
-How it works:
-- Partitions vector space into clusters with centroid-based lookup.
-- Two-phase search: find nearest centroids, then search within partitions.
+```sql
+-- sb_isql / psql
+\di
 
-Use instead of B-tree when:
-- You need vector search with lower memory overhead than HNSW.
-- Dataset is very large and approximate results are acceptable.
+-- SQL
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'users';
+```
 
-Notes:
-- Requires training phase to establish centroids.
-- Trade-off between recall and search speed via nprobe parameter.
+### Drop Index
 
-### R-Tree
+```sql
+DROP INDEX idx_users_email;
 
-How it works:
-- Tree of minimum bounding rectangles (MBRs).
+DROP INDEX IF EXISTS idx_users_email;
 
-Use instead of B-tree when:
-- Spatial data uses rectangle overlap/containment queries.
+-- Concurrent drop
+DROP INDEX CONCURRENTLY idx_large_index;
+```
 
-Notes:
-- Works well for GIS and bounding-box searches.
+### Reindex
 
-## MGA integration (shared behavior)
+```sql
+-- Single index
+REINDEX INDEX idx_users_email;
 
-All index types are required to:
+-- All indexes on table
+REINDEX TABLE users;
 
-- Use TIP-based visibility checks (no snapshot-based visibility).
-- Reference stable TIDs (indexes only update when indexed columns change).
-- Support logical deletion and cooperative garbage collection via `index_gc_interface.h`.
-- Bloom filters can be attached to B-tree, Hash, and GIN indexes for accelerated negative lookups.
+-- All indexes in database
+REINDEX DATABASE mydb;
+```
 
-## Implementation
+---
 
-All index types listed above are implemented in the Alpha codebase. The index factory
-(`src/core/index_factory.cpp`) handles creation and loading. Key infrastructure includes
-`index_params.cpp` for parameter parsing, `index_key_extractor.cpp` for key extraction,
-and `global_uniqueness_index.cpp` for cross-partition uniqueness enforcement.
+## Index Statistics
 
-## References
+```sql
+-- Index usage
+SELECT
+    indexrelname,
+    idx_scan,
+    idx_tup_read,
+    idx_tup_fetch
+FROM pg_stat_user_indexes
+WHERE relname = 'users';
 
-- `docs/specifications/ddl/DDL_INDEXES.md`
-- `docs/specifications/indexes/INDEX_ARCHITECTURE.md`
-- `docs/specifications/indexes/INDEX_IMPLEMENTATION_SPEC.md`
-- `docs/specifications/indexes/BloomFilterIndex.md`
-- `docs/specifications/indexes/ZoneMapsIndex.md`
-- `docs/specifications/indexes/IVFIndex.md`
-- `docs/specifications/indexes/InvertedIndex.md`
-- `docs/specifications/indexes/LSM_TREE_SPEC.md`
-- `docs/specifications/indexes/COLUMNSTORE_SPEC.md`
+-- Unused indexes
+SELECT indexrelname, idx_scan
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0;
+```
+
+---
+
+## Index Design Tips
+
+1. **Index columns used in WHERE**
+2. **Index foreign key columns**
+3. **Order composite indexes by selectivity**
+4. **Use partial indexes for filtered queries**
+5. **Don't over-index** - indexes slow writes
+6. **Monitor usage** - drop unused indexes
+
+---
+
+## Notes
+
+- Indexes are automatically updated on INSERT/UPDATE/DELETE
+- Too many indexes slow down write operations
+- UNIQUE indexes also enforce uniqueness constraint
+- NULL values are indexed (except in HASH indexes)
+
+---
+
+## See Also
+
+- [Performance Tuning](../../admin/performance-tuning.md)
+- [EXPLAIN](../dml/select.md#explain)

@@ -1,27 +1,12 @@
-# Homebrew Installation
+# Homebrew
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-Install ScratchBird on macOS using Homebrew.
+---
 
-## Install
+Installation details are maintained in the repository specs and build scripts.
+Refer to the project README and deployment specifications for current steps.
 
-```bash
-brew install scratchbird/tap/scratchbird
-```
+---
 
-## Start the Server
-
-```bash
-brew services start scratchbird
-brew services list
-```
-
-## Notes
-
-- Default native port: `3092`
-- Config: [sb_server.conf](../configuration/sb_server.conf.md)
-
-## Troubleshooting
-
-See [Installation Issues](../troubleshooting/Installation-Issues.md) for common issues.
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

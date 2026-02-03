@@ -1431,6 +1431,8 @@ core::Status ServerSession::sendResultSet(const sblr::ResultSet* results, core::
                         values.push_back(protocol::ProtocolCodec::ColumnValue::fromInt64(val.getInt64()));
                         break;
                     case core::DataType::FLOAT32:
+                        values.push_back(protocol::ProtocolCodec::ColumnValue::fromDouble(static_cast<double>(val.getFloat32())));
+                        break;
                     case core::DataType::FLOAT64:
                         values.push_back(protocol::ProtocolCodec::ColumnValue::fromDouble(val.getFloat64()));
                         break;

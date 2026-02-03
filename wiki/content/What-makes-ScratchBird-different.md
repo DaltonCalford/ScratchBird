@@ -1,5 +1,7 @@
 # What makes ScratchBird different
 
+**Last Updated:** 2026-02-03
+
 ScratchBird is not just a rewrite. It is a deliberate attempt to build the database I always wanted while staying honest about what it is and what it is not. The differences below are not marketing features. They are choices I made to keep the project clear, safe, and compatible.
 
 ---
@@ -13,7 +15,7 @@ I chose Firebird's Multi-Generational Architecture (MGA) because it fits how I w
 - **Readers do not block writers, and writers do not block readers.**
 - **Recovery is fast and safe** because failures do not lose data or leave half-applied changes.
 
-ScratchBird still supports a write-after log for replication or recovery, but it is not the engine's spine. I wanted the transaction model to be clean first, not bolted on later.
+ScratchBird is designed around MGA without a mandatory write-after log (WAL). Any WAL support is optional and post-gold, not the core mechanism.
 
 ---
 

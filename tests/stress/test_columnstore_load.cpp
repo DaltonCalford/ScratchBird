@@ -22,10 +22,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/uuidv7.h"
+#include <atomic>
 #include <cassert>
-#include <cstdio>
-#include <iostream>
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <iostream>
 #include <random>
 
 using namespace scratchbird::core;
@@ -55,6 +57,17 @@ private:
     std::chrono::high_resolution_clock::time_point start_time;
 };
 
+std::string makeTempDbPath(const std::string &stem)
+{
+    static std::atomic<uint64_t> counter{0};
+    uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);
+    auto ts = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+        (stem + "_" + std::to_string(static_cast<long long>(ts)) + "_" +
+         std::to_string(static_cast<unsigned long long>(seq)) + ".db");
+    return path.string();
+}
+
 /**
  * Test 1: Insert 100K rows and measure throughput
  */
@@ -63,7 +76,7 @@ void testInsert100K()
     std::cout << "\n=== Load Test 1: Insert 100K Rows ===\n";
 
     // Create database
-    std::string db_path = "/tmp/columnstore_load_100k.db";
+    std::string db_path = makeTempDbPath("columnstore_load_100k");
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -151,7 +164,7 @@ void testScan100K()
     std::cout << "\n=== Load Test 2: Scan 100K Rows ===\n";
 
     // Create database
-    std::string db_path = "/tmp/columnstore_load_scan.db";
+    std::string db_path = makeTempDbPath("columnstore_load_scan");
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -259,7 +272,7 @@ void testCompressionScale()
     std::cout << "  WARNING: This test inserts 1M rows and may take 1-2 minutes\n";
 
     // Create database
-    std::string db_path = "/tmp/columnstore_load_1m.db";
+    std::string db_path = makeTempDbPath("columnstore_load_1m");
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -343,7 +356,7 @@ void testMultiColumnLoad()
     std::cout << "\n=== Load Test 4: Multi-Column (3 columns, 10K rows each) ===\n";
 
     // Create database
-    std::string db_path = "/tmp/columnstore_load_multi.db";
+    std::string db_path = makeTempDbPath("columnstore_load_multi");
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

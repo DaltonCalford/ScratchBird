@@ -1,37 +1,16 @@
 # Debug Guide
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-## Run in Foreground
+---
 
-```bash
-sb_server --foreground
-```
+## Debugging Steps
 
-## Verify Ports
+1. Run the server in foreground.
+2. Increase logging verbosity.
+3. Reproduce with minimal SQL.
+4. Capture logs and errors.
 
-```bash
-ss -ltn | rg '3092|5432|3306|3050'
-```
+---
 
-## Check Configuration
-
-- Config file: `../configuration/sb_server.conf.md`
-- HBA rules: `../configuration/hba.conf.md`
-
-## Capture Logs
-
-If running as a service, check system logs:
-
-```bash
-journalctl -u scratchbird -n 200
-```
-
-## Report a Bug
-
-Capture:
-- exact command line
-- full error output
-- config files in use
-
-Then file an issue: https://github.com/scratchbird/scratchbird/issues
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

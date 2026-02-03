@@ -10,12 +10,15 @@
 #include "scratchbird/core/gin_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <filesystem>
 #include <iostream>
 #include "gtest/gtest.h"
-#include <vector>
-#include <string>
-#include <algorithm>
 #include <set>
+#include <string>
+#include <vector>
 
 using namespace scratchbird::core;
 
@@ -35,12 +38,23 @@ std::vector<uint8_t> stringToKey(const std::string &str)
     return std::vector<uint8_t>(str.begin(), str.end());
 }
 
+std::string makeTempDbPath(const std::string &stem)
+{
+    static std::atomic<uint64_t> counter{0};
+    uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);
+    auto ts = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+        (stem + "_" + std::to_string(static_cast<long long>(ts)) + "_" +
+         std::to_string(static_cast<unsigned long long>(seq)) + ".db");
+    return path.string();
+}
+
 void test_find_all_basic()
 {
     std::cout << "Test: findAll() basic AND operation\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db1";
-    std::remove(db_path);
+    std::string db_path = makeTempDbPath("test_gin_phase4_db1");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
     Database db;
@@ -132,8 +146,8 @@ void test_find_any_basic()
 {
     std::cout << "Test: findAny() basic OR operation\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db2";
-    std::remove(db_path);
+    std::string db_path = makeTempDbPath("test_gin_phase4_db2");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
     Database db;
@@ -212,8 +226,8 @@ void test_complex_queries()
 {
     std::cout << "Test: Complex multi-key queries\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db3";
-    std::remove(db_path);
+    std::string db_path = makeTempDbPath("test_gin_phase4_db3");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
     Database db;
@@ -284,8 +298,8 @@ void test_large_scale_multi_key()
 {
     std::cout << "Test: Large-scale multi-key operations\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db4";
-    std::remove(db_path);
+    std::string db_path = makeTempDbPath("test_gin_phase4_db4");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
     Database db;
@@ -345,8 +359,8 @@ void test_edge_cases()
 {
     std::cout << "Test: Edge cases\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db5";
-    std::remove(db_path);
+    std::string db_path = makeTempDbPath("test_gin_phase4_db5");
+    std::remove(db_path.c_str());
 
     ErrorContext ctx;
     Database db;

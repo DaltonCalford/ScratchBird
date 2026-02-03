@@ -28,11 +28,13 @@
 #include <cctype>
 
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/security/tls_config.h"
 #include "scratchbird/network/control_plane.h"
 #include "scratchbird/network/network.h"
 #include "scratchbird/network/connection_handler.h"
 #include "scratchbird/network/socket.h"
 #include "scratchbird/network/socket_types.h"
+#include "scratchbird/server/config_parser.h"
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
 #include "scratchbird/version.h"
 
@@ -60,6 +62,8 @@ struct ParserConfig {
     std::string control_socket;
     std::string engine_endpoint;
     std::string tls_config;
+    scratchbird::security::TLSConfig tls_settings;
+    std::shared_ptr<scratchbird::security::TLSContext> tls_context;
     std::string log_level = "info";
     uint32_t protocol_version = 1;
     uint32_t max_requests = 0;
@@ -190,6 +194,58 @@ bool validateConfig(const ParserConfig& config) {
             return false;
         }
     }
+    return true;
+}
+
+bool loadTLSSettings(const std::string& path,
+                     scratchbird::security::TLSConfig& out,
+                     std::string& error) {
+    scratchbird::core::ErrorContext ctx;
+    scratchbird::server::ConfigParser parser;
+    if (parser.parseFile(path, &ctx) != scratchbird::core::Status::OK) {
+        error = ctx.message.empty() ? "Failed to parse TLS config" : ctx.message;
+        return false;
+    }
+
+    const auto* ssl = parser.section("ssl");
+    if (!ssl) {
+        return true;
+    }
+
+    out.enabled = ssl->getBool("enabled", out.enabled);
+    out.cert_file = ssl->getString("cert_file", out.cert_file);
+    out.key_file = ssl->getString("key_file", out.key_file);
+    out.key_password = ssl->getString("key_password", out.key_password);
+    out.ca_file = ssl->getString("ca_file", out.ca_file);
+    out.ca_path = ssl->getString("ca_path", out.ca_path);
+    out.ciphers = ssl->getString("ciphers", out.ciphers);
+    out.ciphersuites = ssl->getString("ciphersuites", out.ciphersuites);
+    out.ecdh_curve = ssl->getString("ecdh_curve", out.ecdh_curve);
+    out.dh_params_file = ssl->getString("dh_params_file", out.dh_params_file);
+    out.verify_depth = static_cast<int>(ssl->getInt("verify_depth", out.verify_depth));
+
+    if (ssl->getBool("require_client_cert", false)) {
+        out.verify_mode = scratchbird::security::VerifyMode::REQUIRE;
+    }
+
+    std::string min_proto = ssl->getString("min_protocol", "");
+    if (!min_proto.empty()) {
+        scratchbird::security::TLSVersion version;
+        if (scratchbird::security::parseTLSVersion(min_proto, version)) {
+            out.min_version = version;
+        }
+    }
+    std::string max_proto = ssl->getString("max_protocol", "");
+    if (max_proto.empty()) {
+        max_proto = ssl->getString("preferred_protocol", "");
+    }
+    if (!max_proto.empty()) {
+        scratchbird::security::TLSVersion version;
+        if (scratchbird::security::parseTLSVersion(max_proto, version)) {
+            out.max_version = version;
+        }
+    }
+
     return true;
 }
 
@@ -404,6 +460,15 @@ uint32_t runSession(const ParserConfig& config,
         return static_cast<uint32_t>(scratchbird::core::Status::INTERNAL_ERROR);
     }
 
+    if (config.tls_context && config.tls_settings.enabled) {
+        scratchbird::core::ErrorContext tls_ctx;
+        auto status = socket->startTLS(*config.tls_context, &tls_ctx);
+        if (status != scratchbird::core::Status::OK) {
+            std::cerr << "[parser_debug] TLS handshake failed: " << tls_ctx.message << "\n";
+            return static_cast<uint32_t>(status);
+        }
+    }
+
     scratchbird::network::Connection conn(std::move(socket),
                                           static_cast<scratchbird::network::ConnectionId>(
                                               info.connection_id));
@@ -475,7 +540,7 @@ uint32_t runSession(const ParserConfig& config,
     return 0;
 }
 
-int runParser(const ParserConfig& config) {
+int runParser(ParserConfig& config) {
     std::cout << SB_PARSER_NAME << " starting\n"
               << "Protocol: " << config.protocol << "\n"
               << "Control socket: " << config.control_socket << "\n"
@@ -488,6 +553,24 @@ int runParser(const ParserConfig& config) {
     if (!scratchbird::network::initNetwork()) {
         std::cerr << "Failed to initialize network subsystem\n";
         return 2;
+    }
+
+    if (!config.tls_config.empty()) {
+        std::string error;
+        if (!loadTLSSettings(config.tls_config, config.tls_settings, error)) {
+            std::cerr << "Failed to load TLS settings: " << error << "\n";
+            return 2;
+        }
+        if (config.tls_settings.enabled) {
+            scratchbird::core::ErrorContext tls_ctx;
+            auto tls_context = scratchbird::security::TLSContext::createServer(
+                config.tls_settings, &tls_ctx);
+            if (!tls_context || !tls_context->isValid()) {
+                std::cerr << "Failed to initialize TLS context: " << tls_ctx.message << "\n";
+                return 2;
+            }
+            config.tls_context = std::move(tls_context);
+        }
     }
 
     scratchbird::core::ErrorContext ctx;

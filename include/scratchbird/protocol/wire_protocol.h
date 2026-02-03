@@ -818,8 +818,14 @@ public:
      */
     struct ColumnInfo {
         std::string name;
-        WireType type;
-        uint32_t type_modifier;
+        WireType type{WireType::UNKNOWN};
+        uint32_t type_modifier{0};
+        uint32_t table_oid{0};
+        uint16_t column_index{0};
+        uint32_t type_oid{0};
+        int16_t type_size{0};
+        uint8_t format{1};
+        bool nullable{true};
     };
 
     static Message buildRowDescription(const std::vector<ColumnInfo>& columns);

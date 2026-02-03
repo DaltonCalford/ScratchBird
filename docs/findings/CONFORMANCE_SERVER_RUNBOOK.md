@@ -11,6 +11,18 @@ This document tells another agent how to verify driver conformance against the r
 - **Protocol:** scratchbird native
 - **TLS:** disabled for this conformance run (use `sslmode=disable`)
 
+## TLS Conformance Server (Optional)
+
+If you need TLS-enabled driver runs, use the pre-staged config at:
+
+- `/home/dcalford/CliWork/sb_server_conformance_tls.conf`
+
+Example TLS DSN:
+
+```
+scratchbird://SYSARCH:ScratchBirdBeta1!@localhost:5440/sb_conformance_tls?sslmode=require&sslrootcert=/tmp/sb_tls/ca.crt
+```
+
 The server is running from this workspace build and is started with a fixed config file at `/tmp/sb_server_conformance.conf`.
 
 ## How to Check It Is Running
@@ -142,4 +154,3 @@ Server → Client:
 
 For full detail (including exact field layouts, message structures, and type encodings), use:
 - `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
-

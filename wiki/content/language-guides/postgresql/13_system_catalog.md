@@ -1,666 +1,465 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# System Catalog
 
-# PostgreSQL - System Catalog Surface
-
-**Status:** Alpha documentation
-**Last Updated:** 2026-01-30
-
-> Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
-> Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.
+**Last Updated:** 2026-02-03
 
 ---
 
-## Overview
+ScratchBird exposes PostgreSQL system catalogs through a combination of
+pg_catalog virtual tables and emulated views. Every catalog table listed here
+includes strict per-column status and source mapping.
 
-This document covers system catalog access in PostgreSQL emulation mode. PostgreSQL applications often query system catalogs (`pg_catalog`) and the SQL standard `information_schema` for metadata. ScratchBird emulates these catalogs by providing views over its native metadata.
-
-**Spec refs:**
-- `ScratchBird/docs/specifications/POSTGRESQL_PARSER_IMPLEMENTATION_GAPS.md`
-
----
-
-## Catalog Namespaces
-
-PostgreSQL provides two standard ways to access metadata:
-
-| Namespace | Description | Standard |
-|-----------|-------------|----------|
-| `pg_catalog` | PostgreSQL-specific system catalogs | PostgreSQL |
-| `information_schema` | SQL standard metadata views | SQL:2016 |
+Statuses:
+- ScratchBird tracked: populated from a ScratchBird runtime source.
+- Always NULL: column exists but is never populated.
+- Always 0: column is always returned as 0.
 
 ---
 
-## pg_catalog Tables
+## pg_catalog.pg_namespace
 
-### Core Catalog Tables
+Table status: Implemented
+Source: PgCatalogHandler::queryPgNamespace
 
-#### pg_class
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(schema.schema_id) or builtin constants | Row per schema; pg_catalog/info_schema added if missing. |
+| `nspname` | ScratchBird tracked | schemaName(schema) | Row per schema. |
+| `nspowner` | ScratchBird tracked | schema.owner_id | NULL when owner_id is zero. |
+| `nspacl` | Always NULL | Not populated | Never. |
 
-Contains information about tables, indexes, sequences, views, and other relations.
+## pg_catalog.pg_class
 
-```sql
-SELECT
-    relname AS table_name,
-    relkind AS type,
-    reltuples AS row_estimate,
-    relpages AS page_count
-FROM pg_catalog.pg_class
-WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
-AND relkind IN ('r', 'v', 'i');  -- r=table, v=view, i=index
+Table status: Implemented
+Source: PgCatalogHandler::queryPgClass
 
--- Common relkind values:
--- 'r' = ordinary table
--- 'i' = index
--- 'S' = sequence
--- 'v' = view
--- 'm' = materialized view
--- 'c' = composite type
--- 't' = TOAST table
--- 'f' = foreign table
--- 'p' = partitioned table
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(table/view/index/sequence/domain id) | Row per table, view, index, sequence, record domain. |
+| `relname` | ScratchBird tracked | object name | Row per table/view/index/sequence/domain. |
+| `relnamespace` | ScratchBird tracked | schema oid | Row per object. |
+| `relkind` | ScratchBird tracked | pgRelKind/table-type constants | Row per object. |
+| `relowner` | ScratchBird tracked | owner_id | NULL when owner_id is zero. |
+| `reltablespace` | ScratchBird tracked | tablespace oid mapping | NULL when tablespace_id is unset or object has no tablespace. |
+| `reltuples` | ScratchBird tracked | table.row_count or constant 0 | Tables use row_count; indexes/views/sequences/domains emit 0. |
+| `relpages` | Always 0 | Constant 0 | Always. |
+| `relnatts` | ScratchBird tracked | column_count or index column count | Tables use column_count; indexes/views/domains use size of column list. |
+| `relhasindex` | ScratchBird tracked | indexes.empty() | True when table has indexes; false for other relkinds. |
+| `relisshared` | Always 0 | Constant false | Always. |
+| `relpersistence` | ScratchBird tracked | pgRelPersistence(table_type) or constant 'p' | Tables use persistence mapping; others use 'p'. |
+| `reloptions` | Always NULL | Not populated | Never. |
 
-#### pg_attribute
+## pg_catalog.pg_attribute
 
-Contains column information for tables.
+Table status: Implemented
+Source: PgCatalogHandler::queryPgAttribute
 
-```sql
-SELECT
-    a.attname AS column_name,
-    t.typname AS data_type,
-    a.attnum AS position,
-    a.attnotnull AS not_null,
-    a.atthasdef AS has_default
-FROM pg_catalog.pg_attribute a
-JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
-JOIN pg_catalog.pg_type t ON a.atttypid = t.oid
-WHERE c.relname = 'users'
-AND a.attnum > 0  -- Exclude system columns
-AND NOT a.attisdropped
-ORDER BY a.attnum;
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `attrelid` | ScratchBird tracked | oidFromUuid(table_id or record domain id) | Row per column or record domain field. |
+| `attname` | ScratchBird tracked | column/field name | Row per column or record domain field. |
+| `atttypid` | ScratchBird tracked | domain oid or pgBuiltinTypeOid | Domain columns use domain id; otherwise builtin type OID. |
+| `attnum` | ScratchBird tracked | column.ordinal or field position | Row per column or field. |
+| `attnotnull` | ScratchBird tracked | !column.nullable | Row per column or field. |
+| `attisdropped` | Always 0 | Constant false | Always. |
+| `atttypmod` | ScratchBird tracked | Constant -1 | Always. |
 
-#### pg_namespace
+## pg_catalog.pg_type
 
-Contains schema information.
+Table status: Implemented
+Source: PgCatalogHandler::queryPgType
 
-```sql
-SELECT
-    nspname AS schema_name,
-    nspowner AS owner_oid
-FROM pg_catalog.pg_namespace
-WHERE nspname NOT LIKE 'pg_%'
-AND nspname != 'information_schema';
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | pgBuiltinTypeOid or oidFromUuid(domain_id) | Row per builtin type and domain. |
+| `typname` | ScratchBird tracked | pgBuiltinTypeName or domain.domain_name | Row per builtin type and domain. |
+| `typnamespace` | ScratchBird tracked | kPgCatalogOid or domain.schema_id | Builtin types use pg_catalog; domains use their schema. |
+| `typowner` | Always NULL | Not populated | Never. |
+| `typlen` | ScratchBird tracked | pgTypeLen or -1 | Builtin/basic domains use pgTypeLen; others use -1. |
+| `typbyval` | ScratchBird tracked | pgTypeByVal or false | Builtin/basic domains use pgTypeByVal; others false. |
+| `typtype` | ScratchBird tracked | 'b' builtin; domain type mapping | Domain type sets d/e/c/p. |
+| `typcategory` | ScratchBird tracked | pgTypeCategory or domain mapping | Domain types map to category codes. |
+| `typrelid` | ScratchBird tracked | record domain relid or 0 | Record domains use domain id; others 0. |
+| `typelem` | Always 0 | Constant 0 | Always. |
+| `typarray` | Always 0 | Constant 0 | Always. |
+| `typbasetype` | ScratchBird tracked | pgBuiltinTypeOid(base_type) or 0 | Basic domains map to base type OID; others 0. |
+| `typnotnull` | ScratchBird tracked | !domain.nullable or false | Domains use nullable flag; builtin types false. |
 
-#### pg_type
+## pg_catalog.pg_enum
 
-Contains data type definitions.
+Table status: Implemented
+Source: PgCatalogHandler::queryPgEnum
 
-```sql
-SELECT
-    typname AS type_name,
-    typlen AS length,
-    typtype AS type_kind,
-    typcategory AS category
-FROM pg_catalog.pg_type
-WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'pg_catalog')
-AND typtype = 'b'  -- Base types only
-ORDER BY typname;
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `enumtypid` | ScratchBird tracked | oidFromUuid(domain.domain_id) | Row per enum value. |
+| `enumsortorder` | ScratchBird tracked | enum value position | Row per enum value. |
+| `enumlabel` | ScratchBird tracked | enum value label | Row per enum value. |
 
-#### pg_index
+## pg_catalog.pg_proc
 
-Contains index information.
+Table status: Implemented
+Source: PgCatalogHandler::queryPgProc
 
-```sql
-SELECT
-    c.relname AS index_name,
-    t.relname AS table_name,
-    i.indisunique AS is_unique,
-    i.indisprimary AS is_primary,
-    i.indkey AS column_positions
-FROM pg_catalog.pg_index i
-JOIN pg_catalog.pg_class c ON i.indexrelid = c.oid
-JOIN pg_catalog.pg_class t ON i.indrelid = t.oid
-WHERE t.relname = 'users';
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(function_id/procedure_id) | Row per function/procedure. |
+| `proname` | ScratchBird tracked | function/procedure name | Row per function/procedure. |
+| `pronamespace` | ScratchBird tracked | schema oid | Row per function/procedure. |
+| `proowner` | ScratchBird tracked | owner_id | NULL when owner_id is zero. |
+| `prorettype` | ScratchBird tracked | pgBuiltinTypeOid(return_type) or kPgVoidOid | Functions map return type; procedures use void. |
+| `prokind` | ScratchBird tracked | 'f' for functions, 'p' for procedures | Row per function/procedure. |
+| `proargtypes` | ScratchBird tracked | formatArgTypes(parameters) | Space-separated type OIDs for IN parameters; empty when none. |
 
-#### pg_constraint
+## pg_catalog.pg_trigger
 
-Contains constraint definitions.
+Table status: Implemented
+Source: PgCatalogHandler::queryPgTrigger
 
-```sql
-SELECT
-    conname AS constraint_name,
-    contype AS type,
-    c.relname AS table_name
-FROM pg_catalog.pg_constraint con
-JOIN pg_catalog.pg_class c ON con.conrelid = c.oid
-WHERE c.relname = 'orders';
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(trigger_id) | Row per trigger. |
+| `tgname` | ScratchBird tracked | trigger.trigger_name | Row per trigger. |
+| `tgrelid` | ScratchBird tracked | oidFromUuid(trigger.table_id) | Row per trigger. |
+| `tgenabled` | ScratchBird tracked | 'O' or 'D' | 'O' when enabled; 'D' when disabled. |
 
--- contype values:
--- 'c' = check constraint
--- 'f' = foreign key
--- 'p' = primary key
--- 'u' = unique
--- 't' = trigger constraint
--- 'x' = exclusion constraint
-```
+## pg_catalog.pg_constraint
 
-### Security Catalogs
+Table status: Implemented
+Source: PgCatalogHandler::queryPgConstraint
 
-#### pg_roles
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(constraint_id) | Row per constraint. |
+| `conname` | ScratchBird tracked | constraint.constraint_name | Row per constraint. |
+| `connamespace` | ScratchBird tracked | schema oid | Row per constraint. |
+| `conrelid` | ScratchBird tracked | table oid | Row per constraint. |
+| `contype` | ScratchBird tracked | pgConstraintType(constraint_type) | Row per constraint. |
+| `condeferrable` | ScratchBird tracked | constraint.is_deferrable | Row per constraint. |
+| `condeferred` | ScratchBird tracked | constraint.initially_deferred | Row per constraint. |
+| `confrelid` | Always 0 | Constant 0 | Always. |
 
-Contains role information.
+## pg_catalog.pg_index
 
-```sql
-SELECT
-    rolname AS role_name,
-    rolsuper AS is_superuser,
-    rolcreatedb AS can_create_db,
-    rolcreaterole AS can_create_role,
-    rolcanlogin AS can_login
-FROM pg_catalog.pg_roles;
-```
+Table status: Implemented
+Source: PgCatalogHandler::queryPgIndex
 
-#### pg_user
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `indexrelid` | ScratchBird tracked | oidFromUuid(index.index_id) | Row per index. |
+| `indrelid` | ScratchBird tracked | oidFromUuid(table.table_id) | Row per index. |
+| `indisunique` | ScratchBird tracked | index.is_unique | Row per index. |
+| `indisprimary` | Always 0 | Constant false | Always. |
+| `indisvalid` | ScratchBird tracked | index.state == ACTIVE | Row per index. |
+| `indkey` | ScratchBird tracked | Space-separated column ordinals | NULL if no columns found. |
 
-View of roles with login capability.
+## pg_catalog.pg_roles
 
-```sql
-SELECT
-    usename AS username,
-    usesysid AS user_id,
-    usecreatedb AS can_create_db,
-    usesuper AS is_superuser
-FROM pg_catalog.pg_user;
-```
+Table status: Implemented
+Source: PgCatalogHandler::queryPgRoles
 
-#### pg_auth_members
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(user_id/role_id) | Row per user/role. |
+| `rolname` | ScratchBird tracked | user.username or role.role_name | Row per user/role. |
+| `rolsuper` | ScratchBird tracked | user.is_superuser or false | True for superusers; false for roles. |
+| `rolcanlogin` | ScratchBird tracked | true for users; false for roles | True for users; false for roles. |
+| `rolcreaterole` | Always 0 | Constant false | Always. |
+| `rolcreatedb` | Always 0 | Constant false | Always. |
+| `rolreplication` | Always 0 | Constant false | Always. |
+| `rolbypassrls` | ScratchBird tracked | user.is_superuser or false | True for superusers; false for roles. |
 
-Contains role membership information.
+## pg_catalog.pg_authid
 
-```sql
-SELECT
-    r.rolname AS role,
-    m.rolname AS member,
-    grantor.rolname AS grantor
-FROM pg_catalog.pg_auth_members am
-JOIN pg_catalog.pg_roles r ON am.roleid = r.oid
-JOIN pg_catalog.pg_roles m ON am.member = m.oid
-JOIN pg_catalog.pg_roles grantor ON am.grantor = grantor.oid;
-```
+Table status: Implemented
+Source: PgCatalogHandler::queryPgAuthid
 
-### Statistics Catalogs
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(user_id/role_id) | Row per user/role. |
+| `rolname` | ScratchBird tracked | user.username or role.role_name | Row per user/role. |
+| `rolsuper` | ScratchBird tracked | user.is_superuser or false | True for superusers; false for roles. |
+| `rolcanlogin` | ScratchBird tracked | true for users; false for roles | True for users; false for roles. |
+| `rolcreaterole` | Always 0 | Constant false | Always. |
+| `rolcreatedb` | Always 0 | Constant false | Always. |
+| `rolreplication` | Always 0 | Constant false | Always. |
+| `rolbypassrls` | ScratchBird tracked | user.is_superuser or false | True for superusers; false for roles. |
+| `rolpassword` | ScratchBird tracked | user.password_hash or NULL | Users return password hash when present; roles NULL. |
 
-#### pg_stat_user_tables
+## pg_catalog.pg_database
 
-Statistics for user tables.
+Table status: Implemented
+Source: PgCatalogHandler::queryPgDatabase
 
-```sql
-SELECT
-    schemaname,
-    relname AS table_name,
-    seq_scan,
-    seq_tup_read,
-    idx_scan,
-    idx_tup_fetch,
-    n_tup_ins AS inserts,
-    n_tup_upd AS updates,
-    n_tup_del AS deletes,
-    n_live_tup AS live_rows,
-    n_dead_tup AS dead_rows,
-    last_vacuum,
-    last_autovacuum,
-    last_analyze
-FROM pg_stat_user_tables
-ORDER BY seq_scan DESC;
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | Constant 1 | Always. |
+| `datname` | ScratchBird tracked | Constant 'scratchbird' | Always. |
+| `datdba` | Always 0 | Constant 0 | Always. |
+| `encoding` | ScratchBird tracked | Constant 6 | Always (UTF-8 encoding id). |
 
-#### pg_stat_user_indexes
+## pg_catalog.pg_tablespace
 
-Statistics for user indexes.
+Table status: Implemented
+Source: PgCatalogHandler::queryPgTablespace
 
-```sql
-SELECT
-    schemaname,
-    relname AS table_name,
-    indexrelname AS index_name,
-    idx_scan AS scans,
-    idx_tup_read AS rows_read,
-    idx_tup_fetch AS rows_fetched
-FROM pg_stat_user_indexes
-WHERE idx_scan = 0;  -- Unused indexes
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `oid` | ScratchBird tracked | oidFromUuid(tablespace_uuid) or default constant | Row per tablespace; adds pg_default if missing. |
+| `spcname` | ScratchBird tracked | tablespace_name or 'pg_default' | Row per tablespace. |
+| `spcowner` | Always 0 | Constant 0 | Always. |
 
-#### pg_stat_activity
+## pg_catalog.pg_settings
 
-Current database activity.
+Table status: Schema-only (no rows)
+Source: PgCatalogHandler::queryPgSettings
 
-```sql
-SELECT
-    pid,
-    usename AS username,
-    datname AS database,
-    state,
-    query,
-    query_start,
-    wait_event_type,
-    wait_event
-FROM pg_stat_activity
-WHERE state = 'active';
-```
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `name` | Always NULL | Not populated | Never (no rows emitted). |
+| `setting` | Always NULL | Not populated | Never (no rows emitted). |
+
+## pg_catalog.pg_inherits
+
+Table status: Schema-only (no rows)
+Source: PgCatalogHandler::queryPgInherits
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `inhrelid` | Always NULL | Not populated | Never (no rows emitted). |
+| `inhparent` | Always NULL | Not populated | Never (no rows emitted). |
+| `inhseqno` | Always NULL | Not populated | Never (no rows emitted). |
+
+## pg_catalog.pg_locks
+
+Table status: Implemented
+Source: PgCatalogHandler::queryPgLocks
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `locktype` | ScratchBird tracked | pgLockTypeName(lock.tag.target_type) | Row per lock. |
+| `database` | ScratchBird tracked | Constant 1 | Always. |
+| `relation` | ScratchBird tracked | oidFromUuid(lock.tag.object_uuid) | Populated for relation/page/tuple locks; NULL otherwise. |
+| `page` | ScratchBird tracked | lock.tag.page_num | Populated for page/tuple locks; NULL otherwise. |
+| `tuple` | ScratchBird tracked | lock.tag.offset_num | Populated for tuple locks; NULL otherwise. |
+| `virtualxid` | Always NULL | Not populated | Never. |
+| `transactionid` | Always NULL | Not populated | Never. |
+| `classid` | Always NULL | Not populated | Never. |
+| `objid` | Always NULL | Not populated | Never. |
+| `objsubid` | Always NULL | Not populated | Never. |
+| `pid` | ScratchBird tracked | backend pid from ProcArrayManager | Populated when backend pid is known; NULL otherwise. |
+| `mode` | ScratchBird tracked | pgLockModeName(lock.mode) | Row per lock. |
+| `granted` | ScratchBird tracked | lock.granted | Row per lock. |
+
+## pg_catalog.pg_stat_activity
+
+Table status: Implemented
+Source: PgCatalogHandler::queryPgStatActivity
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `datid` | ScratchBird tracked | Constant 1 | Always. |
+| `datname` | ScratchBird tracked | Constant 'scratchbird' | Always. |
+| `pid` | ScratchBird tracked | backend.backend_pid | NULL when backend pid is zero. |
+| `leader_pid` | Always NULL | Not populated | Never. |
+| `usesysid` | ScratchBird tracked | session.user_id | NULL when session lookup fails. |
+| `usename` | ScratchBird tracked | session.username | NULL when session lookup fails. |
+| `application_name` | Always NULL | Not populated | Never. |
+| `client_addr` | Always NULL | Not populated | Never. |
+| `client_hostname` | Always NULL | Not populated | Never. |
+| `client_port` | Always NULL | Not populated | Never. |
+| `backend_start` | ScratchBird tracked | backend.start_time | NULL when start_time is zero. |
+| `xact_start` | ScratchBird tracked | backend.xact_start_time | NULL when not in transaction. |
+| `query_start` | ScratchBird tracked | backend.query_start_time | NULL when idle. |
+| `state_change` | ScratchBird tracked | backend.state_change_time or start_time | Always when backend snapshot exists. |
+| `wait_event_type` | Always NULL | Not populated | Never. |
+| `wait_event` | Always NULL | Not populated | Never. |
+| `state` | ScratchBird tracked | Derived from backend query/txn state | active/idle/idle in transaction. |
+| `backend_xid` | ScratchBird tracked | backend.xid | NULL when xid is zero. |
+| `backend_xmin` | ScratchBird tracked | backend.backend_xmin | NULL when backend_xmin is zero. |
+| `query_id` | Always NULL | Not populated | Never. |
+| `query` | ScratchBird tracked | backend.query_text | NULL when empty. |
+| `backend_type` | ScratchBird tracked | Constant 'client backend' | Always. |
+
+## pg_catalog.pg_stat_user_tables
+
+Table status: Implemented
+Source: PgCatalogHandler::queryPgStatTables
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `relid` | ScratchBird tracked | oidFromUuid(table.table_id) | Row per table in scope. |
+| `schemaname` | ScratchBird tracked | schemaName(schema) | Row per table in scope. |
+| `relname` | ScratchBird tracked | table.table_name | Row per table in scope. |
+| `seq_scan` | ScratchBird tracked | TableStatsSnapshot.seq_scan_count | 0 when no stats snapshot. |
+| `seq_tup_read` | ScratchBird tracked | TableStatsSnapshot.seq_rows_read | 0 when no stats snapshot. |
+| `idx_scan` | ScratchBird tracked | TableStatsSnapshot.idx_scan_count | 0 when no stats snapshot. |
+| `idx_tup_fetch` | ScratchBird tracked | TableStatsSnapshot.idx_rows_fetch | 0 when no stats snapshot. |
+| `n_tup_ins` | ScratchBird tracked | TableStatsSnapshot.rows_inserted | 0 when no stats snapshot. |
+| `n_tup_upd` | ScratchBird tracked | TableStatsSnapshot.rows_updated | 0 when no stats snapshot. |
+| `n_tup_del` | ScratchBird tracked | TableStatsSnapshot.rows_deleted | 0 when no stats snapshot. |
+| `n_live_tup` | ScratchBird tracked | TableStatsSnapshot.live_rows_estimate or table.row_count | Uses live_rows_estimate when available; row_count otherwise. |
+| `n_dead_tup` | ScratchBird tracked | TableStatsSnapshot.dead_rows_estimate | 0 when no stats snapshot. |
+
+## pg_catalog.pg_stat_all_tables
+
+Table status: Implemented
+Source: PgCatalogHandler::queryPgStatTables
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `relid` | ScratchBird tracked | oidFromUuid(table.table_id) | Row per table in scope. |
+| `schemaname` | ScratchBird tracked | schemaName(schema) | Row per table in scope. |
+| `relname` | ScratchBird tracked | table.table_name | Row per table in scope. |
+| `seq_scan` | ScratchBird tracked | TableStatsSnapshot.seq_scan_count | 0 when no stats snapshot. |
+| `seq_tup_read` | ScratchBird tracked | TableStatsSnapshot.seq_rows_read | 0 when no stats snapshot. |
+| `idx_scan` | ScratchBird tracked | TableStatsSnapshot.idx_scan_count | 0 when no stats snapshot. |
+| `idx_tup_fetch` | ScratchBird tracked | TableStatsSnapshot.idx_rows_fetch | 0 when no stats snapshot. |
+| `n_tup_ins` | ScratchBird tracked | TableStatsSnapshot.rows_inserted | 0 when no stats snapshot. |
+| `n_tup_upd` | ScratchBird tracked | TableStatsSnapshot.rows_updated | 0 when no stats snapshot. |
+| `n_tup_del` | ScratchBird tracked | TableStatsSnapshot.rows_deleted | 0 when no stats snapshot. |
+| `n_live_tup` | ScratchBird tracked | TableStatsSnapshot.live_rows_estimate or table.row_count | Uses live_rows_estimate when available; row_count otherwise. |
+| `n_dead_tup` | ScratchBird tracked | TableStatsSnapshot.dead_rows_estimate | 0 when no stats snapshot. |
+
+## pg_catalog.pg_stat_sys_tables
+
+Table status: Implemented
+Source: PgCatalogHandler::queryPgStatTables
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `relid` | ScratchBird tracked | oidFromUuid(table.table_id) | Row per table in scope. |
+| `schemaname` | ScratchBird tracked | schemaName(schema) | Row per table in scope. |
+| `relname` | ScratchBird tracked | table.table_name | Row per table in scope. |
+| `seq_scan` | ScratchBird tracked | TableStatsSnapshot.seq_scan_count | 0 when no stats snapshot. |
+| `seq_tup_read` | ScratchBird tracked | TableStatsSnapshot.seq_rows_read | 0 when no stats snapshot. |
+| `idx_scan` | ScratchBird tracked | TableStatsSnapshot.idx_scan_count | 0 when no stats snapshot. |
+| `idx_tup_fetch` | ScratchBird tracked | TableStatsSnapshot.idx_rows_fetch | 0 when no stats snapshot. |
+| `n_tup_ins` | ScratchBird tracked | TableStatsSnapshot.rows_inserted | 0 when no stats snapshot. |
+| `n_tup_upd` | ScratchBird tracked | TableStatsSnapshot.rows_updated | 0 when no stats snapshot. |
+| `n_tup_del` | ScratchBird tracked | TableStatsSnapshot.rows_deleted | 0 when no stats snapshot. |
+| `n_live_tup` | ScratchBird tracked | TableStatsSnapshot.live_rows_estimate or table.row_count | Uses live_rows_estimate when available; row_count otherwise. |
+| `n_dead_tup` | ScratchBird tracked | TableStatsSnapshot.dead_rows_estimate | 0 when no stats snapshot. |
+
+## pg_catalog.pg_stat_user_indexes
+
+Table status: Schema-only (not implemented)
+Source: Not implemented
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `relid` | Always NULL | Schema-only view required | Never. |
+| `indexrelid` | Always NULL | Schema-only view required | Never. |
+| `schemaname` | Always NULL | Schema-only view required | Never. |
+| `relname` | Always NULL | Schema-only view required | Never. |
+| `indexrelname` | Always NULL | Schema-only view required | Never. |
+| `idx_scan` | Always NULL | Schema-only view required | Never. |
+| `idx_tup_read` | Always NULL | Schema-only view required | Never. |
+| `idx_tup_fetch` | Always NULL | Schema-only view required | Never. |
+
+## pg_catalog.pg_tables
+
+Table status: Implemented (view)
+Source: EmulatedViewGenerator::getPostgreSQLViews
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `schemaname` | ScratchBird tracked | sys.catalog.schemas.schema_name | Row per table in schema. |
+| `tablename` | ScratchBird tracked | sys.catalog.tables.table_name | Row per table in schema. |
+| `tableowner` | ScratchBird tracked | sys.catalog.schemas.owner_name | Row per table in schema. |
+| `tablespace` | Always NULL | Not populated | Never. |
+| `hasindexes` | ScratchBird tracked | sys.catalog.tables.has_indexes | Row per table in schema. |
+| `hastriggers` | ScratchBird tracked | sys.catalog.tables.has_triggers | Row per table in schema. |
+| `hasrules` | Always 0 | Constant false | Always. |
+
+## pg_catalog.pg_views
+
+Table status: Implemented (view)
+Source: EmulatedViewGenerator::getPostgreSQLViews
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `schemaname` | ScratchBird tracked | sys.catalog.schemas.schema_name | Row per view in schema. |
+| `viewname` | ScratchBird tracked | sys.catalog.views.view_name | Row per view in schema. |
+| `viewowner` | ScratchBird tracked | sys.catalog.schemas.owner_name | Row per view in schema. |
+| `definition` | ScratchBird tracked | sys.catalog.views.definition | Row per view in schema. |
+
+## pg_catalog.pg_stat_database
+
+Table status: Implemented (view)
+Source: EmulatedViewGenerator::getPostgreSQLViews
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `datid` | Always NULL | Constant NULL | Always. |
+| `datname` | ScratchBird tracked | '{database_name}' in view context | Always. |
+| `numbackends` | ScratchBird tracked | sys.performance metric connections_active | 0 when metric missing. |
+| `xact_commit` | ScratchBird tracked | sys.performance metric transactions_committed_total | 0 when metric missing. |
+| `xact_rollback` | ScratchBird tracked | sys.performance metric transactions_rolled_back_total | 0 when metric missing. |
+| `blks_read` | ScratchBird tracked | sys.performance metric buffer_pool_reads_total{source=disk} | 0 when metric missing. |
+| `blks_hit` | ScratchBird tracked | sys.performance metric buffer_pool_reads_total{source=cache} | 0 when metric missing. |
+| `tup_returned` | ScratchBird tracked | sys.performance metric query_rows_returned_total | 0 when metric missing. |
+| `tup_fetched` | Always NULL | Not populated | Never. |
+| `tup_inserted` | ScratchBird tracked | sys.performance metric query_rows_affected_total{type=insert} | 0 when metric missing. |
+| `tup_updated` | ScratchBird tracked | sys.performance metric query_rows_affected_total{type=update} | 0 when metric missing. |
+| `tup_deleted` | ScratchBird tracked | sys.performance metric query_rows_affected_total{type=delete} | 0 when metric missing. |
+| `conflicts` | Always 0 | Constant 0 | Always. |
+| `temp_files` | Always 0 | Constant 0 | Always. |
+| `temp_bytes` | Always 0 | Constant 0 | Always. |
+| `deadlocks` | ScratchBird tracked | sys.performance metric deadlocks_total | 0 when metric missing. |
+| `blk_read_time` | Always NULL | Not populated | Never. |
+| `blk_write_time` | Always NULL | Not populated | Never. |
+| `stats_reset` | Always NULL | Not populated | Never. |
+
+## pg_catalog.pg_stat_bgwriter
+
+Table status: Implemented (view)
+Source: EmulatedViewGenerator::getPostgreSQLViews
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `buffers_clean` | ScratchBird tracked | sys.performance metric buffer_pool_writes_total | 0 when metric missing. |
+| `maxwritten_clean` | Always NULL | Not populated | Never. |
+| `buffers_alloc` | ScratchBird tracked | sys.performance metric page_buffers | 0 when metric missing. |
+| `stats_reset` | Always NULL | Not populated | Never. |
+
+## pg_catalog.pg_stat_all_tables (extended view)
+
+Table status: Implemented (view)
+Source: EmulatedViewGenerator::getPostgreSQLViews
+
+| Column | Status | Source | Populated when |
+|--------|--------|--------|----------------|
+| `relid` | Always NULL | Constant NULL | Always. |
+| `schemaname` | ScratchBird tracked | sys.table_stats.schema_name | Row per table stat entry. |
+| `relname` | ScratchBird tracked | sys.table_stats.table_name | Row per table stat entry. |
+| `seq_scan` | ScratchBird tracked | sys.table_stats.seq_scan_count | Row per table stat entry. |
+| `last_seq_scan` | ScratchBird tracked | sys.table_stats.last_seq_scan_at | Row per table stat entry. |
+| `seq_tup_read` | ScratchBird tracked | sys.table_stats.seq_rows_read | Row per table stat entry. |
+| `idx_scan` | ScratchBird tracked | sys.table_stats.idx_scan_count | Row per table stat entry. |
+| `last_idx_scan` | ScratchBird tracked | sys.table_stats.last_idx_scan_at | Row per table stat entry. |
+| `idx_tup_fetch` | ScratchBird tracked | sys.table_stats.idx_rows_fetch | Row per table stat entry. |
+| `n_tup_ins` | ScratchBird tracked | sys.table_stats.rows_inserted | Row per table stat entry. |
+| `n_tup_upd` | ScratchBird tracked | sys.table_stats.rows_updated | Row per table stat entry. |
+| `n_tup_del` | ScratchBird tracked | sys.table_stats.rows_deleted | Row per table stat entry. |
+| `n_tup_hot_upd` | ScratchBird tracked | sys.table_stats.rows_hot_updated | Row per table stat entry. |
+| `n_tup_newpage_upd` | ScratchBird tracked | sys.table_stats.rows_newpage_updated | Row per table stat entry. |
+| `n_live_tup` | ScratchBird tracked | sys.table_stats.live_rows_estimate | Row per table stat entry. |
+| `n_dead_tup` | ScratchBird tracked | sys.table_stats.dead_rows_estimate | Row per table stat entry. |
+| `n_mod_since_analyze` | ScratchBird tracked | sys.table_stats.mod_since_analyze | Row per table stat entry. |
+| `n_ins_since_vacuum` | ScratchBird tracked | sys.table_stats.ins_since_vacuum | Row per table stat entry. |
+| `last_vacuum` | ScratchBird tracked | sys.table_stats.last_vacuum_at | Row per table stat entry. |
+| `last_autovacuum` | ScratchBird tracked | sys.table_stats.last_autovacuum_at | Row per table stat entry. |
+| `last_analyze` | ScratchBird tracked | sys.table_stats.last_analyze_at | Row per table stat entry. |
+| `last_autoanalyze` | ScratchBird tracked | sys.table_stats.last_autoanalyze_at | Row per table stat entry. |
+| `vacuum_count` | ScratchBird tracked | sys.table_stats.vacuum_count | Row per table stat entry. |
+| `autovacuum_count` | ScratchBird tracked | sys.table_stats.autovacuum_count | Row per table stat entry. |
+| `analyze_count` | ScratchBird tracked | sys.table_stats.analyze_count | Row per table stat entry. |
+| `autoanalyze_count` | ScratchBird tracked | sys.table_stats.autoanalyze_count | Row per table stat entry. |
+| `total_vacuum_time` | ScratchBird tracked | sys.table_stats.total_vacuum_time_ms / 1000.0 | Row per table stat entry. |
+| `total_autovacuum_time` | ScratchBird tracked | sys.table_stats.total_autovacuum_time_ms / 1000.0 | Row per table stat entry. |
+| `total_analyze_time` | ScratchBird tracked | sys.table_stats.total_analyze_time_ms / 1000.0 | Row per table stat entry. |
+| `total_autoanalyze_time` | ScratchBird tracked | sys.table_stats.total_autoanalyze_time_ms / 1000.0 | Row per table stat entry. |
 
 ---
 
-## information_schema Views
-
-The `information_schema` provides SQL-standard metadata views.
-
-### Tables and Columns
-
-#### information_schema.tables
-
-```sql
-SELECT
-    table_catalog,
-    table_schema,
-    table_name,
-    table_type
-FROM information_schema.tables
-WHERE table_schema = 'public'
-ORDER BY table_name;
-
--- table_type values:
--- 'BASE TABLE'
--- 'VIEW'
--- 'FOREIGN TABLE'
--- 'LOCAL TEMPORARY'
-```
-
-#### information_schema.columns
-
-```sql
-SELECT
-    table_name,
-    column_name,
-    ordinal_position,
-    column_default,
-    is_nullable,
-    data_type,
-    character_maximum_length,
-    numeric_precision,
-    numeric_scale
-FROM information_schema.columns
-WHERE table_schema = 'public'
-AND table_name = 'users'
-ORDER BY ordinal_position;
-```
-
-### Constraints
-
-#### information_schema.table_constraints
-
-```sql
-SELECT
-    constraint_name,
-    table_name,
-    constraint_type
-FROM information_schema.table_constraints
-WHERE table_schema = 'public'
-ORDER BY table_name, constraint_type;
-
--- constraint_type values:
--- 'PRIMARY KEY'
--- 'FOREIGN KEY'
--- 'UNIQUE'
--- 'CHECK'
-```
-
-#### information_schema.key_column_usage
-
-```sql
-SELECT
-    constraint_name,
-    table_name,
-    column_name,
-    ordinal_position
-FROM information_schema.key_column_usage
-WHERE table_schema = 'public'
-ORDER BY constraint_name, ordinal_position;
-```
-
-#### information_schema.referential_constraints
-
-```sql
-SELECT
-    constraint_name,
-    unique_constraint_name,
-    match_option,
-    update_rule,
-    delete_rule
-FROM information_schema.referential_constraints
-WHERE constraint_schema = 'public';
-```
-
-### Routines and Parameters
-
-#### information_schema.routines
-
-```sql
-SELECT
-    routine_name,
-    routine_type,  -- 'FUNCTION' or 'PROCEDURE'
-    data_type AS return_type,
-    routine_definition
-FROM information_schema.routines
-WHERE routine_schema = 'public';
-```
-
-#### information_schema.parameters
-
-```sql
-SELECT
-    specific_name,
-    parameter_name,
-    ordinal_position,
-    parameter_mode,  -- 'IN', 'OUT', 'INOUT'
-    data_type
-FROM information_schema.parameters
-WHERE specific_schema = 'public'
-ORDER BY specific_name, ordinal_position;
-```
-
-### Privileges
-
-#### information_schema.table_privileges
-
-```sql
-SELECT
-    grantee,
-    table_name,
-    privilege_type,
-    is_grantable
-FROM information_schema.table_privileges
-WHERE table_schema = 'public'
-ORDER BY table_name, grantee;
-```
-
-#### information_schema.column_privileges
-
-```sql
-SELECT
-    grantee,
-    table_name,
-    column_name,
-    privilege_type
-FROM information_schema.column_privileges
-WHERE table_schema = 'public';
-```
-
-### Views
-
-#### information_schema.views
-
-```sql
-SELECT
-    table_name AS view_name,
-    view_definition,
-    check_option,
-    is_updatable
-FROM information_schema.views
-WHERE table_schema = 'public';
-```
-
-### Triggers
-
-#### information_schema.triggers
-
-```sql
-SELECT
-    trigger_name,
-    event_manipulation,  -- 'INSERT', 'UPDATE', 'DELETE'
-    event_object_table,
-    action_timing,       -- 'BEFORE' or 'AFTER'
-    action_statement
-FROM information_schema.triggers
-WHERE trigger_schema = 'public';
-```
-
----
-
-## Common Queries
-
-### List All Tables with Columns
-
-```sql
-SELECT
-    t.table_name,
-    c.column_name,
-    c.data_type,
-    c.is_nullable,
-    c.column_default
-FROM information_schema.tables t
-JOIN information_schema.columns c
-    ON t.table_name = c.table_name
-    AND t.table_schema = c.table_schema
-WHERE t.table_schema = 'public'
-AND t.table_type = 'BASE TABLE'
-ORDER BY t.table_name, c.ordinal_position;
-```
-
-### List Foreign Key Relationships
-
-```sql
-SELECT
-    tc.table_name AS from_table,
-    kcu.column_name AS from_column,
-    ccu.table_name AS to_table,
-    ccu.column_name AS to_column
-FROM information_schema.table_constraints tc
-JOIN information_schema.key_column_usage kcu
-    ON tc.constraint_name = kcu.constraint_name
-JOIN information_schema.constraint_column_usage ccu
-    ON tc.constraint_name = ccu.constraint_name
-WHERE tc.constraint_type = 'FOREIGN KEY'
-AND tc.table_schema = 'public';
-```
-
-### List Indexes with Columns
-
-```sql
-SELECT
-    i.relname AS index_name,
-    t.relname AS table_name,
-    a.attname AS column_name,
-    ix.indisunique AS is_unique,
-    ix.indisprimary AS is_primary
-FROM pg_catalog.pg_index ix
-JOIN pg_catalog.pg_class i ON ix.indexrelid = i.oid
-JOIN pg_catalog.pg_class t ON ix.indrelid = t.oid
-JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid
-    AND a.attnum = ANY(ix.indkey)
-WHERE t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
-ORDER BY t.relname, i.relname;
-```
-
-### Check Table Size
-
-```sql
-SELECT
-    relname AS table_name,
-    pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size,
-    pg_size_pretty(pg_table_size(c.oid)) AS table_size,
-    pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
-FROM pg_catalog.pg_class c
-JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
-WHERE n.nspname = 'public'
-AND c.relkind = 'r'
-ORDER BY pg_total_relation_size(c.oid) DESC;
-```
-
-### Find Unused Indexes
-
-```sql
-SELECT
-    schemaname,
-    relname AS table_name,
-    indexrelname AS index_name,
-    pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size
-FROM pg_stat_user_indexes i
-JOIN pg_index USING (indexrelid)
-WHERE idx_scan = 0
-AND NOT indisunique
-AND NOT indisprimary
-ORDER BY pg_relation_size(i.indexrelid) DESC;
-```
-
-### List All Privileges for User
-
-```sql
-SELECT
-    grantee,
-    table_schema,
-    table_name,
-    privilege_type
-FROM information_schema.table_privileges
-WHERE grantee = 'app_user'
-ORDER BY table_schema, table_name;
-```
-
-### Schema Dump Query
-
-```sql
--- List all object types in schema
-SELECT
-    CASE c.relkind
-        WHEN 'r' THEN 'table'
-        WHEN 'v' THEN 'view'
-        WHEN 'm' THEN 'materialized view'
-        WHEN 'i' THEN 'index'
-        WHEN 'S' THEN 'sequence'
-        WHEN 'f' THEN 'foreign table'
-        WHEN 'p' THEN 'partitioned table'
-    END AS object_type,
-    c.relname AS object_name
-FROM pg_catalog.pg_class c
-JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
-WHERE n.nspname = 'public'
-AND c.relkind IN ('r', 'v', 'm', 'i', 'S', 'f', 'p')
-ORDER BY object_type, object_name;
-```
-
----
-
-## System Functions
-
-### Object Information Functions
-
-```sql
--- Get OID of a table
-SELECT 'users'::regclass::oid;
-
--- Get table name from OID
-SELECT 16384::regclass;
-
--- Get current database
-SELECT current_database();
-
--- Get current schema
-SELECT current_schema();
-
--- Get search path
-SHOW search_path;
-SELECT current_schemas(true);
-```
-
-### Has Privilege Functions
-
-```sql
--- Check table privilege
-SELECT has_table_privilege('app_user', 'users', 'SELECT');
-SELECT has_table_privilege('users', 'INSERT');  -- Current user
-
--- Check schema privilege
-SELECT has_schema_privilege('app_user', 'public', 'USAGE');
-
--- Check database privilege
-SELECT has_database_privilege('app_user', 'mydb', 'CONNECT');
-
--- Check column privilege
-SELECT has_column_privilege('app_user', 'users', 'email', 'SELECT');
-```
-
-### Object Existence Functions
-
-```sql
--- Check if table exists
-SELECT to_regclass('public.users') IS NOT NULL;
-
--- Check if function exists
-SELECT to_regproc('my_function') IS NOT NULL;
-
--- List all objects matching name
-SELECT * FROM pg_catalog.pg_class WHERE relname = 'users';
-```
-
----
-
-## Known Limitations
-
-### Current Implementation Status
-
-| Catalog | Status | Notes |
-|---------|--------|-------|
-| pg_class | Partial | Core columns populated |
-| pg_attribute | Partial | Basic column info |
-| pg_namespace | Implemented | Schema listing works |
-| pg_type | Partial | Built-in types only |
-| pg_index | Partial | Basic index info |
-| pg_constraint | Partial | PK/FK constraints |
-| pg_roles | Partial | Basic role info |
-| pg_stat_* | Stubbed | Statistics not collected |
-| information_schema.tables | Implemented | Works correctly |
-| information_schema.columns | Implemented | Works correctly |
-| information_schema.constraints | Partial | Basic constraints |
-| information_schema.routines | Stubbed | Limited support |
-
-### Specific Issues
-
-**Missing or Incomplete:**
-- Statistics views (`pg_stat_*`) return empty or dummy data
-- `pg_settings` is partially populated
-- System activity views have limited data
-- Some `pg_catalog` columns return NULL
-- Object sizes may not be accurate
-
-**Workarounds:**
-- Use `information_schema` views where possible (better emulation coverage)
-- For missing statistics, implement application-level monitoring
-- Use native ScratchBird system tables for accurate metadata
-
-### Native Metadata Alternative
-
-For complete metadata access, use ScratchBird native system tables:
-
-```sql
--- Native table listing
-SELECT * FROM sb_catalog.tables WHERE schema_name = 'public';
-
--- Native column listing
-SELECT * FROM sb_catalog.columns WHERE table_name = 'users';
-
--- Native index listing
-SELECT * FROM sb_catalog.indexes WHERE table_name = 'users';
-```
-
----
-
-## See Also
-
-- [Databases and Schemas](01_databases_and_schemas.md) - Schema management
-- [Tables and Constraints](02_tables_and_constraints.md) - Table DDL
-- [Indexes, Views, Sequences](03_indexes_views_sequences.md) - Index management
-- [Security DCL](09_security_dcl.md) - Privilege management
-
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

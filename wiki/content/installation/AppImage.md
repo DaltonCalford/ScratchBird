@@ -1,39 +1,12 @@
-# AppImage Installation
+# Appimage
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-Use the AppImage when you want a single-file Linux build without system-wide
-installation.
+---
 
-## Steps
+Installation details are maintained in the repository specs and build scripts.
+Refer to the project README and deployment specifications for current steps.
 
-1) Download the latest AppImage from the releases page.
-2) Make it executable.
-3) Run it.
+---
 
-```bash
-# Download (example)
-curl -LO https://github.com/scratchbird/scratchbird/releases/latest/download/scratchbird.AppImage
-
-# Make executable
-chmod +x scratchbird.AppImage
-
-# Run (starts sb_server)
-./scratchbird.AppImage
-```
-
-## Notes
-
-- Default native port: `3092`
-- Config file: [sb_server.conf](../configuration/sb_server.conf.md)
-- For PostgreSQL/MySQL/Firebird emulation ports, see [sb_server](../cli-tools/sb-server.md).
-
-## Troubleshooting
-
-If the AppImage fails to run, confirm FUSE is available:
-
-```bash
-sudo modprobe fuse
-```
-
-See [Installation Issues](../troubleshooting/Installation-Issues.md) for more.
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

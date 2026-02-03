@@ -1,124 +1,50 @@
 # Transactions
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-ScratchBird uses a Firebird-style Multi-Generational Architecture (MGA/MVCC). Each
-row can have multiple versions, and visibility is decided by transaction IDs
-tracked in Transaction Inventory Pages (TIP). This keeps readers and writers from
-blocking each other while preserving isolation.
+---
 
-## Transaction control
+ScratchBird uses Firebird‑style MGA (multi‑generational architecture) for
+transaction isolation. Each statement runs inside a transaction, and snapshots
+are stable within the transaction boundary.
 
-| Command | Purpose | Notes |
-| --- | --- | --- |
-| BEGIN / START TRANSACTION | Start a transaction block | START TRANSACTION is an alias |
-| COMMIT / END | Make changes durable | END is an alias |
-| ROLLBACK / ABORT | Discard changes | ABORT is an alias |
+---
 
-Example:
+## Basic Commands
 
-```
+```sql
 BEGIN;
-UPDATE accounts SET balance = balance - 100 WHERE account_id = 'savings-123';
-UPDATE accounts SET balance = balance + 100 WHERE account_id = 'checking-456';
 COMMIT;
+ROLLBACK;
 ```
 
-## Savepoints
+### Savepoints
 
-Savepoints allow partial rollback inside a transaction.
-
-| Command | Purpose |
-| --- | --- |
-| SAVEPOINT name | Create a savepoint |
-| ROLLBACK TO SAVEPOINT name | Roll back to a savepoint |
-| RELEASE SAVEPOINT name | Remove a savepoint |
-
-Example:
-
-```
-BEGIN;
-INSERT INTO orders (customer_id, order_date) VALUES (101, CURRENT_DATE);
-SAVEPOINT order_created;
-INSERT INTO order_lines (order_id, product_id, quantity)
-VALUES (currval('order_id_seq'), 9999, 1); -- error
-ROLLBACK TO SAVEPOINT order_created;
-COMMIT;
+```sql
+SAVEPOINT sp1;
+ROLLBACK TO sp1;
+RELEASE SAVEPOINT sp1;
 ```
 
-## Isolation levels
+---
 
-ScratchBird supports standard SQL isolation levels:
+## Isolation Levels
 
-- READ COMMITTED (default): each statement sees committed data at statement start.
-- REPEATABLE READ: all statements in the transaction see the same snapshot.
-- SERIALIZABLE: adds predicate protection to ensure serializable behavior.
+ScratchBird supports standard isolation levels:
 
-Set per-transaction:
+- READ COMMITTED
+- REPEATABLE READ
+- SERIALIZABLE
 
-```
-BEGIN;
-SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
--- work
-COMMIT;
-```
+Use `SET TRANSACTION` or dialect‑specific syntax to select isolation level.
 
-Set session default:
+---
 
-```
-SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
-```
+## Notes
 
-## Locking and concurrency
+- Readers do not block writers under MGA.
+- Old versions are reclaimed by sweep/GC once no active transaction can see them.
 
-ScratchBird provides explicit locks for cases where MVCC alone is not enough.
+---
 
-- LOCK TABLE ... IN ACCESS EXCLUSIVE MODE for coarse-grained locks.
-- SELECT ... FOR UPDATE / FOR SHARE for row-level locking.
-- SKIP LOCKED and NOWAIT are supported in SELECT locking clauses.
-
-Example:
-
-```
-BEGIN;
-SELECT * FROM job_queue
-WHERE status = 'PENDING'
-ORDER BY created_at
-LIMIT 1
-FOR UPDATE SKIP LOCKED;
-COMMIT;
-```
-
-## MGA visibility basics
-
-- Each tuple version has xmin (creator) and xmax (deleter) transaction IDs.
-- TIP pages store the state of each transaction (active, committed, aborted).
-- Visibility is decided by TIP state and MGA rules, not PostgreSQL-style snapshots.
-- Old versions are removed by cooperative garbage collection when safe.
-
-## Distributed transactions (planned)
-
-ScratchBird plans to support two-phase commit (2PC) with PREPARE TRANSACTION,
-COMMIT PREPARED, and ROLLBACK PREPARED for distributed workloads.
-
-## Implementation status
-
-The Alpha codebase implements:
-
-- Full MGA/MVCC with back-versioning and TIP-based visibility
-- 64-bit transaction IDs with proper wraparound handling
-- Lock manager with deadlock detection
-- Savepoint support (SAVEPOINT, ROLLBACK TO, RELEASE)
-- Multi-threaded operation with proper concurrency control
-- Garbage collection (sweep) for version chain cleanup
-
-Distributed transactions (2PC) are planned for Beta.
-
-## References
-
-- `docs/specifications/transaction/TRANSACTION_MAIN.md`
-- `docs/specifications/transaction/TRANSACTION_MGA_CORE.md`
-- `docs/specifications/transaction/TRANSACTION_LOCK_MANAGER.md`
-- `docs/specifications/transaction/TRANSACTION_DISTRIBUTED.md`
-- `docs/specifications/transaction/07_TRANSACTION_AND_SESSION_CONTROL.md`
-- `docs/specifications/MGA_RULES.md`
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

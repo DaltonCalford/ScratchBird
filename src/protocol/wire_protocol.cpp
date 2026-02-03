@@ -14,6 +14,7 @@
  */
 
 #include "scratchbird/protocol/wire_protocol.h"
+#include "scratchbird/protocol/sbwp_protocol.h"
 #include "scratchbird/server/ipc_server.h"
 
 #include <cstring>
@@ -761,14 +762,80 @@ core::Status ProtocolCodec::parseQueryError(const Message& msg,
 Message ProtocolCodec::buildRowDescription(const std::vector<ColumnInfo>& columns) {
     Message msg(MessageType::ROW_DESCRIPTION);
 
+    auto mapWireTypeToOid = [](WireType type) -> uint32_t {
+        switch (type) {
+            case WireType::NULL_TYPE: return 0;
+            case WireType::BOOLEAN: return sbwp::kOidBool;
+            case WireType::INT16: return sbwp::kOidInt2;
+            case WireType::INT32: return sbwp::kOidInt4;
+            case WireType::INT64: return sbwp::kOidInt8;
+            case WireType::FLOAT32: return sbwp::kOidFloat4;
+            case WireType::FLOAT64: return sbwp::kOidFloat8;
+            case WireType::DECIMAL: return sbwp::kOidNumeric;
+            case WireType::VARCHAR: return sbwp::kOidVarchar;
+            case WireType::CHAR: return sbwp::kOidChar;
+            case WireType::BYTEA: return sbwp::kOidBytea;
+            case WireType::DATE: return sbwp::kOidDate;
+            case WireType::TIME: return sbwp::kOidTime;
+            case WireType::TIMESTAMP: return sbwp::kOidTimestamp;
+            case WireType::TIMESTAMPTZ: return sbwp::kOidTimestamptz;
+            case WireType::INTERVAL: return sbwp::kOidInterval;
+            case WireType::UUID: return sbwp::kOidUuid;
+            case WireType::JSON: return sbwp::kOidJson;
+            case WireType::JSONB: return sbwp::kOidJsonb;
+            case WireType::XML: return sbwp::kOidXml;
+            case WireType::INET: return sbwp::kOidInet;
+            case WireType::CIDR: return sbwp::kOidCidr;
+            case WireType::MACADDR: return sbwp::kOidMacaddr;
+            case WireType::TSVECTOR: return sbwp::kOidTsVector;
+            case WireType::TSQUERY: return sbwp::kOidTsQuery;
+            case WireType::VECTOR: return sbwp::kOidSbVector;
+            case WireType::MONEY: return sbwp::kOidMoney;
+            case WireType::ARRAY:
+            case WireType::COMPOSITE:
+            case WireType::RANGE:
+            case WireType::GEOMETRY:
+                return sbwp::kOidRecord;
+            default:
+                return 0;
+        }
+    };
+
+    auto mapWireTypeSize = [](WireType type) -> int16_t {
+        switch (type) {
+            case WireType::BOOLEAN: return 1;
+            case WireType::INT16: return 2;
+            case WireType::INT32: return 4;
+            case WireType::INT64: return 8;
+            case WireType::FLOAT32: return 4;
+            case WireType::FLOAT64: return 8;
+            case WireType::DATE: return 4;
+            case WireType::TIME: return 8;
+            case WireType::TIMESTAMP: return 8;
+            case WireType::TIMESTAMPTZ: return 8;
+            case WireType::UUID: return 16;
+            case WireType::MONEY: return 8;
+            default:
+                return -1;
+        }
+    };
+
     msg.writeUInt16(static_cast<uint16_t>(columns.size()));
+    msg.writeUInt16(0);
 
     for (const auto& col : columns) {
-        msg.writeUInt16(static_cast<uint16_t>(col.name.size()));
+        msg.writeUInt32(static_cast<uint32_t>(col.name.size()));
         msg.writeString(col.name);
-        msg.writeUInt8(static_cast<uint8_t>(col.type));
+        msg.writeUInt32(col.table_oid);
+        msg.writeUInt16(col.column_index);
+        uint32_t type_oid = col.type_oid != 0 ? col.type_oid : mapWireTypeToOid(col.type);
+        msg.writeUInt32(type_oid);
+        int16_t type_size = col.type_size != 0 ? col.type_size : mapWireTypeSize(col.type);
+        msg.writeUInt16(static_cast<uint16_t>(type_size));
         msg.writeUInt32(col.type_modifier);
-        msg.writeUInt16(1);  // binary format
+        msg.writeUInt8(col.format);
+        msg.writeUInt8(col.nullable ? 1 : 0);
+        msg.writeUInt16(0);
     }
 
     return msg;
@@ -781,7 +848,8 @@ core::Status ProtocolCodec::parseRowDescription(const Message& msg,
     m.resetReadOffset();
 
     uint16_t column_count;
-    if (!m.readUInt16(column_count)) {
+    uint16_t reserved;
+    if (!m.readUInt16(column_count) || !m.readUInt16(reserved)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Truncated ROW_DESCRIPTION");
         return core::Status::PROTOCOL_VIOLATION;
@@ -793,23 +861,31 @@ core::Status ProtocolCodec::parseRowDescription(const Message& msg,
     for (uint16_t i = 0; i < column_count; i++) {
         ColumnInfo col;
 
-        uint16_t name_length;
-        if (!m.readUInt16(name_length) || !m.readString(col.name, name_length)) {
+        uint32_t name_length;
+        if (!m.readUInt32(name_length) || !m.readString(col.name, name_length)) {
             SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                               "Truncated ROW_DESCRIPTION column name");
             return core::Status::PROTOCOL_VIOLATION;
         }
 
-        uint8_t type_byte;
-        uint16_t format;
-        if (!m.readUInt8(type_byte) || !m.readUInt32(col.type_modifier) ||
-            !m.readUInt16(format)) {
+        uint16_t type_size = 0;
+        uint16_t reserved_col = 0;
+        uint8_t nullable = 0;
+        if (!m.readUInt32(col.table_oid) ||
+            !m.readUInt16(col.column_index) ||
+            !m.readUInt32(col.type_oid) ||
+            !m.readUInt16(type_size) ||
+            !m.readUInt32(col.type_modifier) ||
+            !m.readUInt8(col.format) ||
+            !m.readUInt8(nullable) ||
+            !m.readUInt16(reserved_col)) {
             SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                               "Truncated ROW_DESCRIPTION column metadata");
             return core::Status::PROTOCOL_VIOLATION;
         }
 
-        col.type = static_cast<WireType>(type_byte);
+        col.type_size = static_cast<int16_t>(type_size);
+        col.nullable = nullable != 0;
         columns.push_back(std::move(col));
     }
 
@@ -883,12 +959,29 @@ ProtocolCodec::ColumnValue ProtocolCodec::ColumnValue::fromStream(uint64_t strea
 Message ProtocolCodec::buildRowData(const std::vector<ColumnValue>& values) {
     Message msg(MessageType::ROW_DATA);
 
-    msg.writeUInt16(static_cast<uint16_t>(values.size()));
+    uint16_t column_count = static_cast<uint16_t>(values.size());
+    uint16_t null_bytes = static_cast<uint16_t>((column_count + 7) / 8);
+    msg.writeUInt16(column_count);
+    msg.writeUInt16(null_bytes);
+
+    std::vector<uint8_t> null_bitmap(null_bytes, 0);
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (!values[i].is_null) {
+            continue;
+        }
+        size_t byte_index = i / 8;
+        uint8_t bit_index = static_cast<uint8_t>(i % 8);
+        null_bitmap[byte_index] |= static_cast<uint8_t>(1u << bit_index);
+    }
+    if (!null_bitmap.empty()) {
+        msg.writeBytes(null_bitmap.data(), null_bitmap.size());
+    }
 
     for (const auto& val : values) {
         if (val.is_null) {
-            msg.writeInt32(-1);  // NULL indicator
-        } else if (val.is_stream) {
+            continue;
+        }
+        if (val.is_stream) {
             msg.writeInt32(-2);
             msg.writeUInt64(val.stream_id);
             msg.writeUInt64(val.stream_length);
@@ -910,7 +1003,8 @@ core::Status ProtocolCodec::parseRowData(const Message& msg,
     m.resetReadOffset();
 
     uint16_t column_count;
-    if (!m.readUInt16(column_count)) {
+    uint16_t null_bytes = 0;
+    if (!m.readUInt16(column_count) || !m.readUInt16(null_bytes)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Truncated ROW_DATA");
         return core::Status::PROTOCOL_VIOLATION;
@@ -919,7 +1013,27 @@ core::Status ProtocolCodec::parseRowData(const Message& msg,
     values.clear();
     values.reserve(column_count);
 
+    std::vector<uint8_t> null_bitmap;
+    if (null_bytes > 0) {
+        null_bitmap.resize(null_bytes);
+        if (!m.readBytes(null_bitmap.data(), null_bytes)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated ROW_DATA null bitmap");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
     for (uint16_t i = 0; i < column_count; i++) {
+        size_t byte_index = i / 8;
+        uint8_t bit_index = static_cast<uint8_t>(i % 8);
+        bool is_null = byte_index < null_bitmap.size() &&
+                       (null_bitmap[byte_index] & (1u << bit_index)) != 0;
+        if (is_null) {
+            ColumnValue val;
+            val.is_null = true;
+            values.push_back(std::move(val));
+            continue;
+        }
         int32_t length;
         if (!m.readInt32(length)) {
             SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,

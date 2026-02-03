@@ -1,34 +1,12 @@
-# RPM Package Installation
+# Rpm Package
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-Install ScratchBird on Fedora/RHEL/CentOS using the `.rpm` package.
+---
 
-## Install
+Installation details are maintained in the repository specs and build scripts.
+Refer to the project README and deployment specifications for current steps.
 
-1) Download the latest `.rpm` from releases.
-2) Install with `dnf` or `yum`.
+---
 
-```bash
-curl -LO https://github.com/scratchbird/scratchbird/releases/latest/download/scratchbird.rpm
-sudo dnf install ./scratchbird.rpm
-# or
-sudo yum install ./scratchbird.rpm
-```
-
-## Service Management
-
-```bash
-sudo systemctl status scratchbird
-sudo systemctl start scratchbird
-sudo systemctl stop scratchbird
-```
-
-## Notes
-
-- Default native port: `3092`
-- Config: [sb_server.conf](../configuration/sb_server.conf.md)
-
-## Troubleshooting
-
-See [Installation Issues](../troubleshooting/Installation-Issues.md) for common issues.
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

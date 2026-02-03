@@ -1,21 +1,15 @@
 # Installation Issues
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-## AppImage Will Not Run
-- Ensure FUSE is available: `sudo modprobe fuse`
-- Make the file executable: `chmod +x scratchbird.AppImage`
+---
 
-## DEB/RPM Dependency Errors
-- Re-run dependency resolution:
-  - Debian/Ubuntu: `sudo apt-get -f install`
-  - RHEL/Fedora: `sudo dnf install ./scratchbird.rpm`
+## Checklist
 
-## Service Fails to Start
-- Check logs in `/var/log/scratchbird/` (if packaged)
-- Run `sb_server` in the foreground to see errors
+- Verify required build tools are installed.
+- Confirm config file location and permissions.
+- Ensure data directory exists and is writable.
 
-See:
-- `../installation/DEB-Package.md`
-- `../installation/RPM-Package.md`
-- `../installation/AppImage.md`
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

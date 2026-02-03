@@ -1,67 +1,28 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# Transactions
 
-# MySQL - Transaction Control
+**Last Updated:** 2026-02-03
 
-> Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
-> Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.
+---
 
-Spec refs:
-- `ScratchBird/docs/specifications/parser/MYSQL_PARSER_SPECIFICATION.md`
-- `ScratchBird/docs/audit/parsers/CRITICAL_FINDINGS.md` (isolation mapping)
-
-## BEGIN / START TRANSACTION
-Description: Starts a transaction; isolation mapped to MGA equivalents.
-
-Syntax (actual):
 ```sql
-START TRANSACTION [READ ONLY | READ WRITE]
-BEGIN
-```
-Example:
-```sql
-START TRANSACTION READ WRITE;
-```
-Status: Implemented.
-
-## COMMIT / ROLLBACK
-Description: Ends a transaction.
-
-Syntax (actual):
-```sql
-COMMIT
-ROLLBACK
-```
-Example:
-```sql
+START TRANSACTION;
+UPDATE users SET active = 1;
 COMMIT;
 ```
-Status: Implemented.
 
-## SAVEPOINT / RELEASE / ROLLBACK TO SAVEPOINT
-Description: Savepoint control.
+Savepoints:
 
-Syntax (actual):
 ```sql
-SAVEPOINT <name>
-RELEASE SAVEPOINT <name>
-ROLLBACK TO SAVEPOINT <name>
+SAVEPOINT sp1;
+ROLLBACK TO sp1;
+RELEASE SAVEPOINT sp1;
 ```
-Example:
-```sql
-SAVEPOINT step1;
-ROLLBACK TO SAVEPOINT step1;
-```
-Status: Implemented.
 
-## SET AUTOCOMMIT
-Description: MySQL autocommit toggle.
+## Differences
 
-Syntax (actual):
-```sql
-SET AUTOCOMMIT = {0|1}
-```
-Example:
-```sql
-SET AUTOCOMMIT = 0;
-```
-Status: Implemented.
+- ScratchBird uses MGA; InnoDB undo/redo and autocommit semantics may differ in
+  edge cases.
+
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

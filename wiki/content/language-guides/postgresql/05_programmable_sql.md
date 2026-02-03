@@ -1,67 +1,39 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# Programmable SQL
 
-# PostgreSQL - Programmable SQL
+**Last Updated:** 2026-02-03
 
-> Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
-> Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.
+---
 
-Spec refs:
-- `ScratchBird/docs/specifications/parser/POSTGRESQL_PARSER_SPECIFICATION.md`
+## Compatibility Matrix
 
-## CREATE FUNCTION / CREATE PROCEDURE
-Description: Defines stored routines; PostgreSQL parser emits EXT_CREATE_* with
-stored body.
+| Feature | Status | Source | Notes |
+|---------|--------|--------|-------|
+| CREATE FUNCTION (plpgsql syntax) | Emulated | PSQL compiler + executor | PostgreSQL syntax is accepted and mapped to ScratchBird PSQL. |
+| CREATE PROCEDURE | Emulated | PSQL compiler + executor | Procedure body is compiled to ScratchBird PSQL. |
+| DO / anonymous blocks | Emulated | PSQL compiler + executor | Mapped to ScratchBird EXECUTE BLOCK. |
+| Exception handling | Emulated | PSQL runtime | Supported where ScratchBird PSQL provides equivalents. |
+| Cursors | Emulated | Executor | Only cursor forms implemented by ScratchBird are supported. |
 
-Syntax (actual, abbreviated):
+## Example
+
 ```sql
-CREATE [OR REPLACE] FUNCTION <name>(<args>) RETURNS <type> AS $$ ... $$ LANGUAGE <lang>
-CREATE [OR REPLACE] PROCEDURE <name>(<args>) AS $$ ... $$ LANGUAGE <lang>
-```
-Example:
-```sql
-CREATE FUNCTION add_one(x INT) RETURNS INT AS $$ SELECT x + 1; $$ LANGUAGE SQL;
-```
-Status: Implemented.
-Spec delta: Language handling is stored but not enforced at runtime.
-
-## CREATE TRIGGER
-Description: Defines a trigger.
-
-Syntax (actual, abbreviated):
-```sql
-CREATE TRIGGER <name> <timing> <event> ON <table>
-  FOR EACH ROW EXECUTE FUNCTION <func>(...)
-```
-Example:
-```sql
-CREATE TRIGGER users_audit BEFORE UPDATE ON users
-FOR EACH ROW EXECUTE FUNCTION audit_user();
-```
-Status: Implemented.
-Spec delta: Executor stores trigger metadata; runtime execution expects a
-registered C++ trigger procedure (no SQL trigger function interpreter yet).
-
-Trigger quick reference: [Trigger Cheat Sheet](../../user-guides/Trigger-Cheat-Sheet.md)
-
-## Trigger Context Variables (NEW / OLD)
-Description: PostgreSQL exposes NEW/OLD row records inside trigger functions.
-
-Syntax (PostgreSQL):
-```sql
-NEW.<column>
-OLD.<column>
-```
-
-Example:
-```sql
-CREATE FUNCTION audit_user() RETURNS trigger AS $$
+CREATE FUNCTION add_one(x INTEGER) RETURNS INTEGER AS $$
 BEGIN
-    INSERT INTO audit_log (user_id, old_status, new_status)
-    VALUES (NEW.id, OLD.status, NEW.status);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+    RETURN x + 1;
+END;$$ LANGUAGE plpgsql;
+
+CREATE PROCEDURE bump_all()
+LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE users SET active = TRUE;
+END;$$;
 ```
 
-Status: Not supported in ScratchBird SQL execution. NEW/OLD values are available
-only to C++ trigger procedures registered with the executor.
+## Differences
+
+- Some PL/pgSQL constructs are not supported unless ScratchBird PSQL provides
+  equivalent behavior.
+
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

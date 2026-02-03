@@ -1,51 +1,45 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# PostgreSQL Emulation
 
-# PostgreSQL Emulation SQL Surface
+**Last Updated:** 2026-02-03
 
-## Emulation behavior
+---
 
-SQL in this dialect is parsed by the emulation parser, translated to SBLR,
-executed by the ScratchBird engine, and results are formatted back to the
-client protocol. Emulated databases are metadata-only schemas and do not
-create physical database files.
+ScratchBird provides a PostgreSQL dialect parser so PostgreSQL clients can
+connect using familiar syntax. Emulation targets PostgreSQL 16 syntax and
+result shapes where possible, but runtime behavior follows the ScratchBird
+engine core.
 
+This guide documents:
+- Features intended to behave identically to PostgreSQL.
+- Features that are emulated (metadata-only).
+- Areas where behavior differs (engine model, storage, and admin tooling).
 
-Parser: PostgreSQL emulation parser (direct SBLR bytecode emission; no V2 semantic stage).
+## Compatibility Matrix
 
-Sources:
-- Parser core: `ScratchBird/src/parser/postgresql/pg_parser.cpp`
-- DDL: `ScratchBird/src/parser/postgresql/pg_parser_ddl.cpp`
-- DML: `ScratchBird/src/parser/postgresql/pg_parser_dml.cpp`
-- Expressions: `ScratchBird/src/parser/postgresql/pg_parser_expr.cpp`
-- Misc: `ScratchBird/src/parser/postgresql/pg_parser_misc.cpp`
-- Executor: `ScratchBird/src/sblr/executor.cpp`
-- Audit refs: `ScratchBird/docs/audit/17_postgresql_parser_statement_reference_actual.md`,
-  `ScratchBird/docs/audit/19_postgresql_parser_correction_plan_checklist.md`,
-  `ScratchBird/docs/audit/30_operator_matrix_by_dialect_actual.md`
+| Area | Status | Source | Notes |
+|------|--------|--------|-------|
+| Core SQL (SELECT/INSERT/UPDATE/DELETE) | ScratchBird tracked | ScratchBird SQL parser + executor | Syntax is PostgreSQL-compatible; execution follows ScratchBird planner/executor. |
+| DDL (tables, views, indexes, sequences) | ScratchBird tracked | Catalog manager + DDL executor | Metadata stored in ScratchBird catalog; storage layout is ScratchBird-native. |
+| System catalogs (pg_catalog/pg_stat) | ScratchBird tracked | Virtual catalog views | All views are exposed; columns not tracked return NULL/0. |
+| Extensions | Emulated (metadata-only) | Catalog metadata | CREATE EXTENSION is accepted when configured; behavior depends on ScratchBird features. |
+| File-backed features (COPY PROGRAM, file paths) | Restricted | Compatibility layer | Disallowed or limited to STDIN/STDOUT streaming. |
+| Transaction model | ScratchBird tracked | Core MGA engine | MGA + TIP with sweep/GC; not PostgreSQL MVCC/WAL. |
 
-## Files
-- [01_databases_and_schemas](01_databases_and_schemas.md)
-- [02_tables_and_constraints](02_tables_and_constraints.md)
-- [03_indexes_views_sequences](03_indexes_views_sequences.md)
-- [04_types_and_domains](04_types_and_domains.md)
-- [05_programmable_sql](05_programmable_sql.md)
-- [06_dml_select](06_dml_select.md)
-- [07_dml_modification](07_dml_modification.md)
-- [08_transactions](08_transactions.md)
-- [09_security_dcl](09_security_dcl.md)
-- [10_session_show_set](10_session_show_set.md)
-- [11_utilities](11_utilities.md)
-- [12_operators](12_operators.md)
-- [13_system_catalog](13_system_catalog.md)
-- [14_functions](14_functions.md)
+## Key Differences
 
-Notes:
-- PostgreSQL parser emits SBLR bytecode directly (no V2 semantic analyzer stage).
-- Most DDL statements are fully implemented: CREATE/DROP TABLE, INDEX, VIEW,
-  MATERIALIZED VIEW, SEQUENCE, FUNCTION, PROCEDURE, TRIGGER, TYPE, DOMAIN.
-- DML statements with RETURNING, ON CONFLICT, and MERGE are implemented via
-  extended opcodes (EXT_RETURNING, EXT_ON_CONFLICT_*, EXT_MERGE_*).
-- CTEs (WITH/WITH RECURSIVE) and window functions emit proper bytecode.
-- GRANT/REVOKE emit EXT_GRANT_PRIVILEGE/EXT_REVOKE_PRIVILEGE opcodes.
-- Transaction control (BEGIN/COMMIT/ROLLBACK/SAVEPOINT) fully implemented.
-- Expression indexes and TABLESPACE clauses are explicitly not supported.
+- **Transaction Model:** PostgreSQL uses MVCC with WAL and VACUUM; ScratchBird
+  uses Firebird-style MGA with TIP and sweep/GC.
+- **WAL:** Not required for correctness in ScratchBird Alpha.
+- **Server-level file features:** PostgreSQL file operations (COPY PROGRAM,
+  file-path COPY) are restricted or unavailable.
+- **Extensions:** CREATE EXTENSION is metadata-only unless explicitly supported.
+
+## Practical Guidance
+
+- Treat ScratchBird as PostgreSQL-compatible SQL, not a drop-in server.
+- Avoid PostgreSQL file-system features and extension assumptions.
+- Validate behaviors that depend on WAL, VACUUM, or pg_stat internals.
+
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

@@ -70,6 +70,7 @@ struct ListenerConfig {
     std::string control_socket_dir;
     std::string engine_endpoint;
     std::string config_path;
+    std::string tls_config;
     std::string log_level = "info";
     uint32_t pool_min = 4;
     uint32_t pool_max = 64;
@@ -519,6 +520,10 @@ private:
         args.push_back(config_.engine_endpoint);
         args.push_back("--log-level");
         args.push_back(config_.log_level);
+        if (!config_.tls_config.empty()) {
+            args.push_back("--tls-config");
+            args.push_back(config_.tls_config);
+        }
 
 #ifdef _WIN32
         std::string command_line;
@@ -1018,6 +1023,10 @@ bool applyConfigFile(ListenerConfig& config) {
                                                                          scratchbird::server::IPCMethod::AUTO);
             }
         }
+    }
+
+    if (!config.config_path.empty() && parser.hasSection("ssl")) {
+        config.tls_config = config.config_path;
     }
 
     return true;

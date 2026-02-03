@@ -1,47 +1,44 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# Firebird SQL Emulation
 
-# FirebirdSQL Emulation SQL Surface
+**Last Updated:** 2026-02-03
 
-## Emulation behavior
+---
 
-SQL in this dialect is parsed by the emulation parser, translated to SBLR,
-executed by the ScratchBird engine, and results are formatted back to the
-client protocol. Emulated databases are metadata-only schemas and do not
-create physical database files.
+ScratchBird provides a Firebird SQL dialect parser so Firebird clients can
+connect using familiar syntax. Emulation targets Firebird 5.0 syntax and
+result shapes where possible, but runtime behavior follows the ScratchBird
+engine core.
 
+This guide documents:
+- Features intended to behave identically to Firebird.
+- Features that are emulated (metadata-only).
+- Areas where behavior differs (engine model, storage, and admin tooling).
 
-Parser: Firebird emulation parser (AST v2 -> V2 pipeline).
+## Compatibility Matrix
 
-Sources:
-- Parser: `ScratchBird/src/parser/firebird/firebird_parser.cpp`
-- Lexer: `ScratchBird/src/parser/firebird/firebird_lexer.cpp`
-- V2 pipeline: `ScratchBird/src/sblr/semantic_analyzer_v2.cpp`, `ScratchBird/src/sblr/bytecode_generator_v2.cpp`
-- Executor: `ScratchBird/src/sblr/executor.cpp`
-- Audit refs: `ScratchBird/docs/audit/16_firebird_parser_statement_reference_actual.md`,
-  `ScratchBird/docs/audit/22_firebird_parser_correction_plan_checklist.md`,
-  `ScratchBird/docs/audit/30_operator_matrix_by_dialect_actual.md`
+| Area | Status | Source | Notes |
+|------|--------|--------|-------|
+| Core SQL (SELECT/INSERT/UPDATE/DELETE) | ScratchBird tracked | ScratchBird parser + executor | Syntax is Firebird-compatible; execution follows ScratchBird planner/executor. |
+| DDL (tables, views, indexes, generators) | ScratchBird tracked | Catalog manager + DDL executor | Metadata stored in ScratchBird catalog; storage layout is ScratchBird-native. |
+| System catalogs (RDB$/MON$/SEC$) | ScratchBird tracked | FirebirdCatalogHandler | Views map to ScratchBird runtime/catalog; untracked fields return NULL/0. |
+| PSQL (procedures, triggers) | Emulated | PSQL compiler + executor | Firebird PSQL maps to ScratchBird PSQL features. |
+| External tables/files | Restricted | Compatibility layer | File-backed features are not available in ScratchBird Alpha. |
 
-## Files
-- [01_databases_and_schemas](01_databases_and_schemas.md)
-- [02_tables_and_constraints](02_tables_and_constraints.md)
-- [03_indexes_views_sequences](03_indexes_views_sequences.md)
-- [04_types_and_domains](04_types_and_domains.md)
-- [05_programmable_sql](05_programmable_sql.md)
-- [06_dml_select](06_dml_select.md)
-- [07_dml_modification](07_dml_modification.md)
-- [08_transactions](08_transactions.md)
-- [09_security_dcl](09_security_dcl.md)
-- [10_session_show_set](10_session_show_set.md)
-- [11_utilities](11_utilities.md)
-- [12_operators](12_operators.md)
-- [13_system_catalog](13_system_catalog.md)
-- [14_functions](14_functions.md)
+## Key Differences
 
-Notes:
-- Firebird parser supports Firebird-specific syntax including PSQL, FIRST/SKIP,
-  CONTAINING/STARTING WITH, EXECUTE BLOCK, generators, and packages.
-- Most DDL statements (CREATE/DROP TABLE, INDEX, VIEW, SEQUENCE, PROCEDURE,
-  FUNCTION, TRIGGER, PACKAGE, EXCEPTION) are fully implemented through the
-  V2 pipeline (parser → semantic analyzer → bytecode generator → executor).
-- Security DCL (GRANT/REVOKE, CREATE/DROP ROLE) is implemented.
-- MERGE statement is fully supported with WHEN MATCHED/NOT MATCHED clauses.
+- **Transaction model:** Firebird uses MVCC with record versions; ScratchBird
+  uses MGA with TIP and sweep/GC. Result semantics are compatible, but
+  internal cleanup differs.
+- **File-system features:** Firebird external files and OS-level utilities are
+  restricted or unavailable.
+- **Extensions/UDRs:** Only supported when explicitly implemented in ScratchBird.
+
+## Practical Guidance
+
+- Treat ScratchBird as Firebird-compatible SQL, not a drop-in server.
+- Avoid Firebird-specific file system features and assume metadata-only
+  behavior for unsupported options.
+
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

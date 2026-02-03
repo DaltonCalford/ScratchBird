@@ -1,78 +1,41 @@
 # Sequences
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-Sequences (generators) produce unique numeric values, typically for primary keys
-and identity columns. ScratchBird favors SQL-style syntax for sequence access.
+---
 
-## CREATE SEQUENCE
+Sequences generate unique numeric values. You can use them directly or through
+identity/serial columns.
 
-```
-CREATE SEQUENCE [IF NOT EXISTS] sequence_name
-    [AS data_type]
-    [START WITH start_value]
-    [INCREMENT BY increment_value]
-    [MINVALUE min_value | NO MINVALUE]
-    [MAXVALUE max_value | NO MAXVALUE]
-    [CACHE cache_size]
-    [[NO] CYCLE];
+---
+
+## Create a Sequence
+
+```sql
+CREATE SEQUENCE order_seq START 1 INCREMENT 1;
 ```
 
-Example:
+## Use a Sequence
 
-```
-CREATE SEQUENCE user_id_seq
-    START WITH 1000
-    INCREMENT BY 1;
-```
-
-## ALTER SEQUENCE
-
-```
-ALTER SEQUENCE [IF EXISTS] sequence_name
-    [AS data_type]
-    [INCREMENT BY increment_value]
-    [MINVALUE min_value | NO MINVALUE]
-    [MAXVALUE max_value | NO MAXVALUE]
-    [RESTART [WITH restart_value]]
-    [CACHE cache_size]
-    [[NO] CYCLE];
+```sql
+SELECT NEXTVAL('order_seq');
+SELECT CURRVAL('order_seq');
 ```
 
-## DROP SEQUENCE
+## SERIAL / IDENTITY
 
-```
-DROP SEQUENCE [IF EXISTS] sequence_name [, ...] [CASCADE | RESTRICT];
-```
-
-## Using sequences
-
-SQL-style access:
-
-- NEXT VALUE FOR sequence_name
-- CURRENT VALUE FOR sequence_name
-- SET sequence_name TO value
-
-Examples:
-
-```
-INSERT INTO users (id, username)
-VALUES (NEXT VALUE FOR user_id_seq, 'jdoe');
+```sql
+CREATE TABLE orders (
+    id SERIAL PRIMARY KEY,
+    total DECIMAL(10,2)
+);
 
 CREATE TABLE invoices (
-  invoice_id BIGINT PRIMARY KEY DEFAULT (NEXT VALUE FOR invoice_id_seq),
-  details TEXT
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    total DECIMAL(10,2)
 );
 ```
 
-## Behavior notes
+---
 
-- Sequences are transaction-independent; values are not rolled back.
-- Caching improves throughput but can create gaps after crashes or rollbacks.
-- Sequences can be linked to identity columns; CASCADE removes dependencies.
-
-## References
-
-- `docs/specifications/ddl/DDL_SEQUENCES.md`
-- `docs/specifications/types/UUID_IDENTITY_COLUMNS.md`
-- `docs/audit/languages/native/03_indexes_views_sequences.md`
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

@@ -27,6 +27,11 @@
 #include <optional>
 
 namespace scratchbird {
+namespace security {
+class TLSContext;
+class TLSConnection;
+} // namespace security
+
 namespace network {
 
 /**
@@ -191,6 +196,20 @@ public:
      */
     core::Status peek(void* buffer, size_t size, size_t* bytes_peeked,
                       core::ErrorContext* ctx = nullptr);
+
+    // ========================================================================
+    // TLS
+    // ========================================================================
+
+    /**
+     * Enable TLS on this socket (server-side accept).
+     */
+    core::Status startTLS(security::TLSContext& ctx, core::ErrorContext* err = nullptr);
+
+    /**
+     * Check if TLS is active on this socket.
+     */
+    bool isTLSActive() const { return tls_active_; }
 
     // ========================================================================
     // Poll/Select
@@ -377,6 +396,8 @@ private:
     bool non_blocking_ = false;
     int last_error_ = 0;
     NetworkStats stats_;
+    std::unique_ptr<security::TLSConnection> tls_conn_;
+    bool tls_active_{false};
 
     // Helper to poll socket
     bool pollSocket(short events, int timeout_ms) const;

@@ -1,7 +1,7 @@
 # Outstanding Work Tracker (Master)
 
 Status: In Progress
-Last Updated: 2026-02-03
+Last Updated: 2026-02-02
 
 This tracker is the **single source of truth** for remaining work. All other
 planning docs can be archived after this is in place.
@@ -12,41 +12,50 @@ superseded; no additional gaps beyond the items listed below.
 ## A) Git Config Key Normalization (PLAN_GIT_CONFIG_KEY_NORMALIZATION.md)
 
 ### A1. YAML Parser Updates (src/git/GitConfigParser.cpp)
+
 - [ ] Parse canonical keys: `repo_type`, `repo_url`, `repo_path`, `repo_mode`,
+  
       `repo_branch`, `integration_mode`, `sign_commits`, `commit_template`.
 - [ ] Accept legacy aliases (`url`, `branch`, `path`, `mode`, `type`) with
+  
       canonical precedence when both are present.
 - [ ] Parse `auto_pull` consistently with auto_commit/auto_push.
 - [ ] Update `validate()` to require `repo_url` (allow legacy alias).
 - [ ] Update `toYAML()` to emit canonical `repo_*` keys.
 
 ### A2. sb_config.ini Support
+
 - [ ] Add INI parsing path for `[git.*]` sections.
 - [ ] Map INI sections to the same config structures as YAML.
 - [ ] Apply canonical precedence + legacy alias handling for INI inputs.
 
 ### A3. Tests + Diagnostics
+
 - [ ] Unit tests for canonical keys (YAML).
 - [ ] Unit tests for legacy aliases + precedence (YAML).
 - [ ] Unit tests for INI parsing (repository/schema/migrations/envs).
 - [ ] Add a config lint/diagnostic message for deprecated keys.
 
 ### A4. Docs Sync (post-implementation)
+
 - [ ] Confirm user docs reflect updated parser behavior.
 - [ ] Update config examples to use canonical keys.
 
 ## B) SBLR Type Opcode Remediation Tests (SBLR_TYPE_OPCODE_REMEDIATION_PLAN.md)
 
 ### B1. SBLR Unit Tests
+
 - [ ] Add bytecode round-trip tests for all SBLR type markers.
 - [ ] Add typed literal parsing tests for new literal opcodes.
 
 ### B2. DDL/DML Coverage
+
 - [ ] Minimal CREATE TABLE + INSERT/SELECT coverage for each new type.
 
 ## C) Emulated Engine 1:1 Parity Gaps (docs/findings/EMULATED_ENGINE_1TO1_AUDIT.md)
 
 ### C1. PostgreSQL Protocol Adapter Parity
+
 - [ ] Add TLS support for SSLRequest and encrypted StartupMessage (respect ssl_mode).
 - [ ] Add GSSENC handling or explicit negotiated disable per spec.
 - [ ] Implement SCRAM-PLUS channel binding or block when requested with correct SQLSTATE.
@@ -54,6 +63,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Align ParameterStatus keys and server_version string with emulation target.
 
 ### C2. PostgreSQL Parser Parity
+
 - [ ] Implement JSONPATH in PostgreSQL emulation.
 - [ ] Implement array domains.
 - [ ] Implement table-level CHECK constraints.
@@ -67,6 +77,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement MERGE USING subqueries.
 
 ### C3. MySQL Protocol Adapter Parity
+
 - [ ] Implement TLS negotiation (CLIENT_SSL) and encryption path.
 - [ ] Implement proper password validation (mysql_native_password + caching_sha2_password).
 - [ ] Validate database existence on connection and COM_INIT_DB.
@@ -74,6 +85,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Align server_version string to emulation target.
 
 ### C4. MySQL Parser Parity
+
 - [ ] Implement window frame offsets.
 - [ ] Implement named windows.
 - [ ] Implement DEFAULT values in multi-row INSERT/REPLACE.
@@ -82,6 +94,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement GRANT/REVOKE ON ALL bytecode support.
 
 ### C5. Firebird Protocol Adapter Parity
+
 - [ ] Implement SRP/legacy auth validation (remove accept-any-auth paths).
 - [ ] Implement full XDR framing/packet length parsing.
 - [ ] Implement additional opcodes (blob ops, events, services, batch, etc.).
@@ -89,6 +102,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Align protocol version negotiation to Firebird 3.0-5.0 targets.
 
 ### C6. Firebird Parser Parity
+
 - [ ] Implement ALTER ROLE/USER/MAPPING/SHADOW.
 - [ ] Implement DROP USER/MAPPING/SHADOW.
 - [ ] Implement ALTER DATABASE options.
@@ -98,6 +112,7 @@ superseded; no additional gaps beyond the items listed below.
 ## D) Remote Engine UDR Connectors (docs/planning/PLAN_UDR_REMOTE_CONNECTORS.md)
 
 ### D0. Shared Connector Framework
+
 - [ ] Finalize UDR connector manifest schema and signing verification.
 - [ ] Implement connection pool per 11a-Connection-Pool-Implementation.md.
 - [ ] Implement server/user mapping options handling.
@@ -106,6 +121,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement common metrics for connection pools and protocol adapters.
 
 ### D1. PostgreSQL UDR
+
 - [ ] Implement PostgreSQL protocol client (v3) startup/auth (SCRAM/MD5).
 - [ ] Implement TLS support (SSLRequest + verify-ca/full).
 - [ ] Implement extended query (Parse/Bind/Execute/Sync) + portal paging.
@@ -116,6 +132,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement SQLSTATE error mapping.
 
 ### D2. MySQL UDR
+
 - [ ] Implement MySQL Handshake V10 + capability negotiation.
 - [ ] Implement TLS support (CLIENT_SSL).
 - [ ] Implement auth plugins (caching_sha2_password + mysql_native_password).
@@ -127,6 +144,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement SQLSTATE + error code mapping.
 
 ### D3. Firebird UDR
+
 - [ ] Implement protocol negotiation (op_connect/op_accept).
 - [ ] Implement SRP + legacy auth validation.
 - [ ] Implement full XDR framing/packet parsing.
@@ -138,6 +156,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement status vector mapping to SQLSTATE.
 
 ### D4. ScratchBird UDR
+
 - [ ] Implement SBWP client startup/auth/handshake.
 - [ ] Implement TLS (required by default).
 - [ ] Implement prepared statements + paging.
@@ -146,6 +165,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement sys.* schema introspection.
 
 ### D5. Conformance and Integration
+
 - [ ] Add sbdriver-conformance adapter coverage for UDRs.
 - [ ] Add conformance manifest entries per connector.
 - [ ] Add end-to-end remote exec/query tests per protocol.
@@ -154,6 +174,7 @@ superseded; no additional gaps beyond the items listed below.
 ## E) IPC + SBWP v1.1 End-to-End Support (docs/planning/PLAN_IPC_PROTOCOL_UPGRADE.md)
 
 ### E1. IPC Contract v1.1
+
 - [ ] Extend IPC header to include protocol version + feature flags.
 - [ ] Add IPC message types for startup/feature negotiation.
 - [ ] Add IPC message types for prepared statement lifecycle (PARSE/BIND/DESCRIBE/EXECUTE/CLOSE).
@@ -165,6 +186,7 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Update ENGINE_PARSER_IPC_CONTRACT.md.
 
 ### E2. Engine IPC Server
+
 - [ ] Implement handlers for new IPC message types.
 - [ ] Map IPC prepared statements to engine statement cache.
 - [ ] Implement streaming/COPY with backpressure.
@@ -172,15 +194,33 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement cancel/interrupt propagation.
 
 ### E3. Parser Agents (Native + Emulated)
+
 - [ ] Forward SBWP startup/feature negotiation to engine.
 - [ ] Map emulated protocol features to IPC prepared/streaming paths.
 - [ ] Pass attachment_id/txn_id on every IPC request.
 - [ ] Map IPC errors to protocol-specific formats.
 
 ### E4. Validation
+
 - [ ] Unit tests for IPC framing + message types.
 - [ ] Integration tests for SBWP v1.1 features (prepare, COPY, notify, cancel).
 - [ ] Cross-protocol tests for emulated parsers using IPC features.
+
+## F) Native SBWP TLS + Driver Conformance (SBWP v1.1)
+
+### F1. TLS Plumbing
+
+- [x] Socket TLS handshake support (server-side accept).
+- [x] Parser TLS config loading (`--tls-config` and `[ssl]` section).
+- [x] Listener passes TLS config to parser workers.
+
+### F2. Native Adapter SBWP Messaging
+
+- [x] SBWP header parsing and message dispatch for Startup/Auth/Query/Parse/Bind/Execute.
+- [x] SBWP result framing (RowDescription/DataRow/CommandComplete/Ready).
+- [x] SBWP auth responses (AuthRequest/Continue/Ok + ParameterStatus).
+- [x] Basic transaction command handling with TxnStatus + Ready.
+- [ ] COPY/streaming over SBWP
 
 ## Exit Criteria
 

@@ -1,24 +1,24 @@
 # Contributing
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
 ScratchBird development follows strict architectural boundaries and audit
-processes. Please review these before contributing:
+processes. Key principles:
 
-- `../../MGA_RULES.md`
-- `../../IMPLEMENTATION_STANDARDS.md`
-- `../../docs/development/PROCESS_AND_AGENTS.md`
-- `../../docs/planning/CONSOLIDATED_FINDINGS_REMEDIATION_PLAN.md`
+- Keep parser and engine layers isolated.
+- Use SBLR as the only engine input.
+- Preserve MGA visibility rules.
+- Update tests and documentation with every change.
 
 ## How to Contribute
 
-1. Identify a spec or finding to address.
+1. Identify a spec or gap to address.
 2. Confirm current behavior in code (code is the source of truth).
 3. Update implementation and related documentation.
 4. Add tests or fixtures where applicable.
-5. Update the audit or findings document if needed.
 
 ## Reporting Issues
 
-File issues at:
-- https://github.com/scratchbird/scratchbird/issues
+Use the project issue tracker for bugs and feature requests.
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

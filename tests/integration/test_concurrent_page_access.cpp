@@ -43,6 +43,7 @@
 #include <atomic>
 #include <random>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <algorithm>
@@ -69,6 +70,11 @@ static int parallelDivisor() {
     }
     int level = std::atoi(env);
     return level > 1 ? 2 : 1;
+}
+
+static std::mt19937 makeThreadRng(int seed) {
+    std::seed_seq seq{0x1234u, static_cast<uint32_t>(seed)};
+    return std::mt19937(seq);
 }
 
 class ConcurrentPageAccessTest : public ::testing::Test {
@@ -148,8 +154,7 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&, t]() {
             ErrorContext ctx;
-            std::random_device rd;
-            std::mt19937 gen(rd());
+            std::mt19937 gen = makeThreadRng(t + 1);
             std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
 
             for (int i = 0; i < ITERATIONS; ++i) {
@@ -238,8 +243,7 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentWritesDifferentPages) {
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&, t]() {
             ErrorContext ctx;
-            std::random_device rd;
-            std::mt19937 gen(rd());
+            std::mt19937 gen = makeThreadRng(t + 101);
             std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
 
             for (int i = 0; i < ITERATIONS; ++i) {
@@ -383,8 +387,7 @@ TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
                 errors.fetch_add(1);
                 return;
             }
-            std::random_device rd;
-            std::mt19937 gen(rd());
+            std::mt19937 gen = makeThreadRng(t + 201);
             std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
 
             for (int i = 0; i < ITERATIONS; ++i) {
@@ -472,8 +475,7 @@ TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
                 errors.fetch_add(1);
                 return;
             }
-            std::random_device rd;
-            std::mt19937 gen(rd());
+            std::mt19937 gen = makeThreadRng(t + 301);
             std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
 
             for (int i = 0; i < ITERATIONS; ++i) {
@@ -546,8 +548,7 @@ TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&, t]() {
             ErrorContext ctx;
-            std::random_device rd;
-            std::mt19937 gen(rd());
+            std::mt19937 gen = makeThreadRng(t + 401);
             std::uniform_int_distribution<> dis(0, HOT_PAGES - 1);
 
             for (int i = 0; i < ITERATIONS; ++i) {

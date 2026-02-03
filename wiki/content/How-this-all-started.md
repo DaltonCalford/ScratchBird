@@ -1,5 +1,7 @@
 # How this all started
 
+**Last Updated:** 2026-02-03
+
 This page explains why ScratchBird exists and how I ended up making the choices that shaped it.
 
 ---

@@ -1,696 +1,528 @@
-# Troubleshooting (Admin)
+# Troubleshooting Guide
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
----
 
-## Overview
+Common issues and solutions.
 
-This guide helps administrators diagnose and resolve common ScratchBird issues. For general user troubleshooting, see the [Troubleshooting section](../troubleshooting/).
-
-**Topics covered:**
-- Server startup issues
-- Connection problems
-- Performance issues
-- Storage problems
-- Replication issues
 
 ---
 
-## Part 1: Server Startup Issues
+## Quick Diagnostics
 
-### Server Won't Start
-
-**Symptom:** `systemctl start scratchbird` fails
-
-**Check the logs:**
 ```bash
-# View service status
+# Check server status
 systemctl status scratchbird
 
-# Check journal logs
-journalctl -u scratchbird -n 100 --no-pager
+# View recent logs
+journalctl -u scratchbird -n 50
 
-# Check server log
-tail -100 /var/log/scratchbird/server.log
-```
+# Test connectivity
+sb_isql -H localhost -P 3092 -c "SELECT 1"
 
-**Common causes and solutions:**
-
-**1. Port already in use**
-```bash
-# Check what's using the port
-ss -tlnp | grep 3092
-lsof -i :3092
-
-# Solution: Stop the other process or change port
-# Or kill existing ScratchBird process
-pkill -f sb_server
-```
-
-**2. Data directory permissions**
-```bash
-# Check ownership
-ls -la /var/lib/scratchbird/
-
-# Fix permissions
-chown -R scratchbird:scratchbird /var/lib/scratchbird/
-chmod 700 /var/lib/scratchbird/
-```
-
-**3. Invalid configuration**
-```bash
-# Validate configuration
-sb_server --config /etc/scratchbird/sb_server.conf --check
-
-# Common issues:
-# - Missing required settings
-# - Invalid values
-# - Syntax errors
-```
-
-**4. Corrupted data files**
-```bash
-# Check for corruption
-sb_admin --check /var/lib/scratchbird/data
-
-# Attempt repair
-sb_admin --repair /var/lib/scratchbird/data
-```
-
-**5. Lock file exists**
-```bash
-# Remove stale lock file
-rm /var/lib/scratchbird/data/postmaster.pid
-
-# Only if server is definitely not running!
-ps aux | grep sb_server
-```
-
-### Server Crashes on Startup
-
-**Check for core dumps:**
-```bash
-# Find core dumps
-ls -la /var/lib/scratchbird/core*
-coredumpctl list
-
-# Analyze core dump
-gdb /usr/bin/sb_server /var/lib/scratchbird/core.12345
-```
-
-**Memory issues:**
-```bash
-# Check available memory
-free -h
-
-# Reduce buffer_pool_size if needed
-# Edit sb_server.conf: buffer_pool_size = 256MB
+# Check listening ports
+ss -tlnp | grep -E "3092|5432|3306|3050"
 ```
 
 ---
 
-## Part 2: Connection Issues
+## Connection Issues
 
-### Cannot Connect to Server
+### "Connection refused"
 
-**Symptom:** `sb_isql: could not connect to server`
+**Cause:** Server not running or wrong port.
 
-**Diagnostic steps:**
-
+**Solution:**
 ```bash
-# 1. Is the server running?
+# Check if running
 systemctl status scratchbird
-ps aux | grep sb_server
 
-# 2. Is the port listening?
-ss -tlnp | grep 3092
+# If stopped, start it
+sudo systemctl start scratchbird
 
-# 3. Is the firewall blocking?
-iptables -L -n | grep 3092
-ufw status
-
-# 4. Test local connection
-sb_isql -H localhost -p 3092 -U admin -d postgres
-
-# 5. Test network connection
-telnet db-server 3092
-nc -zv db-server 3092
+# Check listening ports
+ss -tlnp | grep sb_server
 ```
 
-### Authentication Failed
+### "No pg_hba.conf entry"
 
-**Symptom:** `FATAL: password authentication failed for user`
+**Cause:** Client IP not allowed in hba.conf.
 
-**Solutions:**
+**Solution:**
+1. Check client IP:
+   ```bash
+   echo "My IP: $(curl -s ifconfig.me)"
+   ```
 
+2. Add entry to `/etc/scratchbird/hba.conf`:
+   ```
+   host    all    all    YOUR_IP/32    scram-sha-256
+   ```
+
+3. Reload:
+   ```bash
+   sudo systemctl reload scratchbird
+   ```
+
+### "Authentication failed"
+
+**Cause:** Wrong username or password.
+
+**Solution:**
 ```bash
-# 1. Reset password
-sb_isql -U admin -d postgres -c "ALTER USER app_user WITH PASSWORD 'newpassword'"
+# Reset password
+sb_security password username --new-password
 
-# 2. Check sb_hba.conf
-cat /etc/scratchbird/sb_hba.conf
-
-# 3. Check authentication method
-# Ensure SCRAM-SHA-256 is used consistently:
-# - In sb_server.conf: password_encryption = scram-sha-256
-# - In sb_hba.conf: use scram-sha-256 method
-# - Re-set passwords after changing encryption
-
-# 4. Reload configuration
-systemctl reload scratchbird
+# Or via SQL (as admin)
+ALTER USER username WITH PASSWORD 'new_password';
 ```
 
-### Too Many Connections
+### "Too many connections"
 
-**Symptom:** `FATAL: too many connections for role`
+**Cause:** Connection limit reached.
 
-**Immediate fix:**
-```sql
--- Check current connections
-SELECT usename, COUNT(*) FROM pg_stat_activity GROUP BY usename;
+**Solution:**
+1. Check current connections:
+   ```sql
+   SELECT COUNT(*) FROM pg_stat_activity;
+   ```
 
--- Terminate idle connections
-SELECT pg_terminate_backend(pid)
-FROM pg_stat_activity
-WHERE state = 'idle'
-AND query_start < NOW() - INTERVAL '1 hour';
-```
+2. Terminate idle connections:
+   ```sql
+   SELECT pg_terminate_backend(pid)
+   FROM pg_stat_activity
+   WHERE state = 'idle'
+     AND query_start < NOW() - INTERVAL '1 hour';
+   ```
 
-**Long-term fix:**
-```ini
-# Increase max_connections in sb_server.conf
-[server]
-max_connections = 200
-```
+3. Increase limit in `sb_server.conf`:
+   ```ini
+   [server]
+   max_connections = 200
+   ```
 
-```sql
--- Or limit per-user connections
-ALTER USER app_user CONNECTION LIMIT 20;
-```
+### "SSL required"
 
-### SSL Connection Required
+**Cause:** Server requires SSL but client not using it.
 
-**Symptom:** `FATAL: SSL connection is required`
-
-**Client needs SSL:**
+**Solution:**
 ```bash
 # Connect with SSL
-sb_isql "host=db-server dbname=mydb user=admin sslmode=require"
-
-# Or configure in sb_hba.conf to allow non-SSL for specific hosts
-hostnossl  all  all  192.168.1.0/24  scram-sha-256
+psql "host=server sslmode=require dbname=mydb"
 ```
 
 ---
 
-## Part 3: Performance Issues
+## Database Issues
+
+### "Database does not exist"
+
+**Cause:** Database not created or wrong name.
+
+**Solution:**
+```bash
+# List databases
+sb_isql -H localhost -c "\l"
+
+# Create if needed
+sb_isql -H localhost -c "CREATE DATABASE mydb"
+```
+
+### "Permission denied"
+
+**Cause:** User lacks privileges.
+
+**Solution:**
+```sql
+-- Grant access
+GRANT CONNECT ON DATABASE mydb TO username;
+GRANT USAGE ON SCHEMA public TO username;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO username;
+```
+
+### "Relation does not exist"
+
+**Cause:** Table not found (wrong schema or name).
+
+**Solution:**
+```sql
+-- List tables
+\dt
+
+-- Check schema
+\dt *.tablename
+
+-- Set search path
+SET search_path TO myschema, public;
+```
+
+### "Disk full"
+
+**Cause:** Data directory out of space.
+
+**Solution:**
+1. Check disk:
+   ```bash
+   df -h /var/lib/scratchbird
+   ```
+
+2. Free space:
+   - Delete old backups
+   - Run sweep/GC: `SWEEP;` (VACUUM alias)
+   - Archive old data
+
+3. Expand disk if needed
+
+---
+
+## Performance Issues
 
 ### Slow Queries
 
-**Find slow queries:**
+**Diagnosis:**
 ```sql
--- Currently running slow queries
+-- Find slow queries
 SELECT
     pid,
     NOW() - query_start AS duration,
-    state,
-    LEFT(query, 100) AS query
+    query
 FROM pg_stat_activity
 WHERE state = 'active'
-AND query_start < NOW() - INTERVAL '10 seconds'
 ORDER BY query_start;
-
--- Historical slow queries (requires pg_stat_statements)
-SELECT
-    LEFT(query, 80) AS query,
-    calls,
-    ROUND(mean_exec_time::numeric, 2) AS avg_ms,
-    ROUND(total_exec_time::numeric, 2) AS total_ms
-FROM pg_stat_statements
-ORDER BY mean_exec_time DESC
-LIMIT 20;
 ```
 
-**Analyze query performance:**
-```sql
--- Get query plan
-EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
-SELECT * FROM orders WHERE user_id = 123;
-```
+**Solutions:**
+1. Add missing indexes:
+   ```sql
+   EXPLAIN ANALYZE SELECT ...;  -- Look for Seq Scan
+   CREATE INDEX idx_name ON table(column);
+   ```
 
-**Common solutions:**
+2. Update statistics:
+   ```sql
+   ANALYZE tablename;
+   ```
 
-```sql
--- 1. Missing index
-CREATE INDEX idx_orders_user ON orders(user_id);
-
--- 2. Outdated statistics
-ANALYZE orders;
-
--- 3. Table bloat
-VACUUM ANALYZE orders;
-
--- 4. Bad query plan - force index
-SET enable_seqscan = off;
--- Then run query and re-enable
-SET enable_seqscan = on;
-```
+3. Increase work_mem for sorts
 
 ### High CPU Usage
 
-**Identify CPU-intensive queries:**
-```sql
-SELECT
-    pid,
-    usename,
-    state,
-    NOW() - query_start AS duration,
-    LEFT(query, 60) AS query
-FROM pg_stat_activity
-WHERE state = 'active'
-ORDER BY query_start;
+**Diagnosis:**
+```bash
+top -p $(pgrep sb_server)
 ```
 
-**Kill runaway query:**
-```sql
--- Cancel query (graceful)
-SELECT pg_cancel_backend(12345);
-
--- Terminate connection (forceful)
-SELECT pg_terminate_backend(12345);
-```
+**Solutions:**
+1. Check for long-running queries
+2. Add indexes to avoid sequential scans
+3. Optimize complex queries
 
 ### High Memory Usage
 
-**Check memory allocation:**
+**Diagnosis:**
+```bash
+ps aux | grep sb_server
+```
+
+**Solutions:**
+1. Reduce `buffer_pool_size`
+2. Reduce `work_mem`
+3. Limit connections
+
+### Lock Contention
+
+**Diagnosis:**
 ```sql
--- Check shared buffer usage
 SELECT
-    c.relname,
-    pg_size_pretty(count(*) * 8192) AS buffered,
-    round(100.0 * count(*) / (
-        SELECT setting::integer FROM pg_settings WHERE name = 'buffer_pool_size'
-    ), 2) AS buffer_percent
-FROM pg_buffercache b
-JOIN pg_class c ON b.relfilenode = c.relfilenode
-GROUP BY c.relname
-ORDER BY count(*) DESC
-LIMIT 20;
+    blocked.pid AS blocked_pid,
+    blocking.pid AS blocking_pid,
+    blocked.query AS blocked_query
+FROM pg_stat_activity blocked
+JOIN pg_stat_activity blocking
+    ON blocking.pid = ANY(pg_blocking_pids(blocked.pid));
 ```
 
-**Reduce memory usage:**
-```ini
-# In sb_server.conf
-[memory]
-buffer_pool_size = 256MB      # Reduce if needed
-work_mem = 4MB              # Per-operation memory
-maintenance_work_mem = 64MB # For VACUUM, CREATE INDEX
-```
+**Solutions:**
+1. Kill blocking query:
+   ```sql
+   SELECT pg_terminate_backend(blocking_pid);
+   ```
 
-### Connection Pooling Issues
-
-**Symptom:** Connections exhausted despite low traffic
-
-**Solution:** Implement connection pooling
-
-```ini
-# PgBouncer configuration
-[databases]
-mydb = host=localhost port=5432 dbname=mydb
-
-[pgbouncer]
-listen_port = 6432
-listen_addr = *
-auth_type = scram-sha-256
-auth_file = /etc/pgbouncer/userlist.txt
-pool_mode = transaction
-max_client_conn = 1000
-default_pool_size = 20
-```
+2. Optimize transaction design
+3. Add indexes to reduce lock duration
 
 ---
 
-## Part 4: Storage Issues
+## Server Issues
 
-### Disk Space Full
+### Server Won't Start
 
-**Immediate actions:**
+**Check logs:**
 ```bash
-# Check disk usage
-df -h /var/lib/scratchbird
-
-# Find large files
-du -sh /var/lib/scratchbird/* | sort -h
-
-# Check WAL accumulation
-ls -la /var/lib/scratchbird/data/pg_wal/
-du -sh /var/lib/scratchbird/data/pg_wal/
+journalctl -u scratchbird -n 100
 ```
 
-**Clear space:**
+**Common causes:**
+
+1. **Configuration error:**
+   ```bash
+   sb_server --config /etc/scratchbird/sb_server.conf --check
+   ```
+
+2. **Port in use:**
+   ```bash
+   ss -tlnp | grep 5432
+   # Kill conflicting process or change port
+   ```
+
+3. **Permission denied:**
+   ```bash
+   ls -la /var/lib/scratchbird
+   chown -R scratchbird:scratchbird /var/lib/scratchbird
+   ```
+
+4. **Corrupted data:**
+   ```bash
+   sb_verify /var/lib/scratchbird/mydb.sbdb --all
+   ```
+
+### Server Crashes
+
+**Check core dump:**
 ```bash
-# Remove old WAL files (if not needed for recovery)
-# WARNING: Only if you have recent backups!
-sb_isql -U admin -c "SELECT pg_switch_wal()"
-# Then remove old files
-
-# Clear old logs
-find /var/log/scratchbird -name "*.log" -mtime +7 -delete
-
-# Vacuum to reclaim space
-sb_isql -U admin -d mydb -c "VACUUM FULL"
+coredumpctl list
+coredumpctl info -1
 ```
 
-### Table Bloat
+**Report bug with:**
+- ScratchBird version
+- Operating system
+- Error messages
+- Steps to reproduce
 
-**Detect bloat:**
-```sql
--- Check dead tuple ratio
-SELECT
-    schemaname || '.' || relname AS table_name,
-    n_live_tup AS live_tuples,
-    n_dead_tup AS dead_tuples,
-    ROUND(n_dead_tup * 100.0 / NULLIF(n_live_tup, 0), 2) AS dead_pct,
-    last_vacuum,
-    last_autovacuum
-FROM pg_stat_user_tables
-WHERE n_dead_tup > 10000
-ORDER BY n_dead_tup DESC;
+### Out of Memory
+
+**Symptoms:** Server killed by OOM killer.
+
+**Check:**
+```bash
+dmesg | grep -i "out of memory"
+journalctl -k | grep oom
 ```
-
-**Fix bloat:**
-```sql
--- Regular vacuum (doesn't lock table)
-VACUUM ANALYZE orders;
-
--- Full vacuum (locks table, reclaims disk space)
-VACUUM FULL orders;
-
--- Or use pg_repack for online rebuild
--- pg_repack -d mydb -t orders
-```
-
-### WAL Accumulation
-
-**Symptom:** `pg_wal` directory growing
-
-**Causes:**
-1. Failed archive command
-2. Replication lag
-3. Long-running transactions
 
 **Solutions:**
-```bash
-# 1. Check archive status
-sb_isql -U admin -c "SELECT * FROM pg_stat_archiver"
+1. Reduce memory settings:
+   ```ini
+   [memory]
+   buffer_pool_size = 1GB
+   work_mem = 4MB
+   ```
 
-# 2. Check replication lag
-sb_isql -U admin -c "SELECT * FROM pg_stat_replication"
+2. Reduce max_connections
+3. Add swap (temporary)
+4. Increase RAM
 
-# 3. Find long transactions
-sb_isql -U admin -c "
-SELECT pid, xact_start, NOW() - xact_start AS duration
-FROM pg_stat_activity
-WHERE xact_start IS NOT NULL
-ORDER BY xact_start
-LIMIT 10"
+---
 
-# 4. Force checkpoint
-sb_isql -U admin -c "CHECKPOINT"
-```
+## Data Issues
 
 ### Data Corruption
 
-**Detect corruption:**
+**Detection:**
 ```bash
-# Check data integrity
-sb_admin --check /var/lib/scratchbird/data
-
-# Verify specific table
-sb_isql -U admin -d mydb -c "
-SELECT COUNT(*) FROM orders;
--- If this errors, table may be corrupt
-"
+sb_verify mydb --all
 ```
 
-**Recovery options:**
+**Recovery:**
+1. Restore from backup:
+   ```bash
+   sb_backup restore /backup/latest.sbdb mydb_recovered
+   ```
 
-```bash
-# 1. Try repair
-sb_admin --repair /var/lib/scratchbird/data
+2. If no backup, try recovery mode:
+   ```bash
+   sb_server --database /var/lib/scratchbird/mydb.sbdb --recovery
+   ```
 
-# 2. Restore from backup
-systemctl stop scratchbird
-sb_restore -U admin -d mydb /backups/latest.sbk
-systemctl start scratchbird
+### Accidentally Deleted Data
 
-# 3. Point-in-time recovery (if WAL archiving enabled)
-# See Backup and Restore guide
+**If within transaction:**
+```sql
+ROLLBACK;
+```
+
+**If committed:**
+1. Restore from backup
+2. Use point-in-time recovery (if WAL archiving enabled)
+
+### Wrong Data Modified
+
+```sql
+-- If still in transaction
+ROLLBACK;
+
+-- Otherwise restore from backup
 ```
 
 ---
 
-## Part 5: Replication Issues
+## Backup Issues
 
-### Replica Not Syncing
+### Backup Fails
 
-**Check replication status:**
-```sql
--- On primary
-SELECT
-    client_addr,
-    state,
-    sent_lsn,
-    write_lsn,
-    flush_lsn,
-    replay_lsn,
-    pg_wal_lsn_diff(sent_lsn, replay_lsn) AS lag_bytes
-FROM pg_stat_replication;
-
--- On replica
-SELECT
-    pg_is_in_recovery() AS is_replica,
-    pg_last_wal_receive_lsn() AS receive_lsn,
-    pg_last_wal_replay_lsn() AS replay_lsn,
-    pg_last_xact_replay_timestamp() AS last_replay_time;
-```
-
-**Common issues:**
-
-**1. Network connectivity**
+**Check disk space:**
 ```bash
-# Test connection from replica to primary
-nc -zv primary-server 5432
+df -h /backup
 ```
 
-**2. Authentication**
+**Check permissions:**
 ```bash
-# Check replication user can connect
-sb_isql -h primary-server -U repl_user -d postgres
+ls -la /backup
 ```
 
-**3. WAL not available**
-```sql
--- Increase wal_keep_size on primary
-ALTER SYSTEM SET wal_keep_size = '2GB';
-SELECT pg_reload_conf();
+**Run manually with verbose:**
+```bash
+sb_backup create mydb /backup/test.sbdb --verbose
 ```
 
-### Replication Lag
+### Restore Fails
 
-**Monitor lag:**
-```sql
--- Lag in bytes
-SELECT
-    client_addr,
-    pg_wal_lsn_diff(sent_lsn, replay_lsn) AS lag_bytes,
-    pg_size_pretty(pg_wal_lsn_diff(sent_lsn, replay_lsn)) AS lag_pretty
-FROM pg_stat_replication;
-
--- Lag in time (approximate)
-SELECT NOW() - pg_last_xact_replay_timestamp() AS lag_time;
+**Verify backup integrity:**
+```bash
+sb_backup verify /backup/mydb.sbdb
 ```
 
-**Reduce lag:**
+**Check for conflicts:**
+```bash
+# Database exists?
+sb_isql -c "\l" | grep mydb
+```
+
+---
+
+## Network Issues
+
+### Timeout Connecting
+
+**Check firewall:**
+```bash
+# Linux
+sudo ufw status
+sudo firewall-cmd --list-ports
+
+# Test port
+nc -zv server 5432
+```
+
+### Intermittent Connections
+
+**Check network:**
+```bash
+ping server
+traceroute server
+```
+
+**Check server load:**
+```bash
+uptime
+vmstat 1 5
+```
+
+---
+
+## Logging
+
+### Increase Log Verbosity
+
 ```ini
-# On replica - tune recovery settings
-[recovery]
-recovery_min_apply_delay = 0
+# sb_server.conf
+[logging]
+level = debug
 ```
 
-```sql
--- Pause/resume recovery to debug
-SELECT pg_wal_replay_pause();
--- Debug
-SELECT pg_wal_replay_resume();
-```
-
----
-
-## Part 6: Lock Issues
-
-### Detecting Locks
-
-```sql
--- All locks
-SELECT
-    l.locktype,
-    l.relation::regclass AS table_name,
-    l.mode,
-    l.granted,
-    a.usename,
-    a.query,
-    a.pid
-FROM pg_locks l
-JOIN pg_stat_activity a ON l.pid = a.pid
-WHERE l.relation IS NOT NULL;
-
--- Blocking queries
-SELECT
-    blocked.pid AS blocked_pid,
-    blocked.usename AS blocked_user,
-    blocking.pid AS blocking_pid,
-    blocking.usename AS blocking_user,
-    blocked.query AS blocked_query,
-    blocking.query AS blocking_query
-FROM pg_stat_activity blocked
-JOIN pg_locks bl ON blocked.pid = bl.pid
-JOIN pg_locks kl ON bl.locktype = kl.locktype
-    AND bl.database IS NOT DISTINCT FROM kl.database
-    AND bl.relation IS NOT DISTINCT FROM kl.relation
-    AND bl.page IS NOT DISTINCT FROM kl.page
-    AND bl.tuple IS NOT DISTINCT FROM kl.tuple
-    AND bl.virtualxid IS NOT DISTINCT FROM kl.virtualxid
-    AND bl.transactionid IS NOT DISTINCT FROM kl.transactionid
-    AND bl.classid IS NOT DISTINCT FROM kl.classid
-    AND bl.objid IS NOT DISTINCT FROM kl.objid
-    AND bl.objsubid IS NOT DISTINCT FROM kl.objsubid
-    AND bl.pid != kl.pid
-JOIN pg_stat_activity blocking ON kl.pid = blocking.pid
-WHERE NOT bl.granted;
-```
-
-### Resolving Deadlocks
-
-```sql
--- View deadlock info in logs
--- Then terminate one of the transactions
-SELECT pg_terminate_backend(12345);
-```
-
-**Prevent deadlocks:**
-```sql
--- Set lock timeout
-SET lock_timeout = '10s';
-
--- Set deadlock detection interval
--- In sb_server.conf: deadlock_timeout = 1s
-```
-
----
-
-## Part 7: Diagnostic Queries
-
-### System Health Check
-
-```sql
--- Comprehensive health check
-SELECT 'Version' AS metric, version() AS value
-UNION ALL
-SELECT 'Uptime', NOW() - pg_postmaster_start_time()::text
-UNION ALL
-SELECT 'Active connections', COUNT(*)::text FROM pg_stat_activity WHERE state = 'active'
-UNION ALL
-SELECT 'Database size', pg_size_pretty(pg_database_size(current_database()))
-UNION ALL
-SELECT 'Cache hit ratio', ROUND(
-    (SELECT blks_hit * 100.0 / NULLIF(blks_hit + blks_read, 0)
-     FROM pg_stat_database WHERE datname = current_database()), 2)::text || '%';
-```
-
-### Activity Summary
-
-```sql
-SELECT
-    state,
-    COUNT(*) AS connections,
-    MAX(NOW() - query_start) AS longest_query
-FROM pg_stat_activity
-WHERE backend_type = 'client backend'
-GROUP BY state;
-```
-
-### Table Statistics
-
-```sql
-SELECT
-    schemaname || '.' || relname AS table_name,
-    seq_scan,
-    idx_scan,
-    n_live_tup AS rows,
-    n_dead_tup AS dead_rows,
-    last_vacuum,
-    last_analyze
-FROM pg_stat_user_tables
-ORDER BY n_dead_tup DESC
-LIMIT 20;
-```
-
----
-
-## Quick Reference
-
-### Emergency Commands
+### Find Specific Errors
 
 ```bash
-# Stop server gracefully
-systemctl stop scratchbird
-
-# Force stop
-systemctl kill scratchbird
-
-# Check logs
-journalctl -u scratchbird -f
-
-# Kill specific backend
-sb_isql -U admin -c "SELECT pg_terminate_backend(12345)"
+grep -i error /var/log/scratchbird/sb_server.log
+grep -i "failed" /var/log/scratchbird/sb_server.log
 ```
 
-### Common Fixes
+### Log Rotation Issues
 
-| Problem | Quick Fix |
-|---------|-----------|
-| Can't connect | Check `systemctl status scratchbird` |
-| Auth failed | Reset password with ALTER USER |
-| Too many connections | Kill idle: `pg_terminate_backend()` |
-| Slow queries | Run `VACUUM ANALYZE` |
-| Disk full | Clear logs, vacuum full |
-| Table locked | Find and kill blocking query |
-
-### Health Check Commands
-
-```sql
--- Connections
-SELECT COUNT(*) FROM pg_stat_activity;
-
--- Cache ratio
-SELECT blks_hit * 100 / (blks_hit + blks_read) FROM pg_stat_database;
-
--- Long queries
-SELECT pid, query_start, query FROM pg_stat_activity WHERE state = 'active';
-
--- Replication lag
-SELECT pg_wal_lsn_diff(sent_lsn, replay_lsn) FROM pg_stat_replication;
+Check logrotate config:
+```bash
+cat /etc/logrotate.d/scratchbird
 ```
 
 ---
 
-## See Also
+## Getting Help
+
+### Information to Gather
+
+1. **Version:**
+   ```sql
+   SELECT version();
+   ```
+
+2. **Configuration:**
+   ```sql
+   SHOW ALL;
+   ```
+
+3. **Recent logs:**
+   ```bash
+   tail -100 /var/log/scratchbird/sb_server.log
+   ```
+
+4. **System info:**
+   ```bash
+   uname -a
+   free -h
+   df -h
+   ```
+
+### Where to Get Help
+
+- [FAQ](../FAQ.md)
+- Review server logs and error details
+
+---
+
+## Emergency Procedures
+
+### Emergency Shutdown
+
+```bash
+# Graceful
+sudo systemctl stop scratchbird
+
+# If unresponsive
+sudo kill -TERM $(cat /var/run/scratchbird/sb_server.pid)
+
+# Last resort
+sudo kill -9 $(pgrep sb_server)
+```
+
+### Kill All Connections
+
+```sql
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE pid != pg_backend_pid();
+```
+
+### Read-Only Mode
+
+```sql
+-- Prevent writes during emergency
+ALTER DATABASE mydb SET default_transaction_read_only = on;
+```
+
+---
+
+## Next Steps
 
 - [Monitoring](monitoring.md)
-- [Backup and Restore](backup-restore.md)
-- [Security Administration](security.md)
-- [Performance Tuning](../user-guides/Performance-Tuning.md)
-- [Connection Problems](../troubleshooting/Connection-Problems.md)
-
+- [Backup and restore](backup-restore.md)
+- [Performance tuning](performance-tuning.md)

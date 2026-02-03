@@ -1,57 +1,42 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# Transactions
 
-# PostgreSQL - Transaction Control
+**Last Updated:** 2026-02-03
 
-> Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
-> Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.
+---
 
-Spec refs:
-- `ScratchBird/docs/specifications/parser/POSTGRESQL_PARSER_SPECIFICATION.md`
-- `ScratchBird/docs/audit/parsers/CRITICAL_FINDINGS.md` (isolation mapping)
+## Compatibility Matrix
 
-## BEGIN / START TRANSACTION / SET TRANSACTION
-Description: Starts or configures a transaction; isolation levels are mapped to
-Firebird MGA equivalents.
+| Feature | Status | Source | Notes |
+|---------|--------|--------|-------|
+| BEGIN/COMMIT/ROLLBACK | ScratchBird tracked | Transaction manager | Standard semantics supported. |
+| Isolation levels | ScratchBird tracked | Transaction manager | READ COMMITTED/REPEATABLE READ/SERIALIZABLE mapped to ScratchBird MGA. |
+| Savepoints | ScratchBird tracked | Transaction manager | SAVEPOINT/ROLLBACK TO/RELEASE supported. |
+| Two-phase (PREPARE TRANSACTION) | Emulated | Transaction manager | Supported only if ScratchBird implements 2PC. |
+| Deferrable constraints | Emulated | Constraint manager | Enforced only if ScratchBird supports deferral. |
 
-Syntax (actual, abbreviated):
+## Example
+
 ```sql
-BEGIN [WORK | TRANSACTION]
-START TRANSACTION <options>
-SET TRANSACTION <options>
-```
-Example:
-```sql
-BEGIN ISOLATION LEVEL SERIALIZABLE;
-```
-Status: Implemented.
-Spec delta: SERIALIZABLE/REPEATABLE READ map to MGA SNAPSHOT/STABILITY.
-
-## COMMIT / ROLLBACK
-Description: Ends a transaction.
-
-Syntax (actual):
-```sql
-COMMIT [WORK]
-ROLLBACK [WORK]
-```
-Example:
-```sql
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+UPDATE users SET active = TRUE;
 COMMIT;
 ```
-Status: Implemented.
 
-## SAVEPOINT / RELEASE / ROLLBACK TO SAVEPOINT
-Description: Savepoint control.
+Savepoints:
 
-Syntax (actual):
 ```sql
-SAVEPOINT <name>
-RELEASE SAVEPOINT <name>
-ROLLBACK TO SAVEPOINT <name>
+SAVEPOINT sp1;
+ROLLBACK TO sp1;
+RELEASE SAVEPOINT sp1;
 ```
-Example:
-```sql
-SAVEPOINT step1;
-ROLLBACK TO SAVEPOINT step1;
-```
-Status: Implemented.
+
+## Differences
+
+- PostgreSQL uses WAL and VACUUM. ScratchBird uses MGA with TIP and sweep/GC.
+- Long-running transactions delay sweep instead of VACUUM cleanup.
+- WAL is optional in ScratchBird Alpha and not required for correctness.
+
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

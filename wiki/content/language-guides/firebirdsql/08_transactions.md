@@ -1,55 +1,32 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# Transactions
 
-# FirebirdSQL - Transaction Control
+**Last Updated:** 2026-02-03
 
-> Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
-> Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.
+---
 
-Spec refs:
-- `ScratchBird/docs/specifications/sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
-- `ScratchBird/docs/specifications/reference/firebird/FirebirdReferenceDocument.md`
+## Compatibility Matrix
 
-## SET TRANSACTION / START TRANSACTION
-Description: Firebird MGA transaction options (isolation, read consistency,
-wait/no-wait, lock timeout, reserving).
+| Feature | Status | Source | Notes |
+|---------|--------|--------|-------|
+| START TRANSACTION | ScratchBird tracked | Transaction manager | Firebird-compatible syntax supported. |
+| COMMIT/ROLLBACK | ScratchBird tracked | Transaction manager | Standard semantics supported. |
+| SAVEPOINT | ScratchBird tracked | Transaction manager | SAVEPOINT/ROLLBACK TO/RELEASE supported. |
+| Isolation levels | ScratchBird tracked | Transaction manager | Read committed/consistency semantics mapped to ScratchBird MGA. |
+| Two-phase (PREPARE) | Emulated | Transaction manager | Supported only if ScratchBird implements 2PC. |
 
-Syntax (actual, abbreviated):
+## Example
+
 ```sql
-SET TRANSACTION <options>
-START TRANSACTION <options>
+SET TRANSACTION READ COMMITTED;
+UPDATE users SET active = 1;
+COMMIT;
 ```
-Example:
-```sql
-SET TRANSACTION READ COMMITTED RECORD VERSION WAIT LOCK TIMEOUT 5000;
-```
-Status: Implemented.
 
-## COMMIT / ROLLBACK
-Description: Ends a transaction with optional RETAINING.
+## Differences
 
-Syntax (actual):
-```sql
-COMMIT [RETAINING]
-ROLLBACK [RETAINING]
-```
-Example:
-```sql
-COMMIT RETAINING;
-```
-Status: Implemented.
+- Firebird uses record versioning with garbage collection; ScratchBird uses MGA
+  with TIP and sweep/GC. Results are compatible, internal cleanup differs.
 
-## SAVEPOINT / RELEASE / ROLLBACK TO SAVEPOINT
-Description: Savepoint control.
+---
 
-Syntax (actual):
-```sql
-SAVEPOINT <name>
-RELEASE SAVEPOINT <name>
-ROLLBACK TO SAVEPOINT <name>
-```
-Example:
-```sql
-SAVEPOINT step1;
-ROLLBACK TO SAVEPOINT step1;
-```
-Status: Implemented.
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

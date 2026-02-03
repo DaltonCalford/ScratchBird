@@ -16,6 +16,7 @@
  */
 
 #include "scratchbird/network/socket.h"
+#include "scratchbird/security/tls_config.h"
 
 #include <cstring>
 #include <algorithm>
@@ -206,9 +207,21 @@ Socket::~Socket() {
 Socket::Socket(Socket&& other) noexcept
     : fd_(other.fd_), family_(other.family_), type_(other.type_),
       state_(other.state_), non_blocking_(other.non_blocking_),
-      last_error_(other.last_error_) {
+      last_error_(other.last_error_),
+      tls_conn_(std::move(other.tls_conn_)),
+      tls_active_(other.tls_active_) {
+    stats_.bytes_sent.store(other.stats_.bytes_sent.load());
+    stats_.bytes_received.store(other.stats_.bytes_received.load());
+    stats_.messages_sent.store(other.stats_.messages_sent.load());
+    stats_.messages_received.store(other.stats_.messages_received.load());
+    stats_.errors.store(other.stats_.errors.load());
+    stats_.connected_at = other.stats_.connected_at;
+    stats_.last_activity = other.stats_.last_activity;
+    stats_.last_read = other.stats_.last_read;
+    stats_.last_write = other.stats_.last_write;
     other.fd_ = INVALID_SOCKET_VALUE;
     other.state_ = SocketState::CLOSED;
+    other.tls_active_ = false;
 }
 
 Socket& Socket::operator=(Socket&& other) noexcept {
@@ -220,8 +233,20 @@ Socket& Socket::operator=(Socket&& other) noexcept {
         state_ = other.state_;
         non_blocking_ = other.non_blocking_;
         last_error_ = other.last_error_;
+        stats_.bytes_sent.store(other.stats_.bytes_sent.load());
+        stats_.bytes_received.store(other.stats_.bytes_received.load());
+        stats_.messages_sent.store(other.stats_.messages_sent.load());
+        stats_.messages_received.store(other.stats_.messages_received.load());
+        stats_.errors.store(other.stats_.errors.load());
+        stats_.connected_at = other.stats_.connected_at;
+        stats_.last_activity = other.stats_.last_activity;
+        stats_.last_read = other.stats_.last_read;
+        stats_.last_write = other.stats_.last_write;
+        tls_conn_ = std::move(other.tls_conn_);
+        tls_active_ = other.tls_active_;
         other.fd_ = INVALID_SOCKET_VALUE;
         other.state_ = SocketState::CLOSED;
+        other.tls_active_ = false;
     }
     return *this;
 }
@@ -433,6 +458,11 @@ core::Status Socket::shutdown(bool read, bool write, core::ErrorContext* ctx) {
 }
 
 void Socket::close() {
+    if (tls_conn_) {
+        tls_conn_->shutdown();
+        tls_conn_.reset();
+        tls_active_ = false;
+    }
     if (fd_ != INVALID_SOCKET_VALUE) {
         state_ = SocketState::CLOSING;
 #ifdef _WIN32
@@ -445,6 +475,53 @@ void Socket::close() {
     }
 }
 
+core::Status Socket::startTLS(security::TLSContext& ctx, core::ErrorContext* err) {
+    if (tls_active_) {
+        return core::Status::OK;
+    }
+    if (fd_ == INVALID_SOCKET_VALUE) {
+        SET_ERROR_CONTEXT(err, core::Status::INTERNAL_ERROR, "Socket not open");
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    tls_conn_ = std::make_unique<security::TLSConnection>(ctx);
+    if (tls_conn_->setFd(fd_) != core::Status::OK) {
+        SET_ERROR_CONTEXT(err, core::Status::IO_ERROR, "TLS set_fd failed");
+        tls_conn_.reset();
+        return core::Status::IO_ERROR;
+    }
+
+    auto status = tls_conn_->accept();
+    while (status == core::Status::LOCK_TIMEOUT) {
+        if (tls_conn_->wantRead()) {
+            if (!waitReadable(1000)) {
+                SET_ERROR_CONTEXT(err, core::Status::IO_ERROR, "TLS accept timed out (read)");
+                tls_conn_.reset();
+                return core::Status::IO_ERROR;
+            }
+        } else if (tls_conn_->wantWrite()) {
+            if (!waitWritable(1000)) {
+                SET_ERROR_CONTEXT(err, core::Status::IO_ERROR, "TLS accept timed out (write)");
+                tls_conn_.reset();
+                return core::Status::IO_ERROR;
+            }
+        } else {
+            break;
+        }
+        status = tls_conn_->accept();
+    }
+
+    if (status != core::Status::OK) {
+        std::string msg = tls_conn_ ? tls_conn_->getLastErrorMessage() : "TLS accept failed";
+        SET_ERROR_CONTEXT(err, core::Status::IO_ERROR, msg.c_str());
+        tls_conn_.reset();
+        return core::Status::IO_ERROR;
+    }
+
+    tls_active_ = true;
+    return core::Status::OK;
+}
+
 // ============================================================================
 // I/O Operations
 // ============================================================================
@@ -454,6 +531,29 @@ core::Status Socket::read(void* buffer, size_t size, size_t* bytes_read,
     if (fd_ == INVALID_SOCKET_VALUE) {
         SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Socket not open");
         return core::Status::INTERNAL_ERROR;
+    }
+
+    if (tls_active_ && tls_conn_) {
+        int ret = tls_conn_->read(buffer, static_cast<int>(size));
+        if (ret < 0) {
+            if (tls_conn_->wouldBlock()) {
+                *bytes_read = 0;
+                return core::Status::OK;
+            }
+            std::string msg = tls_conn_->getLastErrorMessage();
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
+                              msg.empty() ? "TLS read failed" : msg.c_str());
+            return core::Status::IO_ERROR;
+        }
+        if (ret == 0) {
+            *bytes_read = 0;
+            state_ = SocketState::CLOSING;
+            return core::Status::CONNECTION_FAILURE;
+        }
+        *bytes_read = static_cast<size_t>(ret);
+        stats_.bytes_received += ret;
+        updateLastRead();
+        return core::Status::OK;
     }
 
     ssize_t result;
@@ -531,6 +631,24 @@ core::Status Socket::write(const void* buffer, size_t size, size_t* bytes_writte
         return core::Status::INTERNAL_ERROR;
     }
 
+    if (tls_active_ && tls_conn_) {
+        int ret = tls_conn_->write(buffer, static_cast<int>(size));
+        if (ret < 0) {
+            if (tls_conn_->wouldBlock()) {
+                *bytes_written = 0;
+                return core::Status::OK;
+            }
+            std::string msg = tls_conn_->getLastErrorMessage();
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
+                              msg.empty() ? "TLS write failed" : msg.c_str());
+            return core::Status::IO_ERROR;
+        }
+        *bytes_written = static_cast<size_t>(ret);
+        stats_.bytes_sent += ret;
+        updateLastWrite();
+        return core::Status::OK;
+    }
+
     ssize_t result;
 #ifdef _WIN32
     result = ::send(fd_, static_cast<const char*>(buffer), static_cast<int>(size), 0);
@@ -595,6 +713,24 @@ core::Status Socket::writeWithTimeout(const void* buffer, size_t size, size_t* b
 
 core::Status Socket::readv(const std::vector<std::pair<void*, size_t>>& buffers,
                            size_t* total_read, core::ErrorContext* ctx) {
+    if (tls_active_ && tls_conn_) {
+        size_t aggregate = 0;
+        for (const auto& buf : buffers) {
+            size_t bytes_read = 0;
+            auto status = read(buf.first, buf.second, &bytes_read, ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+            aggregate += bytes_read;
+            if (bytes_read < buf.second) {
+                break;
+            }
+        }
+        if (total_read) {
+            *total_read = aggregate;
+        }
+        return core::Status::OK;
+    }
 #ifdef _WIN32
     // Windows doesn't have native readv, emulate with multiple reads
     *total_read = 0;
@@ -640,6 +776,24 @@ core::Status Socket::readv(const std::vector<std::pair<void*, size_t>>& buffers,
 
 core::Status Socket::writev(const std::vector<std::pair<const void*, size_t>>& buffers,
                             size_t* total_written, core::ErrorContext* ctx) {
+    if (tls_active_ && tls_conn_) {
+        size_t aggregate = 0;
+        for (const auto& buf : buffers) {
+            size_t bytes_written = 0;
+            auto status = write(buf.first, buf.second, &bytes_written, ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+            aggregate += bytes_written;
+            if (bytes_written < buf.second) {
+                break;
+            }
+        }
+        if (total_written) {
+            *total_written = aggregate;
+        }
+        return core::Status::OK;
+    }
 #ifdef _WIN32
     // Windows doesn't have native writev, emulate with multiple writes
     *total_written = 0;
@@ -683,6 +837,11 @@ core::Status Socket::peek(void* buffer, size_t size, size_t* bytes_peeked,
     if (fd_ == INVALID_SOCKET_VALUE) {
         SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Socket not open");
         return core::Status::INTERNAL_ERROR;
+    }
+
+    if (tls_active_ && tls_conn_) {
+        SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED, "TLS peek not supported");
+        return core::Status::NOT_SUPPORTED;
     }
 
     ssize_t result;

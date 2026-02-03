@@ -1,32 +1,29 @@
-[Back to Language Guides](../README.md) | [Back to Home](../../Home.md)
+# Utilities
 
-# FirebirdSQL - Utilities
+**Last Updated:** 2026-02-03
 
-> Emulation behavior: SQL is parsed by the dialect parser, translated to SBLR, executed by the ScratchBird engine, and results are formatted back to the client protocol.
-> Emulated databases are metadata-only schemas; no physical database files are created. Unsupported features are called out in "Known Limitations" sections.
+---
 
-## EXPLAIN / PLAN
-Description: Firebird uses PLAN clauses on SELECT statements rather than standalone
-EXPLAIN. The Firebird parser does not expose a standalone EXPLAIN statement.
+## Compatibility Matrix
 
-Status: Not applicable (Firebird dialect uses inline PLAN syntax, not EXPLAIN).
+| Feature | Status | Source | Notes |
+|---------|--------|--------|-------|
+| SET STATISTICS | ScratchBird tracked | Statistics manager | Updates ScratchBird stats. |
+| EXECUTE STATEMENT | Emulated | PSQL/runtime | Supported when ScratchBird PSQL provides equivalent behavior. |
+| BACKUP/RESTORE utilities | Out of scope | External tools | ScratchBird uses its own tooling. |
+| SET PLAN / EXPLAIN | Emulated | Planner | Firebird plan output is mapped to ScratchBird plan details. |
 
-## COMMENT ON
-Description: Attaches comments to database objects.
+## Example
 
-Syntax (actual):
 ```sql
-COMMENT ON <object_type> <object_name> IS <string_or_null>
+SET STATISTICS INDEX idx_users_email;
 ```
-Example:
-```sql
-COMMENT ON TABLE employees IS 'Main employee records';
-```
-Status: **Implemented** - `parseCommentStatement()` handles COMMENT ON for TABLE,
-COLUMN, VIEW, PROCEDURE, FUNCTION, TRIGGER, EXCEPTION, DOMAIN, SEQUENCE, INDEX,
-ROLE, PACKAGE, and DATABASE.
 
-## COPY / DESCRIBE
-Description: Not part of Firebird SQL dialect.
+## Differences
 
-Status: Not applicable (Firebird does not define COPY or DESCRIBE statements).
+- Firebird-specific backup/restore utilities are not available; use ScratchBird
+  tools and SQL commands.
+
+---
+
+*Last updated: 2026-02-03 | Wiki version synced with codebase*

@@ -459,6 +459,7 @@ protocol::ProtocolCodec::ColumnValue ProtocolAdapter::toColumnValue(const sblr::
         case DataType::INT64:
             return protocol::ProtocolCodec::ColumnValue::fromInt64(val.getInt64());
         case DataType::FLOAT32:
+            return protocol::ProtocolCodec::ColumnValue::fromDouble(static_cast<double>(val.getFloat32()));
         case DataType::FLOAT64:
             return protocol::ProtocolCodec::ColumnValue::fromDouble(val.getFloat64());
         case DataType::BOOLEAN:

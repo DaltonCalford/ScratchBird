@@ -1,8 +1,10 @@
 # Glossary
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-03
 
-Database and ScratchBird terminology reference.
+
+Database and ScratchBird terminology.
+
 
 ---
 
@@ -24,17 +26,11 @@ Database and ScratchBird terminology reference.
 
 ## B
 
-**Back-Versioning**
-: ScratchBird's MGA approach where updates modify the primary record in-place and move old data to a back version. Contrast with PostgreSQL's forward-versioning.
-
 **B-tree**
 : A balanced tree data structure used for most database indexes, efficient for range queries and equality.
 
 **Backup**
 : A copy of database data for recovery purposes.
-
-**Bitmap Index**
-: Index type optimized for low-cardinality columns using bitmap representations.
 
 **BRIN Index**
 : Block Range Index - efficient for large tables with naturally ordered data.
@@ -54,12 +50,6 @@ Database and ScratchBird terminology reference.
 
 **Column**
 : A vertical field in a table, representing a single attribute.
-
-**CLOG**
-: Commit Log - tracks transaction states (committed, aborted) for efficient lookups.
-
-**Columnstore**
-: Columnar storage format for analytical queries, storing data column-by-column with per-segment compression and statistics.
 
 **Commit**
 : Finalize a transaction, making changes permanent.
@@ -83,11 +73,11 @@ Database and ScratchBird terminology reference.
 **Database**
 : A collection of related tables and objects.
 
-**DDL**
-: Data Definition Language - SQL for defining schema (CREATE, ALTER, DROP).
-
 **Deadlock**
 : A situation where two transactions wait for each other indefinitely.
+
+**DDL**
+: Data Definition Language - SQL for defining schema (CREATE, ALTER, DROP).
 
 **DML**
 : Data Manipulation Language - SQL for modifying data (INSERT, UPDATE, DELETE).
@@ -135,14 +125,8 @@ Database and ScratchBird terminology reference.
 **Hash Index**
 : Index type optimized for equality comparisons only.
 
-**HNSW**
-: Hierarchical Navigable Small World - a graph-based index for approximate nearest neighbor vector search. Used for AI/ML similarity queries.
-
 **HBA**
 : Host-Based Authentication - configuration controlling which hosts can connect.
-
-**Heap Page**
-: A page in the database file that stores table row data.
 
 ---
 
@@ -167,9 +151,6 @@ Database and ScratchBird terminology reference.
 **Join**
 : Combining rows from multiple tables based on related columns.
 
-**JSON/JSONB**
-: JavaScript Object Notation data types for storing structured data.
-
 ---
 
 ## K
@@ -187,18 +168,15 @@ Database and ScratchBird terminology reference.
 **Log**
 : Record of database operations for recovery and auditing.
 
-**LSM-Tree**
-: Log-Structured Merge Tree - a write-optimized index structure that buffers writes in a memtable and flushes to sorted SSTables with background compaction.
-
 ---
 
 ## M
 
 **MGA**
-: Multi-Generational Architecture - ScratchBird's concurrency model based on Firebird, where old row versions are kept as back-versions for readers. Uses TIP (Transaction Inventory Pages) rather than snapshots.
+: Multi-Generational Architecture - concurrency model where old row versions are kept for readers.
 
 **MVCC**
-: Multi-Version Concurrency Control - PostgreSQL's approach to concurrency. NOT the same as MGA despite similar goals.
+: Multi-Version Concurrency Control - similar concept to MGA.
 
 ---
 
@@ -207,9 +185,6 @@ Database and ScratchBird terminology reference.
 **Native Protocol**
 : ScratchBird's own wire protocol (port 3092).
 
-**N2O (Newest-to-Oldest)**
-: Version chain direction in MGA where the primary record contains the newest data and points backward to older versions.
-
 **NULL**
 : Special value representing unknown or missing data.
 
@@ -217,20 +192,11 @@ Database and ScratchBird terminology reference.
 
 ## O
 
-**OAT**
-: Oldest Active Transaction - a transaction marker used in MGA.
-
 **ODBC**
 : Open Database Connectivity - standard API for database access.
 
 **OID**
 : Object Identifier - internal identifier for database objects.
-
-**OIT**
-: Oldest Interesting Transaction - a transaction marker used in MGA for garbage collection.
-
-**OST**
-: Oldest Snapshot Transaction - a transaction marker used in MGA.
 
 ---
 
@@ -238,9 +204,6 @@ Database and ScratchBird terminology reference.
 
 **Page**
 : Fixed-size unit of storage (typically 8 KB).
-
-**Parser**
-: Component that converts SQL text into SBLR bytecode.
 
 **Partitioning**
 : Dividing a large table into smaller pieces for manageability.
@@ -290,12 +253,6 @@ Database and ScratchBird terminology reference.
 
 ## S
 
-**SBLR**
-: ScratchBird Language Representation - the internal bytecode format that all SQL dialects compile to. Similar to Firebird's BLR but extended with 500+ opcodes.
-
-**SP-GiST**
-: Space-Partitioned Generalized Search Tree - index for partitioned key spaces (quad-trees, radix trees, text operations).
-
 **Schema**
 : A namespace for organizing database objects.
 
@@ -320,9 +277,6 @@ Database and ScratchBird terminology reference.
 **Stored Procedure**
 : Server-side code that can be called from SQL.
 
-**Sweep**
-: MGA garbage collection process that removes obsolete back-versions older than OIT.
-
 ---
 
 ## T
@@ -332,18 +286,6 @@ Database and ScratchBird terminology reference.
 
 **Tablespace**
 : Storage location for database files.
-
-**TOAST**
-: The Oversized-Attribute Storage Technique - mechanism for storing large values (> ~2000 bytes) out-of-line. In ScratchBird, includes MGA visibility tracking for proper garbage collection.
-
-**TSVECTOR/TSQUERY**
-: Text search data types. TSVECTOR stores a sorted list of lexemes; TSQUERY represents a text search query. Used with full-text and GIN indexes.
-
-**TID**
-: Tuple Identifier - the location of a row (page number + line number).
-
-**TIP**
-: Transaction Inventory Page - a bitmap storing 2 bits per transaction ID to track transaction states (active, committed, aborted, limbo). Central to MGA visibility checking.
 
 **Transaction**
 : A sequence of operations treated as a single unit.
@@ -369,20 +311,17 @@ Database and ScratchBird terminology reference.
 ## V
 
 **Vacuum**
-: Process that reclaims space from deleted rows (PostgreSQL terminology).
+: Process that reclaims space from deleted rows.
 
 **View**
 : Virtual table defined by a query.
-
-**Visibility**
-: Whether a row version is visible to a given transaction. In MGA, determined by TIP lookup, not snapshots.
 
 ---
 
 ## W
 
 **WAL**
-: Write-Ahead Log - transaction log written before data pages. In ScratchBird, WAL is optional and not required for recovery.
+: Write-Ahead Log - transaction log written before data pages.
 
 **Wire Protocol**
 : Network protocol for client-server communication.
@@ -392,15 +331,7 @@ Database and ScratchBird terminology reference.
 
 ---
 
-## Y
-
-**Y-Valve**
-: ScratchBird's architecture component that routes connections to the appropriate parser based on protocol.
-
----
-
 ## See Also
 
-- [FAQ](../FAQ.md)
-- [SQL Syntax Reference](SQL-Syntax.md)
-- [Developer Guide](../developer-guide/README.md)
+- [FAQ](faq/index.md)
+- [SQL Language Guide](language-guide/index.md)

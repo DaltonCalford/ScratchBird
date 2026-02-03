@@ -25,14 +25,6 @@
 ### 🧰 Command Line Tools
 - [Overview](cli-tools/README)
 - [sb_server](cli-tools/sb-server)
-- [sb_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-isql)
-- [sb_fb_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-fb-isql)
-- [sb_pg_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-pg-isql)
-- [sb_my_isql (Drivers repo)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/cli-tools/sb-my-isql)
-- [sb_security](cli-tools/sb-security)
-- [sb_backup](cli-tools/sb-backup)
-- [sb_verify](cli-tools/sb-verify)
-- [sb_admin](cli-tools/sb-admin)
 
 ---
 
@@ -59,7 +51,7 @@
 ---
 
 ### 💻 Drivers
-- [Driver docs (ScratchBird-driver)](https://github.com/DaltonCalford/ScratchBird-driver/wiki/Drivers)
+- Driver documentation is maintained with each distribution.
 
 ---
 
@@ -146,6 +138,5 @@
 
 ### 🤝 Community
 - [Contributing](Contributing)
-- [Discord](https://discord.gg/scratchbird)
-- [GitHub](https://github.com/scratchbird/scratchbird)
-- [Stack Overflow](https://stackoverflow.com/questions/tagged/scratchbird)
+
+Last Updated: 2026-02-03

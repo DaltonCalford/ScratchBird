@@ -22,7 +22,9 @@
 #include "scratchbird/client/connection.h"
 #include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
+#include "scratchbird/protocol/sbwp_protocol.h"
 #include "scratchbird/protocol/wire_protocol.h"
+#include <chrono>
 #include <unordered_set>
 
 namespace scratchbird {
@@ -103,6 +105,7 @@ private:
     core::Status handleQuery(network::Connection* conn);
     core::Status handleQueryCancel(network::Connection* conn);
     core::Status handlePrepare(network::Connection* conn);
+    core::Status handleBind(network::Connection* conn);
     core::Status handleExecute(network::Connection* conn);
     core::Status handleCloseStatement(network::Connection* conn);
     core::Status handleDescribe(network::Connection* conn);
@@ -128,24 +131,34 @@ private:
     // Message Sending
     // ========================================================================
 
-    void sendConnectResponse(network::Connection* conn, bool success,
-                             const std::string& error_msg = "",
-                             uint16_t server_flags = 0);
-    void sendAuthResponse(network::Connection* conn,
-                          AuthStatus status,
-                          uint32_t user_id,
-                          const std::string& error_msg,
-                          const std::vector<uint8_t>& data = {});
+    void sendAuthRequest(network::Connection* conn,
+                         sbwp::AuthMethod method,
+                         const std::vector<uint8_t>& data = {});
+    void sendAuthContinue(network::Connection* conn,
+                          sbwp::AuthMethod method,
+                          uint8_t stage,
+                          const std::vector<uint8_t>& data);
+    void sendAuthOk(network::Connection* conn,
+                    const std::vector<uint8_t>& info);
     void sendQueryError(network::Connection* conn, uint32_t error_code,
                         const std::string& sqlstate, const std::string& message);
     void sendRowDescription(network::Connection* conn,
                             const std::vector<ProtocolCodec::ColumnInfo>& columns);
     void sendRowData(network::Connection* conn,
                      const std::vector<ProtocolCodec::ColumnValue>& values);
-    void sendEndOfResults(network::Connection* conn);
     void sendCommandComplete(network::Connection* conn, const std::string& tag,
                              int64_t rows_affected);
     void sendPortalSuspended(network::Connection* conn);
+    void sendReady(network::Connection* conn);
+    void sendParameterStatus(network::Connection* conn,
+                             const std::string& name,
+                             const std::string& value);
+    void sendParameterDescription(network::Connection* conn,
+                                  const std::vector<uint32_t>& param_types);
+    void sendParseComplete(network::Connection* conn);
+    void sendBindComplete(network::Connection* conn);
+    void sendCloseComplete(network::Connection* conn);
+    void sendNoData(network::Connection* conn);
     void sendQueryProgress(network::Connection* conn,
                            uint64_t rows_processed,
                            uint64_t bytes_processed);
@@ -168,9 +181,17 @@ private:
     // Helper Methods
     // ========================================================================
 
-    void sendMessage(network::Connection* conn, const Message& msg);
-    core::Status flushWriteBuffer(network::Connection* conn);
-    core::Status receiveMessageBlocking(network::Connection* conn, Message& msg);
+    void sendMessage(network::Connection* conn,
+                     sbwp::MessageType type,
+                     const std::vector<uint8_t>& payload,
+                     uint8_t flags = 0,
+                     uint32_t sequence_override = 0);
+    core::Status flushWriteBuffer(network::Connection* conn,
+                                  std::chrono::milliseconds max_wait =
+                                      std::chrono::milliseconds(1000));
+    core::Status receiveMessageBlocking(network::Connection* conn,
+                                        sbwp::ProtocolMessage& msg);
+    bool pollCancel(network::Connection* conn);
 
     bool parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout,
                         CopyFormat* format_out) const;
@@ -191,6 +212,9 @@ private:
 
     struct PortalState {
         std::string statement_name;
+        std::vector<std::string> param_values;
+        std::vector<bool> param_nulls;
+        bool bound = false;
         std::vector<ProtocolCodec::ColumnInfo> columns;
         std::vector<std::vector<ProtocolCodec::ColumnValue>> rows;
         size_t fetch_pos = 0;
@@ -214,7 +238,14 @@ private:
     NativeProtocolState native_state_ = NativeProtocolState::INITIAL;
 
     // Current message being processed
-    Message current_message_;
+    sbwp::ProtocolMessage current_message_;
+    uint32_t current_sequence_ = 0;
+    uint64_t client_features_ = 0;
+    sbwp::AuthMethod auth_method_ = sbwp::AuthMethod::ScramSha256;
+    bool auth_in_progress_ = false;
+    bool scram_pending_ = false;
+    bool cancel_requested_ = false;
+    uint32_t cancel_target_sequence_ = 0;
 
     // Session info
     uint8_t session_id_[SESSION_ID_SIZE] = {0};
