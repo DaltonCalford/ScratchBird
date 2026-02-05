@@ -1,5 +1,18 @@
 # **Row-Level Security Specification**
 
+## **Implementation Status**
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `ALTER TABLE ... ENABLE/DISABLE ROW LEVEL SECURITY` | ✅ Implemented | V2 Parser + Executor |
+| `CREATE POLICY` | ✅ Implemented | V2 Parser + Executor + CatalogManager |
+| `DROP POLICY` | ✅ Implemented | V2 Parser + Executor + CatalogManager |
+| `ALTER POLICY` | ✅ Implemented | V2 Parser + Executor + CatalogManager (new) |
+| Policy Enforcement (USING/WITH CHECK) | ✅ Implemented | DML operations respect policies |
+| Policy Enable/Disable | ✅ Implemented | Via `alterPolicy()` API |
+| PERMISSIVE/RESTRICTIVE policies | 🚧 Partial | Parsed but all treated as PERMISSIVE |
+| Role-based policy targeting | ✅ Implemented | PUBLIC and role-specific policies |
+
 ## **1\. Introduction**
 
 Row-Level Security (RLS) is an advanced security feature that controls data access at the row level. While standard SQL permissions operate at the table or column level (GRANT SELECT ON ...), RLS allows you to define fine-grained policies that determine which specific rows a user is allowed to view or modify within a single table.
@@ -142,3 +155,78 @@ CREATE POLICY secret\_access ON sensitive\_documents AS RESTRICTIVE
     USING ( sensitivity\_level \<= user\_clearance\_level() );
 
 In this scenario, a user can see a row if (sensitivity\_level \<= 1\) OR (sensitivity\_level \<= user\_clearance\_level()). However, because the second policy is RESTRICTIVE, if a row has sensitivity\_level \= 5, the user *must* have a clearance of 5 or higher. The permissive policy alone is not enough.
+---
+
+## **Implementation Details**
+
+### **Parser Support (V2)**
+
+The V2 parser (the main parser for ScratchBird) now supports:
+
+1. **CREATE POLICY** - Full syntax including:
+   - `AS { PERMISSIVE | RESTRICTIVE }` (parsed, treated as PERMISSIVE)
+   - `FOR { ALL | SELECT | INSERT | UPDATE | DELETE }`
+   - `TO { role_name | PUBLIC }`
+   - `USING ( expression )`
+   - `WITH CHECK ( expression )`
+
+2. **ALTER POLICY** - Supports:
+   - `TO { role_name | PUBLIC }` (role changes)
+   - `USING ( expression )` (expression changes)
+   - `WITH CHECK ( expression )` (check expression changes)
+
+3. **DROP POLICY** - Supports:
+   - `IF EXISTS`
+   - Policy name and table reference
+
+### **CatalogManager API**
+
+```cpp
+// Create a new policy
+Status createPolicy(const ID& table_id, 
+                    const std::string& policy_name,
+                    PolicyType type,
+                    const std::vector<std::string>& roles,
+                    const std::string& using_expr,
+                    const std::string& with_check_expr,
+                    ID& policy_id_out,
+                    ErrorContext* ctx);
+
+// Alter an existing policy
+Status alterPolicy(const ID& table_id,
+                   const std::string& policy_name,
+                   int is_enabled,  // -1 = no change, 0 = disable, 1 = enable
+                   const std::string& using_expr,      // empty = no change
+                   const std::string& with_check_expr, // empty = no change
+                   ErrorContext* ctx);
+
+// Drop a policy
+Status dropPolicy(const ID& table_id,
+                  const std::string& policy_name,
+                  ErrorContext* ctx);
+```
+
+### **SBLR Opcodes**
+
+| Opcode | Value | Description |
+|--------|-------|-------------|
+| `EXT_CREATE_POLICY` | 0xD7 | CREATE POLICY statement |
+| `EXT_DROP_POLICY` | 0xD8 | DROP POLICY statement |
+| `EXT_ALTER_TABLE_RLS` | 0xD9 | ALTER TABLE ... ROW LEVEL SECURITY |
+| `EXT_ALTER_POLICY` | 0xE5 | ALTER POLICY statement (new) |
+
+### **Security Enforcement**
+
+Policy enforcement happens during DML operations:
+- **SELECT**: Rows are filtered by the USING expression
+- **INSERT**: New rows must satisfy the WITH CHECK expression
+- **UPDATE**: Both USING (for visibility) and WITH CHECK (for new values) are checked
+- **DELETE**: USING expression determines which rows can be deleted
+
+### **Policy Cache**
+
+Policies are cached in memory by the CatalogManager for fast lookup during query execution. The cache is invalidated when:
+- A policy is created, altered, or dropped
+- RLS is enabled/disabled on a table
+- The security policy epoch is bumped
+

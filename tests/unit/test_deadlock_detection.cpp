@@ -13,8 +13,10 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 namespace
 {
@@ -38,7 +40,7 @@ class DeadlockDetectionTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = std::filesystem::temp_directory_path() / "test_deadlock_detection.sbrd";
+        test_db_path_ = uniqueTestDbPath("test_deadlock_detection", ".sbrd");
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;

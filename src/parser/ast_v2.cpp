@@ -46,6 +46,7 @@ void CreatePackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateUserStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateGroupStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreatePolicyStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateJobStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -62,10 +63,12 @@ void DropDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterPolicyStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void RenameObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void MoveObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropPolicyStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }

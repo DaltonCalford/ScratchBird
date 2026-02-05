@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <thread>
 #include <chrono>
 #include <vector>
@@ -344,15 +345,31 @@ TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
     // First create the database (create() is static and closes the file)
     ASSERT_EQ(Database::create(test_concurrent_path_, 16384), Status::OK);
 
-    // Now open it to acquire the exclusive lock
-    Database db1;
-    ASSERT_EQ(db1.open(test_concurrent_path_), Status::OK);
+    int sync_pipe[2];
+    ASSERT_EQ(pipe(sync_pipe), 0) << "Failed to create sync pipe";
 
-    // Fork a child process
+    // Fork a child process before opening the database to avoid forking with background threads.
     pid_t pid = fork();
 
     if (pid == 0)
     {
+        close(sync_pipe[1]);
+        struct pollfd pfd;
+        pfd.fd = sync_pipe[0];
+        pfd.events = POLLIN;
+        int poll_rc = poll(&pfd, 1, 5000);
+        if (poll_rc <= 0)
+        {
+            _exit(1);
+        }
+
+        char signal = 0;
+        if (read(sync_pipe[0], &signal, 1) != 1)
+        {
+            _exit(1);
+        }
+        close(sync_pipe[0]);
+
         // Child process - try to open same database
         Database db2;
         ErrorContext ctx;
@@ -372,6 +389,15 @@ TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
     }
     else if (pid > 0)
     {
+        close(sync_pipe[0]);
+        // Now open it to acquire the exclusive lock (after fork).
+        Database db1;
+        ASSERT_EQ(db1.open(test_concurrent_path_), Status::OK);
+
+        char signal = 1;
+        ASSERT_EQ(write(sync_pipe[1], &signal, 1), 1) << "Failed to signal child";
+        close(sync_pipe[1]);
+
         // Parent process - wait for child
         int status;
         waitpid(pid, &status, 0);
@@ -379,6 +405,12 @@ TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
         EXPECT_EQ(WEXITSTATUS(status), 0) << "Second process should be blocked by file lock";
 
         db1.close();
+    }
+    else
+    {
+        close(sync_pipe[0]);
+        close(sync_pipe[1]);
+        FAIL() << "fork() failed in ConcurrentAccess_TwoProcesses";
     }
 }
 

@@ -641,6 +641,8 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateRole(create_role);
     } else if (auto* create_group = dynamic_cast<ResolvedCreateGroupStmt*>(stmt)) {
         generateCreateGroup(create_group);
+    } else if (auto* create_policy = dynamic_cast<ResolvedCreatePolicyStmt*>(stmt)) {
+        generateCreatePolicy(create_policy);
     } else if (auto* create_job = dynamic_cast<ResolvedCreateJobStmt*>(stmt)) {
         generateCreateJob(create_job);
     } else if (auto* create_exception = dynamic_cast<ResolvedCreateExceptionStmt*>(stmt)) {
@@ -661,10 +663,14 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateAlterType(alter_type);
     } else if (auto* alter_domain = dynamic_cast<ResolvedAlterDomainStmt*>(stmt)) {
         generateAlterDomain(alter_domain);
+    } else if (auto* alter_policy = dynamic_cast<ResolvedAlterPolicyStmt*>(stmt)) {
+        generateAlterPolicy(alter_policy);
     } else if (auto* drop_type = dynamic_cast<ResolvedDropTypeStmt*>(stmt)) {
         generateDropType(drop_type);
     } else if (auto* drop_domain = dynamic_cast<ResolvedDropDomainStmt*>(stmt)) {
         generateDropDomain(drop_domain);
+    } else if (auto* drop_policy = dynamic_cast<ResolvedDropPolicyStmt*>(stmt)) {
+        generateDropPolicy(drop_policy);
     } else if (auto* drop_database = dynamic_cast<ResolvedDropDatabaseStmt*>(stmt)) {
         generateDropDatabase(drop_database);
     } else if (auto* alter_database = dynamic_cast<ResolvedAlterDatabaseStmt*>(stmt)) {
@@ -3088,6 +3094,134 @@ void BytecodeGeneratorV2::generateCreateRole(ResolvedCreateRoleStmt* stmt) {
     writeStringId(stmt->role_name);
 }
 
+void BytecodeGeneratorV2::generateCreatePolicy(ResolvedCreatePolicyStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_POLICY));
+    
+    // Write policy name
+    writeStringId(stmt->policy_name);
+    
+    // Write table path
+    current_result_->writeString(schemaPathToString(stmt->table_path, string_pool_));
+    
+    // Write policy command type
+    current_result_->writeByte(static_cast<uint8_t>(stmt->policy_type));
+    
+    // Write is_permissive flag
+    current_result_->writeByte(stmt->is_permissive ? 1 : 0);
+    
+    // Write roles count and roles
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->roles.size()));
+    for (const auto& role : stmt->roles) {
+        writeStringId(role);
+    }
+    
+    // Write flags and expressions
+    uint8_t flags = 0;
+    if (stmt->using_expr) flags |= 0x01;
+    if (stmt->with_check_expr) flags |= 0x02;
+    current_result_->writeByte(flags);
+    
+    // Write USING expression bytecode if present
+    // Format: UVarint(length) + bytecode
+    size_t using_start = current_result_->bytecode().size();
+    if (stmt->using_expr) {
+        generateExpression(stmt->using_expr);
+    }
+    size_t using_end = current_result_->bytecode().size();
+    size_t using_length = using_end - using_start;
+    
+    // Write WITH CHECK expression bytecode if present
+    // Format: UVarint(length) + bytecode
+    size_t with_check_start = current_result_->bytecode().size();
+    if (stmt->with_check_expr) {
+        generateExpression(stmt->with_check_expr);
+    }
+    size_t with_check_end = current_result_->bytecode().size();
+    size_t with_check_length = with_check_end - with_check_start;
+    
+    // Now write the lengths before the expressions
+    // We need to insert the lengths at the right positions
+    // First, let's create temporary buffers for the expressions
+    std::vector<uint8_t> using_bytes;
+    std::vector<uint8_t> with_check_bytes;
+    
+    if (stmt->using_expr) {
+        using_bytes.assign(current_result_->bytecode().begin() + using_start, 
+                           current_result_->bytecode().begin() + using_end);
+    }
+    if (stmt->with_check_expr) {
+        with_check_bytes.assign(current_result_->bytecode().begin() + with_check_start,
+                                current_result_->bytecode().begin() + with_check_end);
+    }
+    
+    // Remove the expression bytes from the main bytecode
+    current_result_->bytecode().resize(using_start);
+    
+    // Write USING expression: length + bytes
+    if (stmt->using_expr) {
+        current_result_->writeUVarint(using_bytes.size());
+        current_result_->bytecode().insert(current_result_->bytecode().end(), 
+                                           using_bytes.begin(), using_bytes.end());
+    }
+    
+    // Write WITH CHECK expression: length + bytes
+    if (stmt->with_check_expr) {
+        current_result_->writeUVarint(with_check_bytes.size());
+        current_result_->bytecode().insert(current_result_->bytecode().end(),
+                                           with_check_bytes.begin(), with_check_bytes.end());
+    }
+}
+
+void BytecodeGeneratorV2::generateAlterPolicy(ResolvedAlterPolicyStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_POLICY));
+    
+    // Write policy name
+    writeStringId(stmt->policy_name);
+    
+    // Write table path
+    current_result_->writeString(schemaPathToString(stmt->table_path, string_pool_));
+    
+    // Write roles count and roles (0 count means no change)
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->roles.size()));
+    for (const auto& role : stmt->roles) {
+        writeStringId(role);
+    }
+    
+    // Write flags and expressions
+    uint8_t flags = 0;
+    if (stmt->using_expr) flags |= 0x01;
+    if (stmt->with_check_expr) flags |= 0x02;
+    current_result_->writeByte(flags);
+    
+    // Write USING expression bytecode if present
+    if (stmt->using_expr) {
+        generateExpression(stmt->using_expr);
+    }
+    
+    // Write WITH CHECK expression bytecode if present
+    if (stmt->with_check_expr) {
+        generateExpression(stmt->with_check_expr);
+    }
+}
+
+void BytecodeGeneratorV2::generateDropPolicy(ResolvedDropPolicyStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_POLICY));
+    
+    // Write policy name
+    writeStringId(stmt->policy_name);
+    
+    // Write table path
+    current_result_->writeString(schemaPathToString(stmt->table_path, string_pool_));
+    
+    // Write flags
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    current_result_->writeByte(flags);
+}
+
 void BytecodeGeneratorV2::generateCreateJob(ResolvedCreateJobStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::CREATE_JOB);
 
@@ -3945,7 +4079,9 @@ void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
             break;
         }
         case AlterTableAction::ENABLE_RLS:
-        case AlterTableAction::DISABLE_RLS: {
+        case AlterTableAction::DISABLE_RLS:
+        case AlterTableAction::FORCE_RLS:
+        case AlterTableAction::NO_FORCE_RLS: {
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_ALTER_TABLE_RLS);
             if (!writeQualifiedTableName()) return;

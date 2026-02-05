@@ -51,6 +51,7 @@ public:
 
     bool success() const { return errors_.empty() && !bytecode_.empty(); }
     const std::vector<uint8_t>& bytecode() const { return bytecode_; }
+    std::vector<uint8_t>& bytecode() { return bytecode_; }
     const std::vector<std::string>& errors() const { return errors_; }
     const std::vector<std::string>& warnings() const { return warnings_; }
 
@@ -218,6 +219,9 @@ private:
     void generateCreateUser(ResolvedCreateUserStmt* stmt);
     void generateCreateRole(ResolvedCreateRoleStmt* stmt);
     void generateCreateGroup(ResolvedCreateGroupStmt* stmt);
+    void generateCreatePolicy(ResolvedCreatePolicyStmt* stmt);
+    void generateAlterPolicy(ResolvedAlterPolicyStmt* stmt);
+    void generateDropPolicy(ResolvedDropPolicyStmt* stmt);
     void generateCreateJob(ResolvedCreateJobStmt* stmt);
     void generateCreateException(ResolvedCreateExceptionStmt* stmt);
     void generateCreateDomain(ResolvedCreateDomainStmt* stmt);

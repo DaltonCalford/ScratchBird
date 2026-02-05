@@ -14,18 +14,20 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <string>
 #include <vector>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestDbPath;
 
 class LockConflictMatrixTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        test_db_path_ = std::filesystem::temp_directory_path() / "test_lock_matrix.sbrd";
+        test_db_path_ = uniqueTestDbPath("test_lock_matrix", ".sbrd");
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;

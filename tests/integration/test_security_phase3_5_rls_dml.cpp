@@ -33,6 +33,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
 
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
@@ -48,12 +49,12 @@ class SecurityPhase3_5_RLS_DML_Test : public ::testing::Test
 {
 protected:
     std::unique_ptr<Database> db;
+    std::unique_ptr<ConnectionContext> conn_ctx_;
     std::string test_db_path;
+    ID public_schema_id_;
 
     void SetUp() override
     {
-        GTEST_SKIP() << "Parser V2 RLS DML support pending";
-
         // Create temporary test database
         test_db_path =
             scratchbird::testing::uniqueTestDbPath("test_security_phase3_5_rls_dml", ".db");
@@ -71,10 +72,25 @@ protected:
         db = std::make_unique<Database>();
         status = db->open(test_db_path, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to open test database: " << ctx.message;
+
+        // Get public schema
+        CatalogManager::SchemaInfo schema_info;
+        status = db->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to get PUBLIC schema: " << ctx.message;
+        public_schema_id_ = schema_info.schema_id;
+
+        // Create connection context with superuser privileges
+        status = db->connect(conn_ctx_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to create connection context: " << ctx.message;
+        
+        conn_ctx_->setCurrentSchemaId(public_schema_id_);
+        // Set superuser privileges (ID{} represents the system/superuser)
+        conn_ctx_->setCurrentUser(ID{}, true);
     }
 
     void TearDown() override
     {
+        conn_ctx_.reset();
         db.reset();
         if (!test_db_path.empty() && std::filesystem::exists(test_db_path))
         {
@@ -86,14 +102,21 @@ protected:
     std::string executeSQL(const std::string& sql)
     {
         QueryCompilerV2 compiler(db.get());
+        compiler.setCurrentSchema(public_schema_id_);
         auto compile_result = compiler.compile(sql);
         if (!compile_result.success())
         {
-            return "COMPILE_ERROR";
+            std::string err = "COMPILE_ERROR:";
+            for (const auto& e : compile_result.errors()) {
+                err += " " + e;
+            }
+            return err;
         }
 
-        // Execute
+        // Execute with connection context for superuser privileges
         Executor executor(db.get());
+        executor.setCurrentSchema(public_schema_id_);
+        executor.setConnectionContext(conn_ctx_.get());
         auto exec_result = executor.execute(compile_result.bytecode());
         if (!exec_result.success())
         {
@@ -117,26 +140,26 @@ protected:
 
         CatalogManager::ColumnInfo id_col;
         id_col.column_name = "id";
-        id_col.data_type = DataType::INTEGER;
-        id_col.is_nullable = false;
+        id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        id_col.nullable = false;
         columns.push_back(id_col);
 
         CatalogManager::ColumnInfo name_col;
         name_col.column_name = "name";
-        name_col.data_type = DataType::VARCHAR;
-        name_col.precision = 100;
-        name_col.is_nullable = true;
+        name_col.data_type = static_cast<uint16_t>(DataType::VARCHAR);
+        name_col.type_precision = 100;
+        name_col.nullable = true;
         columns.push_back(name_col);
 
         CatalogManager::ColumnInfo tenant_col;
         tenant_col.column_name = "tenant_id";
-        tenant_col.data_type = DataType::INTEGER;
-        tenant_col.is_nullable = true;
+        tenant_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        tenant_col.nullable = true;
         columns.push_back(tenant_col);
 
         ID table_id;
         status = db->catalog_manager()->createTable(
-            schema_info.schema_id, table_name, columns, table_id, &ctx);
+            schema_info.schema_id, table_name, columns, table_id, 0, &ctx);
         EXPECT_EQ(status, Status::OK) << "Failed to create table: " << ctx.message;
 
         return table_id;
@@ -149,8 +172,10 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, InsertWithCheckAllowValid)
     // Create table
     createTestTable("products");
 
-    // Enable RLS via SQL
+    // Enable RLS via SQL with FORCE (so even superusers must obey policies during testing)
     std::string result = executeSQL("ALTER TABLE products ENABLE ROW LEVEL SECURITY");
+    ASSERT_EQ(result, "SUCCESS");
+    result = executeSQL("ALTER TABLE products FORCE ROW LEVEL SECURITY");
     ASSERT_EQ(result, "SUCCESS");
 
     // Create policy via SQL with actual SBLR bytecode generation
@@ -180,8 +205,10 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, DeleteUsingFilterRows)
     executeSQL("INSERT INTO employees (id, name, tenant_id) VALUES (2, 'Bob', 2)");
     executeSQL("INSERT INTO employees (id, name, tenant_id) VALUES (3, 'Charlie', 1)");
 
-    // Enable RLS via SQL
+    // Enable RLS via SQL with FORCE
     std::string result = executeSQL("ALTER TABLE employees ENABLE ROW LEVEL SECURITY");
+    ASSERT_EQ(result, "SUCCESS");
+    result = executeSQL("ALTER TABLE employees FORCE ROW LEVEL SECURITY");
     ASSERT_EQ(result, "SUCCESS");
 
     // Create policy via SQL with actual SBLR bytecode generation
@@ -208,8 +235,10 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, UpdateUsingAndWithCheck)
     executeSQL("INSERT INTO documents (id, name, tenant_id) VALUES (1, 'Doc A', 1)");
     executeSQL("INSERT INTO documents (id, name, tenant_id) VALUES (2, 'Doc B', 2)");
 
-    // Enable RLS via SQL
+    // Enable RLS via SQL with FORCE
     std::string result = executeSQL("ALTER TABLE documents ENABLE ROW LEVEL SECURITY");
+    ASSERT_EQ(result, "SUCCESS");
+    result = executeSQL("ALTER TABLE documents FORCE ROW LEVEL SECURITY");
     ASSERT_EQ(result, "SUCCESS");
 
     // Create policy via SQL with actual SBLR bytecode generation
@@ -228,6 +257,7 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, UpdateUsingAndWithCheck)
 
     // Try to change tenant_id=1 to tenant_id=2 (should fail WITH CHECK)
     result = executeSQL("UPDATE documents SET tenant_id = 2 WHERE id = 1");
+    std::cout << "DEBUG UPDATE result: " << result << std::endl;
     EXPECT_TRUE(result.find("Row-level security policy violation") != std::string::npos ||
                 result.find("WITH CHECK") != std::string::npos);
 }
@@ -238,8 +268,10 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, MultiPolicyAndSemantics)
     // Create table
     createTestTable("records");
 
-    // Enable RLS via SQL
+    // Enable RLS via SQL with FORCE
     std::string result = executeSQL("ALTER TABLE records ENABLE ROW LEVEL SECURITY");
+    ASSERT_EQ(result, "SUCCESS");
+    result = executeSQL("ALTER TABLE records FORCE ROW LEVEL SECURITY");
     ASSERT_EQ(result, "SUCCESS");
 
     // Create policy 1 via SQL with actual SBLR bytecode: WITH CHECK (tenant_id = 1)
@@ -279,13 +311,59 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, RLSDisabledNoEnforcement)
     EXPECT_EQ(result, "SUCCESS"); // Should succeed even with restrictive policy
 }
 
-// Test 6: RLS disabled - No enforcement (combined with Test 5)
-// Skipped - Policy enable/disable not in public API yet
-TEST_F(SecurityPhase3_5_RLS_DML_Test, DISABLED_PolicyDisabledNotEnforced)
+// Test 6: Policy disabled - No enforcement for disabled policies
+TEST_F(SecurityPhase3_5_RLS_DML_Test, PolicyDisabledNotEnforced)
 {
-    // NOTE: Policy enable/disable functionality will be added in future
-    // For now, policies are created in enabled state
-    GTEST_SKIP() << "Policy enable/disable API not yet implemented";
+    // Create table
+    ID table_id = createTestTable("disabled_policy_items");
+
+    // Enable RLS
+    ErrorContext ctx;
+    auto status = db->catalog_manager()->setTableRLS(table_id, true, false, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    // Create a policy using the catalog API directly
+    ID policy_id;
+    status = db->catalog_manager()->createPolicy(
+        table_id, "test_restrictive_policy",
+        CatalogManager::PolicyType::INSERT,
+        {"PUBLIC"},
+        "",  // no USING for INSERT
+        "tenant_id = 1",  // WITH CHECK - only tenant_id=1 allowed
+        policy_id, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    // Verify policy is enabled
+    CatalogManager::PolicyInfo policy_info;
+    status = db->catalog_manager()->getPolicy(table_id, "test_restrictive_policy", policy_info, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_TRUE(policy_info.is_enabled);
+
+    // Disable the policy using alterPolicy
+    status = db->catalog_manager()->alterPolicy(
+        table_id, "test_restrictive_policy",
+        0,  // is_enabled = false (0)
+        "",  // no change to using_expr
+        "",  // no change to with_check_expr
+        &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    // Verify policy is now disabled
+    status = db->catalog_manager()->getPolicy(table_id, "test_restrictive_policy", policy_info, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_FALSE(policy_info.is_enabled);
+
+    // Re-enable the policy
+    status = db->catalog_manager()->alterPolicy(
+        table_id, "test_restrictive_policy",
+        1,  // is_enabled = true (1)
+        "", "", &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    // Verify policy is enabled again
+    status = db->catalog_manager()->getPolicy(table_id, "test_restrictive_policy", policy_info, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_TRUE(policy_info.is_enabled);
 }
 
 // Test 7: Empty policy expression - Allow all
@@ -294,8 +372,10 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, EmptyPolicyExpressionAllowAll)
     // Create table
     createTestTable("logs");
 
-    // Enable RLS via SQL
+    // Enable RLS via SQL with FORCE
     std::string result = executeSQL("ALTER TABLE logs ENABLE ROW LEVEL SECURITY");
+    ASSERT_EQ(result, "SUCCESS");
+    result = executeSQL("ALTER TABLE logs FORCE ROW LEVEL SECURITY");
     ASSERT_EQ(result, "SUCCESS");
 
     // Create policy via SQL without WITH CHECK clause (empty expression = allow all)
@@ -336,8 +416,10 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, UpdateWithWhereAndRLS)
     executeSQL("INSERT INTO tasks (id, name, tenant_id) VALUES (2, 'Task B', 1)");
     executeSQL("INSERT INTO tasks (id, name, tenant_id) VALUES (3, 'Task C', 2)");
 
-    // Enable RLS via SQL
+    // Enable RLS via SQL with FORCE
     std::string result = executeSQL("ALTER TABLE tasks ENABLE ROW LEVEL SECURITY");
+    ASSERT_EQ(result, "SUCCESS");
+    result = executeSQL("ALTER TABLE tasks FORCE ROW LEVEL SECURITY");
     ASSERT_EQ(result, "SUCCESS");
 
     // Create policy via SQL with actual SBLR bytecode: USING (tenant_id = 1) WITH CHECK (tenant_id = 1)
@@ -361,13 +443,16 @@ TEST_F(SecurityPhase3_5_RLS_DML_Test, DeleteNoMatchingRows)
     // Insert test data
     executeSQL("INSERT INTO messages (id, name, tenant_id) VALUES (1, 'Msg', 2)");
 
-    // Enable RLS via SQL
+    // Enable RLS via SQL with FORCE
     std::string result = executeSQL("ALTER TABLE messages ENABLE ROW LEVEL SECURITY");
+    ASSERT_EQ(result, "SUCCESS");
+    result = executeSQL("ALTER TABLE messages FORCE ROW LEVEL SECURITY");
     ASSERT_EQ(result, "SUCCESS");
 
     // Create policy via SQL with actual SBLR bytecode: USING (tenant_id = 1)
     // This makes the row invisible (tenant_id=2)
     result = executeSQL("CREATE POLICY tenant_1_only ON messages FOR DELETE USING (tenant_id = 1)");
+    std::cout << "DEBUG CREATE POLICY result: " << result << std::endl;
     ASSERT_EQ(result, "SUCCESS");
 
     // DELETE should succeed but affect 0 rows (all filtered by RLS)

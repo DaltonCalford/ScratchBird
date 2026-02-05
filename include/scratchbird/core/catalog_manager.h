@@ -3096,6 +3096,22 @@ public:
         auto dropPolicy(const ID& table_id, const std::string& policy_name,
                        ErrorContext* ctx = nullptr) -> Status;
 
+        /**
+         * Alter a policy - enable/disable or modify properties
+         *
+         * @param table_id Table ID
+         * @param policy_name Policy name
+         * @param is_enabled New enabled state (optional, -1 to not change)
+         * @param using_expr New USING expression (empty to not change)
+         * @param with_check_expr New WITH CHECK expression (empty to not change)
+         * @param ctx Error context
+         * @return Status OK if successful
+         */
+        auto alterPolicy(const ID& table_id, const std::string& policy_name,
+                        int is_enabled, const std::string& using_expr,
+                        const std::string& with_check_expr,
+                        ErrorContext* ctx = nullptr) -> Status;
+
         auto getPolicy(const ID& table_id, const std::string& policy_name,
                       PolicyInfo& policy_out, ErrorContext* ctx = nullptr) -> Status;
 

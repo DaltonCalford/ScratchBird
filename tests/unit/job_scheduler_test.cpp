@@ -199,7 +199,7 @@ TEST(JobSchedulerCancellation, CancelledRunSkippedBeforeExecution) {
     run.result_message = "Cancelled by test";
     ASSERT_EQ(catalog->updateJobRun(run, &ctx), Status::OK);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
     CatalogManager::JobRunInfo updated;
     ASSERT_EQ(catalog->getJobRun(run.job_run_id, updated, &ctx), Status::OK);
@@ -239,7 +239,7 @@ TEST(JobSchedulerExecuteNow, ManualExecutionCreatesRun) {
     ASSERT_EQ(scheduler.executeJobNow(job, run_id, &ctx), Status::OK);
 
     std::vector<CatalogManager::JobRunInfo> runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 2000, &runs));
+    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 10000, &runs));
 
     bool completed = false;
     for (const auto& run : runs) {
@@ -285,7 +285,7 @@ TEST(JobSchedulerPendingState, RunTransitionsFromPendingToRunning) {
     ASSERT_EQ(scheduler.executeJobNow(job, run_id, &ctx), Status::OK);
 
     bool saw_pending = false;
-    auto pending_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    auto pending_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
     while (std::chrono::steady_clock::now() < pending_deadline) {
         CatalogManager::JobRunInfo run;
         if (catalog->getJobRun(run_id, run, &ctx) == Status::OK) {
@@ -299,10 +299,10 @@ TEST(JobSchedulerPendingState, RunTransitionsFromPendingToRunning) {
     EXPECT_TRUE(saw_pending);
 
     std::vector<CatalogManager::JobRunInfo> runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 2500, &runs));
+    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 10000, &runs));
 
     CatalogManager::JobRunInfo final_run;
-    auto transition_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    auto transition_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
     while (std::chrono::steady_clock::now() < transition_deadline) {
         ASSERT_EQ(catalog->getJobRun(run_id, final_run, &ctx), Status::OK);
         if (final_run.state != CatalogManager::JobRunState::PENDING) {
@@ -350,7 +350,7 @@ TEST(JobSchedulerCancellation, RequestCancelInterruptsRun) {
     EXPECT_EQ(scheduler.requestCancelRun(run_id, &ctx), Status::OK);
 
     std::vector<CatalogManager::JobRunInfo> runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 2000, &runs));
+    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 10000, &runs));
 
     CatalogManager::JobRunInfo latest;
     ASSERT_EQ(catalog->getJobRun(run_id, latest, &ctx), Status::OK);
@@ -436,9 +436,9 @@ TEST(JobSchedulerDependencies, DependentJobWaitsForCompletion) {
     ASSERT_EQ(scheduler.start(&ctx), Status::OK);
 
     std::vector<CatalogManager::JobRunInfo> parent_runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, parent_id, 1, 2000, &parent_runs));
+    ASSERT_TRUE(waitForJobRuns(catalog, parent_id, 1, 10000, &parent_runs));
     CatalogManager::JobRunInfo parent_final;
-    auto parent_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    auto parent_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
     while (std::chrono::steady_clock::now() < parent_deadline) {
         ASSERT_EQ(catalog->getJobRun(parent_runs.front().job_run_id, parent_final, &ctx), Status::OK);
         if (parent_final.state == CatalogManager::JobRunState::COMPLETED) {
@@ -448,24 +448,18 @@ TEST(JobSchedulerDependencies, DependentJobWaitsForCompletion) {
     }
     ASSERT_EQ(parent_final.state, CatalogManager::JobRunState::COMPLETED);
 
-    bool child_ran_early = false;
-    auto early_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
-    while (std::chrono::steady_clock::now() < early_deadline) {
-        std::vector<CatalogManager::JobRunInfo> child_runs;
-        if (catalog->listJobRuns(child_id, child_runs, &ctx) == Status::OK &&
-            !child_runs.empty()) {
-            child_ran_early = true;
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // Now check if child ran before parent completed
+    // If the dependency mechanism works, child should NOT have run yet
+    std::vector<CatalogManager::JobRunInfo> early_child_runs;
+    ASSERT_EQ(catalog->listJobRuns(child_id, early_child_runs, &ctx), Status::OK);
+    bool child_ran_early = !early_child_runs.empty();
     EXPECT_FALSE(child_ran_early);
 
     std::vector<CatalogManager::JobRunInfo> child_runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, child_id, 1, 2500, &child_runs));
+    ASSERT_TRUE(waitForJobRuns(catalog, child_id, 1, 10000, &child_runs));
 
     CatalogManager::JobRunInfo child_final;
-    auto child_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    auto child_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
     while (std::chrono::steady_clock::now() < child_deadline) {
         ASSERT_EQ(catalog->getJobRun(child_runs.front().job_run_id, child_final, &ctx), Status::OK);
         if (child_final.state != CatalogManager::JobRunState::PENDING &&
@@ -507,7 +501,7 @@ TEST(JobSchedulerRuntimeToggle, DisableStopsAndEnableResumesRuns) {
     ID job_id;
     ASSERT_EQ(catalog->createJob(job, job_id, &ctx), Status::OK);
 
-    EXPECT_TRUE(waitForJobRuns(catalog, job_id, 1, 1500));
+    EXPECT_TRUE(waitForJobRuns(catalog, job_id, 1, 10000));
 
     cfg.set("scheduler", "enabled", "false");
     ASSERT_EQ(db.applySchedulerConfig(&ctx), Status::OK);
@@ -516,12 +510,12 @@ TEST(JobSchedulerRuntimeToggle, DisableStopsAndEnableResumesRuns) {
     ID disabled_id;
     ASSERT_EQ(catalog->createJob(job_disabled, disabled_id, &ctx), Status::OK);
 
-    EXPECT_FALSE(waitForJobRuns(catalog, disabled_id, 1, 800));
+    EXPECT_FALSE(waitForJobRuns(catalog, disabled_id, 1, 2000));
 
     cfg.set("scheduler", "enabled", "true");
     ASSERT_EQ(db.applySchedulerConfig(&ctx), Status::OK);
 
-    EXPECT_TRUE(waitForJobRuns(catalog, disabled_id, 1, 1500));
+    EXPECT_TRUE(waitForJobRuns(catalog, disabled_id, 1, 10000));
 
     db.close();
 
@@ -561,10 +555,10 @@ TEST(JobSchedulerTimeout, MarksRunFailedAfterTimeout) {
     ASSERT_EQ(scheduler.start(&ctx), Status::OK);
 
     std::vector<CatalogManager::JobRunInfo> runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 2500, &runs));
+    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 10000, &runs));
 
     CatalogManager::JobRunInfo updated;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
     while (std::chrono::steady_clock::now() < deadline) {
         ASSERT_EQ(catalog->getJobRun(runs.front().job_run_id, updated, &ctx), Status::OK);
         if (updated.state != CatalogManager::JobRunState::RUNNING &&

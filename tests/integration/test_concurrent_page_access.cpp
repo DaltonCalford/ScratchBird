@@ -582,6 +582,10 @@ TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
 
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    auto duration_ms = duration.count();
+    if (duration_ms <= 0) {
+        duration_ms = 1;
+    }
 
     EXPECT_EQ(errors.load(), 0) << "Buffer pool should handle high contention gracefully";
     EXPECT_EQ(successful_ops.load(), NUM_THREADS * ITERATIONS);
@@ -590,8 +594,8 @@ TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
 
     std::cout << "High contention stress test:\n";
     std::cout << "  Operations: " << successful_ops.load() << "\n";
-    std::cout << "  Duration: " << duration.count() << "ms\n";
-    std::cout << "  Throughput: " << (successful_ops.load() * 1000 / duration.count()) << " ops/s\n";
+    std::cout << "  Duration: " << duration_ms << "ms\n";
+    std::cout << "  Throughput: " << (successful_ops.load() * 1000 / duration_ms) << " ops/s\n";
     std::cout << "  Buffer pool stats:\n";
     std::cout << "    Hits: " << stats.hits << "\n";
     std::cout << "    Misses: " << stats.misses << "\n";

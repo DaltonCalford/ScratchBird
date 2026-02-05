@@ -23,6 +23,20 @@ protected:
 
         if (should_succeed)
         {
+            if (!result.success())
+            {
+                std::string details;
+                for (const auto& err : result.errors())
+                {
+                    if (!details.empty())
+                    {
+                        details.append(" | ");
+                    }
+                    details.append(err.message);
+                }
+                ASSERT_TRUE(result.success()) << "Parse failed for: " << sql
+                                              << (details.empty() ? "" : " (errors: " + details + ")");
+            }
             ASSERT_TRUE(result.success()) << "Parse failed for: " << sql;
         }
         else

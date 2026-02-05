@@ -358,6 +358,7 @@ private:
     ResolvedStatement* analyzeCreateUser(CreateUserStmt* stmt);
     ResolvedStatement* analyzeCreateRole(CreateRoleStmt* stmt);
     ResolvedStatement* analyzeCreateGroup(CreateGroupStmt* stmt);
+    ResolvedStatement* analyzeCreatePolicy(CreatePolicyStmt* stmt);
     ResolvedStatement* analyzeCreateJob(CreateJobStmt* stmt);
     ResolvedStatement* analyzeCreateException(CreateExceptionStmt* stmt);
     ResolvedStatement* analyzeCreateType(CreateTypeStmt* stmt);
@@ -371,7 +372,9 @@ private:
     ResolvedStatement* analyzeAlterDatabase(AlterDatabaseStmt* stmt);
     ResolvedStatement* analyzeAlterType(AlterTypeStmt* stmt);
     ResolvedStatement* analyzeAlterDomain(AlterDomainStmt* stmt);
+    ResolvedStatement* analyzeAlterPolicy(AlterPolicyStmt* stmt);
     ResolvedStatement* analyzeDropDomain(DropDomainStmt* stmt);
+    ResolvedStatement* analyzeDropPolicy(DropPolicyStmt* stmt);
     ResolvedStatement* analyzeAlterTable(AlterTableStmt* stmt);
     ResolvedStatement* analyzeAlterIndex(AlterIndexStmt* stmt);
     ResolvedStatement* analyzeRenameObject(RenameObjectStmt* stmt);

@@ -3287,6 +3287,11 @@ namespace scratchbird
                             executeDropPolicy();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_POLICY))
+                        {
+                            executeAlterPolicy();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_TABLE_RLS))
                         {
                             executeAlterTableRLS();
@@ -45418,6 +45423,8 @@ namespace scratchbird
             std::string policy_name = readString();
             std::string table_name = readString();
             uint8_t policy_command = readByte();
+            uint8_t is_permissive = readByte();  // Read is_permissive flag (0=RESTRICTIVE, 1=PERMISSIVE)
+            (void)is_permissive;  // TODO: Store in catalog when catalog supports it
 
             // Read role count and roles
             uint32_t role_count = readInt32();
@@ -45440,47 +45447,38 @@ namespace scratchbird
 
             if (has_using_expr)
             {
-                // Read expression bytecode - the expression is already in SBLR format
-                // We need to serialize this bytecode for storage in the catalog
+                // Read expression length and bytecode
+                // Format: UVarint(length) + bytecode
+                uint64_t expr_length = readUVarint();
                 size_t expr_start = pc_;
-
-                // Evaluate the expression structure to find its end
-                // This will skip over the expression bytecode
-                evaluateExpression();
-
-                size_t expr_end = pc_;
-                size_t expr_length = expr_end - expr_start;
+                pc_ += expr_length;
 
                 // Serialize bytecode as hex string for catalog storage
-                // Format: "0xXXXXXX..." representing the SBLR bytecode
                 using_expr.reserve(2 + expr_length * 2);
                 using_expr = "0x";
-                for (size_t i = expr_start; i < expr_end; i++)
+                for (size_t i = 0; i < expr_length; i++)
                 {
                     char buf[3];
-                    snprintf(buf, sizeof(buf), "%02x", bytecode_[i]);
+                    snprintf(buf, sizeof(buf), "%02x", bytecode_[expr_start + i]);
                     using_expr += buf;
                 }
             }
 
             if (has_with_check_expr)
             {
-                // Read WITH CHECK expression bytecode
+                // Read WITH CHECK expression length and bytecode
+                // Format: UVarint(length) + bytecode
+                uint64_t expr_length = readUVarint();
                 size_t expr_start = pc_;
-
-                // Evaluate the expression structure to find its end
-                evaluateExpression();
-
-                size_t expr_end = pc_;
-                size_t expr_length = expr_end - expr_start;
+                pc_ += expr_length;
 
                 // Serialize bytecode as hex string for catalog storage
                 with_check_expr.reserve(2 + expr_length * 2);
                 with_check_expr = "0x";
-                for (size_t i = expr_start; i < expr_end; i++)
+                for (size_t i = 0; i < expr_length; i++)
                 {
                     char buf[3];
-                    snprintf(buf, sizeof(buf), "%02x", bytecode_[i]);
+                    snprintf(buf, sizeof(buf), "%02x", bytecode_[expr_start + i]);
                     with_check_expr += buf;
                 }
             }
@@ -45624,6 +45622,120 @@ namespace scratchbird
             {
                 deleteObjectDefinition(core::CatalogManager::ObjectType::POLICY,
                                        policy_info.policy_id);
+            }
+        }
+
+        void Executor::executeAlterPolicy()
+        {
+            // Decode bytecode
+            std::string policy_name = readString();
+            std::string table_name = readString();
+
+            // Read role count and roles (0 means no change)
+            uint32_t role_count = readInt32();
+            std::vector<std::string> roles;
+            roles.reserve(role_count);
+            for (uint32_t i = 0; i < role_count; i++)
+            {
+                roles.push_back(readString());
+            }
+
+            uint8_t flags = readByte();
+            bool has_using_expr = flags & 0x01;
+            bool has_with_check_expr = flags & 0x02;
+
+            // Read USING expression if present
+            std::string using_expr;
+            std::string with_check_expr;
+
+            if (has_using_expr)
+            {
+                // Read expression bytecode and serialize to hex string
+                size_t expr_start = pc_;
+                evaluateExpression();
+                size_t expr_end = pc_;
+                size_t expr_length = expr_end - expr_start;
+
+                using_expr.reserve(2 + expr_length * 2);
+                using_expr = "0x";
+                for (size_t i = expr_start; i < expr_end; i++)
+                {
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", bytecode_[i]);
+                    using_expr += buf;
+                }
+            }
+
+            if (has_with_check_expr)
+            {
+                // Read WITH CHECK expression bytecode
+                size_t expr_start = pc_;
+                evaluateExpression();
+                size_t expr_end = pc_;
+                size_t expr_length = expr_end - expr_start;
+
+                with_check_expr.reserve(2 + expr_length * 2);
+                with_check_expr = "0x";
+                for (size_t i = expr_start; i < expr_end; i++)
+                {
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", bytecode_[i]);
+                    with_check_expr += buf;
+                }
+            }
+
+            // Resolve table
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx, false);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto get_status = db_->catalog_manager()->getTable(
+                table_id, table_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Security Check: Only superusers or table owners can alter policies
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                              &table_info.owner_id,
+                                              sizeof(core::ID)) == 0);
+                if (!is_owner)
+                {
+                    error("Permission denied: only superusers or table owners can alter policies");
+                    return;
+                }
+            }
+
+            // Call CatalogManager::alterPolicy
+            // -1 means don't change is_enabled status
+            // empty string means don't change expression
+            auto status = db_->catalog_manager()->alterPolicy(
+                table_info.table_id, policy_name,
+                -1,  // don't change is_enabled
+                has_using_expr ? using_expr : "",
+                has_with_check_expr ? with_check_expr : "",
+                &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("ALTER POLICY failed: " + err_ctx.message);
             }
         }
 
@@ -51163,6 +51275,8 @@ namespace scratchbird
             size_t saved_pc = pc_;
             const uint8_t* saved_bytecode = bytecode_;
             size_t saved_bytecode_size = bytecode_size_;
+            const std::vector<Value>* saved_row_values = current_row_values_;
+            const std::vector<core::CatalogManager::ColumnInfo>* saved_row_columns = current_row_columns_;
 
             // Set up new execution context with expression bytecode
             bytecode_ = expr_bytecode.data();
@@ -51182,8 +51296,8 @@ namespace scratchbird
                 bytecode_ = saved_bytecode;
                 bytecode_size_ = saved_bytecode_size;
                 pc_ = saved_pc;
-                current_row_values_ = nullptr;
-                current_row_columns_ = nullptr;
+                current_row_values_ = saved_row_values;
+                current_row_columns_ = saved_row_columns;
 
                 // Convert result to boolean using Value API
                 return result.toBoolean();
@@ -51194,8 +51308,8 @@ namespace scratchbird
                 bytecode_ = saved_bytecode;
                 bytecode_size_ = saved_bytecode_size;
                 pc_ = saved_pc;
-                current_row_values_ = nullptr;
-                current_row_columns_ = nullptr;
+                current_row_values_ = saved_row_values;
+                current_row_columns_ = saved_row_columns;
                 return false;
             }
         }

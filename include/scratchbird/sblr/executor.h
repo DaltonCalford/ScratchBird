@@ -941,6 +941,7 @@ namespace scratchbird
             void executeDisconnect();        // Execute DISCONNECT
             void executeCreatePolicy();      // Execute CREATE POLICY (Security Phase 3.4.4)
             void executeDropPolicy();        // Execute DROP POLICY (Security Phase 3.4.4)
+            void executeAlterPolicy();       // Execute ALTER POLICY (Security Phase 3.4.4)
             void executeAlterTableRLS();     // Execute ALTER TABLE ... ROW LEVEL SECURITY (Security Phase 3.4.4)
 
             // SQL Engine Commands (ALPHA Phase 1 - Developer Experience)

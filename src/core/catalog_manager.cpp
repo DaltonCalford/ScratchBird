@@ -33041,6 +33041,147 @@ auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_na
     return Status::OK;
 }
 
+auto CatalogManager::alterPolicy(const ID& table_id, const std::string& policy_name,
+                                int is_enabled, const std::string& using_expr,
+                                const std::string& with_check_expr,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    // Find policy record
+    auto predicate = [&](const PolicyRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               std::strcmp(rec.policy_name, policy_name.c_str()) == 0;
+    };
+
+    auto result = findRecordInHeapPage<PolicyRecord>(policies_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                         ("Policy '" + policy_name + "' not found on table").c_str());
+        return Status::NOT_FOUND;
+    }
+
+    // Update the record
+    PolicyRecord updated_rec = result.record;
+    bool modified = false;
+
+    // Update enabled status if specified (-1 means don't change)
+    if (is_enabled >= 0)
+    {
+        updated_rec.is_enabled = is_enabled ? 1 : 0;
+        modified = true;
+    }
+
+    // Update USING expression if specified (non-empty)
+    if (!using_expr.empty())
+    {
+        uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+        if (xmin == 0)
+        {
+            xmin = config::DEFAULT_INITIAL_XID;
+        }
+
+        // Delete old expression if exists
+        if (updated_rec.using_expr_oid != 0 && policy_toast_manager_)
+        {
+            policy_toast_manager_->deleteToastValue(updated_rec.using_expr_oid, xmin, ctx);
+        }
+
+        // Store new expression
+        Status toast_status = storeStringInToast(using_expr, xmin, updated_rec.using_expr_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store USING expression");
+            return toast_status;
+        }
+        modified = true;
+    }
+
+    // Update WITH CHECK expression if specified (non-empty)
+    if (!with_check_expr.empty())
+    {
+        uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+        if (xmin == 0)
+        {
+            xmin = config::DEFAULT_INITIAL_XID;
+        }
+
+        // Delete old expression if exists
+        if (updated_rec.with_check_expr_oid != 0 && policy_toast_manager_)
+        {
+            policy_toast_manager_->deleteToastValue(updated_rec.with_check_expr_oid, xmin, ctx);
+        }
+
+        // Store new expression
+        Status toast_status = storeStringInToast(with_check_expr, xmin, updated_rec.with_check_expr_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store WITH CHECK expression");
+            return toast_status;
+        }
+        modified = true;
+    }
+
+    if (!modified)
+    {
+        return Status::OK;  // Nothing to change
+    }
+
+    // Update modified time
+    updated_rec.modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    // Write updated record
+    Status status = updateRecordInHeapPage(policies_table_page_, result.slot_index,
+                                          updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update policy record");
+        return status;
+    }
+
+    // Update cache (Phase 3.4.6)
+    {
+        std::lock_guard<std::mutex> cache_lock(policy_cache_mutex_);
+
+        auto it = policy_cache_.find(result.record.policy_id);
+        if (it != policy_cache_.end())
+        {
+            if (is_enabled >= 0)
+            {
+                it->second.is_enabled = (is_enabled != 0);
+            }
+            if (!using_expr.empty())
+            {
+                it->second.using_expr = using_expr;
+            }
+            if (!with_check_expr.empty())
+            {
+                it->second.with_check_expr = with_check_expr;
+            }
+            it->second.modified_time = updated_rec.modified_time;
+        }
+    }
+
+    DEBUG_LOG_DB("Altered policy '" << policy_name << "' on table " << table_id.toString());
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    uint64_t table_epoch = 0;
+    Status table_status = bumpTablePolicyEpoch(table_id, table_epoch, ctx);
+    if (table_status != Status::OK)
+    {
+        return table_status;
+    }
+
+    return Status::OK;
+}
+
 auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_name,
                               PolicyInfo& policy_out, ErrorContext* ctx) -> Status
 {

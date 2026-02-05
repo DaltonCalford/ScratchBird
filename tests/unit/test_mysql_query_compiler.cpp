@@ -15,29 +15,23 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/sblr/executor.h"
+#include "test_helpers.h"
 
 #include <algorithm>
 #include <filesystem>
 
 using namespace scratchbird;
-
-namespace {
-std::filesystem::path testDbPath() {
-    return std::filesystem::path("build") / "database" / "test_mysql_compiler.sbdb";
-}
-}
+using scratchbird::testing::TestDatabaseFile;
 
 class MySQLQueryCompilerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        std::filesystem::create_directories(testDbPath().parent_path());
-        std::error_code ec;
-        std::filesystem::remove(testDbPath(), ec);
+        test_db_file_ = std::make_unique<TestDatabaseFile>("test_mysql_compiler");
 
         core::ErrorContext ctx;
-        ASSERT_EQ(core::Database::create(testDbPath().string(), 16384, &ctx), core::Status::OK)
+        ASSERT_EQ(core::Database::create(test_db_file_->path(), 16384, &ctx), core::Status::OK)
             << ctx.message;
-        ASSERT_EQ(db_.open(testDbPath().string(), &ctx), core::Status::OK) << ctx.message;
+        ASSERT_EQ(db_.open(test_db_file_->path(), &ctx), core::Status::OK) << ctx.message;
 
         ASSERT_EQ(db_.connect(conn_ctx_, &ctx), core::Status::OK) << ctx.message;
         core::CatalogManager::SchemaInfo public_schema_info;
@@ -57,7 +51,10 @@ protected:
         executor_.reset();
         conn_ctx_.reset();
         db_.close();
+        test_db_file_.reset();
     }
+
+    std::unique_ptr<TestDatabaseFile> test_db_file_;
 
     sblr::ExecutionResult compileAndExecute(const std::string& sql) {
         sblr::MySQLQueryCompiler compiler(&db_);

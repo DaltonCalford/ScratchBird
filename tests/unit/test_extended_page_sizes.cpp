@@ -7,6 +7,9 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+/**
+ * Extended page sizes test - uses unique file paths for parallel test safety.
+ */
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
@@ -15,6 +18,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <vector>
 #include <chrono>
@@ -23,28 +27,18 @@
 
 using namespace scratchbird;
 using namespace scratchbird::core;
+using scratchbird::testing::TestDatabaseFile;
 
 class ExtendedPageSizesTest : public ::testing::Test
 {
 protected:
-    void SetUp() override
-    {
-        // Clean up any existing test files
-        for (uint32_t ps : {8192u, 16384u, 32768u, 65536u, 131072u})
-        {
-            std::string path = "test_extended_" + std::to_string(ps) + ".db";
-            std::filesystem::remove(path);
-        }
-    }
-
-    void TearDown() override
-    {
-        // Clean up test files
-        for (uint32_t ps : {8192u, 16384u, 32768u, 65536u, 131072u})
-        {
-            std::string path = "test_extended_" + std::to_string(ps) + ".db";
-            std::filesystem::remove(path);
-        }
+    std::vector<std::unique_ptr<TestDatabaseFile>> test_files_;
+    
+    std::string getUniquePath(const std::string& suffix) {
+        auto file = std::make_unique<TestDatabaseFile>("test_extended_" + suffix);
+        std::string path = file->path();
+        test_files_.push_back(std::move(file));
+        return path;
     }
 };
 
@@ -55,7 +49,7 @@ TEST_F(ExtendedPageSizesTest, CreateDatabaseAllPageSizes)
 
     for (uint32_t ps : page_sizes)
     {
-        std::string path = "test_extended_" + std::to_string(ps) + ".db";
+        std::string path = getUniquePath("ps_" + std::to_string(ps));
 
         // Create database with specific page size
         ASSERT_EQ(Database::create(path, ps, &ctx), Status::OK)
@@ -83,8 +77,7 @@ TEST_F(ExtendedPageSizesTest, BufferPoolWithLargePages)
 
     for (uint32_t ps : page_sizes)
     {
-        std::string path = "test_extended_bp_" + std::to_string(ps) + ".db";
-        std::filesystem::remove(path);
+        std::string path = getUniquePath("bp_" + std::to_string(ps));
 
         ASSERT_EQ(Database::create(path, ps, &ctx), Status::OK);
 
@@ -115,7 +108,6 @@ TEST_F(ExtendedPageSizesTest, BufferPoolWithLargePages)
 
         bp.shutdown();
         db.close();
-        std::filesystem::remove(path);
     }
 }
 
@@ -178,8 +170,7 @@ TEST_F(ExtendedPageSizesTest, StorageEngineWithLargePages)
 
     for (uint32_t ps : page_sizes)
     {
-        std::string path = "test_extended_storage_" + std::to_string(ps) + ".db";
-        std::filesystem::remove(path);
+        std::string path = getUniquePath("storage_" + std::to_string(ps));
 
         ASSERT_EQ(Database::create(path, ps, &ctx), Status::OK);
 
@@ -207,7 +198,6 @@ TEST_F(ExtendedPageSizesTest, StorageEngineWithLargePages)
         bp.unpinPage(0, false, &ctx);
         bp.shutdown();
         db.close();
-        std::filesystem::remove(path);
     }
 }
 
@@ -274,16 +264,13 @@ TEST_F(ExtendedPageSizesTest, PerformanceComparison)
 
     for (uint32_t ps : page_sizes)
     {
-        std::string path = "test_extended_perf_" + std::to_string(ps) + ".db";
-        std::filesystem::remove(path);
+        std::string path = getUniquePath("perf_" + std::to_string(ps));
 
         ASSERT_EQ(Database::create(path, ps, &ctx), Status::OK);
 
         // Check file size
         auto file_size = std::filesystem::file_size(path);
         std::cout << std::setw(9) << ps << " | " << std::setw(14) << (file_size / 1024) << "\n";
-
-        std::filesystem::remove(path);
     }
 }
 
@@ -299,11 +286,11 @@ TEST_F(ExtendedPageSizesTest, InvalidPageSizes)
 
     for (uint32_t ps : invalid_sizes)
     {
-        std::string path = "test_invalid_" + std::to_string(ps) + ".db";
+        std::string path = getUniquePath("invalid_" + std::to_string(ps));
         ASSERT_NE(Database::create(path, ps, &ctx), Status::OK)
             << "Should not accept page size " << ps;
 
-        // Verify file was not created
+        // Verify file was not created (or was cleaned up)
         ASSERT_FALSE(std::filesystem::exists(path));
     }
 }
@@ -315,8 +302,7 @@ TEST_F(ExtendedPageSizesTest, FSMWithLargePages)
 
     for (uint32_t ps : page_sizes)
     {
-        std::string path = "test_extended_fsm_" + std::to_string(ps) + ".db";
-        std::filesystem::remove(path);
+        std::string path = getUniquePath("fsm_" + std::to_string(ps));
 
         ASSERT_EQ(Database::create(path, ps, &ctx), Status::OK);
 
@@ -359,6 +345,5 @@ TEST_F(ExtendedPageSizesTest, FSMWithLargePages)
         ASSERT_TRUE(found) << "FSM should reuse freed pages";
 
         db.close();
-        std::filesystem::remove(path);
     }
 }

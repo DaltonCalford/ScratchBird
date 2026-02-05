@@ -485,6 +485,12 @@ Statement* Parser::parseCreate() {
         }
         return parseCreateGroup();
     }
+    if (matchContextual("POLICY")) {
+        if (or_alter) {
+            error("CREATE OR ALTER is only supported for JOB");
+        }
+        return parseCreatePolicy();
+    }
     if (matchContextual("SERVER")) {
         if (or_alter) {
             error("CREATE OR ALTER is only supported for JOB");
@@ -2909,6 +2915,80 @@ CreateGroupStmt* Parser::parseCreateGroup() {
     return stmt;
 }
 
+CreatePolicyStmt* Parser::parseCreatePolicy() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreatePolicyStmt>();
+    stmt->policy_name = expectIdentifier("Expected policy name");
+
+    expect(TokenType::KW_ON, "Expected ON after policy name");
+    stmt->table_path = parseSchemaPath(state_);
+
+    // AS { PERMISSIVE | RESTRICTIVE }
+    if (matchContextual("AS")) {
+        if (matchContextual("PERMISSIVE")) {
+            stmt->is_permissive = true;
+        } else if (matchContextual("RESTRICTIVE")) {
+            stmt->is_permissive = false;
+        } else {
+            error("Expected PERMISSIVE or RESTRICTIVE after AS");
+        }
+    }
+
+    // FOR { ALL | SELECT | INSERT | UPDATE | DELETE }
+    if (matchContextual("FOR")) {
+        if (matchContextual("ALL")) {
+            stmt->policy_type = PolicyType::ALL;
+        } else if (match(TokenType::KW_SELECT)) {
+            stmt->policy_type = PolicyType::SELECT;
+        } else if (match(TokenType::KW_INSERT)) {
+            stmt->policy_type = PolicyType::INSERT;
+        } else if (match(TokenType::KW_UPDATE)) {
+            stmt->policy_type = PolicyType::UPDATE;
+        } else if (match(TokenType::KW_DELETE)) {
+            stmt->policy_type = PolicyType::DELETE;
+        } else {
+            error("Expected ALL, SELECT, INSERT, UPDATE, or DELETE after FOR");
+        }
+    }
+
+    // TO { role_name | PUBLIC } [, ...]
+    if (matchContextual("TO")) {
+        do {
+            if (matchContextual("PUBLIC")) {
+                // PUBLIC means all roles - leave roles empty
+            } else {
+                StringPool::StringId role_name = expectIdentifier("Expected role name");
+                stmt->roles.push_back(role_name);
+            }
+        } while (match(TokenType::COMMA));
+    }
+
+    // USING ( expression )
+    if (match(TokenType::KW_USING)) {
+        if (match(TokenType::LEFT_PAREN)) {
+            stmt->using_expr = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after USING expression");
+        } else {
+            stmt->using_expr = parseExpression();
+        }
+    }
+
+    // WITH CHECK ( expression )
+    if (match(TokenType::KW_WITH)) {
+        expectContextual("CHECK", "Expected CHECK after WITH");
+        if (match(TokenType::LEFT_PAREN)) {
+            stmt->with_check_expr = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH CHECK expression");
+        } else {
+            stmt->with_check_expr = parseExpression();
+        }
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 CreateForeignServerStmt* Parser::parseCreateForeignServer() {
     SourceLocation start = currentLocation();
 
@@ -3845,6 +3925,7 @@ Statement* Parser::parseAlter() {
     if (matchContextual("TYPE")) return parseAlterType();
     if (matchContextual("DOMAIN")) return parseAlterDomain();
     if (matchContextual("JOB")) return parseAlterJob();
+    if (matchContextual("POLICY")) return parseAlterPolicy();
     if (matchContextual("SYSTEM")) return parseAlterSystem();
 
     auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
@@ -4344,6 +4425,53 @@ AlterDomainStmt* Parser::parseAlterDomain() {
         stmt->new_name = expectIdentifier("Expected new domain name");
     } else {
         error("Expected SET, DROP, ADD, or RENAME after domain name");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AlterPolicyStmt* Parser::parseAlterPolicy() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterPolicyStmt>();
+    stmt->policy_name = expectIdentifier("Expected policy name");
+
+    expect(TokenType::KW_ON, "Expected ON after policy name");
+    stmt->table_path = parseSchemaPath(state_);
+
+    // TO { role_name | PUBLIC } [, ...]
+    if (matchContextual("TO")) {
+        do {
+            if (matchContextual("PUBLIC")) {
+                // PUBLIC means all roles
+                stmt->roles.clear();
+            } else {
+                StringPool::StringId role_name = expectIdentifier("Expected role name");
+                stmt->roles.push_back(role_name);
+            }
+        } while (match(TokenType::COMMA));
+    }
+
+    // USING ( expression )
+    if (matchContextual("USING")) {
+        if (match(TokenType::LEFT_PAREN)) {
+            stmt->using_expr = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after USING expression");
+        } else {
+            stmt->using_expr = parseExpression();
+        }
+    }
+
+    // WITH CHECK ( expression )
+    if (matchContextual("WITH")) {
+        expectContextual("CHECK", "Expected CHECK after WITH");
+        if (match(TokenType::LEFT_PAREN)) {
+            stmt->with_check_expr = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH CHECK expression");
+        } else {
+            stmt->with_check_expr = parseExpression();
+        }
     }
 
     stmt->span = makeSpan(start);
@@ -4989,6 +5117,18 @@ AlterTableStmt* Parser::parseAlterTable() {
             expectContextual("SECURITY", "Expected SECURITY after LEVEL");
             stmt->action = AlterTableAction::DISABLE_RLS;
         }
+    } else if (matchContextual("FORCE")) {
+        expectContextual("ROW", "Expected ROW after FORCE");
+        expectContextual("LEVEL", "Expected LEVEL after ROW");
+        expectContextual("SECURITY", "Expected SECURITY after LEVEL");
+        stmt->action = AlterTableAction::FORCE_RLS;
+    } else if (matchContextual("NO")) {
+        if (matchContextual("FORCE")) {
+            expectContextual("ROW", "Expected ROW after NO FORCE");
+            expectContextual("LEVEL", "Expected LEVEL after ROW");
+            expectContextual("SECURITY", "Expected SECURITY after LEVEL");
+            stmt->action = AlterTableAction::NO_FORCE_RLS;
+        }
     } else if (matchContextual("VALIDATE")) {
         stmt->action = AlterTableAction::VALIDATE_CONSTRAINT;
         matchContextual("CONSTRAINT");
@@ -5021,6 +5161,7 @@ Statement* Parser::parseDrop() {
     if (matchContextual("PACKAGE")) return parseDropPackage();
     if (matchContextual("ROLE")) return parseDropRole();
     if (matchContextual("GROUP")) return parseDropGroup();
+    if (matchContextual("POLICY")) return parseDropPolicy();
     if (matchContextual("EXCEPTION")) return parseDropException();
     if (matchContextual("SEQUENCE")) return parseDropSequence();
     if (matchContextual("SYNONYM")) return parseDropSynonym();
@@ -5335,6 +5476,25 @@ DropGroupStmt* Parser::parseDropGroup() {
     if (matchContextual("CASCADE")) {
         stmt->cascade = true;
     }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropPolicyStmt* Parser::parseDropPolicy() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropPolicyStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    stmt->policy_name = expectIdentifier("Expected policy name");
+
+    expect(TokenType::KW_ON, "Expected ON after policy name");
+    stmt->table_path = parseSchemaPath(state_);
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -6156,6 +6316,108 @@ OrderByItem* Parser::parseOrderByItem() {
 
     item->span = makeSpan(start);
     return item;
+}
+
+WindowSpec* Parser::parseWindowSpec() {
+    auto* spec = arena_.create<WindowSpec>();
+
+    expect(TokenType::LEFT_PAREN, "Expected '(' after OVER");
+
+    if (!check(TokenType::RIGHT_PAREN)) {
+        if (matchContextual("PARTITION")) {
+            expectContextual("BY", "Expected BY after PARTITION");
+            do {
+                spec->partition_by.push_back(parseExpression());
+            } while (match(TokenType::COMMA));
+        }
+
+        if (match(TokenType::KW_ORDER) || matchContextual("ORDER")) {
+            expectContextual("BY", "Expected BY after ORDER");
+            do {
+                OrderByItem* item = parseOrderByItem();
+                if (item) {
+                    spec->order_by.push_back(item);
+                }
+            } while (match(TokenType::COMMA));
+        }
+
+        if (checkContextual("ROWS") || checkContextual("RANGE") || checkContextual("GROUPS")) {
+            parseWindowFrame(spec);
+        }
+    }
+
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after window specification");
+    return spec;
+}
+
+void Parser::parseWindowFrame(WindowSpec* spec) {
+    if (!spec) {
+        error("Window specification required for frame clause");
+        return;
+    }
+
+    if (matchContextual("ROWS")) {
+        spec->frame_type = FrameType::ROWS;
+    } else if (matchContextual("RANGE")) {
+        spec->frame_type = FrameType::RANGE;
+    } else if (matchContextual("GROUPS")) {
+        spec->frame_type = FrameType::GROUPS;
+    } else {
+        return;
+    }
+
+    spec->has_frame = true;
+
+    if (match(TokenType::KW_BETWEEN) || matchContextual("BETWEEN")) {
+        spec->frame_start = parseWindowFrameBound(&spec->frame_start_value);
+        if (!(match(TokenType::KW_AND) || matchContextual("AND"))) {
+            error("Expected AND in window frame");
+        }
+        spec->frame_end = parseWindowFrameBound(&spec->frame_end_value);
+    } else {
+        spec->frame_start = parseWindowFrameBound(&spec->frame_start_value);
+        spec->frame_end = FrameBoundType::CURRENT_ROW;
+        spec->frame_end_value = nullptr;
+    }
+}
+
+FrameBoundType Parser::parseWindowFrameBound(Expression** value_out) {
+    if (value_out) {
+        *value_out = nullptr;
+    }
+
+    if (matchContextual("UNBOUNDED")) {
+        if (matchContextual("PRECEDING")) {
+            return FrameBoundType::UNBOUNDED_PRECEDING;
+        }
+        if (matchContextual("FOLLOWING")) {
+            return FrameBoundType::UNBOUNDED_FOLLOWING;
+        }
+        error("Expected PRECEDING or FOLLOWING after UNBOUNDED");
+        return FrameBoundType::UNBOUNDED_PRECEDING;
+    }
+
+    if (matchContextual("CURRENT")) {
+        expectContextual("ROW", "Expected ROW after CURRENT");
+        return FrameBoundType::CURRENT_ROW;
+    }
+
+    Expression* value = parseExpression();
+    if (matchContextual("PRECEDING")) {
+        if (value_out) {
+            *value_out = value;
+        }
+        return FrameBoundType::VALUE_PRECEDING;
+    }
+    if (matchContextual("FOLLOWING")) {
+        if (value_out) {
+            *value_out = value;
+        }
+        return FrameBoundType::VALUE_FOLLOWING;
+    }
+
+    error("Expected PRECEDING or FOLLOWING after window frame offset");
+    return FrameBoundType::CURRENT_ROW;
 }
 
 void Parser::parseLimitClause(SelectStmt* stmt) {
@@ -7980,6 +8242,55 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
     }
 
     expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
+
+    auto is_window_function = [&upper_name]() {
+        return upper_name == "ROW_NUMBER" || upper_name == "RANK" ||
+               upper_name == "DENSE_RANK" || upper_name == "LAG" ||
+               upper_name == "LEAD" || upper_name == "FIRST_VALUE" ||
+               upper_name == "LAST_VALUE" || upper_name == "NTH_VALUE";
+    };
+
+    if (is_window_function())
+    {
+        if (upper_name == "ROW_NUMBER" || upper_name == "RANK" || upper_name == "DENSE_RANK")
+        {
+            if (!expr->arguments.empty())
+            {
+                error(upper_name + " does not accept arguments");
+            }
+        }
+        else if (upper_name == "LAG" || upper_name == "LEAD")
+        {
+            if (expr->arguments.empty() || expr->arguments.size() > 3)
+            {
+                error(upper_name + " requires 1 to 3 arguments");
+            }
+        }
+        else if (upper_name == "FIRST_VALUE" || upper_name == "LAST_VALUE")
+        {
+            if (expr->arguments.size() != 1)
+            {
+                error(upper_name + " requires exactly one argument");
+            }
+        }
+        else if (upper_name == "NTH_VALUE")
+        {
+            if (expr->arguments.size() != 2)
+            {
+                error("NTH_VALUE requires exactly two arguments");
+            }
+        }
+    }
+
+    if (matchContextual("OVER"))
+    {
+        expr->is_window = true;
+        expr->window = parseWindowSpec();
+    }
+    else if (is_window_function())
+    {
+        error(upper_name + " requires an OVER clause");
+    }
 
     if (upper_name == "JSON_EXTRACT")
     {

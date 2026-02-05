@@ -161,6 +161,7 @@ private:
     CreateUserStmt* parseCreateUser();
     CreateRoleStmt* parseCreateRole();
     CreateGroupStmt* parseCreateGroup();
+    CreatePolicyStmt* parseCreatePolicy();
     CreateForeignServerStmt* parseCreateForeignServer();
     CreateForeignTableStmt* parseCreateForeignTable();
     CreateUserMappingStmt* parseCreateUserMapping();
@@ -176,6 +177,7 @@ private:
     AlterTypeStmt* parseAlterType();
     AlterDomainStmt* parseAlterDomain();
     AlterJobStmt* parseAlterJob();
+    AlterPolicyStmt* parseAlterPolicy();
     AlterSystemStmt* parseAlterSystem();
 
     // DROP statements
@@ -194,6 +196,7 @@ private:
     DropPackageStmt* parseDropPackage();
     DropRoleStmt* parseDropRole();
     DropGroupStmt* parseDropGroup();
+    DropPolicyStmt* parseDropPolicy();
     DropExceptionStmt* parseDropException();
     DropSequenceStmt* parseDropSequence();
     DropTypeStmt* parseDropType();
@@ -231,6 +234,9 @@ private:
     OrderByItem* parseOrderByItem();
     void parseLimitClause(SelectStmt* stmt);
     void parseSetOperation(SelectStmt* stmt);
+    WindowSpec* parseWindowSpec();
+    void parseWindowFrame(WindowSpec* spec);
+    FrameBoundType parseWindowFrameBound(Expression** value_out);
 
     // INSERT statement
     InsertStmt* parseInsert();

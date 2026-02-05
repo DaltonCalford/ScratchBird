@@ -35,20 +35,22 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/core/database.h"
+#include "test_helpers.h"
 #include <memory>
 #include <filesystem>
 #include <cstring>
 
 using namespace scratchbird;
 using namespace scratchbird::sblr;
+using scratchbird::testing::uniqueTestDbPath;
 
 class PSQLControlFlowTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        // Create temporary test database
-        test_db_path_ = "/tmp/test_psql_control_flow.db";
+        // Create temporary test database with unique path
+        test_db_path_ = uniqueTestDbPath("test_psql_control_flow", ".db");
         std::filesystem::remove_all(test_db_path_);
 
         core::ErrorContext ctx;

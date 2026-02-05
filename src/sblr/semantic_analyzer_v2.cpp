@@ -3756,6 +3756,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateRole(static_cast<CreateRoleStmt*>(stmt));
         case ASTKind::CreateGroupStmt:
             return analyzeCreateGroup(static_cast<CreateGroupStmt*>(stmt));
+        case ASTKind::CreatePolicyStmt:
+            return analyzeCreatePolicy(static_cast<CreatePolicyStmt*>(stmt));
         case ASTKind::CreateJobStmt:
             return analyzeCreateJob(static_cast<CreateJobStmt*>(stmt));
         case ASTKind::CreateExceptionStmt:
@@ -3778,10 +3780,14 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeAlterType(static_cast<AlterTypeStmt*>(stmt));
         case ASTKind::AlterDomainStmt:
             return analyzeAlterDomain(static_cast<AlterDomainStmt*>(stmt));
+        case ASTKind::AlterPolicyStmt:
+            return analyzeAlterPolicy(static_cast<AlterPolicyStmt*>(stmt));
         case ASTKind::DropTypeStmt:
             return analyzeDropType(static_cast<DropTypeStmt*>(stmt));
         case ASTKind::DropDomainStmt:
             return analyzeDropDomain(static_cast<DropDomainStmt*>(stmt));
+        case ASTKind::DropPolicyStmt:
+            return analyzeDropPolicy(static_cast<DropPolicyStmt*>(stmt));
         case ASTKind::DropDatabaseStmt:
             return analyzeDropDatabase(static_cast<DropDatabaseStmt*>(stmt));
         case ASTKind::AlterDatabaseStmt:
@@ -5488,6 +5494,103 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateRole(CreateRoleStmt* stmt) {
     return resolved;
 }
 
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreatePolicy(CreatePolicyStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreatePolicyStmt>();
+    resolved->span = stmt->span;
+    resolved->policy_name = stmt->policy_name;
+    resolved->table_path = stmt->table_path;
+    resolved->policy_type = stmt->policy_type;
+    resolved->is_permissive = stmt->is_permissive;
+    resolved->roles = stmt->roles;
+    
+    // Resolve target table for column resolution in policy expressions
+    auto table_ref = resolveTable(stmt->table_path, stmt->span);
+    if (!table_ref) {
+        return nullptr;
+    }
+    
+    // Push scope and add table for column resolution
+    pushScope();
+    ResolutionScope::TableEntry entry;
+    entry.table_uuid = table_ref->table_uuid;
+    entry.columns = table_ref->columns;
+    entry.alias = StringPool::INVALID_ID;  // No alias for policy expressions
+    currentScope().addTable(entry);
+    
+    // Analyze USING expression if present
+    if (stmt->using_expr) {
+        resolved->using_expr = analyzeExpression(stmt->using_expr);
+    }
+    
+    // Analyze WITH CHECK expression if present
+    if (stmt->with_check_expr) {
+        resolved->with_check_expr = analyzeExpression(stmt->with_check_expr);
+    }
+    
+    // Pop scope
+    popScope();
+    
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterPolicy(AlterPolicyStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterPolicyStmt>();
+    resolved->span = stmt->span;
+    resolved->policy_name = stmt->policy_name;
+    resolved->table_path = stmt->table_path;
+    resolved->roles = stmt->roles;
+    
+    // Resolve target table for column resolution in policy expressions
+    auto table_ref = resolveTable(stmt->table_path, stmt->span);
+    if (!table_ref) {
+        return nullptr;
+    }
+    
+    // Push scope and add table for column resolution
+    pushScope();
+    ResolutionScope::TableEntry entry;
+    entry.table_uuid = table_ref->table_uuid;
+    entry.columns = table_ref->columns;
+    entry.alias = StringPool::INVALID_ID;  // No alias for policy expressions
+    currentScope().addTable(entry);
+    
+    // Analyze USING expression if present
+    if (stmt->using_expr) {
+        resolved->using_expr = analyzeExpression(stmt->using_expr);
+    }
+    
+    // Analyze WITH CHECK expression if present
+    if (stmt->with_check_expr) {
+        resolved->with_check_expr = analyzeExpression(stmt->with_check_expr);
+    }
+    
+    // Pop scope
+    popScope();
+    
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropPolicy(DropPolicyStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropPolicyStmt>();
+    resolved->span = stmt->span;
+    resolved->policy_name = stmt->policy_name;
+    resolved->table_path = stmt->table_path;
+    resolved->if_exists = stmt->if_exists;
+    return resolved;
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeCreateJob(CreateJobStmt* stmt) {
     if (!stmt) {
         return nullptr;
@@ -6840,6 +6943,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
             return resolved;
         case AlterTableAction::DISABLE_RLS:
             resolved->rls_action = 1;
+            return resolved;
+        case AlterTableAction::FORCE_RLS:
+            resolved->rls_action = 2;
+            return resolved;
+        case AlterTableAction::NO_FORCE_RLS:
+            resolved->rls_action = 3;
             return resolved;
         case AlterTableAction::ENABLE_TRIGGER:
         case AlterTableAction::DISABLE_TRIGGER: {

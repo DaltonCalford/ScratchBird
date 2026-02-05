@@ -8,317 +8,171 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 /**
- * Performance benchmark for Columnstore Phase 5 batch processing
+ * Columnstore Phase 5 Batch Processing Tests
  *
- * Tests SIMD-accelerated predicate evaluation and batch scan throughput.
- * Target: 10-100x improvement over row-by-row processing.
+ * Replacement tests focused on correctness with light performance expectations.
+ * These tests validate:
+ * - RLE compression/decompression correctness
+ * - Predicate evaluation correctness
+ * - Batch scan iterator correctness
  */
+
+#include <gtest/gtest.h>
+#include <algorithm>
+#include <cstring>
+#include <memory>
+#include <vector>
 
 #include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
-#include "scratchbird/core/buffer_pool.h"
-#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/uuidv7.h"
 #include "test_helpers.h"
-#include <iostream>
-#include <chrono>
-#include <vector>
-#include <random>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
 using namespace scratchbird::core;
-using scratchbird::testing::uniqueTestShortPath;
+using scratchbird::testing::TestDatabaseFile;
 
-// Timing helper
-class Timer
-{
-public:
-    void start()
-    {
-        start_time = std::chrono::high_resolution_clock::now();
+namespace {
+
+class ColumnstoreBatchPerfTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        db_file_ = std::make_unique<TestDatabaseFile>("columnstore_batch_perf", ".db");
+
+        ErrorContext ctx;
+        ASSERT_EQ(Database::create(db_file_->path(), 8192, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(db_.open(db_file_->path(), &ctx), Status::OK) << ctx.message;
     }
 
-    double elapsedMs()
-    {
-        auto end_time = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        return duration.count() / 1000.0;
+    void TearDown() override {
+        db_.close();
+        db_file_.reset();
     }
 
-private:
-    std::chrono::high_resolution_clock::time_point start_time;
+    std::unique_ptr<ColumnstoreIndex> createIndex(
+        const std::vector<UuidV7Bytes>& columns,
+        uint32_t segment_size,
+        CompressionType compression) {
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        uint32_t root_page = 0;
+        ErrorContext ctx;
+        Status status = ColumnstoreIndex::create(
+            &db_, index_uuid, table_uuid, columns, segment_size, compression, &root_page, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        if (status != Status::OK) {
+            return nullptr;
+        }
+        auto index = ColumnstoreIndex::open(&db_, index_uuid, root_page, segment_size, &ctx);
+        EXPECT_NE(index, nullptr);
+        return index;
+    }
+
+    ColumnSegment makeInt32Segment(const std::vector<int32_t>& values) {
+        ColumnSegment segment;
+        segment.data_type = DataType::INT32;
+        segment.row_count = static_cast<uint32_t>(values.size());
+        segment.data.resize(values.size() * sizeof(int32_t));
+        std::memcpy(segment.data.data(), values.data(), values.size() * sizeof(int32_t));
+        segment.min_value = values.empty() ? 0 : *std::min_element(values.begin(), values.end());
+        segment.max_value = values.empty() ? 0 : *std::max_element(values.begin(), values.end());
+        return segment;
+    }
+
+    Database db_{};
+    std::unique_ptr<TestDatabaseFile> db_file_;
 };
 
-// Create test database
-Database *createTestDatabase()
-{
-    std::string db_path = uniqueTestShortPath("columnstore_batch_perf_test", ".db");
-    std::remove(db_path.c_str());
-
-    ErrorContext ctx;
-    Database *db = new Database();
-
-    Status status = Database::create(db_path, 8192, &ctx);
-    if (status != Status::OK)
-    {
-        std::cerr << "Failed to create database: " << ctx.message << std::endl;
-        delete db;
-        return nullptr;
-    }
-
-    status = db->open(db_path, &ctx);
-    if (status != Status::OK)
-    {
-        std::cerr << "Failed to open database: " << ctx.message << std::endl;
-        delete db;
-        return nullptr;
-    }
-
-    return db;
-}
-
-/**
- * Benchmark: RLE compression/decompression throughput
- */
-void benchmarkRLEThroughput()
-{
-    std::cout << "\n=== Benchmark: RLE Compression Throughput ===" << std::endl;
-
-    Database *db = createTestDatabase();
-    if (!db)
-        return;
-
-    // Create columnstore index
-    UuidV7Bytes index_uuid = generateUuidV7();
-    UuidV7Bytes table_uuid = generateUuidV7();
+TEST_F(ColumnstoreBatchPerfTest, RLECompressionRoundTrip) {
     UuidV7Bytes column_uuid = generateUuidV7();
+    auto index = createIndex({column_uuid}, 1024, CompressionType::RLE);
+    ASSERT_NE(index, nullptr);
 
-    std::vector<UuidV7Bytes> columns = {column_uuid};
-    uint32_t root_page = 0;
-    ErrorContext ctx;
-
-    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, columns,
-                                            10000, CompressionType::RLE, &root_page, &ctx);
-    if (status != Status::OK)
-    {
-        std::cerr << "Failed to create columnstore: " << ctx.message << std::endl;
-        delete db;
-        return;
-    }
-
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 10000, &ctx);
-
-    // Generate test data: 1M INT32 values with high repetition
-    const uint32_t ROW_COUNT = 1000000;
     std::vector<int32_t> values;
-    values.reserve(ROW_COUNT);
-
-    std::mt19937 rng(42);
-    std::uniform_int_distribution<int32_t> dist(1, 100);  // Low cardinality
-
-    for (uint32_t i = 0; i < ROW_COUNT; ++i)
-    {
-        values.push_back(dist(rng));
+    values.reserve(2000);
+    for (int i = 0; i < 2000; ++i) {
+        values.push_back(i % 10);
     }
 
-    // Create segment
-    ColumnSegment segment;
-    segment.data_type = DataType::INT32;
-    segment.row_count = ROW_COUNT;
-    segment.data.resize(ROW_COUNT * sizeof(int32_t));
-    std::memcpy(segment.data.data(), values.data(), ROW_COUNT * sizeof(int32_t));
-
-    // Benchmark compression
-    Timer timer;
-    timer.start();
+    ColumnSegment input = makeInt32Segment(values);
 
     std::vector<uint8_t> compressed;
-    status = index->compressRLE(segment, &compressed, &ctx);
+    ErrorContext ctx;
+    Status status = index->compressRLE(input, &compressed, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    ASSERT_FALSE(compressed.empty());
 
-    double compress_time_ms = timer.elapsedMs();
-
-    if (status != Status::OK)
-    {
-        std::cerr << "Compression failed: " << ctx.message << std::endl;
-        delete db;
-        return;
-    }
-
-    double compress_throughput_mb_s = (ROW_COUNT * sizeof(int32_t) / 1024.0 / 1024.0) / (compress_time_ms / 1000.0);
-    double compression_ratio = static_cast<double>(ROW_COUNT * sizeof(int32_t)) / compressed.size();
-
-    std::cout << "  Compressed " << ROW_COUNT << " INT32 values in " << compress_time_ms << " ms" << std::endl;
-    std::cout << "  Compression throughput: " << compress_throughput_mb_s << " MB/s" << std::endl;
-    std::cout << "  Compression ratio: " << compression_ratio << "x" << std::endl;
-    std::cout << "  Original size: " << (ROW_COUNT * sizeof(int32_t)) << " bytes" << std::endl;
-    std::cout << "  Compressed size: " << compressed.size() << " bytes" << std::endl;
-
-    // Benchmark decompression
-    timer.start();
-
-    ColumnSegment decompressed;
-    status = index->decompressRLE(compressed, DataType::INT32, ROW_COUNT, &decompressed, &ctx);
-
-    double decompress_time_ms = timer.elapsedMs();
-
-    if (status != Status::OK)
-    {
-        std::cerr << "Decompression failed: " << ctx.message << std::endl;
-        delete db;
-        return;
-    }
-
-    double decompress_throughput_mb_s = (ROW_COUNT * sizeof(int32_t) / 1024.0 / 1024.0) / (decompress_time_ms / 1000.0);
-
-    std::cout << "  Decompressed in " << decompress_time_ms << " ms" << std::endl;
-    std::cout << "  Decompression throughput: " << decompress_throughput_mb_s << " MB/s" << std::endl;
-
-    delete db;
+    ColumnSegment output;
+    status = index->decompressRLE(compressed, DataType::INT32, input.row_count, &output, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    ASSERT_EQ(output.row_count, input.row_count);
+    ASSERT_EQ(output.data.size(), input.data.size());
+    EXPECT_EQ(std::memcmp(output.data.data(), input.data.data(), input.data.size()), 0);
 }
 
-/**
- * Benchmark: SIMD vs Scalar predicate evaluation
- */
-void benchmarkSIMDPredicate()
-{
-    std::cout << "\n=== Benchmark: SIMD Predicate Evaluation ===" << std::endl;
-
-    Database *db = createTestDatabase();
-    if (!db)
-        return;
-
-    // Create columnstore index
-    UuidV7Bytes index_uuid = generateUuidV7();
-    UuidV7Bytes table_uuid = generateUuidV7();
+TEST_F(ColumnstoreBatchPerfTest, PredicateEvaluationMatchesExpectedCount) {
     UuidV7Bytes column_uuid = generateUuidV7();
+    auto index = createIndex({column_uuid}, 1024, CompressionType::NONE);
+    ASSERT_NE(index, nullptr);
 
-    std::vector<UuidV7Bytes> columns = {column_uuid};
-    uint32_t root_page = 0;
-    ErrorContext ctx;
-
-    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, columns,
-                                            100000, CompressionType::NONE, &root_page, &ctx);
-    if (status != Status::OK)
-    {
-        std::cerr << "Failed to create columnstore: " << ctx.message << std::endl;
-        delete db;
-        return;
-    }
-
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 100000, &ctx);
-
-    // Generate test data: 1M INT32 values with uniform distribution
-    const uint32_t ROW_COUNT = 1000000;
     std::vector<int32_t> values;
-    values.reserve(ROW_COUNT);
-
-    std::mt19937 rng(42);
-    std::uniform_int_distribution<int32_t> dist(1, 1000);
-
-    for (uint32_t i = 0; i < ROW_COUNT; ++i)
-    {
-        values.push_back(dist(rng));
+    values.reserve(1000);
+    for (int i = 0; i < 1000; ++i) {
+        values.push_back(i);
     }
 
-    // Create segment (uncompressed for this test)
-    ColumnSegment segment;
-    segment.data_type = DataType::INT32;
-    segment.row_count = ROW_COUNT;
-    segment.data.resize(ROW_COUNT * sizeof(int32_t));
-    segment.min_value = 1;
-    segment.max_value = 1000;
-    std::memcpy(segment.data.data(), values.data(), ROW_COUNT * sizeof(int32_t));
+    ColumnSegment segment = makeInt32Segment(values);
 
-    // Test predicate: WHERE value > 500 (50% selectivity)
     ColumnPredicate predicate;
     predicate.op = ColumnPredicate::Op::GREATER_THAN;
     predicate.value = 500;
 
-    // Benchmark predicate evaluation (with SIMD if available)
-    Timer timer;
-    timer.start();
-
     std::vector<uint32_t> matching_offsets;
-    status = index->applyPredicate(segment, predicate, &matching_offsets, &ctx);
-
-    double time_ms = timer.elapsedMs();
-
-    if (status != Status::OK)
-    {
-        std::cerr << "Predicate evaluation failed: " << ctx.message << std::endl;
-        delete db;
-        return;
-    }
-
-    double throughput_million_rows_per_sec = (ROW_COUNT / 1000000.0) / (time_ms / 1000.0);
-
-    std::cout << "  Evaluated predicate on " << ROW_COUNT << " INT32 values in " << time_ms << " ms" << std::endl;
-    std::cout << "  Throughput: " << throughput_million_rows_per_sec << " million rows/sec" << std::endl;
-    std::cout << "  Matching rows: " << matching_offsets.size() << " (" << (matching_offsets.size() * 100.0 / ROW_COUNT) << "%)" << std::endl;
-
-#if defined(__AVX2__)
-    std::cout << "  SIMD: AVX2 enabled" << std::endl;
-#else
-    std::cout << "  SIMD: Not available (scalar fallback)" << std::endl;
-#endif
-
-    delete db;
-}
-
-/**
- * Benchmark: Batch scan throughput
- */
-void benchmarkBatchScan()
-{
-    std::cout << "\n=== Benchmark: Batch Scan Throughput ===" << std::endl;
-
-    Database *db = createTestDatabase();
-    if (!db)
-        return;
-
-    // Create columnstore index
-    UuidV7Bytes index_uuid = generateUuidV7();
-    UuidV7Bytes table_uuid = generateUuidV7();
-    UuidV7Bytes column_uuid = generateUuidV7();
-
-    std::vector<UuidV7Bytes> columns = {column_uuid};
-    uint32_t root_page = 0;
     ErrorContext ctx;
+    Status status = index->applyPredicate(segment, predicate, &matching_offsets, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
 
-    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, columns,
-                                            10000, CompressionType::RLE, &root_page, &ctx);
-    if (status != Status::OK)
-    {
-        std::cerr << "Failed to create columnstore: " << ctx.message << std::endl;
-        delete db;
-        return;
+    const size_t expected = 499;  // Values 501..999
+    EXPECT_EQ(matching_offsets.size(), expected);
+}
+
+TEST_F(ColumnstoreBatchPerfTest, BatchScanIteratorFindsMatches) {
+    UuidV7Bytes column_uuid = generateUuidV7();
+    auto index = createIndex({column_uuid}, 256, CompressionType::RLE);
+    ASSERT_NE(index, nullptr);
+
+    ErrorContext ctx;
+    const uint32_t total_rows = 2048;
+    for (uint32_t i = 0; i < total_rows; ++i) {
+        int32_t value = static_cast<int32_t>(i % 100);
+        TID tid{0, static_cast<uint64_t>(i), 0};
+        Status status = index->insert(column_uuid, tid, &value, sizeof(int32_t), false, &ctx);
+        ASSERT_EQ(status, Status::OK) << ctx.message;
     }
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 10000, &ctx);
+    ASSERT_EQ(index->flushSegment(column_uuid, &ctx), Status::OK) << ctx.message;
 
-    std::cout << "  Note: Batch scan API implemented but requires disk segments." << std::endl;
-    std::cout << "  Full benchmark deferred to integration testing." << std::endl;
+    ColumnPredicate predicate;
+    predicate.op = ColumnPredicate::Op::GREATER_THAN;
+    predicate.value = 50;
 
-    delete db;
+    ColumnScanIterator iter;
+    uint64_t xid = db_.transaction_manager()->getCurrentXid();
+    ASSERT_EQ(index->beginScan(column_uuid, &predicate, xid, &iter, &ctx), Status::OK)
+        << ctx.message;
+
+    uint32_t total_matches = 0;
+    while (!iter.scan_complete) {
+        ColumnScanBatch batch;
+        ASSERT_EQ(index->scanNext(&iter, &batch, &ctx), Status::OK) << ctx.message;
+        total_matches += batch.count;
+    }
+
+    ASSERT_EQ(index->endScan(&iter, &ctx), Status::OK) << ctx.message;
+
+    const uint32_t expected_per_100 = 49;  // Values 51..99
+    const uint32_t expected = (total_rows / 100) * expected_per_100;
+    EXPECT_EQ(total_matches, expected);
 }
 
-/**
- * Main benchmark runner
- */
-int main()
-{
-    std::cout << "==================================================" << std::endl;
-    std::cout << "Columnstore Phase 5: Batch Processing Benchmarks" << std::endl;
-    std::cout << "==================================================" << std::endl;
-
-    benchmarkRLEThroughput();
-    benchmarkSIMDPredicate();
-    benchmarkBatchScan();
-
-    std::cout << "\n=== All Benchmarks Complete ===" << std::endl;
-
-    return 0;
-}
+}  // namespace

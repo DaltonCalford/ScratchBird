@@ -36,6 +36,7 @@ namespace scratchbird::parser::v2 {
 // Import types from core namespace
 using core::ID;
 using core::DataType;
+using v2::PolicyType;
 
 // Forward declarations
 class ResolvedStatement;
@@ -1449,6 +1450,39 @@ struct ResolvedDetachTablespaceStmt : public ResolvedStatement {
  */
 struct ResolvedCreateGroupStmt : public ResolvedStatement {
     StringPool::StringId group_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved CREATE POLICY statement
+ */
+struct ResolvedCreatePolicyStmt : public ResolvedStatement {
+    StringPool::StringId policy_name = StringPool::INVALID_ID;
+    SchemaPath table_path;
+    PolicyType policy_type = PolicyType::ALL;
+    bool is_permissive = true;
+    std::vector<StringPool::StringId> roles;
+    ResolvedExpression* using_expr = nullptr;
+    ResolvedExpression* with_check_expr = nullptr;
+};
+
+/**
+ * Resolved ALTER POLICY statement
+ */
+struct ResolvedAlterPolicyStmt : public ResolvedStatement {
+    StringPool::StringId policy_name = StringPool::INVALID_ID;
+    SchemaPath table_path;
+    std::vector<StringPool::StringId> roles;
+    ResolvedExpression* using_expr = nullptr;
+    ResolvedExpression* with_check_expr = nullptr;
+};
+
+/**
+ * Resolved DROP POLICY statement
+ */
+struct ResolvedDropPolicyStmt : public ResolvedStatement {
+    StringPool::StringId policy_name = StringPool::INVALID_ID;
+    SchemaPath table_path;
+    bool if_exists = false;
 };
 
 /**

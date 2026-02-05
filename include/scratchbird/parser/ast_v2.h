@@ -54,6 +54,9 @@ class Expression;
 class ASTVisitor;
 struct WindowSpec;
 class SelectStmt;
+class CreatePolicyStmt;
+class AlterPolicyStmt;
+class DropPolicyStmt;
 
 // =============================================================================
 // AST Node Kinds
@@ -153,6 +156,9 @@ enum class ASTKind : uint16_t {
     // Statements - DCL (Data Control Language)
     GrantStmt,
     RevokeStmt,
+    CreatePolicyStmt,
+    AlterPolicyStmt,
+    DropPolicyStmt,
 
     // Statements - Connection
     ConnectStmt,
@@ -922,6 +928,62 @@ public:
     StringPool::StringId group_name = StringPool::INVALID_ID;
 };
 
+/**
+ * Policy type for RLS policies
+ */
+enum class PolicyType : uint8_t {
+    ALL = 0,
+    SELECT = 1,
+    INSERT = 2,
+    UPDATE = 3,
+    DELETE = 4
+};
+
+/**
+ * CREATE POLICY statement for Row-Level Security
+ */
+class CreatePolicyStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreatePolicyStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId policy_name = StringPool::INVALID_ID;
+    SchemaPath table_path;
+    PolicyType policy_type = PolicyType::ALL;
+    bool is_permissive = true;  // true = PERMISSIVE, false = RESTRICTIVE
+    std::vector<StringPool::StringId> roles;  // Empty = PUBLIC
+    Expression* using_expr = nullptr;  // USING expression (for SELECT, UPDATE, DELETE)
+    Expression* with_check_expr = nullptr;  // WITH CHECK expression (for INSERT, UPDATE)
+};
+
+/**
+ * ALTER POLICY statement
+ */
+class AlterPolicyStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterPolicyStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId policy_name = StringPool::INVALID_ID;
+    SchemaPath table_path;
+    std::vector<StringPool::StringId> roles;  // Empty = no change
+    Expression* using_expr = nullptr;  // nullptr = no change
+    Expression* with_check_expr = nullptr;  // nullptr = no change
+};
+
+/**
+ * DROP POLICY statement
+ */
+class DropPolicyStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropPolicyStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId policy_name = StringPool::INVALID_ID;
+    SchemaPath table_path;
+    bool if_exists = false;
+};
+
 struct OptionPair {
     std::string key;
     std::string value;
@@ -1595,6 +1657,8 @@ enum class AlterTableAction : uint8_t {
     SET_SCHEMA,
     ENABLE_RLS,
     DISABLE_RLS,
+    FORCE_RLS,
+    NO_FORCE_RLS,
     ATTACH_PARTITION,
     DETACH_PARTITION,
     ENABLE_TRIGGER,
@@ -3706,6 +3770,7 @@ public:
     virtual void visit(CreateUserStmt* stmt) = 0;
     virtual void visit(CreateRoleStmt* stmt) = 0;
     virtual void visit(CreateGroupStmt* stmt) = 0;
+    virtual void visit(CreatePolicyStmt* stmt) = 0;
     virtual void visit(CreateExceptionStmt* stmt) = 0;
     virtual void visit(CreateJobStmt* stmt) = 0;
     virtual void visit(CreateTypeStmt* stmt) = 0;
@@ -3722,10 +3787,12 @@ public:
     virtual void visit(DropDatabaseStmt* stmt) = 0;
     virtual void visit(AlterDatabaseStmt* stmt) = 0;
     virtual void visit(AlterTableStmt* stmt) = 0;
+    virtual void visit(AlterPolicyStmt* stmt) = 0;
     virtual void visit(AlterIndexStmt* stmt) = 0;
     virtual void visit(RenameObjectStmt* stmt) = 0;
     virtual void visit(MoveObjectStmt* stmt) = 0;
     virtual void visit(DropTableStmt* stmt) = 0;
+    virtual void visit(DropPolicyStmt* stmt) = 0;
     virtual void visit(DropIndexStmt* stmt) = 0;
     virtual void visit(DropViewStmt* stmt) = 0;
     virtual void visit(DropSequenceStmt* stmt) = 0;
