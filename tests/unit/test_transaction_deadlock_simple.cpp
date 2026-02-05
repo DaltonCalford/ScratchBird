@@ -12,8 +12,8 @@
  * Simple verification that lock ordering is correct
  */
 
+#include <gtest/gtest.h>
 #include <iostream>
-
 
 TEST(TransactionDeadlockSimpleTest, Comprehensive) {
 

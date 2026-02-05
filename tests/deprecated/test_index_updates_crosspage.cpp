@@ -5,7 +5,7 @@
  * Licensed under the Initial Developer's Public License Version 1.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
- * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
+ * https://www.firebirdsql.org/en/initial-developers-public-license-version-1-0/
  */
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
@@ -21,7 +21,7 @@
 #include <cstring>
 
 using namespace scratchbird::core;
-using scratchbird::testing::uniqueTestDbPath;
+using scratchbird::testing::TestDatabaseFile;
 
 /**
  * Test suite for index entry updates during cross-page tuple relocations
@@ -35,30 +35,24 @@ class IndexUpdatesCrossPageTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = uniqueTestDbPath("test_index_updates_crosspage");
-
-        // Clean up any existing test database
-        if (std::filesystem::exists(test_db_path_))
-        {
-            std::filesystem::remove(test_db_path_);
-        }
+        ErrorContext ctx;
 
         // Create database
-        ErrorContext ctx;
-        Status status = Database::create(test_db_path_, 8192, &ctx); // Small page size for easier cross-page updates
-        ASSERT_EQ(status, Status::OK) << ctx.message;
+        ASSERT_EQ(Database::create(db_file_.path(), 8192, &ctx), Status::OK)
+            << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();
-        status = db_->open(test_db_path_, &ctx);
-        ASSERT_EQ(status, Status::OK) << ctx.message;
+        ASSERT_EQ(db_->open(db_file_.path(), &ctx), Status::OK)
+            << "Failed to open database: " << ctx.message;
 
         // Initialize catalog
-        status = db_->catalog_manager()->initialize(&ctx);
-        ASSERT_EQ(status, Status::OK) << ctx.message;
+        ASSERT_EQ(db_->catalog_manager()->initialize(&ctx), Status::OK)
+            << "Failed to initialize catalog: " << ctx.message;
 
         // Create test schema
-        status = db_->catalog_manager()->createSchema("test_schema", "test_user", schema_id_, &ctx);
-        ASSERT_EQ(status, Status::OK) << ctx.message;
+        ASSERT_EQ(db_->catalog_manager()->createSchema("test_schema", "test_user", schema_id_, &ctx),
+                  Status::OK)
+            << "Failed to create schema: " << ctx.message;
 
         // Create test table with columns
         std::vector<CatalogManager::ColumnInfo> columns;
@@ -67,7 +61,7 @@ protected:
         id_col.column_id = generateUuidV7();
         id_col.column_name = "id";
         id_col.ordinal = 0;
-        id_col.data_type = static_cast<uint16_t>(DataType::INTEGER);
+        id_col.data_type = static_cast<uint16_t>(DataType::INT32);
         id_col.nullable = false;
         id_col.table_id = ID{}; // Will be set by createTable
         columns.push_back(id_col);
@@ -82,24 +76,23 @@ protected:
         data_col.table_id = ID{}; // Will be set by createTable
         columns.push_back(data_col);
 
-        status = db_->catalog_manager()->createTable(schema_id_, "test_table", columns, table_id_, &ctx);
-        ASSERT_EQ(status, Status::OK) << ctx.message;
+        ASSERT_EQ(db_->catalog_manager()->createTable(schema_id_, "test_table", columns, table_id_, 0, &ctx),
+                  Status::OK)
+            << "Failed to create table: " << ctx.message;
 
         // Save column IDs for later use
         std::vector<CatalogManager::ColumnInfo> saved_columns;
-        status = db_->catalog_manager()->getColumns(table_id_, saved_columns, &ctx);
-        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(db_->catalog_manager()->getColumns(table_id_, saved_columns, &ctx), Status::OK);
         ASSERT_EQ(saved_columns.size(), 2u);
         id_column_id_ = saved_columns[0].column_id;
         data_column_id_ = saved_columns[1].column_id;
 
         // Set up connection context for transaction support
-        ConnectionContext conn_ctx;
-        conn_ctx.setDatabase(db_.get());
-        conn_ctx.setConnectionId(1);
-        conn_ctx.setProcId(1);
-        conn_ctx.setTransactionId(100);
-        ConnectionContext::setCurrent(&conn_ctx);
+        conn_ctx_.setDatabase(db_.get());
+        conn_ctx_.setConnectionId(1);
+        conn_ctx_.setProcId(1);
+        conn_ctx_.setTransactionId(100);
+        ConnectionContext::setCurrent(&conn_ctx_);
     }
 
     void TearDown() override
@@ -110,16 +103,11 @@ protected:
         {
             db_->close();
         }
-
-        // Clean up test database
-        if (std::filesystem::exists(test_db_path_))
-        {
-            std::filesystem::remove(test_db_path_);
-        }
+        db_.reset();
     }
 
     // Helper to create a simple tuple with id and data fields
-    std::vector<uint8_t> makeTuple(uint32_t id, const std::string& data)
+    std::vector<uint8_t> makeTuple(uint32_t id, const std::string &data)
     {
         std::vector<uint8_t> tuple;
 
@@ -133,17 +121,18 @@ protected:
     }
 
     // Helper to extract id from tuple
-    uint32_t extractId(const std::vector<uint8_t>& tuple)
+    uint32_t extractId(const std::vector<uint8_t> &tuple)
     {
         if (tuple.size() < sizeof(uint32_t))
         {
             return 0;
         }
-        return *reinterpret_cast<const uint32_t*>(tuple.data());
+        return *reinterpret_cast<const uint32_t *>(tuple.data());
     }
 
-    std::string test_db_path_;
+    TestDatabaseFile db_file_{"test_index_updates_crosspage"};
     std::unique_ptr<Database> db_;
+    ConnectionContext conn_ctx_;
     ID schema_id_;
     ID table_id_;
     ID id_column_id_;
@@ -175,12 +164,12 @@ TEST_F(IndexUpdatesCrossPageTest, BTreeIndexUpdateOnCrossPageRelocation)
     uint32_t initial_page_id, initial_item_id;
     std::vector<uint8_t> tuple1 = makeTuple(100, "initial data");
     status = db_->storage_engine()->insertTuple(table_id_, tuple1.data(), tuple1.size(),
-                                               &initial_page_id, &initial_item_id, &ctx);
+                                                &initial_page_id, &initial_item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Manually add entry to index (simulating what would happen in a real INSERT)
     uint64_t initial_tid = (static_cast<uint64_t>(initial_page_id) << 32) |
-                          (static_cast<uint64_t>(initial_item_id) << 16);
+                           (static_cast<uint64_t>(initial_item_id) << 16);
     std::vector<uint8_t> key1(sizeof(uint32_t));
     std::memcpy(key1.data(), &tuple1[0], sizeof(uint32_t));
     status = btree->insert(key1, initial_tid, &ctx);
@@ -198,8 +187,8 @@ TEST_F(IndexUpdatesCrossPageTest, BTreeIndexUpdateOnCrossPageRelocation)
     std::string large_data(6000, 'X'); // Large enough to not fit on same page
     std::vector<uint8_t> tuple2 = makeTuple(100, large_data); // Same ID
     status = db_->storage_engine()->updateTuple(table_id_, initial_page_id, initial_item_id,
-                                               tuple2.data(), tuple2.size(),
-                                               &new_page_id, &new_item_id, &ctx);
+                                                tuple2.data(), tuple2.size(),
+                                                &new_page_id, &new_item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Verify that cross-page relocation occurred
@@ -207,7 +196,7 @@ TEST_F(IndexUpdatesCrossPageTest, BTreeIndexUpdateOnCrossPageRelocation)
 
     // Verify index now points to new location
     uint64_t new_tid = (static_cast<uint64_t>(new_page_id) << 32) |
-                      (static_cast<uint64_t>(new_item_id) << 16);
+                       (static_cast<uint64_t>(new_item_id) << 16);
 
     tuple_ids.clear();
     status = btree->search(key1, &tuple_ids, &ctx);
@@ -216,9 +205,6 @@ TEST_F(IndexUpdatesCrossPageTest, BTreeIndexUpdateOnCrossPageRelocation)
     ASSERT_EQ(tuple_ids[0], new_tid) << "Index should point to new tuple location";
 
     // Verify old location is not in index
-    std::vector<uint64_t> all_tids;
-    // Scan all entries (simplified - in real test we'd do proper range scan)
-    // For now, just verify we can't find the old TID
     ASSERT_NE(tuple_ids[0], initial_tid) << "Index should not contain old TID";
 }
 
@@ -247,12 +233,12 @@ TEST_F(IndexUpdatesCrossPageTest, HashIndexUpdateOnCrossPageRelocation)
     uint32_t initial_page_id, initial_item_id;
     std::vector<uint8_t> tuple1 = makeTuple(200, "initial data");
     status = db_->storage_engine()->insertTuple(table_id_, tuple1.data(), tuple1.size(),
-                                               &initial_page_id, &initial_item_id, &ctx);
+                                                &initial_page_id, &initial_item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Manually add entry to hash index
     uint64_t initial_tid = (static_cast<uint64_t>(initial_page_id) << 32) |
-                          (static_cast<uint64_t>(initial_item_id) << 16);
+                           (static_cast<uint64_t>(initial_item_id) << 16);
     uint32_t id_value = 200;
     status = hash_index->insert(&id_value, sizeof(uint32_t), initial_tid, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -267,8 +253,8 @@ TEST_F(IndexUpdatesCrossPageTest, HashIndexUpdateOnCrossPageRelocation)
     std::string large_data(6000, 'Y');
     std::vector<uint8_t> tuple2 = makeTuple(200, large_data); // Same ID
     status = db_->storage_engine()->updateTuple(table_id_, initial_page_id, initial_item_id,
-                                               tuple2.data(), tuple2.size(),
-                                               &new_page_id, &new_item_id, &ctx);
+                                                tuple2.data(), tuple2.size(),
+                                                &new_page_id, &new_item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Verify that cross-page relocation occurred
@@ -276,7 +262,7 @@ TEST_F(IndexUpdatesCrossPageTest, HashIndexUpdateOnCrossPageRelocation)
 
     // Verify index now points to new location
     uint64_t new_tid = (static_cast<uint64_t>(new_page_id) << 32) |
-                      (static_cast<uint64_t>(new_item_id) << 16);
+                       (static_cast<uint64_t>(new_item_id) << 16);
 
     tuple_ids = hash_index->find(&id_value, sizeof(uint32_t), &ctx);
     ASSERT_EQ(tuple_ids.size(), 1u);
@@ -317,11 +303,11 @@ TEST_F(IndexUpdatesCrossPageTest, MultipleIndexesUpdatedOnCrossPageRelocation)
     uint32_t initial_page_id, initial_item_id;
     std::vector<uint8_t> tuple1 = makeTuple(300, "data");
     status = db_->storage_engine()->insertTuple(table_id_, tuple1.data(), tuple1.size(),
-                                               &initial_page_id, &initial_item_id, &ctx);
+                                                &initial_page_id, &initial_item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     uint64_t initial_tid = (static_cast<uint64_t>(initial_page_id) << 32) |
-                          (static_cast<uint64_t>(initial_item_id) << 16);
+                           (static_cast<uint64_t>(initial_item_id) << 16);
 
     // Add to both indexes
     std::vector<uint8_t> key(sizeof(uint32_t));
@@ -338,13 +324,13 @@ TEST_F(IndexUpdatesCrossPageTest, MultipleIndexesUpdatedOnCrossPageRelocation)
     std::string large_data(6000, 'Z');
     std::vector<uint8_t> tuple2 = makeTuple(300, large_data);
     status = db_->storage_engine()->updateTuple(table_id_, initial_page_id, initial_item_id,
-                                               tuple2.data(), tuple2.size(),
-                                               &new_page_id, &new_item_id, &ctx);
+                                                tuple2.data(), tuple2.size(),
+                                                &new_page_id, &new_item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
     ASSERT_NE(new_page_id, initial_page_id);
 
     uint64_t new_tid = (static_cast<uint64_t>(new_page_id) << 32) |
-                      (static_cast<uint64_t>(new_item_id) << 16);
+                       (static_cast<uint64_t>(new_item_id) << 16);
 
     // Verify both indexes are updated
     std::vector<uint64_t> btree_tids;
@@ -377,8 +363,8 @@ TEST_F(IndexUpdatesCrossPageTest, CrossPageRelocationWithNoIndexes)
     std::string large_data(6000, 'W');
     std::vector<uint8_t> tuple2 = makeTuple(400, large_data);
     status = db_->storage_engine()->updateTuple(table_id_, initial_page_id, initial_item_id,
-                                               tuple2.data(), tuple2.size(),
-                                               &new_page_id, &new_item_id, &ctx);
+                                                tuple2.data(), tuple2.size(),
+                                                &new_page_id, &new_item_id, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
     ASSERT_NE(new_page_id, initial_page_id) << "Expected cross-page relocation";
 
