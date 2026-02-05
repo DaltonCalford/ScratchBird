@@ -9,12 +9,26 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+# Test timeout configuration (in seconds)
+# Can be overridden via cmake -DSCRATCHBIRD_TEST_TIMEOUT_GLOBAL=900
+set(SCRATCHBIRD_TEST_TIMEOUT_GLOBAL "0" CACHE STRING "Global test timeout in seconds (0=use category timeouts, max=900=15min)")
+
 # Default timeouts by test category.
 set(SCRATCHBIRD_TEST_TIMEOUT_UNIT 60)
 set(SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION 300)
 set(SCRATCHBIRD_TEST_TIMEOUT_STRESS 600)
 set(SCRATCHBIRD_TEST_TIMEOUT_PERFORMANCE 600)
 set(SCRATCHBIRD_TEST_TIMEOUT_QUARANTINE 120)
+
+# If global timeout is set (>0), use it as maximum for all tests
+if(SCRATCHBIRD_TEST_TIMEOUT_GLOBAL GREATER 0)
+    message(STATUS "Using global test timeout: ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL}s (15min max)")
+    set(SCRATCHBIRD_TEST_TIMEOUT_UNIT ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
+    set(SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
+    set(SCRATCHBIRD_TEST_TIMEOUT_STRESS ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
+    set(SCRATCHBIRD_TEST_TIMEOUT_PERFORMANCE ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
+    set(SCRATCHBIRD_TEST_TIMEOUT_QUARANTINE ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
+endif()
 
 # Allow test sources to include test_helpers.h across all test targets.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
