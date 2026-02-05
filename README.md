@@ -7,7 +7,7 @@
 **Status:** All 9 Alpha workstreams complete; preparing for Beta
 
 ---
-###Note to new visitors
+### **Note to new visitors**
 
 ScratchBird is in early alpha release. No binaries have been officially released at this time. The code is ready to be built and tested if you want to setup your own test environment.
 
