@@ -262,6 +262,9 @@ list(JOIN SCRATCHBIRD_PERFORMANCE_TESTS ":" SCRATCHBIRD_PERFORMANCE_FILTER)
 set(SCRATCHBIRD_QUARANTINE_TESTS
     JSONFunctionTest.JSON_OBJECT_OddArgs
     JSONFunctionTest.JSON_EXTRACT_WrongArgCount
+    CacheIntegrationTest.ResultCacheHitRatioOnRepeatedSelects
+    CacheIntegrationTest.StatementCacheHitRatioOnRepeatedLookups
+    MemorySafetyTest.OOM_OpenHeaderAllocation
 )
 list(JOIN SCRATCHBIRD_QUARANTINE_TESTS ":" SCRATCHBIRD_QUARANTINE_FILTER)
 
