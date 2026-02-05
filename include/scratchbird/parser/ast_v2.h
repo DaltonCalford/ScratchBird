@@ -1604,6 +1604,11 @@ enum class AlterTableAction : uint8_t {
     INHERIT,
     NO_INHERIT,
     VALIDATE_CONSTRAINT,
+    ALTER_COLUMN_SET_DEFAULT,
+    ALTER_COLUMN_DROP_DEFAULT,
+    ALTER_COLUMN_SET_NOT_NULL,
+    ALTER_COLUMN_DROP_NOT_NULL,
+    ALTER_COLUMN_POSITION,
 };
 
 /**
@@ -1625,6 +1630,10 @@ public:
     // For ADD/DROP/ALTER COLUMN
     ColumnDef* column = nullptr;
     StringPool::StringId column_name = StringPool::INVALID_ID;
+    Expression* default_expr = nullptr;
+    bool has_default_expr = false;
+    int32_t position_1_based = 0;
+    bool has_position = false;
 
     // For RENAME COLUMN
     StringPool::StringId new_name = StringPool::INVALID_ID;

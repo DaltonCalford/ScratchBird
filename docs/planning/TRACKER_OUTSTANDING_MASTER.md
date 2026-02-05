@@ -118,6 +118,10 @@ superseded; no additional gaps beyond the items listed below.
 - [ ] Implement server/user mapping options handling.
 - [ ] Implement sys.remote_exec/sys.remote_query/sys.remote_call.
 - [ ] Implement common error mapping to ScratchBird SQLSTATE.
+
+## Z) Maintenance Follow-ups
+
+- [ ] Audit and remove any leftover hash tracing env flags or docs references.
 - [ ] Implement common metrics for connection pools and protocol adapters.
 
 ### D1. PostgreSQL UDR

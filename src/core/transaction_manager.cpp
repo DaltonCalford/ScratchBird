@@ -355,21 +355,22 @@ namespace scratchbird::core
             return status;
         }
 
-        // Update database header with new next_xid periodically (every 100 XIDs)
-        uint64_t current_next_xid_for_header = next_xid_.load(std::memory_order_acquire);
-        if ((current_next_xid_for_header % config::DEFAULT_HEADER_UPDATE_FREQUENCY) == 0)
+        // Persist IN_PROGRESS in CLOG to avoid "unknown == committed" after restart
+        Status clog_status = db_->clog()->setStatus(new_xid, ClogStatus::IN_PROGRESS, ctx);
+        if (clog_status != Status::OK)
         {
-            void *header_buffer;
-            status = buffer_pool_->pinPage(0, &header_buffer, ctx);
-            if (status == Status::OK)
-            {
-                auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
-                db_header->next_transaction_id = current_next_xid_for_header;
-                db_header->page_header.checksum =
-                    calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), db_->page_size());
-                buffer_pool_->unpinPage(0, true, ctx);
-            }
-            // Ignore errors - this is just an optimization
+            removeFromCacheLRU(new_xid);
+            ProcArrayManager::clearTransactionId(proc_id, ctx);
+            // Best-effort mark as aborted in TIP to avoid dangling ACTIVE state
+            writeTipEntry(new_xid, TransactionState::ABORTED, nullptr);
+            return clog_status;
+        }
+
+        // Update database header with new next_xid (avoid XID reuse after restart)
+        uint64_t current_next_xid_for_header = next_xid_.load(std::memory_order_acquire);
+        if (db_ != nullptr)
+        {
+            db_->update_header_next_xid(current_next_xid_for_header, ctx);
         }
 
         xid_out = new_xid;

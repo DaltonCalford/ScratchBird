@@ -132,6 +132,7 @@ See [applications/README.md](applications/README.md) for complete list.
 **[optional/](optional/)** - Optional beta engine features
 
 - [STORAGE_ENCODING_OPTIMIZATIONS.md](optional/STORAGE_ENCODING_OPTIMIZATIONS.md) - Varlen header v2, per-column TOAST, packed NUMERIC
+- [AUDIT_TEMPORAL_HISTORY_ARCHIVE.md](optional/AUDIT_TEMPORAL_HISTORY_ARCHIVE.md) - Optional GC-backed audit + temporal history archive
 
 ## Priority Levels
 

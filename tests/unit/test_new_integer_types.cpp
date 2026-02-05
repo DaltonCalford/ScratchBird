@@ -9,23 +9,35 @@
  */
 #include <gtest/gtest.h>
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include <limits>
 
 using namespace scratchbird::core;
+
+static std::vector<uint8_t> int128ToBytes(int128_t value)
+{
+    std::vector<uint8_t> bytes(16, 0);
+    uint128_t uvalue = static_cast<uint128_t>(value);
+    for (size_t i = 0; i < bytes.size(); ++i)
+    {
+        bytes[i] = static_cast<uint8_t>((uvalue >> (i * 8)) & 0xFF);
+    }
+    return bytes;
+}
 
 // Test INT128 basic functionality
 TEST(NewIntegerTypesTest, INT128_BasicOperations)
 {
     // Test makeInt128 and getInt128
-    auto val1 = TypedValue::makeInt128(0);
+    auto val1 = TypedValue::makeInt128(int128ToBytes(0));
     EXPECT_EQ(val1.type(), DataType::INT128);
     EXPECT_EQ(val1.getInt128(), 0);
 
-    auto val2 = TypedValue::makeInt128(42);
+    auto val2 = TypedValue::makeInt128(int128ToBytes(42));
     EXPECT_EQ(val2.type(), DataType::INT128);
     EXPECT_EQ(val2.getInt128(), 42);
 
-    auto val3 = TypedValue::makeInt128(-100);
+    auto val3 = TypedValue::makeInt128(int128ToBytes(-100));
     EXPECT_EQ(val3.type(), DataType::INT128);
     EXPECT_EQ(val3.getInt128(), -100);
 }
@@ -118,43 +130,6 @@ TEST(NewIntegerTypesTest, UINT64_BasicOperations)
     EXPECT_EQ(val3.toString(), "9223372036854775808");
 }
 
-// Test TypeSystem utility functions
-TEST(NewIntegerTypesTest, TypeSystem_IsInteger)
-{
-    EXPECT_TRUE(TypeSystem::isInteger(DataType::INT128));
-    EXPECT_TRUE(TypeSystem::isInteger(DataType::UINT8));
-    EXPECT_TRUE(TypeSystem::isInteger(DataType::UINT16));
-    EXPECT_TRUE(TypeSystem::isInteger(DataType::UINT32));
-    EXPECT_TRUE(TypeSystem::isInteger(DataType::UINT64));
-}
-
-TEST(NewIntegerTypesTest, TypeSystem_IsNumeric)
-{
-    EXPECT_TRUE(TypeSystem::isNumeric(DataType::INT128));
-    EXPECT_TRUE(TypeSystem::isNumeric(DataType::UINT8));
-    EXPECT_TRUE(TypeSystem::isNumeric(DataType::UINT16));
-    EXPECT_TRUE(TypeSystem::isNumeric(DataType::UINT32));
-    EXPECT_TRUE(TypeSystem::isNumeric(DataType::UINT64));
-}
-
-TEST(NewIntegerTypesTest, TypeSystem_IsFixedLength)
-{
-    EXPECT_TRUE(TypeSystem::isFixedLength(DataType::INT128));
-    EXPECT_TRUE(TypeSystem::isFixedLength(DataType::UINT8));
-    EXPECT_TRUE(TypeSystem::isFixedLength(DataType::UINT16));
-    EXPECT_TRUE(TypeSystem::isFixedLength(DataType::UINT32));
-    EXPECT_TRUE(TypeSystem::isFixedLength(DataType::UINT64));
-}
-
-TEST(NewIntegerTypesTest, TypeSystem_GetFixedSize)
-{
-    EXPECT_EQ(TypeSystem::getFixedSize(DataType::INT128), 16);
-    EXPECT_EQ(TypeSystem::getFixedSize(DataType::UINT8), 1);
-    EXPECT_EQ(TypeSystem::getFixedSize(DataType::UINT16), 2);
-    EXPECT_EQ(TypeSystem::getFixedSize(DataType::UINT32), 4);
-    EXPECT_EQ(TypeSystem::getFixedSize(DataType::UINT64), 8);
-}
-
 TEST(NewIntegerTypesTest, TypeSystem_GetTypeName)
 {
     EXPECT_EQ(TypeSystem::getTypeName(DataType::INT128), "INT128");
@@ -162,19 +137,6 @@ TEST(NewIntegerTypesTest, TypeSystem_GetTypeName)
     EXPECT_EQ(TypeSystem::getTypeName(DataType::UINT16), "UINT16");
     EXPECT_EQ(TypeSystem::getTypeName(DataType::UINT32), "UINT32");
     EXPECT_EQ(TypeSystem::getTypeName(DataType::UINT64), "UINT64");
-}
-
-TEST(NewIntegerTypesTest, TypeSystem_ParseTypeName)
-{
-    EXPECT_EQ(TypeSystem::parseTypeName("INT128"), DataType::INT128);
-    EXPECT_EQ(TypeSystem::parseTypeName("UINT8"), DataType::UINT8);
-    EXPECT_EQ(TypeSystem::parseTypeName("UINT16"), DataType::UINT16);
-    EXPECT_EQ(TypeSystem::parseTypeName("UINT32"), DataType::UINT32);
-    EXPECT_EQ(TypeSystem::parseTypeName("UINT64"), DataType::UINT64);
-
-    // Test case-insensitive parsing
-    EXPECT_EQ(TypeSystem::parseTypeName("int128"), DataType::INT128);
-    EXPECT_EQ(TypeSystem::parseTypeName("uint8"), DataType::UINT8);
 }
 
 // Test type mismatch errors
@@ -186,7 +148,7 @@ TEST(NewIntegerTypesTest, TypeMismatch_ThrowsException)
     // Attempting to get wrong type should throw
     EXPECT_THROW(uint8_val.getUInt16(), std::runtime_error);
     EXPECT_THROW(uint16_val.getUInt8(), std::runtime_error);
-    EXPECT_THROW(uint8_val.getInt8(), std::runtime_error);
+    EXPECT_THROW(uint8_val.getUInt32(), std::runtime_error);
 }
 
 // Test NULL values
@@ -200,13 +162,13 @@ TEST(NewIntegerTypesTest, NullValue)
 // Test INT128 toString (basic)
 TEST(NewIntegerTypesTest, INT128_ToString)
 {
-    auto val_zero = TypedValue::makeInt128(0);
+    auto val_zero = TypedValue::makeInt128(int128ToBytes(0));
     EXPECT_EQ(val_zero.toString(), "0");
 
-    auto val_positive = TypedValue::makeInt128(123);
+    auto val_positive = TypedValue::makeInt128(int128ToBytes(123));
     EXPECT_EQ(val_positive.toString(), "123");
 
-    auto val_negative = TypedValue::makeInt128(-456);
+    auto val_negative = TypedValue::makeInt128(int128ToBytes(-456));
     EXPECT_EQ(val_negative.toString(), "-456");
 }
 

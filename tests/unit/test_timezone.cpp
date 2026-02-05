@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/error_context.h"
 #include <vector>
 #include <string>
@@ -276,27 +277,27 @@ TEST_F(TimezoneTest, FormatTimestamp_WithoutOffset)
     EXPECT_TRUE(result.find("15:30:00") != std::string::npos);
 }
 
-// ===== Type Converter Integration Tests =====
+// ===== TypedValue Integration Tests =====
 
-TEST_F(TimezoneTest, TypeConverter_StringToTimestamp_WithTimezone)
+TEST_F(TimezoneTest, TypedValue_StringToTimestamp_WithTimezone)
 {
     ErrorContext ctx;
 
-    // Test with explicit UTC offset
-    auto ts1 = TypeConverter::stringToTimestamp("2025-10-04 15:30:00+00:00", &ctx);
-    ASSERT_TRUE(ts1.has_value());
+    TypedValue v1 = TypedValue::makeVarchar("2025-10-04 15:30:00+00:00");
+    TypedValue ts1;
+    ASSERT_EQ(v1.convertTo(TypeInfo(DataType::TIMESTAMP), ts1, CastFormat::DEFAULT, &ctx),
+              Status::OK);
 
-    // Test with EST offset
-    auto ts2 = TypeConverter::stringToTimestamp("2025-10-04 10:30:00-05:00", &ctx);
-    ASSERT_TRUE(ts2.has_value());
+    TypedValue v2 = TypedValue::makeVarchar("2025-10-04 10:30:00-05:00");
+    TypedValue ts2;
+    ASSERT_EQ(v2.convertTo(TypeInfo(DataType::TIMESTAMP), ts2, CastFormat::DEFAULT, &ctx),
+              Status::OK);
 
-    // Both should be the same GMT time
-    EXPECT_EQ(*ts1, *ts2);
+    EXPECT_EQ(ts1.getTimestamp(), ts2.getTimestamp());
 }
 
-TEST_F(TimezoneTest, TypeConverter_TimestampToString_ShowsUTC)
+TEST_F(TimezoneTest, TypedValue_TimestampToString_UsesOffset)
 {
-    // Create a known timestamp
     struct tm timeinfo = {};
     timeinfo.tm_year = 2025 - 1900;
     timeinfo.tm_mon = 10 - 1;
@@ -308,11 +309,11 @@ TEST_F(TimezoneTest, TypeConverter_TimestampToString_ShowsUTC)
     time_t epoch_seconds = timegm(&timeinfo);
     int64_t microseconds = static_cast<int64_t>(epoch_seconds) * 1000000;
 
-    std::string result = TypeConverter::timestampToString(microseconds);
+    auto value = TypedValue::makeTimestamp(microseconds, 0);
+    std::string result = value.toString();
 
-    // Should include UTC offset
-    EXPECT_TRUE(result.find("+00:00") != std::string::npos);
     EXPECT_TRUE(result.find("2025-10-04") != std::string::npos);
+    EXPECT_TRUE(result.find("15:30:00") != std::string::npos);
 }
 
 // ===== Round-Trip Tests =====

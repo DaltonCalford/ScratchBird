@@ -107,7 +107,7 @@ TEST_F(HNSWDistanceMetricsTest, EuclideanDistance_HighDimensional)
 
 TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_IdenticalVectors)
 {
-    auto result = vec_diagonal.distance(vec_diagonal, DistanceMetric::COSINE);
+    auto result = createDiagonal().distance(createDiagonal(), DistanceMetric::COSINE);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 1.0);  // Cosine similarity of 1.0
 }
@@ -115,7 +115,7 @@ TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_IdenticalVectors)
 TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_OrthogonalVectors)
 {
     // (1,0,0) and (0,1,0) are orthogonal, cosine similarity = 0
-    auto result = vec_unit_x.distance(vec_unit_y, DistanceMetric::COSINE);
+    auto result = createUnitX().distance(createUnitY(), DistanceMetric::COSINE);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 0.0);
 }
@@ -123,7 +123,7 @@ TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_OrthogonalVectors)
 TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_OppositeVectors)
 {
     // (1,1,1) and (-1,-1,-1) point in opposite directions, cosine = -1
-    auto result = vec_diagonal.distance(vec_negative, DistanceMetric::COSINE);
+    auto result = createDiagonal().distance(createNegative(), DistanceMetric::COSINE);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, -1.0);
 }
@@ -141,7 +141,7 @@ TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_ParallelVectors)
 TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_ZeroVector)
 {
     // Cosine with zero vector should return 0.0 (undefined, but handled)
-    auto result = vec_unit_x.distance(vec_zero_3d, DistanceMetric::COSINE);
+    auto result = createUnitX().distance(createZero3D(), DistanceMetric::COSINE);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 0.0);
 }
@@ -168,7 +168,7 @@ TEST_F(HNSWDistanceMetricsTest, CosineSimilarity_HighDimensional)
 
 TEST_F(HNSWDistanceMetricsTest, ManhattanDistance_IdenticalVectors)
 {
-    auto result = vec_unit_x.distance(vec_unit_x, DistanceMetric::MANHATTAN);
+    auto result = createUnitX().distance(createUnitX(), DistanceMetric::MANHATTAN);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 0.0);
 }
@@ -176,7 +176,7 @@ TEST_F(HNSWDistanceMetricsTest, ManhattanDistance_IdenticalVectors)
 TEST_F(HNSWDistanceMetricsTest, ManhattanDistance_OrthogonalVectors)
 {
     // Manhattan distance between (1,0,0) and (0,1,0) is |1-0| + |0-1| + |0-0| = 2
-    auto result = vec_unit_x.distance(vec_unit_y, DistanceMetric::MANHATTAN);
+    auto result = createUnitX().distance(createUnitY(), DistanceMetric::MANHATTAN);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 2.0);
 }
@@ -184,7 +184,7 @@ TEST_F(HNSWDistanceMetricsTest, ManhattanDistance_OrthogonalVectors)
 TEST_F(HNSWDistanceMetricsTest, ManhattanDistance_OppositeVectors)
 {
     // Manhattan distance between (1,1,1) and (-1,-1,-1) is |1-(-1)| * 3 = 6
-    auto result = vec_diagonal.distance(vec_negative, DistanceMetric::MANHATTAN);
+    auto result = createDiagonal().distance(createNegative(), DistanceMetric::MANHATTAN);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 6.0);
 }
@@ -228,7 +228,7 @@ TEST_F(HNSWDistanceMetricsTest, ManhattanDistance_HighDimensional)
 TEST_F(HNSWDistanceMetricsTest, DotProduct_IdenticalVectors)
 {
     // Dot product of (1,1,1) with itself = 1*1 + 1*1 + 1*1 = 3
-    auto result = vec_diagonal.distance(vec_diagonal, DistanceMetric::DOT_PRODUCT);
+    auto result = createDiagonal().distance(createDiagonal(), DistanceMetric::DOT_PRODUCT);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 3.0);
 }
@@ -236,7 +236,7 @@ TEST_F(HNSWDistanceMetricsTest, DotProduct_IdenticalVectors)
 TEST_F(HNSWDistanceMetricsTest, DotProduct_OrthogonalVectors)
 {
     // Dot product of orthogonal vectors = 0
-    auto result = vec_unit_x.distance(vec_unit_y, DistanceMetric::DOT_PRODUCT);
+    auto result = createUnitX().distance(createUnitY(), DistanceMetric::DOT_PRODUCT);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 0.0);
 }
@@ -244,7 +244,7 @@ TEST_F(HNSWDistanceMetricsTest, DotProduct_OrthogonalVectors)
 TEST_F(HNSWDistanceMetricsTest, DotProduct_OppositeVectors)
 {
     // Dot product of (1,1,1) and (-1,-1,-1) = -3
-    auto result = vec_diagonal.distance(vec_negative, DistanceMetric::DOT_PRODUCT);
+    auto result = createDiagonal().distance(createNegative(), DistanceMetric::DOT_PRODUCT);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, -3.0);
 }
@@ -262,7 +262,7 @@ TEST_F(HNSWDistanceMetricsTest, DotProduct_MixedVectors)
 TEST_F(HNSWDistanceMetricsTest, DotProduct_ZeroVector)
 {
     // Dot product with zero vector = 0
-    auto result = vec_unit_x.distance(vec_zero_3d, DistanceMetric::DOT_PRODUCT);
+    auto result = createUnitX().distance(createZero3D(), DistanceMetric::DOT_PRODUCT);
     ASSERT_TRUE(result.has_value());
     expectNear(*result, 0.0);
 }

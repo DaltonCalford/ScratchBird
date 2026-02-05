@@ -421,6 +421,9 @@ namespace scratchbird
             // Per MGA_RULES.md Rule 5: Use back-versioning with xmax tombstones
             Status remove(const TID &tid, uint64_t xmax, ErrorContext *ctx = nullptr);
 
+            // Physically remove a value (used by GC to purge dead entries)
+            Status removePhysical(const TID &tid, ErrorContext *ctx = nullptr);
+
             // Check if value exists
             bool contains(const TID &tid, ErrorContext *ctx = nullptr);
 

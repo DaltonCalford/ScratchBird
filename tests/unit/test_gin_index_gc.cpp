@@ -13,8 +13,11 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/gpid.h"
 #include <filesystem>
 #include <vector>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -38,7 +41,7 @@ protected:
         // Create database
         db_ = new Database();
         ErrorContext ctx;
-        Status status = db_->create(test_db_path_, &ctx);
+        Status status = Database::create(test_db_path_, 16384, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         status = db_->open(test_db_path_, &ctx);
@@ -95,6 +98,11 @@ protected:
 
         return result;
     }
+
+    static TID makeTid(uint64_t page, uint16_t slot)
+    {
+        return TID(makeGPID(PRIMARY_TABLESPACE_ID, page), slot);
+    }
 };
 
 // Test 1: Empty dead_tids vector (no-op)
@@ -103,17 +111,18 @@ TEST_F(GinIndexGCTest, EmptyDeadTidsVector)
     ErrorContext ctx;
 
     // Create GIN Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = GinIndex::create(db_, index_uuid, &meta_page, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create GIN Index: " << ctx.message;
 
-    auto gin_index = GinIndex::open(db_, index_uuid, meta_page, &ctx);
+    GPID meta_gpid = makeGPID(PRIMARY_TABLESPACE_ID, meta_page);
+    auto gin_index = GinIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(gin_index, nullptr) << "Failed to open GIN Index: " << ctx.message;
 
     // Call removeDeadEntries with empty vector
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -130,21 +139,22 @@ TEST_F(GinIndexGCTest, DeadTidNotInIndex)
     ErrorContext ctx;
 
     // Create GIN Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = GinIndex::create(db_, index_uuid, &meta_page, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto gin_index = GinIndex::open(db_, index_uuid, meta_page, &ctx);
+    GPID meta_gpid = makeGPID(PRIMARY_TABLESPACE_ID, meta_page);
+    auto gin_index = GinIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(gin_index, nullptr);
 
     // Insert a few entries into pending list
     const char *value1 = "apple";
     const char *value2 = "banana";
 
-    uint64_t tid1 = (1ULL << 32) | 1; // page 1, item 1
-    uint64_t tid2 = (1ULL << 32) | 2; // page 1, item 2
+    TID tid1 = makeTid(1, 1);
+    TID tid2 = makeTid(1, 2);
 
     status = gin_index->insert(value1, strlen(value1), tid1, singleKeyExtractor, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -153,9 +163,9 @@ TEST_F(GinIndexGCTest, DeadTidNotInIndex)
     ASSERT_EQ(status, Status::OK);
 
     // Try to remove TIDs that don't exist in index
-    std::vector<uint64_t> dead_tids = {
-        (2ULL << 32) | 1,  // page 2, item 1 (doesn't exist)
-        (2ULL << 32) | 2   // page 2, item 2 (doesn't exist)
+    std::vector<TID> dead_tids = {
+        makeTid(2, 1),  // page 2, item 1 (doesn't exist)
+        makeTid(2, 2)   // page 2, item 2 (doesn't exist)
     };
 
     uint64_t entries_removed = 0;
@@ -173,13 +183,14 @@ TEST_F(GinIndexGCTest, SingleDeadTidRemovalFromPendingList)
     ErrorContext ctx;
 
     // Create GIN Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = GinIndex::create(db_, index_uuid, &meta_page, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto gin_index = GinIndex::open(db_, index_uuid, meta_page, &ctx);
+    GPID meta_gpid = makeGPID(PRIMARY_TABLESPACE_ID, meta_page);
+    auto gin_index = GinIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(gin_index, nullptr);
 
     // Insert entries into pending list
@@ -187,9 +198,9 @@ TEST_F(GinIndexGCTest, SingleDeadTidRemovalFromPendingList)
     const char *key2 = "beta";
     const char *key3 = "gamma";
 
-    uint64_t tid1 = (1ULL << 32) | 1;
-    uint64_t tid2 = (1ULL << 32) | 2;
-    uint64_t tid3 = (1ULL << 32) | 3;
+    TID tid1 = makeTid(1, 1);
+    TID tid2 = makeTid(1, 2);
+    TID tid3 = makeTid(1, 3);
 
     status = gin_index->insert(key1, strlen(key1), tid1, singleKeyExtractor, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -205,7 +216,7 @@ TEST_F(GinIndexGCTest, SingleDeadTidRemovalFromPendingList)
     EXPECT_EQ(stats_before.pending_list_count, 3);
 
     // Remove tid2
-    std::vector<uint64_t> dead_tids = {tid2};
+    std::vector<TID> dead_tids = {tid2};
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -226,23 +237,24 @@ TEST_F(GinIndexGCTest, BulkDeadTidRemovalFromPendingList)
     ErrorContext ctx;
 
     // Create GIN Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = GinIndex::create(db_, index_uuid, &meta_page, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto gin_index = GinIndex::open(db_, index_uuid, meta_page, &ctx);
+    GPID meta_gpid = makeGPID(PRIMARY_TABLESPACE_ID, meta_page);
+    auto gin_index = GinIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(gin_index, nullptr);
 
     // Insert many entries into pending list
     const int num_entries = 50;
-    std::vector<uint64_t> all_tids;
+    std::vector<TID> all_tids;
 
     for (int i = 0; i < num_entries; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        uint64_t tid = (1ULL << 32) | i;
+        TID tid = makeTid(1, static_cast<uint16_t>(i));
         all_tids.push_back(tid);
 
         status = gin_index->insert(key.c_str(), key.length(), tid, singleKeyExtractor, &ctx);
@@ -254,7 +266,7 @@ TEST_F(GinIndexGCTest, BulkDeadTidRemovalFromPendingList)
     EXPECT_EQ(stats_before.pending_list_count, num_entries);
 
     // Remove every other entry (25 entries)
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     for (int i = 0; i < num_entries; i += 2)
     {
         dead_tids.push_back(all_tids[i]);
@@ -280,13 +292,14 @@ TEST_F(GinIndexGCTest, IndexTypeName)
     ErrorContext ctx;
 
     // Create GIN Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = GinIndex::create(db_, index_uuid, &meta_page, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto gin_index = GinIndex::open(db_, index_uuid, meta_page, &ctx);
+    GPID meta_gpid = makeGPID(PRIMARY_TABLESPACE_ID, meta_page);
+    auto gin_index = GinIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(gin_index, nullptr);
 
     // Check index type name
@@ -300,24 +313,25 @@ TEST_F(GinIndexGCTest, DuplicateDeadTids)
     ErrorContext ctx;
 
     // Create GIN Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = GinIndex::create(db_, index_uuid, &meta_page, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto gin_index = GinIndex::open(db_, index_uuid, meta_page, &ctx);
+    GPID meta_gpid = makeGPID(PRIMARY_TABLESPACE_ID, meta_page);
+    auto gin_index = GinIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(gin_index, nullptr);
 
     // Insert entry
     const char *key1 = "test_key";
-    uint64_t tid1 = (1ULL << 32) | 1;
+    TID tid1 = makeTid(1, 1);
 
     status = gin_index->insert(key1, strlen(key1), tid1, singleKeyExtractor, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Remove with duplicate TIDs in vector
-    std::vector<uint64_t> dead_tids = {tid1, tid1, tid1}; // Same TID 3 times
+    std::vector<TID> dead_tids = {tid1, tid1, tid1}; // Same TID 3 times
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -334,13 +348,14 @@ TEST_F(GinIndexGCTest, MultiKeyRemoval)
     ErrorContext ctx;
 
     // Create GIN Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = GinIndex::create(db_, index_uuid, &meta_page, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto gin_index = GinIndex::open(db_, index_uuid, meta_page, &ctx);
+    GPID meta_gpid = makeGPID(PRIMARY_TABLESPACE_ID, meta_page);
+    auto gin_index = GinIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(gin_index, nullptr);
 
     // Insert entries with multiple keys (array-like)
@@ -349,9 +364,9 @@ TEST_F(GinIndexGCTest, MultiKeyRemoval)
     const char *value2 = "date,elderberry";      // 2 keys
     const char *value3 = "fig,grape";             // 2 keys
 
-    uint64_t tid1 = (1ULL << 32) | 1;
-    uint64_t tid2 = (1ULL << 32) | 2;
-    uint64_t tid3 = (1ULL << 32) | 3;
+    TID tid1 = makeTid(1, 1);
+    TID tid2 = makeTid(1, 2);
+    TID tid3 = makeTid(1, 3);
 
     status = gin_index->insert(value1, strlen(value1), tid1, arrayKeyExtractor, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -367,7 +382,7 @@ TEST_F(GinIndexGCTest, MultiKeyRemoval)
     EXPECT_EQ(stats_before.pending_list_count, 7);
 
     // Remove tid2 (which had 2 keys: "date" and "elderberry")
-    std::vector<uint64_t> dead_tids = {tid2};
+    std::vector<TID> dead_tids = {tid2};
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 

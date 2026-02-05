@@ -73,28 +73,15 @@ namespace scratchbird::core
             }
         }
 
-        // Check if current position has valid data
-        void *page_buffer;
         ErrorContext ctx;
-        Status status = btree_->pinIndexPage(current_page_, &page_buffer, &ctx);
+        Status status = advanceToNextValid(&ctx);
         if (status != Status::OK)
         {
             exhausted_ = true;
             return false;
         }
 
-        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
-        bool has_data = (current_slot_ < page->btr_count);
-
-        btree_->unpinIndexPage(current_page_, false, &ctx);
-
-        if (!has_data)
-        {
-            exhausted_ = true;
-            return false;
-        }
-
-        return !exhausted_;
+        return true;
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
@@ -117,6 +104,14 @@ namespace scratchbird::core
             }
         }
 
+        Status advance_status = advanceToNextValid(ctx);
+        if (advance_status != Status::OK)
+        {
+            exhausted_ = true;
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Iterator exhausted");
+            return Status::NOT_FOUND;
+        }
+
         // Pin current page
         void *page_buffer;
         Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
@@ -132,6 +127,8 @@ namespace scratchbird::core
         // Task 17 MGA Phase 3.3: Get node structure to access btn_xmin/btn_xmax
         const auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
         const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[current_slot_]);
+        const uint64_t node_xmin = node->btn_xmin;
+        const uint64_t node_xmax = node->btn_xmax;
 
         // Get current entry using BTreePage helper
         std::vector<uint8_t> key;
@@ -148,7 +145,7 @@ namespace scratchbird::core
         }
 
         // FIREBIRD MGA: Check visibility using TIP-based visibility with current_xid
-        if (!btree_->isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid_))
+        if (!btree_->isEntryVisible(node_xmin, node_xmax, current_xid_))
         {
             // Entry not visible - skip to next entry
             status = moveToNextSlot(ctx);
@@ -406,6 +403,90 @@ namespace scratchbird::core
         }
 
         return Status::OK;
+    }
+
+    auto BTreeIterator::advanceToNextValid(ErrorContext *ctx) -> Status
+    {
+        while (true)
+        {
+            // Ensure current slot is within bounds; otherwise move to next page
+            void *page_buffer = nullptr;
+            Status status = btree_->pinIndexPage(current_page_, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+            if (current_slot_ >= page->btr_count)
+            {
+                btree_->unpinIndexPage(current_page_, false, ctx);
+                status = moveToNextPage(ctx);
+                if (status != Status::OK)
+                {
+                    return Status::NOT_FOUND;
+                }
+                continue;
+            }
+
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            const auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
+            const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[current_slot_]);
+            const uint64_t node_xmin = node->btn_xmin;
+            const uint64_t node_xmax = node->btn_xmax;
+
+            std::vector<uint8_t> key;
+            std::vector<TID> tuple_ids;
+            status = BTreePage::get_node(page_data, db_->page_size(), current_slot_, key, tuple_ids);
+
+            btree_->unpinIndexPage(current_page_, false, ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (!btree_->isEntryVisible(node_xmin, node_xmax, current_xid_))
+            {
+                status = moveToNextSlot(ctx);
+                if (status != Status::OK)
+                {
+                    return Status::NOT_FOUND;
+                }
+                continue;
+            }
+
+            if (!isKeyInRange(key))
+            {
+                if (has_end_)
+                {
+                    int cmp = compareKeys(key, end_key_);
+                    if (cmp > 0 || (cmp == 0 && !end_inclusive_))
+                    {
+                        return Status::NOT_FOUND;
+                    }
+                }
+
+                status = moveToNextSlot(ctx);
+                if (status != Status::OK)
+                {
+                    return Status::NOT_FOUND;
+                }
+                continue;
+            }
+
+            if (current_tuple_index_ >= tuple_ids.size())
+            {
+                status = moveToNextSlot(ctx);
+                if (status != Status::OK)
+                {
+                    return Status::NOT_FOUND;
+                }
+                continue;
+            }
+
+            return Status::OK;
+        }
     }
 
     auto BTreeIterator::moveToNextSlot(ErrorContext *ctx) -> Status

@@ -521,7 +521,7 @@ protected:
         }
         // Generate unique socket name
         static std::atomic<int> counter{0};
-        db_name_ = "unix_test_" + std::to_string(counter++);
+        db_name_ = "unix_test_" + std::to_string(::getpid()) + "_" + std::to_string(counter++);
     }
 
     void TearDown() override {

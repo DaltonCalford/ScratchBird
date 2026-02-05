@@ -146,7 +146,7 @@ struct SBRTreePage
 
     // Statistics
     uint64_t rtree_total_entries;   // Total entries in entire index
-    uint64_t rtree_deleted_entries; // Deleted entries (need VACUUM)
+    uint64_t rtree_deleted_entries; // Deleted entries (need GC compaction)
     uint64_t rtree_height;          // Tree height
 
     uint8_t rtree_padding[16]; // Reserved for future use

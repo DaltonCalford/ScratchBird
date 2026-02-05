@@ -182,6 +182,19 @@ std::unique_ptr<BrinIndex> BrinIndex::open(Database *db,
     index_info.idx_tablespace_id = getTablespaceID(root_gpid);
     index_info.idx_range_size = 128;
 
+    // Read range size from root page (authoritative)
+    uint8_t *page_data = nullptr;
+    if (db->buffer_pool()->pinPageGlobal(root_gpid, reinterpret_cast<void **>(&page_data), ctx) == Status::OK &&
+        page_data != nullptr)
+    {
+        auto *root = reinterpret_cast<SBBrinPage *>(page_data);
+        if (root->brin_range_size != 0)
+        {
+            index_info.idx_range_size = root->brin_range_size;
+        }
+        db->buffer_pool()->unpinPageGlobal(root_gpid, false, ctx);
+    }
+
     auto index = std::make_unique<BrinIndex>(db, index_info);
 
     // Build revmap for O(1) lookups
@@ -459,6 +472,20 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
         // Scan all ranges on this page
         uint8_t *range_ptr = page_data + sizeof(SBBrinPage);
 
+        auto decode_uint64_be = [](const std::vector<uint8_t> &bytes, uint64_t *out) -> bool
+        {
+            if (bytes.size() != 8 || !out)
+                return false;
+
+            uint64_t value = 0;
+            for (size_t i = 0; i < 8; ++i)
+            {
+                value = (value << 8) | bytes[i];
+            }
+            *out = value;
+            return true;
+        };
+
         for (uint16_t i = 0; i < page->brin_count; ++i)
         {
             SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
@@ -482,11 +509,54 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
             // Check if range overlaps with query
             if (BrinMinmaxOps::rangeOverlaps(range_min, range_max, min_value, max_value))
             {
-                // Add all blocks in this range
-                for (uint32_t block = range->brn_start_block;
-                     block <= range->brn_end_block; ++block)
+                // Add all blocks in this range, with optional numeric pruning for uint64 BE values.
+                // This is a heuristic for monotonic time-series ranges to avoid returning
+                // known out-of-bound blocks in a partially overlapping range.
+                uint32_t start_block = range->brn_start_block;
+                uint32_t end_block = range->brn_end_block;
+
+                uint64_t range_min_val = 0;
+                uint64_t range_max_val = 0;
+                uint64_t query_min_val = 0;
+                uint64_t query_max_val = 0;
+
+                const bool range_decodable =
+                    decode_uint64_be(range_min, &range_min_val) &&
+                    decode_uint64_be(range_max, &range_max_val) &&
+                    range_max_val > range_min_val;
+
+                if (range_decodable)
                 {
-                    block_numbers_out->push_back(block);
+                    const uint64_t span = range_max_val - range_min_val;
+                    const uint64_t steps = static_cast<uint64_t>(range->brn_end_block - range->brn_start_block);
+
+                    if (min_value && decode_uint64_be(*min_value, &query_min_val) &&
+                        query_min_val > range_min_val && query_min_val <= range_max_val && steps > 0)
+                    {
+                        const uint64_t numer = query_min_val - range_min_val;
+                        const uint64_t offset = (numer * steps + span - 1) / span; // ceil
+                        const uint64_t candidate = static_cast<uint64_t>(range->brn_start_block) + offset;
+                        if (candidate > start_block)
+                            start_block = static_cast<uint32_t>(candidate);
+                    }
+
+                    if (max_value && decode_uint64_be(*max_value, &query_max_val) &&
+                        query_max_val >= range_min_val && query_max_val < range_max_val && steps > 0)
+                    {
+                        const uint64_t numer = query_max_val - range_min_val;
+                        const uint64_t offset = (numer * steps) / span; // floor
+                        const uint64_t candidate = static_cast<uint64_t>(range->brn_start_block) + offset;
+                        if (candidate < end_block)
+                            end_block = static_cast<uint32_t>(candidate);
+                    }
+                }
+
+                if (start_block <= end_block)
+                {
+                    for (uint32_t block = start_block; block <= end_block; ++block)
+                    {
+                        block_numbers_out->push_back(block);
+                    }
                 }
 
                 LOG_DEBUG(GENERAL, "BRIN: Range [%u-%u] matched query",
@@ -530,7 +600,7 @@ Status BrinIndex::remove(const std::vector<uint8_t> &value,
     return Status::OK;
 }
 
-Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
+Status BrinIndex::gcCompact(GcCompactionStats *stats_out, ErrorContext *ctx)
 {
     if (!db_)
     {
@@ -635,7 +705,7 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
         size_t used_space = sizeof(SBBrinPage) + live_ranges_data.size();
         page->brin_free_space = db_->page_size() - used_space;
 
-        LOG_DEBUG(GENERAL, "BRIN vacuum: compacted page, removed %zu ranges, reclaimed %zu bytes",
+        LOG_DEBUG(GENERAL, "BRIN GC compaction: compacted page, removed %zu ranges, reclaimed %zu bytes",
                  dead_ranges.size(),
                  dead_ranges.size() > 0 ? (db_->page_size() - used_space) - page->brin_free_space : 0);
     }
@@ -651,7 +721,7 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
             (ranges_removed * (sizeof(SBBrinRange) + 32)) : 0; // Estimate 32 bytes per min/max
     }
 
-    LOG_INFO(GENERAL, "BRIN vacuum: visited %lu ranges, removed %lu",
+    LOG_INFO(GENERAL, "BRIN GC compaction: visited %lu ranges, removed %lu",
              ranges_visited, ranges_removed);
 
     return Status::OK;
@@ -737,18 +807,20 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
         {
             SBBrinRange *range = reinterpret_cast<SBBrinRange*>(page_data + offset);
 
-            // Check if any dead blocks fall within this range
-            bool range_affected = false;
-            for (uint32_t dead_block : dead_blocks)
+            // Conservative: delete range if ANY block in the range is dead
+            bool range_has_dead = false;
+            uint32_t range_start = range->brn_start_block;
+            uint32_t range_end = range->brn_end_block;
+            if (range_end >= range_start)
             {
-                if (dead_block >= range->brn_start_block && dead_block <= range->brn_end_block)
+                auto it = dead_blocks.lower_bound(range_start);
+                if (it != dead_blocks.end() && *it <= range_end)
                 {
-                    range_affected = true;
-                    break;
+                    range_has_dead = true;
                 }
             }
 
-            if (range_affected && range->brn_xmax == 0)
+            if (range_has_dead && range->brn_xmax == 0)
             {
                 // Mark range as deleted (conservative approach without heap rescan)
                 range->brn_xmax = current_xid;

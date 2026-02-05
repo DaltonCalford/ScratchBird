@@ -10,9 +10,9 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/storage_engine.h"
-#include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/types.h"
 #include "test_helpers.h"
 #include <algorithm>
@@ -281,7 +281,7 @@ TEST_F(ConnectionContextTest, TransactionSettings)
     EXPECT_EQ(conn->getLockTimeout(), 120u);
 }
 
-// Test snapshot creation for SNAPSHOT isolation
+// Test default isolation behavior and statement XID defaults
 TEST_F(ConnectionContextTest, SnapshotCreation)
 {
     ErrorContext err_ctx;
@@ -290,13 +290,11 @@ TEST_F(ConnectionContextTest, SnapshotCreation)
     Status s = db_.connect(conn, &err_ctx);
     ASSERT_EQ(s, Status::OK);
 
-    // Default isolation is SNAPSHOT, so snapshot should exist
-    const TransactionManager::Snapshot* snapshot = conn->getSnapshot();
-    EXPECT_NE(snapshot, nullptr) << "Snapshot should exist for SNAPSHOT isolation";
+    // Default isolation is SNAPSHOT
+    EXPECT_EQ(conn->getIsolationLevel(), IsolationLevel::SNAPSHOT);
 
-    if (snapshot != nullptr) {
-        EXPECT_NE(snapshot->xmax, 0u) << "Snapshot should have valid xmax";
-    }
+    // Statement XID should default to current XID when no statement XID is active
+    EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid());
 }
 
 // Test table reservation
@@ -472,12 +470,6 @@ TEST_F(ConnectionContextTest, SnapshotIsolationRepeatableReads)
     ASSERT_EQ(conn1->getIsolationLevel(), IsolationLevel::SNAPSHOT);
     ASSERT_EQ(conn2->getIsolationLevel(), IsolationLevel::SNAPSHOT);
 
-    // Both should have snapshots
-    const TransactionManager::Snapshot* snapshot1 = conn1->getSnapshot();
-    const TransactionManager::Snapshot* snapshot2 = conn2->getSnapshot();
-    ASSERT_NE(snapshot1, nullptr) << "Conn1 should have snapshot";
-    ASSERT_NE(snapshot2, nullptr) << "Conn2 should have snapshot";
-
     // Get XIDs
     uint64_t xid1 = conn1->getCurrentXid();
     uint64_t xid2 = conn2->getCurrentXid();
@@ -522,53 +514,80 @@ TEST_F(ConnectionContextTest, SnapshotIsolationRepeatableReads)
     xid1 = conn1->getCurrentXid();
     EXPECT_NE(xid1, old_xid1) << "Should have new XID after commit";
 
-    // Get new snapshot
-    snapshot1 = conn1->getSnapshot();
-    ASSERT_NE(snapshot1, nullptr) << "Should have new snapshot after commit";
-
     // NOW conn1's new snapshot SHOULD see conn2's committed changes
     // because xid2 committed before the new snapshot was taken
     EXPECT_TRUE(storage->isVisible(xid2, 0, xid1))
         << "New snapshot should see previously committed transactions";
 }
 
-// Test SNAPSHOT isolation - snapshot properties
+// Complex SNAPSHOT isolation scenario with overlapping update/delete
+TEST_F(ConnectionContextTest, SnapshotIsolationComplexVisibility)
+{
+    ErrorContext err_ctx;
+
+    StorageEngine* storage = db_.storage_engine();
+    ASSERT_NE(storage, nullptr);
+
+    // Seed transaction creates a base version and commits before snapshot starts.
+    std::unique_ptr<ConnectionContext> conn_seed;
+    ASSERT_EQ(db_.connect(conn_seed, &err_ctx), Status::OK);
+    uint64_t xid_seed = conn_seed->getCurrentXid();
+    ASSERT_EQ(conn_seed->commit(&err_ctx), Status::OK);
+
+    // Snapshot reader starts after seed commit.
+    std::unique_ptr<ConnectionContext> conn_snap;
+    ASSERT_EQ(db_.connect(conn_snap, &err_ctx), Status::OK);
+    uint64_t xid_snap = conn_snap->getCurrentXid();
+
+    ConnectionContext::setCurrent(conn_snap.get());
+
+    // Base version should be visible in snapshot.
+    EXPECT_TRUE(storage->isVisible(xid_seed, 0, xid_snap));
+
+    // Writer starts after snapshot and performs an update.
+    std::unique_ptr<ConnectionContext> conn_writer;
+    ASSERT_EQ(db_.connect(conn_writer, &err_ctx), Status::OK);
+    uint64_t xid_writer = conn_writer->getCurrentXid();
+
+    // Old version deleted by writer, new version created by writer.
+    EXPECT_TRUE(storage->isVisible(xid_seed, xid_writer, xid_snap))
+        << "Snapshot should see old version while writer is active";
+    EXPECT_FALSE(storage->isVisible(xid_writer, 0, xid_snap))
+        << "Snapshot should NOT see writer's new version";
+
+    // Commit writer. Snapshot should still see old version, not new.
+    ASSERT_EQ(conn_writer->commit(&err_ctx), Status::OK);
+    EXPECT_TRUE(storage->isVisible(xid_seed, xid_writer, xid_snap))
+        << "Snapshot should keep seeing old version after writer commits";
+    EXPECT_FALSE(storage->isVisible(xid_writer, 0, xid_snap))
+        << "Snapshot should NOT see new version committed after snapshot start";
+
+    // Refresh snapshot by committing and getting a new XID.
+    ASSERT_EQ(conn_snap->commit(&err_ctx), Status::OK);
+    uint64_t xid_snap2 = conn_snap->getCurrentXid();
+    EXPECT_NE(xid_snap2, xid_snap);
+
+    ConnectionContext::setCurrent(conn_snap.get());
+    EXPECT_FALSE(storage->isVisible(xid_seed, xid_writer, xid_snap2))
+        << "New snapshot should NOT see old version (deletion visible)";
+    EXPECT_TRUE(storage->isVisible(xid_writer, 0, xid_snap2))
+        << "New snapshot should see committed new version";
+}
+
+// Test statement XID defaulting behavior
 TEST_F(ConnectionContextTest, SnapshotIsolationProperties)
 {
     ErrorContext err_ctx;
 
-    // Create connection with SNAPSHOT isolation
+    // Create connection with SNAPSHOT isolation (default)
     std::unique_ptr<ConnectionContext> conn;
     Status s = db_.connect(conn, &err_ctx);
     ASSERT_EQ(s, Status::OK);
 
-    // Get snapshot
-    const TransactionManager::Snapshot* snapshot = conn->getSnapshot();
-    ASSERT_NE(snapshot, nullptr);
-
-    // Verify snapshot properties
-    EXPECT_GT(snapshot->xmax, 0u) << "Snapshot xmax should be set";
-    EXPECT_GE(snapshot->xmin, 0u) << "Snapshot xmin should be set";
-    EXPECT_LE(snapshot->xmin, snapshot->xmax) << "xmin should be <= xmax";
-
-    // active_xids should be sorted (required for binary search)
-    if (!snapshot->active_xids.empty()) {
-        for (size_t i = 1; i < snapshot->active_xids.size(); ++i) {
-            EXPECT_LT(snapshot->active_xids[i-1], snapshot->active_xids[i])
-                << "active_xids should be sorted for binary search";
-        }
-    }
-
-    // Current transaction's XID should be in active list or >= xmax
     uint64_t current_xid = conn->getCurrentXid();
-    bool in_active = std::binary_search(
-        snapshot->active_xids.begin(),
-        snapshot->active_xids.end(),
-        current_xid);
-    bool is_future = (current_xid >= snapshot->xmax);
-
-    EXPECT_TRUE(in_active || is_future)
-        << "Current XID should either be in active list or be >= xmax";
+    EXPECT_NE(current_xid, 0u);
+    EXPECT_EQ(conn->getStatementXID(), current_xid)
+        << "Statement XID should default to current XID when no statement is active";
 }
 
 // Test READ_COMMITTED vs SNAPSHOT isolation visibility differences
@@ -627,7 +646,7 @@ TEST_F(ConnectionContextTest, ReadCommittedVsSnapshotIsolation)
         << "SNAPSHOT should NOT see transactions that were active at snapshot time";
 }
 
-// Test isolation level transitions and snapshot lifecycle
+// Test isolation level transitions and transaction lifecycle
 TEST_F(ConnectionContextTest, IsolationTransitionSnapshotLifecycle)
 {
     ErrorContext err_ctx;
@@ -636,33 +655,26 @@ TEST_F(ConnectionContextTest, IsolationTransitionSnapshotLifecycle)
     Status s = db_.connect(conn, &err_ctx);
     ASSERT_EQ(s, Status::OK);
 
-    // Start with SNAPSHOT - should have snapshot
+    // Start with SNAPSHOT
     ASSERT_EQ(conn->getIsolationLevel(), IsolationLevel::SNAPSHOT);
-    EXPECT_NE(conn->getSnapshot(), nullptr) << "SNAPSHOT isolation should have snapshot";
 
-    // Change to READ_COMMITTED - snapshot should be cleared after commit
+    // Change to READ_COMMITTED
     s = conn->startTransaction(false, IsolationLevel::READ_COMMITTED, true, &err_ctx);
     ASSERT_EQ(s, Status::OK);
     ASSERT_EQ(conn->getIsolationLevel(), IsolationLevel::READ_COMMITTED);
 
-    // READ_COMMITTED might not have a snapshot (depends on implementation)
-    // But it shouldn't crash if we ask for it
-    conn->getSnapshot();  // Just verify it doesn't crash
-
-    // Change back to SNAPSHOT - should create new snapshot
+    // Change back to SNAPSHOT
     s = conn->startTransaction(false, IsolationLevel::SNAPSHOT, true, &err_ctx);
     ASSERT_EQ(s, Status::OK);
     ASSERT_EQ(conn->getIsolationLevel(), IsolationLevel::SNAPSHOT);
-    EXPECT_NE(conn->getSnapshot(), nullptr) << "SNAPSHOT isolation should have snapshot after transition";
 
-    // Change to SNAPSHOT_TABLE_STABILITY - should also have snapshot
+    // Change to SNAPSHOT_TABLE_STABILITY
     s = conn->startTransaction(false, IsolationLevel::SNAPSHOT_TABLE_STABILITY, true, &err_ctx);
     ASSERT_EQ(s, Status::OK);
     ASSERT_EQ(conn->getIsolationLevel(), IsolationLevel::SNAPSHOT_TABLE_STABILITY);
-    EXPECT_NE(conn->getSnapshot(), nullptr) << "SNAPSHOT_TABLE_STABILITY should have snapshot";
 }
 
-// Test READ_COMMITTED_READ_CONSISTENCY - statement snapshot lifecycle
+// Test READ_COMMITTED_READ_CONSISTENCY - statement XID lifecycle
 TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyStatementSnapshot)
 {
     ErrorContext err_ctx;
@@ -676,29 +688,23 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyStatementSnapshot)
     ASSERT_EQ(s, Status::OK);
     ASSERT_EQ(conn->getIsolationLevel(), IsolationLevel::READ_COMMITTED_READ_CONSISTENCY);
 
-    // Initially no statement snapshot
-    EXPECT_EQ(conn->getStatementSnapshot(), nullptr)
-        << "Should not have statement snapshot between statements";
+    // No statement XID between statements
+    EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
+        << "Should use current XID between statements";
 
-    // Create statement snapshot (simulating statement execution start)
-    s = conn->createStatementSnapshot(&err_ctx);
-    ASSERT_EQ(s, Status::OK) << "Failed to create statement snapshot";
+    // Create statement XID (simulating statement execution start)
+    conn->createStatementXID();
 
-    // Now should have statement snapshot
-    const TransactionManager::Snapshot* stmt_snapshot = conn->getStatementSnapshot();
-    ASSERT_NE(stmt_snapshot, nullptr)
-        << "Should have statement snapshot after creation";
+    // Should now use the statement XID (equal to current XID at statement start)
+    uint64_t stmt_xid = conn->getStatementXID();
+    EXPECT_EQ(stmt_xid, conn->getCurrentXid());
 
-    // Verify statement snapshot properties
-    EXPECT_GT(stmt_snapshot->xmax, 0u) << "Statement snapshot should have valid xmax";
-    EXPECT_GE(stmt_snapshot->xmin, 0u) << "Statement snapshot should have valid xmin";
+    // Clear statement XID (simulating statement execution end)
+    conn->clearStatementXID();
 
-    // Clear statement snapshot (simulating statement execution end)
-    conn->clearStatementSnapshot();
-
-    // Should be cleared now
-    EXPECT_EQ(conn->getStatementSnapshot(), nullptr)
-        << "Statement snapshot should be cleared after clearStatementSnapshot()";
+    // Should fall back to current XID
+    EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
+        << "Statement XID should reset after clearStatementXID()";
 }
 
 // Test READ_COMMITTED_READ_CONSISTENCY - statement-level consistency
@@ -733,16 +739,15 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyStatementConsistency)
     StorageEngine* storage = db_.storage_engine();
     ASSERT_NE(storage, nullptr);
 
-    // WITHOUT statement snapshot: should behave like READ_COMMITTED
+    // WITHOUT statement XID: should behave like READ_COMMITTED
     ConnectionContext::setCurrent(conn_rcrc.get());
 
     // Should see previously committed writer transaction
     EXPECT_TRUE(storage->isVisible(xid_writer, 0, xid_rcrc))
-        << "Without statement snapshot, should see committed transactions (READ_COMMITTED behavior)";
+        << "Without statement XID, should see committed transactions (READ_COMMITTED behavior)";
 
-    // NOW create statement snapshot (simulating statement start)
-    s = conn_rcrc->createStatementSnapshot(&err_ctx);
-    ASSERT_EQ(s, Status::OK);
+    // NOW create statement XID (simulating statement start)
+    conn_rcrc->createStatementXID();
 
     // Create another writer transaction that commits DURING the statement
     std::unique_ptr<ConnectionContext> conn_writer2;
@@ -754,17 +759,17 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyStatementConsistency)
     s = conn_writer2->commit(&err_ctx);
     ASSERT_EQ(s, Status::OK);
 
-    // WITH statement snapshot: should NOT see the new commit during this statement
-    // because it was active when statement snapshot was taken
+    // WITH statement XID: should NOT see the new commit during this statement
+    // because it was active when statement XID was captured
     ConnectionContext::setCurrent(conn_rcrc.get());
     EXPECT_FALSE(storage->isVisible(xid_writer2, 0, xid_rcrc))
-        << "With statement snapshot, should NOT see transactions active at statement start";
+        << "With statement XID, should NOT see transactions active at statement start";
 
-    // Clear statement snapshot (simulating statement end)
-    conn_rcrc->clearStatementSnapshot();
+    // Clear statement XID (simulating statement end)
+    conn_rcrc->clearStatementXID();
 
     // After clearing: xid_writer2 is still a future transaction (> xid_rcrc)
-    // so it won't be visible even without statement snapshot
+    // so it won't be visible even without statement XID
     // This is correct READ_COMMITTED behavior - only see transactions that committed BEFORE you started
     EXPECT_FALSE(storage->isVisible(xid_writer2, 0, xid_rcrc))
         << "Future transactions (XID > current XID) are never visible";
@@ -826,24 +831,23 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyComparison)
     EXPECT_TRUE(storage->isVisible(xid_writer, 0, xid_rc))
         << "READ_COMMITTED should see committed change";
 
-    // Test READ_COMMITTED_READ_CONSISTENCY without statement snapshot:
+    // Test READ_COMMITTED_READ_CONSISTENCY without statement XID:
     // should see committed change (between statements)
     ConnectionContext::setCurrent(conn_rcrc.get());
     EXPECT_TRUE(storage->isVisible(xid_writer, 0, xid_rcrc))
-        << "RCRC without statement snapshot should see committed changes";
+        << "RCRC without statement XID should see committed changes";
 
-    // Create statement snapshot for RCRC (simulating statement start)
-    s = conn_rcrc->createStatementSnapshot(&err_ctx);
-    ASSERT_EQ(s, Status::OK);
+    // Create statement XID for RCRC (simulating statement start)
+    conn_rcrc->createStatementXID();
 
-    // Test READ_COMMITTED_READ_CONSISTENCY with statement snapshot:
-    // should still see xid_writer because it committed before statement snapshot
+    // Test READ_COMMITTED_READ_CONSISTENCY with statement XID:
+    // should still see xid_writer because it committed before statement XID
     bool visible_during_stmt = storage->isVisible(xid_writer, 0, xid_rcrc);
     EXPECT_TRUE(visible_during_stmt)
-        << "RCRC with statement snapshot should see transactions committed before statement";
+        << "RCRC with statement XID should see transactions committed before statement";
 
-    // Clear statement snapshot
-    conn_rcrc->clearStatementSnapshot();
+    // Clear statement XID
+    conn_rcrc->clearStatementXID();
 
     // Test SNAPSHOT: xid_writer committed BEFORE snapshot, so it IS visible
     ConnectionContext::setCurrent(conn_snap.get());
@@ -867,7 +871,7 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyComparison)
         << "SNAPSHOT should NOT see transactions that were active at snapshot time";
 }
 
-// Test READ_COMMITTED_READ_CONSISTENCY - transaction end clears statement snapshot
+// Test READ_COMMITTED_READ_CONSISTENCY - transaction end clears statement XID
 TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyTransactionEnd)
 {
     ErrorContext err_ctx;
@@ -880,34 +884,34 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyTransactionEnd)
     s = conn->startTransaction(false, IsolationLevel::READ_COMMITTED_READ_CONSISTENCY, true, &err_ctx);
     ASSERT_EQ(s, Status::OK);
 
-    // Create statement snapshot
-    s = conn->createStatementSnapshot(&err_ctx);
-    ASSERT_EQ(s, Status::OK);
-    ASSERT_NE(conn->getStatementSnapshot(), nullptr);
+    // Create statement XID
+    conn->createStatementXID();
+    uint64_t stmt_xid = conn->getStatementXID();
+    ASSERT_EQ(stmt_xid, conn->getCurrentXid());
 
-    // Commit transaction - should clear statement snapshot
+    // Commit transaction - should clear statement XID
     s = conn->commit(&err_ctx);
     ASSERT_EQ(s, Status::OK);
 
-    // Statement snapshot should be cleared
-    EXPECT_EQ(conn->getStatementSnapshot(), nullptr)
-        << "Statement snapshot should be cleared on commit";
+    // Statement XID should now follow the new transaction XID
+    EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
+        << "Statement XID should be cleared on commit";
 
-    // Create another statement snapshot
-    s = conn->createStatementSnapshot(&err_ctx);
-    ASSERT_EQ(s, Status::OK);
-    ASSERT_NE(conn->getStatementSnapshot(), nullptr);
+    // Create another statement XID
+    conn->createStatementXID();
+    uint64_t stmt_xid2 = conn->getStatementXID();
+    ASSERT_EQ(stmt_xid2, conn->getCurrentXid());
 
-    // Rollback transaction - should also clear statement snapshot
+    // Rollback transaction - should also clear statement XID
     s = conn->rollback(&err_ctx);
     ASSERT_EQ(s, Status::OK);
 
-    // Statement snapshot should be cleared
-    EXPECT_EQ(conn->getStatementSnapshot(), nullptr)
-        << "Statement snapshot should be cleared on rollback";
+    // Statement XID should now follow the new transaction XID
+    EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
+        << "Statement XID should be cleared on rollback";
 }
 
-// Test READ_COMMITTED_READ_CONSISTENCY - multiple statement snapshots
+// Test READ_COMMITTED_READ_CONSISTENCY - multiple statement XIDs
 TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyMultipleStatements)
 {
     ErrorContext err_ctx;
@@ -922,17 +926,15 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyMultipleStatements)
 
     // Simulate multiple statements within same transaction
     for (int i = 0; i < 3; ++i) {
-        // Statement start - create snapshot
-        s = conn->createStatementSnapshot(&err_ctx);
-        ASSERT_EQ(s, Status::OK) << "Failed to create statement snapshot " << i;
+        // Statement start - create statement XID
+        conn->createStatementXID();
+        EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
+            << "Statement XID " << i << " should match current XID";
 
-        const TransactionManager::Snapshot* snapshot = conn->getStatementSnapshot();
-        ASSERT_NE(snapshot, nullptr) << "Statement snapshot " << i << " should exist";
-
-        // Statement end - clear snapshot
-        conn->clearStatementSnapshot();
-        EXPECT_EQ(conn->getStatementSnapshot(), nullptr)
-            << "Statement snapshot " << i << " should be cleared";
+        // Statement end - clear statement XID
+        conn->clearStatementXID();
+        EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
+            << "Statement XID " << i << " should be cleared";
     }
 
     // Transaction should still be active

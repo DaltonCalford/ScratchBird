@@ -15,15 +15,22 @@
 #include "scratchbird/core/transaction_manager.h"  // For isVersionVisible()
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/gpid.h"
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <set>
 #include <thread>  // P2-5: For std::this_thread::yield()
+#include <string>
+#include <vector>
 
 namespace scratchbird
 {
     namespace core
     {
+        namespace
+        {
+        } // namespace
+
         // Constructor
         HashIndex::HashIndex(Database *db, const UuidV7Bytes &index_uuid)
             : db_(db), buffer_pool_(db->buffer_pool()), index_uuid_(index_uuid), meta_page_(0)
@@ -38,9 +45,6 @@ namespace scratchbird
         {
             return (db_->page_size() - 96) / sizeof(HashEntry);
         }
-
-        // Maximum entries per bucket (approximate, based on 16KB pages)
-        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = 627;  // (16384-96)/26
 
         // Create a new hash index
         Status HashIndex::create(Database *db, const UuidV7Bytes &index_uuid,
@@ -262,19 +266,49 @@ namespace scratchbird
 
             // Calculate directory index
             uint32_t dir_index = getDirectoryIndex(hash, global_depth);
+            size_t pointers_per_page =
+                (db_->page_size() - sizeof(SBHashDirectoryPage)) / sizeof(uint64_t);
+            if (pointers_per_page == 0)
+            {
+                return 0;
+            }
+
+            uint32_t page_offset = dir_index / static_cast<uint32_t>(pointers_per_page);
+            uint32_t entry_offset = dir_index % static_cast<uint32_t>(pointers_per_page);
+
+            uint64_t target_dir_page = dir_page;
+            for (uint32_t i = 0; i < page_offset; i++)
+            {
+                uint8_t *dir_data = nullptr;
+                Status status = pinIndexPage(target_dir_page, (void **)&dir_data, ctx);
+                if (status != Status::OK)
+                {
+                    return 0;
+                }
+
+                auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+                uint64_t next_page = dir->hdp_next_page;
+                unpinIndexPage(target_dir_page, false, ctx);
+
+                if (next_page == 0)
+                {
+                    return 0;
+                }
+                target_dir_page = next_page;
+            }
 
             // Pin directory page
             uint8_t *dir_data = nullptr;
-            Status status = pinIndexPage(dir_page, (void **)&dir_data, ctx);
+            Status status = pinIndexPage(target_dir_page, (void **)&dir_data, ctx);
             if (status != Status::OK)
             {
                 return 0;
             }
 
             auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
-            uint64_t bucket_page = dir->hdp_bucket_pointers[dir_index];
+            uint64_t bucket_page = dir->hdp_bucket_pointers[entry_offset];
 
-            unpinIndexPage(dir_page, false, ctx);
+            unpinIndexPage(target_dir_page, false, ctx);
 
             return bucket_page;
         }
@@ -345,7 +379,7 @@ namespace scratchbird
         bool HashIndex::bucketNeedsSplit(SBHashBucketPage *bucket)
         {
             uint16_t total_entries = bucket->hbp_entry_count - bucket->hbp_deleted_count;
-            uint16_t capacity = MAX_ENTRIES_PER_BUCKET;
+            uint16_t capacity = getMaxEntriesPerBucket();
             uint16_t threshold = (capacity * BUCKET_FILL_THRESHOLD) / 100;
             return total_entries >= threshold;
         }
@@ -382,7 +416,7 @@ namespace scratchbird
                                  uint64_t xid, ErrorContext *ctx)
         {
             // PHASE 1.5: Now supports custom tablespaces via TID (GPID + slot)
-            if (!key_data || key_len == 0)
+            if (!key_data || key_len == 0 || !isValidGPID(tid.gpid) || tid.slot == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid insert arguments");
                 return Status::INVALID_ARGUMENT;
@@ -390,7 +424,6 @@ namespace scratchbird
 
             // Calculate hash
             uint64_t hash = MurmurHash64(key_data, key_len);
-
             // Find bucket page
             uint64_t bucket_page = findBucketPageForKey(hash, ctx);
             if (bucket_page == 0)
@@ -413,7 +446,7 @@ namespace scratchbird
                 auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
 
                 // Check if there's space in this page
-                if (bucket->hbp_entry_count < MAX_ENTRIES_PER_BUCKET)
+                if (bucket->hbp_entry_count < getMaxEntriesPerBucket())
                 {
                     // Add entry (storing TID with GPID support)
                     // Firebird MGA: Set xmin to creating transaction, xmax to 0 (not deleted)
@@ -453,8 +486,9 @@ namespace scratchbird
                 // Check if there's an overflow page
                 if (bucket->hbp_overflow_page != 0)
                 {
-                    current_page = bucket->hbp_overflow_page;
-                    unpinIndexPage(bucket_page, false, ctx);
+                    uint32_t next_page = bucket->hbp_overflow_page;
+                    unpinIndexPage(current_page, false, ctx);
+                    current_page = next_page;
                     continue;
                 }
 
@@ -523,6 +557,19 @@ namespace scratchbird
 
             auto *old_bucket = reinterpret_cast<SBHashBucketPage *>(bucket_data);
             uint32_t local_depth = old_bucket->hbp_local_depth;
+            LOG_DEBUG(HASH,
+                      "Hash split begin bucket=%u hash=%llu local_depth=%u global_depth=%u entries=%u deleted=%u overflow=%u",
+                      bucket_page, static_cast<unsigned long long>(hash), local_depth, global_depth,
+                      old_bucket->hbp_entry_count, old_bucket->hbp_deleted_count,
+                      static_cast<uint32_t>(old_bucket->hbp_overflow_page));
+
+            if (local_depth > global_depth)
+            {
+                LOG_ERROR(HASH, "Hash split invariant failed: local_depth=%u > global_depth=%u bucket=%u",
+                          local_depth, global_depth, bucket_page);
+                unpinIndexPage(bucket_page, false, ctx);
+                return Status::INDEX_CORRUPTED;
+            }
 
             // Check if we need directory expansion
             if (local_depth >= global_depth)
@@ -565,7 +612,74 @@ namespace scratchbird
             old_bucket->hbp_local_depth = new_local_depth;
             new_bucket->hbp_local_depth = new_local_depth;
 
-            // Redistribute entries
+            // Update directory pointers
+            // Pin directory page
+            status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
+            if (status != Status::OK)
+            {
+                unpinIndexPage(new_bucket_page, false, ctx);
+                unpinIndexPage(bucket_page, false, ctx);
+                return status;
+            }
+
+            meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
+            uint64_t dir_page = meta->hip_directory_page;
+            global_depth = meta->hip_global_depth;
+
+            unpinIndexPage(meta_page_, false, ctx);
+
+            // Update directory entries that should now point to new bucket
+            uint64_t bit_mask = (1ULL << (new_local_depth - 1));
+            uint32_t num_pointers = (1U << global_depth);
+            size_t pointers_per_page =
+                (db_->page_size() - sizeof(SBHashDirectoryPage)) / sizeof(uint64_t);
+            if (pointers_per_page == 0)
+            {
+                return Status::IO_ERROR;
+            }
+
+            uint64_t current_dir_page = dir_page;
+            uint32_t processed = 0;
+            uint32_t updated_pointers = 0;
+            while (current_dir_page != 0 && processed < num_pointers)
+            {
+                uint8_t *dir_data = nullptr;
+                status = pinIndexPage(current_dir_page, (void **)&dir_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+                uint32_t entries_this_page =
+                    static_cast<uint32_t>(std::min<size_t>(pointers_per_page, num_pointers - processed));
+                bool page_dirty = false;
+
+                for (uint32_t i = 0; i < entries_this_page; i++)
+                {
+                    uint32_t global_index = processed + i;
+                    if (dir->hdp_bucket_pointers[i] == bucket_page)
+                    {
+                        if (global_index & bit_mask)
+                        {
+                            dir->hdp_bucket_pointers[i] = new_bucket_page;
+                            page_dirty = true;
+                            updated_pointers++;
+                        }
+                    }
+                }
+
+                uint64_t next_page = dir->hdp_next_page;
+                unpinIndexPage(current_dir_page, page_dirty, ctx);
+                current_dir_page = next_page;
+                processed += entries_this_page;
+            }
+            LOG_DEBUG(HASH,
+                      "Hash split directory update bucket=%u new_bucket=%u new_local_depth=%u global_depth=%u updated=%u/%u",
+                      bucket_page, new_bucket_page, new_local_depth, global_depth, updated_pointers,
+                      num_pointers);
+
+            // Redistribute entries (after directory update)
             status = redistributeEntries(old_bucket, new_bucket, new_local_depth, ctx);
             if (status != Status::OK)
             {
@@ -577,47 +691,7 @@ namespace scratchbird
             unpinIndexPage(new_bucket_page, true, ctx);
             unpinIndexPage(bucket_page, true, ctx);
 
-            // Update directory pointers
-            // Pin directory page
-            status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
-            uint64_t dir_page = meta->hip_directory_page;
-            global_depth = meta->hip_global_depth;
-
-            unpinIndexPage(meta_page_, false, ctx);
-
-            uint8_t *dir_data = nullptr;
-            status = pinIndexPage(dir_page, (void **)&dir_data, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
-
-            // Update directory entries that should now point to new bucket
-            uint64_t bit_mask = (1ULL << (new_local_depth - 1));
-            uint32_t num_pointers = (1U << global_depth);
-
-            for (uint32_t i = 0; i < num_pointers; i++)
-            {
-                if (dir->hdp_bucket_pointers[i] == bucket_page)
-                {
-                    // Check if this entry should now point to new bucket
-                    if (i & bit_mask)
-                    {
-                        dir->hdp_bucket_pointers[i] = new_bucket_page;
-                    }
-                }
-            }
-
-            unpinIndexPage(dir_page, true, ctx);
-
+            LOG_DEBUG(HASH, "Hash split complete bucket=%u new_bucket=%u", bucket_page, new_bucket_page);
             return Status::OK;
         }
 
@@ -626,19 +700,50 @@ namespace scratchbird
                                               SBHashBucketPage *new_bucket,
                                               uint32_t new_local_depth, ErrorContext *ctx)
         {
-            // Bit mask for the new depth bit
+            const uint16_t max_entries = getMaxEntriesPerBucket();
             uint64_t bit_mask = (1ULL << (new_local_depth - 1));
+            uint32_t total_before = 0;
 
             // Temporary storage for entries
             std::vector<HashEntry> old_entries;
             std::vector<HashEntry> new_entries;
 
-            // Collect all entries (including overflow pages)
+            auto is_deleted_entry = [](const HashEntry &entry) -> bool
+            {
+                return entry.he_xmax != 0 || entry.getTID() == INVALID_TID;
+            };
+
+            // Collect all entries from the primary bucket
             for (uint16_t i = 0; i < old_bucket->hbp_entry_count; i++)
             {
                 const HashEntry &entry = old_bucket->hbp_entries[i];
-                if (entry.getTID() != INVALID_TID) // Not deleted
+                if (entry.he_key_hash & bit_mask)
                 {
+                    new_entries.push_back(entry);
+                }
+                else
+                {
+                    old_entries.push_back(entry);
+                }
+                total_before++;
+            }
+
+            // Collect entries from overflow chain
+            std::vector<uint32_t> overflow_pages;
+            uint32_t overflow_page = static_cast<uint32_t>(old_bucket->hbp_overflow_page);
+            while (overflow_page != 0)
+            {
+                uint8_t *overflow_data = nullptr;
+                Status status = pinIndexPage(overflow_page, (void **)&overflow_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *overflow_bucket = reinterpret_cast<SBHashBucketPage *>(overflow_data);
+                for (uint16_t i = 0; i < overflow_bucket->hbp_entry_count; i++)
+                {
+                    const HashEntry &entry = overflow_bucket->hbp_entries[i];
                     if (entry.he_key_hash & bit_mask)
                     {
                         new_entries.push_back(entry);
@@ -647,31 +752,211 @@ namespace scratchbird
                     {
                         old_entries.push_back(entry);
                     }
+                    total_before++;
                 }
+
+                uint32_t next = static_cast<uint32_t>(overflow_bucket->hbp_overflow_page);
+                unpinIndexPage(overflow_page, false, ctx);
+                overflow_pages.push_back(overflow_page);
+                overflow_page = next;
+            }
+
+            if (total_before != (old_entries.size() + new_entries.size()))
+            {
+                LOG_ERROR(HASH,
+                          "Hash redistribute invariant failed: total_before=%u old_entries=%zu new_entries=%zu",
+                          total_before, old_entries.size(), new_entries.size());
+                return Status::INDEX_CORRUPTED;
             }
 
             // Clear old bucket
             old_bucket->hbp_entry_count = 0;
             old_bucket->hbp_deleted_count = 0;
+            old_bucket->hbp_overflow_page = 0;
 
-            // Repopulate old bucket
+            // Clear new bucket
+            new_bucket->hbp_entry_count = 0;
+            new_bucket->hbp_deleted_count = 0;
+            new_bucket->hbp_overflow_page = 0;
+
+            uint32_t old_page_id = old_bucket->hbp_header.page_id;
+            uint32_t new_page_id = new_bucket->hbp_header.page_id;
+
+            auto append_to_page = [&](uint32_t target_page, const HashEntry &entry) -> Status
+            {
+                uint32_t current_page = target_page;
+                while (current_page != 0)
+                {
+                    SBHashBucketPage *bucket = nullptr;
+                    bool pinned_here = false;
+                    if (current_page == old_page_id)
+                    {
+                        bucket = old_bucket;
+                    }
+                    else if (current_page == new_page_id)
+                    {
+                        bucket = new_bucket;
+                    }
+                    else
+                    {
+                        uint8_t *page_data = nullptr;
+                        Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                        bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
+                        pinned_here = true;
+                    }
+
+                    if (bucket->hbp_entry_count < max_entries)
+                    {
+                        bucket->hbp_entries[bucket->hbp_entry_count++] = entry;
+                        if (is_deleted_entry(entry))
+                        {
+                            bucket->hbp_deleted_count++;
+                        }
+                        if (pinned_here)
+                        {
+                            unpinIndexPage(current_page, true, ctx);
+                        }
+                        return Status::OK;
+                    }
+
+                    uint32_t next_page = static_cast<uint32_t>(bucket->hbp_overflow_page);
+                    if (next_page == 0)
+                    {
+                        Status alloc_status = allocateOverflowPage(&next_page, ctx);
+                        if (alloc_status != Status::OK)
+                        {
+                            if (pinned_here)
+                            {
+                                unpinIndexPage(current_page, false, ctx);
+                            }
+                            return alloc_status;
+                        }
+                        bucket->hbp_overflow_page = next_page;
+                        if (pinned_here)
+                        {
+                            unpinIndexPage(current_page, true, ctx);
+                        }
+                        current_page = next_page;
+                        continue;
+                    }
+
+                    if (pinned_here)
+                    {
+                        unpinIndexPage(current_page, false, ctx);
+                    }
+                    current_page = next_page;
+                }
+
+                return Status::IO_ERROR;
+            };
+
             for (const auto &entry : old_entries)
             {
-                if (old_bucket->hbp_entry_count < MAX_ENTRIES_PER_BUCKET)
+                Status status = append_to_page(old_page_id, entry);
+                if (status != Status::OK)
                 {
-                    old_bucket->hbp_entries[old_bucket->hbp_entry_count++] = entry;
+                    return status;
                 }
             }
 
-            // Populate new bucket
             for (const auto &entry : new_entries)
             {
-                if (new_bucket->hbp_entry_count < MAX_ENTRIES_PER_BUCKET)
+                Status status = append_to_page(new_page_id, entry);
+                if (status != Status::OK)
                 {
-                    new_bucket->hbp_entries[new_bucket->hbp_entry_count++] = entry;
+                    return status;
                 }
             }
 
+            auto count_chain_entries = [&](uint32_t start_page, uint32_t *out_count) -> Status
+            {
+                if (out_count == nullptr)
+                {
+                    return Status::INVALID_ARGUMENT;
+                }
+                uint32_t total = 0;
+                uint32_t current_page = start_page;
+                while (current_page != 0)
+                {
+                    SBHashBucketPage *bucket = nullptr;
+                    bool pinned_here = false;
+                    if (current_page == old_page_id)
+                    {
+                        bucket = old_bucket;
+                    }
+                    else if (current_page == new_page_id)
+                    {
+                        bucket = new_bucket;
+                    }
+                    else
+                    {
+                        uint8_t *page_data = nullptr;
+                        Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                        bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
+                        pinned_here = true;
+                    }
+
+                    if (bucket->hbp_entry_count > max_entries)
+                    {
+                        LOG_ERROR(HASH, "Hash redistribute invariant failed: page=%u entry_count=%u > max=%u",
+                                  current_page, bucket->hbp_entry_count, max_entries);
+                        if (pinned_here)
+                        {
+                            unpinIndexPage(current_page, false, ctx);
+                        }
+                        return Status::INDEX_CORRUPTED;
+                    }
+
+                    total += bucket->hbp_entry_count;
+                    uint32_t next_page = static_cast<uint32_t>(bucket->hbp_overflow_page);
+                    if (pinned_here)
+                    {
+                        unpinIndexPage(current_page, false, ctx);
+                    }
+                    current_page = next_page;
+                }
+                *out_count = total;
+                return Status::OK;
+            };
+
+            uint32_t old_after = 0;
+            uint32_t new_after = 0;
+            Status count_status = count_chain_entries(old_page_id, &old_after);
+            if (count_status != Status::OK)
+            {
+                return count_status;
+            }
+            count_status = count_chain_entries(new_page_id, &new_after);
+            if (count_status != Status::OK)
+            {
+                return count_status;
+            }
+
+            if (old_after != old_entries.size() || new_after != new_entries.size())
+            {
+                LOG_ERROR(HASH,
+                          "Hash redistribute invariant failed: old_after=%u old_entries=%zu new_after=%u new_entries=%zu",
+                          old_after, old_entries.size(), new_after, new_entries.size());
+                return Status::INDEX_CORRUPTED;
+            }
+
+            // Free overflow pages from the old bucket chain
+            auto page_mgr = db_->page_manager();
+            if (page_mgr)
+            {
+                for (uint32_t page_id : overflow_pages)
+                {
+                    page_mgr->freePageGlobal(indexGPID(page_id), ctx);
+                }
+            }
             return Status::OK;
         }
 
@@ -726,7 +1011,6 @@ namespace scratchbird
 
             uint64_t old_dir_page = meta->hip_directory_page;
             unpinIndexPage(meta_page_, false, ctx);
-
             // Calculate sizes
             uint32_t old_size = (1U << old_global_depth);
             uint32_t new_size = (1U << new_global_depth);
@@ -777,13 +1061,11 @@ namespace scratchbird
 
                 auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
 
-                // Double the directory by duplicating each pointer (second half mirrors first half)
-                // This is done atomically from the perspective of readers since they hold shared lock
-                for (uint32_t i = old_size; i > 0; --i)
+                // Double the directory by duplicating each pointer (second half mirrors first half).
+                // New index i maps to old index i, and i + old_size maps to the same bucket.
+                for (uint32_t i = 0; i < old_size; i++)
                 {
-                    // Copy in reverse order to avoid overwriting unread entries
-                    dir->hdp_bucket_pointers[2 * (i - 1) + 1] = dir->hdp_bucket_pointers[i - 1];
-                    dir->hdp_bucket_pointers[2 * (i - 1)] = dir->hdp_bucket_pointers[i - 1];
+                    dir->hdp_bucket_pointers[i + old_size] = dir->hdp_bucket_pointers[i];
                 }
 
                 unpinIndexPage(old_dir_page, true, ctx);
@@ -795,52 +1077,23 @@ namespace scratchbird
                 // Update cache atomically
                 cached_global_depth_.store(new_global_depth, std::memory_order_release);
 
-                resize_in_progress_.store(false, std::memory_order_release);
+                if (lock.owns_lock())
+                {
+                    lock.unlock();
+                }
 
+                resize_in_progress_.store(false, std::memory_order_release);
                 return Status::OK;
             }
             else
             {
-                // Multi-page directory - allocate new page chain
-                // This is more complex but allows unbounded growth
-
-                // Allocate new directory page
-                uint32_t new_dir_page_num = 0;
-                GPID new_dir_gpid = 0;
-                status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_dir_gpid, ctx);
-                if (status != Status::OK)
-                {
-                    resize_in_progress_.store(false, std::memory_order_release);
-                    return status;
-                }
-                new_dir_page_num = static_cast<uint32_t>(getPageNumber(new_dir_gpid));
-
-                // Initialize new directory page
-                uint8_t *new_dir_data = nullptr;
-                status = pinIndexPage(new_dir_page_num, (void **)&new_dir_data, ctx);
-                if (status != Status::OK)
-                {
-                    resize_in_progress_.store(false, std::memory_order_release);
-                    return status;
-                }
-
-                auto *new_dir = reinterpret_cast<SBHashDirectoryPage *>(new_dir_data);
-                std::memset(new_dir, 0, sizeof(SBHashDirectoryPage));
-
-                new_dir->hdp_header.magic = K_MAGIC_SBRD;
-                new_dir->hdp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                new_dir->hdp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_DIRECTORY);
-                new_dir->hdp_header.page_size = db_->page_size();
-                new_dir->hdp_header.page_id = new_dir_page_num;
-
-                // Take exclusive lock for the directory chain update
+                // Multi-page directory - expand across as many pages as needed
                 std::unique_lock<std::shared_mutex> lock(directory_mutex_);
 
-                // Re-read meta and copy existing directory entries
+                // Re-read meta page with lock held
                 status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
                 if (status != Status::OK)
                 {
-                    unpinIndexPage(new_dir_page_num, false, ctx);
                     resize_in_progress_.store(false, std::memory_order_release);
                     return status;
                 }
@@ -851,7 +1104,6 @@ namespace scratchbird
                 if (meta->hip_global_depth >= new_global_depth)
                 {
                     unpinIndexPage(meta_page_, false, ctx);
-                    unpinIndexPage(new_dir_page_num, false, ctx);
                     resize_in_progress_.store(false, std::memory_order_release);
                     cached_global_depth_.store(meta->hip_global_depth, std::memory_order_release);
                     return Status::OK;
@@ -859,43 +1111,158 @@ namespace scratchbird
 
                 old_dir_page = meta->hip_directory_page;
 
-                // Read old directory
-                uint8_t *old_dir_data = nullptr;
-                status = pinIndexPage(old_dir_page, (void **)&old_dir_data, ctx);
-                if (status != Status::OK)
+                // Load existing directory page chain
+                std::vector<uint32_t> dir_pages;
+                uint64_t current_dir_page = old_dir_page;
+                while (current_dir_page != 0)
+                {
+                    dir_pages.push_back(static_cast<uint32_t>(current_dir_page));
+                    uint8_t *dir_data = nullptr;
+                    status = pinIndexPage(current_dir_page, (void **)&dir_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        unpinIndexPage(meta_page_, false, ctx);
+                        resize_in_progress_.store(false, std::memory_order_release);
+                        return status;
+                    }
+                    auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+                    uint64_t next_page = dir->hdp_next_page;
+                    unpinIndexPage(current_dir_page, false, ctx);
+                    current_dir_page = next_page;
+                }
+
+                // Ensure enough pages for new_size
+                size_t pages_needed = (new_size + pointers_per_page - 1) / pointers_per_page;
+                if (pages_needed == 0)
                 {
                     unpinIndexPage(meta_page_, false, ctx);
-                    unpinIndexPage(new_dir_page_num, false, ctx);
                     resize_in_progress_.store(false, std::memory_order_release);
-                    return status;
+                    return Status::IO_ERROR;
                 }
 
-                auto *old_dir = reinterpret_cast<SBHashDirectoryPage *>(old_dir_data);
-
-                // Link new directory page to chain and copy expanded pointers
-                new_dir->hdp_next_page = 0; // New page is at end of chain
-
-                // Copy and double pointers from old directory
-                // First half goes in old dir (updated in place), second half in new dir
-                for (uint32_t i = 0; i < old_size && i < pointers_per_page; i++)
+                while (dir_pages.size() < pages_needed)
                 {
-                    uint64_t bucket_ptr = old_dir->hdp_bucket_pointers[i];
-                    // Keep original in old dir, add duplicate in new dir
-                    if (old_size + i < pointers_per_page)
+                    uint32_t new_dir_page_num = 0;
+                    GPID new_dir_gpid = 0;
+                    status = db_->page_manager()->allocatePageInTablespace(tablespace_id_, &new_dir_gpid, ctx);
+                    if (status != Status::OK)
                     {
-                        old_dir->hdp_bucket_pointers[old_size + i] = bucket_ptr;
+                        unpinIndexPage(meta_page_, false, ctx);
+                        resize_in_progress_.store(false, std::memory_order_release);
+                        return status;
                     }
-                    else
+                    new_dir_page_num = static_cast<uint32_t>(getPageNumber(new_dir_gpid));
+
+                    uint8_t *new_dir_data = nullptr;
+                    status = pinIndexPage(new_dir_page_num, (void **)&new_dir_data, ctx);
+                    if (status != Status::OK)
                     {
-                        new_dir->hdp_bucket_pointers[(old_size + i) - pointers_per_page] = bucket_ptr;
+                        unpinIndexPage(meta_page_, false, ctx);
+                        resize_in_progress_.store(false, std::memory_order_release);
+                        return status;
                     }
+
+                    auto *new_dir = reinterpret_cast<SBHashDirectoryPage *>(new_dir_data);
+                    std::memset(new_dir, 0, sizeof(SBHashDirectoryPage));
+                    new_dir->hdp_header.magic = K_MAGIC_SBRD;
+                    new_dir->hdp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
+                    new_dir->hdp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_DIRECTORY);
+                    new_dir->hdp_header.page_size = db_->page_size();
+                    new_dir->hdp_header.page_id = new_dir_page_num;
+                    new_dir->hdp_next_page = 0;
+
+                    unpinIndexPage(new_dir_page_num, true, ctx);
+                    dir_pages.push_back(new_dir_page_num);
                 }
 
-                // Link new page to old directory chain
-                old_dir->hdp_next_page = new_dir_page_num;
+                // Link pages in the chain
+                for (size_t i = 0; i < dir_pages.size(); i++)
+                {
+                    uint32_t page_id = dir_pages[i];
+                    uint64_t next_page = (i + 1 < dir_pages.size()) ? dir_pages[i + 1] : 0;
+                    uint8_t *dir_data = nullptr;
+                    status = pinIndexPage(page_id, (void **)&dir_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        unpinIndexPage(meta_page_, false, ctx);
+                        resize_in_progress_.store(false, std::memory_order_release);
+                        return status;
+                    }
+                    auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+                    dir->hdp_next_page = next_page;
+                    unpinIndexPage(page_id, true, ctx);
+                }
 
-                unpinIndexPage(old_dir_page, true, ctx);
-                unpinIndexPage(new_dir_page_num, true, ctx);
+                // Read old directory pointers
+                std::vector<uint64_t> old_pointers;
+                old_pointers.reserve(old_size);
+                uint32_t collected = 0;
+                for (size_t page_idx = 0; page_idx < dir_pages.size() && collected < old_size; page_idx++)
+                {
+                    uint8_t *dir_data = nullptr;
+                    status = pinIndexPage(dir_pages[page_idx], (void **)&dir_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        unpinIndexPage(meta_page_, false, ctx);
+                        resize_in_progress_.store(false, std::memory_order_release);
+                        return status;
+                    }
+
+                    auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+                    uint32_t entries_this_page =
+                        static_cast<uint32_t>(std::min<size_t>(pointers_per_page, old_size - collected));
+
+                    for (uint32_t i = 0; i < entries_this_page; i++)
+                    {
+                        old_pointers.push_back(dir->hdp_bucket_pointers[i]);
+                    }
+
+                    unpinIndexPage(dir_pages[page_idx], false, ctx);
+                    collected += entries_this_page;
+                }
+
+                if (old_pointers.size() != old_size)
+                {
+                    unpinIndexPage(meta_page_, false, ctx);
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    return Status::IO_ERROR;
+                }
+
+                // Write new directory pointers
+                uint32_t written = 0;
+                for (size_t page_idx = 0; page_idx < dir_pages.size() && written < new_size; page_idx++)
+                {
+                    uint8_t *dir_data = nullptr;
+                    status = pinIndexPage(dir_pages[page_idx], (void **)&dir_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        unpinIndexPage(meta_page_, false, ctx);
+                        resize_in_progress_.store(false, std::memory_order_release);
+                        return status;
+                    }
+
+                    auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+                    uint32_t entries_this_page =
+                        static_cast<uint32_t>(std::min<size_t>(pointers_per_page, new_size - written));
+
+                    for (uint32_t i = 0; i < entries_this_page; i++)
+                    {
+                        uint32_t global_index = written + i;
+                        dir->hdp_bucket_pointers[i] = old_pointers[global_index % old_size];
+                    }
+
+                    // Zero any remaining entries on the last page
+                    if (entries_this_page < pointers_per_page)
+                    {
+                        for (uint32_t i = entries_this_page; i < pointers_per_page; i++)
+                        {
+                            dir->hdp_bucket_pointers[i] = 0;
+                        }
+                    }
+
+                    unpinIndexPage(dir_pages[page_idx], true, ctx);
+                    written += entries_this_page;
+                }
 
                 // Update meta page
                 meta->hip_global_depth = new_global_depth;
@@ -904,8 +1271,12 @@ namespace scratchbird
                 // Update cache
                 cached_global_depth_.store(new_global_depth, std::memory_order_release);
 
-                resize_in_progress_.store(false, std::memory_order_release);
+                if (lock.owns_lock())
+                {
+                    lock.unlock();
+                }
 
+                resize_in_progress_.store(false, std::memory_order_release);
                 return Status::OK;
             }
         }
@@ -934,7 +1305,6 @@ namespace scratchbird
 
             // Calculate hash
             uint64_t hash = MurmurHash64(key_data, key_len);
-
             if (bloom_filter_ && !bloom_filter_->test(&hash, sizeof(hash), ctx))
             {
                 return Status::NOT_FOUND;
@@ -971,10 +1341,15 @@ namespace scratchbird
                     const HashEntry &entry = bucket->hbp_entries[i];
 
                     // Check if hash matches and entry is not deleted
-                    if (entry.he_key_hash == hash && entry.getTID() != INVALID_TID)
+                    if (entry.he_key_hash == hash)
                     {
+                        if (entry.getTID() == INVALID_TID)
+                        {
+                            continue;
+                        }
+
                         // Firebird MGA: Check visibility using TIP-based visibility (NOT snapshots)
-                        // If current_xid is 0, return all entries (used by VACUUM)
+                        // If current_xid is 0, return all entries (used by GC)
                         bool visible = (current_xid == 0);
 
                         if (!visible && txn_mgr != nullptr)
@@ -1095,8 +1470,8 @@ namespace scratchbird
             return Status::NOT_FOUND;
         }
 
-        // Vacuum operation - remove deleted entries and consolidate
-        Status HashIndex::vacuum(ErrorContext *ctx)
+        // GC compaction - remove deleted entries and consolidate (ScratchBird MGA GC)
+        Status HashIndex::gcCompact(ErrorContext *ctx)
         {
             // Pin meta page to get directory info
             uint8_t *meta_data = nullptr;
@@ -1149,12 +1524,12 @@ namespace scratchbird
 
             unpinIndexPage(dir_page, false, ctx);
 
-            // Vacuum each unique bucket
+            // GC-compact each unique bucket
             uint64_t total_deleted_removed = 0;
 
             for (uint32_t bucket_page : unique_buckets)
             {
-                // STOR-L1: Vacuum this bucket and its overflow chain
+                // STOR-L1: GC-compact this bucket and its overflow chain
                 // Track previous page to unlink empty overflow pages
                 uint32_t current_page = bucket_page;
                 uint32_t prev_page = 0;
@@ -1181,8 +1556,8 @@ namespace scratchbird
                         {
                             const HashEntry &entry = bucket->hbp_entries[read_idx];
 
-                            // Keep non-deleted entries
-                            if (entry.getTID() != INVALID_TID)
+                            // Keep non-deleted entries (deleted entries have he_xmax set or invalid TID)
+                            if (entry.he_xmax == 0 && entry.getTID() != INVALID_TID)
                             {
                                 if (write_idx != read_idx)
                                 {
@@ -1295,7 +1670,7 @@ namespace scratchbird
                 stats.avg_entries_per_bucket =
                     static_cast<double>(stats.num_tuples) / stats.num_buckets;
 
-                uint64_t max_entries = stats.num_buckets * MAX_ENTRIES_PER_BUCKET;
+                uint64_t max_entries = stats.num_buckets * getMaxEntriesPerBucket();
                 stats.load_factor = (static_cast<double>(stats.num_tuples) / max_entries) * 100.0;
             }
 
@@ -1313,23 +1688,37 @@ namespace scratchbird
 
                 if (dir_page != 0)
                 {
-                    // Pin directory page
-                    uint8_t *dir_data = nullptr;
-                    status = pinIndexPage(dir_page, (void **)&dir_data, ctx);
-                    if (status == Status::OK)
+                    uint32_t num_buckets = (1U << global_depth);
+                    size_t pointers_per_page =
+                        (db_->page_size() - sizeof(SBHashDirectoryPage)) / sizeof(uint64_t);
+                    if (pointers_per_page == 0)
                     {
+                        return stats;
+                    }
+
+                    // Track unique bucket pages to avoid double-counting
+                    std::vector<uint32_t> seen_buckets;
+                    seen_buckets.reserve(num_buckets);
+
+                    uint64_t current_dir_page = dir_page;
+                    uint32_t processed = 0;
+                    while (current_dir_page != 0 && processed < num_buckets)
+                    {
+                        uint8_t *dir_data = nullptr;
+                        status = pinIndexPage(current_dir_page, (void **)&dir_data, ctx);
+                        if (status != Status::OK)
+                        {
+                            break;
+                        }
+
                         auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
-                        uint32_t num_buckets = (1U << global_depth);
+                        uint32_t entries_this_page =
+                            static_cast<uint32_t>(std::min<size_t>(pointers_per_page, num_buckets - processed));
 
-                        // Track unique bucket pages to avoid double-counting
-                        std::vector<uint32_t> seen_buckets;
-                        seen_buckets.reserve(num_buckets);
-
-                        for (uint32_t i = 0; i < num_buckets; i++)
+                        for (uint32_t i = 0; i < entries_this_page; i++)
                         {
                             uint32_t bucket_page = dir->hdp_bucket_pointers[i];
 
-                            // Check if we've already counted this bucket
                             bool already_seen = false;
                             for (uint32_t seen : seen_buckets)
                             {
@@ -1355,7 +1744,6 @@ namespace scratchbird
                                 uint32_t overflow_page = bucket->hbp_overflow_page;
                                 unpinIndexPage(bucket_page, false, ctx);
 
-                                // Walk the overflow chain
                                 while (overflow_page != 0)
                                 {
                                     stats.num_overflow_pages++;
@@ -1375,7 +1763,10 @@ namespace scratchbird
                             }
                         }
 
-                        unpinIndexPage(dir_page, false, ctx);
+                        uint64_t next_page = dir->hdp_next_page;
+                        unpinIndexPage(current_dir_page, false, ctx);
+                        current_dir_page = next_page;
+                        processed += entries_this_page;
                     }
                 }
             }

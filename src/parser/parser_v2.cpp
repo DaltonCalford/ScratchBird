@@ -4819,7 +4819,7 @@ AlterTableStmt* Parser::parseAlterTable() {
             stmt->column_name = expectIdentifier("Expected column name");
             if (matchContextual("CASCADE")) stmt->cascade = true;
         }
-    } else if (matchContextual("ALTER")) {
+    } else if (match(TokenType::KW_ALTER) || matchContextual("ALTER")) {
         if (matchContextual("COLUMN")) {
             stmt->column_name = expectIdentifier("Expected column name");
         } else {
@@ -4827,7 +4827,17 @@ AlterTableStmt* Parser::parseAlterTable() {
         }
 
         bool handled = false;
-        if (matchContextual("SET")) {
+        if (matchContextual("POSITION")) {
+            if (!check(TokenType::INTEGER_LITERAL)) {
+                error("ALTER TABLE ALTER COLUMN POSITION requires an integer literal");
+            } else {
+                stmt->action = AlterTableAction::ALTER_COLUMN_POSITION;
+                stmt->position_1_based = static_cast<int32_t>(current().value.int_value);
+                stmt->has_position = true;
+                advance();
+            }
+            handled = true;
+        } else if (match(TokenType::KW_SET) || matchContextual("SET")) {
             if (matchContextual("STATISTICS")) {
                 stmt->action = AlterTableAction::SET_STATISTICS;
                 if (!check(TokenType::INTEGER_LITERAL)) {
@@ -4855,6 +4865,32 @@ AlterTableStmt* Parser::parseAlterTable() {
                 col->type = parseTypeName();
                 stmt->column = col;
                 handled = true;
+            } else if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
+                stmt->action = AlterTableAction::ALTER_COLUMN_SET_DEFAULT;
+                stmt->default_expr = parseExpression();
+                stmt->has_default_expr = (stmt->default_expr != nullptr);
+                handled = true;
+            } else if (match(TokenType::KW_NOT) || matchContextual("NOT")) {
+                if (match(TokenType::KW_NULL) || matchContextual("NULL")) {
+                    // ok
+                } else {
+                    error("Expected NULL after SET NOT");
+                }
+                stmt->action = AlterTableAction::ALTER_COLUMN_SET_NOT_NULL;
+                handled = true;
+            }
+        } else if (match(TokenType::KW_DROP) || matchContextual("DROP")) {
+            if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
+                stmt->action = AlterTableAction::ALTER_COLUMN_DROP_DEFAULT;
+                handled = true;
+            } else if (match(TokenType::KW_NOT) || matchContextual("NOT")) {
+                if (match(TokenType::KW_NULL) || matchContextual("NULL")) {
+                    // ok
+                } else {
+                    error("Expected NULL after DROP NOT");
+                }
+                stmt->action = AlterTableAction::ALTER_COLUMN_DROP_NOT_NULL;
+                handled = true;
             }
         } else if (matchContextual("TYPE")) {
             stmt->action = AlterTableAction::ALTER_COLUMN;
@@ -4865,7 +4901,7 @@ AlterTableStmt* Parser::parseAlterTable() {
             handled = true;
         }
         if (!handled) {
-            error("Expected SET STATISTICS, SET STORAGE, or TYPE after ALTER COLUMN");
+            error("Expected POSITION, SET/DROP DEFAULT, SET/DROP NOT NULL, SET STATISTICS, SET STORAGE, SET DATA TYPE, or TYPE after ALTER COLUMN");
         }
     } else if (matchContextual("ATTACH")) {
         expectContextual("PARTITION", "Expected PARTITION after ATTACH");
@@ -5612,11 +5648,13 @@ WithClause* Parser::parseWithClause() {
 
         expect(TokenType::LEFT_PAREN, "Expected '(' before CTE query");
 
-        if (!match(TokenType::KW_SELECT)) {
+        if (check(TokenType::KW_WITH)) {
+            cte.query = parseSelectWithClause();
+        } else if (match(TokenType::KW_SELECT)) {
+            cte.query = parseSelect();
+        } else {
             error("Expected SELECT in CTE query");
             synchronize();
-        } else {
-            cte.query = parseSelect();
         }
 
         expect(TokenType::RIGHT_PAREN, "Expected ')' after CTE query");

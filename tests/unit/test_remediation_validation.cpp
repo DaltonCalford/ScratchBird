@@ -37,9 +37,9 @@ TEST_F(RemediationValidationTest, VerifyCamelCaseMethodNames) {
     (void)static_cast<std::unique_ptr<HeapScanIterator>(StorageEngine::*)(const ID&, ErrorContext*)>(&StorageEngine::createScan);
 
     // Verify BTree methods (all are member functions)
-    (void)static_cast<Status(BTree::*)(const std::vector<uint8_t>&, uint64_t, ErrorContext*)>(&BTree::insert);
-    (void)static_cast<Status(BTree::*)(const std::vector<uint8_t>&, std::vector<uint64_t>*, ErrorContext*)>(&BTree::search);
-    (void)static_cast<Status(BTree::*)(const std::vector<uint8_t>&, uint64_t, ErrorContext*)>(&BTree::remove);
+    (void)static_cast<Status(BTree::*)(const std::vector<uint8_t>&, const TID&, uint64_t, ErrorContext*)>(&BTree::insert);
+    (void)static_cast<Status(BTree::*)(const std::vector<uint8_t>&, uint64_t, std::vector<TID>*, ErrorContext*)>(&BTree::search);
+    (void)static_cast<Status(BTree::*)(const std::vector<uint8_t>&, const TID&, uint64_t, ErrorContext*)>(&BTree::remove);
 
     // Verify CatalogManager methods
     (void)static_cast<Status(CatalogManager::*)(const std::string&, const std::string&, ID&, ErrorContext*)>(&CatalogManager::createSchema);

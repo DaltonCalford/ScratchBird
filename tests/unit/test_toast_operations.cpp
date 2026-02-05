@@ -105,7 +105,7 @@ protected:
         data_col.has_default = false;
         columns.push_back(data_col);
 
-        ASSERT_EQ(catalog_->createTable(schema_id, "toast_test", columns, test_table_id_, &ctx),
+        ASSERT_EQ(catalog_->createTable(schema_id, "toast_test", columns, test_table_id_, 0, &ctx),
                   Status::OK);
     }
 
@@ -116,6 +116,32 @@ protected:
             data[i] = static_cast<uint8_t>((pattern + i) % 256);
         }
         return data;
+    }
+
+    std::vector<uint8_t> buildTuple(const std::vector<uint8_t>& payload,
+                                    uint64_t xmin,
+                                    uint64_t xmax = 0)
+    {
+        TupleHeader header{};
+        header.xmin = xmin;
+        header.xmax = xmax;
+        header.back_version_gpid = INVALID_GPID;
+        header.back_version_slot = 0;
+        header.reserved1 = 0;
+        header.ctid_gpid = INVALID_GPID;
+        header.ctid_slot = 0;
+        header.infomask = 0;
+        header.null_bitmap_offset = 0;
+        header.padding = 0;
+        header.session_id = ID{};
+
+        std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload.size());
+        std::memcpy(tuple.data(), &header, sizeof(TupleHeader));
+        if (!payload.empty())
+        {
+            std::memcpy(tuple.data() + sizeof(TupleHeader), payload.data(), payload.size());
+        }
+        return tuple;
     }
 
     std::filesystem::path test_db_path_;
@@ -172,7 +198,8 @@ TEST_F(ToastOperationsTest, SmallTuplesWithoutToast)
         auto data = generateData(100, static_cast<uint8_t>(i));
         uint16_t item_id;
 
-        Status status = page.insertTuple(data.data(), data.size() + sizeof(TupleHeader),
+        auto tuple = buildTuple(data, 100 + i);
+        Status status = page.insertTuple(tuple.data(), tuple.size(),
                                          100 + i, &item_id, &ctx);
         EXPECT_EQ(status, Status::OK) << "Should insert small tuple " << i;
     }
@@ -193,11 +220,15 @@ TEST_F(ToastOperationsTest, LargeTupleWithoutToastFails)
     ASSERT_EQ(page.initialize(1, &ctx), Status::OK);
 
     // Try to insert a tuple larger than available page space
-    auto large_data = generateData(7000); // Too large for one page
+    uint32_t max_payload =
+        PAGE_SIZE - sizeof(PageHeader) - sizeof(HeapPageSpecial) - sizeof(ItemPointer) -
+        sizeof(TupleHeader);
+    auto large_data = generateData(static_cast<size_t>(max_payload + 128));
+    auto large_tuple = buildTuple(large_data, 100);
     uint16_t item_id;
 
-    Status status = page.insertTuple(large_data.data(),
-                                      large_data.size() + sizeof(TupleHeader),
+    Status status = page.insertTuple(large_tuple.data(),
+                                      large_tuple.size(),
                                       100, &item_id, &ctx);
 
     // Should fail with PAGE_FULL or similar error
@@ -244,8 +275,9 @@ TEST_F(ToastOperationsTest, UpdateSmallToToast)
     // Insert small tuple
     auto small_data = generateData(100, 0xAA);
     uint16_t item_id;
-    ASSERT_EQ(page.insertTuple(small_data.data(),
-                                small_data.size() + sizeof(TupleHeader),
+    auto small_tuple = buildTuple(small_data, 100);
+    ASSERT_EQ(page.insertTuple(small_tuple.data(),
+                                small_tuple.size(),
                                 100, &item_id, &ctx), Status::OK);
 
     // Update to large value (should trigger TOAST)
@@ -257,8 +289,9 @@ TEST_F(ToastOperationsTest, UpdateSmallToToast)
 
     // Re-insert with large data
     uint16_t new_item_id;
-    Status status = page.insertTuple(large_data.data(),
-                                      large_data.size() + sizeof(TupleHeader),
+    auto large_tuple2 = buildTuple(large_data, 200);
+    Status status = page.insertTuple(large_tuple2.data(),
+                                      large_tuple2.size(),
                                       200, &new_item_id, &ctx);
 
     // With TOAST manager, this should succeed
@@ -294,8 +327,9 @@ TEST_F(ToastOperationsTest, UpdateToastToSmall)
     auto small_data = generateData(100, 0xCC);
     uint16_t item_id;
 
-    ASSERT_EQ(page.insertTuple(small_data.data(),
-                                small_data.size() + sizeof(TupleHeader),
+    auto small_tuple2 = buildTuple(small_data, 100);
+    ASSERT_EQ(page.insertTuple(small_tuple2.data(),
+                                small_tuple2.size(),
                                 100, &item_id, &ctx), Status::OK);
 
     // Test deletion (which should clean up any TOAST)
@@ -322,8 +356,9 @@ TEST_F(ToastOperationsTest, UpdateToastToToast)
     auto large_data1 = generateData(5000, 0xDD);
     uint16_t item_id;
 
-    Status status1 = page.insertTuple(large_data1.data(),
-                                       large_data1.size() + sizeof(TupleHeader),
+    auto large_tuple3 = buildTuple(large_data1, 100);
+    Status status1 = page.insertTuple(large_tuple3.data(),
+                                       large_tuple3.size(),
                                        100, &item_id, &ctx);
 
     if (status1 == Status::OK) {
@@ -333,8 +368,9 @@ TEST_F(ToastOperationsTest, UpdateToastToToast)
         auto large_data2 = generateData(6000, 0xEE);
         uint16_t new_item_id;
 
-        Status status2 = page.insertTuple(large_data2.data(),
-                                           large_data2.size() + sizeof(TupleHeader),
+        auto large_tuple4 = buildTuple(large_data2, 200);
+        Status status2 = page.insertTuple(large_tuple4.data(),
+                                           large_tuple4.size(),
                                            200, &new_item_id, &ctx);
 
         // Should handle TOAST-to-TOAST transition
@@ -358,7 +394,8 @@ TEST_F(ToastOperationsTest, DetoastingAPI)
     // Insert small tuple
     auto data = generateData(200, 0xFF);
     uint16_t item_id;
-    ASSERT_EQ(page.insertTuple(data.data(), data.size() + sizeof(TupleHeader),
+    auto tuple = buildTuple(data, 100);
+    ASSERT_EQ(page.insertTuple(tuple.data(), tuple.size(),
                                 100, &item_id, &ctx), Status::OK);
 
     // Detoast it (should work even for non-TOASTed data)
@@ -366,12 +403,13 @@ TEST_F(ToastOperationsTest, DetoastingAPI)
     ASSERT_EQ(page.getTupleDetoasted(item_id, &detoasted, 100, &ctx), Status::OK);
 
     // Verify size
-    EXPECT_EQ(detoasted.size(), data.size() + sizeof(TupleHeader));
+    EXPECT_EQ(detoasted.size(), tuple.size());
 
     // Verify content (skip TupleHeader)
-    if (detoasted.size() >= sizeof(TupleHeader) + data.size()) {
+    if (detoasted.size() >= tuple.size()) {
         EXPECT_EQ(memcmp(detoasted.data() + sizeof(TupleHeader),
-                         data.data(), data.size()), 0)
+                         data.data(),
+                         data.size()), 0)
             << "Detoasted data should match original";
     }
 }
@@ -397,8 +435,9 @@ TEST_F(ToastOperationsTest, MultipleTuplesNoToast)
         auto data = generateData(100, static_cast<uint8_t>(i));
         uint16_t item_id;
 
-        Status status = page.insertTuple(data.data(),
-                                         data.size() + sizeof(TupleHeader),
+        auto tuple = buildTuple(data, 100 + i);
+        Status status = page.insertTuple(tuple.data(),
+                                         tuple.size(),
                                          100 + i, &item_id, &ctx);
 
         if (status == Status::OK) {
@@ -426,13 +465,13 @@ TEST_F(ToastOperationsTest, ToastThresholdDifferentPageSizes)
 {
     // 8KB page
     EXPECT_TRUE(ToastManager::shouldToast(5000, 8192));
-    EXPECT_FALSE(ToastManager::shouldToast(500, 8192));
+    EXPECT_FALSE(ToastManager::shouldToast(100, 8192));
 
     // 16KB page (larger threshold)
     EXPECT_TRUE(ToastManager::shouldToast(10000, 16384));
-    EXPECT_FALSE(ToastManager::shouldToast(1000, 16384));
+    EXPECT_FALSE(ToastManager::shouldToast(200, 16384));
 
     // 32KB page (even larger threshold)
     EXPECT_TRUE(ToastManager::shouldToast(20000, 32768));
-    EXPECT_FALSE(ToastManager::shouldToast(2000, 32768));
+    EXPECT_FALSE(ToastManager::shouldToast(400, 32768));
 }

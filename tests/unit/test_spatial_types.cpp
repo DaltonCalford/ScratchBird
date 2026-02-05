@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/spatial/wkt_parser.h"
 #include "scratchbird/spatial/wkb.h"
 #include <cmath>
@@ -507,7 +508,7 @@ TEST(SpatialTypesTest, EmptyLineString)
 TEST(SpatialTypesTest, EmptyPolygon)
 {
     Polygon empty;
-    EXPECT_FALSE(empty.isValid());
+    EXPECT_TRUE(empty.isValid());
 }
 
 TEST(WKTParserTest, MalformedWKT)

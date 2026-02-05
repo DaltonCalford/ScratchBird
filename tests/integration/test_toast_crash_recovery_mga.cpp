@@ -15,12 +15,13 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
-#include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/garbage_collector.h"
-#include "scratchbird/core/vacuum.h"
+#include "scratchbird/core/gc_manager.h"
 #include "scratchbird/core/toast.h"
 #include "test_helpers.h"
 #include <memory>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,22 @@ using namespace scratchbird::core;
 class ToastCrashRecoveryMGATest : public ::testing::Test
 {
 protected:
+    class ScopedCurrentConnection
+    {
+    public:
+        explicit ScopedCurrentConnection(ConnectionContext* ctx)
+            : prev_(ConnectionContext::getCurrent())
+        {
+            ConnectionContext::setCurrent(ctx);
+        }
+        ~ScopedCurrentConnection()
+        {
+            ConnectionContext::setCurrent(prev_);
+        }
+    private:
+        ConnectionContext* prev_;
+    };
+
     void SetUp() override
     {
         db_path_ =
@@ -37,9 +54,7 @@ protected:
         // Create test database
         ErrorContext ctx;
         Status status = Database::create(db_path_, 8192, &ctx);
-        if (status != Status::OK && status != Status::ERROR_EXISTS) {
-            FAIL() << "Failed to create database: " << ctx.message;
-        }
+        ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();
         status = db_->open(db_path_, &ctx);
@@ -47,19 +62,54 @@ protected:
 
         storage_ = db_->storage_engine();
         catalog_ = db_->catalog_manager();
-        tm_ = db_->transaction_manager();
         gc_ = db_->garbage_collector();
-        vacuum_ = db_->vacuum();
+        gc_manager_ = db_->gc_manager();
 
         ASSERT_NE(storage_, nullptr);
         ASSERT_NE(catalog_, nullptr);
-        ASSERT_NE(tm_, nullptr);
         ASSERT_NE(gc_, nullptr);
-        ASSERT_NE(vacuum_, nullptr);
+        ASSERT_NE(gc_manager_, nullptr);
+
+        // Create schema + test table
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        ASSERT_EQ(catalog_->listSchemas(schemas, &ctx), Status::OK);
+        ID schema_id;
+        if (schemas.empty()) {
+            ASSERT_EQ(catalog_->createSchema("public", "test", schema_id, &ctx), Status::OK);
+        } else {
+            schema_id = schemas[0].schema_id;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        CatalogManager::ColumnInfo id_col;
+        id_col.column_name = "id";
+        id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        id_col.max_length = 4;
+        id_col.nullable = false;
+        id_col.has_default = false;
+        columns.push_back(id_col);
+
+        CatalogManager::ColumnInfo data_col;
+        data_col.column_name = "data";
+        data_col.data_type = static_cast<uint16_t>(DataType::BYTEA);
+        data_col.max_length = 0;
+        data_col.nullable = true;
+        data_col.has_default = false;
+        columns.push_back(data_col);
+
+        ASSERT_EQ(catalog_->createTable(schema_id, "toast_crash_recovery", columns, table_id_, 0,
+                                        &ctx),
+                  Status::OK);
+
+        // Create connection context (registers ProcArray)
+        ASSERT_EQ(db_->connect(conn_ctx_, &ctx), Status::OK) << ctx.message;
+        ConnectionContext::setCurrent(conn_ctx_.get());
     }
 
     void TearDown() override
     {
+        ConnectionContext::setCurrent(nullptr);
+        conn_ctx_.reset();
         if (db_)
         {
             db_->close();
@@ -83,13 +133,19 @@ protected:
             text.append(buf);
         }
 
+        if (text.size() < size_kb * 1024)
+        {
+            text.append(size_kb * 1024 - text.size(), 'X');
+        }
         return text;
     }
 
     // Helper: Simulate database restart (close and reopen)
     void simulateDatabaseRestart()
     {
-        // Close database
+        // Close database + connection
+        ConnectionContext::setCurrent(nullptr);
+        conn_ctx_.reset();
         db_->close();
         db_.reset();
 
@@ -102,19 +158,52 @@ protected:
         // Reinitialize pointers
         storage_ = db_->storage_engine();
         catalog_ = db_->catalog_manager();
-        tm_ = db_->transaction_manager();
         gc_ = db_->garbage_collector();
-        vacuum_ = db_->vacuum();
+        gc_manager_ = db_->gc_manager();
+
+        // Recreate connection context for new backend/proc
+        ASSERT_EQ(db_->connect(conn_ctx_, &ctx), Status::OK) << ctx.message;
+        ConnectionContext::setCurrent(conn_ctx_.get());
     }
 
     std::string db_path_;
     std::unique_ptr<Database> db_;
     StorageEngine* storage_;
     CatalogManager* catalog_;
-    TransactionManager* tm_;
     GarbageCollector* gc_;
-    Vacuum* vacuum_;
-    std::string db_path_;
+    GcManager* gc_manager_;
+    ID table_id_;
+    std::unique_ptr<ConnectionContext> conn_ctx_;
+
+    std::unique_ptr<ConnectionContext> createConnection(ErrorContext* ctx)
+    {
+        std::unique_ptr<ConnectionContext> conn;
+        Status status = db_->connect(conn, ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+        return conn;
+    }
+
+    uint64_t beginTxn(ConnectionContext* conn, ErrorContext* ctx)
+    {
+        ScopedCurrentConnection scope(conn);
+        uint64_t xid = conn->getCurrentXid();
+        EXPECT_NE(xid, 0u);
+        return xid;
+    }
+
+    void commitTxn(ConnectionContext* conn, ErrorContext* ctx)
+    {
+        ScopedCurrentConnection scope(conn);
+        Status status = conn->commit(ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+    }
+
+    void rollbackTxn(ConnectionContext* conn, ErrorContext* ctx)
+    {
+        ScopedCurrentConnection scope(conn);
+        Status status = conn->rollback(ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+    }
 };
 
 // =============================================================================
@@ -135,11 +224,8 @@ TEST_F(ToastCrashRecoveryMGATest, CrashBeforeCommit_ChunksInvisible)
     //
     // MGA Compliance: Uses TIP for crash recovery, NOT WAL replay
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
     // Create TOAST manager
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -150,7 +236,7 @@ TEST_F(ToastCrashRecoveryMGATest, CrashBeforeCommit_ChunksInvisible)
     }
 
     // Start transaction
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
     ASSERT_NE(xid, 0);
 
     // Create large TOAST value
@@ -158,14 +244,17 @@ TEST_F(ToastCrashRecoveryMGATest, CrashBeforeCommit_ChunksInvisible)
     ASSERT_GT(large_text.size(), 2048u);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK) << "TOAST failed: " << ctx.message;
     uint32_t value_id = toast_ptr.va_valueid;
@@ -179,24 +268,31 @@ TEST_F(ToastCrashRecoveryMGATest, CrashBeforeCommit_ChunksInvisible)
 
     // After restart, TIP should mark transaction as aborted
     // Verify transaction state via TIP
-    uint64_t new_xid = tm_->beginTransaction();
+    uint64_t new_xid = beginTxn(conn_ctx_.get(), &ctx);
     ASSERT_NE(new_xid, 0);
 
     // Try to detoast - should fail because chunks are invisible
     // (transaction xid is aborted in TIP)
-    ToastManager toast_mgr2(db_.get(), table_id);
+    ToastManager toast_mgr2(db_.get(), table_id_);
+    status = toast_mgr2.initialize(&ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    status = toast_mgr2.initialize(&ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
     std::vector<uint8_t> detoasted;
-    status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    }
 
     // Expected: Detoasting fails or returns empty (chunks invisible)
     // This validates TIP-based visibility after crash
     EXPECT_NE(status, Status::OK) << "Chunks should be invisible after crash (TIP marks xmin aborted)";
 
-    tm_->commit(new_xid);
+    commitTxn(conn_ctx_.get(), &ctx);
 
     // Run sweep to physically remove aborted chunks
-    VacuumStats vacuum_stats;
-    status = vacuum_->vacuumDatabase(&vacuum_stats, &ctx);
+    GcStats gc_stats;
+    status = gc_manager_->gcDatabase(&gc_stats, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     // Verify chunks cleaned up (orphan detection should find them)
@@ -221,10 +317,7 @@ TEST_F(ToastCrashRecoveryMGATest, CrashAfterCommit_ChunksVisible)
     //
     // MGA Compliance: Committed data persists via TIP, NOT WAL
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -235,34 +328,42 @@ TEST_F(ToastCrashRecoveryMGATest, CrashAfterCommit_ChunksVisible)
     }
 
     // Start transaction and create TOAST value
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(3);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK);
 
     // COMMIT transaction (persists to TIP)
-    tm_->commit(xid);
+    commitTxn(conn_ctx_.get(), &ctx);
 
     // SIMULATE CRASH after commit
     simulateDatabaseRestart();
 
     // After restart, TIP should show transaction committed
     // Verify chunks are still visible
-    uint64_t new_xid = tm_->beginTransaction();
+    uint64_t new_xid = beginTxn(conn_ctx_.get(), &ctx);
 
-    ToastManager toast_mgr2(db_.get(), table_id);
+    ToastManager toast_mgr2(db_.get(), table_id_);
+    status = toast_mgr2.initialize(&ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
     std::vector<uint8_t> detoasted;
-    status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    }
 
     // Expected: Detoasting succeeds (chunks visible via TIP)
     EXPECT_EQ(status, Status::OK) << "Chunks should be visible after commit+crash (TIP shows committed)";
@@ -274,7 +375,7 @@ TEST_F(ToastCrashRecoveryMGATest, CrashAfterCommit_ChunksVisible)
         EXPECT_EQ(detoasted_text, large_text) << "Detoasted data should match original";
     }
 
-    tm_->commit(new_xid);
+    commitTxn(conn_ctx_.get(), &ctx);
 }
 
 // =============================================================================
@@ -295,10 +396,7 @@ TEST_F(ToastCrashRecoveryMGATest, CrashDuringDelete_XmaxHandling)
     //
     // MGA Compliance: TIP-based xmax visibility, NOT WAL-based undo
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -309,26 +407,32 @@ TEST_F(ToastCrashRecoveryMGATest, CrashDuringDelete_XmaxHandling)
     }
 
     // Create and commit TOAST value
-    uint64_t xid1 = tm_->beginTransaction();
+    uint64_t xid1 = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(4);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid1,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid1,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK);
     uint32_t value_id = toast_ptr.va_valueid;
-    tm_->commit(xid1); // Commit create
+    commitTxn(conn_ctx_.get(), &ctx); // Commit create
 
     // Start delete transaction (sets xmax on chunks)
-    uint64_t xid2 = tm_->beginTransaction();
-    status = toast_mgr.deleteToastValue(value_id, xid2, &ctx);
+    uint64_t xid2 = beginTxn(conn_ctx_.get(), &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.deleteToastValue(value_id, xid2, &ctx);
+    }
     ASSERT_EQ(status, Status::OK);
 
     // SIMULATE CRASH before delete commits
@@ -337,11 +441,16 @@ TEST_F(ToastCrashRecoveryMGATest, CrashDuringDelete_XmaxHandling)
 
     // After restart, TIP should mark delete transaction as aborted
     // Chunks should still be visible (xmax aborted)
-    uint64_t new_xid = tm_->beginTransaction();
+    uint64_t new_xid = beginTxn(conn_ctx_.get(), &ctx);
 
-    ToastManager toast_mgr2(db_.get(), table_id);
+    ToastManager toast_mgr2(db_.get(), table_id_);
+    status = toast_mgr2.initialize(&ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
     std::vector<uint8_t> detoasted;
-    status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    }
 
     // Expected: Chunks still visible (delete aborted via TIP)
     EXPECT_EQ(status, Status::OK) << "Chunks should be visible (delete transaction aborted in TIP)";
@@ -352,7 +461,7 @@ TEST_F(ToastCrashRecoveryMGATest, CrashDuringDelete_XmaxHandling)
         EXPECT_EQ(detoasted_text, large_text);
     }
 
-    tm_->commit(new_xid);
+    commitTxn(conn_ctx_.get(), &ctx);
 }
 
 // =============================================================================
@@ -371,9 +480,7 @@ TEST_F(ToastCrashRecoveryMGATest, MultipleCrashes_IdempotentRecovery)
     //
     // MGA Compliance: TIP-based recovery is idempotent
 
-    ID table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -384,18 +491,21 @@ TEST_F(ToastCrashRecoveryMGATest, MultipleCrashes_IdempotentRecovery)
     }
 
     // Create TOAST value without commit
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(2);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK);
 
@@ -409,15 +519,20 @@ TEST_F(ToastCrashRecoveryMGATest, MultipleCrashes_IdempotentRecovery)
     simulateDatabaseRestart();
 
     // After multiple crashes, chunks should still be invisible
-    uint64_t new_xid = tm_->beginTransaction();
+    uint64_t new_xid = beginTxn(conn_ctx_.get(), &ctx);
 
-    ToastManager toast_mgr2(db_.get(), table_id);
+    ToastManager toast_mgr2(db_.get(), table_id_);
+    status = toast_mgr2.initialize(&ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
     std::vector<uint8_t> detoasted;
-    status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, new_xid, &ctx);
+    }
 
     EXPECT_NE(status, Status::OK) << "After multiple crashes, chunks should remain invisible";
 
-    tm_->commit(new_xid);
+    commitTxn(conn_ctx_.get(), &ctx);
 }
 
 // =============================================================================
@@ -431,14 +546,12 @@ TEST_F(ToastCrashRecoveryMGATest, CrashWithSweep_FullCleanup)
     // Scenario:
     // 1. Create 10 TOAST values, crash before commit
     // 2. Restart (TIP marks transactions aborted)
-    // 3. Run sweep (vacuum)
+    // 3. Run sweep (GC)
     // 4. Verify all aborted chunks physically removed
     //
     // MGA Compliance: Sweep uses TIP for garbage collection
 
-    ID table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -452,18 +565,21 @@ TEST_F(ToastCrashRecoveryMGATest, CrashWithSweep_FullCleanup)
     std::vector<ToastPointer> toast_ptrs;
     for (int i = 0; i < 10; i++)
     {
-        uint64_t xid = tm_->beginTransaction();
+        uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
         std::string large_text = createLargeText(2);
 
         ToastPointer toast_ptr;
-        status = toast_mgr.toastValue(
-            reinterpret_cast<const uint8_t*>(large_text.data()),
-            large_text.size(),
-            ToastStrategy::EXTERNAL,
-            xid,
-            &toast_ptr,
-            &ctx
-        );
+        {
+            ScopedCurrentConnection scope(conn_ctx_.get());
+            status = toast_mgr.toastValue(
+                reinterpret_cast<const uint8_t*>(large_text.data()),
+                large_text.size(),
+                ToastStrategy::EXTERNAL,
+                xid,
+                &toast_ptr,
+                &ctx
+            );
+        }
 
         if (status == Status::OK)
         {
@@ -479,20 +595,25 @@ TEST_F(ToastCrashRecoveryMGATest, CrashWithSweep_FullCleanup)
     simulateDatabaseRestart();
 
     // Run sweep to clean up aborted chunks
-    VacuumStats vacuum_stats;
-    status = vacuum_->vacuumDatabase(&vacuum_stats, &ctx);
+    GcStats gc_stats;
+    status = gc_manager_->gcDatabase(&gc_stats, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     // Verify chunks cleaned (orphan detection should find them all)
     // After sweep, detoasting all should fail
-    uint64_t verify_xid = tm_->beginTransaction();
-    ToastManager toast_mgr2(db_.get(), table_id);
+    uint64_t verify_xid = beginTxn(conn_ctx_.get(), &ctx);
+    ToastManager toast_mgr2(db_.get(), table_id_);
+    status = toast_mgr2.initialize(&ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
 
     int invisible_count = 0;
     for (const auto& toast_ptr : toast_ptrs)
     {
         std::vector<uint8_t> detoasted;
-        status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, verify_xid, &ctx);
+        {
+            ScopedCurrentConnection scope(conn_ctx_.get());
+            status = toast_mgr2.detoastValue(&toast_ptr, &detoasted, verify_xid, &ctx);
+        }
 
         if (status != Status::OK)
         {
@@ -502,7 +623,7 @@ TEST_F(ToastCrashRecoveryMGATest, CrashWithSweep_FullCleanup)
 
     EXPECT_GT(invisible_count, 0) << "Most/all chunks should be invisible after crash+sweep";
 
-    tm_->commit(verify_xid);
+    commitTxn(conn_ctx_.get(), &ctx);
 }
 
 // =============================================================================
@@ -521,9 +642,7 @@ TEST_F(ToastCrashRecoveryMGATest, TIPStatePersistence)
     //
     // MGA Compliance: TIP persists across restarts (not in-memory WAL)
 
-    ID table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -534,37 +653,48 @@ TEST_F(ToastCrashRecoveryMGATest, TIPStatePersistence)
     }
 
     // Create and commit TOAST value
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(3);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK);
-    tm_->commit(xid); // TIP persists commit
+    commitTxn(conn_ctx_.get(), &ctx); // TIP persists commit
 
     // Verify accessible before restart
-    uint64_t verify_xid1 = tm_->beginTransaction();
+    uint64_t verify_xid1 = beginTxn(conn_ctx_.get(), &ctx);
     std::vector<uint8_t> detoasted1;
-    status = toast_mgr.detoastValue(&toast_ptr, &detoasted1, verify_xid1, &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.detoastValue(&toast_ptr, &detoasted1, verify_xid1, &ctx);
+    }
     ASSERT_EQ(status, Status::OK);
-    tm_->commit(verify_xid1);
+    commitTxn(conn_ctx_.get(), &ctx);
 
     // Restart database
     simulateDatabaseRestart();
 
     // Verify still accessible after restart (TIP persisted)
-    uint64_t verify_xid2 = tm_->beginTransaction();
-    ToastManager toast_mgr2(db_.get(), table_id);
+    uint64_t verify_xid2 = beginTxn(conn_ctx_.get(), &ctx);
+    ToastManager toast_mgr2(db_.get(), table_id_);
+    status = toast_mgr2.initialize(&ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
     std::vector<uint8_t> detoasted2;
-    status = toast_mgr2.detoastValue(&toast_ptr, &detoasted2, verify_xid2, &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr2.detoastValue(&toast_ptr, &detoasted2, verify_xid2, &ctx);
+    }
 
     EXPECT_EQ(status, Status::OK) << "TIP state should persist across restart";
 
@@ -574,7 +704,7 @@ TEST_F(ToastCrashRecoveryMGATest, TIPStatePersistence)
         EXPECT_EQ(detoasted_text, large_text) << "Data should be identical after restart";
     }
 
-    tm_->commit(verify_xid2);
+    commitTxn(conn_ctx_.get(), &ctx);
 }
 
 // =============================================================================

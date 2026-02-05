@@ -1210,6 +1210,225 @@ SELECT RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION') FROM RDB$DATABASE;  -- FAILS
 
 ---
 
+## Bytecode Emission Rules (Firebird Parser Parity C6)
+
+This section defines the missing Firebird DDL emission rules with fixed opcodes, field sizes, and payload ordering. All numeric fields are little-endian. All strings are SBLR length-prefixed strings emitted via `writeString()` unless stated otherwise.
+
+### ALTER USER
+
+Opcode: `EXT_ALTER_USER` (`0xCB`)
+
+Payload layout:
+```
+u8 selector                 // 0=NAME, 1=CURRENT_USER
+string user_name            // empty when selector=1
+u16 flags
+string password             // present if flags & 0x0001
+string first_name           // present if flags & 0x0002
+string middle_name          // present if flags & 0x0004
+string last_name            // present if flags & 0x0008
+string plugin_name          // present if flags & 0x0020
+u32 tag_count               // present if flags & 0x0100
+repeat tag_count:
+  u8 tag_op                 // 0=SET, 1=DROP
+  string tag_name
+  string tag_value          // empty when tag_op=DROP
+```
+
+Flags:
+- `0x0001` = SET PASSWORD
+- `0x0002` = SET FIRSTNAME
+- `0x0004` = SET MIDDLENAME
+- `0x0008` = SET LASTNAME
+- `0x0010` = GRANT ADMIN ROLE
+- `0x0020` = USING PLUGIN
+- `0x0040` = REVOKE ADMIN ROLE
+- `0x0080` = SET ACTIVE
+- `0x0100` = TAGS PRESENT
+- `0x0200` = SET INACTIVE
+
+Validation rules:
+- `0x0080` and `0x0200` are mutually exclusive.
+- `USING PLUGIN` must be accompanied by at least one additional option.
+- `selector=1` requires `user_name=""`.
+
+### RECREATE USER
+
+Emit as a two-statement sequence:
+- `EXT_DROP_USER` (`0xCC`) with `if_exists=1`.
+- `EXT_CREATE_USER` (`0xCA`) with the same payload as `CREATE USER`.
+
+### ALTER ROLE
+
+Opcode: `EXT_ALTER_ROLE` (`0x02F0`)
+
+Payload layout:
+```
+string role_name
+u8 action
+```
+
+Action values:
+- `0` = SET_AUTO_ADMIN_MAPPING
+- `1` = DROP_AUTO_ADMIN_MAPPING
+
+Validation rules:
+- `role_name` must be `RDB$ADMIN`.
+
+### RECREATE ROLE
+
+Emit as a two-statement sequence:
+- `EXT_DROP_ROLE` (`0xCE`) with `if_exists=1`.
+- `EXT_CREATE_ROLE` (`0xCD`) with the same payload as `CREATE ROLE`.
+
+### CREATE/ALTER/DROP MAPPING (Firebird)
+
+The Firebird mapping grammar uses a dedicated payload and **does not** reuse FDW user mappings. New opcodes must be added.
+
+New opcodes (authoritative, must be added to `opcodes.h`):
+- `EXT_FB_CREATE_MAPPING = 0x02F1`
+- `EXT_FB_ALTER_MAPPING = 0x02F2`
+- `EXT_FB_DROP_MAPPING = 0x02F3`
+
+`EXT_FB_CREATE_MAPPING` payload:
+```
+u8 flags                     // bit0=GLOBAL, bit1=OR_ALTER
+string mapping_name
+u8 using_kind                // 0=PLUGIN, 1=ANY_PLUGIN, 2=MAPPING, 3=ASTERISK
+string plugin_name           // present if using_kind=0
+u8 using_scope               // 0=DEFAULT, 1=IN_DATABASE, 2=SERVERWIDE
+string using_database        // present if using_scope=1
+u8 from_type                 // 0=USER, 1=ROLE
+u8 from_any                  // 0=NAME, 1=ANY
+string from_name             // empty if from_any=1
+u8 to_type                   // 0=USER, 1=ROLE
+string to_name               // empty if omitted
+```
+
+`EXT_FB_ALTER_MAPPING` payload:
+```
+u8 flags                     // bit0=GLOBAL, bit1=reserved (must be 0)
+string mapping_name
+u8 using_kind
+string plugin_name
+u8 using_scope
+string using_database
+u8 from_type
+u8 from_any
+string from_name
+u8 to_type
+string to_name
+```
+
+`EXT_FB_DROP_MAPPING` payload:
+```
+u8 flags                     // bit0=GLOBAL, bit1=IF_EXISTS
+string mapping_name
+```
+
+### RECREATE MAPPING
+
+Emit as a two-statement sequence:
+- `EXT_FB_DROP_MAPPING` with `IF_EXISTS=1`.
+- `EXT_FB_CREATE_MAPPING` with `OR_ALTER=0` and the full mapping payload.
+
+### CREATE/DROP SHADOW
+
+New opcodes (authoritative, must be added to `opcodes.h`):
+- `EXT_FB_CREATE_SHADOW = 0x02F4`
+- `EXT_FB_DROP_SHADOW = 0x02F5`
+
+`EXT_FB_CREATE_SHADOW` payload:
+```
+u32 shadow_number
+u8 flags                     // bit0=AUTO, bit1=CONDITIONAL
+string primary_file
+u32 primary_length_pages     // 0 if omitted
+u32 secondary_count
+repeat secondary_count:
+  string secondary_file
+  u8 sec_flags               // bit0=HAS_STARTING, bit1=HAS_LENGTH
+  u32 starting_page          // present if sec_flags & 0x01
+  u32 length_pages           // present if sec_flags & 0x02
+```
+
+`EXT_FB_DROP_SHADOW` payload:
+```
+u32 shadow_number
+u8 flags                     // bit0=IF_EXISTS, bit1=PRESERVE_FILE, bit2=DELETE_FILE
+```
+
+Rules:
+- If neither `PRESERVE_FILE` nor `DELETE_FILE` is set, the executor MUST treat it as `DELETE_FILE`.
+
+### ALTER/RECREATE SHADOW
+
+Firebird does not provide an `ALTER SHADOW` DDL. Implement `ALTER SHADOW` and `RECREATE SHADOW` as a parser rewrite to DROP+CREATE.
+
+Emit as a two-statement sequence:
+- `EXT_FB_DROP_SHADOW` with `IF_EXISTS=1` and default `DELETE_FILE=1`.
+- `EXT_FB_CREATE_SHADOW` with the full shadow definition.
+
+### ALTER DATABASE OPTIONS
+
+Opcode: `EXT_ALTER_DATABASE` (`0x010D`)
+
+Action byte: `SET_OPTIONS` (`5`)
+
+Payload layout:
+```
+u8 action                    // must be 5
+string database_path
+u32 option_count
+repeat option_count:
+  string option_key
+  string option_value
+```
+
+### ALTER TABLE SET (Firebird)
+
+These are emitted as `Opcode::ALTER_TABLE` with new action bytes and fixed payloads.
+
+Action byte values (authoritative):
+- `15` = ALTER_COLUMN_SET_DEFAULT
+- `16` = ALTER_COLUMN_DROP_DEFAULT
+- `17` = ALTER_COLUMN_SET_NOT_NULL
+- `18` = ALTER_COLUMN_DROP_NOT_NULL
+- `21` = ALTER_COLUMN_POSITION
+
+Payloads:
+```
+ALTER_COLUMN_SET_DEFAULT:
+  string table_name
+  u8 action=15
+  string column_name
+  u32 expr_len
+  bytes expr_bytecode
+
+ALTER_COLUMN_DROP_DEFAULT:
+  string table_name
+  u8 action=16
+  string column_name
+
+ALTER_COLUMN_SET_NOT_NULL:
+  string table_name
+  u8 action=17
+  string column_name
+
+ALTER_COLUMN_DROP_NOT_NULL:
+  string table_name
+  u8 action=18
+  string column_name
+
+ALTER_COLUMN_POSITION:
+  string table_name
+  u8 action=21
+  string column_name
+  u32 position_1_based
+```
+
+---
+
 ## References
 
 ### Firebird Documentation

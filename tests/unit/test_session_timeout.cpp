@@ -12,8 +12,11 @@
 #include "scratchbird/core/status.h"
 #include <thread>
 #include <chrono>
+#include <ctime>
 
 using namespace scratchbird::core;
+using SessionTimeoutConfig = CatalogManager::SessionTimeoutConfig;
+using SessionInfo = CatalogManager::SessionInfo;
 
 class SessionTimeoutTest : public ::testing::Test {
 protected:

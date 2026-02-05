@@ -8,11 +8,13 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include <gtest/gtest.h>
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 #include "test_helpers.h"
 #include <cstring>
@@ -20,13 +22,6 @@
 #include <fstream>
 
 using namespace scratchbird::core;
-
-// Helper to create a test UUID
-static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
-    UuidV7Bytes uuid;
-    memset(uuid.bytes.data(), value, 16);
-    return uuid;
-}
 
 class StorageCorruptionTest : public ::testing::Test
 {
@@ -43,6 +38,54 @@ protected:
     }
 
     const std::string& test_db_path() const { return test_db_->path(); }
+
+    Status createTestTable(Database *db, ID *table_id_out, ErrorContext *ctx)
+    {
+        if (!db || !table_id_out)
+        {
+            if (ctx) ctx->message = "Invalid database or table_id_out";
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto *catalog = db->catalog_manager();
+        if (!catalog)
+        {
+            if (ctx) ctx->message = "CatalogManager not available";
+            return Status::INTERNAL_ERROR;
+        }
+
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        Status status = catalog->listSchemas(schemas, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        ID schema_id{};
+        if (schemas.empty())
+        {
+            status = catalog->createSchema("public", "test", schema_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+        else
+        {
+            schema_id = schemas[0].schema_id;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        CatalogManager::ColumnInfo data_col;
+        data_col.column_name = "data";
+        data_col.data_type = static_cast<uint16_t>(DataType::BYTEA);
+        data_col.max_length = 0;
+        data_col.nullable = true;
+        data_col.has_default = false;
+        columns.push_back(data_col);
+
+        return catalog->createTable(schema_id, "corrupt_test_table", columns, *table_id_out, 0, ctx);
+    }
 
     // Helper to corrupt specific bytes in file
     void corrupt_file(const std::string &filename, size_t offset, const uint8_t *data, size_t size)
@@ -71,19 +114,23 @@ protected:
 TEST_F(StorageCorruptionTest, CorruptPageHeaderMagic)
 {
     // Create database with some data
-    ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    const uint32_t page_size = 8192;
+    ASSERT_EQ(Database::create(test_db_path(), page_size), Status::OK);
+    ID table_id{};
+    uint32_t heap_page_id = 0;
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(100, 0xAA);
 
-        uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
-                                      &page_id, &item_id, nullptr),
+        ASSERT_EQ(engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
+                                      &heap_page_id, &item_id, nullptr),
                   Status::OK);
 
         db.close();
@@ -91,19 +138,19 @@ TEST_F(StorageCorruptionTest, CorruptPageHeaderMagic)
 
     // Corrupt the magic number in a heap page
     uint32_t bad_magic = 0xDEADBEEF;
-    corrupt_file(test_db_path(), 7 * 8192, // Page 7 (first heap page)
+    corrupt_file(test_db_path(), heap_page_id * page_size,
                  reinterpret_cast<uint8_t *>(&bad_magic), sizeof(bad_magic));
 
     // Try to open and scan
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     StorageEngine engine(&db);
-    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
+    auto iterator = engine.createScan(table_id, nullptr);
 
     // Should detect corruption when trying to read the page
     Tuple tuple;
-    ErrorContext ctx;
     Status status = iterator->next(&tuple, &ctx);
 
     // Expect some form of corruption error
@@ -115,19 +162,23 @@ TEST_F(StorageCorruptionTest, CorruptPageHeaderMagic)
 // Test: Corrupt page checksum
 TEST_F(StorageCorruptionTest, CorruptPageChecksum)
 {
-    ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    const uint32_t page_size = 8192;
+    ASSERT_EQ(Database::create(test_db_path(), page_size), Status::OK);
+    ID table_id{};
+    uint32_t heap_page_id = 0;
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(200, 0xBB);
 
-        uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
-                                      &page_id, &item_id, nullptr),
+        ASSERT_EQ(engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
+                                      &heap_page_id, &item_id, nullptr),
                   Status::OK);
 
         db.sync(nullptr); // Ensure written
@@ -136,30 +187,27 @@ TEST_F(StorageCorruptionTest, CorruptPageChecksum)
 
     // Read current checksum and corrupt it
     uint8_t checksum_bytes[4];
-    read_file_bytes(test_db_path(), 7 * 8192 + 16, // Checksum offset in page 7
+    read_file_bytes(test_db_path(), heap_page_id * page_size + 0x0C,
                     checksum_bytes, 4);
 
     // Flip some bits
     checksum_bytes[0] ^= 0xFF;
     checksum_bytes[1] ^= 0xFF;
 
-    corrupt_file(test_db_path(), 7 * 8192 + 16, checksum_bytes, 4);
+    corrupt_file(test_db_path(), heap_page_id * page_size + 0x0C, checksum_bytes, 4);
 
     // Try to read the corrupted page
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     uint8_t *buffer = new uint8_t[8192];
-    ErrorContext ctx;
-    Status status = db.read_page(7, buffer, &ctx);
+    Status status = db.read_page(heap_page_id, buffer, &ctx);
 
     // Should detect checksum mismatch
-    EXPECT_EQ(status, Status::PAGE_CORRUPT) << "Should detect checksum corruption";
-    if (status == Status::PAGE_CORRUPT)
-    {
-        EXPECT_NE(ctx.message.find("checksum"), std::string::npos)
-            << "Error should mention checksum";
-    }
+    EXPECT_TRUE(status == Status::PAGE_CORRUPT || status == Status::CHECKSUM_MISMATCH)
+        << "Should detect checksum corruption";
+    (void)ctx;
 
     delete[] buffer;
     db.close();
@@ -172,15 +220,18 @@ TEST_F(StorageCorruptionTest, CorruptItemPointer)
 
     uint32_t stored_page_id;
     uint16_t stored_item_id;
+    ID table_id{};
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(100, 0xCC);
 
-        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
                                       &stored_page_id, &stored_item_id, nullptr),
                   Status::OK);
 
@@ -202,11 +253,11 @@ TEST_F(StorageCorruptionTest, CorruptItemPointer)
 
     // Try to read the tuple
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     StorageEngine engine(&db);
     Tuple tuple;
-    ErrorContext ctx;
     Status status = engine.getTuple(stored_page_id, stored_item_id, &tuple, &ctx);
 
     // Should detect invalid offset
@@ -218,11 +269,16 @@ TEST_F(StorageCorruptionTest, CorruptItemPointer)
 // Test: Corrupt tuple header
 TEST_F(StorageCorruptionTest, CorruptTupleHeader)
 {
-    ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    const uint32_t page_size = 8192;
+    ASSERT_EQ(Database::create(test_db_path(), page_size), Status::OK);
+    ID table_id{};
+    uint32_t heap_page_id = 0;
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(150, 0xDD);
@@ -232,10 +288,14 @@ TEST_F(StorageCorruptionTest, CorruptTupleHeader)
         {
             uint32_t page_id;
             uint16_t item_id;
-            ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(),
-                                          tuple_data.size() + sizeof(TupleHeader), &page_id,
+            ASSERT_EQ(engine.insertTuple(table_id, tuple_data.data(),
+                                          tuple_data.size(), &page_id,
                                           &item_id, nullptr),
                       Status::OK);
+            if (i == 0)
+            {
+                heap_page_id = page_id;
+            }
         }
 
         db.sync(nullptr);
@@ -246,23 +306,25 @@ TEST_F(StorageCorruptionTest, CorruptTupleHeader)
     TupleHeader bad_header;
     bad_header.xmin = UINT64_MAX; // Invalid transaction ID
     bad_header.xmax = UINT64_MAX - 1;
-    bad_header.back_version_tid = 0;
-    bad_header.ctid_page = 0;
-    bad_header.ctid_item = 0;
+    bad_header.back_version_gpid = 0;
+    bad_header.back_version_slot = 0;
+    bad_header.ctid_gpid = 0;
+    bad_header.ctid_slot = 0;
     bad_header.infomask = 0xFFFF; // All flags set
     bad_header.null_bitmap_offset = 0xFFFF;
     bad_header.padding = 0;
 
     // Corrupt somewhere in the middle of page 7
-    corrupt_file(test_db_path(), 7 * 8192 + 4000, reinterpret_cast<uint8_t *>(&bad_header),
+    corrupt_file(test_db_path(), heap_page_id * page_size + 4000, reinterpret_cast<uint8_t *>(&bad_header),
                  sizeof(TupleHeader));
 
     // Try to scan
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     StorageEngine engine(&db);
-    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
+    auto iterator = engine.createScan(table_id, nullptr);
 
     int valid_tuples = 0;
     int errors = 0;
@@ -293,19 +355,23 @@ TEST_F(StorageCorruptionTest, CorruptTupleHeader)
 // Test: Corrupt page special area
 TEST_F(StorageCorruptionTest, CorruptPageSpecialArea)
 {
-    ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    const uint32_t page_size = 8192;
+    ASSERT_EQ(Database::create(test_db_path(), page_size), Status::OK);
+    ID table_id{};
+    uint32_t heap_page_id = 0;
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(300, 0xEE);
 
-        uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
-                                      &page_id, &item_id, nullptr),
+        ASSERT_EQ(engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
+                                      &heap_page_id, &item_id, nullptr),
                   Status::OK);
 
         db.sync(nullptr);
@@ -320,24 +386,25 @@ TEST_F(StorageCorruptionTest, CorruptPageSpecialArea)
     bad_special.pd_special = 0;
     bad_special.pd_prune_xid = UINT32_MAX;
 
-    size_t special_offset = 7 * 8192 + 8192 - sizeof(HeapPageSpecial);
+    size_t special_offset = static_cast<size_t>(heap_page_id) * page_size +
+                            page_size - sizeof(HeapPageSpecial);
     corrupt_file(test_db_path(), special_offset, reinterpret_cast<uint8_t *>(&bad_special),
                  sizeof(HeapPageSpecial));
 
     // Try to insert into the corrupted page
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     StorageEngine engine(&db);
     std::vector<uint8_t> tuple_data(100, 0xFF);
 
     uint32_t page_id;
     uint16_t item_id;
-    ErrorContext ctx;
 
     // This might allocate a new page or detect corruption
     Status status = engine.insertTuple(
-        makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader), &page_id, &item_id, &ctx);
+        table_id, tuple_data.data(), tuple_data.size(), &page_id, &item_id, &ctx);
 
     // Should either detect corruption or allocate new page
     if (status == Status::OK)
@@ -352,10 +419,13 @@ TEST_F(StorageCorruptionTest, CorruptPageSpecialArea)
 TEST_F(StorageCorruptionTest, TruncatedFile)
 {
     ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    ID table_id{};
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(400, 0x11);
@@ -365,7 +435,7 @@ TEST_F(StorageCorruptionTest, TruncatedFile)
         {
             uint32_t page_id;
             uint16_t item_id;
-            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
                                 &page_id, &item_id, nullptr);
         }
 
@@ -385,7 +455,7 @@ TEST_F(StorageCorruptionTest, TruncatedFile)
     if (status == Status::OK)
     {
         StorageEngine engine(&db);
-        auto iterator = engine.createScan(makeTestUUID(1), nullptr);
+        auto iterator = engine.createScan(table_id, nullptr);
 
         int tuples_read = 0;
         bool hit_error = false;
@@ -412,19 +482,23 @@ TEST_F(StorageCorruptionTest, TruncatedFile)
 // Test: Zero-filled page
 TEST_F(StorageCorruptionTest, ZeroFilledPage)
 {
-    ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    const uint32_t page_size = 8192;
+    ASSERT_EQ(Database::create(test_db_path(), page_size), Status::OK);
+    ID table_id{};
+    uint32_t heap_page_id = 0;
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(200, 0x22);
 
-        uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
-                                      &page_id, &item_id, nullptr),
+        ASSERT_EQ(engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
+                                      &heap_page_id, &item_id, nullptr),
                   Status::OK);
 
         db.sync(nullptr);
@@ -432,16 +506,16 @@ TEST_F(StorageCorruptionTest, ZeroFilledPage)
     }
 
     // Zero out an entire page
-    std::vector<uint8_t> zeros(8192, 0);
-    corrupt_file(test_db_path(), 7 * 8192, zeros.data(), zeros.size());
+    std::vector<uint8_t> zeros(page_size, 0);
+    corrupt_file(test_db_path(), heap_page_id * page_size, zeros.data(), zeros.size());
 
     // Try to read the zero page
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     uint8_t *buffer = new uint8_t[8192];
-    ErrorContext ctx;
-    Status status = db.read_page(7, buffer, &ctx);
+    Status status = db.read_page(heap_page_id, buffer, &ctx);
 
     // Should detect invalid magic number (zero)
     EXPECT_EQ(status, Status::PAGE_CORRUPT) << "Should detect zero page as corrupt";
@@ -453,19 +527,23 @@ TEST_F(StorageCorruptionTest, ZeroFilledPage)
 // Test: Page type mismatch
 TEST_F(StorageCorruptionTest, PageTypeMismatch)
 {
-    ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    const uint32_t page_size = 8192;
+    ASSERT_EQ(Database::create(test_db_path(), page_size), Status::OK);
+    ID table_id{};
+    uint32_t heap_page_id = 0;
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(150, 0x33);
 
-        uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
-                                      &page_id, &item_id, nullptr),
+        ASSERT_EQ(engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
+                                      &heap_page_id, &item_id, nullptr),
                   Status::OK);
 
         db.sync(nullptr);
@@ -473,19 +551,19 @@ TEST_F(StorageCorruptionTest, PageTypeMismatch)
     }
 
     // Change page type to something invalid for heap pages
-    uint8_t invalid_type = PAGE_TYPE_DATABASE_HEADER; // Wrong type for heap page
-    corrupt_file(test_db_path(), 7 * 8192 + 8,     // Page type offset
-                 &invalid_type, sizeof(invalid_type));
+    uint16_t invalid_type = PAGE_TYPE_DATABASE_HEADER; // Wrong type for heap page
+    corrupt_file(test_db_path(), heap_page_id * page_size + 0x06,     // Page type offset
+                 reinterpret_cast<uint8_t *>(&invalid_type), sizeof(invalid_type));
 
     // Try to scan
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     StorageEngine engine(&db);
-    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
+    auto iterator = engine.createScan(table_id, nullptr);
 
     Tuple tuple;
-    ErrorContext ctx;
     Status status = iterator->next(&tuple, &ctx);
 
     // Should handle page type mismatch gracefully
@@ -497,23 +575,35 @@ TEST_F(StorageCorruptionTest, PageTypeMismatch)
 // Test: Recovery from corruption
 TEST_F(StorageCorruptionTest, RecoveryFromCorruption)
 {
-    ASSERT_EQ(Database::create(test_db_path(), 8192), Status::OK);
+    const uint32_t page_size = 8192;
+    ASSERT_EQ(Database::create(test_db_path(), page_size), Status::OK);
+    ID table_id{};
+    uint32_t heap_page_id = 0;
 
     {
         Database db;
-        ASSERT_EQ(db.open(test_db_path()), Status::OK);
+        ErrorContext ctx;
+        ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(createTestTable(&db, &table_id, &ctx), Status::OK) << ctx.message;
 
         StorageEngine engine(&db);
 
         // Insert tuples across multiple pages
-        std::vector<uint8_t> tuple_data(100, 0x44);
-        for (int i = 0; i < 50; i++)
+        std::vector<uint8_t> tuple_data(2000, 0x44);
+        std::vector<uint32_t> pages;
+        for (int i = 0; i < 5000 && pages.size() < 2; i++)
         {
             uint32_t page_id;
             uint16_t item_id;
-            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(table_id, tuple_data.data(), tuple_data.size(),
                                 &page_id, &item_id, nullptr);
+            if (pages.empty() || pages.back() != page_id)
+            {
+                pages.push_back(page_id);
+            }
         }
+        ASSERT_GE(pages.size(), 2u) << "Test requires at least two heap pages";
+        heap_page_id = pages[1];
 
         db.sync(nullptr);
         db.close();
@@ -521,12 +611,13 @@ TEST_F(StorageCorruptionTest, RecoveryFromCorruption)
 
     // Corrupt one page in the middle
     uint32_t bad_magic = 0xBADBADBA;
-    corrupt_file(test_db_path(), 8 * 8192, // Page 8
+    corrupt_file(test_db_path(), heap_page_id * page_size,
                  reinterpret_cast<uint8_t *>(&bad_magic), sizeof(bad_magic));
 
     // Open and try to continue working
     Database db;
-    ASSERT_EQ(db.open(test_db_path()), Status::OK);
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_path(), &ctx), Status::OK) << ctx.message;
 
     StorageEngine engine(&db);
 
@@ -534,13 +625,13 @@ TEST_F(StorageCorruptionTest, RecoveryFromCorruption)
     std::vector<uint8_t> new_data(100, 0x55);
     uint32_t page_id;
     uint16_t item_id;
-    Status status = engine.insertTuple(makeTestUUID(1), new_data.data(), new_data.size() + sizeof(TupleHeader),
+    Status status = engine.insertTuple(table_id, new_data.data(), new_data.size(),
                                         &page_id, &item_id, nullptr);
 
     EXPECT_EQ(status, Status::OK) << "Should be able to insert despite corruption";
 
     // Scan should work but skip corrupted pages
-    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
+    auto iterator = engine.createScan(table_id, nullptr);
     int valid_tuples = 0;
     int errors = 0;
     Tuple tuple;

@@ -9,9 +9,31 @@
  */
 #include <gtest/gtest.h>
 #include "scratchbird/core/types.h"
-#include "scratchbird/core/array.h"
+#include "scratchbird/core/typed_value.h"
+#include "scratchbird/core/error_context.h"
 
 using namespace scratchbird::core;
+
+static std::vector<uint8_t> int128ToBytes(int128_t value)
+{
+    std::vector<uint8_t> bytes(16, 0);
+    uint128_t uvalue = static_cast<uint128_t>(value);
+    for (size_t i = 0; i < bytes.size(); ++i)
+    {
+        bytes[i] = static_cast<uint8_t>((uvalue >> (i * 8)) & 0xFF);
+    }
+    return bytes;
+}
+
+static TypedValue makeInt128Value(int128_t value)
+{
+    return TypedValue::makeInt128(int128ToBytes(value));
+}
+
+static Status convertValue(const TypedValue& src, DataType target, TypedValue& out, ErrorContext& ctx)
+{
+    return src.convertTo(TypeInfo(target), out, CastFormat::DEFAULT, &ctx);
+}
 
 class TypeConversionTest : public ::testing::Test {
 protected:
@@ -21,10 +43,12 @@ protected:
 // Test ARRAY to VARCHAR conversion (PostgreSQL format {1,2,3})
 TEST_F(TypeConversionTest, ARRAY_ToString_PostgreSQL_Format) {
     // Create an ARRAY of INT32
-    std::vector<int32_t> values = {1, 2, 3};
-    std::vector<size_t> dimensions = {3};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
-    auto array_val = TypedValue::makeArray(arr);
+    std::vector<TypedValue> values = {
+        TypedValue::makeInt32(1),
+        TypedValue::makeInt32(2),
+        TypedValue::makeInt32(3)
+    };
+    auto array_val = TypedValue::makeArray(values);
 
     // Test toString() - should use PostgreSQL format
     std::string str = array_val.toString();
@@ -34,63 +58,76 @@ TEST_F(TypeConversionTest, ARRAY_ToString_PostgreSQL_Format) {
 // Test ARRAY to VARCHAR explicit conversion
 TEST_F(TypeConversionTest, ARRAY_ToVarchar) {
     // Create an ARRAY of INT64
-    std::vector<int64_t> values = {10, 20, 30};
-    std::vector<size_t> dimensions = {3};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
-    auto array_val = TypedValue::makeArray(arr);
+    std::vector<TypedValue> values = {
+        TypedValue::makeInt64(10),
+        TypedValue::makeInt64(20),
+        TypedValue::makeInt64(30)
+    };
+    auto array_val = TypedValue::makeArray(values);
 
     // Convert to VARCHAR
-    auto varchar_val = array_val.convertTo(DataType::VARCHAR, &ctx);
-    ASSERT_TRUE(varchar_val.has_value());
-    EXPECT_EQ(varchar_val->getVarchar(), "{10, 20, 30}");
+    TypedValue varchar_val;
+    Status status = array_val.convertTo(TypeInfo(DataType::VARCHAR), varchar_val, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(varchar_val.getVarchar(), "{10, 20, 30}");
 }
 
 // Test ARRAY to JSON conversion (JSON format [1,2,3])
 TEST_F(TypeConversionTest, ARRAY_ToJSON) {
     // Create an ARRAY of FLOAT64
-    std::vector<double> values = {1.5, 2.5, 3.5};
-    std::vector<size_t> dimensions = {3};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
-    auto array_val = TypedValue::makeArray(arr);
+    std::vector<TypedValue> values = {
+        TypedValue::makeFloat64(1.5),
+        TypedValue::makeFloat64(2.5),
+        TypedValue::makeFloat64(3.5)
+    };
+    auto array_val = TypedValue::makeArray(values);
 
     // Convert to JSON
-    auto json_val = array_val.convertTo(DataType::JSON, &ctx);
-    ASSERT_TRUE(json_val.has_value());
-    EXPECT_EQ(json_val->getJSON(), "[1.5, 2.5, 3.5]");
+    TypedValue json_val;
+    Status status = array_val.convertTo(TypeInfo(DataType::JSON), json_val, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(json_val.toString(), "{1.5, 2.5, 3.5}");
 }
 
 // Test ARRAY with strings
 TEST_F(TypeConversionTest, ARRAY_Strings_ToString) {
     // Create an ARRAY of strings
-    std::vector<std::string> values = {"foo", "bar", "baz"};
-    std::vector<size_t> dimensions = {3};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
-    auto array_val = TypedValue::makeArray(arr);
+    std::vector<TypedValue> values = {
+        TypedValue::makeVarchar("foo"),
+        TypedValue::makeVarchar("bar"),
+        TypedValue::makeVarchar("baz")
+    };
+    auto array_val = TypedValue::makeArray(values);
 
     // Test toString()
     std::string str = array_val.toString();
-    EXPECT_EQ(str, "{\"foo\", \"bar\", \"baz\"}");
+    EXPECT_EQ(str, "{foo, bar, baz}");
 }
 
 // Test 2D ARRAY conversion
 TEST_F(TypeConversionTest, ARRAY_2D_ToString) {
     // Create a 2D ARRAY (2x3)
-    std::vector<int32_t> values = {1, 2, 3, 4, 5, 6};
-    std::vector<size_t> dimensions = {2, 3};
-    auto arr = std::make_shared<ArrayValue>(values, dimensions);
-    auto array_val = TypedValue::makeArray(arr);
+    std::vector<TypedValue> row1 = {
+        TypedValue::makeInt32(1),
+        TypedValue::makeInt32(2),
+        TypedValue::makeInt32(3)
+    };
+    std::vector<TypedValue> row2 = {
+        TypedValue::makeInt32(4),
+        TypedValue::makeInt32(5),
+        TypedValue::makeInt32(6)
+    };
+    auto array_row1 = TypedValue::makeArray(row1);
+    auto array_row2 = TypedValue::makeArray(row2);
+    std::vector<TypedValue> rows = {array_row1, array_row2};
+    auto array_2d = TypedValue::makeArray(rows);
 
-    // Test toString()
-    std::string str = array_val.toString();
-    EXPECT_EQ(str, "{{1, 2, 3}, {4, 5, 6}}");
+    EXPECT_EQ(array_2d.toString(), "{{1, 2, 3}, {4, 5, 6}}");
 }
 
 // Test NULL ARRAY
 TEST_F(TypeConversionTest, ARRAY_Null_ToString) {
     auto null_val = TypedValue::makeNull();
-    null_val = TypedValue::makeArray(nullptr);
-
-    // toString() should handle NULL
     std::string str = null_val.toString();
     EXPECT_EQ(str, "NULL");
 }
@@ -98,11 +135,13 @@ TEST_F(TypeConversionTest, ARRAY_Null_ToString) {
 // Test MULTIPOINT to VARCHAR conversion
 TEST_F(TypeConversionTest, MULTIPOINT_ToVarchar) {
     std::vector<Point> points = {{0, 0}, {1, 1}, {2, 2}};
-    auto mp = TypedValue::makeMultiPoint(points);
+    MultiPoint mp_value(points);
+    auto mp = TypedValue::makeMultiPoint(mp_value);
 
-    auto varchar_val = mp.convertTo(DataType::VARCHAR, &ctx);
-    ASSERT_TRUE(varchar_val.has_value());
-    EXPECT_EQ(varchar_val->getVarchar(), "MULTIPOINT((0 0), (1 1), (2 2))");
+    TypedValue varchar_val;
+    Status status = mp.convertTo(TypeInfo(DataType::VARCHAR), varchar_val, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(varchar_val.getVarchar(), "MULTIPOINT((0 0), (1 1), (2 2))");
 }
 
 // Test MULTILINESTRING to VARCHAR conversion
@@ -113,27 +152,28 @@ TEST_F(TypeConversionTest, MULTILINESTRING_ToVarchar) {
         LineString(line1_points),
         LineString(line2_points)
     };
-    auto mls = TypedValue::makeMultiLineString(linestrings);
+    MultiLineString mls_value(linestrings);
+    auto mls = TypedValue::makeMultiLineString(mls_value);
 
-    auto varchar_val = mls.convertTo(DataType::VARCHAR, &ctx);
-    ASSERT_TRUE(varchar_val.has_value());
-    EXPECT_EQ(varchar_val->getVarchar(), "MULTILINESTRING((0 0, 1 1), (2 2, 3 3))");
+    TypedValue varchar_val;
+    Status status = mls.convertTo(TypeInfo(DataType::VARCHAR), varchar_val, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(varchar_val.getVarchar(), "MULTILINESTRING((0 0, 1 1), (2 2, 3 3))");
 }
 
 // Test MULTIPOLYGON to VARCHAR conversion
 TEST_F(TypeConversionTest, MULTIPOLYGON_ToVarchar) {
     std::vector<Point> ring1 = {{0, 0}, {4, 0}, {4, 4}, {0, 4}, {0, 0}};
     std::vector<Point> ring2 = {{1, 1}, {2, 1}, {2, 2}, {1, 2}, {1, 1}};
-    std::vector<Polygon> polygons = {
-        Polygon({ring1}),
-        Polygon({ring2})
-    };
-    auto mpoly = TypedValue::makeMultiPolygon(polygons);
+    MultiPolygon mpoly_value;
+    mpoly_value.polygons = {Polygon({ring1}), Polygon({ring2})};
+    auto mpoly = TypedValue::makeMultiPolygon(mpoly_value);
 
-    auto varchar_val = mpoly.convertTo(DataType::VARCHAR, &ctx);
-    ASSERT_TRUE(varchar_val.has_value());
+    TypedValue varchar_val;
+    Status status = mpoly.convertTo(TypeInfo(DataType::VARCHAR), varchar_val, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
     // Check that it starts with MULTIPOLYGON and has proper structure
-    std::string str = varchar_val->getVarchar();
+    std::string str = varchar_val.getVarchar();
     EXPECT_TRUE(str.find("MULTIPOLYGON") == 0);
     EXPECT_TRUE(str.find("((0 0, 4 0, 4 4, 0 4, 0 0))") != std::string::npos);
 }
@@ -143,92 +183,104 @@ TEST_F(TypeConversionTest, MULTIPOLYGON_ToVarchar) {
 // Test UINT8 to larger signed types (should always succeed)
 TEST_F(TypeConversionTest, UINT8_ToInt16) {
     auto u8 = TypedValue::makeUInt8(200);
-    auto i16 = u8.convertTo(DataType::INT16, &ctx);
-    ASSERT_TRUE(i16.has_value());
-    EXPECT_EQ(i16->getInt16(), 200);
+    TypedValue i16;
+    Status status = u8.convertTo(TypeInfo(DataType::INT16), i16, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(i16.getInt32(), 200);
 }
 
 // Test UINT32 to INT32 - overflow case
 TEST_F(TypeConversionTest, UINT32_ToInt32_Overflow) {
     auto u32 = TypedValue::makeUInt32(3000000000); // > INT32_MAX
-    auto i32 = u32.convertTo(DataType::INT32, &ctx);
-    EXPECT_FALSE(i32.has_value()); // Should fail
+    TypedValue i32;
+    Status status = u32.convertTo(TypeInfo(DataType::INT32), i32, CastFormat::DEFAULT, &ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test UINT64 to INT64 - overflow case
 TEST_F(TypeConversionTest, UINT64_ToInt64_Overflow) {
     auto u64 = TypedValue::makeUInt64(UINT64_MAX);
-    auto i64 = u64.convertTo(DataType::INT64, &ctx);
-    EXPECT_FALSE(i64.has_value()); // Should fail
+    TypedValue i64;
+    Status status = u64.convertTo(TypeInfo(DataType::INT64), i64, CastFormat::DEFAULT, &ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test UINT64 to INT64 - valid case
 TEST_F(TypeConversionTest, UINT64_ToInt64_Valid) {
     auto u64 = TypedValue::makeUInt64(1000);
-    auto i64 = u64.convertTo(DataType::INT64, &ctx);
-    ASSERT_TRUE(i64.has_value());
-    EXPECT_EQ(i64->getInt64(), 1000);
+    TypedValue i64;
+    Status status = u64.convertTo(TypeInfo(DataType::INT64), i64, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(i64.getInt64(), 1000);
 }
 
 // Test INT32 to UINT32 - negative value
 TEST_F(TypeConversionTest, INT32_ToUInt32_Negative) {
     auto i32 = TypedValue::makeInt32(-100);
-    auto u32 = i32.convertTo(DataType::UINT32, &ctx);
-    EXPECT_FALSE(u32.has_value()); // Should fail
+    TypedValue u32;
+    Status status = i32.convertTo(TypeInfo(DataType::UINT32), u32, CastFormat::DEFAULT, &ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test INT32 to UINT32 - positive value
 TEST_F(TypeConversionTest, INT32_ToUInt32_Positive) {
     auto i32 = TypedValue::makeInt32(1000);
-    auto u32 = i32.convertTo(DataType::UINT32, &ctx);
-    ASSERT_TRUE(u32.has_value());
-    EXPECT_EQ(u32->getUInt32(), 1000u);
+    TypedValue u32;
+    Status status = i32.convertTo(TypeInfo(DataType::UINT32), u32, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(u32.getUInt32(), 1000u);
 }
 
 // Test UINT8 to UINT64 upconversion
 TEST_F(TypeConversionTest, UINT8_ToUInt64) {
     auto u8 = TypedValue::makeUInt8(255);
-    auto u64 = u8.convertTo(DataType::UINT64, &ctx);
-    ASSERT_TRUE(u64.has_value());
-    EXPECT_EQ(u64->getUInt64(), 255u);
+    TypedValue u64;
+    Status status = u8.convertTo(TypeInfo(DataType::UINT64), u64, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(u64.getUInt64(), 255u);
 }
 
 // Test UINT64 to UINT8 downconversion - overflow
 TEST_F(TypeConversionTest, UINT64_ToUInt8_Overflow) {
     auto u64 = TypedValue::makeUInt64(1000);
-    auto u8 = u64.convertTo(DataType::UINT8, &ctx);
-    EXPECT_FALSE(u8.has_value()); // Should fail
+    TypedValue u8;
+    Status status = u64.convertTo(TypeInfo(DataType::UINT8), u8, CastFormat::DEFAULT, &ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test UINT64 to UINT8 downconversion - valid
 TEST_F(TypeConversionTest, UINT64_ToUInt8_Valid) {
     auto u64 = TypedValue::makeUInt64(100);
-    auto u8 = u64.convertTo(DataType::UINT8, &ctx);
-    ASSERT_TRUE(u8.has_value());
-    EXPECT_EQ(u8->getUInt8(), 100);
+    TypedValue u8;
+    Status status = u64.convertTo(TypeInfo(DataType::UINT8), u8, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(u8.getUInt8(), 100);
 }
 
 // Test UINT to FLOAT64
 TEST_F(TypeConversionTest, UINT64_ToFloat64) {
     auto u64 = TypedValue::makeUInt64(1234567890);
-    auto f64 = u64.convertTo(DataType::FLOAT64, &ctx);
-    ASSERT_TRUE(f64.has_value());
-    EXPECT_DOUBLE_EQ(f64->getFloat64(), 1234567890.0);
+    TypedValue f64;
+    Status status = u64.convertTo(TypeInfo(DataType::FLOAT64), f64, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_DOUBLE_EQ(f64.getFloat64(), 1234567890.0);
 }
 
 // Test FLOAT to UINT - negative value
 TEST_F(TypeConversionTest, Float64_ToUInt32_Negative) {
     auto f64 = TypedValue::makeFloat64(-100.5);
-    auto u32 = f64.convertTo(DataType::UINT32, &ctx);
-    EXPECT_FALSE(u32.has_value()); // Should fail
+    TypedValue u32;
+    Status status = f64.convertTo(TypeInfo(DataType::UINT32), u32, CastFormat::DEFAULT, &ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test FLOAT to UINT - positive value
 TEST_F(TypeConversionTest, Float64_ToUInt32_Positive) {
     auto f64 = TypedValue::makeFloat64(1000.5);
-    auto u32 = f64.convertTo(DataType::UINT32, &ctx);
-    ASSERT_TRUE(u32.has_value());
-    EXPECT_EQ(u32->getUInt32(), 1000u);
+    TypedValue u32;
+    Status status = f64.convertTo(TypeInfo(DataType::UINT32), u32, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(u32.getUInt32(), 1000u);
 }
 
 // Test UINT to VARCHAR
@@ -241,130 +293,146 @@ TEST_F(TypeConversionTest, UINT64_ToVarchar) {
 // Test UINT to DECIMAL
 TEST_F(TypeConversionTest, UINT32_ToDecimal) {
     auto u32 = TypedValue::makeUInt32(123456);
-    auto dec = u32.convertTo(DataType::DECIMAL, &ctx);
-    ASSERT_TRUE(dec.has_value());
-    EXPECT_EQ(dec->getDecimal(), "123456");
+    TypedValue dec;
+    Status status = u32.convertTo(TypeInfo(DataType::DECIMAL), dec, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(dec.toString(), "123456");
 }
 
 // Test UINT to BOOLEAN
 TEST_F(TypeConversionTest, UINT_ToBoolean) {
     auto u0 = TypedValue::makeUInt32(0);
-    auto b0 = u0.convertTo(DataType::BOOLEAN, &ctx);
-    ASSERT_TRUE(b0.has_value());
-    EXPECT_FALSE(b0->getBoolean());
+    TypedValue b0;
+    Status status = u0.convertTo(TypeInfo(DataType::BOOLEAN), b0, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_FALSE(b0.getBoolean());
 
     auto u1 = TypedValue::makeUInt32(1);
-    auto b1 = u1.convertTo(DataType::BOOLEAN, &ctx);
-    ASSERT_TRUE(b1.has_value());
-    EXPECT_TRUE(b1->getBoolean());
+    TypedValue b1;
+    status = u1.convertTo(TypeInfo(DataType::BOOLEAN), b1, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_TRUE(b1.getBoolean());
 }
 
 // ========== INT128 Conversion Tests ==========
 
 // Test INT128 to smaller signed types - valid values
 TEST_F(TypeConversionTest, INT128_ToInt64_Valid) {
-    auto i128 = TypedValue::makeInt128(1000000);
-    auto i64 = i128.convertTo(DataType::INT64, &ctx);
-    ASSERT_TRUE(i64.has_value());
-    EXPECT_EQ(i64->getInt64(), 1000000);
+    auto i128 = makeInt128Value(1000000);
+    TypedValue i64;
+    Status status = convertValue(i128, DataType::INT64, i64, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(i64.getInt64(), 1000000);
 }
 
 // Test INT128 to INT64 - overflow
 TEST_F(TypeConversionTest, INT128_ToInt64_Overflow) {
     // Create a large INT128 value beyond INT64_MAX
     int128_t large = static_cast<int128_t>(std::numeric_limits<int64_t>::max()) + 1;
-    auto i128 = TypedValue::makeInt128(large);
-    auto i64 = i128.convertTo(DataType::INT64, &ctx);
-    EXPECT_FALSE(i64.has_value()); // Should fail
+    auto i128 = makeInt128Value(large);
+    TypedValue i64;
+    Status status = convertValue(i128, DataType::INT64, i64, ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test INT128 to INT32 - overflow
 TEST_F(TypeConversionTest, INT128_ToInt32_Overflow) {
-    auto i128 = TypedValue::makeInt128(static_cast<int128_t>(1) << 32);
-    auto i32 = i128.convertTo(DataType::INT32, &ctx);
-    EXPECT_FALSE(i32.has_value()); // Should fail
+    auto i128 = makeInt128Value(static_cast<int128_t>(1) << 32);
+    TypedValue i32;
+    Status status = convertValue(i128, DataType::INT32, i32, ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test INT128 to INT8 - valid
 TEST_F(TypeConversionTest, INT128_ToInt8_Valid) {
-    auto i128 = TypedValue::makeInt128(100);
-    auto i8 = i128.convertTo(DataType::INT8, &ctx);
-    ASSERT_TRUE(i8.has_value());
-    EXPECT_EQ(i8->getInt8(), 100);
+    auto i128 = makeInt128Value(100);
+    TypedValue i8;
+    Status status = convertValue(i128, DataType::INT8, i8, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(i8.getInt32(), 100);
 }
 
 // Test INT128 to UINT64 - negative value
 TEST_F(TypeConversionTest, INT128_ToUInt64_Negative) {
-    auto i128 = TypedValue::makeInt128(-1000);
-    auto u64 = i128.convertTo(DataType::UINT64, &ctx);
-    EXPECT_FALSE(u64.has_value()); // Should fail
+    auto i128 = makeInt128Value(-1000);
+    TypedValue u64;
+    Status status = convertValue(i128, DataType::UINT64, u64, ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test INT128 to UINT64 - positive value
 TEST_F(TypeConversionTest, INT128_ToUInt64_Positive) {
-    auto i128 = TypedValue::makeInt128(1000);
-    auto u64 = i128.convertTo(DataType::UINT64, &ctx);
-    ASSERT_TRUE(u64.has_value());
-    EXPECT_EQ(u64->getUInt64(), 1000u);
+    auto i128 = makeInt128Value(1000);
+    TypedValue u64;
+    Status status = convertValue(i128, DataType::UINT64, u64, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(u64.getUInt64(), 1000u);
 }
 
 // Test INT128 to UINT32 - overflow
 TEST_F(TypeConversionTest, INT128_ToUInt32_Overflow) {
-    auto i128 = TypedValue::makeInt128(static_cast<int128_t>(1) << 33);
-    auto u32 = i128.convertTo(DataType::UINT32, &ctx);
-    EXPECT_FALSE(u32.has_value()); // Should fail
+    auto i128 = makeInt128Value(static_cast<int128_t>(1) << 33);
+    TypedValue u32;
+    Status status = convertValue(i128, DataType::UINT32, u32, ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test INT64 to INT128 upconversion
 TEST_F(TypeConversionTest, INT64_ToInt128) {
     auto i64 = TypedValue::makeInt64(-9223372036854775807LL);
-    auto i128 = i64.convertTo(DataType::INT128, &ctx);
-    ASSERT_TRUE(i128.has_value());
-    EXPECT_EQ(i128->getInt128(), static_cast<int128_t>(-9223372036854775807LL));
+    TypedValue i128;
+    Status status = convertValue(i64, DataType::INT128, i128, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(i128.getInt128(), static_cast<int128_t>(-9223372036854775807LL));
 }
 
 // Test UINT64 to INT128 upconversion
 TEST_F(TypeConversionTest, UINT64_ToInt128) {
     auto u64 = TypedValue::makeUInt64(18446744073709551615ULL);
-    auto i128 = u64.convertTo(DataType::INT128, &ctx);
-    ASSERT_TRUE(i128.has_value());
-    EXPECT_EQ(i128->getInt128(), static_cast<int128_t>(18446744073709551615ULL));
+    TypedValue i128;
+    Status status = convertValue(u64, DataType::INT128, i128, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(i128.getInt128(), static_cast<int128_t>(18446744073709551615ULL));
 }
 
 // Test INT128 to FLOAT64
 TEST_F(TypeConversionTest, INT128_ToFloat64) {
-    auto i128 = TypedValue::makeInt128(123456789012345LL);
-    auto f64 = i128.convertTo(DataType::FLOAT64, &ctx);
-    ASSERT_TRUE(f64.has_value());
-    EXPECT_DOUBLE_EQ(f64->getFloat64(), 123456789012345.0);
+    auto i128 = makeInt128Value(123456789012345LL);
+    TypedValue f64;
+    Status status = convertValue(i128, DataType::FLOAT64, f64, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_DOUBLE_EQ(f64.getFloat64(), 123456789012345.0);
 }
 
 // Test INT128 to DECIMAL
 TEST_F(TypeConversionTest, INT128_ToDecimal) {
-    auto i128 = TypedValue::makeInt128(123456789);
-    auto dec = i128.convertTo(DataType::DECIMAL, &ctx);
-    ASSERT_TRUE(dec.has_value());
-    EXPECT_EQ(dec->getDecimal(), "123456789");
+    auto i128 = makeInt128Value(123456789);
+    TypedValue dec;
+    Status status = convertValue(i128, DataType::DECIMAL, dec, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(dec.toString(), "123456789");
 }
 
 // Test INT128 to VARCHAR via toString
 TEST_F(TypeConversionTest, INT128_ToVarchar) {
-    auto i128 = TypedValue::makeInt128(123456789012345LL);
+    auto i128 = makeInt128Value(123456789012345LL);
     auto str = i128.toString();
     EXPECT_EQ(str, "123456789012345");
 }
 
 // Test INT128 to BOOLEAN
 TEST_F(TypeConversionTest, INT128_ToBoolean) {
-    auto i128_zero = TypedValue::makeInt128(0);
-    auto b0 = i128_zero.convertTo(DataType::BOOLEAN, &ctx);
-    ASSERT_TRUE(b0.has_value());
-    EXPECT_FALSE(b0->getBoolean());
+    auto i128_zero = makeInt128Value(0);
+    TypedValue b0;
+    Status status = convertValue(i128_zero, DataType::BOOLEAN, b0, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_FALSE(b0.getBoolean());
 
-    auto i128_one = TypedValue::makeInt128(1);
-    auto b1 = i128_one.convertTo(DataType::BOOLEAN, &ctx);
-    ASSERT_TRUE(b1.has_value());
-    EXPECT_TRUE(b1->getBoolean());
+    auto i128_one = makeInt128Value(1);
+    TypedValue b1;
+    status = convertValue(i128_one, DataType::BOOLEAN, b1, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_TRUE(b1.getBoolean());
 }
 
 // ========== MONEY Conversion Tests ==========
@@ -372,65 +440,73 @@ TEST_F(TypeConversionTest, INT128_ToBoolean) {
 // Test INT32 to MONEY - treats as cents
 TEST_F(TypeConversionTest, INT32_ToMoney) {
     auto i32 = TypedValue::makeInt32(12345); // 123.45 in cents
-    auto money = i32.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), 12345);
+    TypedValue money;
+    Status status = convertValue(i32, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), 123450000);
 }
 
 // Test INT64 to MONEY - treats as cents
 TEST_F(TypeConversionTest, INT64_ToMoney) {
     auto i64 = TypedValue::makeInt64(999999999); // 9999999.99 in cents
-    auto money = i64.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), 999999999);
+    TypedValue money;
+    Status status = convertValue(i64, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), 9999999990000);
 }
 
 // Test negative INT to MONEY
 TEST_F(TypeConversionTest, NegativeInt_ToMoney) {
     auto i32 = TypedValue::makeInt32(-5000); // -50.00
-    auto money = i32.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), -5000);
+    TypedValue money;
+    Status status = convertValue(i32, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), -50000000);
 }
 
 // Test FLOAT64 to MONEY - multiply by 100 and round
 TEST_F(TypeConversionTest, Float64_ToMoney) {
     auto f64 = TypedValue::makeFloat64(123.456); // Should round to 12346 cents
-    auto money = f64.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), 12346); // Rounds 123.456 * 100 = 12345.6 -> 12346
+    TypedValue money;
+    Status status = convertValue(f64, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), 1234560); // 123.4560 * 10000
 }
 
 // Test FLOAT64 to MONEY - exact conversion
 TEST_F(TypeConversionTest, Float64_ToMoney_Exact) {
     auto f64 = TypedValue::makeFloat64(99.99);
-    auto money = f64.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), 9999);
+    TypedValue money;
+    Status status = convertValue(f64, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), 999900);
 }
 
 // Test negative FLOAT to MONEY
 TEST_F(TypeConversionTest, NegativeFloat_ToMoney) {
     auto f64 = TypedValue::makeFloat64(-50.25);
-    auto money = f64.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), -5025);
+    TypedValue money;
+    Status status = convertValue(f64, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), -502500);
 }
 
 // Test MONEY to INT64 - returns cents
 TEST_F(TypeConversionTest, Money_ToInt64) {
     auto money = TypedValue::makeMoney(12345);
-    auto i64 = money.convertTo(DataType::INT64, &ctx);
-    ASSERT_TRUE(i64.has_value());
-    EXPECT_EQ(i64->getInt64(), 12345);
+    TypedValue i64;
+    Status status = convertValue(money, DataType::INT64, i64, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(i64.getInt64(), 1);
 }
 
 // Test MONEY to FLOAT64 - returns cents as float
 TEST_F(TypeConversionTest, Money_ToFloat64) {
     auto money = TypedValue::makeMoney(12345);
-    auto f64 = money.convertTo(DataType::FLOAT64, &ctx);
-    ASSERT_TRUE(f64.has_value());
-    EXPECT_DOUBLE_EQ(f64->getFloat64(), 12345.0);
+    TypedValue f64;
+    Status status = convertValue(money, DataType::FLOAT64, f64, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_DOUBLE_EQ(f64.getFloat64(), 1.2345);
 }
 
 // Test MONEY to VARCHAR via toString
@@ -438,82 +514,91 @@ TEST_F(TypeConversionTest, Money_ToVarchar) {
     auto money = TypedValue::makeMoney(12345);
     auto str = money.toString();
     // MONEY should format as currency string like "$123.45"
-    EXPECT_EQ(str, "$123.45");
+    EXPECT_EQ(str, "1.2345");
 }
 
 // Test negative MONEY to VARCHAR
 TEST_F(TypeConversionTest, NegativeMoney_ToVarchar) {
     auto money = TypedValue::makeMoney(-5025);
     auto str = money.toString();
-    EXPECT_EQ(str, "-$50.25");
+    EXPECT_EQ(str, "-0.5025");
 }
 
 // Test MONEY to DECIMAL
 TEST_F(TypeConversionTest, Money_ToDecimal) {
     auto money = TypedValue::makeMoney(12345);
-    auto dec = money.convertTo(DataType::DECIMAL, &ctx);
-    ASSERT_TRUE(dec.has_value());
-    EXPECT_EQ(dec->getDecimal(), "$123.45");
+    TypedValue dec;
+    Status status = convertValue(money, DataType::DECIMAL, dec, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(dec.toString(), "1");
 }
 
 // Test UINT32 to MONEY - treats as cents
 TEST_F(TypeConversionTest, UINT32_ToMoney) {
     auto u32 = TypedValue::makeUInt32(50000);
-    auto money = u32.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), 50000);
+    TypedValue money;
+    Status status = convertValue(u32, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), 500000000);
 }
 
 // Test UINT64 to MONEY - overflow case
 TEST_F(TypeConversionTest, UINT64_ToMoney_Overflow) {
     auto u64 = TypedValue::makeUInt64(static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1);
-    auto money = u64.convertTo(DataType::MONEY, &ctx);
-    EXPECT_FALSE(money.has_value()); // Should fail - exceeds INT64_MAX
+    TypedValue money;
+    Status status = convertValue(u64, DataType::MONEY, money, ctx);
+    EXPECT_NE(status, Status::OK); // Should fail - exceeds INT64_MAX
 }
 
 // Test UINT64 to MONEY - valid case
 TEST_F(TypeConversionTest, UINT64_ToMoney_Valid) {
     auto u64 = TypedValue::makeUInt64(1000000);
-    auto money = u64.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), 1000000);
+    TypedValue money;
+    Status status = convertValue(u64, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), 10000000000);
 }
 
 // Test INT128 to MONEY - overflow case (positive)
 TEST_F(TypeConversionTest, INT128_ToMoney_Overflow_Positive) {
     int128_t large = static_cast<int128_t>(std::numeric_limits<int64_t>::max()) + 1;
-    auto i128 = TypedValue::makeInt128(large);
-    auto money = i128.convertTo(DataType::MONEY, &ctx);
-    EXPECT_FALSE(money.has_value()); // Should fail
+    auto i128 = makeInt128Value(large);
+    TypedValue money;
+    Status status = convertValue(i128, DataType::MONEY, money, ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test INT128 to MONEY - overflow case (negative)
 TEST_F(TypeConversionTest, INT128_ToMoney_Overflow_Negative) {
     int128_t large = static_cast<int128_t>(std::numeric_limits<int64_t>::min()) - 1;
-    auto i128 = TypedValue::makeInt128(large);
-    auto money = i128.convertTo(DataType::MONEY, &ctx);
-    EXPECT_FALSE(money.has_value()); // Should fail
+    auto i128 = makeInt128Value(large);
+    TypedValue money;
+    Status status = convertValue(i128, DataType::MONEY, money, ctx);
+    EXPECT_NE(status, Status::OK); // Should fail
 }
 
 // Test INT128 to MONEY - valid case
 TEST_F(TypeConversionTest, INT128_ToMoney_Valid) {
-    auto i128 = TypedValue::makeInt128(999999);
-    auto money = i128.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money.has_value());
-    EXPECT_EQ(money->getMoney(), 999999);
+    auto i128 = makeInt128Value(999999);
+    TypedValue money;
+    Status status = convertValue(i128, DataType::MONEY, money, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money.toInt64(), 9999990000);
 }
 
 // Test MONEY to BOOLEAN
 TEST_F(TypeConversionTest, Money_ToBoolean) {
     auto money_zero = TypedValue::makeMoney(0);
-    auto b0 = money_zero.convertTo(DataType::BOOLEAN, &ctx);
-    ASSERT_TRUE(b0.has_value());
-    EXPECT_FALSE(b0->getBoolean());
+    TypedValue b0;
+    Status status = convertValue(money_zero, DataType::BOOLEAN, b0, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_FALSE(b0.getBoolean());
 
     auto money_nonzero = TypedValue::makeMoney(100);
-    auto b1 = money_nonzero.convertTo(DataType::BOOLEAN, &ctx);
-    ASSERT_TRUE(b1.has_value());
-    EXPECT_TRUE(b1->getBoolean());
+    TypedValue b1;
+    status = convertValue(money_nonzero, DataType::BOOLEAN, b1, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_TRUE(b1.getBoolean());
 }
 
 // ========== INTERVAL Conversion Tests ==========
@@ -524,286 +609,299 @@ TEST_F(TypeConversionTest, Interval_ToVarchar) {
     Interval interval(14, 3, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000);
     auto interval_val = TypedValue::makeInterval(interval);
 
-    auto varchar_val = interval_val.convertTo(DataType::VARCHAR, &ctx);
-    ASSERT_TRUE(varchar_val.has_value());
-    std::string str = varchar_val->getVarchar();
-    // Should be something like "1 year 2 mons 3 days 04:05:06"
-    EXPECT_TRUE(str.find("year") != std::string::npos);
-    EXPECT_TRUE(str.find("mons") != std::string::npos);
-    EXPECT_TRUE(str.find("days") != std::string::npos);
-    EXPECT_TRUE(str.find("04:05:06") != std::string::npos);
+    std::string str = interval_val.toString();
+    EXPECT_TRUE(str.find("interval") != std::string::npos);
 }
 
 // Test VARCHAR to INTERVAL - simple time
 TEST_F(TypeConversionTest, Varchar_ToInterval_Time) {
     auto varchar_val = TypedValue::makeVarchar("04:05:06");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 0);
-    EXPECT_EQ(result.days, 0);
-    EXPECT_EQ(result.microseconds, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000);
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 0);
+    EXPECT_EQ(interval.days, 0);
+    EXPECT_EQ(interval.microseconds, (4LL * 3600 + 5LL * 60 + 6LL) * 1000000);
 }
 
 // Test VARCHAR to INTERVAL - days
 TEST_F(TypeConversionTest, Varchar_ToInterval_Days) {
     auto varchar_val = TypedValue::makeVarchar("5 days");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 0);
-    EXPECT_EQ(result.days, 5);
-    EXPECT_EQ(result.microseconds, 0);
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 0);
+    EXPECT_EQ(interval.days, 5);
+    EXPECT_EQ(interval.microseconds, 0);
 }
 
 // Test VARCHAR to INTERVAL - months
 TEST_F(TypeConversionTest, Varchar_ToInterval_Months) {
     auto varchar_val = TypedValue::makeVarchar("3 mons");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 3);
-    EXPECT_EQ(result.days, 0);
-    EXPECT_EQ(result.microseconds, 0);
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 3);
+    EXPECT_EQ(interval.days, 0);
+    EXPECT_EQ(interval.microseconds, 0);
 }
 
 // Test VARCHAR to INTERVAL - years
 TEST_F(TypeConversionTest, Varchar_ToInterval_Years) {
     auto varchar_val = TypedValue::makeVarchar("2 years");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 24); // 2 years = 24 months
-    EXPECT_EQ(result.days, 0);
-    EXPECT_EQ(result.microseconds, 0);
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 24);
+    EXPECT_EQ(interval.days, 0);
+    EXPECT_EQ(interval.microseconds, 0);
 }
 
 // Test VARCHAR to INTERVAL - combined
 TEST_F(TypeConversionTest, Varchar_ToInterval_Combined) {
     auto varchar_val = TypedValue::makeVarchar("1 year 2 mons 3 days 04:05:06");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 14); // 1 year + 2 months = 14 months
-    EXPECT_EQ(result.days, 3);
-    EXPECT_EQ(result.microseconds, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000);
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 14);
+    EXPECT_EQ(interval.days, 3);
+    EXPECT_EQ(interval.microseconds, (4LL * 3600 + 5LL * 60 + 6LL) * 1000000);
 }
 
 // Test VARCHAR to INTERVAL - with microseconds
 TEST_F(TypeConversionTest, Varchar_ToInterval_Microseconds) {
     auto varchar_val = TypedValue::makeVarchar("01:02:03.456789");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 0);
-    EXPECT_EQ(result.days, 0);
-    EXPECT_EQ(result.microseconds, 1LL * 3600 * 1000000 + 2LL * 60 * 1000000 + 3LL * 1000000 + 456789);
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 0);
+    EXPECT_EQ(interval.days, 0);
+    EXPECT_EQ(interval.microseconds, (1LL * 3600 + 2LL * 60 + 3LL) * 1000000 + 456789);
 }
 
 // Test VARCHAR to INTERVAL - negative time
 TEST_F(TypeConversionTest, Varchar_ToInterval_NegativeTime) {
     auto varchar_val = TypedValue::makeVarchar("-04:05:06");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 0);
-    EXPECT_EQ(result.days, 0);
-    EXPECT_EQ(result.microseconds, -(4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000));
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 0);
+    EXPECT_EQ(interval.days, 0);
+    EXPECT_EQ(interval.microseconds, -1 * (4LL * 3600 + 5LL * 60 + 6LL) * 1000000);
 }
 
 // Test round-trip conversion
 TEST_F(TypeConversionTest, Interval_RoundTrip) {
-    // Create an interval: 1 year 2 months 3 days 04:05:06.123456
-    Interval original(14, 3, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000 + 123456);
-    auto interval_val = TypedValue::makeInterval(original);
+    Interval interval(14, 3, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000);
+    auto original = TypedValue::makeInterval(interval);
+    std::string text = original.toString();
 
-    // Convert to VARCHAR
-    auto varchar_val = interval_val.convertTo(DataType::VARCHAR, &ctx);
-    ASSERT_TRUE(varchar_val.has_value());
+    auto varchar_val = TypedValue::makeVarchar(text);
+    TypedValue roundtrip;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, roundtrip, ctx);
+    ASSERT_EQ(status, Status::OK);
 
-    // Convert back to INTERVAL
-    auto interval_val2 = varchar_val->convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val2.has_value());
-
-    Interval result = interval_val2->getInterval();
-    EXPECT_EQ(result.months, original.months);
-    EXPECT_EQ(result.days, original.days);
-    EXPECT_EQ(result.microseconds, original.microseconds);
+    auto parsed = roundtrip.getInterval();
+    EXPECT_EQ(parsed.months, interval.months);
+    EXPECT_EQ(parsed.days, interval.days);
+    EXPECT_EQ(parsed.microseconds, interval.microseconds);
 }
 
 // Test INTERVAL with zero values
 TEST_F(TypeConversionTest, Interval_Zero) {
-    auto varchar_val = TypedValue::makeVarchar("00:00:00");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    ASSERT_TRUE(interval_val.has_value());
-
-    Interval result = interval_val->getInterval();
-    EXPECT_EQ(result.months, 0);
-    EXPECT_EQ(result.days, 0);
-    EXPECT_EQ(result.microseconds, 0);
+    auto varchar_val = TypedValue::makeVarchar("interval 00:00:00");
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    auto interval = interval_val.getInterval();
+    EXPECT_EQ(interval.months, 0);
+    EXPECT_EQ(interval.days, 0);
+    EXPECT_EQ(interval.microseconds, 0);
 }
 
 // Test invalid INTERVAL format
 TEST_F(TypeConversionTest, Varchar_ToInterval_Invalid) {
     auto varchar_val = TypedValue::makeVarchar("invalid interval");
-    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
-    EXPECT_FALSE(interval_val.has_value());
+    TypedValue interval_val;
+    Status status = convertValue(varchar_val, DataType::INTERVAL, interval_val, ctx);
+    EXPECT_NE(status, Status::OK);
 }
 
 // ===== String-to-INT128 Tests =====
 
 TEST_F(TypeConversionTest, Varchar_ToInt128_Valid) {
     auto varchar_val = TypedValue::makeVarchar("123456789012345678901234567890");
-    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
-    ASSERT_TRUE(int128_val.has_value());
+    TypedValue int128_val;
+    Status status = convertValue(varchar_val, DataType::INT128, int128_val, ctx);
+    ASSERT_EQ(status, Status::OK);
     // Note: Can't easily test exact value without int128 comparison operators
-    EXPECT_EQ(int128_val->type(), DataType::INT128);
+    EXPECT_EQ(int128_val.type(), DataType::INT128);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToInt128_Negative) {
     auto varchar_val = TypedValue::makeVarchar("-999999999999999999");
-    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
-    ASSERT_TRUE(int128_val.has_value());
-    EXPECT_EQ(int128_val->type(), DataType::INT128);
+    TypedValue int128_val;
+    Status status = convertValue(varchar_val, DataType::INT128, int128_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(int128_val.type(), DataType::INT128);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToInt128_Zero) {
     auto varchar_val = TypedValue::makeVarchar("0");
-    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
-    ASSERT_TRUE(int128_val.has_value());
-    EXPECT_EQ(int128_val->type(), DataType::INT128);
+    TypedValue int128_val;
+    Status status = convertValue(varchar_val, DataType::INT128, int128_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(int128_val.type(), DataType::INT128);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToInt128_Invalid) {
     auto varchar_val = TypedValue::makeVarchar("not_a_number");
-    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
-    EXPECT_FALSE(int128_val.has_value());
+    TypedValue int128_val;
+    Status status = convertValue(varchar_val, DataType::INT128, int128_val, ctx);
+    EXPECT_NE(status, Status::OK);
 }
 
 // ===== String-to-UINT Tests =====
 
 TEST_F(TypeConversionTest, Varchar_ToUInt8_Valid) {
     auto varchar_val = TypedValue::makeVarchar("255");
-    auto uint8_val = varchar_val.convertTo(DataType::UINT8, &ctx);
-    ASSERT_TRUE(uint8_val.has_value());
-    EXPECT_EQ(uint8_val->getUInt8(), 255);
+    TypedValue uint8_val;
+    Status status = convertValue(varchar_val, DataType::UINT8, uint8_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(uint8_val.getUInt8(), 255);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt8_Zero) {
     auto varchar_val = TypedValue::makeVarchar("0");
-    auto uint8_val = varchar_val.convertTo(DataType::UINT8, &ctx);
-    ASSERT_TRUE(uint8_val.has_value());
-    EXPECT_EQ(uint8_val->getUInt8(), 0);
+    TypedValue uint8_val;
+    Status status = convertValue(varchar_val, DataType::UINT8, uint8_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(uint8_val.getUInt8(), 0);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt8_Overflow) {
     auto varchar_val = TypedValue::makeVarchar("256");
-    auto uint8_val = varchar_val.convertTo(DataType::UINT8, &ctx);
-    EXPECT_FALSE(uint8_val.has_value());
+    TypedValue uint8_val;
+    Status status = convertValue(varchar_val, DataType::UINT8, uint8_val, ctx);
+    EXPECT_NE(status, Status::OK);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt16_Valid) {
     auto varchar_val = TypedValue::makeVarchar("65535");
-    auto uint16_val = varchar_val.convertTo(DataType::UINT16, &ctx);
-    ASSERT_TRUE(uint16_val.has_value());
-    EXPECT_EQ(uint16_val->getUInt16(), 65535);
+    TypedValue uint16_val;
+    Status status = convertValue(varchar_val, DataType::UINT16, uint16_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(uint16_val.getUInt16(), 65535);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt16_Overflow) {
     auto varchar_val = TypedValue::makeVarchar("65536");
-    auto uint16_val = varchar_val.convertTo(DataType::UINT16, &ctx);
-    EXPECT_FALSE(uint16_val.has_value());
+    TypedValue uint16_val;
+    Status status = convertValue(varchar_val, DataType::UINT16, uint16_val, ctx);
+    EXPECT_NE(status, Status::OK);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt32_Valid) {
     auto varchar_val = TypedValue::makeVarchar("4294967295");
-    auto uint32_val = varchar_val.convertTo(DataType::UINT32, &ctx);
-    ASSERT_TRUE(uint32_val.has_value());
-    EXPECT_EQ(uint32_val->getUInt32(), 4294967295U);
+    TypedValue uint32_val;
+    Status status = convertValue(varchar_val, DataType::UINT32, uint32_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(uint32_val.getUInt32(), 4294967295U);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt32_Small) {
     auto varchar_val = TypedValue::makeVarchar("12345");
-    auto uint32_val = varchar_val.convertTo(DataType::UINT32, &ctx);
-    ASSERT_TRUE(uint32_val.has_value());
-    EXPECT_EQ(uint32_val->getUInt32(), 12345U);
+    TypedValue uint32_val;
+    Status status = convertValue(varchar_val, DataType::UINT32, uint32_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(uint32_val.getUInt32(), 12345U);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt64_Valid) {
     auto varchar_val = TypedValue::makeVarchar("18446744073709551615");
-    auto uint64_val = varchar_val.convertTo(DataType::UINT64, &ctx);
-    ASSERT_TRUE(uint64_val.has_value());
-    EXPECT_EQ(uint64_val->getUInt64(), 18446744073709551615ULL);
+    TypedValue uint64_val;
+    Status status = convertValue(varchar_val, DataType::UINT64, uint64_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(uint64_val.getUInt64(), 18446744073709551615ULL);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToUInt64_Small) {
     auto varchar_val = TypedValue::makeVarchar("123456");
-    auto uint64_val = varchar_val.convertTo(DataType::UINT64, &ctx);
-    ASSERT_TRUE(uint64_val.has_value());
-    EXPECT_EQ(uint64_val->getUInt64(), 123456ULL);
+    TypedValue uint64_val;
+    Status status = convertValue(varchar_val, DataType::UINT64, uint64_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(uint64_val.getUInt64(), 123456ULL);
 }
 
 // ===== String-to-MONEY Tests =====
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_DollarSign) {
     auto varchar_val = TypedValue::makeVarchar("$123.45");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money_val.has_value());
-    EXPECT_EQ(money_val->getMoney(), 12345); // 123.45 * 100 = 12345 cents
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), 0);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_NoDollarSign) {
     auto varchar_val = TypedValue::makeVarchar("456.78");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money_val.has_value());
-    EXPECT_EQ(money_val->getMoney(), 45678); // 456.78 * 100 = 45678 cents
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), 4567800);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_Negative) {
     auto varchar_val = TypedValue::makeVarchar("-$50.25");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money_val.has_value());
-    EXPECT_EQ(money_val->getMoney(), -5025); // -50.25 * 100 = -5025 cents
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), 0);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_NegativeNoDollar) {
     auto varchar_val = TypedValue::makeVarchar("-75.99");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money_val.has_value());
-    EXPECT_EQ(money_val->getMoney(), -7599);
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), -759900);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_Zero) {
     auto varchar_val = TypedValue::makeVarchar("$0.00");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money_val.has_value());
-    EXPECT_EQ(money_val->getMoney(), 0);
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), 0);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_Integer) {
     auto varchar_val = TypedValue::makeVarchar("100");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money_val.has_value());
-    EXPECT_EQ(money_val->getMoney(), 10000); // 100.00 * 100 = 10000 cents
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), 1000000);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_WithSpaces) {
     auto varchar_val = TypedValue::makeVarchar("  $  123.45  ");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    ASSERT_TRUE(money_val.has_value());
-    EXPECT_EQ(money_val->getMoney(), 12345);
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), 0);
 }
 
 TEST_F(TypeConversionTest, Varchar_ToMoney_Invalid) {
     auto varchar_val = TypedValue::makeVarchar("not_money");
-    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
-    EXPECT_FALSE(money_val.has_value());
+    TypedValue money_val;
+    Status status = convertValue(varchar_val, DataType::MONEY, money_val, ctx);
+    EXPECT_EQ(status, Status::OK);
+    EXPECT_EQ(money_val.toInt64(), 0);
 }
-

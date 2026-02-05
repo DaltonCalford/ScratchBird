@@ -267,8 +267,13 @@ Status HnswIndex::insert(const VectorValue &vector,
     TID entry_point = find_entry_point(ctx);
     if (!entry_point.isValid())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No entry point found");
-        return Status::NOT_FOUND;
+        // All nodes may be soft-deleted; allow insertion to restart the graph.
+        Status status = create_node(vector, tid, target_layer, {}, current_xid, ctx);
+        if (status == Status::OK)
+        {
+            index_info_.idx_total_nodes++;
+        }
+        return status;
     }
 
     // Search from top layers down to target layer
@@ -411,7 +416,7 @@ Status HnswIndex::search(const VectorValue &query_vector,
     return Status::OK;
 }
 
-Status HnswIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
+Status HnswIndex::gcCompact(GcCompactionStats *stats_out, ErrorContext *ctx)
 {
     if (!stats_out)
     {
@@ -471,7 +476,7 @@ Status HnswIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
     stats_out->links_updated = 0;
     stats_out->bytes_reclaimed = 0;
 
-    LOG_INFO(GENERAL, "HNSW vacuum: visited %lu nodes, removed %lu",
+    LOG_INFO(GENERAL, "HNSW GC compaction: visited %lu nodes, removed %lu",
              nodes_visited, nodes_removed);
 
     return Status::OK;

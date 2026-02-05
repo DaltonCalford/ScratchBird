@@ -61,6 +61,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/connection_context.h"
 #include "test_helpers.h"
@@ -263,8 +264,15 @@ protected:
         // Create quad-tree operator class
         opclass_ = std::make_shared<QuadTreeOperatorClass>();
 
+        status = db_->initializeProcArray(16, &ctx);
+        if (status != Status::OK && status != Status::INVALID_ARGUMENT)
+        {
+            ASSERT_EQ(status, Status::OK) << "Failed to initialize ProcArray: " << ctx.message;
+        }
+
         // Register backend for MGA
-        proc_id_ = ProcArrayManager::instance().registerBackend();
+        status = ProcArrayManager::registerBackend(&proc_id_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to register backend: " << ctx.message;
     }
 
     void TearDown() override
@@ -272,7 +280,7 @@ protected:
         // Unregister backend
         if (proc_id_ != 0)
         {
-            ProcArrayManager::instance().unregisterBackend(proc_id_);
+            ProcArrayManager::unregisterBackend(proc_id_);
         }
 
         if (db_)
@@ -295,6 +303,23 @@ protected:
     Status commitTxn(uint64_t xid, ErrorContext* ctx)
     {
         return txn_mgr_->commitTransaction(proc_id_, xid, ctx);
+    }
+
+    GPID allocateRootGpid(ErrorContext *ctx)
+    {
+        auto *pm = db_ ? db_->page_manager() : nullptr;
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
     }
 
     // Helper: Create point
@@ -324,18 +349,19 @@ protected:
 TEST_F(SPGiSTMVCCTest, EmptyTreeSearch)
 {
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     ID index_uuid = generateUuidV7();
     ID table_uuid = generateUuidV7();
     std::vector<ID> column_ids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
-                                        opclass_, &root_page, &ctx);
+                                        opclass_, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create SP-GiST index: " << ctx.message;
 
     auto spgist = SPGiSTIndex::open(db_.get(), index_uuid, table_uuid, column_ids,
-                                    opclass_, root_page, &ctx);
+                                    opclass_, root_gpid, &ctx);
     ASSERT_NE(spgist, nullptr);
 
     // Search empty tree
@@ -343,7 +369,7 @@ TEST_F(SPGiSTMVCCTest, EmptyTreeSearch)
     std::vector<TID> results;
     std::vector<uint8_t> query = createPoint(50, 50);
 
-    status = spgist->search(query, xid, results, &ctx);
+    status = spgist->search(query, xid, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(results.size(), 0) << "Empty tree should return no results";
 }
@@ -354,18 +380,19 @@ TEST_F(SPGiSTMVCCTest, EmptyTreeSearch)
 TEST_F(SPGiSTMVCCTest, SingleElementMGAVisibility)
 {
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     ID index_uuid = generateUuidV7();
     ID table_uuid = generateUuidV7();
     std::vector<ID> column_ids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
-                                        opclass_, &root_page, &ctx);
+                                        opclass_, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     auto spgist = SPGiSTIndex::open(db_.get(), index_uuid, table_uuid, column_ids,
-                                    opclass_, root_page, &ctx);
+                                    opclass_, root_gpid, &ctx);
     ASSERT_NE(spgist, nullptr);
 
     // Start transaction T1
@@ -407,18 +434,19 @@ TEST_F(SPGiSTMVCCTest, SingleElementMGAVisibility)
 TEST_F(SPGiSTMVCCTest, MultipleElementsQuadTreePartitioning)
 {
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     ID index_uuid = generateUuidV7();
     ID table_uuid = generateUuidV7();
     std::vector<ID> column_ids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
-                                        opclass_, &root_page, &ctx);
+                                        opclass_, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     auto spgist = SPGiSTIndex::open(db_.get(), index_uuid, table_uuid, column_ids,
-                                    opclass_, root_page, &ctx);
+                                    opclass_, root_gpid, &ctx);
     ASSERT_NE(spgist, nullptr);
 
     uint64_t xid = beginTxn(&ctx);
@@ -456,18 +484,19 @@ TEST_F(SPGiSTMVCCTest, MultipleElementsQuadTreePartitioning)
 TEST_F(SPGiSTMVCCTest, LogicalDeletionXmax)
 {
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     ID index_uuid = generateUuidV7();
     ID table_uuid = generateUuidV7();
     std::vector<ID> column_ids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
-                                        opclass_, &root_page, &ctx);
+                                        opclass_, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     auto spgist = SPGiSTIndex::open(db_.get(), index_uuid, table_uuid, column_ids,
-                                    opclass_, root_page, &ctx);
+                                    opclass_, root_gpid, &ctx);
     ASSERT_NE(spgist, nullptr);
 
     // Insert point in T1
@@ -510,18 +539,19 @@ TEST_F(SPGiSTMVCCTest, LogicalDeletionXmax)
 TEST_F(SPGiSTMVCCTest, RepeatableReadIsolation)
 {
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     ID index_uuid = generateUuidV7();
     ID table_uuid = generateUuidV7();
     std::vector<ID> column_ids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
-                                        opclass_, &root_page, &ctx);
+                                        opclass_, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     auto spgist = SPGiSTIndex::open(db_.get(), index_uuid, table_uuid, column_ids,
-                                    opclass_, root_page, &ctx);
+                                    opclass_, root_gpid, &ctx);
     ASSERT_NE(spgist, nullptr);
 
     // Insert initial point
@@ -564,18 +594,19 @@ TEST_F(SPGiSTMVCCTest, RepeatableReadIsolation)
 TEST_F(SPGiSTMVCCTest, GarbageCollectionDeadEntries)
 {
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     ID index_uuid = generateUuidV7();
     ID table_uuid = generateUuidV7();
     std::vector<ID> column_ids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
-                                        opclass_, &root_page, &ctx);
+                                        opclass_, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     auto spgist = SPGiSTIndex::open(db_.get(), index_uuid, table_uuid, column_ids,
-                                    opclass_, root_page, &ctx);
+                                    opclass_, root_gpid, &ctx);
     ASSERT_NE(spgist, nullptr);
 
     // Insert and delete 10 points
@@ -627,18 +658,19 @@ TEST_F(SPGiSTMVCCTest, GarbageCollectionDeadEntries)
 TEST_F(SPGiSTMVCCTest, TransactionIdParameterValidation)
 {
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     ID index_uuid = generateUuidV7();
     ID table_uuid = generateUuidV7();
     std::vector<ID> column_ids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
-                                        opclass_, &root_page, &ctx);
+                                        opclass_, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     auto spgist = SPGiSTIndex::open(db_.get(), index_uuid, table_uuid, column_ids,
-                                    opclass_, root_page, &ctx);
+                                    opclass_, root_gpid, &ctx);
     ASSERT_NE(spgist, nullptr);
 
     uint64_t xid = txn_mgr_->getCurrentXid();

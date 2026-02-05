@@ -20,7 +20,7 @@ namespace scratchbird
         // SBLR (ScratchBird Language Representation) Opcodes
         // Based on Firebird's BLR (Binary Language Representation)
 
-        enum class Opcode : uint8_t
+        enum class Opcode : uint16_t
         {
             // Control flow
             END = 0x00,     // End of bytecode stream
@@ -570,6 +570,11 @@ namespace scratchbird
             // Group management opcodes
             EXT_CREATE_GROUP = 0xCF,       // CREATE GROUP groupname
             EXT_DROP_GROUP = 0xD0,         // DROP GROUP groupname [IF EXISTS] [CASCADE | RESTRICT]
+            EXT_FB_CREATE_MAPPING = 0x02F1,  // Firebird CREATE MAPPING
+            EXT_FB_ALTER_MAPPING = 0x02F2,   // Firebird ALTER MAPPING
+            EXT_FB_DROP_MAPPING = 0x02F3,    // Firebird DROP MAPPING
+            EXT_FB_CREATE_SHADOW = 0x02F4,   // Firebird CREATE SHADOW
+            EXT_FB_DROP_SHADOW = 0x02F5,     // Firebird DROP SHADOW
 
             // Privilege management opcodes
             EXT_GRANT_PRIVILEGE = 0xD1,    // GRANT privilege ON object TO grantee [WITH GRANT OPTION]

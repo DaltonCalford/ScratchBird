@@ -98,15 +98,48 @@ LIMIT 20 OFFSET 40;
 
 ### **3.6. Window Functions (OVER)**
 
-Performs calculations across a set of table rows that are somehow related to the current row.
+Performs calculations across a set of table rows that are somehow related to the current row. Window functions support partitioning, ordering, frame specifications (ROWS, RANGE, GROUPS), frame exclusions, and NULL handling options.
 
-\-- Rank employees by salary within each department  
-SELECT  
-    employee\_name,  
-    department\_name,  
-    salary,  
-    RANK() OVER (PARTITION BY department\_name ORDER BY salary DESC) as salary\_rank  
+\-- Rank employees by salary within each department
+SELECT
+    employee\_name,
+    department\_name,
+    salary,
+    RANK() OVER (PARTITION BY department\_name ORDER BY salary DESC) as salary\_rank
 FROM employees;
+
+\-- Using GROUPS frame to include entire peer groups
+SELECT
+    product\_id,
+    order\_date,
+    quantity,
+    SUM(quantity) OVER (
+        ORDER BY order\_date
+        GROUPS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+    ) as quantity\_with\_adjacent\_days
+FROM orders;
+
+\-- Using frame exclusions to exclude current row or peer group
+SELECT
+    employee\_id,
+    salary,
+    AVG(salary) OVER (
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        EXCLUDE CURRENT ROW
+    ) as avg\_other\_salaries
+FROM employees;
+
+\-- Using IGNORE NULLS with navigational functions
+SELECT
+    measurement\_date,
+    temperature,
+    LAST\_VALUE(temperature) IGNORE NULLS OVER (
+        ORDER BY measurement\_date
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) as last\_valid\_temperature
+FROM weather\_data;
+
+For detailed window function syntax and examples, see the Window Functions specification.
 
 ### **3.7. Common Table Expressions (WITH)**
 

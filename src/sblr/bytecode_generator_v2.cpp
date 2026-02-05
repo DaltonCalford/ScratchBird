@@ -2462,23 +2462,6 @@ void BytecodeGeneratorV2::generateCreateTrigger(ResolvedCreateTriggerStmt* stmt)
         : (schema_name + "." + proc_name);
 
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
-    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
-    uint8_t flags = 0;
-    if (!stmt->psql_bytecode.empty()) {
-        flags |= 0x10;
-    }
-    current_result_->writeByte(flags);
-    current_result_->writeString(proc_path);
-    current_result_->writeByte(0);  // no parameters
-    current_result_->writeString(stmt->body);
-    if (!stmt->psql_bytecode.empty()) {
-        current_result_->writeInt32(static_cast<uint32_t>(stmt->psql_bytecode.size()));
-        for (auto byte : stmt->psql_bytecode) {
-            current_result_->writeByte(byte);
-        }
-    }
-
-    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_TRIGGER));
     current_result_->writeString(trigger_name);
     current_result_->writeString(schemaPathToString(stmt->table_path, string_pool_));
@@ -2486,6 +2469,18 @@ void BytecodeGeneratorV2::generateCreateTrigger(ResolvedCreateTriggerStmt* stmt)
     current_result_->writeByte(stmt->event_mask);
     current_result_->writeByte(static_cast<uint8_t>(stmt->granularity));
     current_result_->writeString(proc_path);
+    uint8_t flags = 0;
+    if (!stmt->psql_bytecode.empty()) {
+        flags |= 0x10;
+    }
+    current_result_->writeByte(flags);
+    current_result_->writeString(stmt->body);
+    if (!stmt->psql_bytecode.empty()) {
+        current_result_->writeInt32(static_cast<uint32_t>(stmt->psql_bytecode.size()));
+        for (auto byte : stmt->psql_bytecode) {
+            current_result_->writeByte(byte);
+        }
+    }
 }
 
 void BytecodeGeneratorV2::generateExecuteBlock(ResolvedExecuteBlockStmt* stmt) {
@@ -3761,6 +3756,75 @@ void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
             resolveTypeModifiers(stmt->column_def.type, precision, scale);
             current_result_->writeInt32(precision);
             current_result_->writeInt32(scale);
+            break;
+        }
+        case AlterTableAction::ALTER_COLUMN_SET_DEFAULT: {
+            if (stmt->column_name == StringPool::INVALID_ID || !stmt->has_default_expr ||
+                !stmt->default_expr) {
+                current_result_->addError("ALTER TABLE ALTER COLUMN SET DEFAULT requires an expression");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(15);  // ALTER_COLUMN_SET_DEFAULT
+            writeStringId(stmt->column_name);
+
+            BytecodeResultV2 temp_result;
+            BytecodeResultV2* saved_result = current_result_;
+            current_result_ = &temp_result;
+            generateExpression(stmt->default_expr);
+            current_result_ = saved_result;
+
+            const auto& bytecode = temp_result.bytecode();
+            current_result_->writeInt32(static_cast<uint32_t>(bytecode.size()));
+            for (uint8_t b : bytecode) {
+                current_result_->writeByte(b);
+            }
+            break;
+        }
+        case AlterTableAction::ALTER_COLUMN_DROP_DEFAULT: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE ALTER COLUMN DROP DEFAULT requires a column name");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(16);  // ALTER_COLUMN_DROP_DEFAULT
+            writeStringId(stmt->column_name);
+            break;
+        }
+        case AlterTableAction::ALTER_COLUMN_SET_NOT_NULL: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE ALTER COLUMN SET NOT NULL requires a column name");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(17);  // ALTER_COLUMN_SET_NOT_NULL
+            writeStringId(stmt->column_name);
+            break;
+        }
+        case AlterTableAction::ALTER_COLUMN_DROP_NOT_NULL: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE ALTER COLUMN DROP NOT NULL requires a column name");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(18);  // ALTER_COLUMN_DROP_NOT_NULL
+            writeStringId(stmt->column_name);
+            break;
+        }
+        case AlterTableAction::ALTER_COLUMN_POSITION: {
+            if (stmt->column_name == StringPool::INVALID_ID || !stmt->has_position) {
+                current_result_->addError("ALTER TABLE ALTER COLUMN POSITION requires column and position");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(21);  // ALTER_COLUMN_POSITION
+            writeStringId(stmt->column_name);
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->position_1_based));
             break;
         }
         case AlterTableAction::SET_TABLESPACE: {

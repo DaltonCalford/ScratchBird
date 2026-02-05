@@ -97,8 +97,8 @@ namespace scratchbird
             // Compact the LSM-Tree (merge levels)
             Status compact(ErrorContext *ctx = nullptr);
 
-            // Vacuum the index
-            Status vacuum(ErrorContext *ctx = nullptr);
+            // GC compaction (ScratchBird MGA GC, not PostgreSQL VACUUM)
+            Status gcCompact(ErrorContext *ctx = nullptr);
 
             // IndexGCInterface implementation
             Status removeDeadEntries(const std::vector<TID> &dead_tids,

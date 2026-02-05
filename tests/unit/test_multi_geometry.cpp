@@ -31,9 +31,9 @@ TEST(MultiGeometryTest, MultiPointAddGeometry)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
 
-    auto pt1 = TypedValue::makePoint(0.0, 0.0);
-    auto pt2 = TypedValue::makePoint(1.0, 1.0);
-    auto pt3 = TypedValue::makePoint(2.0, 2.0);
+    auto pt1 = TypedValue::makePoint(Point(0.0, 0.0));
+    auto pt2 = TypedValue::makePoint(Point(1.0, 1.0));
+    auto pt3 = TypedValue::makePoint(Point(2.0, 2.0));
 
     EXPECT_TRUE(mp.addGeometry(pt1));
     EXPECT_TRUE(mp.addGeometry(pt2));
@@ -47,7 +47,7 @@ TEST(MultiGeometryTest, MultiPointTypeValidation)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
 
-    auto pt = TypedValue::makePoint(0.0, 0.0);
+    auto pt = TypedValue::makePoint(Point(0.0, 0.0));
     auto line = TypedValue::makeLineString(LineString({Point(0, 0), Point(1, 1)}));
 
     EXPECT_TRUE(mp.addGeometry(pt));
@@ -57,9 +57,9 @@ TEST(MultiGeometryTest, MultiPointTypeValidation)
 TEST(MultiGeometryTest, MultiPointToWKT)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
-    mp.addGeometry(TypedValue::makePoint(0.0, 0.0));
-    mp.addGeometry(TypedValue::makePoint(1.0, 1.0));
-    mp.addGeometry(TypedValue::makePoint(2.0, 2.0));
+    mp.addGeometry(TypedValue::makePoint(Point(0.0, 0.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(1.0, 1.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(2.0, 2.0)));
 
     std::string wkt = mp.toWKT();
     EXPECT_EQ(wkt, "MULTIPOINT((0 0), (1 1), (2 2))");
@@ -98,9 +98,9 @@ TEST(MultiGeometryTest, MultiPointWKTRoundTrip)
 TEST(MultiGeometryTest, MultiPointBoundingBox)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
-    mp.addGeometry(TypedValue::makePoint(-5.0, -10.0));
-    mp.addGeometry(TypedValue::makePoint(10.0, 20.0));
-    mp.addGeometry(TypedValue::makePoint(3.0, 5.0));
+    mp.addGeometry(TypedValue::makePoint(Point(-5.0, -10.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(10.0, 20.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(3.0, 5.0)));
 
     BoundingBox bbox = mp.boundingBox();
     EXPECT_DOUBLE_EQ(bbox.min_x, -5.0);
@@ -113,8 +113,8 @@ TEST(MultiGeometryTest, MultiPointBoundingBox)
 TEST(MultiGeometryTest, MultiPointWKB)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
-    mp.addGeometry(TypedValue::makePoint(0.0, 0.0));
-    mp.addGeometry(TypedValue::makePoint(1.0, 1.0));
+    mp.addGeometry(TypedValue::makePoint(Point(0.0, 0.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(1.0, 1.0)));
 
     std::vector<uint8_t> wkb = mp.toWKB();
 
@@ -153,8 +153,8 @@ TEST(MultiGeometryTest, MultiLineStringAddGeometry)
     LineString line1({Point(0, 0), Point(1, 1)});
     LineString line2({Point(2, 2), Point(3, 3)});
 
-    auto val1 = TypedValue::makeLineString(std::move(line1));
-    auto val2 = TypedValue::makeLineString(std::move(line2));
+    auto val1 = TypedValue::makeLineString(line1);
+    auto val2 = TypedValue::makeLineString(line2);
 
     EXPECT_TRUE(mls.addGeometry(val1));
     EXPECT_TRUE(mls.addGeometry(val2));
@@ -168,8 +168,8 @@ TEST(MultiGeometryTest, MultiLineStringToWKT)
     LineString line1({Point(0, 0), Point(1, 1)});
     LineString line2({Point(2, 2), Point(3, 3)});
 
-    mls.addGeometry(TypedValue::makeLineString(std::move(line1)));
-    mls.addGeometry(TypedValue::makeLineString(std::move(line2)));
+    mls.addGeometry(TypedValue::makeLineString(line1));
+    mls.addGeometry(TypedValue::makeLineString(line2));
 
     std::string wkt = mls.toWKT();
     EXPECT_EQ(wkt, "MULTILINESTRING((0 0, 1 1), (2 2, 3 3))");
@@ -209,8 +209,8 @@ TEST(MultiGeometryTest, MultiLineStringBoundingBox)
     LineString line1({Point(-10, -20), Point(5, 10)});
     LineString line2({Point(0, 0), Point(15, 25)});
 
-    mls.addGeometry(TypedValue::makeLineString(std::move(line1)));
-    mls.addGeometry(TypedValue::makeLineString(std::move(line2)));
+    mls.addGeometry(TypedValue::makeLineString(line1));
+    mls.addGeometry(TypedValue::makeLineString(line2));
 
     BoundingBox bbox = mls.boundingBox();
     EXPECT_DOUBLE_EQ(bbox.min_x, -10.0);
@@ -232,8 +232,8 @@ TEST(MultiGeometryTest, MultiPolygonAddGeometry)
 {
     MultiGeometry mpoly(MultiGeometryType::MULTIPOLYGON);
 
-    Polygon poly1({Point(0, 0), Point(10, 0), Point(10, 10), Point(0, 10), Point(0, 0)});
-    Polygon poly2({Point(20, 20), Point(30, 20), Point(30, 30), Point(20, 30), Point(20, 20)});
+    Polygon poly1(std::vector<std::vector<Point>>{{Point(0, 0), Point(10, 0), Point(10, 10), Point(0, 10), Point(0, 0)}});
+    Polygon poly2(std::vector<std::vector<Point>>{{Point(20, 20), Point(30, 20), Point(30, 30), Point(20, 30), Point(20, 20)}});
 
     EXPECT_TRUE(mpoly.addGeometry(TypedValue::makePolygon(std::move(poly1))));
     EXPECT_TRUE(mpoly.addGeometry(TypedValue::makePolygon(std::move(poly2))));
@@ -244,8 +244,8 @@ TEST(MultiGeometryTest, MultiPolygonToWKT)
 {
     MultiGeometry mpoly(MultiGeometryType::MULTIPOLYGON);
 
-    Polygon poly1({Point(0, 0), Point(10, 0), Point(10, 10), Point(0, 10), Point(0, 0)});
-    Polygon poly2({Point(20, 20), Point(30, 20), Point(30, 30), Point(20, 30), Point(20, 20)});
+    Polygon poly1(std::vector<std::vector<Point>>{{Point(0, 0), Point(10, 0), Point(10, 10), Point(0, 10), Point(0, 0)}});
+    Polygon poly2(std::vector<std::vector<Point>>{{Point(20, 20), Point(30, 20), Point(30, 30), Point(20, 30), Point(20, 20)}});
 
     mpoly.addGeometry(TypedValue::makePolygon(std::move(poly1)));
     mpoly.addGeometry(TypedValue::makePolygon(std::move(poly2)));
@@ -299,8 +299,8 @@ TEST(MultiGeometryTest, MultiPolygonBoundingBox)
 {
     MultiGeometry mpoly(MultiGeometryType::MULTIPOLYGON);
 
-    Polygon poly1({Point(-5, -5), Point(5, -5), Point(5, 5), Point(-5, 5), Point(-5, -5)});
-    Polygon poly2({Point(10, 10), Point(20, 10), Point(20, 20), Point(10, 20), Point(10, 10)});
+    Polygon poly1(std::vector<std::vector<Point>>{{Point(-5, -5), Point(5, -5), Point(5, 5), Point(-5, 5), Point(-5, -5)}});
+    Polygon poly2(std::vector<std::vector<Point>>{{Point(10, 10), Point(20, 10), Point(20, 20), Point(10, 20), Point(10, 10)}});
 
     mpoly.addGeometry(TypedValue::makePolygon(std::move(poly1)));
     mpoly.addGeometry(TypedValue::makePolygon(std::move(poly2)));
@@ -325,9 +325,9 @@ TEST(MultiGeometryTest, GeometryCollectionMixedTypes)
 {
     MultiGeometry gc(MultiGeometryType::GEOMETRYCOLLECTION);
 
-    auto pt = TypedValue::makePoint(0.0, 0.0);
+    auto pt = TypedValue::makePoint(Point(0.0, 0.0));
     auto line = TypedValue::makeLineString(LineString({Point(0, 0), Point(1, 1)}));
-    auto poly = TypedValue::makePolygon(Polygon({Point(0, 0), Point(1, 0), Point(1, 1), Point(0, 1), Point(0, 0)}));
+    auto poly = TypedValue::makePolygon(Polygon(std::vector<std::vector<Point>>{{Point(0, 0), Point(1, 0), Point(1, 1), Point(0, 1), Point(0, 0)}}));
 
     EXPECT_TRUE(gc.addGeometry(pt));
     EXPECT_TRUE(gc.addGeometry(line));
@@ -339,9 +339,9 @@ TEST(MultiGeometryTest, GeometryCollectionToWKT)
 {
     MultiGeometry gc(MultiGeometryType::GEOMETRYCOLLECTION);
 
-    gc.addGeometry(TypedValue::makePoint(0.0, 0.0));
+    gc.addGeometry(TypedValue::makePoint(Point(0.0, 0.0)));
     gc.addGeometry(TypedValue::makeLineString(LineString({Point(0, 0), Point(1, 1)})));
-    gc.addGeometry(TypedValue::makePolygon(Polygon({Point(0, 0), Point(1, 0), Point(1, 1), Point(0, 1), Point(0, 0)})));
+    gc.addGeometry(TypedValue::makePolygon(Polygon(std::vector<std::vector<Point>>{{Point(0, 0), Point(1, 0), Point(1, 1), Point(0, 1), Point(0, 0)}})));
 
     std::string wkt = gc.toWKT();
     EXPECT_EQ(wkt, "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1), POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))");
@@ -377,9 +377,9 @@ TEST(MultiGeometryTest, GeometryCollectionBoundingBox)
 {
     MultiGeometry gc(MultiGeometryType::GEOMETRYCOLLECTION);
 
-    gc.addGeometry(TypedValue::makePoint(-10.0, -20.0));
+    gc.addGeometry(TypedValue::makePoint(Point(-10.0, -20.0)));
     gc.addGeometry(TypedValue::makeLineString(LineString({Point(0, 0), Point(15, 25)})));
-    gc.addGeometry(TypedValue::makePolygon(Polygon({Point(5, 5), Point(8, 5), Point(8, 8), Point(5, 8), Point(5, 5)})));
+    gc.addGeometry(TypedValue::makePolygon(Polygon(std::vector<std::vector<Point>>{{Point(5, 5), Point(8, 5), Point(8, 8), Point(5, 8), Point(5, 5)}})));
 
     BoundingBox bbox = gc.boundingBox();
     EXPECT_DOUBLE_EQ(bbox.min_x, -10.0);
@@ -462,9 +462,9 @@ TEST(BoundingBoxTest, ContainsPoint)
 TEST(MultiGeometryTest, IteratorSupport)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
-    mp.addGeometry(TypedValue::makePoint(0.0, 0.0));
-    mp.addGeometry(TypedValue::makePoint(1.0, 1.0));
-    mp.addGeometry(TypedValue::makePoint(2.0, 2.0));
+    mp.addGeometry(TypedValue::makePoint(Point(0.0, 0.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(1.0, 1.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(2.0, 2.0)));
 
     int count = 0;
     for (const auto& geom : mp) {
@@ -485,15 +485,15 @@ TEST(MultiGeometryTest, IsValidEmpty)
 TEST(MultiGeometryTest, IsValidWithGeometries)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
-    mp.addGeometry(TypedValue::makePoint(0.0, 0.0));
+    mp.addGeometry(TypedValue::makePoint(Point(0.0, 0.0)));
     EXPECT_TRUE(mp.isValid());
 }
 
 TEST(MultiGeometryTest, ClearGeometries)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
-    mp.addGeometry(TypedValue::makePoint(0.0, 0.0));
-    mp.addGeometry(TypedValue::makePoint(1.0, 1.0));
+    mp.addGeometry(TypedValue::makePoint(Point(0.0, 0.0)));
+    mp.addGeometry(TypedValue::makePoint(Point(1.0, 1.0)));
 
     EXPECT_EQ(mp.size(), 2);
     mp.clear();
@@ -515,7 +515,7 @@ TEST(MultiGeometryTest, InvalidWKT)
 TEST(MultiGeometryTest, OutOfRangeAccess)
 {
     MultiGeometry mp(MultiGeometryType::MULTIPOINT);
-    mp.addGeometry(TypedValue::makePoint(0.0, 0.0));
+    mp.addGeometry(TypedValue::makePoint(Point(0.0, 0.0)));
 
     EXPECT_THROW(mp.getGeometry(1), std::out_of_range);
 }

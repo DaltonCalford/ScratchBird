@@ -136,7 +136,7 @@ namespace core {
         return rtree_->remove(bbox, tid, xmax, ctx);
     }
 
-    Status RTreeIndex::vacuum(ErrorContext *ctx)
+    Status RTreeIndex::gcCompact(ErrorContext *ctx)
     {
         if (!rtree_)
         {
@@ -144,7 +144,7 @@ namespace core {
             return Status::NOT_FOUND;
         }
 
-        // Delegate to RTree clear (vacuum equivalent)
+        // Delegate to RTree clear (GC compaction equivalent)
         return rtree_->clear(ctx);
     }
 

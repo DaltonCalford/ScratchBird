@@ -13,6 +13,8 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/tid.h"
 #include "test_helpers.h"
 #include <filesystem>
 #include <cstring>
@@ -20,18 +22,18 @@
 namespace scratchbird::core::test
 {
 
-class BTreeVacuumTest : public ::testing::Test
+// ScratchBird MGA GC compaction tests (not PostgreSQL VACUUM).
+class BTreeGcCompactionTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        // Create test database directory
-        test_db_path_ = scratchbird::testing::uniqueTestDirPath("test_btree_vacuum");
+        // Create test database path
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_btree_vacuum", ".db");
         if (std::filesystem::exists(test_db_path_))
         {
-            std::filesystem::remove_all(test_db_path_);
+            std::filesystem::remove(test_db_path_);
         }
-        std::filesystem::create_directories(test_db_path_);
 
         // Create database
         ErrorContext ctx;
@@ -47,15 +49,32 @@ protected:
         db_.close();
         if (std::filesystem::exists(test_db_path_))
         {
-            std::filesystem::remove_all(test_db_path_);
+            std::filesystem::remove(test_db_path_);
         }
     }
 
     std::string test_db_path_;
     Database db_;
+
+    GPID allocateRootGpid(ErrorContext *ctx)
+    {
+        auto *pm = db_.page_manager();
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        auto status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
+    }
 };
 
-TEST_F(BTreeVacuumTest, VacuumEmptyTree)
+TEST_F(BTreeGcCompactionTest, GcCompactionEmptyTree)
 {
     ErrorContext ctx;
 
@@ -64,27 +83,27 @@ TEST_F(BTreeVacuumTest, VacuumEmptyTree)
     UuidV7Bytes table_uuid = generateUuidV7();
     std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
-    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, &root_page, &ctx);
+    GPID root_gpid = allocateRootGpid(&ctx);
+    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create B-tree: " << ctx.message;
 
     // Open the B-tree
-    auto btree = BTree::open(&db_, index_uuid, root_page, &ctx);
+    auto btree = BTree::open(&db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(btree, nullptr) << "Failed to open B-tree: " << ctx.message;
 
-    // Vacuum empty tree
-    BTree::VacuumStats stats;
-    status = btree->vacuum(&stats, &ctx);
-    ASSERT_EQ(status, Status::OK) << "Vacuum failed: " << ctx.message;
+    // GC compact empty tree
+    BTree::GcCompactionStats stats;
+    status = btree->gcCompact(&stats, &ctx);
+    ASSERT_EQ(status, Status::OK) << "GC compaction failed: " << ctx.message;
 
     EXPECT_EQ(stats.pages_visited, 1);  // Only root page
-    EXPECT_EQ(stats.pages_vacuumed, 0); // No garbage
+    EXPECT_EQ(stats.pages_compacted, 0); // No garbage
     EXPECT_EQ(stats.nodes_removed, 0);
     EXPECT_EQ(stats.bytes_reclaimed, 0);
     EXPECT_EQ(stats.pages_merged, 0);
 }
 
-TEST_F(BTreeVacuumTest, VacuumWithDeletedNodes)
+TEST_F(BTreeGcCompactionTest, GcCompactionWithDeletedNodes)
 {
     ErrorContext ctx;
 
@@ -93,55 +112,55 @@ TEST_F(BTreeVacuumTest, VacuumWithDeletedNodes)
     UuidV7Bytes table_uuid = generateUuidV7();
     std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
-    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, &root_page, &ctx);
+    GPID root_gpid = allocateRootGpid(&ctx);
+    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create B-tree: " << ctx.message;
 
     // Open the B-tree
-    auto btree = BTree::open(&db_, index_uuid, root_page, &ctx);
+    auto btree = BTree::open(&db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(btree, nullptr) << "Failed to open B-tree: " << ctx.message;
 
     // Insert some test data
     const int num_entries = 20;
-    std::vector<std::pair<std::vector<uint8_t>, uint64_t>> test_data;
+    std::vector<std::pair<std::vector<uint8_t>, TID>> test_data;
 
     for (int i = 0; i < num_entries; ++i)
     {
         std::vector<uint8_t> key(sizeof(int));
         std::memcpy(key.data(), &i, sizeof(int));
-        uint64_t tuple_id = i + 1000;
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i + 1)), 1};
 
-        status = btree->insert(key, tuple_id, &ctx);
+        status = btree->insert(key, tid, 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to insert key " << i << ": " << ctx.message;
 
-        test_data.push_back({key, tuple_id});
+        test_data.push_back({key, tid});
     }
 
     // Delete every other entry
     int deleted_count = 0;
     for (int i = 0; i < num_entries; i += 2)
     {
-        status = btree->remove(test_data[i].first, test_data[i].second, &ctx);
+        status = btree->remove(test_data[i].first, test_data[i].second, 2, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to remove key " << i << ": " << ctx.message;
         deleted_count++;
     }
 
-    // Vacuum the tree
-    BTree::VacuumStats stats;
-    status = btree->vacuum(&stats, &ctx);
-    ASSERT_EQ(status, Status::OK) << "Vacuum failed: " << ctx.message;
+    // GC compact the tree
+    BTree::GcCompactionStats stats;
+    status = btree->gcCompact(&stats, &ctx);
+    ASSERT_EQ(status, Status::OK) << "GC compaction failed: " << ctx.message;
 
-    // Verify vacuum statistics
+    // Verify GC statistics
     EXPECT_GT(stats.pages_visited, 0) << "Should have visited at least one page";
-    EXPECT_GT(stats.pages_vacuumed, 0) << "Should have vacuumed at least one page";
+    EXPECT_GT(stats.pages_compacted, 0) << "Should have compacted at least one page";
     EXPECT_EQ(stats.nodes_removed, deleted_count) << "Should have removed all deleted nodes";
     EXPECT_GT(stats.bytes_reclaimed, 0) << "Should have reclaimed some bytes";
 
     // Verify remaining entries are still searchable
     for (int i = 1; i < num_entries; i += 2)
     {
-        std::vector<uint64_t> tuple_ids;
-        status = btree->search(test_data[i].first, nullptr, &tuple_ids, &ctx);
+        std::vector<TID> tuple_ids;
+        status = btree->search(test_data[i].first, 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to search key " << i << ": " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
         EXPECT_EQ(tuple_ids[0], test_data[i].second);
@@ -150,13 +169,13 @@ TEST_F(BTreeVacuumTest, VacuumWithDeletedNodes)
     // Verify deleted entries are not found
     for (int i = 0; i < num_entries; i += 2)
     {
-        std::vector<uint64_t> tuple_ids;
-        status = btree->search(test_data[i].first, nullptr, &tuple_ids, &ctx);
+        std::vector<TID> tuple_ids;
+        status = btree->search(test_data[i].first, 0, &tuple_ids, &ctx);
         EXPECT_EQ(status, Status::NOT_FOUND) << "Deleted key " << i << " should not be found";
     }
 }
 
-TEST_F(BTreeVacuumTest, CompactPageReclainsSpace)
+TEST_F(BTreeGcCompactionTest, CompactionReclaimsSpace)
 {
     ErrorContext ctx;
 
@@ -165,11 +184,11 @@ TEST_F(BTreeVacuumTest, CompactPageReclainsSpace)
     UuidV7Bytes table_uuid = generateUuidV7();
     std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
-    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, &root_page, &ctx);
+    GPID root_gpid = allocateRootGpid(&ctx);
+    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto btree = BTree::open(&db_, index_uuid, root_page, &ctx);
+    auto btree = BTree::open(&db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(btree, nullptr);
 
     // Insert 50 entries
@@ -177,7 +196,8 @@ TEST_F(BTreeVacuumTest, CompactPageReclainsSpace)
     {
         std::vector<uint8_t> key(sizeof(int));
         std::memcpy(key.data(), &i, sizeof(int));
-        status = btree->insert(key, i + 1000, &ctx);
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i + 1)), 1};
+        status = btree->insert(key, tid, 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -186,13 +206,14 @@ TEST_F(BTreeVacuumTest, CompactPageReclainsSpace)
     {
         std::vector<uint8_t> key(sizeof(int));
         std::memcpy(key.data(), &i, sizeof(int));
-        status = btree->remove(key, i + 1000, &ctx);
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i + 1)), 1};
+        status = btree->remove(key, tid, 2, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
-    // Vacuum should reclaim significant space
-    BTree::VacuumStats stats;
-    status = btree->vacuum(&stats, &ctx);
+    // GC compaction should reclaim significant space
+    BTree::GcCompactionStats stats;
+    status = btree->gcCompact(&stats, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     EXPECT_EQ(stats.nodes_removed, 40);
@@ -203,15 +224,15 @@ TEST_F(BTreeVacuumTest, CompactPageReclainsSpace)
     {
         std::vector<uint8_t> key(sizeof(int));
         std::memcpy(key.data(), &i, sizeof(int));
-        std::vector<uint64_t> tuple_ids;
-        status = btree->search(key, nullptr, &tuple_ids, &ctx);
+        std::vector<TID> tuple_ids;
+        status = btree->search(key, 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK);
         ASSERT_EQ(tuple_ids.size(), 1);
-        EXPECT_EQ(tuple_ids[0], i + 1000);
+        EXPECT_EQ(tuple_ids[0], TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i + 1)), 1));
     }
 }
 
-TEST_F(BTreeVacuumTest, VacuumMultipleTimes)
+TEST_F(BTreeGcCompactionTest, GcCompactionMultipleTimes)
 {
     ErrorContext ctx;
 
@@ -219,11 +240,11 @@ TEST_F(BTreeVacuumTest, VacuumMultipleTimes)
     UuidV7Bytes table_uuid = generateUuidV7();
     std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
-    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, &root_page, &ctx);
+    GPID root_gpid = allocateRootGpid(&ctx);
+    auto status = BTree::create(&db_, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto btree = BTree::open(&db_, index_uuid, root_page, &ctx);
+    auto btree = BTree::open(&db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(btree, nullptr);
 
     // Insert 30 entries
@@ -231,7 +252,8 @@ TEST_F(BTreeVacuumTest, VacuumMultipleTimes)
     {
         std::vector<uint8_t> key(sizeof(int));
         std::memcpy(key.data(), &i, sizeof(int));
-        status = btree->insert(key, i + 1000, &ctx);
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i + 1)), 1};
+        status = btree->insert(key, tid, 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -240,22 +262,23 @@ TEST_F(BTreeVacuumTest, VacuumMultipleTimes)
     {
         std::vector<uint8_t> key(sizeof(int));
         std::memcpy(key.data(), &i, sizeof(int));
-        status = btree->remove(key, i + 1000, &ctx);
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i + 1)), 1};
+        status = btree->remove(key, tid, 2, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
-    // First vacuum
-    BTree::VacuumStats stats1;
-    status = btree->vacuum(&stats1, &ctx);
+    // First GC compaction
+    BTree::GcCompactionStats stats1;
+    status = btree->gcCompact(&stats1, &ctx);
     ASSERT_EQ(status, Status::OK);
     EXPECT_EQ(stats1.nodes_removed, 15);
 
-    // Second vacuum on already cleaned tree
-    BTree::VacuumStats stats2;
-    status = btree->vacuum(&stats2, &ctx);
+    // Second GC compaction on already cleaned tree
+    BTree::GcCompactionStats stats2;
+    status = btree->gcCompact(&stats2, &ctx);
     ASSERT_EQ(status, Status::OK);
-    EXPECT_EQ(stats2.nodes_removed, 0) << "Second vacuum should find no garbage";
-    EXPECT_EQ(stats2.bytes_reclaimed, 0) << "Second vacuum should reclaim no space";
+    EXPECT_EQ(stats2.nodes_removed, 0) << "Second GC compaction should find no garbage";
+    EXPECT_EQ(stats2.bytes_reclaimed, 0) << "Second GC compaction should reclaim no space";
 }
 
 } // namespace scratchbird::core::test

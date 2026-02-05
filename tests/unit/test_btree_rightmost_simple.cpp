@@ -12,6 +12,7 @@
  * Simple verification that validation exists and works correctly
  */
 
+#include <gtest/gtest.h>
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
@@ -79,9 +80,17 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         }
 
         std::vector<UuidV7Bytes> column_uuids;
-        uint32_t root_page;
+        GPID root_gpid = 0;
 
-        Status status = BTree::create(&db, index_uuid, table_uuid, column_uuids, &root_page, &ctx);
+        Status status = db.page_manager()->allocatePageInTablespace(PRIMARY_TABLESPACE_ID,
+                                                                    &root_gpid, &ctx);
+        if (status != Status::OK)
+        {
+            std::cout << "FAILED (allocate root): " << ctx.message << std::endl;
+            FAIL(); return;
+        }
+
+        status = BTree::create(&db, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
         if (status != Status::OK)
         {
             std::cout << "FAILED (BTree::create): " << ctx.message << std::endl;
@@ -90,7 +99,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
 
         // Verify root page initialization
         void *root_data;
-        if (db.buffer_pool()->pinPage(root_page, &root_data, &ctx) != Status::OK)
+        if (db.buffer_pool()->pinPageGlobal(root_gpid, &root_data, &ctx) != Status::OK)
         {
             std::cout << "FAILED (pin root): " << ctx.message << std::endl;
             FAIL(); return;
@@ -113,7 +122,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
             FAIL(); return;
         }
 
-        db.buffer_pool()->unpinPage(root_page, false, &ctx);
+        db.buffer_pool()->unpinPageGlobal(root_gpid, false, &ctx);
         db.close();
         std::remove(db_path.c_str());
 

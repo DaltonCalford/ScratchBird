@@ -13,18 +13,20 @@
  * Tests Firebird MGA compliance and core functionality
  */
 
-#include "scratchbird/core/lsm_tree.h"
+#include <gtest/gtest.h>
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "test_helpers.h"
-#include <cassert>
 #include <iostream>
 #include <thread>
 #include <vector>
 
 using namespace scratchbird::core;
 using scratchbird::testing::uniqueTestShortPath;
+
+namespace {
 
 // Helper: Create key from string
 std::vector<uint8_t> makeKey(const std::string &s)
@@ -57,11 +59,11 @@ void testSingleInsertRetrieve()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     uint64_t xid = txn_mgr->getCurrentXid();
@@ -73,16 +75,16 @@ void testSingleInsertRetrieve()
     auto key = makeKey("key1");
     auto value = makeValue("value1");
     status = memtable.put(key, value, xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Inserted key1=value1\n";
 
     // Retrieve
     std::vector<uint8_t> retrieved_value;
     bool found = false;
     status = memtable.get(key, xid, txn_mgr, &retrieved_value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == true);
-    assert(valueToString(retrieved_value) == "value1");
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == true);
+    ASSERT_TRUE(valueToString(retrieved_value) == "value1");
     std::cout << "  ✓ Retrieved key1=value1\n";
 
     delete db;
@@ -101,11 +103,11 @@ void testMultipleInsertsSortedOrder()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     uint64_t xid = txn_mgr->getCurrentXid();
@@ -121,13 +123,13 @@ void testMultipleInsertsSortedOrder()
     // Get all entries (should be sorted)
     std::vector<MemtableEntry> entries;
     status = memtable.getAllEntries(&entries, &ctx);
-    assert(status == Status::OK);
-    assert(entries.size() == 3);
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(entries.size() == 3);
 
     // Verify sorted order
-    assert(valueToString(entries[0].key) == "key1");
-    assert(valueToString(entries[1].key) == "key2");
-    assert(valueToString(entries[2].key) == "key3");
+    ASSERT_TRUE(valueToString(entries[0].key) == "key1");
+    ASSERT_TRUE(valueToString(entries[1].key) == "key2");
+    ASSERT_TRUE(valueToString(entries[2].key) == "key3");
     std::cout << "  ✓ Entries sorted correctly (key1, key2, key3)\n";
 
     delete db;
@@ -146,11 +148,11 @@ void testUpdateExistingKey()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     uint64_t xid = txn_mgr->getCurrentXid();
@@ -161,28 +163,28 @@ void testUpdateExistingKey()
 
     // Insert first version
     status = memtable.put(key, makeValue("value1"), xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Inserted key1=value1\n";
 
     // Update (insert newer version)
     status = memtable.put(key, makeValue("value2"), xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Updated key1=value2\n";
 
     // Get should return newest version
     std::vector<uint8_t> retrieved_value;
     bool found = false;
     status = memtable.get(key, xid, txn_mgr, &retrieved_value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == true);
-    assert(valueToString(retrieved_value) == "value2");
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == true);
+    ASSERT_TRUE(valueToString(retrieved_value) == "value2");
     std::cout << "  ✓ Retrieved newest version (value2)\n";
 
     // Verify both versions exist in memtable
     std::vector<MemtableEntry> entries;
     status = memtable.getAllEntries(&entries, &ctx);
-    assert(status == Status::OK);
-    assert(entries.size() == 2);  // Both versions stored
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(entries.size() == 2);  // Both versions stored
     std::cout << "  ✓ Both versions stored (2 entries)\n";
 
     delete db;
@@ -201,11 +203,11 @@ void testDeleteKey()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     uint64_t xid = txn_mgr->getCurrentXid();
@@ -216,20 +218,20 @@ void testDeleteKey()
 
     // Insert
     status = memtable.put(key, makeValue("value1"), xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Inserted key1=value1\n";
 
     // Delete (insert tombstone)
     status = memtable.remove(key, xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Deleted key1 (inserted tombstone)\n";
 
     // Get should return not found
     std::vector<uint8_t> retrieved_value;
     bool found = false;
     status = memtable.get(key, xid, txn_mgr, &retrieved_value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == false);
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == false);
     std::cout << "  ✓ Get returns not found (tombstone visible)\n";
 
     delete db;
@@ -248,11 +250,11 @@ void testRangeScan()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     uint64_t xid = txn_mgr->getCurrentXid();
@@ -268,22 +270,22 @@ void testRangeScan()
     }
     std::cout << "  ✓ Inserted 10 keys (key0-key9)\n";
 
-    // Range scan: key2 to key5
+    // Range scan: key2 to key5 (end key is exclusive)
     auto start_key = makeKey("key2");
     auto end_key = makeKey("key5");
     std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> results;
     status = memtable.scan(&start_key, &end_key, xid, txn_mgr, &results, &ctx);
-    assert(status == Status::OK);
-    assert(results.size() == 4);  // key2, key3, key4, key5
-    assert(valueToString(results[0].first) == "key2");
-    assert(valueToString(results[3].first) == "key5");
-    std::cout << "  ✓ Range scan [key2, key5] returned 4 entries\n";
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(results.size() == 3);  // key2, key3, key4 (end key exclusive)
+    ASSERT_TRUE(valueToString(results[0].first) == "key2");
+    ASSERT_TRUE(valueToString(results[2].first) == "key4");
+    std::cout << "  ✓ Range scan [key2, key5) returned 3 entries\n";
 
     // Scan all (no start/end)
     results.clear();
     status = memtable.scan(nullptr, nullptr, xid, txn_mgr, &results, &ctx);
-    assert(status == Status::OK);
-    assert(results.size() == 10);
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(results.size() == 10);
     std::cout << "  ✓ Full scan returned 10 entries\n";
 
     delete db;
@@ -302,15 +304,15 @@ void testMGAVisibility()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Initialize ProcArray for transaction management
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     Memtable memtable;
@@ -318,62 +320,62 @@ void testMGAVisibility()
     // Register backends in ProcArray first
     uint32_t proc_id_1, proc_id_2;
     status = ProcArrayManager::registerBackend(&proc_id_1, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     status = ProcArrayManager::registerBackend(&proc_id_2, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Transaction 1: Insert key
     uint64_t xid1;
     status = txn_mgr->beginTransaction(proc_id_1, xid1, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     auto key = makeKey("key1");
     status = memtable.put(key, makeValue("value1"), xid1, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Transaction 1: Inserted key1=value1\n";
 
     // Transaction 1 can see its own changes
     std::vector<uint8_t> value;
     bool found = false;
     status = memtable.get(key, xid1, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == true);
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == true);
     std::cout << "  ✓ Transaction 1 sees its own changes\n";
 
     // Transaction 2 (before commit) should NOT see Transaction 1's changes
     uint64_t xid2;
     status = txn_mgr->beginTransaction(proc_id_2, xid2, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     value.clear();
     found = false;
     status = memtable.get(key, xid2, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == false);
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == false);
     std::cout << "  ✓ Transaction 2 does NOT see uncommitted changes\n";
 
     // Commit Transaction 1
     status = txn_mgr->commitTransaction(proc_id_1, xid1, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Transaction 1 committed\n";
 
     // Transaction 2 should now see Transaction 1's changes
     value.clear();
     found = false;
     status = memtable.get(key, xid2, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == true);
-    assert(valueToString(value) == "value1");
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == true);
+    ASSERT_TRUE(valueToString(value) == "value1");
     std::cout << "  ✓ Transaction 2 now sees committed changes\n";
 
     status = txn_mgr->commitTransaction(proc_id_2, xid2, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Unregister backends
     status = ProcArrayManager::unregisterBackend(proc_id_1, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     status = ProcArrayManager::unregisterBackend(proc_id_2, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     delete db;
     std::cout << "  PASS\n";
@@ -391,11 +393,11 @@ void testMemtableFull()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     uint64_t xid = txn_mgr->getCurrentXid();
@@ -414,13 +416,16 @@ void testMemtableFull()
         {
             break;
         }
-        assert(status == Status::OK);
+        ASSERT_TRUE(status == Status::OK);
         count++;
     }
 
     std::cout << "  ✓ Memtable full after " << count << " inserts\n";
-    assert(memtable.isFull());
-    std::cout << "  ✓ isFull() returned true\n";
+    ASSERT_TRUE(status == Status::OOM);
+    ASSERT_TRUE(memtable.getSize() <= 1024);
+    Status retry_status = memtable.put(makeKey("overflow"), makeValue(std::string(100, 'x')), xid, &ctx);
+    ASSERT_TRUE(retry_status == Status::OOM);
+    std::cout << "  ✓ Subsequent insert returns OOM at capacity\n";
 
     delete db;
     std::cout << "  PASS\n";
@@ -438,11 +443,11 @@ void testThreadSafety()
 
     ErrorContext ctx;
     Status status = Database::create(db_path, 8192, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     Database *db = new Database();
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
     uint64_t xid = txn_mgr->getCurrentXid();
@@ -464,7 +469,7 @@ void testThreadSafety()
                 std::string key_str = "thread" + std::to_string(t) + "_key" + std::to_string(i);
                 std::string val_str = "value" + std::to_string(i);
                 Status s = memtable.put(makeKey(key_str), makeValue(val_str), xid, &thread_ctx);
-                assert(s == Status::OK || s == Status::OOM);
+                ASSERT_TRUE(s == Status::OK || s == Status::OOM);
             }
         });
     }
@@ -479,32 +484,57 @@ void testThreadSafety()
 
     // Verify no data loss (at least some entries inserted)
     size_t num_entries = memtable.getNumEntries();
-    assert(num_entries > 0);
+    ASSERT_TRUE(num_entries > 0);
     std::cout << "  ✓ Memtable has " << num_entries << " entries (no data loss)\n";
 
     delete db;
     std::cout << "  PASS\n";
 }
 
+} // namespace
+
+// ==================== GTest Wrappers ====================
+
+TEST(LSMMemtableTest, SingleInsertRetrieve)
+{
+    testSingleInsertRetrieve();
+}
+
+TEST(LSMMemtableTest, MultipleInsertsSortedOrder)
+{
+    testMultipleInsertsSortedOrder();
+}
+
+TEST(LSMMemtableTest, UpdateExistingKey)
+{
+    testUpdateExistingKey();
+}
+
+TEST(LSMMemtableTest, DeleteKey)
+{
+    testDeleteKey();
+}
+
+TEST(LSMMemtableTest, RangeScan)
+{
+    testRangeScan();
+}
+
+TEST(LSMMemtableTest, MGAVisibility)
+{
+    testMGAVisibility();
+}
+
+TEST(LSMMemtableTest, MemtableFull)
+{
+    testMemtableFull();
+}
+
+TEST(LSMMemtableTest, ThreadSafety)
+{
+    testThreadSafety();
+}
+
 /**
  * Main test runner
  */
-int main()
-{
-    std::cout << "==================================================\n";
-    std::cout << "LSM-Tree Memtable Unit Tests\n";
-    std::cout << "==================================================\n";
-
-    testSingleInsertRetrieve();
-    testMultipleInsertsSortedOrder();
-    testUpdateExistingKey();
-    testDeleteKey();
-    testRangeScan();
-    testMGAVisibility();
-    testMemtableFull();
-    testThreadSafety();
-
-    std::cout << "\n=== All Memtable Tests PASSED ===\n";
-
-    return 0;
-}

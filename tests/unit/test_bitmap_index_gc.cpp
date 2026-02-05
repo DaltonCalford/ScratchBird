@@ -13,8 +13,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/tid.h"
+#include "scratchbird/core/uuidv7.h"
 #include <filesystem>
 #include <vector>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -38,7 +42,7 @@ protected:
         // Create database
         db_ = new Database();
         ErrorContext ctx;
-        Status status = db_->create(test_db_path_, &ctx);
+        Status status = Database::create(test_db_path_, 16384, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         status = db_->open(test_db_path_, &ctx);
@@ -68,7 +72,7 @@ TEST_F(BitmapIndexGCTest, EmptyDeadTidsVector)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -78,7 +82,7 @@ TEST_F(BitmapIndexGCTest, EmptyDeadTidsVector)
     ASSERT_NE(bitmap_index, nullptr) << "Failed to open Bitmap Index: " << ctx.message;
 
     // Call removeDeadEntries with empty vector
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -95,7 +99,7 @@ TEST_F(BitmapIndexGCTest, DeadTidNotInIndex)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -108,8 +112,8 @@ TEST_F(BitmapIndexGCTest, DeadTidNotInIndex)
     const char *value1 = "red";
     const char *value2 = "blue";
 
-    uint64_t tid1 = (1ULL << 32) | 1; // page 1, item 1
-    uint64_t tid2 = (1ULL << 32) | 2; // page 1, item 2
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
+    TID tid2{makeGPID(PRIMARY_TABLESPACE_ID, 1), 2};
 
     status = bitmap_index->insert(value1, strlen(value1), tid1, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -118,9 +122,9 @@ TEST_F(BitmapIndexGCTest, DeadTidNotInIndex)
     ASSERT_EQ(status, Status::OK);
 
     // Try to remove TIDs that don't exist in index
-    std::vector<uint64_t> dead_tids = {
-        (2ULL << 32) | 1,  // page 2, item 1 (doesn't exist)
-        (2ULL << 32) | 2   // page 2, item 2 (doesn't exist)
+    std::vector<TID> dead_tids = {
+        TID{makeGPID(PRIMARY_TABLESPACE_ID, 2), 1},  // page 2, item 1 (doesn't exist)
+        TID{makeGPID(PRIMARY_TABLESPACE_ID, 2), 2}   // page 2, item 2 (doesn't exist)
     };
 
     uint64_t entries_removed = 0;
@@ -138,7 +142,7 @@ TEST_F(BitmapIndexGCTest, SingleDeadTidRemoval)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -150,9 +154,9 @@ TEST_F(BitmapIndexGCTest, SingleDeadTidRemoval)
     // Insert entries with same value (multiple TIDs in one bitmap)
     const char *value = "active";
 
-    uint64_t tid1 = 1; // Simple TID
-    uint64_t tid2 = 2;
-    uint64_t tid3 = 3;
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
+    TID tid2{makeGPID(PRIMARY_TABLESPACE_ID, 2), 1};
+    TID tid3{makeGPID(PRIMARY_TABLESPACE_ID, 3), 1};
 
     status = bitmap_index->insert(value, strlen(value), tid1, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -164,11 +168,12 @@ TEST_F(BitmapIndexGCTest, SingleDeadTidRemoval)
     ASSERT_EQ(status, Status::OK);
 
     // Verify find returns all 3 TIDs
-    auto found_tids = bitmap_index->find(value, strlen(value), nullptr, &ctx);
+    std::vector<TID> found_tids;
+    ASSERT_EQ(bitmap_index->find(value, strlen(value), 0, &found_tids, &ctx), Status::OK);
     EXPECT_EQ(found_tids.size(), 3);
 
     // Remove tid2
-    std::vector<uint64_t> dead_tids = {tid2};
+    std::vector<TID> dead_tids = {tid2};
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -178,7 +183,8 @@ TEST_F(BitmapIndexGCTest, SingleDeadTidRemoval)
     EXPECT_GE(entries_removed, 1);  // At least one entry removed
 
     // Verify find now returns only 2 TIDs (tid1 and tid3)
-    found_tids = bitmap_index->find(value, strlen(value), nullptr, &ctx);
+    found_tids.clear();
+    ASSERT_EQ(bitmap_index->find(value, strlen(value), 0, &found_tids, &ctx), Status::OK);
     EXPECT_EQ(found_tids.size(), 2);
 }
 
@@ -188,7 +194,7 @@ TEST_F(BitmapIndexGCTest, BulkDeadTidRemoval)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -200,11 +206,11 @@ TEST_F(BitmapIndexGCTest, BulkDeadTidRemoval)
     // Insert many entries with same value
     const char *value = "status_active";
     const int num_entries = 50;
-    std::vector<uint64_t> all_tids;
+    std::vector<TID> all_tids;
 
     for (int i = 0; i < num_entries; i++)
     {
-        uint64_t tid = i + 1; // Simple TIDs: 1, 2, 3, ..., 50
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i + 1)), 1};
         all_tids.push_back(tid);
 
         status = bitmap_index->insert(value, strlen(value), tid, &ctx);
@@ -212,11 +218,12 @@ TEST_F(BitmapIndexGCTest, BulkDeadTidRemoval)
     }
 
     // Verify find returns all TIDs
-    auto found_before = bitmap_index->find(value, strlen(value), nullptr, &ctx);
+    std::vector<TID> found_before;
+    ASSERT_EQ(bitmap_index->find(value, strlen(value), 0, &found_before, &ctx), Status::OK);
     EXPECT_EQ(found_before.size(), num_entries);
 
     // Remove every other entry (25 entries)
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     for (int i = 0; i < num_entries; i += 2)
     {
         dead_tids.push_back(all_tids[i]);
@@ -231,7 +238,8 @@ TEST_F(BitmapIndexGCTest, BulkDeadTidRemoval)
     EXPECT_GE(entries_removed, 25);  // At least 25 entries removed
 
     // Verify find returns remaining TIDs
-    auto found_after = bitmap_index->find(value, strlen(value), nullptr, &ctx);
+    std::vector<TID> found_after;
+    ASSERT_EQ(bitmap_index->find(value, strlen(value), 0, &found_after, &ctx), Status::OK);
     EXPECT_EQ(found_after.size(), 25);  // Half remaining
 }
 
@@ -241,7 +249,7 @@ TEST_F(BitmapIndexGCTest, IndexTypeName)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -261,7 +269,7 @@ TEST_F(BitmapIndexGCTest, DuplicateDeadTids)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -272,13 +280,13 @@ TEST_F(BitmapIndexGCTest, DuplicateDeadTids)
 
     // Insert entry
     const char *value = "test_value";
-    uint64_t tid1 = 100;
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 100), 1};
 
     status = bitmap_index->insert(value, strlen(value), tid1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Remove with duplicate TIDs in vector
-    std::vector<uint64_t> dead_tids = {tid1, tid1, tid1}; // Same TID 3 times
+    std::vector<TID> dead_tids = {tid1, tid1, tid1}; // Same TID 3 times
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -294,7 +302,7 @@ TEST_F(BitmapIndexGCTest, MultipleValuesRemoval)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -314,24 +322,31 @@ TEST_F(BitmapIndexGCTest, MultipleValuesRemoval)
 
     for (uint64_t tid = 1; tid <= 3; tid++)
     {
-        status = bitmap_index->insert(red, strlen(red), tid, &ctx);
+        status = bitmap_index->insert(red, strlen(red),
+                                      TID(makeGPID(PRIMARY_TABLESPACE_ID, tid), 1), &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
     for (uint64_t tid = 4; tid <= 6; tid++)
     {
-        status = bitmap_index->insert(blue, strlen(blue), tid, &ctx);
+        status = bitmap_index->insert(blue, strlen(blue),
+                                      TID(makeGPID(PRIMARY_TABLESPACE_ID, tid), 1), &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
     for (uint64_t tid = 7; tid <= 9; tid++)
     {
-        status = bitmap_index->insert(green, strlen(green), tid, &ctx);
+        status = bitmap_index->insert(green, strlen(green),
+                                      TID(makeGPID(PRIMARY_TABLESPACE_ID, tid), 1), &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
     // Remove TID 2 (from red), TID 5 (from blue), TID 8 (from green)
-    std::vector<uint64_t> dead_tids = {2, 5, 8};
+    std::vector<TID> dead_tids = {
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 2), 1),
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 5), 1),
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 8), 1),
+    };
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -341,13 +356,16 @@ TEST_F(BitmapIndexGCTest, MultipleValuesRemoval)
     EXPECT_GE(entries_removed, 3);  // At least 3 entries removed (one from each bitmap)
 
     // Verify each value now has 2 TIDs
-    auto red_tids = bitmap_index->find(red, strlen(red), nullptr, &ctx);
+    std::vector<TID> red_tids;
+    ASSERT_EQ(bitmap_index->find(red, strlen(red), 0, &red_tids, &ctx), Status::OK);
     EXPECT_EQ(red_tids.size(), 2);  // 1, 3
 
-    auto blue_tids = bitmap_index->find(blue, strlen(blue), nullptr, &ctx);
+    std::vector<TID> blue_tids;
+    ASSERT_EQ(bitmap_index->find(blue, strlen(blue), 0, &blue_tids, &ctx), Status::OK);
     EXPECT_EQ(blue_tids.size(), 2);  // 4, 6
 
-    auto green_tids = bitmap_index->find(green, strlen(green), nullptr, &ctx);
+    std::vector<TID> green_tids;
+    ASSERT_EQ(bitmap_index->find(green, strlen(green), 0, &green_tids, &ctx), Status::OK);
     EXPECT_EQ(green_tids.size(), 2);  // 7, 9
 }
 
@@ -357,7 +375,7 @@ TEST_F(BitmapIndexGCTest, EmptyIndexGC)
     ErrorContext ctx;
 
     // Create Bitmap Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = BitmapIndex::create(db_, index_uuid, &meta_page, &ctx);
@@ -367,7 +385,11 @@ TEST_F(BitmapIndexGCTest, EmptyIndexGC)
     ASSERT_NE(bitmap_index, nullptr);
 
     // Don't insert anything, try to remove dead TIDs
-    std::vector<uint64_t> dead_tids = {1, 2, 3};
+    std::vector<TID> dead_tids = {
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 1), 1),
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 2), 1),
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 3), 1),
+    };
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 

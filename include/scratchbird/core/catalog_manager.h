@@ -1894,6 +1894,13 @@ public:
                              std::optional<uint16_t> new_charset_id = std::nullopt,
                              std::optional<uint32_t> new_collation_id = std::nullopt,
                              ErrorContext *ctx = nullptr) -> Status;
+        auto updateColumnDefaultExpr(const ID &table_id, const std::string &column_name,
+                                     const std::string &default_expr_hex, bool has_default,
+                                     ErrorContext *ctx = nullptr) -> Status;
+        auto updateColumnNullable(const ID &table_id, const std::string &column_name,
+                                  bool nullable, ErrorContext *ctx = nullptr) -> Status;
+        auto updateColumnPosition(const ID &table_id, const std::string &column_name,
+                                  uint16_t new_position_1_based, ErrorContext *ctx = nullptr) -> Status;
         auto updateTableStorageParams(const ID& table_id, const std::string& storage_params,
                                       ErrorContext* ctx = nullptr) -> Status;
         auto updateIndexParams(const ID &index_id, const std::string &index_params,

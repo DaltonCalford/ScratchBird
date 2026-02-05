@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <unordered_set>
 #include <shared_mutex>
 #include <atomic>
 
@@ -125,7 +126,7 @@ namespace scratchbird
 
             // Find all tuple IDs for a given key
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
-            // Pass 0 for current_xid to return ALL matching TIDs (used by VACUUM)
+            // Pass 0 for current_xid to return ALL matching TIDs (used by GC)
             // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             Status find(const void *key_data, size_t key_len,
                         uint64_t current_xid,
@@ -138,8 +139,8 @@ namespace scratchbird
             Status remove(const void *key_data, size_t key_len, const TID &tid,
                           uint64_t xid, ErrorContext *ctx = nullptr);
 
-            // Vacuum the index - remove deleted entries and consolidate pages
-            Status vacuum(ErrorContext *ctx = nullptr);
+            // GC compaction (ScratchBird MGA GC, not PostgreSQL VACUUM)
+            Status gcCompact(ErrorContext *ctx = nullptr);
 
             // Get index statistics
             struct Statistics

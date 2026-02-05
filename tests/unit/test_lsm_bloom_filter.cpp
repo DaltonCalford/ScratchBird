@@ -18,6 +18,7 @@
  * 5. Large datasets (100K keys)
  */
 
+#include <gtest/gtest.h>
 #include "scratchbird/core/lsm_tree.h"
 #include <iostream>
 #include <vector>
@@ -85,15 +86,7 @@ void testBasicFunctionality()
     std::cout << "  ✓ Added 1000 keys\n";
     std::cout << "  ✓ True positives: " << true_positives << "/1000";
 
-    if (true_positives == 1000)
-    {
-        std::cout << " (ALL keys detected)\n";
-    }
-    else
-    {
-        std::cout << " (ERROR: Some keys missed!)\n";
-        exit(1);
-    }
+    EXPECT_EQ(true_positives, 1000u) << "Some keys missed";
 }
 
 /**
@@ -129,11 +122,7 @@ void testFalsePositiveRate()
     std::cout << " (" << std::fixed << std::setprecision(2) << (fpr * 100.0) << "%)\n";
     std::cout << "  ✓ Target: <2% (expected ~1%)\n";
 
-    if (fpr > 0.02)
-    {
-        std::cout << "  ERROR: False positive rate too high!\n";
-        exit(1);
-    }
+    EXPECT_LE(fpr, 0.02) << "False positive rate too high";
 }
 
 /**
@@ -158,11 +147,7 @@ void testSerialization()
 
     // Deserialize
     LSMBloomFilter *bf2 = LSMBloomFilter::deserialize(serialized);
-    if (bf2 == nullptr)
-    {
-        std::cout << "  ERROR: Deserialization failed!\n";
-        exit(1);
-    }
+    ASSERT_NE(bf2, nullptr) << "Deserialization failed";
     std::cout << "  ✓ Deserialized bloom filter\n";
 
     // Verify all keys still detected after deserialization
@@ -178,12 +163,7 @@ void testSerialization()
 
     std::cout << "  ✓ Keys detected after deserialization: " << detected << "/1000\n";
 
-    if (detected != 1000)
-    {
-        std::cout << "  ERROR: Some keys lost during serialization!\n";
-        delete bf2;
-        exit(1);
-    }
+    EXPECT_EQ(detected, 1000u) << "Some keys lost during serialization";
 
     delete bf2;
 }
@@ -268,11 +248,7 @@ void testLargeDataset()
     }
     std::cout << "  ✓ Keys detected: " << detected << "/100000\n";
 
-    if (detected != 100000)
-    {
-        std::cout << "  ERROR: Some keys missed!\n";
-        exit(1);
-    }
+    EXPECT_EQ(detected, 100000u) << "Some keys missed";
 
     // Measure FPR with 10K absent keys
     std::cout << "  Measuring false positive rate (10K absent keys)...\n";
@@ -291,32 +267,30 @@ void testLargeDataset()
     std::cout << (fpr * 100.0) << "%\n";
     std::cout << "  ✓ Bloom filter size: " << bf.getSizeBytes() << " bytes\n";
 
-    if (fpr > 0.02)
-    {
-        std::cout << "  ERROR: False positive rate too high!\n";
-        exit(1);
-    }
+    EXPECT_LE(fpr, 0.02) << "False positive rate too high";
 }
 
-// ============================================================================
-// Main Test Runner
-// ============================================================================
-
-int main()
+TEST(LSMBloomFilterTest, BasicFunctionality)
 {
-    std::cout << "========================================\n";
-    std::cout << "   LSM Bloom Filter - Unit Tests\n";
-    std::cout << "========================================\n";
-
     testBasicFunctionality();
+}
+
+TEST(LSMBloomFilterTest, FalsePositiveRate)
+{
     testFalsePositiveRate();
+}
+
+TEST(LSMBloomFilterTest, Serialization)
+{
     testSerialization();
+}
+
+TEST(LSMBloomFilterTest, DifferentBitSizes)
+{
     testDifferentBitSizes();
+}
+
+TEST(LSMBloomFilterTest, LargeDataset)
+{
     testLargeDataset();
-
-    std::cout << "\n========================================\n";
-    std::cout << "  ✅ ALL BLOOM FILTER TESTS PASSED\n";
-    std::cout << "========================================\n";
-
-    return;
 }

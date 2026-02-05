@@ -9214,7 +9214,22 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             record.collation_id = col.collation_id;
             strncpy(record.default_value, col.default_value.c_str(), 127);
             record.default_value[127] = '\0';
-            record.default_value_oid = col.default_value_oid;
+            record.default_value_oid = 0;
+            if (!col.default_expr.empty())
+            {
+                uint64_t xmin = 0;
+                uint32_t default_oid = 0;
+                Status st = storeStringInToast(col.default_expr, xmin, default_oid, ctx);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+                record.default_value_oid = default_oid;
+            }
+            else
+            {
+                record.default_value_oid = col.default_value_oid;
+            }
             record.check_expr_oid = col.check_expr_oid;
             record.created_time = col.created_time;
             record.is_valid = 1;
@@ -9233,7 +9248,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         auto filter = [table_id](const ColumnRecord &record)
         { return record.table_id == table_id; };
 
-        auto converter = [](const ColumnRecord &record, ColumnInfo &info)
+        auto converter = [this, ctx](const ColumnRecord &record, ColumnInfo &info)
         {
             // Phase 4: Safety check - ensure null-termination at max position
             const_cast<char&>(record.column_name[511]) = '\0';
@@ -9263,6 +9278,16 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.collation_id = record.collation_id;
             info.default_value = record.default_value;
             info.default_value_oid = record.default_value_oid;
+            info.default_expr.clear();
+            if (record.default_value_oid != 0)
+            {
+                uint64_t xmin = 0;
+                std::string expr_blob;
+                if (loadStringFromToast(record.default_value_oid, xmin, expr_blob, ctx) == Status::OK)
+                {
+                    info.default_expr = std::move(expr_blob);
+                }
+            }
             info.check_expr_oid = record.check_expr_oid;
             info.created_time = record.created_time;
         };
@@ -15005,8 +15030,8 @@ auto CatalogManager::getTriggerByName(const std::string &trigger_name, TriggerIn
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger not found");
         return Status::NOT_FOUND;
     }
-    
-    return getTrigger(it->second, info, ctx);
+
+    return getTriggerInternal(it->second, info, ctx);
 }
 
 auto CatalogManager::listTriggersForTable(const ID &table_id, TriggerEvent event,
@@ -16469,10 +16494,24 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.collation_id = new_column.collation_id;
     if (new_column.has_default)
     {
-        std::strncpy(record.default_value, new_column.default_value.c_str(),
-                     sizeof(record.default_value) - 1);
+        if (!new_column.default_expr.empty())
+        {
+            uint64_t xmin = 0;
+            uint32_t default_oid = 0;
+            Status st = storeStringInToast(new_column.default_expr, xmin, default_oid, ctx);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            record.default_value_oid = default_oid;
+        }
+        else
+        {
+            std::strncpy(record.default_value, new_column.default_value.c_str(),
+                         sizeof(record.default_value) - 1);
+            record.default_value_oid = new_column.default_value_oid;
+        }
     }
-    record.default_value_oid = new_column.default_value_oid;
     record.check_expr_oid = new_column.check_expr_oid;
     record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     record.is_valid = 1;
@@ -19329,6 +19368,489 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
         return Status::NOT_FOUND;
     }
 
+    return Status::OK;
+}
+
+Status CatalogManager::updateColumnDefaultExpr(const ID &table_id, const std::string &column_name,
+                                               const std::string &default_expr_hex,
+                                               bool has_default, ErrorContext *ctx)
+{
+    std::scoped_lock lock(mutex_, dependency_cache_mutex_, sequence_cache_mutex_);
+
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    Status status;
+    ID column_id;
+    bool found = false;
+    uint32_t current_page_id = columns_table_page_;
+
+    while (current_page_id != 0)
+    {
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto *record = reinterpret_cast<const ColumnRecord *>(
+                reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->is_valid == 1 &&
+                IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                            record->column_name,
+                                            record->name_is_delimited != 0))
+            {
+                column_id = record->column_id;
+                found = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        if (found)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
+
+    if (!found)
+    {
+        std::string err = "Column not found: " + column_name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, err.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    // Remove old sequence dependencies tied to this column default
+    std::vector<DependencyInfo> deps;
+    getDependenciesForInternal(column_id, deps);
+    for (const auto& dep : deps)
+    {
+        if (dep.dependent_type == ObjectType::COLUMN &&
+            dep.referenced_type == ObjectType::SEQUENCE &&
+            dep.dependency_type == DependencyType::NORMAL)
+        {
+            deleteDependencyInternal(dep.dependency_id, ctx);
+        }
+    }
+
+    // Update ColumnRecord on disk
+    current_page_id = columns_table_page_;
+    bool updated = false;
+    uint32_t new_default_oid = 0;
+
+    while (current_page_id != 0)
+    {
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_dirty = false;
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<ColumnRecord *>(
+                reinterpret_cast<uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->column_id == column_id &&
+                record->is_valid == 1)
+            {
+                record->has_default = has_default ? 1 : 0;
+                record->default_value[0] = '\0';
+                record->default_value_oid = 0;
+
+                if (has_default && !default_expr_hex.empty())
+                {
+                    uint64_t xmin = 0;
+                    Status st = storeStringInToast(default_expr_hex, xmin, new_default_oid, ctx);
+                    if (st != Status::OK)
+                    {
+                        bp->unpinPage(current_page_id, false, ctx);
+                        return st;
+                    }
+                    record->default_value_oid = new_default_oid;
+                }
+
+                heap->header.generation++;
+                page_dirty = true;
+                updated = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, page_dirty, ctx);
+        if (updated)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
+
+    if (!updated)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column record not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    // Update cache
+    auto cache_it = column_cache_.find(table_id);
+    if (cache_it != column_cache_.end())
+    {
+        for (auto &col : cache_it->second)
+        {
+            if (IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                            col.column_name,
+                                            col.name_is_delimited))
+            {
+                col.has_default = has_default;
+                col.default_expr = (has_default && !default_expr_hex.empty()) ? default_expr_hex : std::string();
+                col.default_value.clear();
+                col.default_value_oid = has_default ? new_default_oid : 0;
+                break;
+            }
+        }
+    }
+
+    // Add new sequence dependencies
+    if (has_default && !default_expr_hex.empty())
+    {
+        std::vector<uint8_t> bytecode = hexToBytesLocal(default_expr_hex);
+        std::vector<std::string> seq_names;
+        parseDefaultExprSequenceNames(bytecode, seq_names);
+
+        std::unordered_set<ID, IDHash> sequence_ids;
+        for (const auto& name : seq_names)
+        {
+            ID seq_id;
+            if (getSequenceIdByNameInternal(table_it->second.schema_id, name, seq_id, ctx) == Status::OK)
+            {
+                sequence_ids.insert(seq_id);
+                continue;
+            }
+            SequenceInfo sinfo;
+            if (getSequenceInternal(table_it->second.schema_id, name, sinfo, ctx) == Status::OK)
+            {
+                sequence_ids.insert(sinfo.sequence_id);
+            }
+        }
+
+        for (const auto& seq_id : sequence_ids)
+        {
+            ID dep_id;
+            status = createDependencyInternal(
+                column_id, ObjectType::COLUMN,
+                seq_id, ObjectType::SEQUENCE,
+                DependencyType::NORMAL,
+                dep_id,
+                ctx
+            );
+            if (status != Status::OK)
+            {
+                LOG_ERROR(CATALOG, "Failed to create dependency for default sequence");
+                return status;
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status CatalogManager::updateColumnNullable(const ID &table_id, const std::string &column_name,
+                                            bool nullable, ErrorContext *ctx)
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    Status status;
+    ID column_id;
+    bool found = false;
+    uint32_t current_page_id = columns_table_page_;
+
+    while (current_page_id != 0)
+    {
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto *record = reinterpret_cast<const ColumnRecord *>(
+                reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->is_valid == 1 &&
+                IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                            record->column_name,
+                                            record->name_is_delimited != 0))
+            {
+                column_id = record->column_id;
+                found = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        if (found)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
+
+    if (!found)
+    {
+        std::string err = "Column not found: " + column_name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, err.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    current_page_id = columns_table_page_;
+    bool updated = false;
+
+    while (current_page_id != 0)
+    {
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_dirty = false;
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<ColumnRecord *>(
+                reinterpret_cast<uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->column_id == column_id &&
+                record->is_valid == 1)
+            {
+                record->nullable = nullable ? 1 : 0;
+                heap->header.generation++;
+                page_dirty = true;
+                updated = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, page_dirty, ctx);
+        if (updated)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
+
+    if (!updated)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column record not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    auto cache_it = column_cache_.find(table_id);
+    if (cache_it != column_cache_.end())
+    {
+        for (auto &col : cache_it->second)
+        {
+            if (IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                            col.column_name,
+                                            col.name_is_delimited))
+            {
+                col.nullable = nullable;
+                break;
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status CatalogManager::updateColumnPosition(const ID &table_id, const std::string &column_name,
+                                            uint16_t new_position_1_based, ErrorContext *ctx)
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    if (new_position_1_based == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Column position must be >= 1");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<ColumnInfo> columns;
+    auto cache_it = column_cache_.find(table_id);
+    if (cache_it != column_cache_.end())
+    {
+        columns = cache_it->second;
+    }
+    else
+    {
+        Status st = readColumnRecords(table_id, ctx);
+        if (st != Status::OK)
+        {
+            return st;
+        }
+        auto fresh_it = column_cache_.find(table_id);
+        if (fresh_it != column_cache_.end())
+        {
+            columns = fresh_it->second;
+        }
+    }
+
+    if (columns.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No columns found for table");
+        return Status::NOT_FOUND;
+    }
+
+    std::sort(columns.begin(), columns.end(),
+              [](const ColumnInfo& a, const ColumnInfo& b) { return a.ordinal < b.ordinal; });
+
+    size_t old_index = columns.size();
+    for (size_t i = 0; i < columns.size(); ++i)
+    {
+        if (IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                        columns[i].column_name,
+                                        columns[i].name_is_delimited))
+        {
+            old_index = i;
+            break;
+        }
+    }
+
+    if (old_index >= columns.size())
+    {
+        std::string err = "Column not found: " + column_name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, err.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    size_t new_index = static_cast<size_t>(new_position_1_based - 1);
+    if (new_index >= columns.size())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Column position out of range");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (new_index != old_index)
+    {
+        ColumnInfo moved = columns[old_index];
+        columns.erase(columns.begin() + static_cast<ptrdiff_t>(old_index));
+        columns.insert(columns.begin() + static_cast<ptrdiff_t>(new_index), moved);
+    }
+
+    std::unordered_map<ID, uint16_t, IDHash> new_ordinals;
+    new_ordinals.reserve(columns.size());
+    for (size_t i = 0; i < columns.size(); ++i)
+    {
+        columns[i].ordinal = static_cast<uint16_t>(i);
+        new_ordinals[columns[i].column_id] = columns[i].ordinal;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    Status status;
+    uint32_t current_page_id = columns_table_page_;
+    bool updated_any = false;
+
+    while (current_page_id != 0)
+    {
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_dirty = false;
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<ColumnRecord *>(
+                reinterpret_cast<uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->is_valid == 1)
+            {
+                auto it = new_ordinals.find(record->column_id);
+                if (it != new_ordinals.end())
+                {
+                    record->ordinal = it->second;
+                    page_dirty = true;
+                    updated_any = true;
+                }
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        if (page_dirty)
+        {
+            heap->header.generation++;
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, page_dirty, ctx);
+        current_page_id = next_page;
+    }
+
+    if (!updated_any)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column records not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    column_cache_[table_id] = std::move(columns);
     return Status::OK;
 }
 

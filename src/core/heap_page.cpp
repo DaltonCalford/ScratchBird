@@ -245,8 +245,15 @@ namespace scratchbird::core
         {
             if (items[i].isDeleted() && items[i].length >= actual_tuple_size)
             {
-                item_id = i;
-                break;
+                if (items[i].isValid(page_size_))
+                {
+                    auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[i].offset);
+                    if (tuple_hdr->xmax == UINT64_MAX)
+                    {
+                        item_id = i;
+                        break;
+                    }
+                }
             }
         }
 
@@ -434,6 +441,8 @@ namespace scratchbird::core
 
     auto HeapPage::deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx) -> Status
     {
+        const bool force_delete = (xmax == UINT64_MAX);
+
         if (item_id >= header()->item_count)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
@@ -444,8 +453,12 @@ namespace scratchbird::core
 
         if (items[item_id].isDeleted())
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple already deleted");
-            return Status::NOT_FOUND;
+            if (!force_delete)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple already deleted");
+                return Status::NOT_FOUND;
+            }
+            return Status::OK;
         }
 
         // Validate item pointer bounds
@@ -481,13 +494,22 @@ namespace scratchbird::core
             }
         }
 
-        // Mark item as deleted
-        items[item_id].setDeleted(true);
-
         // Update tuple header with xmax
         auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[item_id].offset);
-        tuple_hdr->xmax = xmax;
-        tuple_hdr->infomask |= TupleHeader::FLAG_DELETED;
+        if (!force_delete)
+        {
+            if (tuple_hdr->xmax != 0 || (tuple_hdr->infomask & TupleHeader::FLAG_DELETED))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple already deleted");
+                return Status::NOT_FOUND;
+            }
+
+            tuple_hdr->xmax = xmax;
+            tuple_hdr->infomask |= TupleHeader::FLAG_DELETED;
+        }
+
+        // Mark the line pointer deleted so scans skip the tuple and space can be reused.
+        items[item_id].setDeleted(true);
 
         updateHeaderStats();
 
@@ -885,6 +907,18 @@ namespace scratchbird::core
                 // Guard automatically unpins (clean) on return
                 return get_status;
             }
+
+            // Restore back-version metadata that insertTuple overwrote.
+            // insertTuple initializes xmin/xmax/back_version/infomask for new tuples.
+            // For back versions we must preserve the original metadata so GC can prune.
+            auto *stored_hdr =
+                reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_data_ptr));
+            const auto *src_hdr =
+                reinterpret_cast<const TupleHeader *>(back_version_tuple.data());
+            stored_hdr->xmax = src_hdr->xmax;
+            stored_hdr->back_version_gpid = src_hdr->back_version_gpid;
+            stored_hdr->back_version_slot = src_hdr->back_version_slot;
+            stored_hdr->infomask |= (TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED);
 
             // Calculate offset from page start
             back_version_offset = static_cast<uint32_t>(back_data_ptr - static_cast<uint8_t *>(back_page_buffer));
@@ -1851,12 +1885,10 @@ namespace scratchbird::core
 
         // Get page header
         auto *pg_header = header();
-        auto *special = reinterpret_cast<HeapPageSpecial *>(page_data_ + page_size_ -
-                                                            sizeof(HeapPageSpecial));
 
         // Get item pointer array
         auto *items = reinterpret_cast<ItemPointer *>(page_data_ + sizeof(PageHeader));
-        uint16_t item_count = special->pd_lower / sizeof(ItemPointer);
+        uint16_t item_count = pg_header->item_count;
 
         dead_tids_out->clear();
 
@@ -1869,13 +1901,13 @@ namespace scratchbird::core
                 continue;
             }
 
-            // Skip deleted line pointers
-            if (items[i].isDeleted())
+            // Deleted line pointers still contain tuple headers; we need them for index cleanup.
+
+            // Get tuple header
+            if (!items[i].isValid(page_size_))
             {
                 continue;
             }
-
-            // Get tuple header
             auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[i].offset);
 
             // Tuple is dead if:

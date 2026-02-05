@@ -704,6 +704,95 @@ SHOW CREATE TABLE t;
 
 ---
 
+## Bytecode Emission Rules (Alpha-Required, No Ambiguity)
+
+This section defines exact bytecode emission rules for the remaining MySQL
+parity gaps. It is **authoritative** for implementation.
+
+### Window Frame Offsets
+
+**Emission rule:**
+- Emit `WINDOW` (0xD6) once per SELECT that contains any window functions.
+- For each window spec, emit `WINDOW_SPEC` (0xD7) with:
+  - window name string (empty for inline spec)
+  - base window name string (empty if none)
+  - `PARTITION_BY` (0xD8) list (count + expr bytecode for each)
+  - `WINDOW_ORDER_BY` (0xD9) list (count + sort key expr + ASC/DESC)
+  - `FRAME_CLAUSE` (0xDA) followed by:
+    - frame mode opcode: `FRAME_ROWS` (0xDB) or `FRAME_RANGE` (0xDC)
+    - start boundary opcode:
+      - `FRAME_UNBOUNDED_PRECEDING` (0xDD), or
+      - `FRAME_PRECEDING` (0xDE) + `LITERAL_INT32` (0x31), or
+      - `FRAME_CURRENT_ROW` (0xDF)
+    - end boundary opcode:
+      - `FRAME_CURRENT_ROW` (0xDF), or
+      - `FRAME_FOLLOWING` (0xE0) + `LITERAL_INT32` (0x31), or
+      - `FRAME_UNBOUNDED_FOLLOWING` (0xE1)
+
+### Named Windows
+
+**Emission rule:**
+- Named windows in `WINDOW <name> AS (...)` are emitted via `WINDOW_SPEC` with
+  `window name` set and `base window name` if `WINDOW <name> AS (base ...)`.
+- Inlined `OVER (...)` specs emit a `WINDOW_SPEC` with empty name.
+- The parser must ensure referenced named windows are emitted **before** any
+  inline specs that reference them.
+
+### DEFAULT in Multi-Row INSERT/REPLACE
+
+**Emission rule:**
+- In each row value list, the token `DEFAULT` emits opcode `DEFAULT_VALUE` (0x91)
+  with no payload.
+- Executor replaces `DEFAULT_VALUE` with the column default for that column.
+
+### ALTER TABLE CHANGE COLUMN (Rename + Type)
+
+**New action byte values for `ALTER_TABLE` (authoritative additions):**
+- 20 = `RENAME_COLUMN`
+- 21 = `RENAME_TABLE`
+
+**Emission rule for CHANGE COLUMN:**
+- Emit `ALTER_TABLE` opcode
+- qualified table name
+- action byte `20` (RENAME_COLUMN)
+- old column name
+- new column name
+- type marker (u16 DataType enum)
+- precision (u32) and scale (u32)
+- nullable flag (u8)
+
+### ALTER TABLE ALTER COLUMN SET/DROP DEFAULT
+
+**Use PostgreSQL action bytes defined in the PostgreSQL gap spec:**
+- 15 = `ALTER_COLUMN_SET_DEFAULT`
+- 16 = `ALTER_COLUMN_DROP_DEFAULT`
+
+**Emission rule:**
+- Same payload formats as defined in the PostgreSQL bytecode rules section.
+
+### GRANT/REVOKE ON ALL Bytecode
+
+**Emission rule:**
+- Use `EXT_GRANT_PRIVILEGE` / `EXT_REVOKE_PRIVILEGE` (see `generateGrant`/`generateRevoke`):
+  - write opcode `EXTENDED_OPCODE`
+  - write extended opcode `EXT_GRANT_PRIVILEGE` or `EXT_REVOKE_PRIVILEGE`
+  - write privileges (int32 bitmask)
+  - write object_type byte
+  - write object path string
+  - write grantee type (PUBLIC or USER)
+  - write grantee name (empty for PUBLIC)
+  - write flags (WITH GRANT OPTION / CASCADE)
+
+**ON ALL mapping:**
+- `ON ALL TABLES IN SCHEMA db` → object_type=TABLE, object path `db.*`
+- `ON ALL TABLES` (current database) → object_type=TABLE, object path `*`
+
+### Named Windows + Frame Offsets Validation
+
+**Validation rule:**
+- Named windows must resolve to an existing definition.
+- Frame offsets must be non-negative integers; emit parser error otherwise.
+
 **End of Specification**
 **Status:** ACTIVE - Implementation Required for Alpha
 **Next Steps:** Begin Phase 1 implementation immediately

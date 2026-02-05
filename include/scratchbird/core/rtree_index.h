@@ -61,8 +61,8 @@ namespace scratchbird
             Status remove(const std::vector<uint8_t> &key, const TID &tid,
                           uint64_t xmax, ErrorContext *ctx = nullptr);
 
-            // Vacuum the index
-            Status vacuum(ErrorContext *ctx = nullptr);
+            // GC compaction (ScratchBird MGA GC, not PostgreSQL VACUUM)
+            Status gcCompact(ErrorContext *ctx = nullptr);
 
             // IndexGCInterface implementation
             Status removeDeadEntries(const std::vector<TID> &dead_tids,

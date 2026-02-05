@@ -1704,6 +1704,10 @@ struct ResolvedAlterTableStmt : public ResolvedStatement {
     ResolvedColumnDef column_def;
     bool has_column_def = false;
     StringPool::StringId column_name = StringPool::INVALID_ID;
+    ResolvedExpression* default_expr = nullptr;
+    bool has_default_expr = false;
+    int32_t position_1_based = 0;
+    bool has_position = false;
 
     // Constraint operations
     ResolvedTableConstraint constraint;

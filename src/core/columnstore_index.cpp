@@ -432,16 +432,16 @@ namespace core {
         return Status::OK;
     }
 
-    Status ColumnstoreIndexSimple::vacuum(ErrorContext *ctx)
+    Status ColumnstoreIndexSimple::gcCompact(ErrorContext *ctx)
     {
-        // Vacuum: Compact segments, remove deleted data
+        // GC compaction: Compact segments, remove deleted data (ScratchBird MGA GC)
         // In production:
         // 1. Merge small segments
         // 2. Remove expired data (MGA-based)
         // 3. Recompress with better algorithms
         // 4. Rebuild segment catalog
 
-        // For now, return OK as vacuum is optional
+        // For now, return OK as GC compaction is optional
         return Status::OK;
     }
 

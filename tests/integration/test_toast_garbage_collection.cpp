@@ -14,12 +14,13 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
-#include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/garbage_collector.h"
-#include "scratchbird/core/vacuum.h"
+#include "scratchbird/core/gc_manager.h"
 #include "scratchbird/core/toast.h"
 #include "test_helpers.h"
 #include <memory>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <unordered_set>
@@ -29,15 +30,29 @@ using namespace scratchbird::core;
 class ToastGarbageCollectionTest : public ::testing::Test
 {
 protected:
+    class ScopedCurrentConnection
+    {
+    public:
+        explicit ScopedCurrentConnection(ConnectionContext* ctx)
+            : prev_(ConnectionContext::getCurrent())
+        {
+            ConnectionContext::setCurrent(ctx);
+        }
+        ~ScopedCurrentConnection()
+        {
+            ConnectionContext::setCurrent(prev_);
+        }
+    private:
+        ConnectionContext* prev_;
+    };
+
     void SetUp() override
     {
         // Create test database
         test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_toast_gc", ".db");
         ErrorContext ctx;
         Status status = Database::create(test_db_path_, 8192, &ctx);
-        if (status != Status::OK && status != Status::ERROR_EXISTS) {
-            FAIL() << "Failed to create database: " << ctx.message;
-        }
+        ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();
         status = db_->open(test_db_path_, &ctx);
@@ -45,19 +60,53 @@ protected:
 
         storage_ = db_->storage_engine();
         catalog_ = db_->catalog_manager();
-        tm_ = db_->transaction_manager();
         gc_ = db_->garbage_collector();
-        vacuum_ = db_->vacuum();
+        gc_manager_ = db_->gc_manager();
 
         ASSERT_NE(storage_, nullptr);
         ASSERT_NE(catalog_, nullptr);
-        ASSERT_NE(tm_, nullptr);
         ASSERT_NE(gc_, nullptr);
-        ASSERT_NE(vacuum_, nullptr);
+        ASSERT_NE(gc_manager_, nullptr);
+
+        // Create schema + test table
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        ASSERT_EQ(catalog_->listSchemas(schemas, &ctx), Status::OK);
+        ID schema_id;
+        if (schemas.empty()) {
+            ASSERT_EQ(catalog_->createSchema("public", "test", schema_id, &ctx), Status::OK);
+        } else {
+            schema_id = schemas[0].schema_id;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        CatalogManager::ColumnInfo id_col;
+        id_col.column_name = "id";
+        id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        id_col.max_length = 4;
+        id_col.nullable = false;
+        id_col.has_default = false;
+        columns.push_back(id_col);
+
+        CatalogManager::ColumnInfo data_col;
+        data_col.column_name = "data";
+        data_col.data_type = static_cast<uint16_t>(DataType::BYTEA);
+        data_col.max_length = 0;
+        data_col.nullable = true;
+        data_col.has_default = false;
+        columns.push_back(data_col);
+
+        ASSERT_EQ(catalog_->createTable(schema_id, "toast_gc_test", columns, table_id_, 0, &ctx),
+                  Status::OK);
+
+        // Create connection context (registers ProcArray)
+        ASSERT_EQ(db_->connect(conn_ctx_, &ctx), Status::OK) << ctx.message;
+        ConnectionContext::setCurrent(conn_ctx_.get());
     }
 
     void TearDown() override
     {
+        ConnectionContext::setCurrent(nullptr);
+        conn_ctx_.reset();
         if (db_)
         {
             db_->close();
@@ -77,16 +126,51 @@ protected:
             text.append(buf);
         }
 
+        if (text.size() < size_kb * 1024)
+        {
+            text.append(size_kb * 1024 - text.size(), 'X');
+        }
         return text;
     }
 
     std::unique_ptr<Database> db_;
     StorageEngine* storage_;
     CatalogManager* catalog_;
-    TransactionManager* tm_;
     GarbageCollector* gc_;
-    Vacuum* vacuum_;
+    GcManager* gc_manager_;
     std::string test_db_path_;
+    ID table_id_;
+    std::unique_ptr<ConnectionContext> conn_ctx_;
+
+    std::unique_ptr<ConnectionContext> createConnection(ErrorContext* ctx)
+    {
+        std::unique_ptr<ConnectionContext> conn;
+        Status status = db_->connect(conn, ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+        return conn;
+    }
+
+    uint64_t beginTxn(ConnectionContext* conn, ErrorContext* ctx)
+    {
+        ScopedCurrentConnection scope(conn);
+        uint64_t xid = conn->getCurrentXid();
+        EXPECT_NE(xid, 0u);
+        return xid;
+    }
+
+    void commitTxn(ConnectionContext* conn, ErrorContext* ctx)
+    {
+        ScopedCurrentConnection scope(conn);
+        Status status = conn->commit(ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+    }
+
+    void rollbackTxn(ConnectionContext* conn, ErrorContext* ctx)
+    {
+        ScopedCurrentConnection scope(conn);
+        Status status = conn->rollback(ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+    }
 };
 
 // =============================================================================
@@ -105,31 +189,22 @@ TEST_F(ToastGarbageCollectionTest, OrphanDetection)
     // 5. Verify orphans detected
 
     // Create table with TOAST column
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
-    // Register table in catalog (simplified)
-    CatalogManager::TableInfo table_info;
-    table_info.table_id = table_id;
-    table_info.table_name = "test_orphan_table";
-    table_info.has_toast = true;
-    table_info.toast_table_id = toast_table_id;
-
     // Start transaction
-    uint64_t xid = tm_->beginTransaction();
+    ErrorContext ctx;
+    uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
     ASSERT_NE(xid, 0);
 
     // Create TOAST manager
-    ToastManager toast_mgr(db_.get(), table_id);
-    ErrorContext ctx;
+    ToastManager toast_mgr(db_.get(), table_id_);
     Status status = toast_mgr.createToastTable(&ctx);
 
     if (status != Status::OK)
     {
-        tm_->abort(xid);
+        rollbackTxn(conn_ctx_.get(), &ctx);
         GTEST_SKIP() << "Failed to create TOAST table, skipping test";
         return;
     }
+    const ID toast_table_id = toast_mgr.toastTableId();
 
     // Create large value
     std::string large_text = createLargeText(5); // 5KB
@@ -137,19 +212,22 @@ TEST_F(ToastGarbageCollectionTest, OrphanDetection)
 
     // TOAST the value
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK) << "TOAST failed: " << ctx.message;
 
     // Abort transaction - TOAST chunks become orphans
-    tm_->abort(xid);
+    rollbackTxn(conn_ctx_.get(), &ctx);
 
     // Run orphan detection
     std::unordered_set<uint32_t> orphaned_value_ids;
@@ -178,11 +256,8 @@ TEST_F(ToastGarbageCollectionTest, OrphanCleanup)
     // 4. Run orphan detection again
     // 5. Verify no orphans remain
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
     // Create TOAST manager
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -193,23 +268,27 @@ TEST_F(ToastGarbageCollectionTest, OrphanCleanup)
     }
 
     // Create orphan
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(3);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
-    tm_->abort(xid); // Create orphan
+    rollbackTxn(conn_ctx_.get(), &ctx); // Create orphan
 
     // Detect orphans
     std::unordered_set<uint32_t> orphaned_value_ids;
+    const ID toast_table_id = toast_mgr.toastTableId();
     status = gc_->detectOrphanedToastChunks(toast_table_id, &orphaned_value_ids, &ctx);
     ASSERT_EQ(status, Status::OK);
     size_t orphans_before = orphaned_value_ids.size();
@@ -244,10 +323,7 @@ TEST_F(ToastGarbageCollectionTest, TIPBasedGC)
     // 3. Run TIP-based GC
     // 4. Verify chunks physically deleted (xmax committed)
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -258,32 +334,39 @@ TEST_F(ToastGarbageCollectionTest, TIPBasedGC)
     }
 
     // Create TOAST value
-    uint64_t xid1 = tm_->beginTransaction();
+    uint64_t xid1 = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(4);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid1,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid1,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK);
     uint32_t value_id = toast_ptr.va_valueid;
 
-    tm_->commit(xid1); // Commit - chunks are now visible
+    commitTxn(conn_ctx_.get(), &ctx); // Commit - chunks are now visible
 
     // Delete TOAST value (set xmax)
-    uint64_t xid2 = tm_->beginTransaction();
-    status = toast_mgr.deleteToastValue(value_id, xid2, &ctx);
+    uint64_t xid2 = beginTxn(conn_ctx_.get(), &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.deleteToastValue(value_id, xid2, &ctx);
+    }
     ASSERT_EQ(status, Status::OK);
-    tm_->commit(xid2); // Commit - chunks now have committed xmax
+    commitTxn(conn_ctx_.get(), &ctx); // Commit - chunks now have committed xmax
 
     // Run TIP-based GC
     uint64_t chunks_deleted = 0;
+    const ID toast_table_id = toast_mgr.toastTableId();
     status = gc_->cleanToastChunksByTIP(toast_table_id, &chunks_deleted, &ctx);
 
     EXPECT_EQ(status, Status::OK) << "TIP-based GC failed: " << ctx.message;
@@ -291,23 +374,20 @@ TEST_F(ToastGarbageCollectionTest, TIPBasedGC)
 }
 
 // =============================================================================
-// Test 4: Vacuum Integration - Verify vacuum processes TOAST tables
+// Test 4: GC Integration - Verify GC processes TOAST tables
 // =============================================================================
 
-TEST_F(ToastGarbageCollectionTest, VacuumIntegration)
+TEST_F(ToastGarbageCollectionTest, GcIntegration)
 {
-    // Phase 4 Task 4.3 Test: Vacuum Integration
+    // Phase 4 Task 4.3 Test: GC Integration
     //
     // Scenario:
     // 1. Create orphaned TOAST chunks
-    // 2. Run VACUUM
+    // 2. Run GC
     // 3. Verify TOAST table processed
     // 4. Verify orphans cleaned up
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -318,37 +398,41 @@ TEST_F(ToastGarbageCollectionTest, VacuumIntegration)
     }
 
     // Create orphan
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(3);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
-    tm_->abort(xid); // Create orphan
+    rollbackTxn(conn_ctx_.get(), &ctx); // Create orphan
 
     // Verify orphan exists
     std::unordered_set<uint32_t> orphans_before;
+    const ID toast_table_id = toast_mgr.toastTableId();
     gc_->detectOrphanedToastChunks(toast_table_id, &orphans_before, &ctx);
     ASSERT_GT(orphans_before.size(), 0u);
 
-    // Run VACUUM on database
-    VacuumStats stats;
-    status = vacuum_->vacuumDatabase(&stats, &ctx);
+    // Run GC on database
+    GcStats stats;
+    status = gc_manager_->gcDatabase(&stats, &ctx);
 
-    EXPECT_EQ(status, Status::OK) << "Vacuum failed: " << ctx.message;
+    EXPECT_EQ(status, Status::OK) << "GC failed: " << ctx.message;
 
     // Verify orphans cleaned
     std::unordered_set<uint32_t> orphans_after;
     gc_->detectOrphanedToastChunks(toast_table_id, &orphans_after, &ctx);
     EXPECT_LT(orphans_after.size(), orphans_before.size())
-        << "Expected vacuum to clean some orphans";
+        << "Expected GC to clean some orphans";
 }
 
 // =============================================================================
@@ -366,10 +450,7 @@ TEST_F(ToastGarbageCollectionTest, AbortedDelete)
     // 4. Verify chunks NOT deleted (xmax aborted)
     // 5. Verify value still accessible
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -380,43 +461,53 @@ TEST_F(ToastGarbageCollectionTest, AbortedDelete)
     }
 
     // Create TOAST value
-    uint64_t xid1 = tm_->beginTransaction();
+    uint64_t xid1 = beginTxn(conn_ctx_.get(), &ctx);
     std::string large_text = createLargeText(3);
 
     ToastPointer toast_ptr;
-    status = toast_mgr.toastValue(
-        reinterpret_cast<const uint8_t*>(large_text.data()),
-        large_text.size(),
-        ToastStrategy::EXTERNAL,
-        xid1,
-        &toast_ptr,
-        &ctx
-    );
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.toastValue(
+            reinterpret_cast<const uint8_t*>(large_text.data()),
+            large_text.size(),
+            ToastStrategy::EXTERNAL,
+            xid1,
+            &toast_ptr,
+            &ctx
+        );
+    }
 
     ASSERT_EQ(status, Status::OK);
     uint32_t value_id = toast_ptr.va_valueid;
-    tm_->commit(xid1);
+    commitTxn(conn_ctx_.get(), &ctx);
 
     // Delete but abort
-    uint64_t xid2 = tm_->beginTransaction();
-    status = toast_mgr.deleteToastValue(value_id, xid2, &ctx);
-    tm_->abort(xid2); // ABORT - chunks should remain accessible
+    uint64_t xid2 = beginTxn(conn_ctx_.get(), &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.deleteToastValue(value_id, xid2, &ctx);
+    }
+    rollbackTxn(conn_ctx_.get(), &ctx); // ABORT - chunks should remain accessible
 
     // Run TIP-based GC
     uint64_t chunks_deleted = 0;
+    const ID toast_table_id = toast_mgr.toastTableId();
     gc_->cleanToastChunksByTIP(toast_table_id, &chunks_deleted, &ctx);
 
     // Chunks should NOT be deleted (xmax aborted)
     // Note: Current implementation may not fully handle this yet (see TODO in code)
 
     // Verify value still accessible
-    uint64_t xid3 = tm_->beginTransaction();
+    uint64_t xid3 = beginTxn(conn_ctx_.get(), &ctx);
     std::vector<uint8_t> detoasted_data;
-    status = toast_mgr.detoastValue(&toast_ptr, &detoasted_data, xid3, &ctx);
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        status = toast_mgr.detoastValue(&toast_ptr, &detoasted_data, xid3, &ctx);
+    }
 
     EXPECT_EQ(status, Status::OK) << "Should still be able to detoast after aborted delete";
 
-    tm_->commit(xid3);
+    commitTxn(conn_ctx_.get(), &ctx);
 }
 
 // =============================================================================
@@ -433,10 +524,7 @@ TEST_F(ToastGarbageCollectionTest, StressTestManyOrphans)
     // 3. Run orphan cleanup
     // 4. Verify all orphans deleted
 
-    ID table_id = generateUuidV7();
-    ID toast_table_id = generateUuidV7();
-
-    ToastManager toast_mgr(db_.get(), table_id);
+    ToastManager toast_mgr(db_.get(), table_id_);
     ErrorContext ctx;
     Status status = toast_mgr.createToastTable(&ctx);
 
@@ -450,24 +538,28 @@ TEST_F(ToastGarbageCollectionTest, StressTestManyOrphans)
     constexpr int NUM_ORPHANS = 100;
     for (int i = 0; i < NUM_ORPHANS; i++)
     {
-        uint64_t xid = tm_->beginTransaction();
+        uint64_t xid = beginTxn(conn_ctx_.get(), &ctx);
         std::string large_text = createLargeText(2);
 
         ToastPointer toast_ptr;
-        status = toast_mgr.toastValue(
-            reinterpret_cast<const uint8_t*>(large_text.data()),
-            large_text.size(),
-            ToastStrategy::EXTERNAL,
-            xid,
-            &toast_ptr,
-            &ctx
-        );
+        {
+            ScopedCurrentConnection scope(conn_ctx_.get());
+            status = toast_mgr.toastValue(
+                reinterpret_cast<const uint8_t*>(large_text.data()),
+                large_text.size(),
+                ToastStrategy::EXTERNAL,
+                xid,
+                &toast_ptr,
+                &ctx
+            );
+        }
 
-        tm_->abort(xid); // Create orphan
+        rollbackTxn(conn_ctx_.get(), &ctx); // Create orphan
     }
 
     // Detect orphans
     std::unordered_set<uint32_t> orphaned_value_ids;
+    const ID toast_table_id = toast_mgr.toastTableId();
     status = gc_->detectOrphanedToastChunks(toast_table_id, &orphaned_value_ids, &ctx);
     ASSERT_EQ(status, Status::OK);
     ASSERT_GT(orphaned_value_ids.size(), 0u);

@@ -17,11 +17,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/hnsw_index.h"
-#include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/vector.h"
-#include "scratchbird/core/logger.h"
 #include "test_helpers.h"
 #include <gtest/gtest.h>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -34,8 +35,20 @@ protected:
     {
         // Create test database in temporary directory
         test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_hnsw_dml", ".db");
-        db_ = std::make_unique<Database>(test_db_path_, 8192);
+        if (std::filesystem::exists(test_db_path_))
+        {
+            std::filesystem::remove(test_db_path_);
+        }
+
+        db_ = std::make_unique<Database>();
         ASSERT_NE(db_, nullptr);
+
+        ErrorContext ctx;
+        Status status = Database::create(test_db_path_, 16384, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
+
+        status = db_->open(test_db_path_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         // Initialize core components
         ASSERT_NE(db_->buffer_pool(), nullptr);
@@ -45,7 +58,12 @@ protected:
 
     void TearDown() override
     {
-        db_.reset();
+        if (db_)
+        {
+            db_->close();
+            db_.reset();
+        }
+
         // Clean up test database file
         if (!test_db_path_.empty())
         {
@@ -55,6 +73,23 @@ protected:
 
     std::unique_ptr<Database> db_;
     std::string test_db_path_;
+
+    GPID allocateRootGpid(ErrorContext *ctx)
+    {
+        auto *pm = db_ ? db_->page_manager() : nullptr;
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
+    }
 };
 
 /**
@@ -68,12 +103,13 @@ TEST_F(HnswDMLTest, BasicInsert)
     VectorValue vector = Vector::fromFloat32(vec_data);
 
     // Create HNSW index (3 dimensions)
-    UuidV7Bytes index_uuid = UuidV7::generate();
-    UuidV7Bytes table_uuid = UuidV7::generate();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generate()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     Status status = HnswIndex::create(
         db_.get(),
@@ -85,15 +121,14 @@ TEST_F(HnswDMLTest, BasicInsert)
         16,   // M parameter
         200,  // ef_construction
         100,  // ef_search
-        &root_page,
+        root_gpid,
         &ctx
     );
 
     ASSERT_EQ(status, Status::OK) << "Failed to create HNSW index: " << ctx.message;
-    ASSERT_NE(root_page, 0);
 
     // Open the index
-    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr) << "Failed to open HNSW index: " << ctx.message;
 
     // Insert vector
@@ -103,12 +138,11 @@ TEST_F(HnswDMLTest, BasicInsert)
 
     // Verify insertion by searching
     std::vector<HnswSearchResult> results;
-    uint64_t current_xid = db_->transaction_manager()->getCurrentXid();
-    status = hnsw->search(vector, 1, current_xid, &results, &ctx);
+    status = hnsw->search(vector, 1, 0, &results, &ctx);
 
     ASSERT_EQ(status, Status::OK) << "Failed to search: " << ctx.message;
     ASSERT_EQ(results.size(), 1);
-    ASSERT_EQ(results[0].tid.value(), tid.value());
+    ASSERT_EQ(results[0].tid, tid);
 }
 
 /**
@@ -121,19 +155,20 @@ TEST_F(HnswDMLTest, BasicRemove)
     std::vector<float> vec_data = {1.0f, 2.0f, 3.0f, 4.0f};
     VectorValue vector = Vector::fromFloat32(vec_data);
 
-    UuidV7Bytes index_uuid = UuidV7::generate();
-    UuidV7Bytes table_uuid = UuidV7::generate();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generate()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     Status status = HnswIndex::create(
         db_.get(), index_uuid, table_uuid, column_uuids,
-        4, DistanceMetric::EUCLIDEAN, 16, 200, 100, &root_page, &ctx);
+        4, DistanceMetric::EUCLIDEAN, 16, 200, 100, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     TID tid(1, 0);
@@ -161,19 +196,20 @@ TEST_F(HnswDMLTest, InsertAndUpdate)
     VectorValue vector1 = Vector::fromFloat32(vec1);
     VectorValue vector2 = Vector::fromFloat32(vec2);
 
-    UuidV7Bytes index_uuid = UuidV7::generate();
-    UuidV7Bytes table_uuid = UuidV7::generate();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generate()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     Status status = HnswIndex::create(
         db_.get(), index_uuid, table_uuid, column_uuids,
-        4, DistanceMetric::EUCLIDEAN, 16, 200, 100, &root_page, &ctx);
+        4, DistanceMetric::EUCLIDEAN, 16, 200, 100, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert original vector
@@ -191,8 +227,7 @@ TEST_F(HnswDMLTest, InsertAndUpdate)
 
     // Verify new vector is searchable
     std::vector<HnswSearchResult> results;
-    uint64_t current_xid = db_->transaction_manager()->getCurrentXid();
-    status = hnsw->search(vector2, 1, current_xid, &results, &ctx);
+    status = hnsw->search(vector2, 1, 0, &results, &ctx);
 
     ASSERT_EQ(status, Status::OK);
     // Should find the updated vector
@@ -205,19 +240,20 @@ TEST_F(HnswDMLTest, InsertAndUpdate)
  */
 TEST_F(HnswDMLTest, MultipleOperations)
 {
-    UuidV7Bytes index_uuid = UuidV7::generate();
-    UuidV7Bytes table_uuid = UuidV7::generate();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generate()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
     ErrorContext ctx;
+    GPID root_gpid = allocateRootGpid(&ctx);
+    ASSERT_NE(root_gpid, 0);
 
     Status status = HnswIndex::create(
         db_.get(), index_uuid, table_uuid, column_uuids,
-        4, DistanceMetric::EUCLIDEAN, 16, 200, 100, &root_page, &ctx);
+        4, DistanceMetric::EUCLIDEAN, 16, 200, 100, root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_.get(), index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert 10 vectors
@@ -249,9 +285,7 @@ TEST_F(HnswDMLTest, MultipleOperations)
     std::vector<float> query = {5.0f, 6.0f, 7.0f, 8.0f};
     VectorValue query_vec = Vector::fromFloat32(query);
     std::vector<HnswSearchResult> results;
-    uint64_t current_xid = db_->transaction_manager()->getCurrentXid();
-
-    status = hnsw->search(query_vec, 3, current_xid, &results, &ctx);
+    status = hnsw->search(query_vec, 3, 0, &results, &ctx);
     ASSERT_EQ(status, Status::OK);
     // Should find remaining visible vectors
 }

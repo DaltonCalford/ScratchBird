@@ -446,11 +446,21 @@ TEST_F(StatisticsCRUDTest, RealisticUserTable) {
     EXPECT_EQ(status_stats.num_distinct, 5);
 
     // MCVs for status column
-    status_stats.mcv_list.push_back({.frequency = 0.70f}); // active
-    status_stats.mcv_list.push_back({.frequency = 0.20f}); // inactive
-    status_stats.mcv_list.push_back({.frequency = 0.05f}); // pending
-    status_stats.mcv_list.push_back({.frequency = 0.03f}); // suspended
-    status_stats.mcv_list.push_back({.frequency = 0.02f}); // deleted
+    MCVEntry active{};
+    active.frequency = 0.70f;
+    status_stats.mcv_list.push_back(active); // active
+    MCVEntry inactive{};
+    inactive.frequency = 0.20f;
+    status_stats.mcv_list.push_back(inactive); // inactive
+    MCVEntry pending{};
+    pending.frequency = 0.05f;
+    status_stats.mcv_list.push_back(pending); // pending
+    MCVEntry suspended{};
+    suspended.frequency = 0.03f;
+    status_stats.mcv_list.push_back(suspended); // suspended
+    MCVEntry deleted{};
+    deleted.frequency = 0.02f;
+    status_stats.mcv_list.push_back(deleted); // deleted
 
     EXPECT_EQ(status_stats.mcv_list.size(), 5);
     EXPECT_FLOAT_EQ(status_stats.mcv_list[0].frequency, 0.70f);

@@ -12,8 +12,9 @@
  * Verifies that deleteTuple() and updateTuple() properly delete TOAST data
  */
 
-#include <iostream>
+#include <gtest/gtest.h>
 #include <cstdint>
+#include <iostream>
 
 
 TEST(ToastCleanupTest, Comprehensive) {
@@ -201,4 +202,3 @@ TEST(ToastCleanupTest, Comprehensive) {
     std::cout << std::endl;
     std::cout << "This is FALSE POSITIVE #13 out of 22 issues examined (59% audit error rate)\n";
 }
-

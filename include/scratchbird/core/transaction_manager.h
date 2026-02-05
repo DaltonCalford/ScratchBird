@@ -195,12 +195,19 @@ namespace scratchbird::core
         // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getCurrentXid() const -> uint64_t
         {
-            // Note: Lock not strictly needed for atomic read, but kept for consistency
+            // Note: Lock not strictly needed for atomic read, but kept for consistency.
+            // For non-transactional callers (no ConnectionContext), return the last
+            // allocated XID (next_xid - 1) so visibility checks consider it in-range.
             std::lock_guard<std::mutex> lock(mutex_);
-            return next_xid_.load(std::memory_order_acquire);
+            uint64_t next = next_xid_.load(std::memory_order_acquire);
+            if (next <= config::DEFAULT_INITIAL_XID)
+            {
+                return config::DEFAULT_INITIAL_XID;
+            }
+            return next - 1;
         }
 
-        // Get oldest valid XID (OIT - for VACUUM and XID validation)
+        // Get oldest valid XID (OIT - for GC and XID validation)
         // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getOldestXid() const -> uint64_t
         {
@@ -224,7 +231,7 @@ namespace scratchbird::core
             return oldest_snapshot_;
         }
 
-        // Update oldest XID after VACUUM/sweep completes
+        // Update oldest XID after GC/sweep completes
         // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto setOldestXid(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
 

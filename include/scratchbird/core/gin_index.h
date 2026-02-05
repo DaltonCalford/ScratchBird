@@ -431,8 +431,8 @@ namespace scratchbird
             // Merge pending list into main index
             Status mergePendingList(ErrorContext *ctx = nullptr);
 
-            // Vacuum the index - consolidate posting lists
-            Status vacuum(ErrorContext *ctx = nullptr);
+            // GC compaction (ScratchBird MGA GC, not PostgreSQL VACUUM)
+            Status gcCompact(ErrorContext *ctx = nullptr);
 
             // Get index statistics
             struct Statistics

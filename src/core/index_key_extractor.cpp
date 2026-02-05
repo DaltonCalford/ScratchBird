@@ -120,6 +120,9 @@ auto IndexKeyExtractor::extractKeyForUpdate(
         return status;
     }
 
+    // Clear cached values from old tuple before extracting new tuple.
+    clearCache();
+
     // Extract new key
     status = extractKey(
         new_tuple_data, new_tuple_size,

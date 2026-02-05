@@ -573,17 +573,26 @@ namespace scratchbird::core
         }
 
         // Delete all chunks with this value_id
+        uint64_t chunks_deleted = 0;
         Tuple tuple;
         while ((status = scan->next(&tuple, ctx)) == Status::OK)
         {
-            // Parse tuple to verify it's for our value_id
-            if ((tuple.data == nullptr) ||
-                tuple.data_size < sizeof(TupleHeader) + sizeof(uint32_t))
+            // Index scan returns only TID; fetch heap tuple data
+            Tuple heap_tuple;
+            Status fetch_status = storage->getTuple(toast_table_id_, tuple.tid, &heap_tuple, ctx);
+            if (fetch_status != Status::OK)
             {
                 continue;
             }
 
-            const uint8_t *ptr = tuple.data + sizeof(TupleHeader);
+            // Parse tuple to verify it's for our value_id
+            if ((heap_tuple.data == nullptr) ||
+                heap_tuple.data_size < sizeof(TupleHeader) + sizeof(uint32_t))
+            {
+                continue;
+            }
+
+            const uint8_t *ptr = heap_tuple.data + sizeof(TupleHeader);
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
             if (chunk_id != value_id)
             {
@@ -593,13 +602,20 @@ namespace scratchbird::core
 
             // MGA-compliant soft delete: Update xmax field only (do not mark item pointer as deleted)
             // This allows transactions that started before this delete to still see the chunk
-            uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid));
-            uint16_t item_id = getSlot(tuple.tid);
+            uint32_t page_id = static_cast<uint32_t>(getPageNumber(heap_tuple.tid));
+            uint16_t item_id = getSlot(heap_tuple.tid);
             Status delete_status = markToastChunkDeleted(page_id, item_id, xmax, ctx);
             if (delete_status != Status::OK)
             {
                 return delete_status;
             }
+            ++chunks_deleted;
+        }
+
+        // If index scan produced no deletions (e.g., partial-key search), fall back to heap scan
+        if (chunks_deleted == 0)
+        {
+            return deleteToastValueHeapScan(value_id, xmax, ctx);
         }
 
         return Status::OK;
@@ -943,6 +959,15 @@ namespace scratchbird::core
             uint64_t chunk_xmin = tuple_hdr->xmin;
             uint64_t chunk_xmax = tuple_hdr->xmax;
             ptr += sizeof(TupleHeader);
+
+            if (xmin != 0)
+            {
+                TransactionManager *tm = db_->transaction_manager();
+                if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                {
+                    continue; // Skip invisible chunk
+                }
+            }
 
             // Parse chunk_id
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);

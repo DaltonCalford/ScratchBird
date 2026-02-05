@@ -131,7 +131,7 @@ namespace scratchbird
 
             // Statistics
             uint64_t hnsw_total_nodes;   // Total nodes in entire index
-            uint64_t hnsw_deleted_nodes; // Deleted nodes (need VACUUM)
+            uint64_t hnsw_deleted_nodes; // Deleted nodes (need GC compaction)
 
             uint8_t hnsw_distance_metric; // DistanceMetric enum value
             uint8_t hnsw_padding[63];     // Reserved for future use
@@ -279,7 +279,7 @@ namespace scratchbird
              * Phase 4A.2.3: Graph deletion algorithm
              * - Marks node as deleted (sets xmax)
              * - Keeps links intact (needed for older snapshots)
-             * - Actual removal done during VACUUM via removeDeadEntries()
+             * - Actual removal done during GC compaction via removeDeadEntries()
              *
              * PHASE 1.5 TASK 1.5.2d: Migrated to TID struct API
              *
@@ -319,9 +319,9 @@ namespace scratchbird
                           ErrorContext *ctx = nullptr);
 
             /**
-             * Vacuum operations
+             * GC compaction operations (ScratchBird MGA GC, not PostgreSQL VACUUM)
              */
-            struct VacuumStats
+            struct GcCompactionStats
             {
                 uint64_t nodes_visited;
                 uint64_t nodes_removed;
@@ -329,8 +329,8 @@ namespace scratchbird
                 uint64_t bytes_reclaimed;
             };
 
-            Status vacuum(VacuumStats *stats_out = nullptr,
-                          ErrorContext *ctx = nullptr);
+            Status gcCompact(GcCompactionStats *stats_out = nullptr,
+                             ErrorContext *ctx = nullptr);
 
             /**
              * Phase 4A.2.5: Remove dead nodes

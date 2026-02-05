@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 
 #include "scratchbird/core/charset_parser.h"
 #include "scratchbird/core/charset_loader.h"
@@ -39,7 +40,7 @@ protected:
         status = db_.open(test_db_path_, nullptr);
         ASSERT_EQ(status, Status::OK) << "Failed to open test database";
 
-        catalog_ = db_.getCatalog();
+        catalog_ = db_.catalog_manager();
         ASSERT_NE(catalog_, nullptr);
 
         // Create temporary JSON test files
@@ -128,8 +129,8 @@ TEST_F(CharsetLoaderTest, GenerateBuiltinCharsets)
     Status status = parser.generateBuiltinCharsets(charsets, &ctx);
     EXPECT_EQ(Status::OK, status) << "Failed to generate built-in charsets: " << ctx.message;
 
-    // Should generate 5 built-in charsets
-    EXPECT_EQ(5, charsets.size());
+    // Should generate 6 built-in charsets
+    EXPECT_EQ(6, charsets.size());
 
     // Verify UTF-8
     auto utf8_it = std::find_if(charsets.begin(), charsets.end(),
@@ -139,6 +140,14 @@ TEST_F(CharsetLoaderTest, GenerateBuiltinCharsets)
     EXPECT_EQ(1, utf8_it->min_bytes);
     EXPECT_TRUE(utf8_it->is_variable_width);
     EXPECT_EQ("utf8,UTF8", utf8_it->aliases);
+
+    // Verify UTF-8MB4
+    auto utf8mb4_it = std::find_if(charsets.begin(), charsets.end(),
+                                   [](const CharacterSet &cs) { return cs.name == "UTF8MB4"; });
+    ASSERT_NE(utf8mb4_it, charsets.end()) << "UTF8MB4 charset not found";
+    EXPECT_EQ(4, utf8mb4_it->max_bytes);
+    EXPECT_EQ(1, utf8mb4_it->min_bytes);
+    EXPECT_TRUE(utf8mb4_it->is_variable_width);
 
     // Verify ASCII
     auto ascii_it = std::find_if(charsets.begin(), charsets.end(),
@@ -307,10 +316,16 @@ TEST_F(CharsetLoaderTest, LoadCollationsFromJSONFile)
 TEST_F(CharsetLoaderTest, ASCIICharacterMappings)
 {
     CharsetParser parser;
-    CharacterSet ascii;
+    std::vector<CharacterSet> charsets;
+    ErrorContext ctx;
 
-    Status status = parser.generateASCII(ascii);
-    EXPECT_EQ(Status::OK, status);
+    Status status = parser.generateBuiltinCharsets(charsets, &ctx);
+    ASSERT_EQ(Status::OK, status) << "Failed to generate built-in charsets: " << ctx.message;
+
+    auto ascii_it = std::find_if(charsets.begin(), charsets.end(),
+                                 [](const CharacterSet &cs) { return cs.name == "ASCII"; });
+    ASSERT_NE(ascii_it, charsets.end()) << "ASCII charset not found";
+    const CharacterSet &ascii = *ascii_it;
 
     EXPECT_EQ(128, ascii.mappings.size());
 
@@ -330,10 +345,16 @@ TEST_F(CharsetLoaderTest, ASCIICharacterMappings)
 TEST_F(CharsetLoaderTest, Latin1CharacterMappings)
 {
     CharsetParser parser;
-    CharacterSet latin1;
+    std::vector<CharacterSet> charsets;
+    ErrorContext ctx;
 
-    Status status = parser.generateLatin1(latin1);
-    EXPECT_EQ(Status::OK, status);
+    Status status = parser.generateBuiltinCharsets(charsets, &ctx);
+    ASSERT_EQ(Status::OK, status) << "Failed to generate built-in charsets: " << ctx.message;
+
+    auto latin1_it = std::find_if(charsets.begin(), charsets.end(),
+                                  [](const CharacterSet &cs) { return cs.name == "ISO-8859-1"; });
+    ASSERT_NE(latin1_it, charsets.end()) << "ISO-8859-1 charset not found";
+    const CharacterSet &latin1 = *latin1_it;
 
     EXPECT_EQ(256, latin1.mappings.size());
 
@@ -355,10 +376,11 @@ TEST_F(CharsetLoaderTest, LoadFromProjectResources)
     std::vector<CharacterSet> charsets;
     ErrorContext ctx;
 
-    std::string resources_charsets = "resources/charsets/charsets.json";
-    if (std::filesystem::exists(resources_charsets))
+    auto project_root = scratchbird::testing::findProjectRoot();
+    std::filesystem::path resources_charsets = project_root / "resources" / "charsets" / "charsets.json";
+    if (!project_root.empty() && std::filesystem::exists(resources_charsets))
     {
-        Status status = parser.parseJSONFile(resources_charsets, charsets, &ctx);
+        Status status = parser.parseJSONFile(resources_charsets.string(), charsets, &ctx);
         EXPECT_EQ(Status::OK, status) << "Failed to parse project charsets: " << ctx.message;
         EXPECT_GT(charsets.size(), 0) << "No charsets loaded from project resources";
 
@@ -380,10 +402,11 @@ TEST_F(CharsetLoaderTest, LoadCollationsFromProjectResources)
     std::vector<Collation> collations;
     ErrorContext ctx;
 
-    std::string resources_collations = "resources/collations/collations.json";
-    if (std::filesystem::exists(resources_collations))
+    auto project_root = scratchbird::testing::findProjectRoot();
+    std::filesystem::path resources_collations = project_root / "resources" / "collations" / "collations.json";
+    if (!project_root.empty() && std::filesystem::exists(resources_collations))
     {
-        Status status = parser.parseCollationsFile(resources_collations, collations, &ctx);
+        Status status = parser.parseCollationsFile(resources_collations.string(), collations, &ctx);
         EXPECT_EQ(Status::OK, status) << "Failed to parse project collations: " << ctx.message;
         EXPECT_GT(collations.size(), 0) << "No collations loaded from project resources";
 

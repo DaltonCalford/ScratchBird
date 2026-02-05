@@ -16,7 +16,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/lock_manager.h"
-#include "scratchbird/core/vacuum.h"
+#include "scratchbird/core/gc_manager.h"
 #include "scratchbird/core/clog.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
@@ -441,6 +441,18 @@ namespace scratchbird::core
         {
             ErrorContext ctx;
             page_manager_->flush(&ctx);
+        }
+
+        // Sync header_buffer_ with latest header page before buffer pool shutdown
+        if (buffer_pool_ != nullptr && header_buffer_ != nullptr)
+        {
+            void *header_page = nullptr;
+            ErrorContext ctx;
+            if (buffer_pool_->pinPage(0, &header_page, &ctx) == Status::OK && header_page != nullptr)
+            {
+                std::memcpy(header_buffer_.get(), header_page, page_size_);
+                buffer_pool_->unpinPage(0, false, &ctx);
+            }
         }
 
         // Shut down buffer pool (flushes dirty pages)
@@ -1506,15 +1518,15 @@ namespace scratchbird::core
             return status;
         }
 
-        // Initialize vacuum manager
+        // Initialize GC manager
         try
         {
-            vacuum_ = std::make_unique<Vacuum>(this);
+            gc_manager_ = std::make_unique<GcManager>(this);
         }
         catch (const std::bad_alloc &)
         {
             close();
-            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate Vacuum");
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate GC manager");
             return Status::OOM;
         }
 
@@ -2139,6 +2151,45 @@ namespace scratchbird::core
 
             // Unpin as dirty
             buffer_pool_->unpinPage(0, true, ctx);
+        }
+
+        return Status::OK;
+    }
+
+    auto Database::update_header_next_xid(uint64_t next_xid, ErrorContext *ctx) -> Status
+    {
+        if (fd_ < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not open");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (header_ != nullptr)
+        {
+            header_->next_transaction_id = next_xid;
+        }
+
+        if (buffer_pool_ != nullptr)
+        {
+            void *header_buffer;
+            Status status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+            if (db_header->next_transaction_id < next_xid)
+            {
+                db_header->next_transaction_id = next_xid;
+                db_header->page_header.checksum =
+                    calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), page_size_);
+                buffer_pool_->unpinPage(0, true, ctx);
+            }
+            else
+            {
+                buffer_pool_->unpinPage(0, false, ctx);
+            }
         }
 
         return Status::OK;

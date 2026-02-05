@@ -7,7 +7,7 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
-#include "scratchbird/core/vacuum.h"
+#include "scratchbird/core/gc_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/heap_page.h"
@@ -26,20 +26,20 @@
 namespace scratchbird::core
 {
 
-    Vacuum::Vacuum(Database *db) : db_(db) {}
+    GcManager::GcManager(Database *db) : db_(db) {}
 
-    Vacuum::~Vacuum() = default;
+    GcManager::~GcManager() = default;
 
-    auto Vacuum::getVacuumHorizon(uint64_t *horizon_out, ErrorContext *ctx) -> Status
+    auto GcManager::getGcHorizon(uint64_t *horizon_out, ErrorContext *ctx) -> Status
     {
         // Get oldest XID that might still see a tuple
         // This is the minimum of all backend xmin values
 
-        Status status = ProcArrayManager::getVacuumHorizon(horizon_out, ctx);
+        Status status = ProcArrayManager::getGcHorizon(horizon_out, ctx);
         if (status != Status::OK)
         {
             // If ProcArray not available, use a conservative horizon
-            // (no vacuum - everything is potentially visible)
+            // (no GC - everything is potentially visible)
             *horizon_out = UINT64_MAX;
             return Status::OK;
         }
@@ -47,22 +47,22 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::vacuumTable(const ID &table_id, VacuumStats *stats_out, ErrorContext *ctx)
+    auto GcManager::gcTable(const ID &table_id, GcStats *stats_out, ErrorContext *ctx)
         -> Status
     {
         auto start_time = std::chrono::high_resolution_clock::now();
 
-        VacuumStats stats;
+        GcStats stats;
 
-        // Get vacuum horizon
+        // Get GC horizon
         uint64_t horizon;
-        Status status = getVacuumHorizon(&horizon, ctx);
+        Status status = getGcHorizon(&horizon, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        // If horizon is UINT64_MAX, skip vacuum (nothing can be cleaned)
+        // If horizon is UINT64_MAX, skip GC (nothing can be cleaned)
         if (horizon == UINT64_MAX)
         {
             if (stats_out != nullptr)
@@ -106,7 +106,7 @@ namespace scratchbird::core
         }
 
         auto end_time = std::chrono::high_resolution_clock::now();
-        stats.vacuum_time_us =
+        stats.gc_time_us =
             std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
         if (stats_out != nullptr)
@@ -117,9 +117,9 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::vacuumDatabase(VacuumStats *stats_out, ErrorContext *ctx) -> Status
+    auto GcManager::gcDatabase(GcStats *stats_out, ErrorContext *ctx) -> Status
     {
-        VacuumStats total_stats;
+        GcStats total_stats;
         auto start_time = std::chrono::high_resolution_clock::now();
 
         // Get catalog manager
@@ -131,12 +131,12 @@ namespace scratchbird::core
         }
 
         // Get the default schema (public schema)
-        // For simplicity, we'll vacuum all tables in all schemas
+        // For simplicity, we'll GC all tables in all schemas
         std::vector<CatalogManager::SchemaInfo> schemas;
         Status status = catalog->listSchemas(schemas, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to list schemas for vacuum");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to list schemas for GC");
             return status;
         }
 
@@ -152,7 +152,7 @@ namespace scratchbird::core
                 continue;
             }
 
-            // Vacuum each table
+            // GC each table
             for (const auto &table : tables)
             {
                 // Phase 4 Task 4.3: Process TOAST tables for garbage collection
@@ -200,9 +200,9 @@ namespace scratchbird::core
                     continue; // Don't process TOAST as regular table
                 }
 
-                // Regular table - vacuum normally
-                VacuumStats table_stats;
-                status = vacuumTable(table.table_id, &table_stats, ctx);
+                // Regular table - GC normally
+                GcStats table_stats;
+                status = gcTable(table.table_id, &table_stats, ctx);
                 if (status == Status::OK)
                 {
                     // Accumulate statistics
@@ -219,7 +219,7 @@ namespace scratchbird::core
         }
 
         auto end_time = std::chrono::high_resolution_clock::now();
-        total_stats.vacuum_time_us =
+        total_stats.gc_time_us =
             std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
         if (stats_out != nullptr)
@@ -230,14 +230,14 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::vacuumPage(const ID &table_id, uint32_t page_id, VacuumStats *stats_out,
+    auto GcManager::gcPage(const ID &table_id, uint32_t page_id, GcStats *stats_out,
                             ErrorContext *ctx) -> Status
     {
-        VacuumStats stats;
+        GcStats stats;
 
-        // Get vacuum horizon
+        // Get GC horizon
         uint64_t horizon;
-        Status status = getVacuumHorizon(&horizon, ctx);
+        Status status = getGcHorizon(&horizon, ctx);
         if (status != Status::OK || horizon == UINT64_MAX)
         {
             if (stats_out != nullptr)
@@ -265,8 +265,8 @@ namespace scratchbird::core
         return status;
     }
 
-    auto Vacuum::scanHeapForDeadTuples(const ID &table_id, uint64_t horizon,
-                                       std::vector<uint64_t> *dead_tids_out, VacuumStats *stats,
+    auto GcManager::scanHeapForDeadTuples(const ID &table_id, uint64_t horizon,
+                                       std::vector<uint64_t> *dead_tids_out, GcStats *stats,
                                        ErrorContext *ctx) -> Status
     {
         // Get table information from catalog
@@ -282,7 +282,7 @@ namespace scratchbird::core
         Status status = catalog->getTable(table_id, table_info, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to get table info for vacuum");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get table info for GC");
             return status;
         }
 
@@ -356,8 +356,8 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::pruneVersionChains(const ID &table_id, uint32_t page_id, uint64_t horizon,
-                                    VacuumStats *stats, ErrorContext *ctx) -> Status
+    auto GcManager::pruneVersionChains(const ID &table_id, uint32_t page_id, uint64_t horizon,
+                                    GcStats *stats, ErrorContext *ctx) -> Status
     {
         void *page_buffer;
         Status status = db_->buffer_pool()->pinPage(
@@ -410,9 +410,9 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::removeDeadTuplesFromPage(const ID &table_id, uint32_t page_id,
+    auto GcManager::removeDeadTuplesFromPage(const ID &table_id, uint32_t page_id,
                                           const std::vector<uint16_t> &dead_item_ids,
-                                          VacuumStats *stats, ErrorContext *ctx) -> Status
+                                          GcStats *stats, ErrorContext *ctx) -> Status
     {
         if (dead_item_ids.empty())
         {
@@ -445,7 +445,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::compactPage(uint32_t page_id, VacuumStats *stats, ErrorContext *ctx) -> Status
+    auto GcManager::compactPage(uint32_t page_id, GcStats *stats, ErrorContext *ctx) -> Status
     {
         // Pin the page
         void *page_buffer;
@@ -545,7 +545,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    bool Vacuum::isTupleDead(const uint8_t *tuple_data, uint64_t horizon) const
+    bool GcManager::isTupleDead(const uint8_t *tuple_data, uint64_t horizon) const
     {
         auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
 
@@ -580,7 +580,7 @@ namespace scratchbird::core
         return (header->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0;
     }
 
-    bool Vacuum::isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon) const
+    bool GcManager::isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon) const
     {
         auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
 
@@ -608,11 +608,11 @@ namespace scratchbird::core
         return true;
     }
 
-    auto Vacuum::freezeTable(const ID &table_id, uint64_t freeze_limit, VacuumStats *stats_out,
+    auto GcManager::freezeTable(const ID &table_id, uint64_t freeze_limit, GcStats *stats_out,
                              ErrorContext *ctx) -> Status
     {
         // Freeze tuples with xmin < freeze_limit to prevent XID wraparound
-        VacuumStats stats;
+        GcStats stats;
 
         // Get table metadata from catalog
         CatalogManager *catalog = db_->catalog_manager();

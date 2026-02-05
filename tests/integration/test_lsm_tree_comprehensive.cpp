@@ -17,24 +17,68 @@
  * - Statistics tracking
  */
 
-#include "scratchbird/core/lsm_tree.h"
+#include <gtest/gtest.h>
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/database.h"
-#include <iostream>
+#include "scratchbird/core/error_context.h"
 #include <vector>
 #include <string>
-#include <cstdlib>
 #include <cstdio>
 #include <unistd.h>
-#include <cassert>
 #include <chrono>
 #include <thread>
+#include <filesystem>
 
 using namespace scratchbird::core;
 
-void removeDirectory(const std::string &path)
+namespace {
+
+std::string sanitizeName(const char* name)
 {
-    std::string cmd = "rm -rf " + path;
-    system(cmd.c_str());
+    std::string out;
+    for (char c : std::string(name ? name : "test"))
+    {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_')
+        {
+            out.push_back(c);
+        }
+        else
+        {
+            out.push_back('_');
+        }
+    }
+    return out;
+}
+
+struct LsmTempPaths
+{
+    std::string index_path;
+    std::string db_path;
+
+    ~LsmTempPaths()
+    {
+        std::error_code ec;
+        if (!index_path.empty())
+        {
+            std::filesystem::remove_all(index_path, ec);
+        }
+        if (!db_path.empty())
+        {
+            std::filesystem::remove(db_path, ec);
+        }
+    }
+};
+
+LsmTempPaths makeTempPaths(const std::string& prefix)
+{
+    const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+    std::string test_name = info ? sanitizeName(info->name()) : "test";
+    std::string suffix = "_" + std::to_string(getpid()) + "_" + test_name;
+    LsmTempPaths paths;
+    paths.index_path = "/tmp/" + prefix + suffix;
+    paths.db_path = "/tmp/" + prefix + suffix + ".db";
+    return paths;
 }
 
 std::vector<uint8_t> makeKey(size_t index)
@@ -49,57 +93,46 @@ std::vector<uint8_t> makeValue(size_t index, const std::string &prefix = "value"
     return std::vector<uint8_t>(value_str.begin(), value_str.end());
 }
 
+} // namespace
+
 /**
  * Test 1: Large dataset with multiple flushes
  */
-void testLargeDataset()
+TEST(LSMTreeComprehensiveIntegrationTest, LargeDataset)
 {
-    std::cout << "\n=== Test 1: Large Dataset (1000 keys, multiple flushes) ===\n";
+    auto paths = makeTempPaths("lsm_test_large");
 
-    std::string suffix = "_" + std::to_string(getpid());
-    std::string index_path = "/tmp/lsm_test_large" + suffix;
-    std::string db_path = "/tmp/lsm_test_large" + suffix + ".db";
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
+    ErrorContext ctx;
+    Status status = Database::create(paths.db_path, 8192, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
-    // Create and open database
-    Status status = Database::create(db_path, 8192, nullptr);
-    assert(status == Status::OK);
+    Database db;
+    status = db.open(paths.db_path, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
-    Database *db = new Database();
-    status = db->open(db_path, nullptr);
-    assert(status == Status::OK);
-
-    TransactionManager *txn_mgr = db->transaction_manager();
+    TransactionManager *txn_mgr = db.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
     uint64_t xid = txn_mgr->getCurrentXid();
 
-    // Create LSM-Tree index with small memtable (1 MB) to force flushes
-    LSMTreeIndex index(index_path, txn_mgr, 1);
+    LSMTreeIndex index(&db, paths.index_path, txn_mgr, 1);
     status = index.create(nullptr);
-    assert(status == Status::OK);
-    std::cout << "  ✓ Created LSM-Tree index\n";
+    ASSERT_EQ(status, Status::OK);
 
-    // Insert 1000 keys (will trigger multiple flushes)
     auto start = std::chrono::high_resolution_clock::now();
     for (size_t i = 0; i < 1000; i++)
     {
         std::vector<uint8_t> key = makeKey(i);
         std::vector<uint8_t> value = makeValue(i);
         status = index.put(key, value, xid, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
     }
     auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "  ✓ Inserted 1000 keys in " << duration.count() << " ms\n";
+    (void)end;
 
-    // Get statistics
-    LSMTreeIndex::Statistics stats;
+    Statistics stats;
     status = index.getStatistics(&stats, nullptr);
-    assert(status == Status::OK);
-    std::cout << "  ✓ Level 0 SSTables: " << stats.level0_sstables << "\n";
-    std::cout << "  ✓ Total size: " << (stats.total_size_bytes / 1024) << " KB\n";
+    ASSERT_EQ(status, Status::OK);
 
-    // Verify all keys readable
     size_t found_count = 0;
     for (size_t i = 0; i < 1000; i++)
     {
@@ -108,84 +141,61 @@ void testLargeDataset()
         bool found = false;
 
         status = index.get(key, xid, &value, &found, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         if (found)
         {
             found_count++;
         }
     }
-    std::cout << "  ✓ Retrieved " << found_count << "/1000 keys correctly\n";
-    assert(found_count == 1000);
-
-    // Cleanup
+    EXPECT_EQ(found_count, 1000u);
     index.close(nullptr);
-    delete db;
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
 }
 
 /**
  * Test 2: Manual flush and verification
  */
-void testManualFlush()
+TEST(LSMTreeComprehensiveIntegrationTest, ManualFlush)
 {
-    std::cout << "\n=== Test 2: Manual Flush and Verification ===\n";
+    auto paths = makeTempPaths("lsm_test_flush");
 
-    std::string suffix = "_" + std::to_string(getpid());
-    std::string index_path = "/tmp/lsm_test_flush" + suffix;
-    std::string db_path = "/tmp/lsm_test_flush" + suffix + ".db";
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
+    ErrorContext ctx;
+    Status status = Database::create(paths.db_path, 8192, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
-    // Create database
-    Status status = Database::create(db_path, 8192, nullptr);
-    assert(status == Status::OK);
+    Database db;
+    status = db.open(paths.db_path, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
-    Database *db = new Database();
-    status = db->open(db_path, nullptr);
-    assert(status == Status::OK);
-
-    TransactionManager *txn_mgr = db->transaction_manager();
+    TransactionManager *txn_mgr = db.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
     uint64_t xid = txn_mgr->getCurrentXid();
 
-    // Create index with large memtable (no auto-flush)
-    LSMTreeIndex index(index_path, txn_mgr, 10);
+    LSMTreeIndex index(&db, paths.index_path, txn_mgr, 10);
     status = index.create(nullptr);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
-    // Insert 100 keys
     for (size_t i = 0; i < 100; i++)
     {
         std::vector<uint8_t> key = makeKey(i);
         std::vector<uint8_t> value = makeValue(i);
         status = index.put(key, value, xid, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
     }
-    std::cout << "  ✓ Inserted 100 keys\n";
 
-    // Check statistics before flush
-    LSMTreeIndex::Statistics stats_before;
+    Statistics stats_before;
     status = index.getStatistics(&stats_before, nullptr);
-    assert(status == Status::OK);
-    std::cout << "  ✓ Before flush - Active memtable: " << stats_before.active_memtable_entries << " entries\n";
-    std::cout << "  ✓ Before flush - Level 0 SSTables: " << stats_before.level0_sstables << "\n";
+    ASSERT_EQ(status, Status::OK);
 
-    // Manual flush
     status = index.flush(nullptr);
-    assert(status == Status::OK);
-    std::cout << "  ✓ Flushed memtable\n";
+    ASSERT_EQ(status, Status::OK);
 
-    // Check statistics after flush
-    LSMTreeIndex::Statistics stats_after;
+    Statistics stats_after;
     status = index.getStatistics(&stats_after, nullptr);
-    assert(status == Status::OK);
-    std::cout << "  ✓ After flush - Active memtable: " << stats_after.active_memtable_entries << " entries\n";
-    std::cout << "  ✓ After flush - Level 0 SSTables: " << stats_after.level0_sstables << "\n";
+    ASSERT_EQ(status, Status::OK);
 
-    assert(stats_after.level0_sstables > stats_before.level0_sstables);
+    EXPECT_GT(stats_after.level0_sstables, stats_before.level0_sstables);
 
-    // Verify all keys still readable from SSTable
     size_t found_count = 0;
     for (size_t i = 0; i < 100; i++)
     {
@@ -194,73 +204,56 @@ void testManualFlush()
         bool found = false;
 
         status = index.get(key, xid, &value, &found, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         if (found)
         {
             found_count++;
         }
     }
-    std::cout << "  ✓ Retrieved " << found_count << "/100 keys after flush\n";
-    assert(found_count == 100);
-
-    // Cleanup
+    EXPECT_EQ(found_count, 100u);
     index.close(nullptr);
-    delete db;
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
 }
 
 /**
  * Test 3: Update operations (multiple versions)
  */
-void testUpdates()
+TEST(LSMTreeComprehensiveIntegrationTest, Updates)
 {
-    std::cout << "\n=== Test 3: Update Operations ===\n";
+    auto paths = makeTempPaths("lsm_test_updates");
 
-    std::string suffix = "_" + std::to_string(getpid());
-    std::string index_path = "/tmp/lsm_test_updates" + suffix;
-    std::string db_path = "/tmp/lsm_test_updates" + suffix + ".db";
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
+    ErrorContext ctx;
+    Status status = Database::create(paths.db_path, 8192, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
-    // Create database
-    Status status = Database::create(db_path, 8192, nullptr);
-    assert(status == Status::OK);
+    Database db;
+    status = db.open(paths.db_path, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
-    Database *db = new Database();
-    status = db->open(db_path, nullptr);
-    assert(status == Status::OK);
-
-    TransactionManager *txn_mgr = db->transaction_manager();
+    TransactionManager *txn_mgr = db.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
     uint64_t xid = txn_mgr->getCurrentXid();
 
-    // Create index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(&db, paths.index_path, txn_mgr, 4);
     status = index.create(nullptr);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
-    // Insert 10 keys
     for (size_t i = 0; i < 10; i++)
     {
         std::vector<uint8_t> key = makeKey(i);
         std::vector<uint8_t> value = makeValue(i, "v1");
         status = index.put(key, value, xid, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
     }
-    std::cout << "  ✓ Inserted 10 keys (version 1)\n";
 
-    // Update the same keys with different values
     for (size_t i = 0; i < 10; i++)
     {
         std::vector<uint8_t> key = makeKey(i);
         std::vector<uint8_t> value = makeValue(i, "v2");
         status = index.put(key, value, xid, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
     }
-    std::cout << "  ✓ Updated 10 keys (version 2)\n";
 
-    // Verify we get the latest values
     size_t correct_version = 0;
     for (size_t i = 0; i < 10; i++)
     {
@@ -270,109 +263,60 @@ void testUpdates()
         bool found = false;
 
         status = index.get(key, xid, &actual_value, &found, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         if (found && actual_value == expected_value)
         {
             correct_version++;
         }
     }
-    std::cout << "  ✓ Retrieved correct version for " << correct_version << "/10 keys\n";
-    assert(correct_version == 10);
-
-    // Cleanup
+    EXPECT_EQ(correct_version, 10u);
     index.close(nullptr);
-    delete db;
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
 }
 
 /**
  * Test 4: Compaction trigger (multiple flushes to Level 0)
  */
-void testCompactionTrigger()
+TEST(LSMTreeComprehensiveIntegrationTest, CompactionTrigger)
 {
-    std::cout << "\n=== Test 4: Compaction Trigger ===\n";
+    auto paths = makeTempPaths("lsm_test_compaction");
 
-    std::string suffix = "_" + std::to_string(getpid());
-    std::string index_path = "/tmp/lsm_test_compaction" + suffix;
-    std::string db_path = "/tmp/lsm_test_compaction" + suffix + ".db";
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
+    ErrorContext ctx;
+    Status status = Database::create(paths.db_path, 8192, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
-    // Create database
-    Status status = Database::create(db_path, 8192, nullptr);
-    assert(status == Status::OK);
+    Database db;
+    status = db.open(paths.db_path, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
-    Database *db = new Database();
-    status = db->open(db_path, nullptr);
-    assert(status == Status::OK);
-
-    TransactionManager *txn_mgr = db->transaction_manager();
+    TransactionManager *txn_mgr = db.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
     uint64_t xid = txn_mgr->getCurrentXid();
 
-    // Create index with small memtable to force multiple flushes
-    LSMTreeIndex index(index_path, txn_mgr, 1);
-    status = index.open(nullptr);  // This will call create if doesn't exist
+    LSMTreeIndex index(&db, paths.index_path, txn_mgr, 1);
+    status = index.open(nullptr);
     if (status != Status::OK)
     {
         status = index.create(nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
     }
-    std::cout << "  ✓ Created LSM-Tree index\n";
 
-    // Insert enough keys to trigger multiple flushes
-    // With 1 MB memtable, inserting ~500 keys should trigger 4-5 flushes
     for (size_t i = 0; i < 500; i++)
     {
         std::vector<uint8_t> key = makeKey(i);
         std::vector<uint8_t> value = makeValue(i);
         status = index.put(key, value, xid, nullptr);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
     }
-    std::cout << "  ✓ Inserted 500 keys\n";
 
-    // Flush remaining keys
     status = index.flush(nullptr);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
-    // Wait a bit for background compaction
-    std::cout << "  ✓ Waiting for background compaction (3 seconds)...\n";
     std::this_thread::sleep_for(std::chrono::seconds(3));
 
-    // Get statistics
-    LSMTreeIndex::Statistics stats;
+    Statistics stats;
     status = index.getStatistics(&stats, nullptr);
-    assert(status == Status::OK);
-    std::cout << "  ✓ Level 0 SSTables: " << stats.level0_sstables << "\n";
-    std::cout << "  ✓ Level 1 SSTables: " << stats.level1_sstables << "\n";
-    std::cout << "  ✓ Level 2 SSTables: " << stats.level2_sstables << "\n";
-    std::cout << "  ✓ Level 3 SSTables: " << stats.level3_sstables << "\n";
+    ASSERT_EQ(status, Status::OK);
 
-    // Note: Compaction should have moved some Level 0 files to Level 1
-    // if there were 4+ Level 0 files
-
-    // Cleanup
     index.close(nullptr);
-    delete db;
-    removeDirectory(index_path);
-    std::remove(db_path.c_str());
-}
-
-int main()
-{
-    std::cout << "========================================\n";
-    std::cout << "  LSM-Tree Comprehensive Integration Tests\n";
-    std::cout << "========================================\n";
-
-    testLargeDataset();
-    testManualFlush();
-    testUpdates();
-    testCompactionTrigger();
-
-    std::cout << "\n========================================\n";
-    std::cout << "  ✅ ALL COMPREHENSIVE TESTS PASSED\n";
-    std::cout << "========================================\n";
-
-    return 0;
 }

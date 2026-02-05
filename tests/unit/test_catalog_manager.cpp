@@ -13,6 +13,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include <cstdio>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -72,6 +73,31 @@ protected:
             std::cerr << "Failed to open database: " << ctx.message << std::endl;
         }
         ASSERT_EQ(status, Status::OK);
+
+        CatalogManager *catalog = db->catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        CatalogManager::SchemaInfo default_schema;
+        Status schema_status = catalog->getSchema("public", default_schema, &ctx);
+        if (schema_status != Status::OK)
+        {
+            schema_status = catalog->getSchema("root", default_schema, &ctx);
+        }
+        ASSERT_EQ(schema_status, Status::OK);
+
+        auto ensure_user = [&](const std::string &name)
+        {
+            ID user_id;
+            Status user_status = catalog->ensureUserExists(
+                name, "test_hash", default_schema.schema_id, false, user_id, &ctx);
+            ASSERT_EQ(user_status, Status::OK);
+        };
+
+        ensure_user("test_user");
+        ensure_user("user1");
+        ensure_user("user2");
+        ensure_user("user3");
+        ensure_user("owner1");
     }
 };
 
@@ -102,7 +128,7 @@ TEST_F(CatalogManagerTest, CreateAndGetSchema)
     ASSERT_EQ(catalog->getSchema(schema_id, info, &ctx), Status::OK);
     EXPECT_EQ(info.schema_id, schema_id);
     EXPECT_EQ(info.schema_name, "test_schema");
-    EXPECT_EQ(info.owner, "test_user");
+    EXPECT_NE(info.owner_id, ID{});
 
     // Get schema by name
     CatalogManager::SchemaInfo info2;
@@ -200,7 +226,7 @@ TEST_F(CatalogManagerTest, CreateAndGetTable)
 
     // Create table
     ID table_id;
-    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, &ctx), Status::OK);
+    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, 0, &ctx), Status::OK);
 
     // Get table by ID
     CatalogManager::TableInfo info;
@@ -209,7 +235,7 @@ TEST_F(CatalogManagerTest, CreateAndGetTable)
     EXPECT_EQ(info.schema_id, schema_id);
     EXPECT_EQ(info.table_name, "test_table");
     EXPECT_EQ(info.column_count, 3);
-    EXPECT_GT(info.root_page, 2); // Should have allocated a page
+    EXPECT_NE(info.root_gpid, static_cast<GPID>(0)); // Should have allocated a page
 
     // Get table by schema and name
     CatalogManager::TableInfo info2;
@@ -233,9 +259,9 @@ TEST_F(CatalogManagerTest, ListTables)
     columns.push_back(makeColumn("id", static_cast<uint16_t>(DataType::INT32), 4, false, false, ""));
 
     ID id1, id2, id3;
-    ASSERT_EQ(catalog->createTable(schema_id, "table1", columns, id1, &ctx), Status::OK);
-    ASSERT_EQ(catalog->createTable(schema_id, "table2", columns, id2, &ctx), Status::OK);
-    ASSERT_EQ(catalog->createTable(schema_id, "table3", columns, id3, &ctx), Status::OK);
+    ASSERT_EQ(catalog->createTable(schema_id, "table1", columns, id1, 0, &ctx), Status::OK);
+    ASSERT_EQ(catalog->createTable(schema_id, "table2", columns, id2, 0, &ctx), Status::OK);
+    ASSERT_EQ(catalog->createTable(schema_id, "table3", columns, id3, 0, &ctx), Status::OK);
 
     // List tables in schema
     std::vector<CatalogManager::TableInfo> tables;
@@ -273,7 +299,7 @@ makeColumn("created", static_cast<uint16_t>(DataType::TIMESTAMP), 8, false, true
 
     // Create table
     ID table_id;
-    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, &ctx), Status::OK);
+    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, 0, &ctx), Status::OK);
 
     // Get columns
     std::vector<CatalogManager::ColumnInfo> retrieved_columns;
@@ -314,7 +340,7 @@ TEST_F(CatalogManagerTest, GetColumnByName)
 makeColumn("name", static_cast<uint16_t>(DataType::VARCHAR), 100, true, false, ""));
 
     ID table_id;
-    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, &ctx), Status::OK);
+    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, 0, &ctx), Status::OK);
 
     // Get column by name
     CatalogManager::ColumnInfo col_info;
@@ -348,7 +374,7 @@ TEST_F(CatalogManagerTest, CreateAndGetIndex)
 makeColumn("name", static_cast<uint16_t>(DataType::VARCHAR), 100, true, false, ""));
 
     ID table_id;
-    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, &ctx), Status::OK);
+    ASSERT_EQ(catalog->createTable(schema_id, "test_table", columns, table_id, 0, &ctx), Status::OK);
 
     // Get the generated column IDs
     std::vector<CatalogManager::ColumnInfo> retrieved_columns;
@@ -358,7 +384,7 @@ makeColumn("name", static_cast<uint16_t>(DataType::VARCHAR), 100, true, false, "
     // Create index
     ID index_id;
     ASSERT_EQ(catalog->createIndex(table_id, "test_index", {"name"}, index_id, false,
-                                    CatalogManager::IndexType::BTREE, &ctx),
+                                    CatalogManager::IndexType::BTREE, 0, &ctx),
               Status::OK);
 
     // Get index by ID
@@ -385,7 +411,7 @@ TEST_F(CatalogManagerTest, InvalidOperations)
     ID table_id;
     ID non_existent_schema_id = generateUuidV7();
     Status status =
-        catalog->createTable(non_existent_schema_id, "test_table", columns, table_id, &ctx);
+        catalog->createTable(non_existent_schema_id, "test_table", columns, table_id, 0, &ctx);
     EXPECT_EQ(status, Status::INVALID_ARGUMENT);
 
     // Try to get non-existent schema
@@ -422,7 +448,7 @@ makeColumn("id", static_cast<uint16_t>(DataType::INT64), 8, false, false, ""));
 makeColumn("data", static_cast<uint16_t>(DataType::TEXT), 0, true, false, ""));
 
         ID table_id;
-        ASSERT_EQ(catalog->createTable(schema_id, "persistent_table", columns, table_id, &ctx),
+        ASSERT_EQ(catalog->createTable(schema_id, "persistent_table", columns, table_id, 0, &ctx),
                   Status::OK);
 
         // Close database
@@ -444,7 +470,7 @@ makeColumn("data", static_cast<uint16_t>(DataType::TEXT), 0, true, false, ""));
         CatalogManager::SchemaInfo schema_info;
         ASSERT_EQ(catalog->getSchema("persistent_schema", schema_info, &ctx), Status::OK);
         EXPECT_EQ(schema_info.schema_name, "persistent_schema");
-        EXPECT_EQ(schema_info.owner, "owner1");
+        EXPECT_NE(schema_info.owner_id, ID{});
 
         // Find table
         CatalogManager::TableInfo table_info;
@@ -475,6 +501,8 @@ TEST_F(CatalogManagerTest, LargeNumberOfTables)
     ID schema_id;
     ASSERT_EQ(catalog->createSchema("load_test", "test_user", schema_id, &ctx), Status::OK);
 
+    uint32_t initial_count = catalog->tableCount();
+
     // Create many tables
     std::vector<CatalogManager::ColumnInfo> columns;
     columns.push_back(makeColumn("id", static_cast<uint16_t>(DataType::INT32), 4, false, false, ""));
@@ -486,7 +514,7 @@ TEST_F(CatalogManagerTest, LargeNumberOfTables)
     {
         std::string table_name = "table_" + std::to_string(i);
         ID table_id;
-        ASSERT_EQ(catalog->createTable(schema_id, table_name, columns, table_id, &ctx),
+        ASSERT_EQ(catalog->createTable(schema_id, table_name, columns, table_id, 0, &ctx),
                   Status::OK);
         table_ids.push_back(table_id);
     }
@@ -504,5 +532,5 @@ TEST_F(CatalogManagerTest, LargeNumberOfTables)
         EXPECT_EQ(info.table_id, table_ids[i]);
     }
 
-    EXPECT_EQ(catalog->tableCount(), num_tables);
+    EXPECT_EQ(catalog->tableCount(), initial_count + num_tables);
 }

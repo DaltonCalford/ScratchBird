@@ -13,18 +13,20 @@
  * Tests SSTable read operations and correctness
  */
 
-#include "scratchbird/core/lsm_tree.h"
+#include <gtest/gtest.h>
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "test_helpers.h"
-#include <cassert>
 #include <iostream>
 #include <cstdio>
 #include <vector>
 
 using namespace scratchbird::core;
 using scratchbird::testing::uniqueTestShortPath;
+
+namespace {
 
 // Helper: Create key from string
 std::vector<uint8_t> makeKey(const std::string &s)
@@ -44,6 +46,18 @@ std::string toString(const std::vector<uint8_t> &v)
     return std::string(v.begin(), v.end());
 }
 
+size_t countEntries(SSTableReader &reader)
+{
+    auto it = reader.createIterator();
+    size_t count = 0;
+    while (it && it->isValid())
+    {
+        ++count;
+        it->next();
+    }
+    return count;
+}
+
 // Helper: Create test SSTable
 void createTestSSTable(const std::string &file_path,
                        const std::vector<std::pair<std::string, std::string>> &entries,
@@ -53,7 +67,7 @@ void createTestSSTable(const std::string &file_path,
     ErrorContext ctx;
 
     Status status = writer.open(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     for (size_t i = 0; i < entries.size(); ++i)
     {
@@ -64,11 +78,11 @@ void createTestSSTable(const std::string &file_path,
                                   base_xid,         // xmin (all same transaction)
                                   0,                // xmax
                                   &ctx);
-        assert(status == Status::OK);
+        ASSERT_TRUE(status == Status::OK);
     }
 
     status = writer.finish(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 }
 
 /**
@@ -103,18 +117,18 @@ void testOpenSSTable()
     ErrorContext ctx;
 
     Status status = reader.open(&ctx);
-    assert(status == Status::OK);
-    assert(reader.isOpen());
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(reader.isOpen());
     std::cout << "  ✓ Opened SSTable successfully\n";
 
     // Check metadata
-    assert(reader.getNumEntries() == 10);
+    ASSERT_EQ(countEntries(reader), 10u);
     std::cout << "  ✓ Num entries: 10\n";
 
     std::vector<uint8_t> min_key = reader.getMinKey();
     std::vector<uint8_t> max_key = reader.getMaxKey();
-    assert(toString(min_key) == "key01");
-    assert(toString(max_key) == "key10");
+    ASSERT_TRUE(toString(min_key) == "key01");
+    ASSERT_TRUE(toString(max_key) == "key10");
     std::cout << "  ✓ Min/max keys correct (key01, key10)\n";
 
     std::cout << "  PASS\n";
@@ -134,25 +148,25 @@ void testPointQuery()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     // Register backend for writer transaction
     uint32_t writer_proc_id;
     status = ProcArrayManager::registerBackend(&writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Start writer transaction
     uint64_t writer_xid;
     status = txn_mgr->beginTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable
     std::string file_path = "test_sstable_reader_point.sst";
@@ -171,25 +185,25 @@ void testPointQuery()
 
     // Commit the writer transaction
     status = txn_mgr->commitTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Now start reader transaction
     uint32_t reader_proc_id;
     status = ProcArrayManager::registerBackend(&reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t reader_xid;
     status = txn_mgr->beginTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Reader transaction started (xid=" << reader_xid << ")\n";
 
     // Open SSTable for reading
     SSTableReader reader(file_path);
     status = reader.open(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Test get operations
     std::vector<uint8_t> value;
@@ -197,30 +211,30 @@ void testPointQuery()
 
     // Query existing key
     status = reader.get(makeKey("banana"), reader_xid, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == true);
-    assert(toString(value) == "yellow");
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == true);
+    ASSERT_TRUE(toString(value) == "yellow");
     std::cout << "  ✓ Found key 'banana' = 'yellow'\n";
 
     // Query another existing key
     status = reader.get(makeKey("cherry"), reader_xid, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == true);
-    assert(toString(value) == "red");
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == true);
+    ASSERT_TRUE(toString(value) == "red");
     std::cout << "  ✓ Found key 'cherry' = 'red'\n";
 
     // Query non-existing key
     status = reader.get(makeKey("fig"), reader_xid, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == false);
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == false);
     std::cout << "  ✓ Key 'fig' not found (expected)\n";
 
     // Cleanup
     status = txn_mgr->commitTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     delete db;
 
@@ -241,25 +255,25 @@ void testRangeScan()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     // Register backend for writer transaction
     uint32_t writer_proc_id;
     status = ProcArrayManager::registerBackend(&writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Start writer transaction
     uint64_t writer_xid;
     status = txn_mgr->beginTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable with sorted keys
     std::string file_path = "test_sstable_reader_scan.sst";
@@ -281,62 +295,62 @@ void testRangeScan()
 
     // Commit the writer transaction
     status = txn_mgr->commitTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Now start reader transaction
     uint32_t reader_proc_id;
     status = ProcArrayManager::registerBackend(&reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t reader_xid;
     status = txn_mgr->beginTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
     std::cout << "  ✓ Reader transaction started (xid=" << reader_xid << ")\n";
 
     // Open SSTable
     SSTableReader reader(file_path);
     status = reader.open(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Range scan: key20 to key60 (exclusive)
     std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> results;
     status = reader.scan(makeKey("key20"), makeKey("key60"), reader_xid, txn_mgr, &results, &ctx);
-    assert(status == Status::OK);
-    assert(results.size() == 4); // key20, key30, key40, key50
-    assert(toString(results[0].first) == "key20");
-    assert(toString(results[3].first) == "key50");
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(results.size() == 4); // key20, key30, key40, key50
+    ASSERT_TRUE(toString(results[0].first) == "key20");
+    ASSERT_TRUE(toString(results[3].first) == "key50");
     std::cout << "  ✓ Range scan [key20, key60): 4 results\n";
 
     // Full scan (empty start/end)
     results.clear();
     status = reader.scan(std::vector<uint8_t>(), std::vector<uint8_t>(), reader_xid, txn_mgr, &results, &ctx);
-    assert(status == Status::OK);
-    assert(results.size() == 9); // All entries
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(results.size() == 9); // All entries
     std::cout << "  ✓ Full scan: 9 results\n";
 
     // Scan from start
     results.clear();
     status = reader.scan(std::vector<uint8_t>(), makeKey("key40"), reader_xid, txn_mgr, &results, &ctx);
-    assert(status == Status::OK);
-    assert(results.size() == 3); // key10, key20, key30
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(results.size() == 3); // key10, key20, key30
     std::cout << "  ✓ Scan [start, key40): 3 results\n";
 
     // Scan to end
     results.clear();
     status = reader.scan(makeKey("key70"), std::vector<uint8_t>(), reader_xid, txn_mgr, &results, &ctx);
-    assert(status == Status::OK);
-    assert(results.size() == 3); // key70, key80, key90
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(results.size() == 3); // key70, key80, key90
     std::cout << "  ✓ Scan [key70, end): 3 results\n";
 
     // Cleanup
     status = txn_mgr->commitTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     delete db;
 
@@ -357,25 +371,25 @@ void testBloomFilterOptimization()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     // Register backend for writer transaction
     uint32_t writer_proc_id;
     status = ProcArrayManager::registerBackend(&writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Start writer transaction
     uint64_t writer_xid;
     status = txn_mgr->beginTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable with specific keys
     std::string file_path = "test_sstable_reader_bloom.sst";
@@ -392,24 +406,24 @@ void testBloomFilterOptimization()
 
     // Commit the writer transaction
     status = txn_mgr->commitTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Now start reader transaction
     uint32_t reader_proc_id;
     status = ProcArrayManager::registerBackend(&reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t reader_xid;
     status = txn_mgr->beginTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Open SSTable
     SSTableReader reader(file_path);
     status = reader.open(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Query keys that are definitely NOT present
     // Bloom filter should return NOT FOUND without I/O
@@ -417,23 +431,23 @@ void testBloomFilterOptimization()
     bool found;
 
     status = reader.get(makeKey("zzzz"), reader_xid, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == false);
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == false);
     std::cout << "  ✓ Bloom filter correctly rejects 'zzzz'\n";
 
     // Query key that IS present
     status = reader.get(makeKey("beta"), reader_xid, txn_mgr, &value, &found, &ctx);
-    assert(status == Status::OK);
-    assert(found == true);
-    assert(toString(value) == "2");
+    ASSERT_TRUE(status == Status::OK);
+    ASSERT_TRUE(found == true);
+    ASSERT_TRUE(toString(value) == "2");
     std::cout << "  ✓ Bloom filter allows 'beta' (present)\n";
 
     // Cleanup
     status = txn_mgr->commitTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     delete db;
 
@@ -454,25 +468,25 @@ void testWriteReadRoundtrip()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     // Register backend for writer transaction
     uint32_t writer_proc_id;
     status = ProcArrayManager::registerBackend(&writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Start writer transaction
     uint64_t writer_xid;
     status = txn_mgr->beginTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable with 1000 entries
     std::string file_path = "test_sstable_reader_roundtrip.sst";
@@ -491,24 +505,24 @@ void testWriteReadRoundtrip()
 
     // Commit the writer transaction
     status = txn_mgr->commitTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Now start reader transaction
     uint32_t reader_proc_id;
     status = ProcArrayManager::registerBackend(&reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t reader_xid;
     status = txn_mgr->beginTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Open for reading
     SSTableReader reader(file_path);
     status = reader.open(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Verify all entries can be read
     int found_count = 0;
@@ -519,45 +533,57 @@ void testWriteReadRoundtrip()
         std::vector<uint8_t> value;
         bool found;
         status = reader.get(makeKey(key), reader_xid, txn_mgr, &value, &found, &ctx);
-        assert(status == Status::OK);
+        ASSERT_TRUE(status == Status::OK);
 
         if (found)
         {
             std::string expected_value = "value" + std::to_string(i);
-            assert(toString(value) == expected_value);
+            ASSERT_TRUE(toString(value) == expected_value);
             found_count++;
         }
     }
 
-    assert(found_count == 1000);
+    ASSERT_TRUE(found_count == 1000);
     std::cout << "  ✓ All 1000 entries found and verified\n";
 
     // Cleanup
     status = txn_mgr->commitTransaction(reader_proc_id, reader_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(reader_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     delete db;
 
     std::cout << "  PASS\n";
 }
 
-int main()
+} // namespace
+
+
+// ==================== GTest Wrappers ====================
+
+TEST(LSMTest, OpenSSTable)
 {
-    std::cout << "\n";
-    std::cout << "==================================================\n";
-    std::cout << "   SSTable Reader Unit Tests\n";
-    std::cout << "==================================================\n";
-
     testOpenSSTable();
+}
+
+TEST(LSMTest, PointQuery)
+{
     testPointQuery();
+}
+
+TEST(LSMTest, RangeScan)
+{
     testRangeScan();
+}
+
+TEST(LSMTest, BloomFilterOptimization)
+{
     testBloomFilterOptimization();
+}
+
+TEST(LSMTest, WriteReadRoundtrip)
+{
     testWriteReadRoundtrip();
-
-    std::cout << "\n=== All SSTable Reader Tests PASSED ===\n\n";
-
-    return 0;
 }

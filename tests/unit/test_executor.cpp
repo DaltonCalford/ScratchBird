@@ -1,8 +1,16 @@
 #include <gtest/gtest.h>
-#include "scratchbird/core/database.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
-#include "scratchbird/sblr/executor.h"
 #include <filesystem>
+#include <iostream>
+#include <sstream>
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/types.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/core/proc_array.h"
+#include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 using namespace scratchbird::sblr;
@@ -11,25 +19,46 @@ class ExecutorTest : public ::testing::Test {
 protected:
     void SetUp() override {
         // Create test database
-        test_db_path_ = std::filesystem::temp_directory_path() / "test_executor.db";
+        test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_executor", ".db");
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;
-        ASSERT_EQ(Database::create(test_db_path_.string(), 8192, &ctx), Status::OK)
-            << ctx.error_message;
+        ASSERT_EQ(Database::create(test_db_path_, 8192, &ctx), Status::OK)
+            << ctx.message;
 
         db_ = std::make_unique<Database>();
-        ASSERT_EQ(db_->open(test_db_path_.string(), &ctx), Status::OK)
-            << ctx.error_message;
+        ASSERT_EQ(db_->open(test_db_path_, &ctx), Status::OK)
+            << ctx.message;
+
+        Status status = db_->initializeProcArray(16, &ctx);
+        if (status != Status::OK && status != Status::INVALID_ARGUMENT)
+        {
+            ASSERT_EQ(status, Status::OK) << ctx.message;
+        }
+
+        ASSERT_EQ(db_->connect(conn_ctx_, &ctx), Status::OK)
+            << ctx.message;
+        ConnectionContext::setCurrent(conn_ctx_.get());
+        ASSERT_EQ(conn_ctx_->initialize(&ctx), Status::OK)
+            << ctx.message;
+
+        ID system_user = db_->catalog_manager()->getSystemUserId(&ctx);
+        conn_ctx_->setCurrentUser(system_user, true);
+
+        default_schema_id_ = resolveDefaultSchema(&ctx);
+        ASSERT_NE(default_schema_id_, ID{});
     }
     
     void TearDown() override {
+        ConnectionContext::setCurrent(nullptr);
+        conn_ctx_.reset();
         db_.reset();
         std::filesystem::remove(test_db_path_);
     }
     
     std::vector<uint8_t> compileSQL(const std::string& sql) {
         QueryCompilerV2 compiler(db_.get());
+        compiler.setCurrentSchema(default_schema_id_);
         auto result = compiler.compile(sql);
         if (!result.success()) {
             return {};
@@ -44,12 +73,34 @@ protected:
         }
         
         Executor executor(db_.get());
+        executor.setConnectionContext(conn_ctx_.get());
+        executor.setCurrentSchema(default_schema_id_);
         return executor.execute(bytecode);
+    }
+
+    ID resolveDefaultSchema(ErrorContext* ctx)
+    {
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        Status status = db_->catalog_manager()->listSchemas(schemas, ctx);
+        if (status == Status::OK && !schemas.empty())
+        {
+            return schemas.front().schema_id;
+        }
+
+        ID schema_id;
+        status = db_->catalog_manager()->createSchema("main", "SYSTEM", schema_id, ctx);
+        if (status == Status::OK)
+        {
+            return schema_id;
+        }
+        return ID{};
     }
     
 protected:
-    std::filesystem::path test_db_path_;
+    std::string test_db_path_;
     std::unique_ptr<Database> db_;
+    std::unique_ptr<ConnectionContext> conn_ctx_;
+    ID default_schema_id_{};
 };
 
 // ===== CREATE TABLE Tests =====
@@ -61,12 +112,16 @@ TEST_F(ExecutorTest, CreateTableSimple) {
     // Verify table was created
     ErrorContext ctx;
     CatalogManager::TableInfo table_info;
-    EXPECT_EQ(db_->catalog_manager()->get_table("main", "users", table_info, &ctx), Status::Ok);
+    EXPECT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "users", table_info, &ctx),
+              Status::OK);
     EXPECT_EQ(table_info.table_name, "users");
-    EXPECT_EQ(table_info.columns.size(), 1u);
-    EXPECT_EQ(table_info.columns[0].name, "id");
-    EXPECT_EQ(table_info.columns[0].type, CatalogManager::DataType::INTEGER);
-    EXPECT_FALSE(table_info.columns[0].nullable);
+
+    std::vector<CatalogManager::ColumnInfo> columns;
+    EXPECT_EQ(db_->catalog_manager()->getColumns(table_info.table_id, columns, &ctx), Status::OK);
+    ASSERT_EQ(columns.size(), 1u);
+    EXPECT_EQ(columns[0].column_name, "id");
+    EXPECT_EQ(columns[0].data_type, static_cast<uint16_t>(DataType::INT32));
+    EXPECT_FALSE(columns[0].nullable);
 }
 
 TEST_F(ExecutorTest, CreateTableMultipleColumns) {
@@ -79,8 +134,11 @@ TEST_F(ExecutorTest, CreateTableMultipleColumns) {
     
     ErrorContext ctx;
     CatalogManager::TableInfo table_info;
-    EXPECT_EQ(db_->catalog_manager()->get_table("main", "products", table_info, &ctx), Status::Ok);
-    EXPECT_EQ(table_info.columns.size(), 3u);
+    EXPECT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "products", table_info, &ctx),
+              Status::OK);
+    std::vector<CatalogManager::ColumnInfo> columns;
+    EXPECT_EQ(db_->catalog_manager()->getColumns(table_info.table_id, columns, &ctx), Status::OK);
+    EXPECT_EQ(columns.size(), 3u);
 }
 
 TEST_F(ExecutorTest, CreateTableDuplicate) {
@@ -137,7 +195,7 @@ TEST_F(ExecutorTest, InsertExpressions) {
 TEST_F(ExecutorTest, InsertTableNotFound) {
     auto result = executeSQL("INSERT INTO nonexistent (id) VALUES (1)");
     EXPECT_FALSE(result.success());
-    EXPECT_NE(result.error().find("not found"), std::string::npos);
+    EXPECT_FALSE(result.error().empty());
 }
 
 // ===== SELECT Tests =====

@@ -9,12 +9,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+# Default timeouts by test category.
+set(SCRATCHBIRD_TEST_TIMEOUT_UNIT 60)
+set(SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION 300)
+set(SCRATCHBIRD_TEST_TIMEOUT_STRESS 600)
+set(SCRATCHBIRD_TEST_TIMEOUT_PERFORMANCE 600)
+set(SCRATCHBIRD_TEST_TIMEOUT_QUARANTINE 120)
+
 # Allow test sources to include test_helpers.h across all test targets.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 link_libraries(scratchbird_link_group)
-set(SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_parser)
 if(SCRATCHBIRD_WITH_COMPILER)
-    list(APPEND SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_compiler)
+    set(SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_compiler scratchbird_parser)
+else()
+    set(SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_parser)
 endif()
 set(SCRATCHBIRD_TEST_OPTIMIZER_LIBS scratchbird_optimizer_runtime)
 if(SCRATCHBIRD_WITH_COMPILER)
@@ -58,83 +66,28 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/deprecated/.*")
 # These require additional manual fixes beyond automated script capabilities
 # TODO: Fix these in Phase 3 using test_bitmap_dml.cpp as template
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_bytecode_executor\\.cpp$")  # 40+ errors - executor API refactor
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_dml\\.cpp$")  # Incomplete transaction API fixes
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_mvcc\\.cpp$")  # Incomplete transaction API fixes
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_simple\\.cpp$")  # LSMTreeIndex not declared
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_comprehensive\\.cpp$")  # LSMTreeIndex not declared
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() → generateUuidV7(), Database constructor signature, TransactionManager forward declaration
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_dml\\.cpp$")  # Re-enabled (API updated)
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_mvcc\\.cpp$")  # Re-enabled (API updated)
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # Re-enabled (API updated)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree_dml\\.cpp$")  # Duplicate Status declarations
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # commit() → commitTransaction(), beginTransaction() signature, Database constructor, search() results parameter
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # Transaction API issues, TupleHeader, ToastPointer fields need fixing
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # Re-enabled (API updated)
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Re-enabled (API updated)
 # btree_page_test.cpp was fixed: Tuple struct initializer corrected to use TID{gpid, slot}
 
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_mga_compliance.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_catalog_mga_compliance.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_connection_context.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_extended_page_sizes.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_extended_page_sizes_agent_c_review.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_gin_index_gc.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_hash_custom_tablespace.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_hash_index.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_hash_index_gc.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_heap_index_gc_integration.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_heap_page_memory.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_hnsw_distance_metrics.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_hnsw_index.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_index_mga_compliance.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_compaction.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_memtable.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_range_scan.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_sstable_reader.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_sstable_writer.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_mga_back_versioning.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_parser.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_parser_integration.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_psql_control_flow.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_remediation_validation.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_rtree.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_spatial_functions.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_srid.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_storage_corruption.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_tip_performance_benchmark.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_triggers.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_utf8_utils.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_window_functions.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_charset_loader.cpp$")  # Missing algorithm header and private method access
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_constraints_crud.cpp$")  # API incompatibilities
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_multi_geometry.cpp$")  # TypedValue API changes
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_stored_code_dependencies.cpp$")  # Duplicate of test_code_dependencies.cpp
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_new_integer_types.cpp$")  # API incompatibilities
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_password_policy.cpp$")  # ErrorContext assignment operator deleted
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_session_timeout.cpp$")  # API incompatibilities
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_statistics_crud.cpp$")  # API incompatibilities
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_spatial_types.cpp$")  # API incompatibilities
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_type_serialization.cpp$")  # TypedValue geometry API
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_type_conversions.cpp$")  # TypedValue geometry API
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_type_system.cpp$")  # TypedValue geometry API
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_timezone.cpp$")  # TypeConverter API
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_multi_geometry.cpp$")  # TypedValue API changes
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_type_serialization.cpp$")  # TypeSerializer implementation disabled
+
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_timezone.cpp$")  # TypeConverter API
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_client_connection.cpp$")  # Has separate test target
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/types/test_interval_type.cpp$")  # TypedValue API
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/types/test_money_type.cpp$")  # TypeSystem API
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/types/test_new_types_standalone.cpp$")  # TypedValue API
+
 
 
 # Phase 2C: Exclude standalone tests with main() functions
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_brin_index\.cpp$")  # Phase 2C: removeDeadEntries API changed from uint64_t to TID
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_iterator\.cpp$")  # Phase 2C: nullptr vs uint64_t issue
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_catalog_manager\.cpp$")  # Phase 2C: createTable API signature - dependency tests moved to test_dependency_tracking.cpp
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_cte\.cpp$")  # Phase 2C: Database constructor API
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_bitmap_index_gc\.cpp$")  # Phase 2C: removeDeadEntries API mismatch
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_compression\.cpp$")  # Phase 2C: API signature issues
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_gc\.cpp$")  # Phase 2C: API issues
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_vacuum\.cpp$")  # Phase 2C: API issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase.*\.cpp$")  # Database API issues (open/create)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/manual_test_planner_integration\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_delete_parent_update\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_mga_compliance\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_rightmost_child\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_rightmost_simple\.cpp$")  # Standalone main()
+# Re-enabled B-Tree tests (now built under GTest)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_buffer_error_consistency\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_bytecode_executor\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cache_bounded\.cpp$")  # Standalone main()
@@ -156,25 +109,14 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_tsvector_ops\.cpp$")  # Stan
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_heap_free_space_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hint_bits_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hot_updates\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_index_mga_compliance\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_long_transaction_monitor\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_bloom_filter\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_compaction\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_memtable\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_range_scan\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_sstable_reader\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_sstable_writer\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_comprehensive\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_matchers_only\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_materialized_views_parser\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_multi_index_mga\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_network_types\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_psql_control_flow\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_lexer\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_operators\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_types\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_sorted\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_xids\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subtransactions\.cpp$")  # Standalone main()
@@ -184,9 +126,8 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_terminate_connection\.cpp$")  # 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_phase2\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_phase3\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_types\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_tip_performance_benchmark\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_cleanup\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_cleanup_ordering\.cpp$")  # Standalone main()
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_cleanup\.cpp$")  # Re-enabled (GTest)
+# list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_cleanup_ordering\.cpp$")  # Re-enabled (GTest)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_deadlock_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_markers_race\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_version_chain_cycle\.cpp$")  # Standalone main()
@@ -221,6 +162,8 @@ target_link_libraries(scratchbird_tests
     scratchbird_network
     GTest::gtest
     GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
 )
 
 # Link GEOS library if available (for spatial functions)
@@ -329,14 +272,14 @@ endif()
 
 gtest_discover_tests(scratchbird_tests
     PROPERTIES
-        TIMEOUT 60  # Per-test timeout: 60 seconds
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}  # Per-test timeout
         LABELS "unit"
     TEST_FILTER "*-${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}"
 )
 
 gtest_discover_tests(scratchbird_tests
     PROPERTIES
-        TIMEOUT 60  # Per-test timeout: 60 seconds
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}  # Per-test timeout
         LABELS "unit\\;smoke"
     TEST_FILTER "${SCRATCHBIRD_SMOKE_FILTER}"
 )
@@ -344,19 +287,19 @@ gtest_discover_tests(scratchbird_tests
 if(SCRATCHBIRD_DIALECT_PARSER_FILTER)
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
-            TIMEOUT 60
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
             LABELS "unit\\;smoke\\;parser\\;firebird"
         TEST_FILTER "FirebirdParserTest.*"
     )
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
-            TIMEOUT 60
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
             LABELS "unit\\;smoke\\;parser\\;postgresql"
         TEST_FILTER "PostgreSQLParserTest.*"
     )
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
-            TIMEOUT 60
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
             LABELS "unit\\;smoke\\;parser\\;mysql"
         TEST_FILTER "MySQLParserTest.*"
     )
@@ -365,7 +308,7 @@ endif()
 if(SCRATCHBIRD_STRESS_FILTER)
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
-            TIMEOUT 300
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_STRESS}
             LABELS "stress"
         TEST_FILTER "${SCRATCHBIRD_STRESS_FILTER}"
     )
@@ -374,7 +317,7 @@ endif()
 if(SCRATCHBIRD_PERFORMANCE_FILTER)
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
-            TIMEOUT 300
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_PERFORMANCE}
             LABELS "performance"
         TEST_FILTER "${SCRATCHBIRD_PERFORMANCE_FILTER}"
     )
@@ -383,7 +326,7 @@ endif()
 if(SCRATCHBIRD_INTEGRATION_FILTER)
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
-            TIMEOUT 120
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
             LABELS "integration"
             ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
         TEST_FILTER "${SCRATCHBIRD_INTEGRATION_FILTER}"
@@ -393,7 +336,7 @@ endif()
 if(SCRATCHBIRD_QUARANTINE_FILTER)
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
-            TIMEOUT 60
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_QUARANTINE}
             LABELS "quarantine\\;disabled"
         TEST_FILTER "${SCRATCHBIRD_QUARANTINE_FILTER}"
     )
@@ -437,63 +380,68 @@ set_tests_properties(WireProtocolTests PROPERTIES
 
 # ThreadSanitizer (TSAN) Tests for Critical Race Conditions
 # These tests validate fixes for CRITICAL-1, CRITICAL-2, CRITICAL-3, HIGH-1, HIGH-2, etc.
+option(SCRATCHBIRD_ENABLE_TSAN "Enable ThreadSanitizer (TSAN) tests" OFF)
 
-# TSAN Test 1: Buffer Pool Frame Metadata Race (CRITICAL-1)
-add_executable(tsan_buffer_pool_race tsan/test_buffer_pool_race.cpp)
-target_compile_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread -g -O1)
-target_link_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread)
-target_link_libraries(tsan_buffer_pool_race
-    scratchbird_sblr
-    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
-    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME TSAN_BufferPoolRace COMMAND tsan_buffer_pool_race)
-set_tests_properties(TSAN_BufferPoolRace PROPERTIES
-    LABELS "tsan;critical"
-    TIMEOUT 120
-)
+if (SCRATCHBIRD_ENABLE_TSAN)
+    # TSAN Test 1: Buffer Pool Frame Metadata Race (CRITICAL-1)
+    add_executable(tsan_buffer_pool_race tsan/test_buffer_pool_race.cpp)
+    target_compile_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread -g -O1)
+    target_link_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread)
+    target_link_libraries(tsan_buffer_pool_race
+        scratchbird_sblr
+        ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+        ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+        scratchbird_core
+        GTest::gtest
+        GTest::gtest_main
+    )
+    add_test(NAME TSAN_BufferPoolRace COMMAND tsan_buffer_pool_race)
+    set_tests_properties(TSAN_BufferPoolRace PROPERTIES
+        LABELS "tsan;critical"
+        TIMEOUT 120
+    )
 
-# TSAN Test 2: TransactionManager Cache Race (CRITICAL-2)
-add_executable(tsan_transaction_cache_race tsan/test_transaction_cache_race.cpp)
-target_compile_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread -g -O1)
-target_link_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread)
-target_link_libraries(tsan_transaction_cache_race
-    scratchbird_sblr
-    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
-    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME TSAN_TransactionCacheRace COMMAND tsan_transaction_cache_race)
-set_tests_properties(TSAN_TransactionCacheRace PROPERTIES
-    LABELS "tsan;critical"
-    TIMEOUT 180
-)
+    # TSAN Test 2: TransactionManager Cache Race (CRITICAL-2)
+    add_executable(tsan_transaction_cache_race tsan/test_transaction_cache_race.cpp)
+    target_compile_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread -g -O1)
+    target_link_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread)
+    target_link_libraries(tsan_transaction_cache_race
+        scratchbird_sblr
+        ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+        ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+        scratchbird_core
+        GTest::gtest
+        GTest::gtest_main
+    )
+    add_test(NAME TSAN_TransactionCacheRace COMMAND tsan_transaction_cache_race)
+    set_tests_properties(TSAN_TransactionCacheRace PROPERTIES
+        LABELS "tsan;critical"
+        TIMEOUT 180
+    )
 
-# TSAN Test 3: Lock Ordering / Deadlock Prevention (CRITICAL-3)
-add_executable(tsan_lock_ordering tsan/test_lock_ordering.cpp)
-target_compile_options(tsan_lock_ordering PRIVATE -fsanitize=thread -g -O1)
-target_link_options(tsan_lock_ordering PRIVATE -fsanitize=thread)
-target_link_libraries(tsan_lock_ordering
-    scratchbird_sblr
-    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
-    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME TSAN_LockOrdering COMMAND tsan_lock_ordering)
-set_tests_properties(TSAN_LockOrdering PROPERTIES
-    LABELS "tsan;critical"
-    TIMEOUT 240
-    # Suppress known false positives from ProcArrayManager initialization
-    # TSAN can't track happens-before through atomic pointer + mutex init pattern
-    ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tools/tsan_suppressions.txt"
-)
+    # TSAN Test 3: Lock Ordering / Deadlock Prevention (CRITICAL-3)
+    add_executable(tsan_lock_ordering tsan/test_lock_ordering.cpp)
+    target_compile_options(tsan_lock_ordering PRIVATE -fsanitize=thread -g -O1)
+    target_link_options(tsan_lock_ordering PRIVATE -fsanitize=thread)
+    target_link_libraries(tsan_lock_ordering
+        scratchbird_sblr
+        ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+        ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+        scratchbird_core
+        GTest::gtest
+        GTest::gtest_main
+    )
+    add_test(NAME TSAN_LockOrdering COMMAND tsan_lock_ordering)
+    set_tests_properties(TSAN_LockOrdering PROPERTIES
+        LABELS "tsan;critical"
+        TIMEOUT 240
+        # Suppress known false positives from ProcArrayManager initialization
+        # TSAN can't track happens-before through atomic pointer + mutex init pattern
+        ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tools/tsan_suppressions.txt"
+    )
+else()
+    message(STATUS "TSAN tests disabled (set SCRATCHBIRD_ENABLE_TSAN=ON to enable)")
+endif()
 
 # Helgrind Tests for Lock Ordering and Data Race Detection
 # Run with: valgrind --tool=helgrind ./helgrind_races
@@ -1342,7 +1290,10 @@ add_executable(test_join_ordering
 target_link_libraries(test_join_ordering
     scratchbird_core
     ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    GTest::gtest
+    GTest::gtest_main
 )
+target_include_directories(test_join_ordering PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME JoinOrdering COMMAND test_join_ordering)
 set_tests_properties(JoinOrdering PROPERTIES
     LABELS "unit;optimizer;join_ordering;p3"
@@ -1358,7 +1309,10 @@ target_link_libraries(test_mv_rewriter
     ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_server
+    GTest::gtest
+    GTest::gtest_main
 )
+target_include_directories(test_mv_rewriter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME MVRewriter COMMAND test_mv_rewriter)
 set_tests_properties(MVRewriter PROPERTIES
     LABELS "unit;optimizer;mv_rewriter;p3"

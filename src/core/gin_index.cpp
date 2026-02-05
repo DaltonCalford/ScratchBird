@@ -755,7 +755,7 @@ namespace scratchbird
 
                 if (status != Status::OK || posting_page == 0)
                 {
-                    // Key not found in entry tree - this is OK, might have been vacuumed
+                    // Key not found in entry tree - this is OK, might have been GC-compacted
                     continue;
                 }
 
@@ -1145,11 +1145,11 @@ namespace scratchbird
             return Status::OK;
         }
 
-        // Vacuum operation (manual VACUUM command)
+        // GC compaction operation (ScratchBird MGA GC, not PostgreSQL VACUUM)
         // Note: Actual GC is done via removeDeadEntries() called by garbage collector
-        Status GinIndex::vacuum(ErrorContext *ctx)
+        Status GinIndex::gcCompact(ErrorContext *ctx)
         {
-            // Manual vacuum is optional - garbage collector uses removeDeadEntries()
+            // Manual GC compaction is optional - garbage collector uses removeDeadEntries()
             // Could implement: scan all posting lists, compact fragmented pages, update stats
             // For now, return OK - automatic GC via removeDeadEntries() is sufficient
             return Status::OK;
@@ -2210,7 +2210,7 @@ namespace scratchbird
 
             if (!found)
             {
-                // TID not found in posting list - this is OK (might have been removed by vacuum)
+                // TID not found in posting list - this is OK (might have been removed by GC compaction)
                 unpinIndexPage(posting_page, false, ctx);
                 return Status::OK;
             }
@@ -2222,7 +2222,7 @@ namespace scratchbird
             posting->getEntries()[found_index].xmax = current_xid;
 
             // Note: entry_count is NOT decremented - entries remain in place
-            // Vacuum will remove entries where xmax < OIT during garbage collection
+            // GC compaction will remove entries where xmax < OIT during garbage collection
 
             // Mark page as dirty
             unpinIndexPage(posting_page, true, ctx);
@@ -2254,7 +2254,7 @@ namespace scratchbird
             }
 
             // Note: We don't handle tree rebalancing/merging here for simplicity
-            // Empty leaf pages will be cleaned up during vacuum
+            // Empty leaf pages will be cleaned up during GC compaction
             // This is acceptable for Phase 1
 
             return Status::OK;
@@ -2314,7 +2314,7 @@ namespace scratchbird
             leaf->gpt_tids[found_index].xmax = current_xid;
 
             // Note: entry_count is NOT decremented - entries remain in place
-            // Vacuum will remove entries where xmax < OIT during garbage collection
+            // GC compaction will remove entries where xmax < OIT during garbage collection
 
             if (entry_removed_out)
             {

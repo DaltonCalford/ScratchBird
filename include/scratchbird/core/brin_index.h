@@ -137,7 +137,7 @@ namespace scratchbird
 
             // Statistics
             uint64_t brin_ranges_total;   // Total ranges in entire index
-            uint64_t brin_ranges_deleted; // Deleted ranges (need VACUUM)
+            uint64_t brin_ranges_deleted; // Deleted ranges (need GC compaction)
 
             uint8_t brin_padding[64]; // Reserved for future use
 
@@ -286,7 +286,7 @@ namespace scratchbird
              * Remove a value from range summary
              *
              * Updates min/max if necessary. Does NOT shrink ranges.
-             * Full recalculation deferred to VACUUM.
+             * Full recalculation deferred to GC compaction.
              *
              * @param value The value to remove
              * @param block_number The block number
@@ -297,9 +297,9 @@ namespace scratchbird
                           ErrorContext *ctx = nullptr);
 
             /**
-             * Vacuum operations
+             * GC compaction operations (ScratchBird MGA GC, not PostgreSQL VACUUM)
              */
-            struct VacuumStats
+            struct GcCompactionStats
             {
                 uint64_t ranges_visited;
                 uint64_t ranges_removed;
@@ -307,8 +307,8 @@ namespace scratchbird
                 uint64_t bytes_reclaimed;
             };
 
-            Status vacuum(VacuumStats *stats_out = nullptr,
-                          ErrorContext *ctx = nullptr);
+            Status gcCompact(GcCompactionStats *stats_out = nullptr,
+                             ErrorContext *ctx = nullptr);
 
             /**
              * Phase 4A.1.4: Remove dead range summaries

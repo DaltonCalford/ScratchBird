@@ -13,8 +13,13 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/tid.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/uuidv7.h"
 #include <filesystem>
 #include <vector>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -38,7 +43,7 @@ protected:
         // Create database
         db_ = new Database();
         ErrorContext ctx;
-        Status status = db_->create(test_db_path_, &ctx);
+        Status status = Database::create(test_db_path_, 16384, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         status = db_->open(test_db_path_, &ctx);
@@ -60,6 +65,23 @@ protected:
             std::filesystem::remove(test_db_path_);
         }
     }
+
+    GPID allocateMetaGpid(ErrorContext *ctx)
+    {
+        auto *pm = db_ ? db_->page_manager() : nullptr;
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
+    }
 };
 
 // Test 1: Empty dead_tids vector (no-op)
@@ -68,17 +90,17 @@ TEST_F(HashIndexGCTest, EmptyDeadTidsVector)
     ErrorContext ctx;
 
     // Create Hash Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    uint32_t meta_page = 0;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db_, index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create Hash Index: " << ctx.message;
 
-    auto hash_index = HashIndex::open(db_, index_uuid, meta_page, &ctx);
+    auto hash_index = HashIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(hash_index, nullptr) << "Failed to open Hash Index: " << ctx.message;
 
     // Call removeDeadEntries with empty vector
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -95,32 +117,32 @@ TEST_F(HashIndexGCTest, DeadTidNotInIndex)
     ErrorContext ctx;
 
     // Create Hash Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    uint32_t meta_page = 0;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db_, index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hash_index = HashIndex::open(db_, index_uuid, meta_page, &ctx);
+    auto hash_index = HashIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(hash_index, nullptr);
 
     // Insert a few entries
     const char *key1 = "key1";
     const char *key2 = "key2";
 
-    uint64_t tid1 = (1ULL << 32) | 1; // page 1, item 1
-    uint64_t tid2 = (1ULL << 32) | 2; // page 1, item 2
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
+    TID tid2{makeGPID(PRIMARY_TABLESPACE_ID, 1), 2};
 
-    status = hash_index->insert(key1, strlen(key1), tid1, &ctx);
+    status = hash_index->insert(key1, strlen(key1), tid1, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    status = hash_index->insert(key2, strlen(key2), tid2, &ctx);
+    status = hash_index->insert(key2, strlen(key2), tid2, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Try to remove TIDs that don't exist in index
-    std::vector<uint64_t> dead_tids = {
-        (2ULL << 32) | 1,  // page 2, item 1 (doesn't exist)
-        (2ULL << 32) | 2   // page 2, item 2 (doesn't exist)
+    std::vector<TID> dead_tids = {
+        TID{makeGPID(PRIMARY_TABLESPACE_ID, 2), 1},  // page 2, item 1 (doesn't exist)
+        TID{makeGPID(PRIMARY_TABLESPACE_ID, 2), 2}   // page 2, item 2 (doesn't exist)
     };
 
     uint64_t entries_removed = 0;
@@ -138,13 +160,13 @@ TEST_F(HashIndexGCTest, SingleDeadTidRemoval)
     ErrorContext ctx;
 
     // Create Hash Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    uint32_t meta_page = 0;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db_, index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hash_index = HashIndex::open(db_, index_uuid, meta_page, &ctx);
+    auto hash_index = HashIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(hash_index, nullptr);
 
     // Insert entries
@@ -152,17 +174,17 @@ TEST_F(HashIndexGCTest, SingleDeadTidRemoval)
     const char *key2 = "beta";
     const char *key3 = "gamma";
 
-    uint64_t tid1 = (1ULL << 32) | 1;
-    uint64_t tid2 = (1ULL << 32) | 2;
-    uint64_t tid3 = (1ULL << 32) | 3;
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
+    TID tid2{makeGPID(PRIMARY_TABLESPACE_ID, 1), 2};
+    TID tid3{makeGPID(PRIMARY_TABLESPACE_ID, 1), 3};
 
-    status = hash_index->insert(key1, strlen(key1), tid1, &ctx);
+    status = hash_index->insert(key1, strlen(key1), tid1, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    status = hash_index->insert(key2, strlen(key2), tid2, &ctx);
+    status = hash_index->insert(key2, strlen(key2), tid2, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    status = hash_index->insert(key3, strlen(key3), tid3, &ctx);
+    status = hash_index->insert(key3, strlen(key3), tid3, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Get statistics before removal
@@ -170,7 +192,7 @@ TEST_F(HashIndexGCTest, SingleDeadTidRemoval)
     EXPECT_EQ(stats_before.num_tuples, 3);
 
     // Remove tid2
-    std::vector<uint64_t> dead_tids = {tid2};
+    std::vector<TID> dead_tids = {tid2};
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -186,9 +208,10 @@ TEST_F(HashIndexGCTest, SingleDeadTidRemoval)
     EXPECT_EQ(stats_after.num_deleted, stats_before.num_deleted + 1); // Deleted count increases
 
     // Verify tid2 is no longer found (returns empty vector)
-    auto result_tids = hash_index->find(key2, strlen(key2), nullptr, &ctx);
-    // Entry marked as deleted (he_tuple_id = 0), so should not be returned
-    // Or might return empty depending on implementation
+    std::vector<TID> result_tids;
+    Status find_status = hash_index->find(key2, strlen(key2), 0, &result_tids, &ctx);
+    EXPECT_EQ(find_status, Status::OK);
+    EXPECT_TRUE(result_tids.empty());
 }
 
 // Test 4: Bulk dead TID removal
@@ -197,26 +220,26 @@ TEST_F(HashIndexGCTest, BulkDeadTidRemoval)
     ErrorContext ctx;
 
     // Create Hash Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    uint32_t meta_page = 0;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db_, index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hash_index = HashIndex::open(db_, index_uuid, meta_page, &ctx);
+    auto hash_index = HashIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(hash_index, nullptr);
 
     // Insert many entries
     const int num_entries = 50;
-    std::vector<uint64_t> all_tids;
+    std::vector<TID> all_tids;
 
     for (int i = 0; i < num_entries; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        uint64_t tid = (1ULL << 32) | i;
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1};
         all_tids.push_back(tid);
 
-        status = hash_index->insert(key.c_str(), key.length(), tid, &ctx);
+        status = hash_index->insert(key.c_str(), key.length(), tid, 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -225,7 +248,7 @@ TEST_F(HashIndexGCTest, BulkDeadTidRemoval)
     EXPECT_EQ(stats_before.num_tuples, num_entries);
 
     // Remove every other entry (25 entries)
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     for (int i = 0; i < num_entries; i += 2)
     {
         dead_tids.push_back(all_tids[i]);
@@ -252,13 +275,13 @@ TEST_F(HashIndexGCTest, IndexTypeName)
     ErrorContext ctx;
 
     // Create Hash Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    uint32_t meta_page = 0;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db_, index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hash_index = HashIndex::open(db_, index_uuid, meta_page, &ctx);
+    auto hash_index = HashIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(hash_index, nullptr);
 
     // Check index type name
@@ -272,24 +295,24 @@ TEST_F(HashIndexGCTest, DuplicateDeadTids)
     ErrorContext ctx;
 
     // Create Hash Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    uint32_t meta_page = 0;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db_, index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hash_index = HashIndex::open(db_, index_uuid, meta_page, &ctx);
+    auto hash_index = HashIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(hash_index, nullptr);
 
     // Insert entry
     const char *key1 = "test_key";
-    uint64_t tid1 = (1ULL << 32) | 1;
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
 
-    status = hash_index->insert(key1, strlen(key1), tid1, &ctx);
+    status = hash_index->insert(key1, strlen(key1), tid1, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Remove with duplicate TIDs in vector
-    std::vector<uint64_t> dead_tids = {tid1, tid1, tid1}; // Same TID 3 times
+    std::vector<TID> dead_tids = {tid1, tid1, tid1}; // Same TID 3 times
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -306,21 +329,21 @@ TEST_F(HashIndexGCTest, StatisticsUpdate)
     ErrorContext ctx;
 
     // Create Hash Index
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    uint32_t meta_page = 0;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db_, index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hash_index = HashIndex::open(db_, index_uuid, meta_page, &ctx);
+    auto hash_index = HashIndex::open(db_, index_uuid, meta_gpid, &ctx);
     ASSERT_NE(hash_index, nullptr);
 
     // Insert 10 entries
     for (int i = 0; i < 10; i++)
     {
         std::string key = "stat_key_" + std::to_string(i);
-        uint64_t tid = (1ULL << 32) | i;
-        status = hash_index->insert(key.c_str(), key.length(), tid, &ctx);
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1};
+        status = hash_index->insert(key.c_str(), key.length(), tid, 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -329,10 +352,10 @@ TEST_F(HashIndexGCTest, StatisticsUpdate)
     uint64_t initial_deleted = stats_initial.num_deleted;
 
     // Remove 3 entries
-    std::vector<uint64_t> dead_tids = {
-        (1ULL << 32) | 0,
-        (1ULL << 32) | 5,
-        (1ULL << 32) | 9
+    std::vector<TID> dead_tids = {
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 0), 1),
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 5), 1),
+        TID(makeGPID(PRIMARY_TABLESPACE_ID, 9), 1)
     };
 
     uint64_t entries_removed = 0;

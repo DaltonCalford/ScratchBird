@@ -18,15 +18,17 @@
  * 5. Level management
  */
 
-#include "scratchbird/core/lsm_tree.h"
+#include <gtest/gtest.h>
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include <iostream>
-#include <cassert>
 #include <cstdio>
 
 using namespace scratchbird::core;
+
+namespace {
 
 // Helper function: Convert string to byte vector
 std::vector<uint8_t> makeKey(const std::string &s)
@@ -48,18 +50,18 @@ void createTestSSTable(const std::string &file_path,
     SSTableWriter writer(file_path, 4096);
     ErrorContext ctx;
     Status status = writer.open(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     for (const auto &[key_str, val_str, seq, type, xmin, xmax] : entries)
     {
         std::vector<uint8_t> key = makeKey(key_str);
         std::vector<uint8_t> val = makeKey(val_str);
         status = writer.addEntry(key, val, seq, type, xmin, xmax, &ctx);
-        assert(status == Status::OK);
+        ASSERT_TRUE(status == Status::OK);
     }
 
     status = writer.finish(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 }
 
 /**
@@ -76,24 +78,24 @@ void testKWayMerge()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     // Start writer transaction
     uint32_t writer_proc_id;
     status = ProcArrayManager::registerBackend(&writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t writer_xid;
     status = txn_mgr->beginTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Create 3 SSTables with overlapping key ranges
     std::string sst1 = "test_compact_sst1.sst";
@@ -127,15 +129,15 @@ void testKWayMerge()
 
     // Commit writer transaction
     status = txn_mgr->commitTransaction(writer_proc_id, writer_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(writer_proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Create compaction manager
     LSMCompactionManager compaction_mgr(txn_mgr);
     status = compaction_mgr.initialize(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Perform K-way merge
     std::string output_sst = "test_compact_merged.sst";
@@ -172,13 +174,13 @@ void testDeduplication()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
@@ -191,11 +193,11 @@ void testDeduplication()
 
     uint32_t proc_id;
     status = ProcArrayManager::registerBackend(&proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t xid;
     status = txn_mgr->beginTransaction(proc_id, xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // SST1: key="foo" with old value (sequence=100)
     createTestSSTable(sst1, {
@@ -208,10 +210,10 @@ void testDeduplication()
     });
 
     status = txn_mgr->commitTransaction(proc_id, xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     std::cout << "  ✓ Created 2 SSTables with duplicate key (different sequence numbers)\n";
 
@@ -240,23 +242,23 @@ void testTombstoneRemoval()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     uint32_t proc_id;
     status = ProcArrayManager::registerBackend(&proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t xid;
     status = txn_mgr->beginTransaction(proc_id, xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable with tombstones (DELETE entries)
     std::string sst = "test_tombstone.sst";
@@ -269,10 +271,10 @@ void testTombstoneRemoval()
     });
 
     status = txn_mgr->commitTransaction(proc_id, xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     std::cout << "  ✓ Created SSTable with tombstone (DELETE entry)\n";
 
@@ -299,24 +301,24 @@ void testGarbageCollection()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     // Create old version with xmax set (deleted)
     uint32_t proc_id;
     status = ProcArrayManager::registerBackend(&proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     uint64_t old_xid;
     status = txn_mgr->beginTransaction(proc_id, old_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     std::string sst = "test_gc.sst";
     std::remove(sst.c_str());
@@ -327,10 +329,10 @@ void testGarbageCollection()
     });
 
     status = txn_mgr->commitTransaction(proc_id, old_xid, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = ProcArrayManager::unregisterBackend(proc_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     std::cout << "  ✓ Created SSTable with deleted entry (xmax != 0)\n";
 
@@ -357,46 +359,46 @@ void testLevelManagement()
     Database *db = new Database();
     ErrorContext ctx;
     Status status = Database::create(db_path, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->open(db_path, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = db->initializeProcArray(10, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     TransactionManager *txn_mgr = db->transaction_manager();
 
     // Create compaction manager
     LSMCompactionManager compaction_mgr(txn_mgr);
     status = compaction_mgr.initialize(&ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     // Add SSTables to Level 0
     status = compaction_mgr.addSSTable(0, "sst1.sst", 8 * 1024 * 1024, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = compaction_mgr.addSSTable(0, "sst2.sst", 8 * 1024 * 1024, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = compaction_mgr.addSSTable(0, "sst3.sst", 8 * 1024 * 1024, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     status = compaction_mgr.addSSTable(0, "sst4.sst", 8 * 1024 * 1024, &ctx);
-    assert(status == Status::OK);
+    ASSERT_TRUE(status == Status::OK);
 
     std::cout << "  ✓ Added 4 SSTables to Level 0\n";
 
     // Check if compaction is needed
     bool needs_compaction = compaction_mgr.needsCompaction();
-    assert(needs_compaction == true);
+    ASSERT_TRUE(needs_compaction == true);
     std::cout << "  ✓ Compaction needed (Level 0 has 4+ SSTables)\n";
 
     // Get statistics
     uint64_t total_sstables, total_size;
     compaction_mgr.getStatistics(&total_sstables, &total_size);
-    assert(total_sstables == 4);
-    assert(total_size == 32 * 1024 * 1024);
+    ASSERT_TRUE(total_sstables == 4);
+    ASSERT_TRUE(total_size == 32 * 1024 * 1024);
     std::cout << "  ✓ Statistics: " << total_sstables << " SSTables, " << total_size << " bytes\n";
 
     delete db;
@@ -404,20 +406,32 @@ void testLevelManagement()
     std::cout << "  PASS\n";
 }
 
-int main()
+} // namespace
+
+
+// ==================== GTest Wrappers ====================
+
+TEST(LSMTest, KWayMerge)
 {
-    std::cout << "\n";
-    std::cout << "==================================================\n";
-    std::cout << "   LSM-Tree Compaction Unit Tests\n";
-    std::cout << "==================================================\n";
-
     testKWayMerge();
+}
+
+TEST(LSMTest, Deduplication)
+{
     testDeduplication();
+}
+
+TEST(LSMTest, TombstoneRemoval)
+{
     testTombstoneRemoval();
+}
+
+TEST(LSMTest, GarbageCollection)
+{
     testGarbageCollection();
+}
+
+TEST(LSMTest, LevelManagement)
+{
     testLevelManagement();
-
-    std::cout << "\n=== All LSM-Tree Compaction Tests PASSED ===\n";
-
-    return;
 }

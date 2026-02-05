@@ -26,6 +26,9 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/tid.h"
 #include "test_helpers.h"
 #include <filesystem>
 #include <vector>
@@ -59,7 +62,7 @@ protected:
     }
 
     // Helper: Create a B-Tree index
-    Status createIndex(uint32_t* root_page_out)
+    Status createIndex(GPID* root_gpid_out)
     {
         ErrorContext ctx;
 
@@ -72,14 +75,31 @@ protected:
         memset(column_uuid.bytes.data(), 0xCC, 16);
         std::vector<UuidV7Bytes> columns = {column_uuid};
 
-        return BTree::create(db_.get(), index_uuid_, table_uuid_, columns, root_page_out, &ctx);
+        GPID root_gpid = allocateRootGpid(&ctx);
+        if (root_gpid == 0)
+        {
+            return Status::IO_ERROR;
+        }
+
+        Status status = BTree::create(db_.get(), index_uuid_, table_uuid_, columns, root_gpid, &ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (root_gpid_out)
+        {
+            *root_gpid_out = root_gpid;
+        }
+
+        return Status::OK;
     }
 
     // Helper: Open existing B-Tree
-    void openIndex(uint32_t root_page)
+    void openIndex(GPID root_gpid)
     {
         ErrorContext ctx;
-        btree_ = BTree::open(db_.get(), index_uuid_, root_page, &ctx);
+        btree_ = BTree::open(db_.get(), index_uuid_, root_gpid, &ctx);
         ASSERT_NE(btree_, nullptr);
     }
 
@@ -94,8 +114,30 @@ protected:
     // Helper: Extract integer from key
     int32_t extractKey(const std::vector<uint8_t>& key)
     {
-        if (key.size() < sizeof(int32_t)) return;
+        if (key.size() < sizeof(int32_t)) return 0;
         return *reinterpret_cast<const int32_t*>(key.data());
+    }
+
+    GPID allocateRootGpid(ErrorContext *ctx)
+    {
+        if (!db_)
+        {
+            if (ctx) ctx->message = "Database not initialized";
+            return 0;
+        }
+        auto *pm = db_->page_manager();
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
     }
 
     // Helper: Insert multiple keys
@@ -104,8 +146,8 @@ protected:
         ErrorContext ctx;
         for (int32_t k : keys) {
             auto key = makeKey(k);
-            uint64_t tuple_id = static_cast<uint64_t>(k) << 16;
-            ASSERT_EQ(btree_->insert(key, tuple_id, &ctx), Status::OK)
+            TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(k)), 1};
+            ASSERT_EQ(btree_->insert(key, tid, 1, &ctx), Status::OK)
                 << "Failed to insert key " << k;
         }
     }
@@ -124,12 +166,12 @@ protected:
  */
 TEST_F(BTreeIteratorTest, FullScanEmpty)
 {
-    uint32_t root_page;
-    ASSERT_EQ(createIndex(&root_page), Status::OK);
-    openIndex(root_page);
+    GPID root_gpid;
+    ASSERT_EQ(createIndex(&root_gpid), Status::OK);
+    openIndex(root_gpid);
 
     ErrorContext ctx;
-    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, 0, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Should have no elements
@@ -144,9 +186,9 @@ TEST_F(BTreeIteratorTest, FullScanEmpty)
  */
 TEST_F(BTreeIteratorTest, FullScanSinglePage)
 {
-    uint32_t root_page;
-    ASSERT_EQ(createIndex(&root_page), Status::OK);
-    openIndex(root_page);
+    GPID root_gpid;
+    ASSERT_EQ(createIndex(&root_gpid), Status::OK);
+    openIndex(root_gpid);
 
     // Insert 10 keys in random order
     std::vector<int32_t> keys = {5, 2, 8, 1, 9, 3, 7, 4, 6, 10};
@@ -157,25 +199,27 @@ TEST_F(BTreeIteratorTest, FullScanSinglePage)
 
     // Debug: Check root page btr_count before scanning
     void* page_buffer;
-    ASSERT_EQ(db_->buffer_pool()->pinPage(root_page, &page_buffer, &ctx), Status::OK);
+    uint32_t root_page_id = 0;
+    ASSERT_TRUE(convertGPIDtoPageID(root_gpid, &root_page_id));
+    ASSERT_EQ(db_->buffer_pool()->pinPage(root_page_id, &page_buffer, &ctx), Status::OK);
     auto* page = reinterpret_cast<const SBBTreePage*>(page_buffer);
     uint16_t actual_count = page->btr_count;
-    db_->buffer_pool()->unpinPage(root_page, false, &ctx);
+    db_->buffer_pool()->unpinPage(root_page_id, false, &ctx);
 
     // Debug output
     if (actual_count != 10) {
         std::cout << "WARNING: Root page btr_count = " << actual_count << " (expected 10)" << std::endl;
     }
 
-    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, 0, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
     std::vector<int32_t> scanned;
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
         scanned.push_back(extractKey(key));
     }
 
@@ -194,9 +238,9 @@ TEST_F(BTreeIteratorTest, FullScanSinglePage)
  */
 TEST_F(BTreeIteratorTest, FullScanMultiplePages)
 {
-    uint32_t root_page;
-    ASSERT_EQ(createIndex(&root_page), Status::OK);
-    openIndex(root_page);
+    GPID root_gpid;
+    ASSERT_EQ(createIndex(&root_gpid), Status::OK);
+    openIndex(root_gpid);
 
     // Insert enough keys to span multiple pages (100 keys)
     std::vector<int32_t> keys;
@@ -209,15 +253,15 @@ TEST_F(BTreeIteratorTest, FullScanMultiplePages)
 
     // Full scan
     ErrorContext ctx;
-    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, 0, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect all keys
     std::vector<int32_t> scanned;
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
         scanned.push_back(extractKey(key));
     }
 
@@ -234,7 +278,7 @@ TEST_F(BTreeIteratorTest, FullScanMultiplePages)
  */
 TEST_F(BTreeIteratorTest, BoundedScanInclusive)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -249,15 +293,15 @@ TEST_F(BTreeIteratorTest, BoundedScanInclusive)
     ErrorContext ctx;
     auto start_key = makeKey(5);
     auto end_key = makeKey(15);
-    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, true, true, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, 0, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
     std::vector<int32_t> scanned;
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
         scanned.push_back(extractKey(key));
     }
 
@@ -275,7 +319,7 @@ TEST_F(BTreeIteratorTest, BoundedScanInclusive)
  */
 TEST_F(BTreeIteratorTest, BoundedScanExclusive)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -290,15 +334,15 @@ TEST_F(BTreeIteratorTest, BoundedScanExclusive)
     ErrorContext ctx;
     auto start_key = makeKey(5);
     auto end_key = makeKey(15);
-    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, false, false, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, 0, false, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
     std::vector<int32_t> scanned;
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
         scanned.push_back(extractKey(key));
     }
 
@@ -318,7 +362,7 @@ TEST_F(BTreeIteratorTest, BoundedScanExclusive)
  */
 TEST_F(BTreeIteratorTest, UnboundedStartScan)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -332,15 +376,15 @@ TEST_F(BTreeIteratorTest, UnboundedStartScan)
     // Scan (-∞, 10]
     ErrorContext ctx;
     auto end_key = makeKey(10);
-    auto iter = btree_->rangeScan(nullptr, &end_key, nullptr, true, true, &ctx);
+    auto iter = btree_->rangeScan(nullptr, &end_key, 0, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
     std::vector<int32_t> scanned;
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
         scanned.push_back(extractKey(key));
     }
 
@@ -359,7 +403,7 @@ TEST_F(BTreeIteratorTest, UnboundedStartScan)
  */
 TEST_F(BTreeIteratorTest, UnboundedEndScan)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -373,15 +417,15 @@ TEST_F(BTreeIteratorTest, UnboundedEndScan)
     // Scan [10, +∞)
     ErrorContext ctx;
     auto start_key = makeKey(10);
-    auto iter = btree_->rangeScan(&start_key, nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(&start_key, nullptr, 0, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
     std::vector<int32_t> scanned;
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
         scanned.push_back(extractKey(key));
     }
 
@@ -400,7 +444,7 @@ TEST_F(BTreeIteratorTest, UnboundedEndScan)
  */
 TEST_F(BTreeIteratorTest, ScanWithDuplicates)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -412,27 +456,27 @@ TEST_F(BTreeIteratorTest, ScanWithDuplicates)
     auto key15 = makeKey(15);
 
     // Insert key 5 with 3 tuple IDs
-    ASSERT_EQ(btree_->insert(key5, 100, &ctx), Status::OK);
-    ASSERT_EQ(btree_->insert(key5, 101, &ctx), Status::OK);
-    ASSERT_EQ(btree_->insert(key5, 102, &ctx), Status::OK);
+    ASSERT_EQ(btree_->insert(key5, TID(makeGPID(PRIMARY_TABLESPACE_ID, 100), 1), 1, &ctx), Status::OK);
+    ASSERT_EQ(btree_->insert(key5, TID(makeGPID(PRIMARY_TABLESPACE_ID, 101), 1), 1, &ctx), Status::OK);
+    ASSERT_EQ(btree_->insert(key5, TID(makeGPID(PRIMARY_TABLESPACE_ID, 102), 1), 1, &ctx), Status::OK);
 
     // Insert key 10 with 2 tuple IDs
-    ASSERT_EQ(btree_->insert(key10, 200, &ctx), Status::OK);
-    ASSERT_EQ(btree_->insert(key10, 201, &ctx), Status::OK);
+    ASSERT_EQ(btree_->insert(key10, TID(makeGPID(PRIMARY_TABLESPACE_ID, 200), 1), 1, &ctx), Status::OK);
+    ASSERT_EQ(btree_->insert(key10, TID(makeGPID(PRIMARY_TABLESPACE_ID, 201), 1), 1, &ctx), Status::OK);
 
     // Insert key 15 with 1 tuple ID
-    ASSERT_EQ(btree_->insert(key15, 300, &ctx), Status::OK);
+    ASSERT_EQ(btree_->insert(key15, TID(makeGPID(PRIMARY_TABLESPACE_ID, 300), 1), 1, &ctx), Status::OK);
 
     // Full scan
-    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, 0, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect all entries
     int count = 0;
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
         count++;
     }
 
@@ -448,7 +492,7 @@ TEST_F(BTreeIteratorTest, ScanWithDuplicates)
  */
 TEST_F(BTreeIteratorTest, ScannedCountValidation)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -457,7 +501,7 @@ TEST_F(BTreeIteratorTest, ScannedCountValidation)
     insertKeys(keys);
 
     ErrorContext ctx;
-    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, 0, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Initially 0
@@ -466,16 +510,16 @@ TEST_F(BTreeIteratorTest, ScannedCountValidation)
     // Scan 5 items
     for (int i = 0; i < 5 && iter->hasNext(); i++) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
     }
     EXPECT_EQ(iter->getScannedCount(), 5u);
 
     // Scan remaining items
     while (iter->hasNext()) {
         std::vector<uint8_t> key;
-        uint64_t tuple_id;
-        ASSERT_EQ(iter->next(&key, &tuple_id, &ctx), Status::OK);
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK);
     }
     EXPECT_EQ(iter->getScannedCount(), 10u);
 }
@@ -487,7 +531,7 @@ TEST_F(BTreeIteratorTest, ScannedCountValidation)
  */
 TEST_F(BTreeIteratorTest, EmptyRangeScan)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -502,7 +546,7 @@ TEST_F(BTreeIteratorTest, EmptyRangeScan)
     ErrorContext ctx;
     auto start_key = makeKey(15);
     auto end_key = makeKey(5);
-    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, true, true, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, 0, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Should have no results
@@ -517,7 +561,7 @@ TEST_F(BTreeIteratorTest, EmptyRangeScan)
  */
 TEST_F(BTreeIteratorTest, ScanNonExistentRange)
 {
-    uint32_t root_page;
+    GPID root_page;
     ASSERT_EQ(createIndex(&root_page), Status::OK);
     openIndex(root_page);
 
@@ -531,7 +575,7 @@ TEST_F(BTreeIteratorTest, ScanNonExistentRange)
     ErrorContext ctx;
     auto start_key = makeKey(12);
     auto end_key = makeKey(18);
-    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, true, true, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, 0, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Should have no results

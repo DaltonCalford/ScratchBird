@@ -12,8 +12,9 @@
  * Verifies that TOAST deletion is transactional and ordering is correct
  */
 
-#include <iostream>
+#include <gtest/gtest.h>
 #include <cstdint>
+#include <iostream>
 
 
 TEST(ToastCleanupOrderingTest, Comprehensive) {
@@ -214,4 +215,3 @@ TEST(ToastCleanupOrderingTest, Comprehensive) {
     std::cout << std::endl;
     std::cout << "PHASE 2 Progress: 1 real bug fixed, 2 false positives (33% accuracy so far)" << std::endl;
 }
-

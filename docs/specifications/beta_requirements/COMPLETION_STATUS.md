@@ -26,6 +26,27 @@
 
 ---
 
+## 🧭 Track Status (Drivers + Integrations)
+
+**Source of truth:** `ScratchBird-driver/tracks/` directory layout.
+
+### Alpha Track
+
+**Drivers:** `cli`, `dotnet`, `go`, `jdbc`, `mojo`, `node`, `odbc`, `pascal`, `php`, `python`, `ruby`, `rust`  
+**Integrations:** `scratchbird-metabase-driver`
+
+### Beta Track
+
+**Drivers:** `cpp`, `dart`, `r`, `swift`  
+**Integrations:** `scratchbird-superset-driver`
+
+### Post-Gold (P3) Track
+
+**Drivers:** `elixir`  
+**Integrations:** none yet
+
+---
+
 ## 🎯 Priority Breakdown
 
 | Priority | Items | Complete | Partial | Pending | Progress |
@@ -52,7 +73,7 @@ These items MUST be completed before Beta release.
 | **cloud container** | 2 | 1 | 0 | 0 | 0 | 0 | 2 | 0% |
 | **connectivity** | 2 | 1 | 0 | 0 | 0 | 0 | 2 | 0% |
 | **drivers** | 8 | 7 | 0 | 0 | 1 | 0 | 7 | 12% |
-| **optional** | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0% |
+| **optional** | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0% |
 | **orms frameworks** | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0% |
 | **replication** | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 100% |
 | **tools** | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0% |
@@ -120,11 +141,12 @@ These items MUST be completed before Beta release.
 
 ### Optional (0% complete)
 
-**Total:** 1 items | ✅ 0 Complete | 🚧 0 Partial | ⏳ 1 Pending
+**Total:** 2 items | ✅ 0 Complete | 🚧 0 Partial | ⏳ 2 Pending
 
 | Item | Priority | Status |
 |------|----------|--------|
-| Optional | ? | ⏳ Pending |
+| Storage Encoding Optimizations | ? | ⏳ Pending |
+| Audit + Temporal History Archive | ? | ⏳ Pending |
 
 ### Orms Frameworks (0% complete)
 
@@ -193,7 +215,7 @@ The following P0 items are critical for Beta release:
 | Cloud Container | 0% (0/2) | ⏳ |
 | Connectivity | 0% (0/2) | ⏳ |
 | Drivers | 12% (1/8) | ⏳ |
-| Optional | 0% (0/1) | ⏳ |
+| Optional | 0% (0/2) | ⏳ |
 | Orms Frameworks | 0% (0/1) | ⏳ |
 | Replication | 100% (1/1) | ✅ |
 | Tools | 0% (0/1) | ⏳ |

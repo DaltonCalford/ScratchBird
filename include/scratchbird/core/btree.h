@@ -190,7 +190,7 @@ namespace scratchbird
                           ErrorContext *ctx = nullptr);
 
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
-            // Pass 0 as current_xid to return ALL matching TIDs (used by VACUUM/internal operations)
+            // Pass 0 as current_xid to return ALL matching TIDs (used by GC/internal operations)
             // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             Status search(const std::vector<uint8_t> &key,
                           uint64_t current_xid,  // Transaction ID for visibility checks
@@ -209,7 +209,7 @@ namespace scratchbird
              *
              * More efficient than physical removal - entry remains in index but becomes
              * invisible to transactions >= xmax (if xmax transaction commits).
-             * Physical removal happens later during GC/vacuum.
+             * Physical removal happens later during GC compaction.
              *
              * @param key Index key
              * @param tid Tuple ID to mark deleted
@@ -232,17 +232,19 @@ namespace scratchbird
                       bool start_inclusive = true, bool end_inclusive = false,
                       ErrorContext *ctx = nullptr);
 
-            // Vacuum operations
-            struct VacuumStats
+            // GC compaction operations (ScratchBird MGA GC, not PostgreSQL VACUUM)
+            struct GcCompactionStats
             {
                 uint64_t pages_visited;
-                uint64_t pages_vacuumed;
+                uint64_t pages_compacted;
                 uint64_t nodes_removed;
                 uint64_t bytes_reclaimed;
                 uint64_t pages_merged;
             };
 
-            Status vacuum(VacuumStats *stats_out = nullptr, ErrorContext *ctx = nullptr);
+            // GC compaction: removes logically deleted entries and reclaims space
+            // This is NOT PostgreSQL VACUUM.
+            Status gcCompact(GcCompactionStats *stats_out = nullptr, ErrorContext *ctx = nullptr);
 
             // P1-11: Bulk loading optimization for initial index construction
             // Build index bottom-up from sorted data for O(N) vs O(N log N) performance
@@ -332,14 +334,21 @@ namespace scratchbird
             Status split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
                                    const TID &new_tid, ErrorContext *ctx);
             Status split_internal_page(uint64_t left_page_num,
+                                       uint64_t left_child_page_num,
                                        const std::vector<uint8_t> &separator_key,
-                                       uint64_t right_page_num, ErrorContext *ctx);
+                                       uint64_t right_page_num,
+                                       uint16_t separator_suffix_trunc,
+                                       ErrorContext *ctx);
             Status insert_into_parent(uint64_t left_page_num,
                                       const std::vector<uint8_t> &separator_key,
-                                      uint64_t right_page_num, ErrorContext *ctx);
+                                      uint64_t right_page_num,
+                                      uint16_t separator_suffix_trunc,
+                                      ErrorContext *ctx);
             Status create_new_root(uint64_t left_page_num,
                                    const std::vector<uint8_t> &separator_key,
-                                   uint64_t right_page_num, ErrorContext *ctx);
+                                   uint64_t right_page_num,
+                                   uint16_t separator_suffix_trunc,
+                                   ErrorContext *ctx);
 
             // Firebird MGA: TIP-based visibility checking for index entries
             /**
@@ -359,17 +368,17 @@ namespace scratchbird
             // Allow iterator to access internal members
             friend class BTreeIterator;
 
-            // Vacuum helpers
-            Status vacuumPage(uint32_t page_id, VacuumStats &stats, ErrorContext *ctx);
-            Status compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats, ErrorContext *ctx);
+            // GC compaction helpers
+            Status gcCompactPage(uint32_t page_id, GcCompactionStats &stats, ErrorContext *ctx);
+            Status compactPage(uint8_t *page_data, uint32_t page_size, GcCompactionStats &stats, ErrorContext *ctx);
             bool shouldMergePages(const SBBTreePage *page1, const SBBTreePage *page2) const;
-            Status mergePages(uint32_t left_page, uint32_t right_page, VacuumStats &stats,
+            Status mergePages(uint32_t left_page, uint32_t right_page, GcCompactionStats &stats,
                               ErrorContext *ctx);
             Status removeFromParent(uint64_t parent_page_num, uint64_t child_page_id,
                                     ErrorContext *ctx);
 
             // STOR-L3: Check if parent page is underutilized and merge recursively
-            void checkAndMergeParentRecursive(uint64_t page_num, VacuumStats &stats,
+            void checkAndMergeParentRecursive(uint64_t page_num, GcCompactionStats &stats,
                                               ErrorContext *ctx);
 
             std::unique_ptr<BloomFilter> bloom_filter_;
@@ -406,7 +415,7 @@ namespace scratchbird
             Database *db_;
 
             // Firebird MGA: Transaction ID for TIP-based visibility filtering
-            // Pass 0 to return all tuples (used by VACUUM/internal operations)
+            // Pass 0 to return all tuples (used by GC/internal operations)
             uint64_t current_xid_;
 
             // Range bounds
@@ -429,6 +438,7 @@ namespace scratchbird
 
             // Internal navigation
             Status initialize(ErrorContext *ctx);
+            Status advanceToNextValid(ErrorContext *ctx);
             Status moveToNextSlot(ErrorContext *ctx);
             Status moveToNextPage(ErrorContext *ctx);
             bool isKeyInRange(const std::vector<uint8_t> &key) const;

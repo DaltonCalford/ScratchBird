@@ -133,7 +133,7 @@ namespace scratchbird::core
             -> Status;
 
         // Vacuum support
-        static auto getVacuumHorizon(uint64_t *horizon_out, ErrorContext *ctx = nullptr) -> Status;
+        static auto getGcHorizon(uint64_t *horizon_out, ErrorContext *ctx = nullptr) -> Status;
 
         // Backend info queries
         static auto getBackendXmin(uint32_t proc_id, uint64_t *xmin_out,

@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/spatial/wkt_parser.h"
 #include "scratchbird/spatial/wkb.h"
 
@@ -38,16 +39,16 @@ protected:
         line2.points = {Point{0.0, 0.0}, Point{0.0, 2.0}, Point{2.0, 2.0}};
 
         // Simple polygon (square)
-        square.exterior = {Point{0.0, 0.0}, Point{4.0, 0.0}, Point{4.0, 4.0}, Point{0.0, 4.0}, Point{0.0, 0.0}};
+        square.rings = {{Point{0.0, 0.0}, Point{4.0, 0.0}, Point{4.0, 4.0}, Point{0.0, 4.0}, Point{0.0, 0.0}}};
 
         // Larger polygon that contains square
-        large_poly.exterior = {Point{-1.0, -1.0}, Point{5.0, -1.0}, Point{5.0, 5.0}, Point{-1.0, 5.0}, Point{-1.0, -1.0}};
+        large_poly.rings = {{Point{-1.0, -1.0}, Point{5.0, -1.0}, Point{5.0, 5.0}, Point{-1.0, 5.0}, Point{-1.0, -1.0}}};
 
         // Polygon that overlaps with square
-        overlap_poly.exterior = {Point{2.0, 2.0}, Point{6.0, 2.0}, Point{6.0, 6.0}, Point{2.0, 6.0}, Point{2.0, 2.0}};
+        overlap_poly.rings = {{Point{2.0, 2.0}, Point{6.0, 2.0}, Point{6.0, 6.0}, Point{2.0, 6.0}, Point{2.0, 2.0}}};
 
         // Disjoint polygon
-        disjoint_poly.exterior = {Point{10.0, 10.0}, Point{14.0, 10.0}, Point{14.0, 14.0}, Point{10.0, 14.0}, Point{10.0, 10.0}};
+        disjoint_poly.rings = {{Point{10.0, 10.0}, Point{14.0, 10.0}, Point{14.0, 14.0}, Point{10.0, 14.0}, Point{10.0, 10.0}}};
     }
 
     Point pt1, pt2, pt3;
@@ -75,31 +76,32 @@ TEST_F(SpatialFunctionsTest, ST_MakeLine_CreatesValidLineString)
 TEST_F(SpatialFunctionsTest, ST_MakePolygon_CreatesValidPolygon)
 {
     EXPECT_TRUE(square.isValid());
-    EXPECT_EQ(square.exterior.size(), 5);
+    ASSERT_EQ(square.rings.size(), 1);
+    EXPECT_EQ(square.rings[0].size(), 5);
 }
 
 TEST_F(SpatialFunctionsTest, ST_AsText_ProducesWKT)
 {
-    std::string wkt = WKTParser::toWKT(pt1);
-    EXPECT_EQ(wkt, "POINT (0 0)");
+    std::string wkt = WKTParser::pointToWKT(pt1);
+    EXPECT_EQ(wkt, "POINT(0 0)");
 
-    wkt = WKTParser::toWKT(line1);
+    wkt = WKTParser::lineStringToWKT(line1);
     EXPECT_TRUE(wkt.find("LINESTRING") != std::string::npos);
 
-    wkt = WKTParser::toWKT(square);
+    wkt = WKTParser::polygonToWKT(square);
     EXPECT_TRUE(wkt.find("POLYGON") != std::string::npos);
 }
 
 TEST_F(SpatialFunctionsTest, ST_AsBinary_ProducesWKB)
 {
-    std::vector<uint8_t> wkb = WKB::encode(pt1);
+    std::vector<uint8_t> wkb = WKBSerializer::serializePoint(pt1);
     EXPECT_FALSE(wkb.empty());
     EXPECT_EQ(wkb[0], 0x01); // Little endian
 
-    wkb = WKB::encode(line1);
+    wkb = WKBSerializer::serializeLineString(line1);
     EXPECT_FALSE(wkb.empty());
 
-    wkb = WKB::encode(square);
+    wkb = WKBSerializer::serializePolygon(square);
     EXPECT_FALSE(wkb.empty());
 }
 
@@ -130,7 +132,7 @@ TEST_F(SpatialFunctionsTest, ST_IsValid_ValidatesGeometry)
 
     // Invalid polygon (< 4 points)
     Polygon invalid_poly;
-    invalid_poly.exterior = {Point{0.0, 0.0}, Point{1.0, 1.0}};
+    invalid_poly.rings = {{Point{0.0, 0.0}, Point{1.0, 1.0}}};
     EXPECT_FALSE(invalid_poly.isValid());
 }
 
@@ -300,10 +302,10 @@ TEST_F(SpatialFunctionsTest, ST_Touches_DetectsTouching)
 
     // Create two adjacent squares that touch at an edge
     Polygon square1;
-    square1.exterior = {Point{0.0, 0.0}, Point{2.0, 0.0}, Point{2.0, 2.0}, Point{0.0, 2.0}, Point{0.0, 0.0}};
+    square1.rings = {{Point{0.0, 0.0}, Point{2.0, 0.0}, Point{2.0, 2.0}, Point{0.0, 2.0}, Point{0.0, 0.0}}};
 
     Polygon square2;
-    square2.exterior = {Point{2.0, 0.0}, Point{4.0, 0.0}, Point{4.0, 2.0}, Point{2.0, 2.0}, Point{2.0, 0.0}};
+    square2.rings = {{Point{2.0, 0.0}, Point{4.0, 0.0}, Point{4.0, 2.0}, Point{2.0, 2.0}, Point{2.0, 0.0}}};
 
     auto g1 = polygonToGEOS(square1, ctx);
     auto g2 = polygonToGEOS(square2, ctx);
@@ -529,7 +531,7 @@ TEST_F(SpatialFunctionsTest, InvalidGeometry_HandledGracefully)
     EXPECT_FALSE(invalid_line.isValid());
 
     Polygon invalid_poly;
-    invalid_poly.exterior = {Point{0.0, 0.0}, Point{1.0, 1.0}}; // < 4 points
+    invalid_poly.rings = {{Point{0.0, 0.0}, Point{1.0, 1.0}}}; // < 4 points
 
     EXPECT_FALSE(invalid_poly.isValid());
 }

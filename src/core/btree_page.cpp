@@ -8,11 +8,66 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/core/btree_page.h"
+#include "scratchbird/core/logger.h"
 #include <stdexcept>
 #include <cstring>
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        uint16_t calculate_prefix_length_bytes(const std::vector<uint8_t> &key1,
+                                               const std::vector<uint8_t> &key2)
+        {
+            const size_t min_len = std::min(key1.size(), key2.size());
+            uint16_t prefix_len = 0;
+            while (prefix_len < min_len && key1[prefix_len] == key2[prefix_len])
+            {
+                ++prefix_len;
+            }
+            return prefix_len;
+        }
+
+        bool should_prefix_compress(uint16_t prefix_len, size_t key_len)
+        {
+            return prefix_len >= 4 && key_len >= 8;
+        }
+
+        std::vector<uint8_t> decompress_key_bytes(const std::vector<uint8_t> &prev_key,
+                                                  const uint8_t *compressed_key_data,
+                                                  uint16_t compressed_key_len,
+                                                  uint16_t prefix_len)
+        {
+            if (prefix_len == 0 || prev_key.empty())
+            {
+                return std::vector<uint8_t>(compressed_key_data,
+                                            compressed_key_data + compressed_key_len);
+            }
+
+            if (prefix_len > prev_key.size())
+            {
+                return std::vector<uint8_t>(compressed_key_data,
+                                            compressed_key_data + compressed_key_len);
+            }
+
+            std::vector<uint8_t> full_key;
+            full_key.reserve(prefix_len + compressed_key_len);
+            full_key.insert(full_key.end(), prev_key.begin(), prev_key.begin() + prefix_len);
+            full_key.insert(full_key.end(), compressed_key_data,
+                            compressed_key_data + compressed_key_len);
+            return full_key;
+        }
+
+        int compare_key_bytes(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b)
+        {
+            if (a == b)
+            {
+                return 0;
+            }
+            return (a < b) ? -1 : 1;
+        }
+    }
+
 
     BTreePage::BTreePage(uint8_t *page_data, uint32_t page_size)
         : page_data_(page_data), page_size_(page_size)
@@ -47,7 +102,8 @@ namespace scratchbird::core
         page_header_->btr_rightmost_child = 0; // Initialize rightmost child pointer
         page_header_->btr_prefix_total = 0;
         page_header_->btr_suffix_total = 0;
-        page_header_->btr_compression = static_cast<uint8_t>(BTreeCompressionType::NONE);
+        // Default to adaptive prefix compression for new pages
+        page_header_->btr_compression = static_cast<uint8_t>(BTreeCompressionType::ADAPTIVE);
         page_header_->btr_min_prefix_len = 0;
         page_header_->btr_xmin = 0; // Phase 3 Enhancement: Set from ConnectionContext::getCurrentTransactionId()
         page_header_->btr_xmax = 0;
@@ -67,78 +123,163 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        uint32_t node_size = sizeof(SBBTreeNode) + key.size() + sizeof(OnDiskTID);
-        if (!has_sufficient_space(node_size))
+        struct LeafEntry
         {
-            return Status::PAGE_FULL;
-        }
+            std::vector<uint8_t> key;
+            std::vector<OnDiskTID> tids;
+            uint16_t flags = 0;
+            uint64_t xmin = 0;
+            uint64_t xmax = 0;
+        };
 
-        // Allocate space for the new node from the end of the page
-        page_header_->btr_high_water -= node_size;
-        auto *new_node = reinterpret_cast<SBBTreeNode *>(page_data_ + page_header_->btr_high_water);
+        std::vector<LeafEntry> entries;
+        entries.reserve(page_header_->btr_count + 1);
 
-        // Populate the new node
-        new_node->btn_flags = 0;
-        new_node->btn_prefix_len = 0; // Phase 3 Enhancement: Implement prefix compression for space savings
-        new_node->btn_suffix_trunc = 0;
-        new_node->btn_key_len = key.size();
-        new_node->btn_tuple_count = 1;
-        new_node->btn_child_page = 0;
-        // Task 17 MGA Phase 3.1: Set btn_xmin from transaction creating this entry
-        new_node->btn_xmin = xmin;  // Transaction ID creating this entry
-        new_node->btn_xmax = 0;      // 0 = entry is active (not deleted)
+        auto *offsets = reinterpret_cast<const uint16_t *>(page_data_ + sizeof(SBBTreePage));
+        std::vector<uint8_t> prev_key;
 
-        // Copy key and tuple ID
-        uint8_t *key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);
-        memcpy(key_location, key.data(), key.size());
-        auto *tid_location = reinterpret_cast<OnDiskTID *>(key_location + key.size());
-        *tid_location = toOnDiskTID(value.tid);
-
-        // Insert the node into the sorted position in the offsets array
-        auto *offsets = reinterpret_cast<uint16_t *>(page_data_ + sizeof(SBBTreePage));
-
-        // Find the correct insertion position using binary search
-        uint16_t insert_pos = 0;
-        int left = 0;
-        int right = page_header_->btr_count - 1;
-
-        while (left <= right)
+        for (uint16_t i = 0; i < page_header_->btr_count; ++i)
         {
-            int mid = left + (right - left) / 2;
-            const auto *existing_node =
-                reinterpret_cast<const SBBTreeNode *>(page_data_ + offsets[mid]);
+            const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data_ + offsets[i]);
+            const uint8_t *node_key_data =
+                reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
 
-            // Extract existing node's key
-            const uint8_t *existing_key_data =
-                reinterpret_cast<const uint8_t *>(existing_node) + sizeof(SBBTreeNode);
-            std::vector<uint8_t> existing_key(existing_key_data,
-                                              existing_key_data + existing_node->btn_key_len);
+            std::vector<uint8_t> full_key = decompress_key_bytes(prev_key, node_key_data,
+                                                                 node->btn_key_len,
+                                                                 node->btn_prefix_len);
+            prev_key = full_key;
 
-            // Compare keys
-            if (key < existing_key)
+            std::vector<OnDiskTID> tids;
+            tids.reserve(node->btn_tuple_count);
+            const auto *tuple_ids_ptr =
+                reinterpret_cast<const OnDiskTID *>(node_key_data + node->btn_key_len);
+            for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
             {
-                right = mid - 1;
-                insert_pos = mid;
+                tids.push_back(tuple_ids_ptr[j]);
             }
-            else
-            {
-                left = mid + 1;
-                insert_pos = mid + 1;
-            }
+
+            LeafEntry entry;
+            entry.key = std::move(full_key);
+            entry.tids = std::move(tids);
+            entry.flags = node->btn_flags;
+            entry.xmin = node->btn_xmin;
+            entry.xmax = node->btn_xmax;
+            entries.push_back(std::move(entry));
         }
 
-        // Shift existing offsets to make room for new entry
-        for (uint16_t i = page_header_->btr_count; i > insert_pos; --i)
+        LeafEntry new_entry;
+        new_entry.key = key;
+        new_entry.tids = {toOnDiskTID(value.tid)};
+        new_entry.flags = 0;
+        new_entry.xmin = xmin;
+        new_entry.xmax = 0;
+
+        size_t insert_pos = entries.size();
+        for (size_t i = 0; i < entries.size(); ++i)
         {
-            offsets[i] = offsets[i - 1];
+            if (compare_key_bytes(new_entry.key, entries[i].key) < 0)
+            {
+                insert_pos = i;
+                break;
+            }
+        }
+        entries.insert(entries.begin() + static_cast<std::ptrdiff_t>(insert_pos),
+                       std::move(new_entry));
+
+        // Rebuild page with optional prefix compression
+        std::vector<uint8_t> temp(page_size_, 0);
+        auto new_header = *page_header_;
+        new_header.btr_count = 0;
+        new_header.btr_high_water = page_size_;
+        new_header.btr_free_space = page_size_ - sizeof(SBBTreePage);
+        new_header.btr_prefix_total = 0;
+        new_header.btr_suffix_total = 0;
+        new_header.btr_min_prefix_len = 0;
+
+        std::memcpy(temp.data(), &new_header, sizeof(SBBTreePage));
+        auto *new_offsets = reinterpret_cast<uint16_t *>(temp.data() + sizeof(SBBTreePage));
+
+        std::vector<uint8_t> prev_full_key;
+        uint16_t min_prefix = 0;
+
+        for (const auto &entry : entries)
+        {
+            uint16_t prefix_len = 0;
+            std::vector<uint8_t> stored_key = entry.key;
+            const auto compression = static_cast<BTreeCompressionType>(new_header.btr_compression);
+            if (compression == BTreeCompressionType::PREFIX ||
+                compression == BTreeCompressionType::BOTH ||
+                compression == BTreeCompressionType::ADAPTIVE)
+            {
+                prefix_len = calculate_prefix_length_bytes(prev_full_key, entry.key);
+                if (!should_prefix_compress(prefix_len, entry.key.size()))
+                {
+                    prefix_len = 0;
+                }
+            }
+
+            if (prefix_len > 0)
+            {
+                stored_key.assign(entry.key.begin() + prefix_len, entry.key.end());
+                new_header.btr_prefix_total += prefix_len;
+                if (min_prefix == 0 || prefix_len < min_prefix)
+                {
+                    min_prefix = prefix_len;
+                }
+            }
+
+            const uint32_t node_size =
+                sizeof(SBBTreeNode) + stored_key.size() +
+                static_cast<uint32_t>(entry.tids.size() * sizeof(OnDiskTID));
+
+            if (new_header.btr_free_space < (node_size + sizeof(uint16_t)))
+            {
+                return Status::PAGE_FULL;
+            }
+
+            new_header.btr_high_water -= node_size;
+            auto *node = reinterpret_cast<SBBTreeNode *>(temp.data() + new_header.btr_high_water);
+            node->btn_flags = entry.flags;
+            node->btn_prefix_len = prefix_len;
+            node->btn_suffix_trunc = 0;
+            node->btn_key_len = static_cast<uint16_t>(stored_key.size());
+            node->btn_tuple_count = static_cast<uint32_t>(entry.tids.size());
+            node->btn_child_page = 0;
+            node->btn_xmin = entry.xmin;
+            node->btn_xmax = entry.xmax;
+
+            uint8_t *key_location = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
+            if (!stored_key.empty())
+            {
+                std::memcpy(key_location, stored_key.data(), stored_key.size());
+            }
+            auto *tid_location =
+                reinterpret_cast<OnDiskTID *>(key_location + stored_key.size());
+            for (size_t t = 0; t < entry.tids.size(); ++t)
+            {
+                tid_location[t] = entry.tids[t];
+            }
+
+            new_offsets[new_header.btr_count] =
+                static_cast<uint16_t>(new_header.btr_high_water);
+            new_header.btr_count++;
+            new_header.btr_free_space -= (node_size + sizeof(uint16_t));
+
+            prev_full_key = entry.key;
         }
 
-        // Insert the new offset at the correct position
-        offsets[insert_pos] = page_header_->btr_high_water;
+        new_header.btr_min_prefix_len = min_prefix;
+        if (new_header.btr_prefix_total > 0)
+        {
+            new_header.btr_flags |= static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        }
+        else
+        {
+            new_header.btr_flags &= ~static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        }
 
-        // Update header
-        page_header_->btr_count++;
-        page_header_->btr_free_space -= (node_size + sizeof(uint16_t));
+        std::memcpy(temp.data(), &new_header, sizeof(SBBTreePage));
+        std::memcpy(page_data_, temp.data(), page_size_);
 
         return Status::OK;
     }
@@ -178,7 +319,7 @@ namespace scratchbird::core
         }
 
         // Instead of physically removing the node (which would require compacting),
-        // we'll mark it as deleted. Physical compaction can happen during vacuum/maintenance.
+        // we'll mark it as deleted. Physical compaction can happen during GC/maintenance.
         node->btn_flags |= static_cast<uint16_t>(BTreeNodeFlags::DELETED);
 
         // Remove the offset entry by shifting remaining offsets left
@@ -194,7 +335,7 @@ namespace scratchbird::core
         page_header_->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
 
         // Note: Free space is not reclaimed immediately. It will be reclaimed during
-        // page compaction/vacuum. This is a common approach in B-tree implementations
+        // page compaction/GC. This is a common approach in B-tree implementations
         // to avoid expensive page reorganization on every delete.
     }
 
@@ -311,24 +452,57 @@ namespace scratchbird::core
         auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
         uint16_t node_offset = offsets[node_index];
 
+        if (node_offset < sizeof(SBBTreePage) || node_offset >= page_size)
+        {
+            LOG_WARNING(GENERAL,
+                        "BTreePage::get_node invalid offset: page_id=%u node_index=%u btr_count=%u offset=%u page_size=%u",
+                        page->btr_header.page_id, node_index, page->btr_count,
+                        static_cast<uint32_t>(node_offset), page_size);
+            return Status::PAGE_CORRUPT;
+        }
+
         auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + node_offset);
+
+        if (node_offset + sizeof(SBBTreeNode) > page_size)
+        {
+            LOG_WARNING(GENERAL,
+                        "BTreePage::get_node header overflow: page_id=%u node_index=%u btr_count=%u offset=%u page_size=%u",
+                        page->btr_header.page_id, node_index, page->btr_count,
+                        static_cast<uint32_t>(node_offset), page_size);
+            return Status::PAGE_CORRUPT;
+        }
 
         // Extract compressed key (suffix only if prefix compression enabled)
         const uint8_t *key_data = reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
-        std::vector<uint8_t> compressed_key(key_data, key_data + node->btn_key_len);
 
-        // Decompress key if needed
-        if (node->btn_prefix_len > 0)
+        // Bounds check for key data
+        if (node_offset + sizeof(SBBTreeNode) + node->btn_key_len > page_size)
         {
-            // Page has prefix compression - reconstruct full key
-            // The page prefix is stored after the page header (implementation detail)
-            // For now, we'll return the compressed key and let caller handle it
-            // Full implementation would extract page prefix and concatenate
-            key_out = compressed_key; // Phase 3 Enhancement: Add full decompression (prepend page prefix)
+            LOG_WARNING(GENERAL,
+                        "BTreePage::get_node key overflow: page_id=%u node_index=%u btr_count=%u offset=%u key_len=%u page_size=%u",
+                        page->btr_header.page_id, node_index, page->btr_count,
+                        static_cast<uint32_t>(node_offset), node->btn_key_len, page_size);
+            return Status::PAGE_CORRUPT;
         }
-        else
+
+        std::vector<uint8_t> prev_key;
+        key_out.clear();
+        for (uint16_t i = 0; i <= node_index; ++i)
         {
-            key_out = compressed_key;
+            uint16_t cur_offset = offsets[i];
+            auto *cur_node = reinterpret_cast<const SBBTreeNode *>(page_data + cur_offset);
+            const uint8_t *cur_key_data =
+                reinterpret_cast<const uint8_t *>(cur_node) + sizeof(SBBTreeNode);
+
+            std::vector<uint8_t> full_key = decompress_key_bytes(prev_key, cur_key_data,
+                                                                 cur_node->btn_key_len,
+                                                                 cur_node->btn_prefix_len);
+            if (i == node_index)
+            {
+                key_out = std::move(full_key);
+                break;
+            }
+            prev_key = std::move(full_key);
         }
 
         // Check if this is a leaf or internal node
@@ -343,6 +517,17 @@ namespace scratchbird::core
             auto *tuple_ids = reinterpret_cast<const OnDiskTID *>(tuple_data);
 
             tuple_ids_out.reserve(node->btn_tuple_count);
+
+            uint64_t tuple_bytes = static_cast<uint64_t>(node->btn_tuple_count) * sizeof(OnDiskTID);
+            if (node_offset + sizeof(SBBTreeNode) + node->btn_key_len + tuple_bytes > page_size)
+            {
+                LOG_WARNING(GENERAL,
+                            "BTreePage::get_node tuple overflow: page_id=%u node_index=%u btr_count=%u offset=%u key_len=%u tuple_count=%u page_size=%u",
+                            page->btr_header.page_id, node_index, page->btr_count,
+                            static_cast<uint32_t>(node_offset), node->btn_key_len,
+                            node->btn_tuple_count, page_size);
+                return Status::PAGE_CORRUPT;
+            }
 
             for (uint32_t i = 0; i < node->btn_tuple_count; i++)
             {
@@ -404,14 +589,18 @@ namespace scratchbird::core
             return 0;
         }
 
-        // Get previous key
+        // Reconstruct previous full key by scanning in order
         auto *offsets = reinterpret_cast<const uint16_t *>(page_data_ + sizeof(SBBTreePage));
-        auto *prev_node =
-            reinterpret_cast<const SBBTreeNode *>(page_data_ + offsets[node_index - 1]);
-
-        const uint8_t *prev_key_data =
-            reinterpret_cast<const uint8_t *>(prev_node) + sizeof(SBBTreeNode);
-        std::vector<uint8_t> prev_key(prev_key_data, prev_key_data + prev_node->btn_key_len);
+        std::vector<uint8_t> prev_key;
+        for (uint16_t i = 0; i < node_index; ++i)
+        {
+            auto *node = reinterpret_cast<const SBBTreeNode *>(page_data_ + offsets[i]);
+            const uint8_t *node_key_data =
+                reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+            std::vector<uint8_t> full_key = decompress_key_bytes(
+                prev_key, node_key_data, node->btn_key_len, node->btn_prefix_len);
+            prev_key = std::move(full_key);
+        }
 
         // Calculate common prefix
         size_t min_len = std::min(prev_key.size(), key.size());

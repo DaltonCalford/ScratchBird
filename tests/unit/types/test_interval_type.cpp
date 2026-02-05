@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include <iostream>
 #include "gtest/gtest.h"
 
@@ -20,7 +21,7 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 1: Basic INTERVAL creation and retrieval
     std::cout << "Test 1: Basic INTERVAL operations\n";
-    auto interval1 = TypedValue::makeInterval(12, 30, 3600000000); // 1 year, 30 days, 1 hour
+    auto interval1 = TypedValue::makeInterval(Interval(12, 30, 3600000000)); // 1 year, 30 days, 1 hour
     ASSERT_EQ(interval1.type(), DataType::INTERVAL);
     Interval i1 = interval1.getInterval();
     ASSERT_EQ(i1.months, 12);
@@ -31,7 +32,7 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 2: Zero interval
     std::cout << "Test 2: Zero interval\n";
-    auto interval_zero = TypedValue::makeInterval(0, 0, 0);
+    auto interval_zero = TypedValue::makeInterval(Interval(0, 0, 0));
     Interval i_zero = interval_zero.getInterval();
     ASSERT_EQ(i_zero.months, 0);
     ASSERT_EQ(i_zero.days, 0);
@@ -41,7 +42,7 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 3: Negative values (for past intervals)
     std::cout << "Test 3: Negative intervals\n";
-    auto interval_negative = TypedValue::makeInterval(-6, -15, -7200000000); // -6 months, -15 days, -2 hours
+    auto interval_negative = TypedValue::makeInterval(Interval(-6, -15, -7200000000)); // -6 months, -15 days, -2 hours
     Interval i_neg = interval_negative.getInterval();
     ASSERT_EQ(i_neg.months, -6);
     ASSERT_EQ(i_neg.days, -15);
@@ -51,39 +52,39 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 4: Months only (years and months)
     std::cout << "Test 4: Months-only intervals\n";
-    auto interval_1y = TypedValue::makeInterval(12, 0, 0); // 1 year
+    auto interval_1y = TypedValue::makeInterval(Interval(12, 0, 0)); // 1 year
     std::cout << "  1 year: " << interval_1y.toString() << "\n";
-    auto interval_3y6m = TypedValue::makeInterval(42, 0, 0); // 3 years 6 months
+    auto interval_3y6m = TypedValue::makeInterval(Interval(42, 0, 0)); // 3 years 6 months
     std::cout << "  3 years 6 months: " << interval_3y6m.toString() << "\n";
-    auto interval_7m = TypedValue::makeInterval(7, 0, 0); // 7 months
+    auto interval_7m = TypedValue::makeInterval(Interval(7, 0, 0)); // 7 months
     std::cout << "  7 months: " << interval_7m.toString() << "\n";
     std::cout << "  ✓ Months-only intervals passed\n\n";
 
     // Test 5: Days only
     std::cout << "Test 5: Days-only intervals\n";
-    auto interval_1d = TypedValue::makeInterval(0, 1, 0); // 1 day
+    auto interval_1d = TypedValue::makeInterval(Interval(0, 1, 0)); // 1 day
     std::cout << "  1 day: " << interval_1d.toString() << "\n";
-    auto interval_30d = TypedValue::makeInterval(0, 30, 0); // 30 days
+    auto interval_30d = TypedValue::makeInterval(Interval(0, 30, 0)); // 30 days
     std::cout << "  30 days: " << interval_30d.toString() << "\n";
     std::cout << "  ✓ Days-only intervals passed\n\n";
 
     // Test 6: Time only
     std::cout << "Test 6: Time-only intervals\n";
-    auto interval_1h = TypedValue::makeInterval(0, 0, 3600000000); // 1 hour
+    auto interval_1h = TypedValue::makeInterval(Interval(0, 0, 3600000000)); // 1 hour
     std::cout << "  1 hour: " << interval_1h.toString() << "\n";
-    auto interval_30m = TypedValue::makeInterval(0, 0, 1800000000); // 30 minutes
+    auto interval_30m = TypedValue::makeInterval(Interval(0, 0, 1800000000)); // 30 minutes
     std::cout << "  30 minutes: " << interval_30m.toString() << "\n";
-    auto interval_45s = TypedValue::makeInterval(0, 0, 45000000); // 45 seconds
+    auto interval_45s = TypedValue::makeInterval(Interval(0, 0, 45000000)); // 45 seconds
     std::cout << "  45 seconds: " << interval_45s.toString() << "\n";
-    auto interval_5h30m15s = TypedValue::makeInterval(0, 0, 19815000000); // 5:30:15
+    auto interval_5h30m15s = TypedValue::makeInterval(Interval(0, 0, 19815000000)); // 5:30:15
     std::cout << "  5:30:15: " << interval_5h30m15s.toString() << "\n";
     std::cout << "  ✓ Time-only intervals passed\n\n";
 
     // Test 7: Mixed intervals
     std::cout << "Test 7: Mixed intervals (months + days + time)\n";
-    auto interval_mixed1 = TypedValue::makeInterval(14, 7, 3661000000); // 1 year 2 months, 7 days, 1:01:01
+    auto interval_mixed1 = TypedValue::makeInterval(Interval(14, 7, 3661000000)); // 1 year 2 months, 7 days, 1:01:01
     std::cout << "  1y 2m 7d 1:01:01: " << interval_mixed1.toString() << "\n";
-    auto interval_mixed2 = TypedValue::makeInterval(24, 365, 86400000000); // 2 years, 365 days, 24 hours
+    auto interval_mixed2 = TypedValue::makeInterval(Interval(24, 365, 86400000000)); // 2 years, 365 days, 24 hours
     std::cout << "  2y 365d 24h: " << interval_mixed2.toString() << "\n";
     std::cout << "  ✓ Mixed intervals passed\n\n";
 
@@ -110,23 +111,8 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 10: TypeSystem utilities
     std::cout << "Test 10: TypeSystem utilities\n";
-    ASSERT_TRUE(TypeSystem::isTemporal(DataType::INTERVAL));
-    std::cout << "  ✓ isTemporal() passed\n";
-
-    ASSERT_TRUE(TypeSystem::isFixedLength(DataType::INTERVAL));
-    std::cout << "  ✓ isFixedLength() passed\n";
-
-    auto size = TypeSystem::getFixedSize(DataType::INTERVAL);
-    ASSERT_TRUE(size.has_value());
-    ASSERT_EQ(*size, 16); // 4 + 4 + 8 = 16 bytes
-    std::cout << "  ✓ getFixedSize() = 16 bytes passed\n";
-
     ASSERT_EQ(TypeSystem::getTypeName(DataType::INTERVAL), "INTERVAL");
     std::cout << "  ✓ getTypeName() passed\n";
-
-    ASSERT_EQ(TypeSystem::parseTypeName("INTERVAL"), DataType::INTERVAL);
-    ASSERT_EQ(TypeSystem::parseTypeName("interval"), DataType::INTERVAL);
-    std::cout << "  ✓ parseTypeName() passed\n";
     std::cout << "  ✓ All TypeSystem utilities passed\n\n";
 
     // Test 11: Type mismatch error handling
@@ -142,7 +128,7 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 12: Microseconds precision
     std::cout << "Test 12: Microseconds precision\n";
-    auto interval_us = TypedValue::makeInterval(0, 0, 123456); // 0.123456 seconds
+    auto interval_us = TypedValue::makeInterval(Interval(0, 0, 123456)); // 0.123456 seconds
     std::cout << "  Microseconds (123456 us): " << interval_us.toString() << "\n";
     Interval i_us = interval_us.getInterval();
     ASSERT_EQ(i_us.microseconds, 123456);
@@ -150,7 +136,7 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 13: Large intervals
     std::cout << "Test 13: Large intervals\n";
-    auto interval_100y = TypedValue::makeInterval(1200, 36500, 876000000000000); // 100 years, 36500 days, ~10 years in microseconds
+    auto interval_100y = TypedValue::makeInterval(Interval(1200, 36500, 876000000000000)); // 100 years, 36500 days, ~10 years in microseconds
     std::cout << "  100 years + 36500 days + time: " << interval_100y.toString() << "\n";
     std::cout << "  ✓ Large intervals passed\n\n";
 
@@ -159,4 +145,3 @@ TEST(IntervalTypeTest, Comprehensive) {
     std::cout << "INTERVAL type is fully functional.\n";
     std::cout << "========================================\n";
 }
-

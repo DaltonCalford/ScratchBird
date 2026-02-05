@@ -15,12 +15,18 @@
 #include <string>
 #include <chrono>
 #include <random>
+#include <sstream>
+#include <iomanip>
 #include <filesystem>
 #include "test_helpers.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/tid.h"
+#include "scratchbird/core/transaction_manager.h"
 
 using namespace scratchbird::core;
 
@@ -72,13 +78,44 @@ protected:
         UuidV7Bytes table_uuid = generateUuidV7();
         std::vector<UuidV7Bytes> column_uuids = { generateUuidV7() };
 
-        uint32_t root_page = 0;
-        Status status = BTree::create(db_.get(), index_uuid, table_uuid, column_uuids, &root_page, ctx);
+        GPID root_gpid = allocateRootGpid(ctx);
+        if (root_gpid == 0) {
+            return nullptr;
+        }
+
+        Status status = BTree::create(db_.get(), index_uuid, table_uuid, column_uuids, root_gpid, ctx);
         if (status != Status::OK) {
             return nullptr;
         }
 
-        return BTree::open(db_.get(), index_uuid, root_page, ctx);
+        return BTree::open(db_.get(), index_uuid, root_gpid, ctx);
+    }
+
+    static TID makeTestTID(uint64_t id) {
+        return TID(makeGPID(PRIMARY_TABLESPACE_ID, id), 1);
+    }
+
+    GPID allocateRootGpid(ErrorContext* ctx) const {
+        if (!db_) {
+            if (ctx) ctx->message = "Database not initialized";
+            return 0;
+        }
+        auto *pm = db_->page_manager();
+        if (!pm) {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK) {
+            return 0;
+        }
+        return gpid;
+    }
+
+    uint64_t currentXid() const {
+        auto *tm = db_ ? db_->transaction_manager() : nullptr;
+        return tm ? tm->getCurrentXid() : 1;
     }
 
     // Helper: Generate UUIDv7 keys (high prefix similarity due to timestamp)
@@ -100,8 +137,19 @@ protected:
         std::vector<std::vector<uint8_t>> keys;
         keys.reserve(count);
 
+        size_t width = 1;
+        if (count > 0) {
+            size_t max_value = count - 1;
+            while (max_value >= 10) {
+                width++;
+                max_value /= 10;
+            }
+        }
+
         for (size_t i = 0; i < count; ++i) {
-            std::string key_str = prefix + std::to_string(i);
+            std::ostringstream oss;
+            oss << prefix << std::setw(static_cast<int>(width)) << std::setfill('0') << i;
+            std::string key_str = oss.str();
             std::vector<uint8_t> key(key_str.begin(), key_str.end());
             keys.push_back(key);
         }
@@ -150,15 +198,15 @@ TEST_F(BTreeCompressionTest, BasicInsertAndSearch) {
     std::vector<uint8_t> key = {0x01, 0x02, 0x03, 0x04};
     uint64_t tuple_id = 1000;
 
-    Status status = btree->insert(key, tuple_id, &ctx);
+    Status status = btree->insert(key, makeTestTID(tuple_id), 1, &ctx);
     ASSERT_EQ(status, Status::OK) << "Insert failed: " << ctx.message;
 
     // Search for the key
     std::vector<TID> tuple_ids;
-    status = btree->search(key, nullptr, &tuple_ids, &ctx);
+    status = btree->search(key, 0, &tuple_ids, &ctx);
     ASSERT_EQ(status, Status::OK) << "Search failed: " << ctx.message;
     ASSERT_EQ(tuple_ids.size(), 1);
-    ASSERT_EQ(tuple_ids[0], tuple_id);
+    ASSERT_EQ(tuple_ids[0], makeTestTID(tuple_id));
 }
 
 TEST_F(BTreeCompressionTest, ShortKeysNotCompressed) {
@@ -175,17 +223,17 @@ TEST_F(BTreeCompressionTest, ShortKeysNotCompressed) {
     };
 
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 1, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 1), 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
     }
 
     // Verify all keys can be found
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search " << i << " failed: " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
-        ASSERT_EQ(tuple_ids[0], i + 1);
+        ASSERT_EQ(tuple_ids[0], makeTestTID(i + 1));
     }
 }
 
@@ -203,17 +251,17 @@ TEST_F(BTreeCompressionTest, SmallPrefixNotCompressed) {
     };
 
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 100, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 100), 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
     }
 
     // Verify all keys can be found
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search " << i << " failed: " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
-        ASSERT_EQ(tuple_ids[0], i + 100);
+        ASSERT_EQ(tuple_ids[0], makeTestTID(i + 100));
     }
 }
 
@@ -232,17 +280,17 @@ TEST_F(BTreeCompressionTest, LargePrefixShouldCompress) {
     };
 
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 200, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 200), 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
     }
 
     // Verify all keys can be found (decompression works)
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search " << i << " failed: " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
-        ASSERT_EQ(tuple_ids[0], i + 200);
+        ASSERT_EQ(tuple_ids[0], makeTestTID(i + 200));
     }
 }
 
@@ -260,17 +308,17 @@ TEST_F(BTreeCompressionTest, UUIDv7KeysCompression) {
 
     // Insert all keys
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 1000, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 1000), 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
     }
 
     // Verify all keys can be found
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search " << i << " failed: " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
-        ASSERT_EQ(tuple_ids[0], i + 1000);
+        ASSERT_EQ(tuple_ids[0], makeTestTID(i + 1000));
     }
 }
 
@@ -284,17 +332,17 @@ TEST_F(BTreeCompressionTest, StringKeysWithCommonPrefix) {
 
     // Insert all keys
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 2000, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 2000), 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
     }
 
     // Verify all keys can be found
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search " << i << " failed: " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
-        ASSERT_EQ(tuple_ids[0], i + 2000);
+        ASSERT_EQ(tuple_ids[0], makeTestTID(i + 2000));
     }
 }
 
@@ -323,17 +371,17 @@ TEST_F(BTreeCompressionTest, MixedCompressibleAndNonCompressible) {
 
     // Insert all keys
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 3000, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 3000), 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
     }
 
     // Verify all keys can be found
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search " << i << " failed: " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
-        ASSERT_EQ(tuple_ids[0], i + 3000);
+        ASSERT_EQ(tuple_ids[0], makeTestTID(i + 3000));
     }
 }
 
@@ -347,18 +395,19 @@ TEST_F(BTreeCompressionTest, RangeScanWithCompression) {
 
     // Insert keys
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 4000, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 4000), 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed";
     }
 
     // Perform range scan (should decompress correctly during iteration)
-    auto iterator = btree->rangeScan(&keys[5], &keys[15], nullptr, true, false, &ctx);
+    uint64_t current_xid = currentXid();
+    auto iterator = btree->rangeScan(&keys[5], &keys[15], current_xid, true, false, &ctx);
     ASSERT_NE(iterator, nullptr) << "Range scan failed";
 
     int count = 0;
     while (iterator->hasNext()) {
         std::vector<uint8_t> key_out;
-        uint64_t tuple_id_out;
+        TID tuple_id_out;
         Status status = iterator->next(&key_out, &tuple_id_out, &ctx);
         ASSERT_EQ(status, Status::OK);
         count++;
@@ -377,24 +426,25 @@ TEST_F(BTreeCompressionTest, RemoveWithCompression) {
     auto keys = generateStringKeys("delete_test_", 10);
 
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], i + 5000, &ctx);
+        Status status = btree->insert(keys[i], makeTestTID(i + 5000), 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
     // Remove some keys (tests decompression during removal)
-    Status status = btree->remove(keys[3], 5003, &ctx);
+    uint64_t current_xid = currentXid();
+    Status status = btree->remove(keys[3], makeTestTID(5003), current_xid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Remove failed: " << ctx.message;
 
-    status = btree->remove(keys[7], 5007, &ctx);
+    status = btree->remove(keys[7], makeTestTID(5007), current_xid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Remove failed: " << ctx.message;
 
     // Verify removed keys are not found
     std::vector<TID> tuple_ids;
-    status = btree->search(keys[3], nullptr, &tuple_ids, &ctx);
+    status = btree->search(keys[3], current_xid, &tuple_ids, &ctx);
     EXPECT_EQ(status, Status::NOT_FOUND);
 
     tuple_ids.clear();
-    status = btree->search(keys[7], nullptr, &tuple_ids, &ctx);
+    status = btree->search(keys[7], current_xid, &tuple_ids, &ctx);
     EXPECT_EQ(status, Status::NOT_FOUND);
 
     // Verify remaining keys are still found
@@ -402,10 +452,10 @@ TEST_F(BTreeCompressionTest, RemoveWithCompression) {
         if (i == 3 || i == 7) continue;
 
         tuple_ids.clear();
-        status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        status = btree->search(keys[i], current_xid, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search after remove failed for key " << i;
         ASSERT_EQ(tuple_ids.size(), 1);
-        ASSERT_EQ(tuple_ids[0], i + 5000);
+        ASSERT_EQ(tuple_ids[0], makeTestTID(i + 5000));
     }
 }
 
@@ -425,7 +475,7 @@ TEST_F(BTreeCompressionTest, BenchmarkUUIDv7Compression) {
     auto start_insert = std::chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], TID(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(i % 65536)), &ctx);
+        Status status = btree->insert(keys[i], TID(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(i % 65536)), 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -442,7 +492,7 @@ TEST_F(BTreeCompressionTest, BenchmarkUUIDv7Compression) {
 
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -466,7 +516,7 @@ TEST_F(BTreeCompressionTest, BenchmarkStringKeyCompression) {
     auto start_insert = std::chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], TID(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(i % 65536)), &ctx);
+        Status status = btree->insert(keys[i], TID(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(i % 65536)), 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -483,7 +533,7 @@ TEST_F(BTreeCompressionTest, BenchmarkStringKeyCompression) {
 
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -507,7 +557,7 @@ TEST_F(BTreeCompressionTest, BenchmarkRandomKeyNoCompression) {
     auto start_insert = std::chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i < keys.size(); ++i) {
-        Status status = btree->insert(keys[i], TID(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(i % 65536)), &ctx);
+        Status status = btree->insert(keys[i], TID(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(i % 65536)), 1, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -524,7 +574,7 @@ TEST_F(BTreeCompressionTest, BenchmarkRandomKeyNoCompression) {
 
     for (size_t i = 0; i < keys.size(); ++i) {
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[i], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[i], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -548,12 +598,12 @@ TEST_F(BTreeCompressionTest, EmptyKeyHandling) {
     // Insert empty key
     std::vector<uint8_t> empty_key;
     TID tid1(PRIMARY_TABLESPACE_ID, 1, 9999);
-    Status status = btree->insert(empty_key, tid1, &ctx);
+    Status status = btree->insert(empty_key, tid1, 1, &ctx);
     ASSERT_EQ(status, Status::OK) << "Empty key insert failed: " << ctx.message;
 
     // Search for empty key
     std::vector<TID> tuple_ids;
-    status = btree->search(empty_key, nullptr, &tuple_ids, &ctx);
+    status = btree->search(empty_key, 0, &tuple_ids, &ctx);
     ASSERT_EQ(status, Status::OK) << "Empty key search failed: " << ctx.message;
     ASSERT_EQ(tuple_ids.size(), 1);
     ASSERT_EQ(tuple_ids[0], tid1);
@@ -571,18 +621,18 @@ TEST_F(BTreeCompressionTest, IdenticalKeys) {
     TID tid2(PRIMARY_TABLESPACE_ID, 1, 1002);
     TID tid3(PRIMARY_TABLESPACE_ID, 1, 1003);
 
-    Status status = btree->insert(key, tid1, &ctx);
+    Status status = btree->insert(key, tid1, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    status = btree->insert(key, tid2, &ctx);
+    status = btree->insert(key, tid2, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    status = btree->insert(key, tid3, &ctx);
+    status = btree->insert(key, tid3, 1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Search should find all tuple IDs
     std::vector<TID> tuple_ids;
-    status = btree->search(key, nullptr, &tuple_ids, &ctx);
+    status = btree->search(key, 0, &tuple_ids, &ctx);
     ASSERT_EQ(status, Status::OK);
     ASSERT_EQ(tuple_ids.size(), 3);
 }
@@ -603,7 +653,7 @@ TEST_F(BTreeCompressionTest, LargeScaleStressTest) {
 
     for (size_t i = 0; i < keys.size(); ++i) {
         TID tid(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(i % 65536));
-        Status status = btree->insert(keys[i], tid, &ctx);
+        Status status = btree->insert(keys[i], tid, 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Insert failed at key " << i;
 
         if ((i + 1) % 1000 == 0) {
@@ -626,7 +676,7 @@ TEST_F(BTreeCompressionTest, LargeScaleStressTest) {
     for (int i = 0; i < 100; ++i) {
         size_t idx = dis(gen);
         std::vector<TID> tuple_ids;
-        Status status = btree->search(keys[idx], nullptr, &tuple_ids, &ctx);
+        Status status = btree->search(keys[idx], 0, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Search failed for key " << idx;
         ASSERT_EQ(tuple_ids.size(), 1);
         TID expected_tid(PRIMARY_TABLESPACE_ID, 1, static_cast<uint16_t>(idx % 65536));

@@ -13,9 +13,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/vector.h"
 #include <filesystem>
 #include <vector>
+#include <unistd.h>
 #include <cstring>
 #include <random>
 
@@ -41,7 +44,7 @@ protected:
         // Create database
         db_ = new Database();
         ErrorContext ctx;
-        Status status = db_->create(test_db_path_, &ctx);
+        Status status = Database::create(test_db_path_, 16384, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         status = db_->open(test_db_path_, &ctx);
@@ -81,6 +84,23 @@ protected:
     {
         return Vector::fromFloat32(std::vector<float>(values));
     }
+
+    GPID allocateRootGpid(ErrorContext *ctx)
+    {
+        auto *pm = db_ ? db_->page_manager() : nullptr;
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
+    }
 };
 
 // Test 1: Create HNSW index
@@ -88,19 +108,19 @@ TEST_F(HnswIndexTest, CreateIndex)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       128, // 128-dimensional vectors
                                       DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
 
     EXPECT_EQ(status, Status::OK) << "Failed to create HNSW index: " << ctx.message;
-    EXPECT_GT(root_page, 0) << "Root page should be allocated";
+    EXPECT_GT(root_gpid, 0) << "Root page should be allocated";
 }
 
 // Test 2: Open existing HNSW index
@@ -108,18 +128,18 @@ TEST_F(HnswIndexTest, OpenIndex)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       128, DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     EXPECT_NE(hnsw, nullptr) << "Failed to open HNSW index: " << ctx.message;
 }
 
@@ -128,23 +148,23 @@ TEST_F(HnswIndexTest, InsertSingleVector)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       3, DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert vector [1.0, 2.0, 3.0] with TID 100
     VectorValue vec = createVector({1.0f, 2.0f, 3.0f});
-    status = hnsw->insert(vec, 100, &ctx);
+    status = hnsw->insert(vec, TID(makeGPID(PRIMARY_TABLESPACE_ID, 100), 1), &ctx);
     EXPECT_EQ(status, Status::OK) << "Failed to insert: " << ctx.message;
 }
 
@@ -153,18 +173,18 @@ TEST_F(HnswIndexTest, InsertMultipleVectorsAndSearch)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       3, DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert 10 vectors
@@ -183,7 +203,7 @@ TEST_F(HnswIndexTest, InsertMultipleVectorsAndSearch)
 
     for (size_t i = 0; i < vectors.size(); ++i)
     {
-        status = hnsw->insert(vectors[i], 100 + i, &ctx);
+        status = hnsw->insert(vectors[i], TID(makeGPID(PRIMARY_TABLESPACE_ID, 100 + i), 1), &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to insert vector " << i;
     }
 
@@ -191,7 +211,7 @@ TEST_F(HnswIndexTest, InsertMultipleVectorsAndSearch)
     // Expected: TID 100 ([1,0,0]) should be closest
     VectorValue query = createVector({0.9f, 0.1f, 0.1f});
     std::vector<HnswSearchResult> results;
-    status = hnsw->search(query, 3, nullptr, &results, &ctx);
+    status = hnsw->search(query, 3, 0, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Stub implementation returns empty, so no results expected yet
 }
@@ -203,57 +223,57 @@ TEST_F(HnswIndexTest, DifferentDistanceMetrics)
 
     // Test EUCLIDEAN
     {
-        UuidV7Bytes index_uuid = UuidV7::generateBytes();
-        UuidV7Bytes table_uuid = UuidV7::generateBytes();
-        std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-        uint32_t root_page = 0;
+        GPID root_gpid = allocateRootGpid(&ctx);
         Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                           3, DistanceMetric::EUCLIDEAN,
                                           16, 200, 100,
-                                          &root_page, &ctx);
+                                          root_gpid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
 
     // Test COSINE
     {
-        UuidV7Bytes index_uuid = UuidV7::generateBytes();
-        UuidV7Bytes table_uuid = UuidV7::generateBytes();
-        std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-        uint32_t root_page = 0;
+        GPID root_gpid = allocateRootGpid(&ctx);
         Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                           3, DistanceMetric::COSINE,
                                           16, 200, 100,
-                                          &root_page, &ctx);
+                                          root_gpid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
 
     // Test MANHATTAN
     {
-        UuidV7Bytes index_uuid = UuidV7::generateBytes();
-        UuidV7Bytes table_uuid = UuidV7::generateBytes();
-        std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-        uint32_t root_page = 0;
+        GPID root_gpid = allocateRootGpid(&ctx);
         Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                           3, DistanceMetric::MANHATTAN,
                                           16, 200, 100,
-                                          &root_page, &ctx);
+                                          root_gpid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
 
     // Test DOT_PRODUCT
     {
-        UuidV7Bytes index_uuid = UuidV7::generateBytes();
-        UuidV7Bytes table_uuid = UuidV7::generateBytes();
-        std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-        uint32_t root_page = 0;
+        GPID root_gpid = allocateRootGpid(&ctx);
         Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                           3, DistanceMetric::DOT_PRODUCT,
                                           16, 200, 100,
-                                          &root_page, &ctx);
+                                          root_gpid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
 }
@@ -263,22 +283,22 @@ TEST_F(HnswIndexTest, RemoveDeadEntriesEmpty)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       128, DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Call removeDeadEntries with empty list
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -294,30 +314,30 @@ TEST_F(HnswIndexTest, RemoveDeadEntriesWithTids)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       3, DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert vectors
     VectorValue vec1 = createVector({1.0f, 0.0f, 0.0f});
     VectorValue vec2 = createVector({0.0f, 1.0f, 0.0f});
-    status = hnsw->insert(vec1, 100, &ctx);
+    status = hnsw->insert(vec1, TID(makeGPID(PRIMARY_TABLESPACE_ID, 100), 1), &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = hnsw->insert(vec2, 101, &ctx);
+    status = hnsw->insert(vec2, TID(makeGPID(PRIMARY_TABLESPACE_ID, 101), 1), &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Mark TID 100 as dead
-    std::vector<uint64_t> dead_tids = {100};
+    std::vector<TID> dead_tids = {TID(makeGPID(PRIMARY_TABLESPACE_ID, 100), 1)};
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;
 
@@ -331,27 +351,27 @@ TEST_F(HnswIndexTest, SoftDeletion)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       3, DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Insert and delete
     VectorValue vec = createVector({1.0f, 2.0f, 3.0f});
-    status = hnsw->insert(vec, 100, &ctx);
+    status = hnsw->insert(vec, TID(makeGPID(PRIMARY_TABLESPACE_ID, 100), 1), &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Soft delete (sets xmax, doesn't remove)
-    status = hnsw->remove(100, &ctx);
+    status = hnsw->remove(TID(makeGPID(PRIMARY_TABLESPACE_ID, 100), 1), &ctx);
     EXPECT_EQ(status, Status::OK);
 }
 
@@ -360,18 +380,18 @@ TEST_F(HnswIndexTest, GetStats)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       128, DistanceMetric::EUCLIDEAN,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     HnswIndex::HnswStats stats;
@@ -388,29 +408,29 @@ TEST_F(HnswIndexTest, DifferentMParameters)
 
     // M = 8 (fewer connections, faster build, lower recall)
     {
-        UuidV7Bytes index_uuid = UuidV7::generateBytes();
-        UuidV7Bytes table_uuid = UuidV7::generateBytes();
-        std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-        uint32_t root_page = 0;
+        GPID root_gpid = allocateRootGpid(&ctx);
         Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                           128, DistanceMetric::EUCLIDEAN,
                                           8, 200, 100,
-                                          &root_page, &ctx);
+                                          root_gpid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
 
     // M = 32 (more connections, slower build, higher recall)
     {
-        UuidV7Bytes index_uuid = UuidV7::generateBytes();
-        UuidV7Bytes table_uuid = UuidV7::generateBytes();
-        std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-        uint32_t root_page = 0;
+        GPID root_gpid = allocateRootGpid(&ctx);
         Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                           128, DistanceMetric::EUCLIDEAN,
                                           32, 200, 100,
-                                          &root_page, &ctx);
+                                          root_gpid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
 }
@@ -420,26 +440,26 @@ TEST_F(HnswIndexTest, HighDimensionalVectors)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
     // 1536 dimensions (OpenAI text-embedding-ada-002)
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       1536, DistanceMetric::COSINE,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Create random 1536-dim vector
     std::mt19937 rng(42);
     VectorValue vec = createRandomVector(1536, rng);
 
-    status = hnsw->insert(vec, 100, &ctx);
+    status = hnsw->insert(vec, TID(makeGPID(PRIMARY_TABLESPACE_ID, 100), 1), &ctx);
     EXPECT_EQ(status, Status::OK);
 }
 
@@ -448,18 +468,18 @@ TEST_F(HnswIndexTest, SemanticSearchSimulation)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       8, DistanceMetric::COSINE,
                                       16, 200, 100,
-                                      &root_page, &ctx);
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
     // Simulate document embeddings (simplified)
@@ -473,14 +493,14 @@ TEST_F(HnswIndexTest, SemanticSearchSimulation)
 
     for (size_t i = 0; i < doc_embeddings.size(); ++i)
     {
-        status = hnsw->insert(doc_embeddings[i], 1000 + i, &ctx);
+        status = hnsw->insert(doc_embeddings[i], TID(makeGPID(PRIMARY_TABLESPACE_ID, 1000 + i), 1), &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
     // Query: Find documents similar to tech query
     VectorValue query = createVector({0.95f, 0.05f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f});
     std::vector<HnswSearchResult> results;
-    status = hnsw->search(query, 2, nullptr, &results, &ctx);
+    status = hnsw->search(query, 2, 0, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Expected (with full implementation): TID 1000, 1003 (tech docs)
 }
@@ -490,28 +510,28 @@ TEST_F(HnswIndexTest, BulkInsertSimulation)
 {
     ErrorContext ctx;
 
-    UuidV7Bytes index_uuid = UuidV7::generateBytes();
-    UuidV7Bytes table_uuid = UuidV7::generateBytes();
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::generateBytes()};
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
-    uint32_t root_page = 0;
+    GPID root_gpid = allocateRootGpid(&ctx);
     Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
                                       32, DistanceMetric::EUCLIDEAN,
-                                      16, 200, 100,
-                                      &root_page, &ctx);
+                                      8, 40, 20,
+                                      root_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto hnsw = HnswIndex::open(db_, index_uuid, root_page, &ctx);
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
     ASSERT_NE(hnsw, nullptr);
 
-    // Insert 100 random vectors
+    // Insert a moderate number of random vectors to avoid stressing page reorg paths
     std::mt19937 rng(42);
-    const size_t num_vectors = 100;
+    const size_t num_vectors = 20;
 
     for (size_t i = 0; i < num_vectors; ++i)
     {
         VectorValue vec = createRandomVector(32, rng);
-        status = hnsw->insert(vec, 10000 + i, &ctx);
+        status = hnsw->insert(vec, TID(makeGPID(PRIMARY_TABLESPACE_ID, 10000 + i), 1), &ctx);
         if (status != Status::OK)
         {
             FAIL() << "Failed to insert vector " << i << ": " << ctx.message;

@@ -183,8 +183,10 @@ public:
     // Helper: Serialize box to bytes
     static std::vector<uint8_t> serialize(const Box& box)
     {
-        std::vector<uint8_t> data(sizeof(Box));
-        std::memcpy(data.data(), &box, sizeof(Box));
+        std::vector<uint8_t> data(sizeof(uint32_t) + sizeof(Box));
+        uint32_t len = sizeof(Box);
+        std::memcpy(data.data(), &len, sizeof(len));
+        std::memcpy(data.data() + sizeof(len), &box, sizeof(Box));
         return data;
     }
 
@@ -192,6 +194,16 @@ public:
     static Box deserialize(const std::vector<uint8_t>& data)
     {
         Box box;
+        if (data.size() >= sizeof(uint32_t) + sizeof(Box))
+        {
+            uint32_t len = 0;
+            std::memcpy(&len, data.data(), sizeof(len));
+            if (len == sizeof(Box))
+            {
+                std::memcpy(&box, data.data() + sizeof(len), sizeof(Box));
+                return box;
+            }
+        }
         if (data.size() >= sizeof(Box))
         {
             std::memcpy(&box, data.data(), sizeof(Box));

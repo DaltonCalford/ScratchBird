@@ -29,7 +29,7 @@ namespace scratchbird::core
         /* AS */ {0, 0, 0, 0, 0, 0, 0, 1},
         /* RS */ {0, 0, 0, 0, 0, 0, 1, 1},
         /* RE */ {0, 0, 0, 0, 1, 1, 1, 1},
-        /* SUE*/ {0, 0, 0, 0, 1, 1, 1, 1},
+        /* SUE*/ {0, 0, 0, 1, 1, 1, 1, 1},
         /* S  */ {0, 0, 1, 1, 0, 1, 1, 1},
         /* SRE*/ {0, 0, 1, 1, 1, 1, 1, 1},
         /* E  */ {0, 1, 1, 1, 1, 1, 1, 1},
@@ -433,11 +433,6 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // HIGH-2 FIX: Acquire lock before deadlock detection
-        // DeadlockDetector needs to access lock_table_ and proc_locks_,
-        // which require lock_table_mutex_ to be held for thread safety.
-        std::lock_guard<std::mutex> lock(lock_table_mutex_);
-
         // OPTIMIZATION NOTE: When deadlock detection is fully implemented,
         // read-only transactions can be excluded from deadlock detection
         // since they only acquire SHARE locks and cannot create write-write
@@ -446,7 +441,6 @@ namespace scratchbird::core
         // Future implementation:
         //   - Skip adding read-only transactions to wait-for graph
         //   - Filter out read-only waiters/holders in buildWaitGraph()
-
         return deadlock_detector_->detectDeadlocks(ctx);
     }
 
@@ -586,17 +580,28 @@ namespace scratchbird::core
 
     auto DeadlockDetector::detectDeadlocks(ErrorContext *ctx) -> Status
     {
-        wait_graph_.clear();
-        buildWaitGraph();
+        std::vector<uint32_t> victims;
+        {
+            std::lock_guard<std::mutex> lock(lock_mgr_->lock_table_mutex_);
+            wait_graph_.clear();
+            buildWaitGraph();
+            auto cycles = findAllCycles();
 
-        auto cycles = findAllCycles();
+            if (!cycles.empty())
+            {
+                victims.reserve(cycles.size());
+                for (const auto &cycle : cycles)
+                {
+                    victims.push_back(selectVictim(cycle));
+                }
+            }
+        }
 
-        if (!cycles.empty())
+        if (!victims.empty())
         {
             // Deadlock detected! Abort one transaction from each cycle
-            for (const auto &cycle : cycles)
+            for (uint32_t victim : victims)
             {
-                uint32_t victim = selectVictim(cycle);
                 Status status = abortTransaction(victim, ctx);
                 if (status != Status::OK)
                 {
@@ -650,7 +655,7 @@ namespace scratchbird::core
         //
         // HIGH-2 FIX: CRITICAL - Caller MUST hold lock_mgr_->lock_table_mutex_
         // This method accesses lock_table_ and proc_locks_, which are protected
-        // by lock_table_mutex_. The mutex is acquired in LockManager::detectDeadlocks()
+        // by lock_table_mutex_. The mutex is acquired in DeadlockDetector::detectDeadlocks()
         // before calling this method.
 
         wait_graph_.clear();

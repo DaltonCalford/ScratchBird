@@ -776,6 +776,144 @@ and `docs/planning/SBLR_TYPE_OPCODE_REMEDIATION_PLAN.md`.
 
 ---
 
+## Bytecode Emission Rules (Alpha-Required, No Ambiguity)
+
+This section defines exact bytecode emission rules for remaining PostgreSQL
+parity gaps. It is **authoritative** for implementation and must be kept in
+sync with `include/scratchbird/sblr/opcodes.h` and
+`src/sblr/bytecode_generator_v2.cpp`.
+
+### JSONPATH
+
+**Emission rule (WHERE/expr context):**
+- Emit `EXT_FUNC_JSON_EXISTS` (extended opcode `0x0324`) with 2 arguments:
+  1. JSON expression bytecode
+  2. JSONPATH literal as `LITERAL_STRING` (UTF-8, raw path text)
+- Any JSONPATH-specific functions must normalize to this opcode and argument order.
+
+### Array Domains
+
+**Emission rule:**
+- When a domain is used as an array element type, emit:
+  - `TYPE_ARRAY` (0xB9)
+  - `TYPE_DOMAIN` (0xB8) + domain_id payload (as used elsewhere)
+  - `array_dimensions` (u32, 0 if unspecified)
+
+### Table-Level CHECK Constraints
+
+**CREATE TABLE:**
+- Emit `CHECK_CONSTRAINT` (0x92) followed by the check expression bytecode.
+
+**ALTER TABLE ADD CONSTRAINT CHECK:**
+- `ALTER_TABLE` opcode (0x21)
+- qualified table name
+- action byte `3` (ADD_CONSTRAINT)
+- constraint type byte `3` (CHECK)
+- constraint name string (empty if none)
+- expression bytecode length (u32) + bytes
+
+### CREATE DOMAIN Base Type Support
+
+**Emission rule:**
+- Emit `EXT_CREATE_DOMAIN` (0x5C) using the payload format defined in
+  `docs/specifications/sblr/SBLR_DOMAIN_PAYLOADS.md` and
+  `src/sblr/bytecode_generator_v2.cpp`:
+  - `domain_kind = BASIC`
+  - `base_type = ResolvedType` (precision/scale/length included)
+  - `nullable/default/constraints` as parsed
+
+### ALTER TABLE DROP CONSTRAINT
+
+**Emission rule:**
+- `ALTER_TABLE` opcode
+- qualified table name
+- action byte `4` (DROP_CONSTRAINT)
+- constraint name
+- cascade flag (u8, 1 if CASCADE else 0)
+
+### ALTER TABLE ALTER COLUMN SET/DROP DEFAULT, SET/DROP NOT NULL
+
+**New action byte values (authoritative):**
+- 15 = `ALTER_COLUMN_SET_DEFAULT`
+- 16 = `ALTER_COLUMN_DROP_DEFAULT`
+- 17 = `ALTER_COLUMN_SET_NOT_NULL`
+- 18 = `ALTER_COLUMN_DROP_NOT_NULL`
+- 19 = `ALTER_COLUMN_USING` (see below)
+
+**Payload formats:**
+- **SET DEFAULT**:
+  - `ALTER_TABLE` opcode
+  - qualified table name
+  - action byte `15`
+  - column name (string id)
+  - expression bytecode length (u32) + bytes
+- **DROP DEFAULT**:
+  - `ALTER_TABLE` opcode
+  - qualified table name
+  - action byte `16`
+  - column name
+- **SET NOT NULL**:
+  - `ALTER_TABLE` opcode
+  - qualified table name
+  - action byte `17`
+  - column name
+- **DROP NOT NULL**:
+  - `ALTER_TABLE` opcode
+  - qualified table name
+  - action byte `18`
+  - column name
+
+### ALTER TABLE ALTER COLUMN ... USING
+
+**Emission rule:**
+- `ALTER_TABLE` opcode
+- qualified table name
+- action byte `19` (ALTER_COLUMN_USING)
+- column name
+- target type marker (u16 DataType enum)
+- precision (u32) and scale (u32)
+- USING expression bytecode length (u32) + bytes
+
+### TRUNCATE Options
+
+**Emission rule update (authoritative):**
+- `TRUNCATE_TABLE` opcode payload becomes:
+  - table path string
+  - `mode` byte (0=ASYNC, 1=SYNC)
+  - `flags` byte:
+    - bit0 = RESTART IDENTITY
+    - bit1 = CASCADE
+
+### JOIN USING
+
+**Emission rule:**
+- `JOIN_CONDITION` opcode followed by an `EXPR_AND` chain of `EXPR_EQ` pairs:
+  - `EXPR_EQ (COLUMN_REF left.col_i, COLUMN_REF right.col_i)` for each USING column.
+- For `SELECT *`, expand output:
+  - For each USING column, emit `COALESCE(left.col_i, right.col_i)` via opcode `COALESCE` (0xF8).
+  - Emit remaining non-USING columns from left then right.
+
+### DEFAULT in Multi-Row INSERT
+
+**Emission rule:**
+- In each row value list, token `DEFAULT` emits opcode `DEFAULT_VALUE` (0x91)
+  with no payload.
+- Executor replaces `DEFAULT_VALUE` with column default for that column.
+
+### MERGE USING Subqueries
+
+**Emission rule:**
+- Emit:
+  1. `EXT_MERGE_START` (0x4F)
+  2. `EXT_MERGE_SOURCE` (0x50)
+     - `source_kind` byte: 0=table, 1=subquery
+     - If table: qualified table name string
+     - If subquery: `subquery_len` (u32) + subquery bytecode bytes
+     - Source alias string (empty if none)
+  3. `EXT_MERGE_ON` (0x51) + predicate bytecode
+  4. `EXT_MERGE_WHEN_MATCHED` / `EXT_MERGE_WHEN_NOT_MATCHED` payloads per clause
+  5. `EXT_MERGE_END` (0x55)
+
 **End of Specification**
 **Status:** ACTIVE - Critical Fixes Required for Alpha
 **Next Steps:** Fix ARRAY type bug and bytecode format mismatches immediately

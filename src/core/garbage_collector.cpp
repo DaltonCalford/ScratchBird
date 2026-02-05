@@ -45,6 +45,51 @@ namespace scratchbird::core
 {
     namespace
     {
+        bool parseUuidFromString(const std::string& text, ID& out)
+        {
+            // Expect canonical UUID with dashes; tolerate missing dashes.
+            std::string hex;
+            hex.reserve(32);
+            for (char c : text)
+            {
+                if (c == '-')
+                {
+                    continue;
+                }
+                if ((c >= '0' && c <= '9') ||
+                    (c >= 'a' && c <= 'f') ||
+                    (c >= 'A' && c <= 'F'))
+                {
+                    hex.push_back(c);
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            if (hex.size() != 32)
+            {
+                return false;
+            }
+
+            auto hexToNibble = [](char c) -> uint8_t {
+                if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+                if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(10 + (c - 'a'));
+                return static_cast<uint8_t>(10 + (c - 'A'));
+            };
+
+            for (size_t i = 0; i < 16; ++i)
+            {
+                uint8_t hi = hexToNibble(hex[i * 2]);
+                uint8_t lo = hexToNibble(hex[i * 2 + 1]);
+                out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+            }
+            return true;
+        }
+    } // namespace
+    namespace
+    {
         bool isZeroId(const ID &id)
         {
             for (uint8_t byte : id.bytes)
@@ -1171,6 +1216,31 @@ namespace scratchbird::core
 
         if (!found_parent)
         {
+            // Fallback: parse parent UUID from TOAST table name (sb_toast_<uuid>)
+            CatalogManager::TableInfo toast_info;
+            Status toast_status = catalog->getTable(toast_table_id, toast_info, ctx);
+            if (toast_status == Status::OK)
+            {
+                static const std::string kPrefix = "sb_toast_";
+                if (toast_info.table_name.rfind(kPrefix, 0) == 0)
+                {
+                    std::string uuid_text = toast_info.table_name.substr(kPrefix.size());
+                    ID parsed_parent{};
+                    if (parseUuidFromString(uuid_text, parsed_parent))
+                    {
+                        CatalogManager::TableInfo parent_info;
+                        if (catalog->getTable(parsed_parent, parent_info, ctx) == Status::OK)
+                        {
+                            parent_table_id = parsed_parent;
+                            found_parent = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!found_parent)
+        {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Parent table not found for TOAST table");
             return Status::NOT_FOUND;
         }
@@ -1339,7 +1409,7 @@ namespace scratchbird::core
         // Step 2: Scan TOAST table for all value IDs
         std::unordered_set<uint32_t> toast_value_ids;
 
-        auto toast_scan = storage->createScan(toast_table_id, ctx);
+        auto toast_scan = storage->createScanAll(toast_table_id, ctx);
         if (!toast_scan)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to create TOAST scan iterator");
@@ -1415,7 +1485,7 @@ namespace scratchbird::core
         }
 
         // Scan TOAST table and delete chunks with matching value_ids
-        auto toast_scan = storage->createScan(toast_table_id, ctx);
+        auto toast_scan = storage->createScanAll(toast_table_id, ctx);
         if (!toast_scan)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to create TOAST scan iterator");
@@ -1450,22 +1520,35 @@ namespace scratchbird::core
             }
         }
 
+        auto forceDeleteChunk = [&](const TID& tid) -> Status {
+            void* page_buffer = nullptr;
+            Status pin_status = db_->buffer_pool()->pinPageGlobal(
+                tid.gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            auto* page_data = static_cast<uint8_t*>(page_buffer);
+            HeapPage heap_page(page_data, db_->page_size());
+            Status delete_status = heap_page.deleteTuple(tid.slot, UINT64_MAX, ctx);
+
+            db_->buffer_pool()->unpinPageGlobal(tid.gpid, delete_status == Status::OK, ctx);
+            return delete_status;
+        };
+
         // Delete the chunks
         for (const auto& tid : chunks_to_delete)
         {
-            uint32_t page_id = getPageNumber(tid);
-            uint16_t item_id = tid.slot;
-
-            Status delete_status = storage->deleteTuple(toast_table_id, page_id, item_id,
-                                                       UINT16_MAX, ctx);
+            Status delete_status = forceDeleteChunk(tid);
             if (delete_status == Status::OK)
             {
                 (*chunks_deleted)++;
             }
             else
             {
-                LOG_WARNING(VACUUM, "Failed to delete orphaned TOAST chunk: page=%u, item=%u",
-                           page_id, item_id);
+                LOG_WARNING(VACUUM, "Failed to delete orphaned TOAST chunk: gpid=%lu, item=%u",
+                           static_cast<unsigned long>(tid.gpid), tid.slot);
             }
         }
 
@@ -1508,7 +1591,7 @@ namespace scratchbird::core
         }
 
         // Scan TOAST table
-        auto toast_scan = storage->createScan(toast_table_id, ctx);
+        auto toast_scan = storage->createScanAll(toast_table_id, ctx);
         if (!toast_scan)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to create TOAST scan iterator");
@@ -1559,22 +1642,35 @@ namespace scratchbird::core
             }
         }
 
+        auto forceDeleteChunk = [&](const TID& tid) -> Status {
+            void* page_buffer = nullptr;
+            Status pin_status = db_->buffer_pool()->pinPageGlobal(
+                tid.gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            auto* page_data = static_cast<uint8_t*>(page_buffer);
+            HeapPage heap_page(page_data, db_->page_size());
+            Status delete_status = heap_page.deleteTuple(tid.slot, UINT64_MAX, ctx);
+
+            db_->buffer_pool()->unpinPageGlobal(tid.gpid, delete_status == Status::OK, ctx);
+            return delete_status;
+        };
+
         // Physically delete chunks with committed xmax
         for (const auto& tid : chunks_to_delete)
         {
-            uint32_t page_id = getPageNumber(tid);
-            uint16_t item_id = tid.slot;
-
-            Status delete_status = storage->deleteTuple(toast_table_id, page_id, item_id,
-                                                       UINT16_MAX, ctx);
+            Status delete_status = forceDeleteChunk(tid);
             if (delete_status == Status::OK)
             {
                 (*chunks_deleted)++;
             }
             else
             {
-                LOG_WARNING(VACUUM, "Failed to delete TOAST chunk with committed xmax: page=%u, item=%u",
-                           page_id, item_id);
+                LOG_WARNING(VACUUM, "Failed to delete TOAST chunk with committed xmax: gpid=%lu, item=%u",
+                           static_cast<unsigned long>(tid.gpid), tid.slot);
             }
         }
 

@@ -6767,6 +6767,62 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
             resolved->column_name = col_name;
             return resolved;
         }
+        case AlterTableAction::ALTER_COLUMN_SET_DEFAULT: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN SET DEFAULT requires a column name");
+                return nullptr;
+            }
+            if (!stmt->default_expr) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN SET DEFAULT requires an expression");
+                return nullptr;
+            }
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(stmt->column_name)),
+                                   existing, &err_ctx) != Status::OK) {
+                error(stmt->span, "Column not found: " + std::string(getString(stmt->column_name)));
+                return nullptr;
+            }
+            resolved->column_name = stmt->column_name;
+            resolved->default_expr = analyzeExpression(stmt->default_expr);
+            resolved->has_default_expr = (resolved->default_expr != nullptr);
+            return resolved;
+        }
+        case AlterTableAction::ALTER_COLUMN_DROP_DEFAULT:
+        case AlterTableAction::ALTER_COLUMN_SET_NOT_NULL:
+        case AlterTableAction::ALTER_COLUMN_DROP_NOT_NULL: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN requires a column name");
+                return nullptr;
+            }
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(stmt->column_name)),
+                                   existing, &err_ctx) != Status::OK) {
+                error(stmt->span, "Column not found: " + std::string(getString(stmt->column_name)));
+                return nullptr;
+            }
+            resolved->column_name = stmt->column_name;
+            return resolved;
+        }
+        case AlterTableAction::ALTER_COLUMN_POSITION: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN POSITION requires a column name");
+                return nullptr;
+            }
+            if (!stmt->has_position || stmt->position_1_based <= 0) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN POSITION requires a positive position");
+                return nullptr;
+            }
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(stmt->column_name)),
+                                   existing, &err_ctx) != Status::OK) {
+                error(stmt->span, "Column not found: " + std::string(getString(stmt->column_name)));
+                return nullptr;
+            }
+            resolved->column_name = stmt->column_name;
+            resolved->position_1_based = stmt->position_1_based;
+            resolved->has_position = true;
+            return resolved;
+        }
         case AlterTableAction::SET_TABLESPACE: {
             if (stmt->tablespace.components.empty()) {
                 error(stmt->span, "ALTER TABLE SET TABLESPACE requires a tablespace name");
@@ -7305,6 +7361,25 @@ ResolvedSelectStmt* SemanticAnalyzerV2::analyzeSelect(SelectStmt* stmt) {
     if (!stmt) {
         return nullptr;
     }
+
+    struct AggregateScopeGuard {
+        SemanticAnalyzerV2* analyzer;
+        bool previous_has_aggregates;
+        bool previous_in_aggregate;
+        explicit AggregateScopeGuard(SemanticAnalyzerV2* analyzer_in)
+            : analyzer(analyzer_in),
+              previous_has_aggregates(analyzer_in->has_aggregates_),
+              previous_in_aggregate(analyzer_in->in_aggregate_) {
+            analyzer->has_aggregates_ = false;
+            analyzer->in_aggregate_ = false;
+        }
+        ~AggregateScopeGuard() {
+            analyzer->has_aggregates_ = previous_has_aggregates;
+            analyzer->in_aggregate_ = previous_in_aggregate;
+        }
+    };
+
+    AggregateScopeGuard aggregate_guard(this);
 
     auto* resolved = arena_.create<ResolvedSelectStmt>();
     resolved->span = stmt->span;

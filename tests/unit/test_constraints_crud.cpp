@@ -12,6 +12,10 @@
 #include "scratchbird/core/status.h"
 
 using namespace scratchbird::core;
+using ConstraintType = CatalogManager::ConstraintType;
+using ConstraintInfo = CatalogManager::ConstraintInfo;
+using FKAction = CatalogManager::FKAction;
+using FKMatchType = CatalogManager::FKMatchType;
 
 class ConstraintsCRUDTest : public ::testing::Test {
 protected:

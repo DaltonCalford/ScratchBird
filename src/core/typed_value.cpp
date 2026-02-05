@@ -1069,6 +1069,211 @@ namespace scratchbird::core
             return true;
         }
 
+        std::string formatInterval(const Interval &interval)
+        {
+            std::ostringstream oss;
+            bool has_output = false;
+
+            if (interval.months != 0)
+            {
+                int32_t years = interval.months / 12;
+                int32_t months = interval.months % 12;
+
+                if (years != 0)
+                {
+                    oss << years << (years == 1 ? " year" : " years");
+                    has_output = true;
+                }
+                if (months != 0)
+                {
+                    if (has_output)
+                    {
+                        oss << " ";
+                    }
+                    oss << months << (months == 1 ? " mon" : " mons");
+                    has_output = true;
+                }
+            }
+
+            if (interval.days != 0)
+            {
+                if (has_output)
+                {
+                    oss << " ";
+                }
+                oss << interval.days << (interval.days == 1 ? " day" : " days");
+                has_output = true;
+            }
+
+            if (interval.microseconds != 0 || !has_output)
+            {
+                int64_t total_seconds = interval.microseconds / 1000000;
+                int64_t us = interval.microseconds % 1000000;
+
+                bool negative = total_seconds < 0 || (total_seconds == 0 && us < 0);
+                if (negative)
+                {
+                    total_seconds = -total_seconds;
+                    us = -us;
+                }
+
+                int64_t hours = total_seconds / 3600;
+                int64_t minutes = (total_seconds % 3600) / 60;
+                int64_t seconds = total_seconds % 60;
+
+                if (has_output)
+                {
+                    oss << " ";
+                }
+                if (negative)
+                {
+                    oss << "-";
+                }
+                oss << std::setfill('0') << std::setw(2) << hours << ":"
+                    << std::setw(2) << minutes << ":"
+                    << std::setw(2) << seconds;
+
+                if (us != 0)
+                {
+                    oss << "." << std::setw(6) << (us < 0 ? -us : us);
+                }
+            }
+
+            return oss.str();
+        }
+
+        std::optional<Interval> parseIntervalString(const std::string &text, ErrorContext *ctx)
+        {
+            std::string input = trimAscii(text);
+            if (input.empty())
+            {
+                return Interval();
+            }
+
+            const std::string prefix = "interval";
+            if (input.size() >= prefix.size())
+            {
+                std::string lower = input.substr(0, prefix.size());
+                std::transform(lower.begin(), lower.end(), lower.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (lower == prefix)
+                {
+                    input = trimAscii(input.substr(prefix.size()));
+                    if (input.empty())
+                    {
+                        return Interval();
+                    }
+
+                    std::istringstream iss(input);
+                    int32_t months = 0;
+                    int32_t days = 0;
+                    int64_t micros = 0;
+                    if ((iss >> months >> days >> micros) && iss.eof())
+                    {
+                        return Interval(months, days, micros);
+                    }
+                }
+            }
+
+            Interval result;
+            result.months = 0;
+            result.days = 0;
+            result.microseconds = 0;
+
+            std::istringstream iss(input);
+            std::string token;
+            while (iss >> token)
+            {
+                if (token.find(':') != std::string::npos)
+                {
+                    bool negative = false;
+                    std::string time_str = token;
+                    if (!time_str.empty() && time_str[0] == '-')
+                    {
+                        negative = true;
+                        time_str = time_str.substr(1);
+                    }
+
+                    int hour = 0;
+                    int minute = 0;
+                    int second = 0;
+                    int micros = 0;
+                    if (!parseTimeParts(time_str, hour, minute, second, micros, ctx))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                          ("Invalid interval time format: " + token).c_str());
+                        return std::nullopt;
+                    }
+
+                    int64_t total_microseconds =
+                        (static_cast<int64_t>(hour) * 3600 +
+                         static_cast<int64_t>(minute) * 60 +
+                         static_cast<int64_t>(second)) * 1000000 +
+                        micros;
+                    if (negative)
+                    {
+                        total_microseconds = -total_microseconds;
+                    }
+                    result.microseconds += total_microseconds;
+                    continue;
+                }
+
+                char *endptr = nullptr;
+                int64_t value = std::strtoll(token.c_str(), &endptr, 10);
+                if (endptr == token.c_str() || *endptr != '\0')
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      ("Invalid interval token: " + token).c_str());
+                    return std::nullopt;
+                }
+
+                std::string unit;
+                if (!(iss >> unit))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Interval value missing unit");
+                    return std::nullopt;
+                }
+
+                if (unit == "year" || unit == "years")
+                {
+                    result.months += static_cast<int32_t>(value * 12);
+                }
+                else if (unit == "mon" || unit == "mons" || unit == "month" || unit == "months")
+                {
+                    result.months += static_cast<int32_t>(value);
+                }
+                else if (unit == "day" || unit == "days")
+                {
+                    result.days += static_cast<int32_t>(value);
+                }
+                else if (unit == "hour" || unit == "hours")
+                {
+                    result.microseconds += value * 3600LL * 1000000LL;
+                }
+                else if (unit == "minute" || unit == "minutes")
+                {
+                    result.microseconds += value * 60LL * 1000000LL;
+                }
+                else if (unit == "second" || unit == "seconds")
+                {
+                    result.microseconds += value * 1000000LL;
+                }
+                else if (unit == "microsecond" || unit == "microseconds")
+                {
+                    result.microseconds += value;
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      ("Invalid interval unit: " + unit).c_str());
+                    return std::nullopt;
+                }
+            }
+
+            return result;
+        }
+
         int64_t defaultDateTimeMicros()
         {
             Config &cfg = Config::getInstance();
@@ -3221,9 +3426,7 @@ namespace scratchbird::core
             case DataType::INTERVAL:
                 if (complex_data_ && complex_data_->interval) {
                     const auto& interval = *complex_data_->interval;
-                    return "interval " + std::to_string(interval.months) + " " +
-                        std::to_string(interval.days) + " " +
-                        std::to_string(interval.microseconds);
+                    return "interval " + formatInterval(interval);
                 }
                 return "<empty interval>";
             case DataType::ARRAY:
@@ -6728,6 +6931,33 @@ namespace scratchbird::core
                 result_out = TypedValue(DataType::MONEY);
                 result_out.is_null_ = false;
                 result_out.data_.int64_val = static_cast<int64_t>(money.unscaledValue());
+                return Status::OK;
+            }
+            case DataType::INTERVAL:
+            {
+                if (type_ == DataType::INTERVAL)
+                {
+                    result_out = *this;
+                    return Status::OK;
+                }
+                if (!isStringLike(type_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Interval cast expects string input");
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
+                }
+
+                std::string input = stringValueForParse();
+                auto parsed = parseIntervalString(input, ctx);
+                if (!parsed)
+                {
+                    Status code = (ctx && ctx->code != Status::OK)
+                                      ? ctx->code
+                                      : Status::INVALID_TEXT_REPRESENTATION;
+                    return wrapStatus(code);
+                }
+
+                result_out = makeInterval(*parsed);
                 return Status::OK;
             }
             case DataType::DATE:

@@ -69,6 +69,30 @@ protected:
         return data;
     }
 
+    std::vector<uint8_t> buildTuple(const std::vector<uint8_t>& payload, uint64_t xmin)
+    {
+        TupleHeader header{};
+        header.xmin = xmin;
+        header.xmax = 0;
+        header.back_version_gpid = INVALID_GPID;
+        header.back_version_slot = 0;
+        header.reserved1 = 0;
+        header.ctid_gpid = INVALID_GPID;
+        header.ctid_slot = 0;
+        header.infomask = 0;
+        header.null_bitmap_offset = 0;
+        header.padding = 0;
+        header.session_id = ID{};
+
+        std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload.size());
+        std::memcpy(tuple.data(), &header, sizeof(TupleHeader));
+        if (!payload.empty())
+        {
+            std::memcpy(tuple.data() + sizeof(TupleHeader), payload.data(), payload.size());
+        }
+        return tuple;
+    }
+
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
     std::unique_ptr<Database> db_;
 };
@@ -101,10 +125,11 @@ TEST_F(StorageBoundariesTest, MaxTupleSize8K)
                            - special_size - tuple_header_size - 64; // Safety margin
 
     auto max_data = generatePattern(max_data_size, 0xAB);
+    auto max_tuple = buildTuple(max_data, 100);
     uint16_t item_id;
 
-    Status status = page.insertTuple(max_data.data(),
-                                      max_data.size() + tuple_header_size,
+    Status status = page.insertTuple(max_tuple.data(),
+                                      max_tuple.size(),
                                       100, &item_id, &ctx);
 
     EXPECT_EQ(status, Status::OK)
@@ -138,10 +163,11 @@ TEST_F(StorageBoundariesTest, MaxTupleSize16K)
     size_t max_data_size = PAGE_SIZE - 256; // Conservative estimate
 
     auto max_data = generatePattern(max_data_size, 0xCD);
+    auto max_tuple = buildTuple(max_data, 100);
     uint16_t item_id;
 
-    Status status = page.insertTuple(max_data.data(),
-                                      max_data.size() + sizeof(TupleHeader),
+    Status status = page.insertTuple(max_tuple.data(),
+                                      max_tuple.size(),
                                       100, &item_id, &ctx);
 
     EXPECT_EQ(status, Status::OK)
@@ -168,10 +194,11 @@ TEST_F(StorageBoundariesTest, MaxTupleSize32K)
     size_t max_data_size = PAGE_SIZE - 512; // Conservative estimate
 
     auto max_data = generatePattern(max_data_size, 0xEF);
+    auto max_tuple = buildTuple(max_data, 100);
     uint16_t item_id;
 
-    Status status = page.insertTuple(max_data.data(),
-                                      max_data.size() + sizeof(TupleHeader),
+    Status status = page.insertTuple(max_tuple.data(),
+                                      max_tuple.size(),
                                       100, &item_id, &ctx);
 
     EXPECT_EQ(status, Status::OK)
@@ -197,10 +224,11 @@ TEST_F(StorageBoundariesTest, TupleTooLarge)
     // Try to insert tuple larger than entire page
     size_t oversized = PAGE_SIZE + 1000;
     auto oversized_data = generatePattern(oversized, 0xFF);
+    auto oversized_tuple = buildTuple(oversized_data, 100);
     uint16_t item_id;
 
-    Status status = page.insertTuple(oversized_data.data(),
-                                      oversized_data.size() + sizeof(TupleHeader),
+    Status status = page.insertTuple(oversized_tuple.data(),
+                                      oversized_tuple.size(),
                                       100, &item_id, &ctx);
 
     EXPECT_NE(status, Status::OK)
@@ -229,10 +257,11 @@ TEST_F(StorageBoundariesTest, PageCapacityMultipleTuples)
     // Keep inserting until page is full
     for (int i = 0; i < 100; i++) {
         auto data = generatePattern(TUPLE_SIZE, static_cast<uint8_t>(i));
+        auto tuple = buildTuple(data, 100 + i);
         uint16_t item_id;
 
-        Status status = page.insertTuple(data.data(),
-                                         data.size() + sizeof(TupleHeader),
+        Status status = page.insertTuple(tuple.data(),
+                                         tuple.size(),
                                          100 + i, &item_id, &ctx);
 
         if (status == Status::OK) {
@@ -275,10 +304,11 @@ TEST_F(StorageBoundariesTest, ZeroLengthTuple)
     ASSERT_EQ(page.initialize(1, &ctx), Status::OK);
 
     // Insert tuple with just TupleHeader, no data
-    std::vector<uint8_t> empty(sizeof(TupleHeader), 0);
+    std::vector<uint8_t> empty_payload;
+    auto empty = buildTuple(empty_payload, 100);
     uint16_t item_id;
 
-    Status status = page.insertTuple(empty.data(), sizeof(TupleHeader),
+    Status status = page.insertTuple(empty.data(), static_cast<uint32_t>(empty.size()),
                                       100, &item_id, &ctx);
 
     EXPECT_EQ(status, Status::OK)
@@ -308,11 +338,12 @@ TEST_F(StorageBoundariesTest, SingleByteTuple)
     HeapPage page(page_buffer.data(), PAGE_SIZE);
     ASSERT_EQ(page.initialize(1, &ctx), Status::OK);
 
-    std::vector<uint8_t> one_byte = {0x42};
+    std::vector<uint8_t> one_byte_payload = {0x42};
+    auto one_byte = buildTuple(one_byte_payload, 100);
     uint16_t item_id;
 
     Status status = page.insertTuple(one_byte.data(),
-                                      one_byte.size() + sizeof(TupleHeader),
+                                      one_byte.size(),
                                       100, &item_id, &ctx);
 
     EXPECT_EQ(status, Status::OK)
@@ -348,24 +379,26 @@ TEST_F(StorageBoundariesTest, PageFragmentation)
     // Insert 10 tuples
     for (int i = 0; i < 10; i++) {
         auto data = generatePattern(TUPLE_SIZE, static_cast<uint8_t>(i));
+        auto tuple = buildTuple(data, 100 + i);
         uint16_t item_id;
 
-        ASSERT_EQ(page.insertTuple(data.data(), data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(page.insertTuple(tuple.data(), tuple.size(),
                                     100 + i, &item_id, &ctx), Status::OK);
         item_ids.push_back(item_id);
     }
 
     // Delete every other tuple
     for (size_t i = 0; i < item_ids.size(); i += 2) {
-        EXPECT_EQ(page.deleteTuple(item_ids[i], 200 + i, &ctx), Status::OK);
+        EXPECT_EQ(page.deleteTuple(item_ids[i], UINT64_MAX, &ctx), Status::OK);
     }
 
     // Try to insert new tuple - should reuse freed space
     auto new_data = generatePattern(TUPLE_SIZE, 0xAB);
+    auto new_tuple = buildTuple(new_data, 300);
     uint16_t new_item_id;
 
-    Status status = page.insertTuple(new_data.data(),
-                                      new_data.size() + sizeof(TupleHeader),
+    Status status = page.insertTuple(new_tuple.data(),
+                                      new_tuple.size(),
                                       300, &new_item_id, &ctx);
 
     EXPECT_EQ(status, Status::OK)
@@ -394,10 +427,11 @@ TEST_F(StorageBoundariesTest, ItemPointerArrayGrowth)
 
     for (int i = 0; i < 100; i++) {
         auto data = generatePattern(SMALL_TUPLE_SIZE, static_cast<uint8_t>(i));
+        auto tuple = buildTuple(data, 100 + i);
         uint16_t item_id;
 
-        Status status = page.insertTuple(data.data(),
-                                         data.size() + sizeof(TupleHeader),
+        Status status = page.insertTuple(tuple.data(),
+                                         tuple.size(),
                                          100 + i, &item_id, &ctx);
 
         if (status == Status::OK) {
@@ -433,10 +467,11 @@ TEST_F(StorageBoundariesTest, TupleAlignment)
 
     for (size_t size : sizes) {
         auto data = generatePattern(size, 0xAA);
+        auto tuple = buildTuple(data, 100);
         uint16_t item_id;
 
-        Status status = page.insertTuple(data.data(),
-                                         data.size() + sizeof(TupleHeader),
+        Status status = page.insertTuple(tuple.data(),
+                                         tuple.size(),
                                          100, &item_id, &ctx);
 
         if (status == Status::OK) {

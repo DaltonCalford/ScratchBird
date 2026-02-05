@@ -42,8 +42,10 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
-#include "scratchbird/core/index_factory.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/proc_array.h"
 #include "test_helpers.h"
 
@@ -168,8 +170,10 @@ public:
     // Helper: Serialize box to bytes
     static std::vector<uint8_t> serialize(const Box& box)
     {
-        std::vector<uint8_t> data(sizeof(Box));
-        std::memcpy(data.data(), &box, sizeof(Box));
+        std::vector<uint8_t> data(sizeof(uint32_t) + sizeof(Box));
+        uint32_t len = sizeof(Box);
+        std::memcpy(data.data(), &len, sizeof(len));
+        std::memcpy(data.data() + sizeof(len), &box, sizeof(Box));
         return data;
     }
 
@@ -177,6 +181,16 @@ public:
     static Box deserialize(const std::vector<uint8_t>& data)
     {
         Box box;
+        if (data.size() >= sizeof(uint32_t) + sizeof(Box))
+        {
+            uint32_t len = 0;
+            std::memcpy(&len, data.data(), sizeof(len));
+            if (len == sizeof(Box))
+            {
+                std::memcpy(&box, data.data() + sizeof(len), sizeof(Box));
+                return box;
+            }
+        }
         if (data.size() >= sizeof(Box))
         {
             std::memcpy(&box, data.data(), sizeof(Box));
@@ -201,8 +215,15 @@ protected:
         Status status = Database::create(test_db_path_, 8192, &ctx);
         ASSERT_EQ(Status::OK, status) << "Failed to create database: " << ctx.message;
 
-        db_ = Database::open(test_db_path_, &ctx);
-        ASSERT_NE(nullptr, db_) << "Failed to open database: " << ctx.message;
+        db_ = std::make_unique<Database>();
+        status = db_->open(test_db_path_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
+
+        status = db_->initializeProcArray(16, &ctx);
+        if (status != Status::OK && status != Status::INVALID_ARGUMENT)
+        {
+            ASSERT_EQ(status, Status::OK) << "Failed to initialize ProcArray: " << ctx.message;
+        }
 
         catalog_ = db_->catalog_manager();
         storage_ = db_->storage_engine();
@@ -211,17 +232,19 @@ protected:
         ASSERT_NE(nullptr, storage_);
         ASSERT_NE(nullptr, txn_mgr_);
 
-        // Register backend for MGA
-        proc_id_ = ProcArrayManager::instance().registerBackend();
+        // Create and bind a ConnectionContext so DML uses real XIDs.
+        status = db_->connect(conn_ctx_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to create ConnectionContext: " << ctx.message;
+        ConnectionContext::setCurrent(conn_ctx_.get());
+        status = conn_ctx_->initialize(&ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to initialize ConnectionContext: " << ctx.message;
+        proc_id_ = conn_ctx_->getProcId();
     }
 
     void TearDown() override
     {
-        // Unregister backend
-        if (proc_id_ != 0)
-        {
-            ProcArrayManager::instance().unregisterBackend(proc_id_);
-        }
+        ConnectionContext::setCurrent(nullptr);
+        conn_ctx_.reset();
 
         if (db_)
         {
@@ -234,16 +257,16 @@ protected:
     // Helper: Begin transaction with MGA API
     uint64_t beginTxn(ErrorContext* ctx)
     {
-        uint64_t xid = 0;
-        Status status = txn_mgr_->beginTransaction(proc_id_, xid, ctx);
+        Status status = conn_ctx_->startTransaction(false, IsolationLevel::READ_COMMITTED, true, ctx);
         EXPECT_EQ(status, Status::OK);
-        return xid;
+        return conn_ctx_->getCurrentXid();
     }
 
     // Helper: Commit transaction with MGA API
     Status commitTxn(uint64_t xid, ErrorContext* ctx)
     {
-        return txn_mgr_->commitTransaction(proc_id_, xid, ctx);
+        (void)xid;
+        return conn_ctx_->commit(ctx);
     }
 
     // Helper: Create table with box column
@@ -251,36 +274,38 @@ protected:
     {
         ErrorContext ctx;
 
-        // Create schema
-        CatalogManager::SchemaInfo schema;
-        schema.schema_name = "test_schema";
-        schema.schema_id = UUIDv7::generate();
-        schema.owner_id = UUIDv7::generate();
-        Status status = catalog_->createSchema(schema, &ctx);
+        // Use existing schema if available, otherwise create one.
+        ID schema_id;
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        Status status = catalog_->listSchemas(schemas, &ctx);
         EXPECT_EQ(Status::OK, status);
+        if (!schemas.empty())
+        {
+            schema_id = schemas[0].schema_id;
+        }
+        else
+        {
+            status = catalog_->createSchema("test_schema", "SYSTEM", schema_id, &ctx);
+            EXPECT_EQ(Status::OK, status);
+        }
 
-        // Create table
-        CatalogManager::TableInfo table;
-        table.table_name = "test_table";
-        table.table_id = UUIDv7::generate();
-        table.schema_id = schema.schema_id;
-        table.owner_id = schema.owner_id;
-        status = catalog_->createTable(table, &ctx);
-        EXPECT_EQ(Status::OK, status);
-
-        // Add box column (stored as BYTEA for simplicity)
+        // Create table with box column (stored as BYTEA for simplicity)
+        std::vector<CatalogManager::ColumnInfo> columns;
         CatalogManager::ColumnInfo col;
-        col.column_id = UUIDv7::generate();
-        col.table_id = table.table_id;
         col.column_name = "box_col";
-        col.ordinal_position = 1;
+        col.ordinal = 1;
         col.data_type = static_cast<uint16_t>(DataType::BYTEA);
         col.type_precision = sizeof(BoxOperatorClass::Box);
+        col.max_length = 0;
         col.nullable = false;
-        status = catalog_->createColumn(col, &ctx);
+        col.has_default = false;
+        columns.push_back(col);
+
+        ID table_id;
+        status = catalog_->createTable(schema_id, "test_table", columns, table_id, 0, &ctx);
         EXPECT_EQ(Status::OK, status);
 
-        return table.table_id;
+        return table_id;
     }
 
     // Helper: Create GiST index on table
@@ -288,34 +313,14 @@ protected:
     {
         ErrorContext ctx;
 
-        CatalogManager::IndexInfo index;
-        index.index_id = UUIDv7::generate();
-        index.index_name = "test_gist_idx";
-        index.table_id = table_id;
-        index.schema_id = UUIDv7::generate();  // Same schema as table
-        index.column_ids = {column_id};
-        index.is_unique = false;
-
-        // Create index using factory
-        void* index_ptr = nullptr;
-        Status status = IndexFactory::createIndex(
-            CatalogManager::IndexType::GIST,
-            db_.get(),
-            index,
-            &index_ptr,
-            &ctx);
-
+        ID index_id;
+        std::vector<std::string> column_names = {"box_col"};
+        Status status = catalog_->createIndex(table_id, "test_gist_idx", column_names,
+                                              index_id, false, CatalogManager::IndexType::GIST,
+                                              PRIMARY_TABLESPACE_ID, &ctx);
         EXPECT_EQ(Status::OK, status) << "Failed to create GiST index: " << ctx.message;
-        EXPECT_NE(nullptr, index_ptr);
 
-        // Register index in catalog
-        status = catalog_->createIndex(index, &ctx);
-        EXPECT_EQ(Status::OK, status);
-
-        // Add to index object cache
-        catalog_->addIndexToCache(index.index_id, index_ptr, CatalogManager::IndexType::GIST);
-
-        return index.index_id;
+        return index_id;
     }
 
     // Helper: Insert tuple with box value
@@ -323,8 +328,9 @@ protected:
     {
         ErrorContext ctx;
 
-        // Serialize box as tuple data
-        std::vector<uint8_t> tuple_data = BoxOperatorClass::serialize(box);
+        // Build tuple with header + payload
+        uint64_t xmin = conn_ctx_ ? conn_ctx_->getCurrentXid() : txn_mgr_->getCurrentXid();
+        std::vector<uint8_t> tuple_data = buildTupleData(box, xmin);
 
         uint32_t page_id = 0;
         uint16_t item_id = 0;
@@ -343,11 +349,38 @@ protected:
         return TID(0, page_id, item_id);  // tablespace_id=0, page_number, slot
     }
 
+    std::vector<uint8_t> buildTupleData(const BoxOperatorClass::Box& box, uint64_t xmin)
+    {
+        std::vector<uint8_t> payload = BoxOperatorClass::serialize(box);
+        std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload.size(), 0);
+
+        TupleHeader header{};
+        header.xmin = xmin;
+        header.xmax = 0;
+        header.back_version_gpid = INVALID_GPID;
+        header.back_version_slot = 0;
+        header.reserved1 = 0;
+        header.ctid_gpid = INVALID_GPID;
+        header.ctid_slot = 0;
+        header.infomask = 0;
+        header.null_bitmap_offset = 0;
+        header.padding = 0;
+        header.session_id = ID{};
+
+        std::memcpy(tuple.data(), &header, sizeof(TupleHeader));
+        if (!payload.empty())
+        {
+            std::memcpy(tuple.data() + sizeof(TupleHeader), payload.data(), payload.size());
+        }
+        return tuple;
+    }
+
     std::string test_db_path_;
     std::unique_ptr<Database> db_;
     CatalogManager* catalog_;
     StorageEngine* storage_;
     TransactionManager* txn_mgr_;
+    std::unique_ptr<ConnectionContext> conn_ctx_;
     uint32_t proc_id_ = 0;
 };
 
@@ -423,14 +456,22 @@ TEST_F(GiSTDMLTest, UpdateUpdateIndex)
 
     // Update tuple (note: this test assumes updateTuple exists)
     BoxOperatorClass::Box new_box(20.0, 20.0, 30.0, 30.0);
-    std::vector<uint8_t> new_tuple_data = BoxOperatorClass::serialize(new_box);
+    std::vector<uint8_t> new_tuple_data = buildTupleData(new_box,
+                                                         conn_ctx_ ? conn_ctx_->getCurrentXid()
+                                                                   : txn_mgr_->getCurrentXid());
 
-    uint64_t xid = txn_mgr_->getCurrentXid();
+    uint64_t xid = ConnectionContext::getCurrentTransactionId();
+    uint32_t new_page_id = 0;
+    uint16_t new_item_id = 0;
+    uint32_t page_id = static_cast<uint32_t>(getPageNumber(tid.gpid));
     status = storage_->updateTuple(
         table_id,
-        tid,
+        page_id,
+        tid.slot,
         new_tuple_data.data(),
         new_tuple_data.size(),
+        &new_page_id,
+        &new_item_id,
         &ctx);
 
     // Verify old predicate is not visible

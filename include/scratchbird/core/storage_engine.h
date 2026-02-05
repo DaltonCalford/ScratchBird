@@ -49,7 +49,7 @@ namespace scratchbird::core
     {
     public:
         HeapScanIterator(Database *db, StorageEngine *engine, const ID &table_id,
-                         uint32_t start_page);
+                         uint32_t start_page, bool ignore_visibility);
         ~HeapScanIterator();
 
         // Move to next tuple
@@ -75,6 +75,7 @@ namespace scratchbird::core
         bool done_;
         bool filter_session_ = false;
         ID session_id_{};
+        bool ignore_visibility_ = false;
         uint32_t ra_current_pages_ = 0;
         uint32_t ra_seq_count_ = 0;
         uint32_t ra_last_page_ = UINT32_MAX;
@@ -170,6 +171,8 @@ namespace scratchbird::core
 
         // Create a sequential scan iterator
         auto createScan(const ID &table_id, ErrorContext *ctx = nullptr)
+            -> std::unique_ptr<HeapScanIterator>;
+        auto createScanAll(const ID &table_id, ErrorContext *ctx = nullptr)
             -> std::unique_ptr<HeapScanIterator>;
 
         // Create an index scan iterator

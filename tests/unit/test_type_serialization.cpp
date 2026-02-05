@@ -25,6 +25,17 @@ using namespace scratchbird::core;
 
 // ===== Helper Functions =====
 
+static std::vector<uint8_t> int128ToBytes(int128_t value)
+{
+    std::vector<uint8_t> bytes(16, 0);
+    uint128_t uvalue = static_cast<uint128_t>(value);
+    for (size_t i = 0; i < bytes.size(); ++i)
+    {
+        bytes[i] = static_cast<uint8_t>((uvalue >> (i * 8)) & 0xFF);
+    }
+    return bytes;
+}
+
 template<typename T>
 void testSerializationRoundTrip(const TypedValue& original,
                                 DataType expected_type,
@@ -96,7 +107,7 @@ TEST(TypeSerializationTest, UINT64_Serialization)
 TEST(TypeSerializationTest, INT128_Serialization)
 {
     int128_t large_val = static_cast<int128_t>(1) << 100;
-    auto value = TypedValue::makeInt128(large_val);
+    auto value = TypedValue::makeInt128(int128ToBytes(large_val));
 
     auto serialized = TypeSerializer::serialize(value);
     EXPECT_EQ(serialized.size(), 16u);
@@ -115,15 +126,15 @@ TEST(TypeSerializationTest, INT128_Serialization)
 TEST(TypeSerializationTest, MONEY_Serialization)
 {
     auto value = TypedValue::makeMoney(123456789); // $1,234,567.89
-    testSerializationRoundTrip<int64_t>(value, DataType::MONEY,
-                                        [](const TypedValue& v) { return v.getMoney(); });
+    testSerializationRoundTrip<std::string>(value, DataType::MONEY,
+                                            [](const TypedValue& v) { return v.toString(); });
 }
 
 // ===== INTERVAL Serialization Test =====
 
 TEST(TypeSerializationTest, INTERVAL_Serialization)
 {
-    auto value = TypedValue::makeInterval(12, 30, 3600000000LL); // 12 months, 30 days, 1 hour
+    auto value = TypedValue::makeInterval(Interval(12, 30, 3600000000LL)); // 12 months, 30 days, 1 hour
 
     auto serialized = TypeSerializer::serialize(value);
     EXPECT_EQ(serialized.size(), 16u); // 4 + 4 + 8
@@ -209,10 +220,10 @@ TEST(TypeSerializationTest, POLYGON_Serialization)
     auto original_polygon = value.getPolygon();
     auto deserialized_polygon = deserialized->getPolygon();
 
-    ASSERT_EQ(original_polygon.exteriorRing().size(), deserialized_polygon.exteriorRing().size());
-    for (size_t i = 0; i < original_polygon.exteriorRing().size(); ++i) {
-        EXPECT_DOUBLE_EQ(original_polygon.exteriorRing()[i].x, deserialized_polygon.exteriorRing()[i].x);
-        EXPECT_DOUBLE_EQ(original_polygon.exteriorRing()[i].y, deserialized_polygon.exteriorRing()[i].y);
+    ASSERT_EQ(original_polygon.rings[0].size(), deserialized_polygon.rings[0].size());
+    for (size_t i = 0; i < original_polygon.rings[0].size(); ++i) {
+        EXPECT_DOUBLE_EQ(original_polygon.rings[0][i].x, deserialized_polygon.rings[0][i].x);
+        EXPECT_DOUBLE_EQ(original_polygon.rings[0][i].y, deserialized_polygon.rings[0][i].y);
     }
 }
 
@@ -220,8 +231,8 @@ TEST(TypeSerializationTest, POLYGON_Serialization)
 
 TEST(TypeSerializationTest, VECTOR_Serialization)
 {
-    std::vector<float> vec_data = {1.0f, 2.0f, 3.0f, 4.0f};
-    auto value = TypedValue::makeVector(vec_data);
+    std::vector<float> values = {1.0f, 2.5f, 3.75f};
+    auto value = TypedValue::makeVector(values);
 
     auto serialized = TypeSerializer::serialize(value);
     EXPECT_GT(serialized.size(), 0u);
@@ -232,14 +243,13 @@ TEST(TypeSerializationTest, VECTOR_Serialization)
                                                     static_cast<uint32_t>(serialized.size()),
                                                     &ctx);
     ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->type(), DataType::VECTOR);
 
-    auto original_vector = value.getVector();
-    auto deserialized_vector = deserialized->getVector();
-
-    EXPECT_EQ(original_vector->getDimensions(), deserialized_vector->getDimensions());
-    for (size_t i = 0; i < original_vector->getDimensions(); ++i) {
-        EXPECT_FLOAT_EQ(original_vector->getFloat32(i).value(), deserialized_vector->getFloat32(i).value());
-    }
+    const auto& bytes = deserialized->getBinary();
+    ASSERT_EQ(bytes.size(), values.size() * sizeof(float));
+    std::vector<float> decoded(values.size(), 0.0f);
+    std::memcpy(decoded.data(), bytes.data(), bytes.size());
+    EXPECT_EQ(decoded, values);
 }
 
 // ===== Range Type Serialization Tests =====
@@ -336,8 +346,8 @@ TEST(TypeSerializationTest, DATERANGE_Serialization)
                                                     &ctx);
     ASSERT_TRUE(deserialized.has_value());
 
-    auto original_range = value.getDateRange();
-    auto deserialized_range = deserialized->getDateRange();
+    auto original_range = value.getDateRange<int64_t>();
+    auto deserialized_range = deserialized->getDateRange<int64_t>();
 
     EXPECT_EQ(*original_range.lower(), *deserialized_range.lower());
     EXPECT_EQ(*original_range.upper(), *deserialized_range.upper());
@@ -358,8 +368,8 @@ TEST(TypeSerializationTest, TSRANGE_Serialization)
                                                     &ctx);
     ASSERT_TRUE(deserialized.has_value());
 
-    auto original_range = value.getTSRange();
-    auto deserialized_range = deserialized->getTSRange();
+    auto original_range = value.getTSRange<int64_t>();
+    auto deserialized_range = deserialized->getTSRange<int64_t>();
 
     EXPECT_EQ(*original_range.lower(), *deserialized_range.lower());
     EXPECT_EQ(*original_range.upper(), *deserialized_range.upper());
@@ -380,8 +390,8 @@ TEST(TypeSerializationTest, TSTZRANGE_Serialization)
                                                     &ctx);
     ASSERT_TRUE(deserialized.has_value());
 
-    auto original_range = value.getTSTZRange();
-    auto deserialized_range = deserialized->getTSTZRange();
+    auto original_range = value.getTSTZRange<int64_t>();
+    auto deserialized_range = deserialized->getTSTZRange<int64_t>();
 
     EXPECT_EQ(*original_range.lower(), *deserialized_range.lower());
     EXPECT_EQ(*original_range.upper(), *deserialized_range.upper());
@@ -510,10 +520,10 @@ TEST(TypeSerializationTest, TSVECTOR_Serialization)
                                                     &ctx);
     ASSERT_TRUE(deserialized.has_value());
 
-    auto original_tsv = value.getTSVector();
-    auto deserialized_tsv = deserialized->getTSVector();
+    const auto& original_tsv = value.getTSVector();
+    const auto& deserialized_tsv = deserialized->getTSVector();
 
-    EXPECT_EQ(original_tsv->numLexemes(), deserialized_tsv->numLexemes());
+    EXPECT_EQ(original_tsv.numLexemes(), deserialized_tsv.numLexemes());
 }
 
 TEST(TypeSerializationTest, TSQUERY_Serialization)
@@ -561,21 +571,73 @@ TEST(TypeSerializationTest, XML_Serialization)
     // by ensuring it handles XML type in switch statement
 }
 
-// TODO: Re-enable when getComposite() accessor is added to TypedValue
-TEST(TypeSerializationTest, DISABLED_COMPOSITE_Serialization)
+TEST(TypeSerializationTest, COMPOSITE_Serialization)
 {
-    GTEST_SKIP() << "TypedValue::getComposite() accessor not available";
+    std::vector<std::string> field_names = {"id", "name"};
+    std::vector<TypedValue> field_values = {
+        TypedValue::makeInt32(42),
+        TypedValue::makeVarchar("alice")
+    };
+    auto value = TypedValue::makeComposite(field_names, field_values);
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::COMPOSITE,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+
+    auto names = deserialized->getCompositeFieldNames();
+    const auto& values = deserialized->getCompositeValues();
+    ASSERT_EQ(names.size(), field_names.size());
+    ASSERT_EQ(values.size(), field_values.size());
+    EXPECT_EQ(names[0], "id");
+    EXPECT_EQ(names[1], "name");
+    EXPECT_EQ(values[0].getInt32(), 42);
+    EXPECT_EQ(values[1].getVarchar(), "alice");
 }
 
-// TODO: Re-enable when getVariant() accessor is added to TypedValue
-TEST(TypeSerializationTest, DISABLED_VARIANT_Serialization)
+TEST(TypeSerializationTest, VARIANT_ImplicitTag_Serialization)
 {
-    GTEST_SKIP() << "TypedValue::getVariant() accessor not available";
+    auto payload = TypedValue::makeInt32(123);
+    auto value = TypedValue::makeVariant(payload);
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::VARIANT,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+
+    EXPECT_FALSE(deserialized->getVariantTag().has_value());
+    EXPECT_EQ(deserialized->getVariantValue().getInt32(), 123);
 }
 
-TEST(TypeSerializationTest, DISABLED_VARIANT_Null_Serialization)
+TEST(TypeSerializationTest, VARIANT_ExplicitTag_Serialization)
 {
-    GTEST_SKIP() << "TypedValue::getVariant() accessor not available";
+    auto payload = TypedValue::makeVarchar("tagged");
+    auto value = TypedValue::makeVariant(DataType::VARCHAR, payload);
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::VARIANT,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+
+    auto tag = deserialized->getVariantTag();
+    ASSERT_TRUE(tag.has_value());
+    EXPECT_EQ(tag.value(), DataType::VARCHAR);
+    EXPECT_EQ(deserialized->getVariantValue().getVarchar(), "tagged");
 }
 
 // ===== Array Type Tests =====
@@ -614,26 +676,96 @@ TEST(TypeSerializationTest, ARRAY_1D_INT32_Serialization)
     EXPECT_EQ(expected_size, static_cast<uint32_t>(serialized.size()));
 }
 
-// TODO: Re-enable when ArrayValue integration with TypedValue::makeArray is fixed
-// Multi-dimensional arrays use ArrayValue which requires a different API
-TEST(TypeSerializationTest, DISABLED_ARRAY_2D_INT32_Serialization)
+TEST(TypeSerializationTest, ARRAY_2D_INT32_Serialization)
 {
-    GTEST_SKIP() << "Multi-dimensional ArrayValue not integrated with TypedValue::makeArray API";
+    std::vector<TypedValue> row1 = {
+        TypedValue::makeInt32(1),
+        TypedValue::makeInt32(2)
+    };
+    std::vector<TypedValue> row2 = {
+        TypedValue::makeInt32(3),
+        TypedValue::makeInt32(4)
+    };
+    auto array_row1 = TypedValue::makeArray(row1);
+    auto array_row2 = TypedValue::makeArray(row2);
+    auto value = TypedValue::makeArray({array_row1, array_row2});
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->toString(), "{{1, 2}, {3, 4}}");
 }
 
-TEST(TypeSerializationTest, DISABLED_ARRAY_FLOAT_Serialization)
+TEST(TypeSerializationTest, ARRAY_FLOAT_Serialization)
 {
-    GTEST_SKIP() << "ArrayValue not integrated with TypedValue::makeArray API";
+    std::vector<TypedValue> values = {
+        TypedValue::makeFloat64(1.25),
+        TypedValue::makeFloat64(2.5),
+        TypedValue::makeFloat64(3.75)
+    };
+    auto value = TypedValue::makeArray(values);
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->toString(), "{1.25, 2.5, 3.75}");
 }
 
-TEST(TypeSerializationTest, DISABLED_ARRAY_STRING_Serialization)
+TEST(TypeSerializationTest, ARRAY_STRING_Serialization)
 {
-    GTEST_SKIP() << "ArrayValue not integrated with TypedValue::makeArray API";
+    std::vector<TypedValue> values = {
+        TypedValue::makeVarchar("alpha"),
+        TypedValue::makeVarchar("beta"),
+        TypedValue::makeVarchar("gamma")
+    };
+    auto value = TypedValue::makeArray(values);
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->toString(), "{alpha, beta, gamma}");
 }
 
-TEST(TypeSerializationTest, DISABLED_ARRAY_3D_Serialization)
+TEST(TypeSerializationTest, ARRAY_3D_Serialization)
 {
-    GTEST_SKIP() << "Multi-dimensional ArrayValue not integrated with TypedValue::makeArray API";
+    auto leaf1 = TypedValue::makeArray({TypedValue::makeInt32(1), TypedValue::makeInt32(2)});
+    auto leaf2 = TypedValue::makeArray({TypedValue::makeInt32(3), TypedValue::makeInt32(4)});
+    auto plane1 = TypedValue::makeArray({leaf1, leaf2});
+
+    auto leaf3 = TypedValue::makeArray({TypedValue::makeInt32(5), TypedValue::makeInt32(6)});
+    auto leaf4 = TypedValue::makeArray({TypedValue::makeInt32(7), TypedValue::makeInt32(8)});
+    auto plane2 = TypedValue::makeArray({leaf3, leaf4});
+
+    auto value = TypedValue::makeArray({plane1, plane2});
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->toString(), "{{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}}");
 }
 
 // ===== Multi-Geometry Tests =====

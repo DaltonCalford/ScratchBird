@@ -12,7 +12,6 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
-#include "scratchbird/core/proc_array.h"
 #include "scratchbird/parser/parser_v2.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
@@ -41,15 +40,9 @@ protected:
         db_ = std::make_unique<core::Database>();
         ASSERT_EQ(db_->open(db_file_->path(), &ctx), core::Status::OK) << ctx.message;
 
-        auto status = core::ProcArrayManager::initialize(db_.get(), 10, &ctx);
+        auto status = db_->connect(conn_ctx_, &ctx);
         ASSERT_EQ(status, core::Status::OK) << ctx.message;
-
-        status = core::ProcArrayManager::registerBackend(&proc_id_, &ctx);
-        ASSERT_EQ(status, core::Status::OK) << ctx.message;
-
-        conn_ctx_ = std::make_unique<core::ConnectionContext>(db_.get(), proc_id_);
-        status = conn_ctx_->initialize(&ctx);
-        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+        core::ConnectionContext::setCurrent(conn_ctx_.get());
 
         core::CatalogManager::SchemaInfo schema;
         ASSERT_EQ(db_->catalog_manager()->getSchema("PUBLIC", schema, &ctx), core::Status::OK)
@@ -70,11 +63,8 @@ protected:
     {
         executor_.reset();
         compiler_.reset();
+        core::ConnectionContext::setCurrent(nullptr);
         conn_ctx_.reset();
-
-        core::ErrorContext ctx;
-        core::ProcArrayManager::unregisterBackend(proc_id_, &ctx);
-        core::ProcArrayManager::shutdown(&ctx);
 
         db_.reset();
         db_file_.reset();
@@ -174,7 +164,6 @@ private:
     std::unique_ptr<QueryCompilerV2> compiler_;
     std::unique_ptr<Executor> executor_;
     core::ID schema_id_{};
-    uint32_t proc_id_ = 0;
 };
 
 // ===== Parsing Tests =====
@@ -262,14 +251,14 @@ TEST_F(CTETest, BytecodeCTEWithColumnAliases)
 
 // ===== Execution Tests =====
 
-TEST_F(CTETest, DISABLED_ExecuteSimpleCTE)
+TEST_F(CTETest, ExecuteSimpleCTE)
 {
     std::string setup = "CREATE TABLE test_users (id INT32, name VARCHAR(100))";
     std::string test = "WITH temp AS (SELECT * FROM test_users) SELECT * FROM temp";
     testExecution(setup, test);
 }
 
-TEST_F(CTETest, DISABLED_ExecuteMultipleCTEs)
+TEST_F(CTETest, ExecuteMultipleCTEs)
 {
     std::string setup = "CREATE TABLE test_data (id INT32, value INT32)";
     std::string test = "WITH "

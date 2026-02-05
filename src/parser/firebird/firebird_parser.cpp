@@ -2628,6 +2628,46 @@ ast::AlterTableStmt* Parser::parseAlterTableImpl() {
             stmt->action = ast::AlterTableAction::RENAME_COLUMN;
             stmt->new_name = parseIdentifier();
         } else {
+            if (matchKeyword(TokenType::KW_POSITION)) {
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("ALTER TABLE ALTER COLUMN POSITION requires an integer literal");
+                    return nullptr;
+                }
+                stmt->action = ast::AlterTableAction::ALTER_COLUMN_POSITION;
+                stmt->position_1_based = current_token_.value.int_value;
+                stmt->has_position = true;
+                match(TokenType::INTEGER_LITERAL);
+                return stmt;
+            }
+            if (matchKeyword(TokenType::KW_SET)) {
+                if (matchKeyword(TokenType::KW_DEFAULT)) {
+                    stmt->action = ast::AlterTableAction::ALTER_COLUMN_SET_DEFAULT;
+                    stmt->default_expr = parseExpression();
+                    stmt->has_default_expr = (stmt->default_expr != nullptr);
+                    return stmt;
+                }
+                if (matchKeyword(TokenType::KW_NOT)) {
+                    consume(TokenType::KW_NULL, "Expected NULL after SET NOT");
+                    stmt->action = ast::AlterTableAction::ALTER_COLUMN_SET_NOT_NULL;
+                    return stmt;
+                }
+                error("Expected DEFAULT or NOT NULL after SET");
+                return nullptr;
+            }
+            if (matchKeyword(TokenType::KW_DROP)) {
+                if (matchKeyword(TokenType::KW_DEFAULT)) {
+                    stmt->action = ast::AlterTableAction::ALTER_COLUMN_DROP_DEFAULT;
+                    return stmt;
+                }
+                if (matchKeyword(TokenType::KW_NOT)) {
+                    consume(TokenType::KW_NULL, "Expected NULL after DROP NOT");
+                    stmt->action = ast::AlterTableAction::ALTER_COLUMN_DROP_NOT_NULL;
+                    return stmt;
+                }
+                error("Expected DEFAULT or NOT NULL after DROP");
+                return nullptr;
+            }
+
             stmt->action = ast::AlterTableAction::ALTER_COLUMN;
             // Parse column alteration (TYPE, SET DEFAULT, DROP DEFAULT, etc.)
         }

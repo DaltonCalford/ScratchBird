@@ -52,8 +52,12 @@ protected:
         std::filesystem::remove_all(test_db_path_);
 
         core::ErrorContext ctx;
-        db_ = core::Database::create(test_db_path_, &ctx);
-        ASSERT_NE(db_, nullptr) << "Failed to create database: " << ctx.message;
+        db_ = std::make_unique<core::Database>();
+        core::Status status = core::Database::create(test_db_path_, 16384, &ctx);
+        ASSERT_EQ(status, core::Status::OK) << "Failed to create database: " << ctx.message;
+
+        status = db_->open(test_db_path_, &ctx);
+        ASSERT_EQ(status, core::Status::OK) << "Failed to open database: " << ctx.message;
     }
 
     void TearDown() override
@@ -153,12 +157,12 @@ TEST_F(PSQLControlFlowTest, VariableLoadStore)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
 
     // Note: This test verifies that the bytecode doesn't crash
     // A real test would need a way to inspect the variable stack or return value
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // For now, just verify it doesn't crash
         // Full test would verify return_value_ == 42
     });
@@ -195,9 +199,9 @@ TEST_F(PSQLControlFlowTest, IfStatementTrueCondition)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // Variable x should be set to 1
     });
 }
@@ -233,9 +237,9 @@ TEST_F(PSQLControlFlowTest, IfStatementFalseCondition)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // Variable x should NOT be set
     });
 }
@@ -293,9 +297,9 @@ TEST_F(PSQLControlFlowTest, LoopWithExit)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // Variable i should be 5 after loop
     });
 }
@@ -319,9 +323,9 @@ TEST_F(PSQLControlFlowTest, ReturnWithValue)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // Should return 42, not execute the declare
         // TODO: Add way to verify return_value_
     });
@@ -343,9 +347,9 @@ TEST_F(PSQLControlFlowTest, ReturnWithoutValue)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // Should return NULL, not execute the declare
     });
 }
@@ -394,9 +398,9 @@ TEST_F(PSQLControlFlowTest, WhileLoop)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // counter should be 3 after loop
     });
 }
@@ -429,9 +433,9 @@ TEST_F(PSQLControlFlowTest, JumpOperations)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // Variable 'skipped' should not be created
         // Variable 'executed' should be created
     });
@@ -506,9 +510,9 @@ TEST_F(PSQLControlFlowTest, NestedLoopsLabeledExit)
     bytecode.push_back(static_cast<uint8_t>(Opcode::END));
 
     // Execute
-    auto executor = std::make_unique<Executor>(db_.get(), bytecode);
+    auto executor = std::make_unique<Executor>(db_.get());
     ASSERT_NO_THROW({
-        auto result = executor->execute();
+        auto result = executor->execute(bytecode);
         // outer should be 2, inner should have incremented multiple times
     });
 }

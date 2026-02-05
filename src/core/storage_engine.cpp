@@ -844,7 +844,7 @@ namespace scratchbird::core
         {
             heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
         }
-        HeapScanIterator scan(db_, this, table_id, heap_start);
+        HeapScanIterator scan(db_, this, table_id, heap_start, false);
         Tuple tuple;
 
         Status scan_status = Status::OK;
@@ -1269,7 +1269,24 @@ namespace scratchbird::core
         }
 
         return std::unique_ptr<HeapScanIterator>(
-            new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page));
+            new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page, false));
+    }
+
+    auto StorageEngine::createScanAll(const ID &table_id, ErrorContext *ctx)
+        -> std::unique_ptr<HeapScanIterator>
+    {
+        uint32_t start_page = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
+        if (!isZeroId(table_id))
+        {
+            start_page = 0;
+        }
+        else if (page_manager_ && start_page >= page_manager_->totalPages())
+        {
+            start_page = 0;
+        }
+
+        return std::unique_ptr<HeapScanIterator>(
+            new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page, true));
     }
 
     auto StorageEngine::isVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const -> bool
@@ -1613,9 +1630,9 @@ namespace scratchbird::core
     // HeapScanIterator implementation
 
     HeapScanIterator::HeapScanIterator(Database *db, StorageEngine *engine, const ID &table_id,
-                                       uint32_t start_page)
+                                       uint32_t start_page, bool ignore_visibility)
         : db_(db), engine_(engine), table_id_(table_id), current_page_(start_page),
-          current_item_(0), last_page_(0), done_(false)
+          current_item_(0), last_page_(0), done_(false), ignore_visibility_(ignore_visibility)
     {
         ra_current_pages_ = READAHEAD_MIN_PAGES;
 
@@ -1742,7 +1759,8 @@ namespace scratchbird::core
                         // Check visibility
                         const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
 
-                        if (engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
+                        if (ignore_visibility_ ||
+                            engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
                         {
                             if (filter_session_ && hdr->session_id != session_id_)
                             {
@@ -1831,7 +1849,8 @@ namespace scratchbird::core
                     }
                     const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
 
-                    if (engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
+                    if (ignore_visibility_ ||
+                        engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
                     {
                         if (filter_session_ && hdr->session_id != session_id_)
                         {
@@ -2084,9 +2103,37 @@ namespace scratchbird::core
             return status;
         }
 
-        // Try to update tuple on same page
         // Use full constructor with database to enable cross-page back versions
         ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+
+        // Capture the current tuple before update for index key comparison.
+        std::vector<uint8_t> old_tuple_buffer;
+        uint32_t old_tuple_length = 0;
+        {
+            HeapPage snapshot_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
+            if (item_id >= snapshot_page.getItemCount())
+            {
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const ItemPointer *items =
+                reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
+            uint32_t old_offset = items[item_id].offset;
+            old_tuple_length = items[item_id].length;
+            if (old_tuple_length == 0)
+            {
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Old tuple length is zero");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            old_tuple_buffer.resize(old_tuple_length);
+            memcpy(old_tuple_buffer.data(), page_data + old_offset, old_tuple_length);
+        }
+
+        // Try to update tuple on same page
         HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
         uint16_t new_item_id;
 
@@ -2098,12 +2145,6 @@ namespace scratchbird::core
             // Success - new version on same page
             // Phase 3 Task 3.3: Update indexes if indexed columns changed
             // MGA benefit: If indexed columns unchanged, TID is stable and indexes remain valid!
-
-            // Get old tuple data to compare with new tuple
-            const ItemPointer *items = reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
-            uint32_t old_offset = items[item_id].offset;
-            uint32_t old_length = items[item_id].length;
-            const uint8_t *old_tuple_data = page_data + old_offset;
 
             // Get all indexes for this table
             std::vector<CatalogManager::IndexInfo> indexes;
@@ -2125,7 +2166,8 @@ namespace scratchbird::core
 
                     // Extract old and new tuple layouts
                     std::vector<size_t> old_offsets, old_sizes, new_offsets, new_sizes;
-                    Status old_layout_status = computeColumnLayout(old_tuple_data, old_length, columns,
+                    Status old_layout_status = computeColumnLayout(old_tuple_buffer.data(),
+                                                                   old_tuple_length, columns,
                                                                    db_->domain_manager(),
                                                                    old_offsets, old_sizes, ctx);
                     Status new_layout_status = computeColumnLayout(tuple_data_ptr, new_tuple_size, columns,
@@ -2224,7 +2266,7 @@ namespace scratchbird::core
                         // Extract OLD and NEW keys
                         std::vector<uint8_t> old_key, new_key;
                         Status old_status = extractor.extractKeyForUpdate(
-                            old_tuple_data, old_length, old_offsets, old_sizes,
+                            old_tuple_buffer.data(), old_tuple_length, old_offsets, old_sizes,
                             tuple_data_ptr, new_tuple_size, new_offsets, new_sizes,
                             column_indices,
                             getOrCreateToastManager(table_id, ctx),

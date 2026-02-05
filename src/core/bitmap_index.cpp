@@ -41,6 +41,12 @@ namespace scratchbird
         // Per MGA_RULES.md Rule 3 (lines 121-145): Use TIP lookups, not snapshot arrays
         bool VersionedBitmapEntry::isVisible(uint64_t current_xid, TransactionManager *txn_mgr) const
         {
+            // If no transaction specified, treat entry as visible (used by VACUUM/internal ops)
+            if (current_xid == 0)
+            {
+                return true;
+            }
+
             if (!txn_mgr)
             {
                 // No transaction manager - everything visible (fallback for testing)
@@ -1354,6 +1360,86 @@ namespace scratchbird
             return status;
         }
 
+        Status RoaringBitmap::removePhysical(const TID &tid, ErrorContext *ctx)
+        {
+            uint64_t high = tid.gpid;
+            uint16_t low = tid.slot;
+
+            Container *container = nullptr;
+            for (auto &c : containers_)
+            {
+                if (c.key == high)
+                {
+                    container = &c;
+                    break;
+                }
+            }
+
+            if (!container)
+            {
+                return Status::OK;
+            }
+
+            bool removed = false;
+
+            if (container->type == ContainerType::ARRAY)
+            {
+                auto it = std::lower_bound(container->array_data_versioned.begin(),
+                                           container->array_data_versioned.end(), low,
+                                           [](const VersionedBitmapEntry& entry, uint16_t tid) {
+                                               return entry.tid_low < tid;
+                                           });
+                if (it != container->array_data_versioned.end() && it->tid_low == low)
+                {
+                    container->array_data_versioned.erase(it);
+                    removed = true;
+                }
+            }
+            else if (container->type == ContainerType::BITSET)
+            {
+                size_t word_idx = low / 64;
+                size_t bit_idx = low % 64;
+                if (word_idx < container->bitset_data.size())
+                {
+                    uint64_t mask = 1ULL << bit_idx;
+                    if (container->bitset_data[word_idx] & mask)
+                    {
+                        container->bitset_data[word_idx] &= ~mask;
+                        container->bitset_versions.erase(low);
+                        removed = true;
+                    }
+                }
+            }
+
+            if (!removed)
+            {
+                return Status::OK;
+            }
+
+            if (container->num_values > 0)
+            {
+                container->num_values--;
+            }
+            if (cardinality_ > 0)
+            {
+                cardinality_--;
+            }
+
+            Status status = saveContainer(*container, ctx);
+            if (status == Status::OK)
+            {
+                uint8_t *root_data = nullptr;
+                if (pinIndexPage(root_page_, (void **)&root_data, ctx) == Status::OK)
+                {
+                    auto *root = reinterpret_cast<SBRoaringBitmapRootPage *>(root_data);
+                    root->rbr_total_cardinality = cardinality_;
+                    unpinIndexPage(root_page_, true, ctx);
+                }
+            }
+
+            return status;
+        }
+
         bool RoaringBitmap::contains(const TID &tid, ErrorContext *ctx)
         {
             // Split 64-bit value: high 48 bits for container key, low 16 bits for value
@@ -1476,6 +1562,11 @@ namespace scratchbird
             if (!txn_mgr)
             {
                 // No transaction manager - return all entries
+                return toArray(ctx);
+            }
+            if (current_xid == 0)
+            {
+                // No visibility filtering requested
                 return toArray(ctx);
             }
 
@@ -2263,11 +2354,9 @@ namespace scratchbird
                         if (bitmap)
                         {
                             // Remove each dead TID from this bitmap
-                            // Use a high xmax value to mark as deleted (e.g., max uint64_t)
-                            uint64_t xmax = std::numeric_limits<uint64_t>::max();
                             for (const TID &tid : dead_tids)
                             {
-                                Status remove_status = bitmap->remove(tid, xmax, ctx);
+                                Status remove_status = bitmap->removePhysical(tid, ctx);
                                 if (remove_status == Status::OK)
                                 {
                                     total_entries_removed++;

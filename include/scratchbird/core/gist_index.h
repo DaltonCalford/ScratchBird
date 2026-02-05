@@ -159,7 +159,7 @@ struct SBGiSTPage
 
     // Statistics (16 bytes)
     uint64_t gist_total_entries;   // Total entries in entire index
-    uint64_t gist_deleted_entries; // Deleted entries (need VACUUM)
+    uint64_t gist_deleted_entries; // Deleted entries (need GC compaction)
 
     uint8_t gist_padding[16]; // Reserved for future use (total: 208 bytes)
 

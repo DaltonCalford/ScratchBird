@@ -419,13 +419,13 @@ Status LSMTree::compact(ErrorContext *ctx)
     return Status::OK;
 }
 
-Status LSMTree::vacuum(ErrorContext *ctx)
+Status LSMTree::gcCompact(ErrorContext *ctx)
 {
-    // Vacuum is similar to compact but focuses on removing dead entries
+    // GC compaction is similar to compact but focuses on removing dead entries
     // For in-memory LSM-Tree without direct TransactionManager access,
     // vacuum delegates to compact which removes all dead entries
     //
-    // In a full implementation with OIT access, vacuum would only remove
+    // In a full implementation with OIT access, GC compaction would only remove
     // entries with xmax < OIT (no longer visible to any transaction)
     return compact(ctx);
 }

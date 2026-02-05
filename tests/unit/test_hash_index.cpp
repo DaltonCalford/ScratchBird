@@ -11,13 +11,122 @@
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/hash_functions.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/logger.h"
+#include "scratchbird/core/tid.h"
+#include "scratchbird/core/transaction_manager.h"
 #include "test_helpers.h"
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
+#include <cstdlib>
 
 using namespace scratchbird::core;
 using scratchbird::testing::uniqueTestDbPath;
+
+namespace
+{
+    bool scanIndexForEntry(Database *db, GPID meta_gpid, uint64_t hash, const TID &tid, ErrorContext *ctx)
+    {
+        if (!db)
+        {
+            return false;
+        }
+
+        BufferPool *buffer_pool = db->buffer_pool();
+        if (!buffer_pool)
+        {
+            return false;
+        }
+
+        void *meta_buffer = nullptr;
+        Status status = buffer_pool->pinPageGlobal(meta_gpid, &meta_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return false;
+        }
+
+        auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_buffer);
+        uint32_t global_depth = meta->hip_global_depth;
+        uint64_t directory_page = meta->hip_directory_page;
+        uint16_t tablespace_id = getTablespaceID(meta_gpid);
+
+        buffer_pool->unpinPageGlobal(meta_gpid, false, ctx);
+
+        uint32_t num_buckets = 1U << global_depth;
+        size_t pointers_per_page =
+            (db->page_size() - sizeof(SBHashDirectoryPage)) / sizeof(uint64_t);
+        if (pointers_per_page == 0)
+        {
+            return false;
+        }
+
+        std::set<uint64_t> visited;
+        uint64_t current_dir_page = directory_page;
+        uint32_t processed = 0;
+
+        while (current_dir_page != 0 && processed < num_buckets)
+        {
+            void *dir_buffer = nullptr;
+            status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, current_dir_page), &dir_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return false;
+            }
+
+            auto *dir_page = reinterpret_cast<SBHashDirectoryPage *>(dir_buffer);
+            uint32_t entries_this_page =
+                static_cast<uint32_t>(std::min<size_t>(pointers_per_page, num_buckets - processed));
+
+            for (uint32_t i = 0; i < entries_this_page; i++)
+            {
+                uint64_t bucket_page = dir_page->hdp_bucket_pointers[i];
+                if (visited.insert(bucket_page).second)
+                {
+                    uint64_t current_bucket = bucket_page;
+                    while (current_bucket != 0)
+                    {
+                        void *bucket_buffer = nullptr;
+                        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, current_bucket),
+                                                            &bucket_buffer, ctx);
+                        if (status != Status::OK)
+                        {
+                            buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, current_dir_page), false, ctx);
+                            return false;
+                        }
+
+                        auto *bucket = reinterpret_cast<SBHashBucketPage *>(bucket_buffer);
+                        uint16_t entry_count = bucket->hbp_entry_count;
+                        uint64_t overflow_page = bucket->hbp_overflow_page;
+
+                        for (uint16_t j = 0; j < entry_count; j++)
+                        {
+                            const HashEntry &entry = bucket->hbp_entries[j];
+                            if (entry.he_key_hash == hash && entry.getTID() == tid)
+                            {
+                                buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, current_bucket), false, ctx);
+                                buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, current_dir_page), false, ctx);
+                                return true;
+                            }
+                        }
+
+                        buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, current_bucket), false, ctx);
+                        current_bucket = overflow_page;
+                    }
+                }
+            }
+
+            uint64_t next_dir_page = dir_page->hdp_next_page;
+            buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, current_dir_page), false, ctx);
+            current_dir_page = next_dir_page;
+            processed += entries_this_page;
+        }
+
+        return false;
+    }
+} // namespace
 
 class HashIndexTest : public ::testing::Test
 {
@@ -59,6 +168,30 @@ protected:
         }
     }
 
+    GPID allocateMetaGpid(ErrorContext *ctx)
+    {
+        auto *pm = db ? db->page_manager() : nullptr;
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
+    }
+
+    uint32_t metaPageId(GPID gpid) const
+    {
+        uint32_t page_id = 0;
+        convertGPIDtoPageID(gpid, &page_id);
+        return page_id;
+    }
+
     std::string test_db_path;
     std::unique_ptr<Database> db;
 };
@@ -68,11 +201,11 @@ TEST_F(HashIndexTest, CreateIndex)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create hash index: " << ctx.message;
-    ASSERT_GT(meta_page, 0);
+    ASSERT_GT(metaPageId(meta_gpid), 0u);
 }
 
 // Test 2: Open existing hash index
@@ -80,17 +213,17 @@ TEST_F(HashIndexTest, OpenIndex)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
     // Create index
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Open index
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr) << "Failed to open hash index: " << ctx.message;
     ASSERT_EQ(index->getIndexUuid(), index_uuid);
-    ASSERT_EQ(index->getMetaPage(), meta_page);
+    ASSERT_EQ(index->getMetaPage(), metaPageId(meta_gpid));
 }
 
 // Test 3: Insert single entry
@@ -98,19 +231,19 @@ TEST_F(HashIndexTest, InsertSingle)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert entry
     const char* key = "test_key";
-    uint64_t tuple_id = (1ULL << 32) | 1; // page 1, item 1
+    TID tuple_id{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
 
-    status = index->insert(key, std::strlen(key), tuple_id, &ctx);
+    status = index->insert(key, std::strlen(key), tuple_id, 1, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to insert: " << ctx.message;
 
     // Verify statistics
@@ -124,12 +257,12 @@ TEST_F(HashIndexTest, InsertAndFind)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert multiple entries
@@ -137,30 +270,34 @@ TEST_F(HashIndexTest, InsertAndFind)
     const char* key2 = "key2";
     const char* key3 = "key3";
 
-    uint64_t tid1 = (1ULL << 32) | 1;
-    uint64_t tid2 = (1ULL << 32) | 2;
-    uint64_t tid3 = (1ULL << 32) | 3;
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
+    TID tid2{makeGPID(PRIMARY_TABLESPACE_ID, 1), 2};
+    TID tid3{makeGPID(PRIMARY_TABLESPACE_ID, 1), 3};
 
-    ASSERT_EQ(index->insert(key1, std::strlen(key1), tid1, &ctx), Status::OK);
-    ASSERT_EQ(index->insert(key2, std::strlen(key2), tid2, &ctx), Status::OK);
-    ASSERT_EQ(index->insert(key3, std::strlen(key3), tid3, &ctx), Status::OK);
+    ASSERT_EQ(index->insert(key1, std::strlen(key1), tid1, 1, &ctx), Status::OK);
+    ASSERT_EQ(index->insert(key2, std::strlen(key2), tid2, 1, &ctx), Status::OK);
+    ASSERT_EQ(index->insert(key3, std::strlen(key3), tid3, 1, &ctx), Status::OK);
 
     // Find entries
-    auto results1 = index->find(key1, std::strlen(key1), &ctx);
+    std::vector<TID> results1;
+    ASSERT_EQ(index->find(key1, std::strlen(key1), 0, &results1, &ctx), Status::OK);
     ASSERT_EQ(results1.size(), 1);
     ASSERT_EQ(results1[0], tid1);
 
-    auto results2 = index->find(key2, std::strlen(key2), &ctx);
+    std::vector<TID> results2;
+    ASSERT_EQ(index->find(key2, std::strlen(key2), 0, &results2, &ctx), Status::OK);
     ASSERT_EQ(results2.size(), 1);
     ASSERT_EQ(results2[0], tid2);
 
-    auto results3 = index->find(key3, std::strlen(key3), &ctx);
+    std::vector<TID> results3;
+    ASSERT_EQ(index->find(key3, std::strlen(key3), 0, &results3, &ctx), Status::OK);
     ASSERT_EQ(results3.size(), 1);
     ASSERT_EQ(results3[0], tid3);
 
     // Find non-existent key
     const char* key4 = "key4";
-    auto results4 = index->find(key4, std::strlen(key4), &ctx);
+    std::vector<TID> results4;
+    ASSERT_EQ(index->find(key4, std::strlen(key4), 0, &results4, &ctx), Status::OK);
     ASSERT_EQ(results4.size(), 0);
 }
 
@@ -169,26 +306,27 @@ TEST_F(HashIndexTest, InsertDuplicates)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert same key with different tuple IDs
     const char* key = "duplicate_key";
-    uint64_t tid1 = (1ULL << 32) | 1;
-    uint64_t tid2 = (1ULL << 32) | 2;
-    uint64_t tid3 = (1ULL << 32) | 3;
+    TID tid1{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
+    TID tid2{makeGPID(PRIMARY_TABLESPACE_ID, 1), 2};
+    TID tid3{makeGPID(PRIMARY_TABLESPACE_ID, 1), 3};
 
-    ASSERT_EQ(index->insert(key, std::strlen(key), tid1, &ctx), Status::OK);
-    ASSERT_EQ(index->insert(key, std::strlen(key), tid2, &ctx), Status::OK);
-    ASSERT_EQ(index->insert(key, std::strlen(key), tid3, &ctx), Status::OK);
+    ASSERT_EQ(index->insert(key, std::strlen(key), tid1, 1, &ctx), Status::OK);
+    ASSERT_EQ(index->insert(key, std::strlen(key), tid2, 1, &ctx), Status::OK);
+    ASSERT_EQ(index->insert(key, std::strlen(key), tid3, 1, &ctx), Status::OK);
 
     // Find should return all three
-    auto results = index->find(key, std::strlen(key), &ctx);
+    std::vector<TID> results;
+    ASSERT_EQ(index->find(key, std::strlen(key), 0, &results, &ctx), Status::OK);
     ASSERT_EQ(results.size(), 3);
 
     // Verify all tuple IDs are present
@@ -202,30 +340,33 @@ TEST_F(HashIndexTest, DeleteEntry)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert entry
     const char* key = "test_key";
-    uint64_t tuple_id = (1ULL << 32) | 1;
+    TID tuple_id{makeGPID(PRIMARY_TABLESPACE_ID, 1), 1};
 
-    ASSERT_EQ(index->insert(key, std::strlen(key), tuple_id, &ctx), Status::OK);
+    ASSERT_EQ(index->insert(key, std::strlen(key), tuple_id, 1, &ctx), Status::OK);
 
     // Verify it exists
-    auto results = index->find(key, std::strlen(key), &ctx);
+    std::vector<TID> results;
+    uint64_t current_xid = db->transaction_manager()->getCurrentXid();
+    ASSERT_EQ(index->find(key, std::strlen(key), current_xid, &results, &ctx), Status::OK);
     ASSERT_EQ(results.size(), 1);
 
     // Delete entry
-    status = index->remove(key, std::strlen(key), tuple_id, &ctx);
+    status = index->remove(key, std::strlen(key), tuple_id, 2, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Verify it's gone
-    results = index->find(key, std::strlen(key), &ctx);
+    results.clear();
+    ASSERT_EQ(index->find(key, std::strlen(key), current_xid, &results, &ctx), Status::OK);
     ASSERT_EQ(results.size(), 0);
 
     // Verify statistics
@@ -238,12 +379,12 @@ TEST_F(HashIndexTest, BucketSplit)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Get initial statistics
@@ -255,9 +396,9 @@ TEST_F(HashIndexTest, BucketSplit)
     for (int i = 0; i < num_entries; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        uint64_t tuple_id = (1ULL << 32) | i;
+        TID tuple_id{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1};
 
-        status = index->insert(key.c_str(), key.length(), tuple_id, &ctx);
+        status = index->insert(key.c_str(), key.length(), tuple_id, 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to insert entry " << i;
     }
 
@@ -265,9 +406,10 @@ TEST_F(HashIndexTest, BucketSplit)
     for (int i = 0; i < num_entries; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        auto results = index->find(key.c_str(), key.length(), &ctx);
+        std::vector<TID> results;
+    ASSERT_EQ(index->find(key.c_str(), key.length(), 0, &results, &ctx), Status::OK);
         ASSERT_EQ(results.size(), 1) << "Failed to find entry " << i;
-        ASSERT_EQ(results[0], (1ULL << 32) | i);
+        ASSERT_EQ(results[0], TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1));
     }
 
     // Verify statistics
@@ -276,17 +418,17 @@ TEST_F(HashIndexTest, BucketSplit)
     ASSERT_GE(stats_after.global_depth, initial_depth); // Depth should increase
 }
 
-// Test 8: Vacuum operation
-TEST_F(HashIndexTest, Vacuum)
+// Test 8: GC compaction operation
+TEST_F(HashIndexTest, GcCompaction)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert entries
@@ -294,24 +436,24 @@ TEST_F(HashIndexTest, Vacuum)
     for (int i = 0; i < num_entries; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        uint64_t tuple_id = (1ULL << 32) | i;
-        ASSERT_EQ(index->insert(key.c_str(), key.length(), tuple_id, &ctx), Status::OK);
+        TID tuple_id{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1};
+        ASSERT_EQ(index->insert(key.c_str(), key.length(), tuple_id, 1, &ctx), Status::OK);
     }
 
     // Delete half of them
     for (int i = 0; i < num_entries / 2; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        uint64_t tuple_id = (1ULL << 32) | i;
-        ASSERT_EQ(index->remove(key.c_str(), key.length(), tuple_id, &ctx), Status::OK);
+        TID tuple_id{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1};
+        ASSERT_EQ(index->remove(key.c_str(), key.length(), tuple_id, 2, &ctx), Status::OK);
     }
 
     // Verify deleted count
     auto stats_before = index->getStatistics(&ctx);
     ASSERT_EQ(stats_before.num_deleted, num_entries / 2);
 
-    // Run vacuum
-    status = index->vacuum(&ctx);
+    // Run GC compaction
+    status = index->gcCompact(&ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Verify deleted count is reduced
@@ -322,7 +464,8 @@ TEST_F(HashIndexTest, Vacuum)
     for (int i = num_entries / 2; i < num_entries; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        auto results = index->find(key.c_str(), key.length(), &ctx);
+        std::vector<TID> results;
+    ASSERT_EQ(index->find(key.c_str(), key.length(), 0, &results, &ctx), Status::OK);
         ASSERT_EQ(results.size(), 1);
     }
 }
@@ -351,14 +494,15 @@ TEST_F(HashIndexTest, HashFunctionConsistency)
 // Test 10: Large dataset stress test
 TEST_F(HashIndexTest, LargeDataset)
 {
+    Logger::getInstance().setLogLevel(LogLevel::DEBUG);
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert 10,000 entries
@@ -366,9 +510,9 @@ TEST_F(HashIndexTest, LargeDataset)
     for (int i = 0; i < num_entries; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        uint64_t tuple_id = (1ULL << 32) | i;
+        TID tuple_id{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1};
 
-        status = index->insert(key.c_str(), key.length(), tuple_id, &ctx);
+        status = index->insert(key.c_str(), key.length(), tuple_id, 1, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed at entry " << i;
     }
 
@@ -378,13 +522,26 @@ TEST_F(HashIndexTest, LargeDataset)
     ASSERT_GT(stats.global_depth, 4); // Should have grown beyond initial depth
 
     // Random access test - verify 1000 random entries
+    std::srand(1);
     for (int i = 0; i < 1000; i++)
     {
         int idx = rand() % num_entries;
         std::string key = "key_" + std::to_string(idx);
-        auto results = index->find(key.c_str(), key.length(), &ctx);
-        ASSERT_EQ(results.size(), 1);
-        ASSERT_EQ(results[0], (1ULL << 32) | idx);
+        std::vector<TID> results;
+        ASSERT_EQ(index->find(key.c_str(), key.length(), 0, &results, &ctx), Status::OK);
+        if (results.size() != 1)
+        {
+            uint64_t hash = MurmurHash64(key.c_str(), key.length());
+            bool found_elsewhere = scanIndexForEntry(db.get(), meta_gpid, hash,
+                                                     TID(makeGPID(PRIMARY_TABLESPACE_ID,
+                                                                  static_cast<uint64_t>(idx)),
+                                                         1),
+                                                     &ctx);
+            FAIL() << "Missing idx=" << idx
+                   << " global_depth=" << stats.global_depth
+                   << " found_elsewhere=" << (found_elsewhere ? "true" : "false");
+        }
+        ASSERT_EQ(results[0], TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(idx)), 1));
     }
 }
 
@@ -393,12 +550,12 @@ TEST_F(HashIndexTest, StatisticsAccuracy)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Initial statistics
@@ -412,8 +569,8 @@ TEST_F(HashIndexTest, StatisticsAccuracy)
     for (int i = 0; i < 50; i++)
     {
         std::string key = "key_" + std::to_string(i);
-        uint64_t tuple_id = (1ULL << 32) | i;
-        index->insert(key.c_str(), key.length(), tuple_id, &ctx);
+        TID tuple_id{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(i)), 1};
+        index->insert(key.c_str(), key.length(), tuple_id, 1, &ctx);
     }
 
     stats = index->getStatistics(&ctx);
@@ -428,28 +585,28 @@ TEST_F(HashIndexTest, InvalidOperations)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert with null key
-    status = index->insert(nullptr, 10, 1, &ctx);
+    status = index->insert(nullptr, 10, TID(makeGPID(PRIMARY_TABLESPACE_ID, 1), 1), 1, &ctx);
     ASSERT_EQ(status, Status::INVALID_ARGUMENT);
 
     // Insert with zero length
     const char* key = "test";
-    status = index->insert(key, 0, 1, &ctx);
+    status = index->insert(key, 0, TID(makeGPID(PRIMARY_TABLESPACE_ID, 1), 1), 1, &ctx);
     ASSERT_EQ(status, Status::INVALID_ARGUMENT);
 
     // Insert with zero tuple ID
-    status = index->insert(key, 4, 0, &ctx);
+    status = index->insert(key, 4, TID(makeGPID(PRIMARY_TABLESPACE_ID, 0), 0), 1, &ctx);
     ASSERT_EQ(status, Status::INVALID_ARGUMENT);
 
     // Remove non-existent entry
-    status = index->remove(key, 4, 1, &ctx);
+    status = index->remove(key, 4, TID(makeGPID(PRIMARY_TABLESPACE_ID, 1), 1), 2, &ctx);
     ASSERT_EQ(status, Status::NOT_FOUND);
 }

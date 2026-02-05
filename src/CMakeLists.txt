@@ -439,7 +439,9 @@ target_link_libraries(scratchbird_server PUBLIC
     scratchbird_sblr
 )
 if(SCRATCHBIRD_WITH_COMPILER)
-    target_link_libraries(scratchbird_server PUBLIC scratchbird_compiler)
+    target_link_libraries(scratchbird_server PUBLIC scratchbird_compiler scratchbird_parser)
+else()
+    target_link_libraries(scratchbird_server PUBLIC scratchbird_parser)
 endif()
 
 # ==============================================================================
@@ -554,9 +556,12 @@ target_link_libraries(sb_server PRIVATE
     scratchbird_protocol
     scratchbird_sblr
     scratchbird_core
+    scratchbird_link_group
 )
 if(SCRATCHBIRD_WITH_COMPILER)
-    target_link_libraries(sb_server PRIVATE scratchbird_compiler)
+    target_link_libraries(sb_server PRIVATE scratchbird_compiler scratchbird_parser)
+else()
+    target_link_libraries(sb_server PRIVATE scratchbird_parser)
 endif()
 
 set_target_properties(sb_server PROPERTIES
@@ -630,7 +635,7 @@ target_compile_definitions(sb_parser_native PRIVATE
     SB_PARSER_PROTOCOL="scratchbird"
     SB_PARSER_NAME="sb_parser_native"
 )
-target_link_libraries(sb_parser_native PRIVATE scratchbird_protocol scratchbird_core)
+target_link_libraries(sb_parser_native PRIVATE scratchbird_protocol scratchbird_core scratchbird_parser scratchbird_link_group)
 set_target_properties(sb_parser_native PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -642,7 +647,7 @@ target_compile_definitions(sb_parser_pg PRIVATE
     SB_PARSER_PROTOCOL="postgresql"
     SB_PARSER_NAME="sb_parser_pg"
 )
-target_link_libraries(sb_parser_pg PRIVATE scratchbird_protocol scratchbird_core)
+target_link_libraries(sb_parser_pg PRIVATE scratchbird_protocol scratchbird_core scratchbird_parser scratchbird_link_group)
 set_target_properties(sb_parser_pg PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -654,7 +659,7 @@ target_compile_definitions(sb_parser_mysql PRIVATE
     SB_PARSER_PROTOCOL="mysql"
     SB_PARSER_NAME="sb_parser_mysql"
 )
-target_link_libraries(sb_parser_mysql PRIVATE scratchbird_protocol scratchbird_core)
+target_link_libraries(sb_parser_mysql PRIVATE scratchbird_protocol scratchbird_core scratchbird_parser scratchbird_link_group)
 set_target_properties(sb_parser_mysql PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -666,7 +671,7 @@ target_compile_definitions(sb_parser_fb PRIVATE
     SB_PARSER_PROTOCOL="firebird"
     SB_PARSER_NAME="sb_parser_fb"
 )
-target_link_libraries(sb_parser_fb PRIVATE scratchbird_protocol scratchbird_core)
+target_link_libraries(sb_parser_fb PRIVATE scratchbird_protocol scratchbird_core scratchbird_parser scratchbird_link_group)
 set_target_properties(sb_parser_fb PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES

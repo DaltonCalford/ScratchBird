@@ -49,7 +49,7 @@ namespace scratchbird
         class TransactionManager;
         class ProcArrayManager;
         class LockManager;
-        class Vacuum;
+        class GcManager;
         class Clog;
         class ConnectionContext;
         class SweepManager;
@@ -408,14 +408,14 @@ namespace scratchbird
                 return lock_manager_.get();
             }
 
-            // Get vacuum manager
-            Vacuum *vacuum()
+            // Get GC manager (ScratchBird MGA GC, not PostgreSQL VACUUM)
+            GcManager *gc_manager()
             {
-                return vacuum_.get();
+                return gc_manager_.get();
             }
-            const Vacuum *vacuum() const
+            const GcManager *gc_manager() const
             {
-                return vacuum_.get();
+                return gc_manager_.get();
             }
 
             // Get CLOG (commit log) manager
@@ -506,6 +506,9 @@ namespace scratchbird
             // Update header total pages (for internal use by PageManager)
             Status update_header_total_pages(uint32_t total_pages, ErrorContext *ctx = nullptr);
 
+            // Update header next transaction id (for internal use by TransactionManager)
+            Status update_header_next_xid(uint64_t next_xid, ErrorContext *ctx = nullptr);
+
             // === LEGACY API: tablespace 0 only ===
             // Allocate a new page ID (for internal use by BufferPool/PageManager)
             // Thread-safe: atomically increments next_page_id in database header
@@ -584,7 +587,7 @@ namespace scratchbird
             std::unique_ptr<TransactionManager> transaction_manager_; // Transaction manager (owned)
             std::unique_ptr<TIDResolver> tid_resolver_;               // TID resolver (Sprint 4, owned)
             std::unique_ptr<LockManager> lock_manager_;               // Lock manager (owned)
-            std::unique_ptr<Vacuum> vacuum_;                          // Vacuum manager (owned)
+            std::unique_ptr<GcManager> gc_manager_;                  // GC manager (owned)
             std::unique_ptr<Clog> clog_;                              // Commit log manager (owned)
             std::unique_ptr<SweepManager> sweep_manager_;             // Sweep manager (owned)
             std::unique_ptr<GarbageCollector> garbage_collector_;     // Garbage collector (owned)

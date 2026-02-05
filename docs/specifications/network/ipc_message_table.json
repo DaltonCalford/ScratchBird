@@ -1,0 +1,337 @@
+{
+  "version": "1.1",
+  "endianness": "little",
+  "primitives": {
+    "u8": 1,
+    "u16": 2,
+    "u32": 4,
+    "u64": 8,
+    "i32": 4,
+    "uuid": 16
+  },
+  "string_encoding": "u32 length + UTF-8 bytes",
+  "array_encoding": "u32 count + items",
+  "param_value_encoding": "i32 length (-1 NULL) + bytes",
+  "header": {
+    "size": 32,
+    "fields": [
+      {"name": "magic", "type": "char[4]", "offset": 0, "size": 4, "must": "SBIP"},
+      {"name": "version", "type": "u16", "offset": 4, "size": 2},
+      {"name": "msg_type", "type": "u16", "offset": 6, "size": 2},
+      {"name": "flags", "type": "u32", "offset": 8, "size": 4},
+      {"name": "request_id", "type": "u64", "offset": 12, "size": 8},
+      {"name": "payload_len", "type": "u64", "offset": 20, "size": 8},
+      {"name": "reserved", "type": "u32", "offset": 28, "size": 4, "must": 0}
+    ]
+  },
+  "extended_header": {
+    "size": 16,
+    "fields": [
+      {"name": "feature_flags", "type": "u32", "offset": 0, "size": 4},
+      {"name": "checksum", "type": "u32", "offset": 4, "size": 4},
+      {"name": "reserved", "type": "u64", "offset": 8, "size": 8, "must": 0}
+    ]
+  },
+  "messages": [
+    {
+      "name": "STARTUP_REQUEST",
+      "code": "0x0003",
+      "payload": [
+        {"name": "sbwp_major", "type": "u16", "offset": 0, "size": 2},
+        {"name": "sbwp_minor", "type": "u16", "offset": 2, "size": 2},
+        {"name": "client_features", "type": "u32", "offset": 4, "size": 4},
+        {"name": "client_id", "type": "uuid", "offset": 8, "size": 16},
+        {"name": "dialect", "type": "u8", "offset": 24, "size": 1},
+        {"name": "process_id", "type": "u32", "offset": 25, "size": 4}
+      ]
+    },
+    {
+      "name": "STARTUP_RESPONSE",
+      "code": "0x0004",
+      "payload": [
+        {"name": "accepted_major", "type": "u16", "offset": 0, "size": 2},
+        {"name": "accepted_minor", "type": "u16", "offset": 2, "size": 2},
+        {"name": "server_features", "type": "u32", "offset": 4, "size": 4},
+        {"name": "engine_id", "type": "uuid", "offset": 8, "size": 16},
+        {"name": "session_id", "type": "uuid", "offset": 24, "size": 16},
+        {"name": "message_len", "type": "u32", "offset": 40, "size": 4},
+        {"name": "message", "type": "bytes", "offset": 44, "size": "message_len"}
+      ]
+    },
+    {
+      "name": "FEATURE_NEGOTIATE",
+      "code": "0x0005",
+      "payload": [
+        {"name": "requested_features", "type": "u32", "offset": 0, "size": 4},
+        {"name": "granted_features", "type": "u32", "offset": 4, "size": 4}
+      ]
+    },
+    {
+      "name": "AUTH_REQUEST",
+      "code": "0x0001",
+      "payload": [
+        {"name": "auth_method", "type": "u32", "offset": 0, "size": 4},
+        {"name": "auth_payload", "type": "bytes", "offset": 4, "size": "payload_len-4"}
+      ]
+    },
+    {
+      "name": "AUTH_RESPONSE",
+      "code": "0x0002",
+      "payload": [
+        {"name": "auth_payload", "type": "bytes", "offset": 0, "size": "payload_len"}
+      ]
+    },
+    {
+      "name": "PARSE",
+      "code": "0x0040",
+      "payload": [
+        {"name": "session_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "attachment_id", "type": "uuid", "offset": 16, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 32, "size": 8},
+        {"name": "statement_name_len", "type": "u32", "offset": 40, "size": 4},
+        {"name": "statement_name", "type": "bytes", "offset": 44, "size": "statement_name_len"},
+        {"name": "sql_len", "type": "u32", "offset": "44+statement_name_len", "size": 4},
+        {"name": "sql", "type": "bytes", "offset": "48+statement_name_len", "size": "sql_len"}
+      ]
+    },
+    {
+      "name": "BIND",
+      "code": "0x0042",
+      "payload": [
+        {"name": "session_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "attachment_id", "type": "uuid", "offset": 16, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 32, "size": 8},
+        {"name": "statement_name_len", "type": "u32", "offset": 40, "size": 4},
+        {"name": "statement_name", "type": "bytes", "offset": 44, "size": "statement_name_len"},
+        {"name": "portal_name_len", "type": "u32", "offset": "44+statement_name_len", "size": 4},
+        {"name": "portal_name", "type": "bytes", "offset": "48+statement_name_len", "size": "portal_name_len"},
+        {"name": "param_format_count", "type": "u32", "offset": "48+statement_name_len+portal_name_len", "size": 4},
+        {"name": "param_formats", "type": "u16[]", "offset": "52+statement_name_len+portal_name_len", "size": "param_format_count*2"},
+        {"name": "param_value_count", "type": "u32", "offset": "52+statement_name_len+portal_name_len+param_format_count*2", "size": 4},
+        {"name": "param_lengths", "type": "i32[]", "offset": "56+statement_name_len+portal_name_len+param_format_count*2", "size": "param_value_count*4"},
+        {"name": "param_bytes", "type": "bytes", "offset": "56+statement_name_len+portal_name_len+param_format_count*2+param_value_count*4", "size": "sum(param_lengths>=0)"},
+        {"name": "result_format_count", "type": "u32", "offset": "after_param_bytes", "size": 4},
+        {"name": "result_formats", "type": "u16[]", "offset": "after_result_format_count", "size": "result_format_count*2"}
+      ]
+    },
+    {
+      "name": "DESCRIBE",
+      "code": "0x0044",
+      "payload": [
+        {"name": "target_type", "type": "u8", "offset": 0, "size": 1},
+        {"name": "name_len", "type": "u32", "offset": 1, "size": 4},
+        {"name": "name", "type": "bytes", "offset": 5, "size": "name_len"}
+      ]
+    },
+    {
+      "name": "EXECUTE",
+      "code": "0x0046",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "portal_name_len", "type": "u32", "offset": 24, "size": 4},
+        {"name": "portal_name", "type": "bytes", "offset": 28, "size": "portal_name_len"},
+        {"name": "max_rows", "type": "u32", "offset": "28+portal_name_len", "size": 4},
+        {"name": "timeout_ms", "type": "u32", "offset": "32+portal_name_len", "size": 4}
+      ]
+    },
+    {
+      "name": "CLOSE",
+      "code": "0x0048",
+      "payload": [
+        {"name": "target_type", "type": "u8", "offset": 0, "size": 1},
+        {"name": "name_len", "type": "u32", "offset": 1, "size": 4},
+        {"name": "name", "type": "bytes", "offset": 5, "size": "name_len"}
+      ]
+    },
+    {
+      "name": "SYNC",
+      "code": "0x004A",
+      "payload": [
+        {"name": "reserved_zero", "type": "u32", "offset": 0, "size": 4, "must": 0}
+      ]
+    },
+    {
+      "name": "COPY_BEGIN",
+      "code": "0x0050",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "copy_id", "type": "u64", "offset": 24, "size": 8},
+        {"name": "direction", "type": "u8", "offset": 32, "size": 1},
+        {"name": "format", "type": "u8", "offset": 33, "size": 1}
+      ]
+    },
+    {
+      "name": "COPY_DATA",
+      "code": "0x0051",
+      "payload": [
+        {"name": "copy_id", "type": "u64", "offset": 0, "size": 8},
+        {"name": "data_len", "type": "u32", "offset": 8, "size": 4},
+        {"name": "data", "type": "bytes", "offset": 12, "size": "data_len"}
+      ]
+    },
+    {
+      "name": "COPY_DONE",
+      "code": "0x0052",
+      "payload": [
+        {"name": "copy_id", "type": "u64", "offset": 0, "size": 8}
+      ]
+    },
+    {
+      "name": "COPY_FAIL",
+      "code": "0x0053",
+      "payload": [
+        {"name": "copy_id", "type": "u64", "offset": 0, "size": 8},
+        {"name": "error_len", "type": "u32", "offset": 8, "size": 4},
+        {"name": "error", "type": "bytes", "offset": 12, "size": "error_len"}
+      ]
+    },
+    {
+      "name": "STREAM_READY",
+      "code": "0x0054",
+      "payload": [
+        {"name": "stream_id", "type": "u64", "offset": 0, "size": 8}
+      ]
+    },
+    {
+      "name": "STREAM_DATA",
+      "code": "0x0055",
+      "payload": [
+        {"name": "stream_id", "type": "u64", "offset": 0, "size": 8},
+        {"name": "data_len", "type": "u32", "offset": 8, "size": 4},
+        {"name": "data", "type": "bytes", "offset": 12, "size": "data_len"}
+      ]
+    },
+    {
+      "name": "STREAM_END",
+      "code": "0x0056",
+      "payload": [
+        {"name": "stream_id", "type": "u64", "offset": 0, "size": 8},
+        {"name": "status_code", "type": "u32", "offset": 8, "size": 4},
+        {"name": "message_len", "type": "u32", "offset": 12, "size": 4},
+        {"name": "message", "type": "bytes", "offset": 16, "size": "message_len"}
+      ]
+    },
+    {
+      "name": "STREAM_CONTROL",
+      "code": "0x0057",
+      "payload": [
+        {"name": "stream_id", "type": "u64", "offset": 0, "size": 8},
+        {"name": "window_bytes", "type": "u32", "offset": 8, "size": 4},
+        {"name": "window_rows", "type": "u32", "offset": 12, "size": 4}
+      ]
+    },
+    {
+      "name": "SUBSCRIBE",
+      "code": "0x0060",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "channel_len", "type": "u32", "offset": 24, "size": 4},
+        {"name": "channel", "type": "bytes", "offset": 28, "size": "channel_len"}
+      ]
+    },
+    {
+      "name": "UNSUBSCRIBE",
+      "code": "0x0061",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "channel_len", "type": "u32", "offset": 24, "size": 4},
+        {"name": "channel", "type": "bytes", "offset": 28, "size": "channel_len"}
+      ]
+    },
+    {
+      "name": "NOTIFICATION",
+      "code": "0x0062",
+      "payload": [
+        {"name": "channel_len", "type": "u32", "offset": 0, "size": 4},
+        {"name": "channel", "type": "bytes", "offset": 4, "size": "channel_len"},
+        {"name": "payload_len", "type": "u32", "offset": "4+channel_len", "size": 4},
+        {"name": "payload", "type": "bytes", "offset": "8+channel_len", "size": "payload_len"},
+        {"name": "origin_session", "type": "uuid", "offset": "8+channel_len+payload_len", "size": 16}
+      ]
+    },
+    {
+      "name": "CANCEL",
+      "code": "0x0070",
+      "payload": [
+        {"name": "target_request_id", "type": "u64", "offset": 0, "size": 8},
+        {"name": "reason_len", "type": "u32", "offset": 8, "size": 4},
+        {"name": "reason", "type": "bytes", "offset": 12, "size": "reason_len"}
+      ]
+    },
+    {
+      "name": "CANCEL_ACK",
+      "code": "0x0071",
+      "payload": [
+        {"name": "target_request_id", "type": "u64", "offset": 0, "size": 8},
+        {"name": "status", "type": "u8", "offset": 8, "size": 1}
+      ]
+    },
+    {
+      "name": "TXN_BEGIN",
+      "code": "0x0072",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8}
+      ]
+    },
+    {
+      "name": "TXN_COMMIT",
+      "code": "0x0073",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8}
+      ]
+    },
+    {
+      "name": "TXN_ROLLBACK",
+      "code": "0x0074",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8}
+      ]
+    },
+    {
+      "name": "TXN_SAVEPOINT",
+      "code": "0x0075",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "name_len", "type": "u32", "offset": 24, "size": 4},
+        {"name": "name", "type": "bytes", "offset": 28, "size": "name_len"}
+      ]
+    },
+    {
+      "name": "TXN_RELEASE",
+      "code": "0x0076",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "name_len", "type": "u32", "offset": 24, "size": 4},
+        {"name": "name", "type": "bytes", "offset": 28, "size": "name_len"}
+      ]
+    },
+    {
+      "name": "TXN_ROLLBACK_TO",
+      "code": "0x0077",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "name_len", "type": "u32", "offset": 24, "size": 4},
+        {"name": "name", "type": "bytes", "offset": 28, "size": "name_len"}
+      ]
+    },
+    {
+      "name": "TXN_STATUS",
+      "code": "0x0078",
+      "payload": [
+        {"name": "attachment_id", "type": "uuid", "offset": 0, "size": 16},
+        {"name": "txn_id", "type": "u64", "offset": 16, "size": 8},
+        {"name": "state", "type": "u8", "offset": 24, "size": 1}
+      ]
+    }
+  ]
+}

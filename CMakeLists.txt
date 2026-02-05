@@ -41,6 +41,25 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 include(CTest)
 enable_testing()
 
+# Default to parallel test runs when using the built-in test target.
+include(ProcessorCount)
+ProcessorCount(SCRATCHBIRD_CPU_COUNT)
+set(SCRATCHBIRD_TEST_PARALLEL_LEVEL "" CACHE STRING "Default CTest parallel level (empty=auto)")
+if(NOT SCRATCHBIRD_TEST_PARALLEL_LEVEL)
+    if(SCRATCHBIRD_CPU_COUNT GREATER 1)
+        set(SCRATCHBIRD_TEST_PARALLEL_LEVEL ${SCRATCHBIRD_CPU_COUNT})
+    else()
+        set(SCRATCHBIRD_TEST_PARALLEL_LEVEL 1)
+    endif()
+endif()
+if(SCRATCHBIRD_TEST_PARALLEL_LEVEL GREATER 1)
+    set(CMAKE_CTEST_ARGUMENTS
+        "--parallel" "${SCRATCHBIRD_TEST_PARALLEL_LEVEL}"
+        "--output-on-failure"
+    )
+    message(STATUS "CTest parallel level: ${SCRATCHBIRD_TEST_PARALLEL_LEVEL}")
+endif()
+
 # Find optional packages
 find_package(PkgConfig)
 if(PkgConfig_FOUND)

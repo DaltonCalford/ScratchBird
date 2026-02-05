@@ -12,6 +12,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/page_manager.h"
 #include "test_helpers.h"
 #include <cstring>
 #include <filesystem>
@@ -59,6 +60,23 @@ protected:
 
     std::string test_db_path;
     std::unique_ptr<Database> db;
+
+    GPID allocateMetaGpid(ErrorContext *ctx)
+    {
+        auto *pm = db ? db->page_manager() : nullptr;
+        if (!pm)
+        {
+            if (ctx) ctx->message = "PageManager not available";
+            return 0;
+        }
+        GPID gpid = 0;
+        Status status = pm->allocatePageInTablespace(PRIMARY_TABLESPACE_ID, &gpid, ctx);
+        if (status != Status::OK)
+        {
+            return 0;
+        }
+        return gpid;
+    }
 };
 
 // Test: Insert and find with custom tablespace TID (tablespace 5, page 100, slot 7)
@@ -66,13 +84,14 @@ TEST_F(HashCustomTablespaceTest, InsertFindCustomTablespace)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
+    ASSERT_NE(meta_gpid, 0u);
 
     // Create index
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to create hash index: " << ctx.message;
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Create TID in custom tablespace 5
@@ -95,7 +114,9 @@ TEST_F(HashCustomTablespaceTest, InsertFindCustomTablespace)
     ASSERT_EQ(status, Status::OK) << "Failed to insert with custom tablespace TID: " << ctx.message;
 
     // Find the entry
-    std::vector<TID> results = index->find(key, strlen(key), xid, &ctx);
+    std::vector<TID> results;
+    status = index->find(key, strlen(key), xid, &results, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to find entry: " << ctx.message;
     ASSERT_EQ(results.size(), 1) << "Expected 1 result, got " << results.size();
 
     // Verify retrieved TID matches
@@ -116,12 +137,13 @@ TEST_F(HashCustomTablespaceTest, MultipleTablespaces)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
+    ASSERT_NE(meta_gpid, 0u);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert entries in different tablespaces
@@ -156,7 +178,9 @@ TEST_F(HashCustomTablespaceTest, MultipleTablespaces)
     // Verify all entries can be found
     for (const auto& entry : entries)
     {
-        std::vector<TID> results = index->find(entry.key, strlen(entry.key), xid, &ctx);
+        std::vector<TID> results;
+        status = index->find(entry.key, strlen(entry.key), xid, &results, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to find key " << entry.key << ": " << ctx.message;
         ASSERT_EQ(results.size(), 1) << "Expected 1 result for key " << entry.key;
 
         TID retrieved = results[0];
@@ -176,12 +200,13 @@ TEST_F(HashCustomTablespaceTest, RemoveCustomTablespace)
 {
     ErrorContext ctx;
     UuidV7Bytes index_uuid = generateUuidV7();
-    uint32_t meta_page = 0;
+    GPID meta_gpid = allocateMetaGpid(&ctx);
+    ASSERT_NE(meta_gpid, 0u);
 
-    Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
+    Status status = HashIndex::create(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    auto index = HashIndex::open(db.get(), index_uuid, meta_page, &ctx);
+    auto index = HashIndex::open(db.get(), index_uuid, meta_gpid, &ctx);
     ASSERT_NE(index, nullptr);
 
     // Insert entry in custom tablespace
@@ -194,7 +219,9 @@ TEST_F(HashCustomTablespaceTest, RemoveCustomTablespace)
     ASSERT_EQ(status, Status::OK);
 
     // Verify it exists
-    std::vector<TID> results = index->find(key, strlen(key), xid, &ctx);
+    std::vector<TID> results;
+    status = index->find(key, strlen(key), xid, &results, &ctx);
+    ASSERT_EQ(status, Status::OK);
     ASSERT_EQ(results.size(), 1);
 
     // Remove it
@@ -202,7 +229,9 @@ TEST_F(HashCustomTablespaceTest, RemoveCustomTablespace)
     ASSERT_EQ(status, Status::OK) << "Failed to remove entry from custom tablespace";
 
     // Verify it's gone (using xid+1 to see it as deleted)
-    results = index->find(key, strlen(key), xid + 2, &ctx);
+    results.clear();
+    status = index->find(key, strlen(key), xid + 2, &results, &ctx);
+    ASSERT_EQ(status, Status::OK);
     ASSERT_EQ(results.size(), 0) << "Entry should be deleted";
 
     std::cout << "✅ Hash index successfully removed entry from custom tablespace" << std::endl;

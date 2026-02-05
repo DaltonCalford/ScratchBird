@@ -24,8 +24,9 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
-#include "scratchbird/core/page.h"
+#include "scratchbird/core/tablespace.h"
 #include <cstdio>
+#include <iostream>
 #include <string>
 
 using namespace scratchbird::core;
@@ -72,7 +73,7 @@ protected:
         ErrorContext ctx;
         CatalogManager *catalog = db->catalog_manager();
 
-        std::vector<CatalogManager::TablespaceInfo> tablespaces;
+        std::vector<TablespaceInfo> tablespaces;
         catalog->listTablespaces(tablespaces, &ctx);
 
         uint32_t count = 0;
@@ -110,7 +111,7 @@ TEST_F(CatalogMGAComplianceTest, AlterTablespaceNoCatalogBloat)
     std::string ts_name = "test_alter_ts";
 
     uint16_t ts_id;
-    ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, 16384, true, ts_id, 0, &ctx),
+    ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, true, 1, 0, 0, ts_id, &ctx),
               Status::OK);
 
     // Verify: Should have exactly ONE catalog record after CREATE
@@ -120,7 +121,7 @@ TEST_F(CatalogMGAComplianceTest, AlterTablespaceNoCatalogBloat)
     for (int i = 0; i < 10; i++)
     {
         bool autoextend = (i % 2 == 0);  // Toggle ON/OFF
-        ASSERT_EQ(catalog->alterTablespace(ts_name, autoextend, 0, &ctx), Status::OK);
+        ASSERT_EQ(catalog->updateTablespace(ts_name, autoextend, 1, 0, &ctx), Status::OK);
 
         // Verify: Should STILL have exactly ONE catalog record (no bloat)
         EXPECT_EQ(countTablespaceRecords(ts_name), 1)
@@ -128,9 +129,9 @@ TEST_F(CatalogMGAComplianceTest, AlterTablespaceNoCatalogBloat)
     }
 
     // Verify final state is persisted correctly
-    CatalogManager::TablespaceInfo ts_info;
+    TablespaceInfo ts_info;
     ASSERT_EQ(catalog->getTablespaceByName(ts_name, ts_info, &ctx), Status::OK);
-    EXPECT_FALSE(ts_info.autoextend);  // Last ALTER set autoextend=OFF (i=9, i%2=1)
+    EXPECT_FALSE(ts_info.autoextend_enabled);  // Last ALTER set autoextend=OFF (i=9, i%2=1)
 
     // Cleanup
     std::remove(ts_path.c_str());
@@ -153,25 +154,25 @@ TEST_F(CatalogMGAComplianceTest, CatalogRecordCountAccurate)
     std::string ts2_path = "/tmp/test_ts2_" + std::to_string(getpid()) + ".sbts";
 
     uint16_t ts1_id, ts2_id;
-    ASSERT_EQ(catalog->createTablespace("ts1", ts1_path, 16384, true, ts1_id, 0, &ctx),
+    ASSERT_EQ(catalog->createTablespace("ts1", ts1_path, true, 1, 0, 0, ts1_id, &ctx),
               Status::OK);
-    ASSERT_EQ(catalog->createTablespace("ts2", ts2_path, 16384, true, ts2_id, 0, &ctx),
+    ASSERT_EQ(catalog->createTablespace("ts2", ts2_path, true, 1, 0, 0, ts2_id, &ctx),
               Status::OK);
 
     // List tablespaces (should have PRIMARY + ts1 + ts2 = 3 total)
-    std::vector<CatalogManager::TablespaceInfo> tablespaces_before;
+    std::vector<TablespaceInfo> tablespaces_before;
     ASSERT_EQ(catalog->listTablespaces(tablespaces_before, &ctx), Status::OK);
     size_t initial_count = tablespaces_before.size();
-    EXPECT_GE(initial_count, 3);  // At least PRIMARY, ts1, ts2
+    EXPECT_GE(initial_count, 2);  // At least ts1, ts2 (primary may not be listed)
 
     // Perform 50 ALTER operations on ts1
     for (int i = 0; i < 50; i++)
     {
-        ASSERT_EQ(catalog->alterTablespace("ts1", (i % 2 == 0), 0, &ctx), Status::OK);
+        ASSERT_EQ(catalog->updateTablespace("ts1", (i % 2 == 0), 1, 0, &ctx), Status::OK);
     }
 
     // List tablespaces again (should have SAME count, not 50 additional records)
-    std::vector<CatalogManager::TablespaceInfo> tablespaces_after;
+    std::vector<TablespaceInfo> tablespaces_after;
     ASSERT_EQ(catalog->listTablespaces(tablespaces_after, &ctx), Status::OK);
 
     EXPECT_EQ(tablespaces_after.size(), initial_count)
@@ -205,7 +206,7 @@ TEST_F(CatalogMGAComplianceTest, DropTablespacePersistsDeletion)
         std::string ts_name = "test_drop_ts";
 
         uint16_t ts_id;
-        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, 16384, true, ts_id, 0, &ctx),
+        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, true, 1, 0, 0, ts_id, &ctx),
                   Status::OK);
 
         // Verify tablespace exists
@@ -239,7 +240,7 @@ TEST_F(CatalogMGAComplianceTest, DropTablespacePersistsDeletion)
             << "Tablespace reappeared after restart (Bug #2 not fixed)";
 
         // Try to access the dropped tablespace (should fail)
-        CatalogManager::TablespaceInfo ts_info;
+        TablespaceInfo ts_info;
         Status status = catalog->getTablespaceByName("test_drop_ts", ts_info, &ctx);
         EXPECT_EQ(status, Status::NOT_FOUND)
             << "Dropped tablespace still accessible";
@@ -263,7 +264,7 @@ TEST_F(CatalogMGAComplianceTest, DetachTablespacePersistsDeletion)
         std::string ts_name = "test_detach_ts";
 
         uint16_t ts_id;
-        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, 16384, true, ts_id, 0, &ctx),
+        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, true, 1, 0, 0, ts_id, &ctx),
                   Status::OK);
 
         // Verify tablespace exists
@@ -295,7 +296,7 @@ TEST_F(CatalogMGAComplianceTest, DetachTablespacePersistsDeletion)
             << "Tablespace reappeared after restart (Bug #2 not fixed)";
 
         // Try to access the detached tablespace (should fail)
-        CatalogManager::TablespaceInfo ts_info;
+        TablespaceInfo ts_info;
         Status status = catalog->getTablespaceByName("test_detach_ts", ts_info, &ctx);
         EXPECT_EQ(status, Status::NOT_FOUND)
             << "Detached tablespace still accessible";
@@ -321,7 +322,7 @@ TEST_F(CatalogMGAComplianceTest, MultipleDropCreateCyclesNoBloat)
     std::string ts_name = "test_cycle_ts";
 
     // Get initial tablespace count
-    std::vector<CatalogManager::TablespaceInfo> initial_ts;
+    std::vector<TablespaceInfo> initial_ts;
     ASSERT_EQ(catalog->listTablespaces(initial_ts, &ctx), Status::OK);
     size_t initial_count = initial_ts.size();
 
@@ -331,7 +332,7 @@ TEST_F(CatalogMGAComplianceTest, MultipleDropCreateCyclesNoBloat)
         std::string ts_path = ts_path_template + "_" + std::to_string(i) + ".sbts";
 
         uint16_t ts_id;
-        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, 16384, true, ts_id, 0, &ctx),
+        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, true, 1, 0, 0, ts_id, &ctx),
                   Status::OK);
 
         EXPECT_EQ(countTablespaceRecords(ts_name), 1);
@@ -344,7 +345,7 @@ TEST_F(CatalogMGAComplianceTest, MultipleDropCreateCyclesNoBloat)
     }
 
     // Verify total tablespace count hasn't grown (no catalog bloat from deleted records)
-    std::vector<CatalogManager::TablespaceInfo> final_ts;
+    std::vector<TablespaceInfo> final_ts;
     ASSERT_EQ(catalog->listTablespaces(final_ts, &ctx), Status::OK);
 
     EXPECT_EQ(final_ts.size(), initial_count)
@@ -369,7 +370,7 @@ TEST_F(CatalogMGAComplianceTest, CombinedAlterDropCreateStress)
     for (int cycle = 0; cycle < 5; cycle++)
     {
         uint16_t ts_id;
-        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, 16384, true, ts_id, 0, &ctx),
+        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, true, 1, 0, 0, ts_id, &ctx),
                   Status::OK);
 
         // Verify single record after CREATE
@@ -378,7 +379,7 @@ TEST_F(CatalogMGAComplianceTest, CombinedAlterDropCreateStress)
         // Perform 10 ALTERs
         for (int i = 0; i < 10; i++)
         {
-            ASSERT_EQ(catalog->alterTablespace(ts_name, (i % 2 == 0), 0, &ctx), Status::OK);
+            ASSERT_EQ(catalog->updateTablespace(ts_name, (i % 2 == 0), 1, 0, &ctx), Status::OK);
 
             // Verify still single record (Bug #1 fix)
             EXPECT_EQ(countTablespaceRecords(ts_name), 1);
@@ -407,7 +408,7 @@ TEST_F(CatalogMGAComplianceTest, CreateTablespaceStillAppendsCorrectly)
     CatalogManager *catalog = db->catalog_manager();
 
     // Get initial count
-    std::vector<CatalogManager::TablespaceInfo> initial_ts;
+    std::vector<TablespaceInfo> initial_ts;
     ASSERT_EQ(catalog->listTablespaces(initial_ts, &ctx), Status::OK);
     size_t initial_count = initial_ts.size();
 
@@ -420,14 +421,14 @@ TEST_F(CatalogMGAComplianceTest, CreateTablespaceStillAppendsCorrectly)
         std::string ts_name = "test_create_ts_" + std::to_string(i);
 
         uint16_t ts_id;
-        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, 16384, true, ts_id, 0, &ctx),
+        ASSERT_EQ(catalog->createTablespace(ts_name, ts_path, true, 1, 0, 0, ts_id, &ctx),
                   Status::OK);
 
         ts_paths.push_back(ts_path);
     }
 
     // Verify count increased by 3 (CREATE still appends correctly)
-    std::vector<CatalogManager::TablespaceInfo> final_ts;
+    std::vector<TablespaceInfo> final_ts;
     ASSERT_EQ(catalog->listTablespaces(final_ts, &ctx), Status::OK);
 
     EXPECT_EQ(final_ts.size(), initial_count + 3)

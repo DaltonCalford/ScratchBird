@@ -69,8 +69,8 @@ namespace scratchbird
             Status scanColumn(uint16_t column_id, uint32_t start_row, uint32_t end_row,
                               std::vector<uint8_t> *data_out, ErrorContext *ctx = nullptr);
 
-            // Vacuum the index
-            Status vacuum(ErrorContext *ctx = nullptr);
+            // GC compaction (ScratchBird MGA GC, not PostgreSQL VACUUM)
+            Status gcCompact(ErrorContext *ctx = nullptr);
 
             // IndexGCInterface implementation
             Status removeDeadEntries(const std::vector<TID> &dead_tids,

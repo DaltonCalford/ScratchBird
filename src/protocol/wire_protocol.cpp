@@ -847,6 +847,41 @@ core::Status ProtocolCodec::parseRowDescription(const Message& msg,
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
 
+    auto mapOidToWireType = [](uint32_t oid) -> WireType {
+        switch (oid) {
+            case sbwp::kOidBool: return WireType::BOOLEAN;
+            case sbwp::kOidInt2: return WireType::INT16;
+            case sbwp::kOidInt4: return WireType::INT32;
+            case sbwp::kOidInt8: return WireType::INT64;
+            case sbwp::kOidFloat4: return WireType::FLOAT32;
+            case sbwp::kOidFloat8: return WireType::FLOAT64;
+            case sbwp::kOidNumeric: return WireType::DECIMAL;
+            case sbwp::kOidVarchar: return WireType::VARCHAR;
+            case sbwp::kOidChar: return WireType::CHAR;
+            case sbwp::kOidText: return WireType::VARCHAR;
+            case sbwp::kOidBytea: return WireType::BYTEA;
+            case sbwp::kOidDate: return WireType::DATE;
+            case sbwp::kOidTime: return WireType::TIME;
+            case sbwp::kOidTimestamp: return WireType::TIMESTAMP;
+            case sbwp::kOidTimestamptz: return WireType::TIMESTAMPTZ;
+            case sbwp::kOidInterval: return WireType::INTERVAL;
+            case sbwp::kOidUuid: return WireType::UUID;
+            case sbwp::kOidJson: return WireType::JSON;
+            case sbwp::kOidJsonb: return WireType::JSONB;
+            case sbwp::kOidXml: return WireType::XML;
+            case sbwp::kOidInet: return WireType::INET;
+            case sbwp::kOidCidr: return WireType::CIDR;
+            case sbwp::kOidMacaddr: return WireType::MACADDR;
+            case sbwp::kOidTsVector: return WireType::TSVECTOR;
+            case sbwp::kOidTsQuery: return WireType::TSQUERY;
+            case sbwp::kOidSbVector: return WireType::VECTOR;
+            case sbwp::kOidMoney: return WireType::MONEY;
+            case sbwp::kOidRecord: return WireType::COMPOSITE;
+            default:
+                return WireType::UNKNOWN;
+        }
+    };
+
     uint16_t column_count;
     uint16_t reserved;
     if (!m.readUInt16(column_count) || !m.readUInt16(reserved)) {
@@ -886,6 +921,7 @@ core::Status ProtocolCodec::parseRowDescription(const Message& msg,
 
         col.type_size = static_cast<int16_t>(type_size);
         col.nullable = nullable != 0;
+        col.type = mapOidToWireType(col.type_oid);
         columns.push_back(std::move(col));
     }
 

@@ -18,7 +18,7 @@
  * Test coverage:
  * - collectDeadTuples() correctly identifies dead tuples based on OIT
  * - GC cleanPage() flow calls collectDeadTuples() before prunePage()
- * - TID format is correct: (page_id << 32) | (item_id << 16)
+ * - TID format is correct: (GPID, slot)
  *
  * NOTE: Full end-to-end index cleanup testing requires table metadata
  * integration which is pending (see GarbageCollector::cleanIndexes TODO).
@@ -27,9 +27,15 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/garbage_collector.h"
+#include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/tid.h"
+#include "scratchbird/core/config.h"
 #include <filesystem>
 #include <vector>
+#include <cstring>
 
 using namespace scratchbird::core;
 
@@ -41,6 +47,11 @@ protected:
 
     void SetUp() override
     {
+        // Ensure cooperative GC runs every time for deterministic tests.
+        Config::getInstance().set("garbage_collection", "enabled", "true");
+        Config::getInstance().set("garbage_collection", "policy", "COMBINED");
+        Config::getInstance().set("garbage_collection", "cooperative_rate", "1");
+
         // Create temporary database for testing
         test_db_path_ = "/tmp/test_heap_index_gc_" + std::to_string(getpid()) + ".db";
 
@@ -75,6 +86,58 @@ protected:
             std::filesystem::remove(test_db_path_);
         }
     }
+
+    Status allocatePage(uint32_t &page_id, uint8_t **page_data, ErrorContext *ctx)
+    {
+        auto *page_mgr = db_.page_manager();
+        if (!page_mgr)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Status status = page_mgr->allocatePage(page_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        void *buffer = nullptr;
+        status = db_.buffer_pool()->pinPage(page_id, &buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        *page_data = static_cast<uint8_t *>(buffer);
+        return Status::OK;
+    }
+
+    void releasePage(uint32_t page_id, bool dirty, ErrorContext *ctx)
+    {
+        db_.buffer_pool()->unpinPage(page_id, dirty, ctx);
+        db_.page_manager()->freePage(page_id, ctx);
+    }
+
+    static std::vector<uint8_t> buildTuple(const uint8_t *payload, size_t payload_size)
+    {
+        std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload_size, 0);
+        TupleHeader header{};
+        header.session_id = ID{};
+        std::memcpy(tuple.data(), &header, sizeof(TupleHeader));
+        if (payload_size > 0)
+        {
+            std::memcpy(tuple.data() + sizeof(TupleHeader), payload, payload_size);
+        }
+        return tuple;
+    }
+
+    static void markXmaxCommitted(uint8_t *page_data, uint16_t item_id)
+    {
+        auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
+        auto *tuple_hdr =
+            reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
+        tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+    }
 };
 
 // ========== HeapPage::collectDeadTuples() Tests ==========
@@ -84,12 +147,10 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_EmptyPage)
     ErrorContext ctx;
 
     // Allocate a test page
-    auto page_mgr = db_.page_manager();
-    ASSERT_NE(page_mgr, nullptr);
 
     uint32_t page_id = 0;
     uint8_t *page_data = nullptr;
-    Status status = page_mgr->allocatePage(&page_id, &page_data, &ctx);
+    Status status = allocatePage(page_id, &page_data, &ctx);
     ASSERT_EQ(status, Status::OK);
     ASSERT_NE(page_data, nullptr);
 
@@ -99,14 +160,14 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_EmptyPage)
     ASSERT_EQ(status, Status::OK);
 
     // Collect dead tuples with OIT=1000
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     status = heap_page.collectDeadTuples(1000, &dead_tids, &ctx);
 
     EXPECT_EQ(status, Status::OK);
     EXPECT_TRUE(dead_tids.empty()) << "Empty page should have no dead tuples";
 
     // Free page
-    page_mgr->freePage(page_id, &ctx);
+    releasePage(page_id, true, &ctx);
 }
 
 TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_LiveTuplesOnly)
@@ -114,10 +175,9 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_LiveTuplesOnly)
     ErrorContext ctx;
 
     // Allocate and initialize page
-    auto page_mgr = db_.page_manager();
     uint32_t page_id = 0;
     uint8_t *page_data = nullptr;
-    Status status = page_mgr->allocatePage(&page_id, &page_data, &ctx);
+    Status status = allocatePage(page_id, &page_data, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     HeapPage heap_page(page_data, db_.page_size());
@@ -125,23 +185,26 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_LiveTuplesOnly)
     ASSERT_EQ(status, Status::OK);
 
     // Insert live tuples (xmax=0)
-    uint8_t tuple_data[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    uint8_t payload[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    auto tuple_data = buildTuple(payload, sizeof(payload));
 
     for (int i = 0; i < 3; i++)
     {
         uint16_t item_id = 0;
-        status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 100 + i, &item_id, &ctx);
+        status = heap_page.insertTuple(tuple_data.data(),
+                                       static_cast<uint32_t>(tuple_data.size()),
+                                       100 + i, &item_id, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
     // Collect dead tuples with OIT=1000
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     status = heap_page.collectDeadTuples(1000, &dead_tids, &ctx);
 
     EXPECT_EQ(status, Status::OK);
     EXPECT_TRUE(dead_tids.empty()) << "No dead tuples (all xmax=0)";
 
-    page_mgr->freePage(page_id, &ctx);
+    releasePage(page_id, true, &ctx);
 }
 
 TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_AllDead)
@@ -149,10 +212,9 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_AllDead)
     ErrorContext ctx;
 
     // Allocate and initialize page
-    auto page_mgr = db_.page_manager();
     uint32_t page_id = 0;
     uint8_t *page_data = nullptr;
-    Status status = page_mgr->allocatePage(&page_id, &page_data, &ctx);
+    Status status = allocatePage(page_id, &page_data, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     HeapPage heap_page(page_data, db_.page_size());
@@ -160,38 +222,42 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_AllDead)
     ASSERT_EQ(status, Status::OK);
 
     // Insert and delete tuples (xmax < OIT)
-    uint8_t tuple_data[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    uint8_t payload[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    auto tuple_data = buildTuple(payload, sizeof(payload));
 
     for (int i = 0; i < 3; i++)
     {
         uint16_t item_id = 0;
-        status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 100 + i, &item_id, &ctx);
+        status = heap_page.insertTuple(tuple_data.data(),
+                                       static_cast<uint32_t>(tuple_data.size()),
+                                       100 + i, &item_id, &ctx);
         ASSERT_EQ(status, Status::OK);
 
         // Delete tuple (sets xmax and HEAP_XMAX_COMMITTED flag)
         status = heap_page.deleteTuple(item_id, 500 + i, &ctx);
         ASSERT_EQ(status, Status::OK);
+        markXmaxCommitted(page_data, item_id);
     }
 
     // Collect dead tuples with OIT=1000 (all xmax values 500-502 < 1000)
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     status = heap_page.collectDeadTuples(1000, &dead_tids, &ctx);
 
     EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(dead_tids.size(), 3) << "All 3 tuples should be dead";
 
-    // Verify TID format: (page_id << 32) | (item_id << 16)
+    // Verify TID format: (GPID, slot)
     for (size_t i = 0; i < dead_tids.size(); i++)
     {
-        uint64_t tid = dead_tids[i];
-        uint32_t tid_page = static_cast<uint32_t>(tid >> 32);
-        uint16_t tid_item = static_cast<uint16_t>((tid >> 16) & 0xFFFF);
+        TID tid = dead_tids[i];
+        uint32_t tid_page = 0;
+        ASSERT_TRUE(convertGPIDtoPageID(tid.gpid, &tid_page));
 
         EXPECT_EQ(tid_page, page_id) << "TID page_id should match";
-        EXPECT_EQ(tid_item, i) << "TID item_id should be " << i;
+        EXPECT_EQ(tid.slot, i) << "TID slot should be " << i;
     }
 
-    page_mgr->freePage(page_id, &ctx);
+    releasePage(page_id, true, &ctx);
 }
 
 TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_MixedLiveAndDead)
@@ -199,10 +265,9 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_MixedLiveAndDead)
     ErrorContext ctx;
 
     // Allocate and initialize page
-    auto page_mgr = db_.page_manager();
     uint32_t page_id = 0;
     uint8_t *page_data = nullptr;
-    Status status = page_mgr->allocatePage(&page_id, &page_data, &ctx);
+    Status status = allocatePage(page_id, &page_data, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     HeapPage heap_page(page_data, db_.page_size());
@@ -210,37 +275,51 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_MixedLiveAndDead)
     ASSERT_EQ(status, Status::OK);
 
     // Insert mix of live and dead tuples
-    uint8_t tuple_data[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    uint8_t payload[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    auto tuple_data = buildTuple(payload, sizeof(payload));
 
     // Tuple 0: Live (xmax=0)
     uint16_t item_id = 0;
-    status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 100, &item_id, &ctx);
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   100, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Tuple 1: Dead (xmax=500 < OIT=1000)
-    status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 200, &item_id, &ctx);
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   200, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
     status = heap_page.deleteTuple(item_id, 500, &ctx);
     ASSERT_EQ(status, Status::OK);
+    markXmaxCommitted(page_data, item_id);
 
     // Tuple 2: Live (xmax=0)
-    status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 300, &item_id, &ctx);
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   300, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Tuple 3: Dead (xmax=600 < OIT=1000)
-    status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 400, &item_id, &ctx);
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   400, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
     status = heap_page.deleteTuple(item_id, 600, &ctx);
     ASSERT_EQ(status, Status::OK);
+    markXmaxCommitted(page_data, item_id);
 
     // Tuple 4: Live (xmax=1100 >= OIT=1000, still visible to older transactions)
-    status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 500, &item_id, &ctx);
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   500, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
     status = heap_page.deleteTuple(item_id, 1100, &ctx);
     ASSERT_EQ(status, Status::OK);
+    markXmaxCommitted(page_data, item_id);
 
     // Collect dead tuples with OIT=1000
-    std::vector<uint64_t> dead_tids;
+    std::vector<TID> dead_tids;
     status = heap_page.collectDeadTuples(1000, &dead_tids, &ctx);
 
     EXPECT_EQ(status, Status::OK);
@@ -249,14 +328,14 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_MixedLiveAndDead)
     // Verify dead TIDs are for items 1 and 3
     if (dead_tids.size() == 2)
     {
-        uint16_t item1 = static_cast<uint16_t>((dead_tids[0] >> 16) & 0xFFFF);
-        uint16_t item2 = static_cast<uint16_t>((dead_tids[1] >> 16) & 0xFFFF);
+        uint16_t item1 = dead_tids[0].slot;
+        uint16_t item2 = dead_tids[1].slot;
 
         EXPECT_EQ(item1, 1) << "First dead TID should be item 1";
         EXPECT_EQ(item2, 3) << "Second dead TID should be item 3";
     }
 
-    page_mgr->freePage(page_id, &ctx);
+    releasePage(page_id, true, &ctx);
 }
 
 TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_NullPointer)
@@ -264,10 +343,9 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_NullPointer)
     ErrorContext ctx;
 
     // Allocate and initialize page
-    auto page_mgr = db_.page_manager();
     uint32_t page_id = 0;
     uint8_t *page_data = nullptr;
-    Status status = page_mgr->allocatePage(&page_id, &page_data, &ctx);
+    Status status = allocatePage(page_id, &page_data, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     HeapPage heap_page(page_data, db_.page_size());
@@ -280,7 +358,7 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_NullPointer)
     EXPECT_EQ(status, Status::INVALID_ARGUMENT);
     EXPECT_NE(ctx.message.find("cannot be null"), std::string::npos);
 
-    page_mgr->freePage(page_id, &ctx);
+    releasePage(page_id, true, &ctx);
 }
 
 // ========== GarbageCollector Integration Tests ==========
@@ -290,10 +368,9 @@ TEST_F(HeapIndexGCIntegrationTest, GC_Integration_FlowWorks)
     ErrorContext ctx;
 
     // Create page with dead tuple
-    auto page_mgr = db_.page_manager();
     uint32_t page_id = 0;
     uint8_t *page_data = nullptr;
-    Status status = page_mgr->allocatePage(&page_id, &page_data, &ctx);
+    Status status = allocatePage(page_id, &page_data, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     HeapPage heap_page(page_data, db_.page_size());
@@ -301,12 +378,16 @@ TEST_F(HeapIndexGCIntegrationTest, GC_Integration_FlowWorks)
     ASSERT_EQ(status, Status::OK);
 
     // Insert and delete a tuple
-    uint8_t tuple_data[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    uint8_t payload[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    auto tuple_data = buildTuple(payload, sizeof(payload));
     uint16_t item_id = 0;
-    status = heap_page.insertTuple(tuple_data, sizeof(tuple_data), 100, &item_id, &ctx);
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   100, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
     status = heap_page.deleteTuple(item_id, 500, &ctx);
     ASSERT_EQ(status, Status::OK);
+    markXmaxCommitted(page_data, item_id);
 
     // Mark page dirty so GC will process it
     auto gc = db_.garbage_collector();
@@ -323,7 +404,7 @@ TEST_F(HeapIndexGCIntegrationTest, GC_Integration_FlowWorks)
     // Note: cleanIndexes() currently logs but doesn't clean (pending table metadata)
     // This test verifies the integration flow works without errors
 
-    page_mgr->freePage(page_id, &ctx);
+    releasePage(page_id, true, &ctx);
 }
 
 TEST_F(HeapIndexGCIntegrationTest, GC_Integration_HandlesEmptyPage)
@@ -331,10 +412,9 @@ TEST_F(HeapIndexGCIntegrationTest, GC_Integration_HandlesEmptyPage)
     ErrorContext ctx;
 
     // Create empty page
-    auto page_mgr = db_.page_manager();
     uint32_t page_id = 0;
     uint8_t *page_data = nullptr;
-    Status status = page_mgr->allocatePage(&page_id, &page_data, &ctx);
+    Status status = allocatePage(page_id, &page_data, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     HeapPage heap_page(page_data, db_.page_size());
@@ -350,7 +430,7 @@ TEST_F(HeapIndexGCIntegrationTest, GC_Integration_HandlesEmptyPage)
     auto stats = gc->getStatistics();
     EXPECT_GT(stats.cooperative_runs, 0);
 
-    page_mgr->freePage(page_id, &ctx);
+    releasePage(page_id, true, &ctx);
 }
 
 // Note: main() is provided by GTest::gtest_main linked in CMakeLists.txt

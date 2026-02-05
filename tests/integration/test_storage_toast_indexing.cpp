@@ -16,12 +16,15 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/tid.h"
 #include "test_helpers.h"
 #include <memory>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -36,9 +39,7 @@ protected:
         test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_storage_toast_indexing", ".db");
         ErrorContext ctx;
         Status status = Database::create(test_db_path_, 8192, &ctx);
-        if (status != Status::OK && status != Status::ERROR_EXISTS) {
-            FAIL() << "Failed to create database: " << ctx.message;
-        }
+        ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();
         status = db_->open(test_db_path_, &ctx);
@@ -51,10 +52,47 @@ protected:
         ASSERT_NE(storage_, nullptr);
         ASSERT_NE(catalog_, nullptr);
         ASSERT_NE(tm_, nullptr);
+
+        // Create schema + test table
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        ASSERT_EQ(catalog_->listSchemas(schemas, &ctx), Status::OK);
+        ID schema_id;
+        if (schemas.empty()) {
+            ASSERT_EQ(catalog_->createSchema("public", "test", schema_id, &ctx), Status::OK);
+        } else {
+            schema_id = schemas[0].schema_id;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        CatalogManager::ColumnInfo id_col;
+        id_col.column_name = "id";
+        id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        id_col.max_length = 4;
+        id_col.nullable = false;
+        id_col.has_default = false;
+        columns.push_back(id_col);
+
+        CatalogManager::ColumnInfo text_col;
+        text_col.column_name = "text_value";
+        text_col.data_type = static_cast<uint16_t>(DataType::BYTEA);
+        text_col.max_length = 0;
+        text_col.nullable = true;
+        text_col.has_default = false;
+        columns.push_back(text_col);
+
+        ASSERT_EQ(catalog_->createTable(schema_id, "toast_index_test", columns, table_id_, 0, &ctx),
+                  Status::OK);
+
+        // Create connection context (registers ProcArray)
+        ASSERT_EQ(db_->connect(conn_ctx_, &ctx), Status::OK) << ctx.message;
+        proc_id_ = conn_ctx_->getProcId();
+        ConnectionContext::setCurrent(conn_ctx_.get());
     }
 
     void TearDown() override
     {
+        ConnectionContext::setCurrent(nullptr);
+        conn_ctx_.reset();
         if (db_)
         {
             db_->close();
@@ -77,6 +115,10 @@ protected:
             text.append(buf);
         }
 
+        if (text.size() < size_kb * 1024)
+        {
+            text.append(size_kb * 1024 - text.size(), 'X');
+        }
         return text;
     }
 
@@ -118,6 +160,22 @@ protected:
     StorageEngine* storage_;
     CatalogManager* catalog_;
     TransactionManager* tm_;
+    std::unique_ptr<ConnectionContext> conn_ctx_;
+    uint32_t proc_id_ = 0;
+    ID table_id_;
+    uint64_t beginTxn(ErrorContext* ctx)
+    {
+        uint64_t xid = 0;
+        Status status = tm_->beginTransaction(proc_id_, xid, ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+        return xid;
+    }
+
+    void commitTxn(uint64_t xid, ErrorContext* ctx)
+    {
+        Status status = tm_->commitTransaction(proc_id_, xid, ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+    }
 };
 
 // =============================================================================
@@ -135,7 +193,8 @@ TEST_F(StorageToastIndexingTest, InsertWithToastAndBTreeIndex)
     // 4. Index contains actual detoasted value, NOT 18-byte TOAST pointer
     // 5. Query via index returns correct results
 
-    uint64_t xid = tm_->beginTransaction();
+    ErrorContext ctx;
+    uint64_t xid = beginTxn(&ctx);
     ASSERT_NE(xid, 0);
 
     // Create large text (5KB - will be TOASTed)
@@ -146,13 +205,10 @@ TEST_F(StorageToastIndexingTest, InsertWithToastAndBTreeIndex)
     std::vector<uint8_t> tuple = serializeTuple(1, large_text, xid);
 
     // Create table (simplified - in real code this would go through catalog)
-    ID table_id = generateUuidV7();
-
     // Insert tuple
     uint32_t page_id = 0;
     uint16_t item_id = 0;
-    ErrorContext ctx;
-    Status status = storage_->insertTuple(table_id, tuple.data(), tuple.size(),
+    Status status = storage_->insertTuple(table_id_, tuple.data(), tuple.size(),
                                           &page_id, &item_id, &ctx);
 
     // Verify insert succeeded
@@ -164,7 +220,7 @@ TEST_F(StorageToastIndexingTest, InsertWithToastAndBTreeIndex)
     // 2. Index does NOT contain 18-byte TOAST pointer
     // 3. Search via index returns correct tuple
 
-    tm_->commit(xid);
+    commitTxn(xid, &ctx);
 }
 
 // =============================================================================
@@ -183,31 +239,30 @@ TEST_F(StorageToastIndexingTest, UpdateWithChangedIndexedColumn)
     // 5. TID remains STABLE (same page_id, item_id)
     // 6. Index contains new detoasted value
 
-    uint64_t xid1 = tm_->beginTransaction();
+    ErrorContext ctx;
+    uint64_t xid1 = beginTxn(&ctx);
     ASSERT_NE(xid1, 0);
 
     // Insert initial tuple
     std::string initial_text = createLargeText(3);
     std::vector<uint8_t> tuple1 = serializeTuple(1, initial_text, xid1);
 
-    ID table_id = generateUuidV7();
     uint32_t page_id = 0;
     uint16_t item_id = 0;
-    ErrorContext ctx;
-    Status status = storage_->insertTuple(table_id, tuple1.data(), tuple1.size(),
+    Status status = storage_->insertTuple(table_id_, tuple1.data(), tuple1.size(),
                                           &page_id, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    tm_->commit(xid1);
+    commitTxn(xid1, &ctx);
 
     // Update with different text
-    uint64_t xid2 = tm_->beginTransaction();
+    uint64_t xid2 = beginTxn(&ctx);
     std::string updated_text = createLargeText(4); // Different content
     std::vector<uint8_t> tuple2 = serializeTuple(1, updated_text, xid2);
 
     uint32_t new_page_id = 0;
     uint16_t new_item_id = 0;
-    status = storage_->updateTuple(table_id, page_id, item_id,
+    status = storage_->updateTuple(table_id_, page_id, item_id,
                                    tuple2.data(), tuple2.size(),
                                    &new_page_id, &new_item_id, &ctx);
 
@@ -220,7 +275,7 @@ TEST_F(StorageToastIndexingTest, UpdateWithChangedIndexedColumn)
 
     // TODO: Verify index was updated with new detoasted value
 
-    tm_->commit(xid2);
+    commitTxn(xid2, &ctx);
 }
 
 // =============================================================================
@@ -238,7 +293,8 @@ TEST_F(StorageToastIndexingTest, UpdateWithUnchangedIndexedColumn)
     // 4. Storage layer skips index update (MGA TID stability!)
     // 5. ~80% performance improvement for this case
 
-    uint64_t xid1 = tm_->beginTransaction();
+    ErrorContext ctx;
+    uint64_t xid1 = beginTxn(&ctx);
     ASSERT_NE(xid1, 0);
 
     // For this test, we'd need a tuple with multiple columns
@@ -249,23 +305,21 @@ TEST_F(StorageToastIndexingTest, UpdateWithUnchangedIndexedColumn)
     std::string text = createLargeText(3);
     std::vector<uint8_t> tuple1 = serializeTuple(1, text, xid1);
 
-    ID table_id = generateUuidV7();
     uint32_t page_id = 0;
     uint16_t item_id = 0;
-    ErrorContext ctx;
-    Status status = storage_->insertTuple(table_id, tuple1.data(), tuple1.size(),
+    Status status = storage_->insertTuple(table_id_, tuple1.data(), tuple1.size(),
                                           &page_id, &item_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    tm_->commit(xid1);
+    commitTxn(xid1, &ctx);
 
     // Update with SAME text (indexed column unchanged)
-    uint64_t xid2 = tm_->beginTransaction();
+    uint64_t xid2 = beginTxn(&ctx);
     std::vector<uint8_t> tuple2 = serializeTuple(2, text, xid2); // Changed ID, same text
 
     uint32_t new_page_id = 0;
     uint16_t new_item_id = 0;
-    status = storage_->updateTuple(table_id, page_id, item_id,
+    status = storage_->updateTuple(table_id_, page_id, item_id,
                                    tuple2.data(), tuple2.size(),
                                    &new_page_id, &new_item_id, &ctx);
 
@@ -274,7 +328,7 @@ TEST_F(StorageToastIndexingTest, UpdateWithUnchangedIndexedColumn)
     // TODO: Verify NO index maintenance was performed
     // (In real implementation, would need instrumentation/logging to verify)
 
-    tm_->commit(xid2);
+    commitTxn(xid2, &ctx);
 }
 
 // =============================================================================
@@ -292,7 +346,8 @@ TEST_F(StorageToastIndexingTest, MultipleIndexesSameToastColumn)
     // 4. Cache hit for second and third indexes
     // 5. All 3 indexes contain actual detoasted value
 
-    uint64_t xid = tm_->beginTransaction();
+    ErrorContext ctx;
+    uint64_t xid = beginTxn(&ctx);
     ASSERT_NE(xid, 0);
 
     // Create large text
@@ -300,15 +355,12 @@ TEST_F(StorageToastIndexingTest, MultipleIndexesSameToastColumn)
     std::vector<uint8_t> tuple = serializeTuple(1, large_text, xid);
 
     // Create table
-    ID table_id = generateUuidV7();
-
     // TODO: Create 3 indexes on text column via catalog
 
     // Insert tuple
     uint32_t page_id = 0;
     uint16_t item_id = 0;
-    ErrorContext ctx;
-    Status status = storage_->insertTuple(table_id, tuple.data(), tuple.size(),
+    Status status = storage_->insertTuple(table_id_, tuple.data(), tuple.size(),
                                           &page_id, &item_id, &ctx);
 
     EXPECT_EQ(status, Status::OK) << "Insert failed: " << ctx.message;
@@ -316,7 +368,7 @@ TEST_F(StorageToastIndexingTest, MultipleIndexesSameToastColumn)
     // TODO: Verify all 3 indexes have the same detoasted value
     // TODO: Add performance instrumentation to verify cache hit
 
-    tm_->commit(xid);
+    commitTxn(xid, &ctx);
 }
 
 // =============================================================================
@@ -334,10 +386,12 @@ TEST_F(StorageToastIndexingTest, ToastPointerDetection)
 
     // Create a valid TOAST pointer
     ToastPointer toast_ptr{};
+    toast_ptr.va_header = 0x01;
     toast_ptr.va_tag = static_cast<uint8_t>(ToastStrategy::EXTERNAL);
     toast_ptr.va_rawsize = 5000;
     toast_ptr.va_extsize = 5000;
-    toast_ptr.va_valueid = generateUuidV7();
+    toast_ptr.va_valueid = 42;
+    toast_ptr.va_toastrelid = 1;
 
     // Test 1: Valid TOAST pointer (18 bytes with magic)
     EXPECT_TRUE(ToastManager::isToastPointer(
@@ -372,19 +426,18 @@ TEST_F(StorageToastIndexingTest, DetoastIfNeeded)
     // 2. Detoast TOAST pointers
     // 3. Handle errors gracefully
 
-    uint64_t xid = tm_->beginTransaction();
+    ErrorContext ctx;
+    uint64_t xid = beginTxn(&ctx);
     ASSERT_NE(xid, 0);
 
-    ID table_id = generateUuidV7();
-    ToastManager toast_mgr(db_.get(), table_id);
-    ErrorContext ctx;
+    ToastManager toast_mgr(db_.get(), table_id_);
 
     // Initialize TOAST manager
     Status status = toast_mgr.initialize(&ctx);
     if (status != Status::OK)
     {
         // TOAST table doesn't exist - skip this test
-        tm_->commit(xid);
+        commitTxn(xid, &ctx);
         GTEST_SKIP() << "TOAST table not initialized, skipping detoastIfNeeded test";
         return;
     }
@@ -408,7 +461,7 @@ TEST_F(StorageToastIndexingTest, DetoastIfNeeded)
     // Test 2: TOAST pointer (would need actual TOAST chunks to test properly)
     // This is a placeholder - full test requires end-to-end TOAST flow
 
-    tm_->commit(xid);
+    commitTxn(xid, &ctx);
 }
 
 // =============================================================================

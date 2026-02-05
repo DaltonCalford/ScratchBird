@@ -539,7 +539,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getVacuumHorizon(uint64_t *horizon_out, ErrorContext *ctx) -> Status
+    auto ProcArrayManager::getGcHorizon(uint64_t *horizon_out, ErrorContext *ctx) -> Status
     {
         ProcArray *array = proc_array_.load(std::memory_order_acquire);
         if (!array)

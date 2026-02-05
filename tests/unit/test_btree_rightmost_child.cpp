@@ -13,6 +13,7 @@
  * and that traversal code properly detects corruption
  */
 
+#include <gtest/gtest.h>
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
@@ -36,6 +37,16 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
     std::string db_path = uniqueTestDbPath("test_btree_rightmost", ".sbrd");
     std::remove(db_path.c_str());
 
+    UuidV7Bytes index_uuid;
+    for (int i = 0; i < 16; i++)
+    {
+        index_uuid.bytes[i] = static_cast<uint8_t>(i);
+    }
+
+    auto uuid_matches = [&](const SBBTreePage *page) -> bool {
+        return std::memcmp(page->btr_index_uuid.bytes.data(), index_uuid.bytes.data(), 16) == 0;
+    };
+
     // Test 1: Create a B-tree and verify root initialization
     {
         std::cout << "Test 1: Root initialization with rightmost_child... ";
@@ -55,17 +66,24 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         }
 
         // Create B-tree index
-        UuidV7Bytes index_uuid, table_uuid;
+        UuidV7Bytes table_uuid;
         for (int i = 0; i < 16; i++)
         {
-            index_uuid.bytes[i] = static_cast<uint8_t>(i);
             table_uuid.bytes[i] = static_cast<uint8_t>(i + 16);
         }
 
         std::vector<UuidV7Bytes> column_uuids;
-        uint32_t root_page;
+        GPID root_gpid = 0;
 
-        Status status = BTree::create(&db, index_uuid, table_uuid, column_uuids, &root_page, &ctx);
+        Status status = db.page_manager()->allocatePageInTablespace(PRIMARY_TABLESPACE_ID,
+                                                                    &root_gpid, &ctx);
+        if (status != Status::OK)
+        {
+            std::cout << "FAILED (allocate root): " << ctx.message << std::endl;
+            FAIL(); return;
+        }
+
+        status = BTree::create(&db, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
         if (status != Status::OK)
         {
             std::cout << "FAILED (BTree::create): " << ctx.message << std::endl;
@@ -74,7 +92,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
 
         // Verify root page has rightmost_child = 0 (it's a leaf initially)
         void *root_data;
-        if (db.buffer_pool()->pinPage(root_page, &root_data, &ctx) != Status::OK)
+        if (db.buffer_pool()->pinPageGlobal(root_gpid, &root_data, &ctx) != Status::OK)
         {
             std::cout << "FAILED (pin root): " << ctx.message << std::endl;
             FAIL(); return;
@@ -97,7 +115,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             FAIL(); return;
         }
 
-        db.buffer_pool()->unpinPage(root_page, false, &ctx);
+        db.buffer_pool()->unpinPageGlobal(root_gpid, false, &ctx);
         db.close();
         std::cout << "PASSED" << std::endl;
     }
@@ -115,12 +133,13 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         }
 
         // Read root page from database metadata (it was saved in Test 1)
-        // For simplicity, we'll scan for the B-tree root page
+        // For simplicity, we'll scan for the B-tree root page, but ensure the UUID matches.
         BufferPool *temp_bp = db.buffer_pool();
         PageManager *temp_pm = db.page_manager();
         uint32_t root_page = 0;
+        GPID root_gpid = 0;
 
-        // Find the B-tree root page
+        // Find the B-tree root page for our index
         for (uint32_t pid = 0; pid < 100; pid++)
         {
             void *temp_data;
@@ -129,7 +148,8 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
                 auto *temp_page = reinterpret_cast<SBBTreePage *>(temp_data);
                 if ((temp_page->btr_header.page_type == PAGE_TYPE_BTREE_LEAF ||
                      temp_page->btr_header.page_type == PAGE_TYPE_BTREE_INTERNAL) &&
-                    (temp_page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0)
+                    (temp_page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0 &&
+                    uuid_matches(temp_page))
                 {
                     root_page = pid;
                     temp_bp->unpinPage(pid, false, &ctx);
@@ -145,13 +165,8 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             FAIL(); return;
         }
 
-        UuidV7Bytes index_uuid;
-        for (int i = 0; i < 16; i++)
-        {
-            index_uuid.bytes[i] = static_cast<uint8_t>(i);
-        }
-
-        auto btree = BTree::open(&db, index_uuid, root_page, &ctx);
+        root_gpid = makeGPID(PRIMARY_TABLESPACE_ID, root_page);
+        auto btree = BTree::open(&db, index_uuid, root_gpid, &ctx);
         if (!btree)
         {
             std::cout << "FAILED (BTree::open): " << ctx.message << std::endl;
@@ -167,8 +182,9 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             memcpy(key.data(), &key_val, 4);
 
             uint64_t tuple_id = 1000 + i;
+            TID tid(PRIMARY_TABLESPACE_ID, tuple_id, 1);
 
-            Status status = btree->insert(key, tuple_id, &ctx);
+            Status status = btree->insert(key, tid, 1, &ctx);
             if (status != Status::OK)
             {
                 std::cout << "FAILED (insert " << i << "): " << ctx.message << std::endl;
@@ -244,36 +260,48 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             FAIL(); return;
         }
 
-        // Find an internal node and corrupt its rightmost_child
+        // Corrupt the ROOT internal node's rightmost_child to ensure traversal hits it
         BufferPool *bp = db.buffer_pool();
-        PageManager *pm = db.page_manager();
-        uint32_t total_pages = pm->totalPages();
         uint32_t corrupted_page_id = 0;
+        uint32_t root_page = 0;
 
-        for (uint32_t page_id = 0; page_id < total_pages; page_id++)
+        for (uint32_t pid = 0; pid < 100; pid++)
         {
-            void *page_data;
-            Status status = bp->pinPage(page_id, &page_data, &ctx);
-            if (status != Status::OK)
+            void *temp_data;
+            if (bp->pinPage(pid, &temp_data, &ctx) == Status::OK)
             {
-                continue;
+                auto *temp_page = reinterpret_cast<SBBTreePage *>(temp_data);
+                if ((temp_page->btr_header.page_type == PAGE_TYPE_BTREE_LEAF ||
+                     temp_page->btr_header.page_type == PAGE_TYPE_BTREE_INTERNAL) &&
+                    (temp_page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0 &&
+                    uuid_matches(temp_page))
+                {
+                    root_page = pid;
+                    bp->unpinPage(pid, false, &ctx);
+                    break;
+                }
+                bp->unpinPage(pid, false, &ctx);
             }
+        }
 
-            auto *page = reinterpret_cast<PageHeader *>(page_data);
-
-            if (page->page_type == PAGE_TYPE_BTREE_INTERNAL)
+        if (root_page != 0)
+        {
+            void *page_data = nullptr;
+            if (bp->pinPage(root_page, &page_data, &ctx) == Status::OK)
             {
-                auto *btree_page = reinterpret_cast<SBBTreePage *>(page_data);
-
-                // Corrupt the rightmost_child pointer
-                btree_page->btr_rightmost_child = 0;
-                corrupted_page_id = page_id;
-
-                bp->unpinPage(page_id, true, &ctx); // Mark dirty to save corruption
-                break;
+                auto *root_page_hdr = reinterpret_cast<PageHeader *>(page_data);
+                if (root_page_hdr->page_type == PAGE_TYPE_BTREE_INTERNAL)
+                {
+                    auto *btree_page = reinterpret_cast<SBBTreePage *>(page_data);
+                    btree_page->btr_rightmost_child = 0;
+                    corrupted_page_id = root_page;
+                    bp->unpinPage(root_page, true, &ctx);
+                }
+                else
+                {
+                    bp->unpinPage(root_page, false, &ctx);
+                }
             }
-
-            bp->unpinPage(page_id, false, &ctx);
         }
 
         if (corrupted_page_id == 0)
@@ -284,46 +312,25 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         else
         {
             // Now try to search the tree - it should detect the corruption
-            // Find root page again
-            uint32_t root_page = 0;
-            for (uint32_t pid = 0; pid < 100; pid++)
+            if (root_page == 0)
             {
-                void *temp_data;
-                if (bp->pinPage(pid, &temp_data, &ctx) == Status::OK)
-                {
-                    auto *temp_page = reinterpret_cast<SBBTreePage *>(temp_data);
-                    if ((temp_page->btr_header.page_type == PAGE_TYPE_BTREE_LEAF ||
-                         temp_page->btr_header.page_type == PAGE_TYPE_BTREE_INTERNAL) &&
-                        (temp_page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0)
-                    {
-                        root_page = pid;
-                        bp->unpinPage(pid, false, &ctx);
-                        break;
-                    }
-                    bp->unpinPage(pid, false, &ctx);
-                }
+                std::cout << "FAILED: Could not find B-tree root page after corruption" << std::endl;
+                FAIL(); return;
             }
 
-            UuidV7Bytes index_uuid;
-            for (int i = 0; i < 16; i++)
-            {
-                index_uuid.bytes[i] = static_cast<uint8_t>(i);
-            }
-
-            auto btree = BTree::open(&db, index_uuid, root_page, &ctx);
+            GPID root_gpid = makeGPID(PRIMARY_TABLESPACE_ID, root_page);
+            auto btree = BTree::open(&db, index_uuid, root_gpid, &ctx);
             if (!btree)
             {
                 std::cout << "FAILED (BTree::open after corruption): " << ctx.message << std::endl;
                 FAIL(); return;
             }
 
-            // Try to search for a key that would traverse through the corrupted node
-            std::vector<uint8_t> search_key(8);
-            uint32_t key_val = 25000; // A key that should traverse the tree
-            memcpy(search_key.data(), &key_val, 4);
+            // Try to search for a key that forces rightmost traversal
+            std::vector<uint8_t> search_key(8, 0xFF);
 
-            std::vector<uint64_t> results;
-            Status search_status = btree->search(search_key, &results, &ctx);
+            std::vector<TID> results;
+            Status search_status = btree->search(search_key, 1, &results, &ctx);
 
             // Should get PAGE_CORRUPT error
             if (search_status == Status::PAGE_CORRUPT)

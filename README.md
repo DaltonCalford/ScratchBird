@@ -7,6 +7,23 @@
 **Status:** All 9 Alpha workstreams complete; preparing for Beta
 
 ---
+###Note to new visitors
+
+ScratchBird is in early alpha release. No binaries have been officially released at this time. The code is ready to be built and tested if you want to setup your own test environment.
+
+If you are curious, clone the directories and have your friendly local AI analyse the code base (documentation is out of date except for specifications) - tell it to find out the capabilities of the project from the implemented source code, not the comments or documentation. This will give you a good understanding of what is done and what is going to be done.
+
+The drivers and management interface (ScratchBird-drivers and ScratchRobin) are getting heavy testing and updating. They are getting multiple commits per day on average.
+
+The initial preview will be a docker containing the database engine and an app-image or standalone executable so that you can test the project without any problems of getting rid of it afterward.
+
+This project has become my answer to the constant "Damn I wish I had the ability to...." issues I have encountered over 35 years of database use.
+
+I have been seeing multiple clones of my project(s) via the tracker but I have not received any feedback yet - don't be afraid, I need feedback and I don't bite.
+
+I am sure there are things others have encountered over the years and wish they had a tool to cover it.
+
+Thanks for your interest in the project.
 
 ## Quick Overview
 
@@ -26,6 +43,7 @@ ScratchBird is a next-generation database management system that combines:
 | **Documentation Index**  | `docs/INDEX.md`                       |
 | **Specifications Index** | `docs/specifications/README.md`       |
 | **Findings & Plans**     | `docs/findings/` and `docs/planning/` |
+| **Release Targets**      | `docs/planning/RELEASE_TARGETS.md`    |
 | **Outstanding Work**     | `docs/planning/TRACKER_OUTSTANDING_MASTER.md` |
 | **Feature Catalog**      | `docs/FEATURE_CATALOG.md`             |
 | **Audit Outputs**        | `docs/audit/`                         |

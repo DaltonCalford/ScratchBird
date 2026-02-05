@@ -9,11 +9,12 @@
  */
 #include <gtest/gtest.h>
 #include <filesystem>
+#include <stdexcept>
+#include <vector>
 
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
-#include "scratchbird/core/transaction_manager.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
@@ -53,206 +54,200 @@ protected:
     BufferPool *buffer_pool_ = nullptr;
 };
 
-// Test 1: Verify Snapshot cleanup unpins all pages
-TEST_F(HeapPageMemoryTest, SnapshotCleanupUnpinsPages)
+class PinnedPageTracker
 {
-    // Create a snapshot
-    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-    snapshot.xmin = 1;
-    snapshot.xmax = 100;
-    snapshot.buffer_pool = buffer_pool_;
+public:
+    explicit PinnedPageTracker(BufferPool *buffer_pool) : buffer_pool_(buffer_pool) {}
 
-    // Manually pin some pages and register with snapshot
+    Status pin(uint32_t page_id)
+    {
+        if (!buffer_pool_)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        void *buffer = nullptr;
+        Status status = buffer_pool_->pinPage(page_id, &buffer, nullptr);
+        if (status == Status::OK)
+        {
+            pinned_pages_.push_back(page_id);
+        }
+        return status;
+    }
+
+    void cleanup()
+    {
+        if (!buffer_pool_)
+        {
+            pinned_pages_.clear();
+            return;
+        }
+        for (uint32_t page_id : pinned_pages_)
+        {
+            buffer_pool_->unpinPage(page_id, false, nullptr);
+        }
+        pinned_pages_.clear();
+        buffer_pool_ = nullptr;
+    }
+
+    ~PinnedPageTracker()
+    {
+        cleanup();
+    }
+
+    const std::vector<uint32_t> &pinned_pages() const
+    {
+        return pinned_pages_;
+    }
+
+private:
+    BufferPool *buffer_pool_ = nullptr;
+    std::vector<uint32_t> pinned_pages_{};
+};
+
+static void expectUnpinned(BufferPool *buffer_pool, uint32_t page_id)
+{
+    ErrorContext ctx;
+    Status status = buffer_pool->unpinPage(page_id, false, &ctx);
+    EXPECT_EQ(status, Status::INVALID_ARGUMENT);
+}
+
+// Test 1: Verify cleanup unpins all pages
+TEST_F(HeapPageMemoryTest, TrackerCleanupUnpinsPages)
+{
+    PinnedPageTracker tracker(buffer_pool_);
+
+    // Manually pin some pages and register with tracker
     constexpr int NUM_PAGES = 5;
     std::vector<uint32_t> page_ids = {0, 1, 2, 3, 4};
 
     // Pin pages
     for (uint32_t page_id : page_ids)
     {
-        void *buffer = nullptr;
-        auto status = buffer_pool_->pinPage(page_id, &buffer, nullptr);
-        if (status == Status::OK)
-        {
-            snapshot.pinned_pages.push_back(page_id);
-        }
+        tracker.pin(page_id);
     }
-
-    // Record stats before cleanup
-    auto stats_before = buffer_pool_->getStats();
 
     // Verify pages are pinned
-    EXPECT_EQ(snapshot.pinned_pages.size(), NUM_PAGES);
+    EXPECT_EQ(tracker.pinned_pages().size(), NUM_PAGES);
 
     // Call cleanup explicitly
-    // MGA: snapshot.cleanup removed;
+    tracker.cleanup();
 
     // Verify all pages were unpinned
-    EXPECT_EQ(snapshot.pinned_pages.size(), 0);
-    EXPECT_EQ(snapshot.buffer_pool, nullptr);
-
-    // Note: We can't directly verify pin counts in buffer pool
-    // But we can verify the snapshot's internal state was cleared
-}
-
-// Test 2: Verify Snapshot destructor calls cleanup
-TEST_F(HeapPageMemoryTest, SnapshotDestructorCallsCleanup)
-{
-    auto stats_before = buffer_pool_->getStats();
-
-    // Create snapshot in inner scope
+    EXPECT_EQ(tracker.pinned_pages().size(), 0);
+    for (uint32_t page_id : page_ids)
     {
-        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-        snapshot.xmin = 1;
-        snapshot.xmax = 100;
-        snapshot.buffer_pool = buffer_pool_;
-
-        // Pin a page
-        void *buffer = nullptr;
-        auto status = buffer_pool_->pinPage(0, &buffer, nullptr);
-        ASSERT_EQ(status, Status::OK);
-        snapshot.pinned_pages.push_back(0);
-
-        // Snapshot still owns the pin
-        EXPECT_EQ(snapshot.pinned_pages.size(), 1);
+        expectUnpinned(buffer_pool_, page_id);
     }
-    // Snapshot destructor should have unpinned the page
-
-    auto stats_after = buffer_pool_->getStats();
-
-    // Can't directly verify pin count, but test passes if no crash/leak
-    SUCCEED();
 }
 
-// Test 3: Snapshot cleanup on error path
-TEST_F(HeapPageMemoryTest, SnapshotCleanupOnErrorPath)
+// Test 2: Verify tracker destructor calls cleanup
+TEST_F(HeapPageMemoryTest, TrackerDestructorCallsCleanup)
 {
-    auto stats_before = buffer_pool_->getStats();
-
-    // Simulate error path scenario
+    // Create tracker in inner scope
+    std::vector<uint32_t> page_ids = {0, 1, 2};
     {
-        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-        snapshot.xmin = 1;
-        snapshot.xmax = 100;
-        snapshot.buffer_pool = buffer_pool_;
-
-        // Pin multiple pages
-        for (uint32_t i = 0; i < 3; i++)
+        PinnedPageTracker tracker(buffer_pool_);
+        for (uint32_t page_id : page_ids)
         {
-            void *buffer = nullptr;
-            auto status = buffer_pool_->pinPage(i, &buffer, nullptr);
-            if (status == Status::OK)
-            {
-                snapshot.pinned_pages.push_back(i);
-            }
+            tracker.pin(page_id);
         }
 
-        // Simulate early return (error path)
-        // In real code, this would be a return statement
-        // Destructor will still be called when scope exits
+        // Tracker still owns the pins
+        EXPECT_EQ(tracker.pinned_pages().size(), page_ids.size());
+    }
+    // Tracker destructor should have unpinned the pages
+    for (uint32_t page_id : page_ids)
+    {
+        expectUnpinned(buffer_pool_, page_id);
+    }
+}
+
+// Test 3: Tracker cleanup on error path
+TEST_F(HeapPageMemoryTest, TrackerCleanupOnErrorPath)
+{
+    // Simulate error path scenario
+    std::vector<uint32_t> page_ids = {0, 1, 2};
+    {
+        PinnedPageTracker tracker(buffer_pool_);
+        for (uint32_t page_id : page_ids)
+        {
+            tracker.pin(page_id);
+        }
+        // Simulate early return (error path) - destructor will clean up
     }
 
     // Verify destructor cleaned up
-    auto stats_after = buffer_pool_->getStats();
-
-    // Test passes if no crash/leak (Valgrind will detect leaks)
-    SUCCEED();
+    for (uint32_t page_id : page_ids)
+    {
+        expectUnpinned(buffer_pool_, page_id);
+    }
 }
 
-// Test 4: Multiple snapshots, independent cleanup
-TEST_F(HeapPageMemoryTest, MultipleSnapshotsIndependentCleanup)
+// Test 4: Multiple trackers, independent cleanup
+TEST_F(HeapPageMemoryTest, MultipleTrackersIndependentCleanup)
 {
-    // Create two snapshots
-    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid()1;
-    snapshot1.xmin = 1;
-    snapshot1.xmax = 50;
-    snapshot1.buffer_pool = buffer_pool_;
-
-    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid()2;
-    snapshot2.xmin = 51;
-    snapshot2.xmax = 100;
-    snapshot2.buffer_pool = buffer_pool_;
+    // Create two trackers
+    PinnedPageTracker tracker1(buffer_pool_);
+    PinnedPageTracker tracker2(buffer_pool_);
 
     // Pin different pages for each snapshot
-    void *buffer1 = nullptr;
-    auto status1 = buffer_pool_->pinPage(0, &buffer1, nullptr);
-    ASSERT_EQ(status1, Status::OK);
-    snapshot1.pinned_pages.push_back(0);
-
-    void *buffer2 = nullptr;
-    auto status2 = buffer_pool_->pinPage(1, &buffer2, nullptr);
-    ASSERT_EQ(status2, Status::OK);
-    snapshot2.pinned_pages.push_back(1);
+    ASSERT_EQ(tracker1.pin(0), Status::OK);
+    ASSERT_EQ(tracker2.pin(1), Status::OK);
 
     // Cleanup snapshot1 only
-    snapshot1.cleanup();
-    EXPECT_EQ(snapshot1.pinned_pages.size(), 0);
+    tracker1.cleanup();
+    EXPECT_EQ(tracker1.pinned_pages().size(), 0);
+    expectUnpinned(buffer_pool_, 0);
 
     // snapshot2 should still have its pin
-    EXPECT_EQ(snapshot2.pinned_pages.size(), 1);
+    EXPECT_EQ(tracker2.pinned_pages().size(), 1);
 
     // Cleanup snapshot2
-    snapshot2.cleanup();
-    EXPECT_EQ(snapshot2.pinned_pages.size(), 0);
+    tracker2.cleanup();
+    EXPECT_EQ(tracker2.pinned_pages().size(), 0);
+    expectUnpinned(buffer_pool_, 1);
 }
 
-// Test 5: Snapshot with no pages pinned (edge case)
-TEST_F(HeapPageMemoryTest, SnapshotWithNoPins)
+// Test 5: Tracker with no pages pinned (edge case)
+TEST_F(HeapPageMemoryTest, TrackerWithNoPins)
 {
-    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-    snapshot.xmin = 1;
-    snapshot.xmax = 100;
-    // Note: buffer_pool is null, pinned_pages is empty
-
-    // Cleanup should be safe with no pins
-    // MGA: snapshot.cleanup removed;
-
-    EXPECT_EQ(snapshot.pinned_pages.size(), 0);
-    EXPECT_EQ(snapshot.buffer_pool, nullptr);
+    PinnedPageTracker tracker(nullptr);
+    tracker.cleanup();
+    EXPECT_EQ(tracker.pinned_pages().size(), 0);
 }
 
-// Test 6: Snapshot double cleanup (defensive test)
-TEST_F(HeapPageMemoryTest, SnapshotDoubleCleanup)
+// Test 6: Tracker double cleanup (defensive test)
+TEST_F(HeapPageMemoryTest, TrackerDoubleCleanup)
 {
-    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-    snapshot.xmin = 1;
-    snapshot.xmax = 100;
-    snapshot.buffer_pool = buffer_pool_;
+    PinnedPageTracker tracker(buffer_pool_);
 
     // Pin a page
-    void *buffer = nullptr;
-    auto status = buffer_pool_->pinPage(0, &buffer, nullptr);
-    ASSERT_EQ(status, Status::OK);
-    snapshot.pinned_pages.push_back(0);
+    ASSERT_EQ(tracker.pin(0), Status::OK);
 
     // First cleanup
-    // MGA: snapshot.cleanup removed;
-    EXPECT_EQ(snapshot.pinned_pages.size(), 0);
-    EXPECT_EQ(snapshot.buffer_pool, nullptr);
+    tracker.cleanup();
+    EXPECT_EQ(tracker.pinned_pages().size(), 0);
+    expectUnpinned(buffer_pool_, 0);
 
     // Second cleanup should be safe (no-op)
-    // MGA: snapshot.cleanup removed;
-    EXPECT_EQ(snapshot.pinned_pages.size(), 0);
-    EXPECT_EQ(snapshot.buffer_pool, nullptr);
+    tracker.cleanup();
+    EXPECT_EQ(tracker.pinned_pages().size(), 0);
 }
 
 // Test 7: Stress test with many pins
 TEST_F(HeapPageMemoryTest, StressTestManyPins)
 {
-    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-    snapshot.xmin = 1;
-    snapshot.xmax = 1000;
-    snapshot.buffer_pool = buffer_pool_;
+    PinnedPageTracker tracker(buffer_pool_);
 
     // Pin many pages (limited by buffer pool size)
     constexpr int MAX_PINS = 100;
     for (int i = 0; i < MAX_PINS; i++)
     {
         uint32_t page_id = i % 10; // Reuse first 10 pages
-        void *buffer = nullptr;
-        auto status = buffer_pool_->pinPage(page_id, &buffer, nullptr);
+        auto status = tracker.pin(page_id);
         if (status == Status::OK)
         {
-            snapshot.pinned_pages.push_back(page_id);
         }
         else
         {
@@ -261,35 +256,25 @@ TEST_F(HeapPageMemoryTest, StressTestManyPins)
     }
 
     // Record how many we pinned
-    size_t num_pinned = snapshot.pinned_pages.size();
+    size_t num_pinned = tracker.pinned_pages().size();
     EXPECT_GT(num_pinned, 0);
 
     // Cleanup all
-    // MGA: snapshot.cleanup removed;
-    EXPECT_EQ(snapshot.pinned_pages.size(), 0);
+    tracker.cleanup();
+    EXPECT_EQ(tracker.pinned_pages().size(), 0);
 }
 
 // Test 8: Verify no leak on exception (simulated)
 TEST_F(HeapPageMemoryTest, NoLeakOnException)
 {
-    auto stats_before = buffer_pool_->getStats();
-
     try
     {
-        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-        snapshot.xmin = 1;
-        snapshot.xmax = 100;
-        snapshot.buffer_pool = buffer_pool_;
+        PinnedPageTracker tracker(buffer_pool_);
 
         // Pin pages
         for (uint32_t i = 0; i < 3; i++)
         {
-            void *buffer = nullptr;
-            auto status = buffer_pool_->pinPage(i, &buffer, nullptr);
-            if (status == Status::OK)
-            {
-                snapshot.pinned_pages.push_back(i);
-            }
+            tracker.pin(i);
         }
 
         // Simulate exception
@@ -299,8 +284,6 @@ TEST_F(HeapPageMemoryTest, NoLeakOnException)
     {
         // Exception caught, snapshot destructor should have run
     }
-
-    auto stats_after = buffer_pool_->getStats();
 
     // Test passes if no leak (Valgrind will verify)
     SUCCEED();

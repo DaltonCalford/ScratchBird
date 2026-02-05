@@ -1993,9 +1993,9 @@ namespace scratchbird::core
     {
         // For READ_COMMITTED_READ_CONSISTENCY, capture current XID for statement duration
         // This provides consistent reads within a single statement
-        if (txn_manager_ != nullptr)
+        if (current_xid_ != 0)
         {
-            statement_xid_ = txn_manager_->getCurrentXid();
+            statement_xid_ = current_xid_;
             LOG_DEBUG(TRANSACTION, "Created statement XID: %lu", statement_xid_);
         }
     }

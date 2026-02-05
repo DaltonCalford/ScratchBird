@@ -17,7 +17,8 @@
  * Purpose: Verify LSMTreeIndex::scan() implementation
  */
 
-#include "scratchbird/core/lsm_tree.h"
+#include <gtest/gtest.h>
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/database.h"
 #include <iostream>
 #include <vector>
@@ -25,9 +26,10 @@
 #include <cstdlib>
 #include <cstdio>
 #include <algorithm>
-#include <cassert>
 
 using namespace scratchbird::core;
+
+namespace {
 
 // Test statistics
 static int tests_passed = 0;
@@ -135,7 +137,7 @@ void test_basic_range_scan()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -218,7 +220,7 @@ void test_unbounded_start()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -303,7 +305,7 @@ void test_unbounded_end()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -388,7 +390,7 @@ void test_full_scan()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -469,7 +471,7 @@ void test_single_key_range()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -544,7 +546,7 @@ void test_kway_merge_correctness()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree with small memtable (1 MB) to force multiple SSTables
-    LSMTreeIndex index(index_path, txn_mgr, 1);
+    LSMTreeIndex index(db, index_path, txn_mgr, 1);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -656,7 +658,7 @@ void test_deduplication()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -764,7 +766,7 @@ void test_empty_index()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index but don't insert any data
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -832,7 +834,7 @@ void test_nonexistent_range()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -917,7 +919,7 @@ void test_empty_range()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create LSM-Tree index
-    LSMTreeIndex index(index_path, txn_mgr, 4);
+    LSMTreeIndex index(db, index_path, txn_mgr, 4);
     status = index.create(nullptr);
     assertStatusOK(status, "Index create");
 
@@ -956,37 +958,60 @@ cleanup:
     std::remove(db_path.c_str());
 }
 
+} // namespace
+
 // ============================================================================
 // MAIN TEST RUNNER
 // ============================================================================
-int main()
+
+// ==================== GTest Wrappers ====================
+
+TEST(LSMTest, _basic_range_scan)
 {
-    std::cout << "\n";
-    std::cout << "========================================\n";
-    std::cout << "  LSM-Tree Range Scan Unit Tests\n";
-    std::cout << "========================================\n";
-
-    // Run all tests
     test_basic_range_scan();
+}
+
+TEST(LSMTest, _unbounded_start)
+{
     test_unbounded_start();
+}
+
+TEST(LSMTest, _unbounded_end)
+{
     test_unbounded_end();
+}
+
+TEST(LSMTest, _full_scan)
+{
     test_full_scan();
+}
+
+TEST(LSMTest, _single_key_range)
+{
     test_single_key_range();
+}
+
+TEST(LSMTest, _kway_merge_correctness)
+{
     test_kway_merge_correctness();
+}
+
+TEST(LSMTest, _deduplication)
+{
     test_deduplication();
+}
+
+TEST(LSMTest, _empty_index)
+{
     test_empty_index();
+}
+
+TEST(LSMTest, _nonexistent_range)
+{
     test_nonexistent_range();
+}
+
+TEST(LSMTest, _empty_range)
+{
     test_empty_range();
-
-    // Print summary
-    std::cout << "\n";
-    std::cout << "========================================\n";
-    std::cout << "  TEST SUMMARY\n";
-    std::cout << "========================================\n";
-    std::cout << "Tests Passed: " << tests_passed << "\n";
-    std::cout << "Tests Failed: " << tests_failed << "\n";
-    std::cout << "========================================\n";
-    std::cout << "\n";
-
-    return (tests_failed == 0) ? 0 : 1;
 }
