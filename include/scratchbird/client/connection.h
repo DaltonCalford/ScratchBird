@@ -499,6 +499,34 @@ public:
      */
     core::Status cancelQuery(core::ErrorContext* ctx = nullptr);
 
+    struct Notification {
+        uint32_t processId = 0;
+        std::string channel;
+        std::vector<uint8_t> payload;
+        uint8_t changeType = 0;
+        uint64_t rowId = 0;
+    };
+
+    /**
+     * Subscribe to notifications on a channel.
+     */
+    core::Status subscribe(const std::string& channel,
+                           const std::string& filter = "",
+                           uint8_t subscribe_type = 0,
+                           core::ErrorContext* ctx = nullptr);
+
+    /**
+     * Unsubscribe from a channel.
+     */
+    core::Status unsubscribe(const std::string& channel,
+                             core::ErrorContext* ctx = nullptr);
+
+    /**
+     * Receive the next notification (blocking).
+     */
+    core::Status receiveNotification(Notification* out,
+                                     core::ErrorContext* ctx = nullptr);
+
     void setCopyInputStream(std::istream* in);
     void setCopyOutputStream(std::ostream* out);
 

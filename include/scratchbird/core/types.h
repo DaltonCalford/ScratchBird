@@ -35,84 +35,112 @@ namespace scratchbird::core
     {
         UNKNOWN = 0,
 
-        // Numeric types (1-14)
-        INT8 = 1,     // 1-byte signed integer (-128 to 127)
-        INT16 = 2,    // 2-byte signed integer (alias: SMALLINT)
-        INT32 = 3,    // 4-byte signed integer (alias: INTEGER, INT)
-        INT64 = 4,    // 8-byte signed integer (alias: BIGINT)
-        INT128 = 5,   // 16-byte signed integer
-        UINT8 = 6,    // 1-byte unsigned integer (0 to 255)
-        UINT16 = 7,   // 2-byte unsigned integer
-        UINT32 = 8,   // 4-byte unsigned integer
-        UINT64 = 9,   // 8-byte unsigned integer
-        FLOAT32 = 10, // 4-byte IEEE 754 float (alias: REAL, FLOAT)
-        FLOAT64 = 11, // 8-byte IEEE 754 double (alias: DOUBLE)
+        // Numeric types (1-19)
+        INT8 = 1,        // 1-byte signed integer (-128 to 127)
+        TINYINT = 1,     // Alias for INT8 (SQL standard name)
+        INT16 = 2,       // 2-byte signed integer
+        SMALLINT = 2,    // Alias for INT16 (SQL standard name)
+        INT32 = 3,       // 4-byte signed integer
+        INTEGER = 3,     // Alias for INT32 (SQL standard name)
+        INT = 3,         // Alias for INT32
+        INT64 = 4,       // 8-byte signed integer
+        BIGINT = 4,      // Alias for INT64 (SQL standard name)
+        INT128 = 5,      // 16-byte signed integer
+        UINT8 = 6,       // 1-byte unsigned integer (0 to 255)
+        UINT16 = 7,      // 2-byte unsigned integer
+        UINT32 = 8,      // 4-byte unsigned integer
+        UINT64 = 9,      // 8-byte unsigned integer
+        FLOAT32 = 10,    // 4-byte IEEE 754 float
+        REAL = 10,       // Alias for FLOAT32 (SQL standard name)
+        FLOAT = 10,      // Alias for FLOAT32
+        FLOAT64 = 11,    // 8-byte IEEE 754 double
+        DOUBLE = 11,     // Alias for FLOAT64 (SQL standard name)
         DECIMAL = 12,    // Fixed-precision decimal (precision, scale)
+        NUMERIC = 12,    // Alias for DECIMAL (SQL standard name)
         MONEY = 13,      // Fixed-precision currency type
         UINT128 = 14,    // 16-byte unsigned integer
         DECFLOAT16 = 15, // IEEE-754 decimal floating (Decimal64)
         DECFLOAT34 = 16, // IEEE-754 decimal floating (Decimal128)
+        MEDIUMINT = 17,  // MySQL 3-byte integer (maps to INT32 internally)
 
         // String types (20-29)
-        CHAR = 20,    // Fixed-length string (padded with spaces)
-        VARCHAR = 21, // Variable-length string (max length specified)
-        TEXT = 22,    // Unlimited variable-length string
+        CHAR = 20,       // Fixed-length string (padded with spaces)
+        VARCHAR = 21,    // Variable-length string (max length specified)
+        TEXT = 22,       // Unlimited variable-length string
 
         // Binary types (30-39)
-        BINARY = 30,    // Fixed-length binary data
-        VARBINARY = 31, // Variable-length binary data
-        BLOB = 32,      // Binary large object
-        BYTEA = 33,     // PostgreSQL-style binary data
+        BINARY = 30,     // Fixed-length binary data
+        VARBINARY = 31,  // Variable-length binary data
+        BLOB = 32,       // Binary large object
+        TINYBLOB = 32,   // Alias for BLOB (MySQL compatibility)
+        MEDIUMBLOB = 32, // Alias for BLOB (MySQL compatibility)
+        LONGBLOB = 32,   // Alias for BLOB (MySQL compatibility)
+        BYTEA = 33,      // PostgreSQL-style binary data
 
         // Date/Time types (40-49)
-        DATE = 40,      // Date (year, month, day)
-        TIME = 41,      // Time of day (hour, minute, second, microsecond)
-        TIMESTAMP = 42, // Date + time (with optional timezone)
-        INTERVAL = 43,  // Time interval (years, months, days, hours, etc.)
+        DATE = 40,       // Date (year, month, day)
+        TIME = 41,       // Time of day (hour, minute, second, microsecond)
+        TIMESTAMP = 42,  // Date + time (with optional timezone)
+        TIMESTAMP_WITH_ZONE = 43, // Timestamp with timezone (TIMESTAMPTZ)
+        TIME_WITH_ZONE = 44,      // Time with timezone
+        INTERVAL = 45,   // Time interval (years, months, days, hours, etc.)
+        DATETIME = 46,   // MySQL DATETIME (alias for TIMESTAMP)
+        YEAR = 47,       // MySQL YEAR type
 
         // Boolean (50-59)
-        BOOLEAN = 50, // True/false
+        BOOLEAN = 50,    // True/false
+        BIT = 51,        // Bit string type
 
         // Special types (60-69)
-        UUID = 60,   // 128-bit UUID (RFC 4122)
-        JSON = 61,   // JSON document (stored as text, validated)
-        JSONB = 62,  // Binary JSON (optimized storage and indexing)
-        XML = 63,    // XML document
-        VECTOR = 64, // Vector embeddings for similarity search (variable dimensions)
+        UUID = 60,       // 128-bit UUID (RFC 4122)
+        JSON = 61,       // JSON document (stored as text, validated)
+        JSONB = 62,      // Binary JSON (optimized storage and indexing)
+        XML = 63,        // XML document
+        VECTOR = 64,     // Vector embeddings for similarity search (variable dimensions)
 
-        // Spatial types (65-71)
-        POINT = 65,             // Geometric point (x, y)
-        LINESTRING = 66,        // Sequence of connected points
-        POLYGON = 67,           // Closed polygon with optional holes
-        MULTIPOINT = 68,        // Collection of POINT geometries
-        MULTILINESTRING = 69,   // Collection of LINESTRING geometries
-        MULTIPOLYGON = 70,      // Collection of POLYGON geometries
+        // Spatial types (65-79)
+        POINT = 65,              // Geometric point (x, y)
+        LINESTRING = 66,         // Sequence of connected points
+        POLYGON = 67,            // Closed polygon with optional holes
+        MULTIPOINT = 68,         // Collection of POINT geometries
+        MULTILINESTRING = 69,    // Collection of LINESTRING geometries
+        MULTIPOLYGON = 70,       // Collection of POLYGON geometries
         GEOMETRYCOLLECTION = 71, // Heterogeneous collection of geometries
+        GEOMETRY = 72,           // Generic geometry type
 
-        // Array and composite types (72-79)
-        ARRAY = 72,     // Array of elements (homogeneous type)
-        COMPOSITE = 73, // Record/struct type (heterogeneous types)
+        // Array and composite types (80-89)
+        ARRAY = 80,      // Array of elements (homogeneous type)
+        COMPOSITE = 81,  // Record/struct type (heterogeneous types)
 
-        // Text search types (74-75)
-        TSVECTOR = 74,  // Text search vector (document representation)
-        TSQUERY = 75,   // Text search query (search expression)
+        // Text search types (90-91)
+        TSVECTOR = 90,   // Text search vector (document representation)
+        TSQUERY = 91,    // Text search query (search expression)
 
-        // Range types (76-85)
-        INT4RANGE = 76,  // Range of INT32 values
-        INT8RANGE = 77,  // Range of INT64 values
-        NUMRANGE = 78,   // Range of DECIMAL/FLOAT64 values
-        TSRANGE = 79,    // Range of TIMESTAMP values (without timezone)
-        TSTZRANGE = 80,  // Range of TIMESTAMP values (with timezone)
-        DATERANGE = 81,  // Range of DATE values
+        // Range types (92-97)
+        INT4RANGE = 92,  // Range of INT32 values
+        INT8RANGE = 93,  // Range of INT64 values
+        NUMRANGE = 94,   // Range of DECIMAL/FLOAT64 values
+        TSRANGE = 95,    // Range of TIMESTAMP values (without timezone)
+        TSTZRANGE = 96,  // Range of TIMESTAMP values (with timezone)
+        DATERANGE = 97,  // Range of DATE values
 
-        // Network types (86-89)
-        INET = 86,       // IPv4 or IPv6 address with optional subnet
-        CIDR = 87,       // IPv4 or IPv6 network (strict CIDR notation)
-        MACADDR = 88,    // 6-byte MAC address (EUI-48)
-        MACADDR8 = 89,   // 8-byte MAC address (EUI-64)
+        // Network types (98-101)
+        INET = 98,       // IPv4 or IPv6 address with optional subnet
+        CIDR = 99,       // IPv4 or IPv6 network (strict CIDR notation)
+        MACADDR = 100,   // 6-byte MAC address (EUI-48)
+        MACADDR8 = 101,  // 8-byte MAC address (EUI-64)
 
-        // Polymorphic types (90-99)
-        VARIANT = 90,    // Tagged union that can hold any type
+        // User-defined types (102-109)
+        DOMAIN = 102,    // Domain type
+        ROW = 103,       // ROW type
+        ENUM = 104,      // ENUM type (MySQL compatibility)
+        SET = 105,       // SET type (MySQL compatibility)
+
+        // Polymorphic types (110-119)
+        VARIANT = 110,   // Tagged union that can hold any type
+
+        // Special blob subtypes
+        BLOB_SUB_TYPE_TEXT = 120, // Firebird-style text BLOB
 
         // Null type (255)
         NULL_TYPE = 255, // SQL NULL

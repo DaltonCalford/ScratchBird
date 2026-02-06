@@ -140,12 +140,10 @@ uint32_t TypeMapping::toPostgreSQL(core::DataType type) {
         case core::DataType::BIGINT:
             return pg_oid::INT8;
         case core::DataType::REAL:
-        case core::DataType::FLOAT:
             return pg_oid::FLOAT4;
         case core::DataType::DOUBLE:
             return pg_oid::FLOAT8;
         case core::DataType::NUMERIC:
-        case core::DataType::DECIMAL:
             return pg_oid::NUMERIC;
         case core::DataType::CHAR:
             return pg_oid::BPCHAR;
@@ -323,12 +321,10 @@ uint8_t TypeMapping::toMySQL(core::DataType type) {
         case core::DataType::BIGINT:
             return mysql_type::MYSQL_TYPE_LONGLONG;
         case core::DataType::FLOAT:
-        case core::DataType::REAL:
             return mysql_type::MYSQL_TYPE_FLOAT;
         case core::DataType::DOUBLE:
             return mysql_type::MYSQL_TYPE_DOUBLE;
         case core::DataType::NUMERIC:
-        case core::DataType::DECIMAL:
             return mysql_type::MYSQL_TYPE_NEWDECIMAL;
         case core::DataType::CHAR:
             return mysql_type::MYSQL_TYPE_STRING;
@@ -350,9 +346,6 @@ uint8_t TypeMapping::toMySQL(core::DataType type) {
         case core::DataType::BINARY:
         case core::DataType::VARBINARY:
         case core::DataType::BLOB:
-        case core::DataType::TINYBLOB:
-        case core::DataType::MEDIUMBLOB:
-        case core::DataType::LONGBLOB:
             return mysql_type::MYSQL_TYPE_BLOB;
         case core::DataType::JSON:
             return mysql_type::MYSQL_TYPE_JSON;
@@ -479,12 +472,10 @@ uint32_t TypeMapping::toFirebird(core::DataType type) {
         case core::DataType::INT128:
             return fb_blr::INT128;
         case core::DataType::FLOAT:
-        case core::DataType::REAL:
             return fb_blr::FLOAT;
         case core::DataType::DOUBLE:
             return fb_blr::DOUBLE;
         case core::DataType::NUMERIC:
-        case core::DataType::DECIMAL:
             return fb_blr::INT64;  // Or DEC_FIXED for high precision
         case core::DataType::CHAR:
         case core::DataType::VARCHAR:
@@ -522,7 +513,6 @@ core::DataType TypeMapping::fromFirebird(uint32_t blr_type) {
         case fb_blr::INT64:
             return core::DataType::BIGINT;
         case fb_blr::INT128:
-        case fb_blr::DEC_FIXED:
             return core::DataType::INT128;
         case fb_blr::DEC16:
             return core::DataType::DECFLOAT16;
@@ -549,7 +539,6 @@ core::DataType TypeMapping::fromFirebird(uint32_t blr_type) {
         case fb_blr::BLOB:
             return core::DataType::BLOB;
         case fb_blr::ARRAY:
-        case fb_blr::QUAD:
             return core::DataType::ARRAY;
         default:
             return core::DataType::UNKNOWN;
@@ -657,10 +646,8 @@ std::string TypeMapping::getTypeName(core::DataType type) {
         case core::DataType::DECFLOAT16: return "DECFLOAT(16)";
         case core::DataType::DECFLOAT34: return "DECFLOAT(34)";
         case core::DataType::REAL: return "REAL";
-        case core::DataType::FLOAT: return "FLOAT";
         case core::DataType::DOUBLE: return "DOUBLE";
         case core::DataType::NUMERIC: return "NUMERIC";
-        case core::DataType::DECIMAL: return "DECIMAL";
         case core::DataType::DATE: return "DATE";
         case core::DataType::TIME: return "TIME";
         case core::DataType::TIME_WITH_ZONE: return "TIME WITH TIME ZONE";
@@ -674,9 +661,6 @@ std::string TypeMapping::getTypeName(core::DataType type) {
         case core::DataType::BINARY: return "BINARY";
         case core::DataType::VARBINARY: return "VARBINARY";
         case core::DataType::BLOB: return "BLOB";
-        case core::DataType::TINYBLOB: return "TINYBLOB";
-        case core::DataType::MEDIUMBLOB: return "MEDIUMBLOB";
-        case core::DataType::LONGBLOB: return "LONGBLOB";
         case core::DataType::JSON: return "JSON";
         case core::DataType::XML: return "XML";
         case core::DataType::UUID: return "UUID";
@@ -715,7 +699,6 @@ uint32_t TypeMapping::getTypeSize(core::DataType type) {
             return 3;
         case core::DataType::INTEGER:
         case core::DataType::FLOAT:
-        case core::DataType::REAL:
             return 4;
         case core::DataType::BIGINT:
         case core::DataType::DOUBLE:
@@ -751,9 +734,6 @@ bool TypeMapping::isVariableLength(core::DataType type) {
         case core::DataType::VARCHAR:
         case core::DataType::TEXT:
         case core::DataType::BLOB:
-        case core::DataType::TINYBLOB:
-        case core::DataType::MEDIUMBLOB:
-        case core::DataType::LONGBLOB:
         case core::DataType::JSON:
         case core::DataType::XML:
         case core::DataType::VARBINARY:
@@ -782,10 +762,8 @@ bool TypeMapping::isNumericType(core::DataType type) {
         case core::DataType::BIGINT:
         case core::DataType::INT128:
         case core::DataType::REAL:
-        case core::DataType::FLOAT:
         case core::DataType::DOUBLE:
         case core::DataType::NUMERIC:
-        case core::DataType::DECIMAL:
         case core::DataType::DECFLOAT16:
         case core::DataType::DECFLOAT34:
             return true;
@@ -827,9 +805,6 @@ bool TypeMapping::isBinaryType(core::DataType type) {
         case core::DataType::BINARY:
         case core::DataType::VARBINARY:
         case core::DataType::BLOB:
-        case core::DataType::TINYBLOB:
-        case core::DataType::MEDIUMBLOB:
-        case core::DataType::LONGBLOB:
             return true;
         default:
             return false;

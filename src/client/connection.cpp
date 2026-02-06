@@ -1730,6 +1730,98 @@ core::Status Connection::cancelQuery(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
+core::Status Connection::subscribe(const std::string& channel,
+                                   const std::string& filter,
+                                   uint8_t subscribe_type,
+                                   core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+    auto msg = protocol::ProtocolCodec::buildSubscribe(subscribe_type, channel, filter);
+    auto status = impl_->protocol_session_->sendMessage(msg, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to send subscribe request";
+        return status;
+    }
+
+    protocol::Message response;
+    status = impl_->protocol_session_->receiveMessage(response, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to receive subscribe response";
+        return status;
+    }
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        uint32_t error_code;
+        std::string sqlstate, message, detail, hint;
+        protocol::ProtocolCodec::parseQueryError(
+            response, error_code, sqlstate, message, detail, hint, ctx
+        );
+        impl_->last_error_ = message;
+        return static_cast<core::Status>(error_code);
+    }
+    return core::Status::OK;
+}
+
+core::Status Connection::unsubscribe(const std::string& channel,
+                                     core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+    auto msg = protocol::ProtocolCodec::buildUnsubscribe(channel);
+    auto status = impl_->protocol_session_->sendMessage(msg, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to send unsubscribe request";
+        return status;
+    }
+
+    protocol::Message response;
+    status = impl_->protocol_session_->receiveMessage(response, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to receive unsubscribe response";
+        return status;
+    }
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        uint32_t error_code;
+        std::string sqlstate, message, detail, hint;
+        protocol::ProtocolCodec::parseQueryError(
+            response, error_code, sqlstate, message, detail, hint, ctx
+        );
+        impl_->last_error_ = message;
+        return static_cast<core::Status>(error_code);
+    }
+    return core::Status::OK;
+}
+
+core::Status Connection::receiveNotification(Notification* out,
+                                             core::ErrorContext* ctx) {
+    if (!out) {
+        return core::Status::INVALID_ARGUMENT;
+    }
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    protocol::Message response;
+    auto status = impl_->protocol_session_->receiveMessage(response, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to receive notification";
+        return status;
+    }
+
+    if (response.getType() != protocol::MessageType::NOTIFICATION) {
+        impl_->last_error_ = "No notification";
+        return core::Status::NOT_FOUND;
+    }
+
+    protocol::ProtocolCodec::parseNotification(response, out->processId, out->channel,
+                                               out->payload, out->changeType,
+                                               out->rowId, ctx);
+    return core::Status::OK;
+}
+
 void Connection::setCopyInputStream(std::istream* in) {
     if (!impl_) {
         return;

@@ -1812,3 +1812,97 @@ endif()
 if(TARGET scratchbird_test_binaries)
     set_property(TARGET scratchbird_test_binaries PROPERTY FOLDER "tests")
 endif()
+
+# ============================================================================
+# Alpha Completion Component Tests
+# ============================================================================
+
+# Engine IPC Session Handler Tests
+add_executable(test_engine_ipc_session_handler
+    unit/test_engine_ipc_session_handler.cpp
+)
+target_link_libraries(test_engine_ipc_session_handler
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME EngineIPCSessionHandler COMMAND test_engine_ipc_session_handler)
+
+# PostgreSQL Parser Agent Tests
+add_executable(test_postgresql_parser_agent
+    unit/test_postgresql_parser_agent.cpp
+)
+target_link_libraries(test_postgresql_parser_agent
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME PostgreSQLParserAgent COMMAND test_postgresql_parser_agent)
+
+# MySQL Parser Agent Tests
+add_executable(test_mysql_parser_agent
+    unit/test_mysql_parser_agent.cpp
+)
+target_link_libraries(test_mysql_parser_agent
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME MySQLParserAgent COMMAND test_mysql_parser_agent)
+
+# Firebird Parser Agent Tests
+add_executable(test_firebird_parser_agent
+    unit/test_firebird_parser_agent.cpp
+)
+target_link_libraries(test_firebird_parser_agent
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME FirebirdParserAgent COMMAND test_firebird_parser_agent)
+
+# SCRAM Authentication Tests
+add_executable(test_scram_auth
+    unit/test_scram_auth.cpp
+)
+target_link_libraries(test_scram_auth
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME SCRAMAuth COMMAND test_scram_auth)
+
+# Type Mapping Tests
+add_executable(test_type_mapping
+    unit/test_type_mapping.cpp
+)
+target_link_libraries(test_type_mapping
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME TypeMapping COMMAND test_type_mapping)
+
+# Schema Introspection Tests
+add_executable(test_schema_introspection
+    unit/test_schema_introspection.cpp
+)
+target_link_libraries(test_schema_introspection
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME SchemaIntrospection COMMAND test_schema_introspection)
+
+# COPY Flow Control Tests
+add_executable(test_copy_flow_control
+    unit/test_copy_flow_control.cpp
+)
+target_link_libraries(test_copy_flow_control
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME COPYFlowControl COMMAND test_copy_flow_control)
+
+# Unix Socket IPC Channel Tests
+add_executable(test_unix_socket_channel
+    unit/test_unix_socket_channel.cpp
+)
+target_link_libraries(test_unix_socket_channel
+    scratchbird_lib
+    GTest::gtest_main
+)
+add_test(NAME UnixSocketChannel COMMAND test_unix_socket_channel)
