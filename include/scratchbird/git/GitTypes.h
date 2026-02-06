@@ -131,27 +131,138 @@ enum class MigrationNaming {
 //=============================================================================
 
 /**
+ * Integration mode for Git synchronization behavior
+ */
+enum class GitIntegrationMode {
+    MANUAL,         // Manual sync only
+    AUTO_COMMIT,    // Auto-commit on export
+    AUTO_PUSH,      // Auto-commit + auto-push
+    FULL_SYNC       // Auto-commit + auto-push + auto-pull
+};
+
+/**
  * Git repository configuration
+ *
+ * Supports both canonical keys (repo_*) and legacy aliases.
+ * When parsing, canonical keys take precedence over legacy aliases.
  */
 struct GitConfig {
-    std::string url;                // Repository URL
-    std::string branch = "main";    // Target branch
-    std::string local_path;         // Local clone path
+    //=========================================================================
+    // Canonical Keys (preferred)
+    //=========================================================================
+    std::string repo_url;                     // Repository URL (canonical)
+    std::string repo_branch = "main";         // Target branch (canonical)
+    std::string repo_path;                    // Local clone path (canonical)
+    std::string repo_type = "git";            // Repository type (canonical: git, svn, etc.)
+    std::string repo_mode = "manual";         // Sync mode (canonical: manual, auto_commit, auto_push, full_sync)
 
+    // Commit settings
+    bool sign_commits = false;                // Sign commits with GPG
+    std::string commit_template;              // Template for commit messages
+    std::string gpg_key_id;                   // GPG key ID for signing
+
+    //=========================================================================
+    // Legacy Aliases (deprecated, use canonical keys above)
+    // These are accessed via accessor methods for backward compatibility
+    //=========================================================================
+
+    //=========================================================================
     // Authentication
+    //=========================================================================
     std::string ssh_key_path;
     std::string ssh_passphrase;
     std::string username;
     std::string password;
     std::string credential_helper;
 
-    // Behavior
-    bool auto_commit = false;
-    bool auto_push = false;
-    bool auto_pull = true;
-    int sync_interval_seconds = 0;  // 0 = manual only
+    //=========================================================================
+    // Legacy Behavior Accessors (for backward compatibility)
+    //=========================================================================
+    
+    /**
+     * Get legacy url field (alias for repo_url)
+     */
+    const std::string& getUrl() const { return repo_url; }
+    std::string& getUrl() { return repo_url; }
+    void setUrl(const std::string& val) { repo_url = val; }
 
+    /**
+     * Get legacy branch field (alias for repo_branch)
+     */
+    const std::string& getBranch() const { return repo_branch; }
+    std::string& getBranch() { return repo_branch; }
+    void setBranch(const std::string& val) { repo_branch = val; }
+
+    /**
+     * Get legacy local_path field (alias for repo_path)
+     */
+    const std::string& getLocalPath() const { return repo_path; }
+    std::string& getLocalPath() { return repo_path; }
+    void setLocalPath(const std::string& val) { repo_path = val; }
+
+    /**
+     * Parse repo_mode string into integration mode enum
+     */
+    GitIntegrationMode getIntegrationMode() const {
+        if (repo_mode == "full_sync") return GitIntegrationMode::FULL_SYNC;
+        if (repo_mode == "auto_push") return GitIntegrationMode::AUTO_PUSH;
+        if (repo_mode == "auto_commit") return GitIntegrationMode::AUTO_COMMIT;
+        return GitIntegrationMode::MANUAL;
+    }
+
+    void setIntegrationMode(GitIntegrationMode mode) {
+        switch (mode) {
+            case GitIntegrationMode::FULL_SYNC: repo_mode = "full_sync"; break;
+            case GitIntegrationMode::AUTO_PUSH: repo_mode = "auto_push"; break;
+            case GitIntegrationMode::AUTO_COMMIT: repo_mode = "auto_commit"; break;
+            default: repo_mode = "manual"; break;
+        }
+    }
+
+    /**
+     * Legacy auto_commit accessor (true if mode >= AUTO_COMMIT)
+     */
+    bool getAutoCommit() const {
+        auto mode = getIntegrationMode();
+        return mode == GitIntegrationMode::AUTO_COMMIT ||
+               mode == GitIntegrationMode::AUTO_PUSH ||
+               mode == GitIntegrationMode::FULL_SYNC;
+    }
+
+    /**
+     * Legacy auto_push accessor (true if mode >= AUTO_PUSH)
+     */
+    bool getAutoPush() const {
+        auto mode = getIntegrationMode();
+        return mode == GitIntegrationMode::AUTO_PUSH ||
+               mode == GitIntegrationMode::FULL_SYNC;
+    }
+
+    /**
+     * Legacy auto_pull accessor (true if mode == FULL_SYNC)
+     */
+    bool getAutoPull() const {
+        return getIntegrationMode() == GitIntegrationMode::FULL_SYNC;
+    }
+
+    /**
+     * Set from legacy boolean flags
+     */
+    void setFromLegacyFlags(bool auto_commit, bool auto_push, bool auto_pull) {
+        if (auto_push && auto_pull) {
+            setIntegrationMode(GitIntegrationMode::FULL_SYNC);
+        } else if (auto_push) {
+            setIntegrationMode(GitIntegrationMode::AUTO_PUSH);
+        } else if (auto_commit) {
+            setIntegrationMode(GitIntegrationMode::AUTO_COMMIT);
+        } else {
+            setIntegrationMode(GitIntegrationMode::MANUAL);
+        }
+    }
+
+    //=========================================================================
     // Paths
+    //=========================================================================
     std::string schema_directory = "schema";
     std::string migrations_directory = "migrations";
     std::string seeds_directory = "seeds";

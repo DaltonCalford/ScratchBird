@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - 2026-02-05
 
+### Added - SBLR Type Opcode Remediation Tests (Section B Complete) ✅
+
+**Comprehensive test coverage for SBLR type markers and literal opcodes**
+
+#### Type Marker Tests (B1)
+- Base type markers: 22 types (integers, floats, strings, boolean, temporal, binary, UUID, DECIMAL, JSON, ARRAY, DOMAIN)
+- Extended type markers for emulated-engine parity:
+  - Unsigned integers: UINT8, UINT16, UINT32, UINT64, INT128, UINT128
+  - PostgreSQL types: JSONB, XML, MONEY, INTERVAL, INET, CIDR, MACADDR, MACADDR8
+  - Firebird types: DECFLOAT16, DECFLOAT34
+  - Spatial types: POINT, LINESTRING, POLYGON, MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, GEOMETRYCOLLECTION
+  - Timezone-aware temporal: TIME_TZ, TIMESTAMP_TZ
+  - Text search: TSVECTOR, TSQUERY
+  - Range types: INT4RANGE, INT8RANGE, NUMRANGE, DATERANGE, TSRANGE, TSTZRANGE
+  - Complex types: COMPOSITE, VARIANT, VECTOR
+
+#### Literal Opcode Tests (B1)
+- 14 base literal opcodes: NULL, INT32, INT64, DOUBLE, STRING, BOOLEAN, UUID, DATE, TIME, TIMESTAMP, BINARY, DECIMAL, JSON, XML
+
+#### DDL/DML Coverage Tests (B2)
+- CREATE TABLE bytecode encoding with type markers
+- INSERT bytecode with typed literals
+- Extended type usage (JSONB columns)
+- Type sequence encoding/decoding round-trip tests
+
+#### Test Results
+- 22 tests, 100% pass rate
+- Test file: `tests/unit/test_sblr_type_opcodes.cpp`
+
+### Added - Git Config Key Normalization (Section A Complete) ✅
+
+**Full implementation of canonical key support with legacy alias fallback**
+
+#### Canonical Key Support
+- New canonical keys: `repo_type`, `repo_url`, `repo_path`, `repo_mode`, `repo_branch`
+- New commit settings: `sign_commits`, `commit_template`, `gpg_key_id`
+- `GitIntegrationMode` enum: MANUAL, AUTO_COMMIT, AUTO_PUSH, FULL_SYNC
+- Legacy boolean flags (`auto_commit`, `auto_push`, `auto_pull`) map to `repo_mode`
+
+#### Legacy Alias Support
+- Legacy aliases accepted: `url` → `repo_url`, `branch` → `repo_branch`, etc.
+- Canonical precedence: canonical keys win when both present
+- Diagnostic API: `hasCanonicalKeys()`, `hasLegacyKeys()`, `getDeprecationWarnings()`
+- Backward compatibility: legacy accessor methods on GitConfig struct
+
+#### INI Format Support
+- INI parsing for `[git]`, `[git.repository]`, `[git.schema]`, `[git.migrations]` sections
+- Auto-detection by file extension (.ini, .conf)
+- Same precedence rules as YAML format
+- Environment variable substitution in both formats
+
+#### Validation & Serialization
+- `validate()` requires `repo_url` (accepts legacy `url` alias)
+- `toYAML()` emits canonical keys only
+- URL format validation (supports https, http, git@, ssh://)
+- `repo_mode` validation (manual, auto_commit, auto_push, full_sync)
+
+#### Testing
+- 41 comprehensive unit tests (100% pass rate)
+- Canonical key tests (YAML)
+- Legacy alias + precedence tests
+- INI parsing tests (repository/schema/migrations)
+- Environment variable substitution tests
+- Serialization round-trip tests
+
 ### Added - COPY/Streaming over SBWP (F2 Complete) ✅
 
 **Full implementation of COPY protocol for ScratchBird Wire Protocol (SBWP) v1.1**

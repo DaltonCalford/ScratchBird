@@ -785,12 +785,14 @@ TEST_F(FirebirdParserTest, SetSqlDialect) {
 }
 
 TEST_F(FirebirdParserTest, ShowTable) {
+    // Firebird SHOW is client-side only (isql)
+    // Server rejects SHOW statements per Firebird dialect guardrails
+    SimpleParserErrorReporter reporter;
     Parser parser("SHOW TABLE employees");
+    parser.setErrorReporter(&reporter);
     auto result = parser.parseStatement();
-    EXPECT_TRUE(result.success);
-    EXPECT_EQ(result.statement->kind(), ASTKind::ShowStmt);
-    auto* stmt = static_cast<ShowStmt*>(result.statement.get());
-    EXPECT_EQ(stmt->show_type, ShowStmt::ShowType::TABLE);
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(reporter.hasErrors());
 }
 
 TEST_F(FirebirdParserTest, GrantStatement) {

@@ -5,6 +5,7 @@
 file(GLOB_RECURSE SCRATCHBIRD_CORE_SOURCES CONFIGURE_DEPENDS
     core/*.cpp
     catalog/*.cpp
+    git/*.cpp
 )
 
 # Spatial library sources (exclude disabled_p1_15 directory)
@@ -179,11 +180,11 @@ endif()
 add_library(scratchbird_link_group INTERFACE)
 if(SCRATCHBIRD_WITH_COMPILER)
     target_link_libraries(scratchbird_link_group INTERFACE
-        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_compiler,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_optimizer_compiler,scratchbird_security>
+        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_compiler,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_optimizer_compiler,scratchbird_security,scratchbird_ipc>
     )
 else()
     target_link_libraries(scratchbird_link_group INTERFACE
-        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_security>
+        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_security,scratchbird_ipc>
     )
 endif()
 target_link_options(scratchbird_link_group INTERFACE -Wl,--no-as-needed)
@@ -511,6 +512,74 @@ set_target_properties(scratchbird_fdw PROPERTIES
 )
 
 message(STATUS "FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)")
+
+# ==============================================================================
+# UDR Library: scratchbird_udr (Section D: Remote Engine UDR Connectors)
+# ==============================================================================
+# User Defined Routine connectors for remote database access
+# Components: Connection pool, connector framework, PostgreSQL/MySQL/Firebird/SB clients
+
+file(GLOB SCRATCHBIRD_UDR_SOURCES
+    udr/*.cpp
+)
+
+add_library(scratchbird_udr STATIC
+    ${SCRATCHBIRD_UDR_SOURCES}
+)
+
+# OpenSSL required for PostgreSQL MD5 auth and TLS
+if(OPENSSL_FOUND)
+    target_include_directories(scratchbird_udr PUBLIC ${OPENSSL_INCLUDE_DIR})
+    target_link_libraries(scratchbird_udr PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+endif()
+
+target_include_directories(scratchbird_udr PUBLIC
+    ${PROJECT_SOURCE_DIR}/include
+)
+
+# Thread support for connection pool
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_udr PUBLIC Threads::Threads scratchbird_core)
+
+set_target_properties(scratchbird_udr PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
+
+# ==============================================================================
+# IPC Library: scratchbird_ipc (Section E: IPC + SBWP v1.1)
+# ==============================================================================
+# Inter-process communication infrastructure for engine-parser communication
+# Components: IPC contract v1.1, message framing, session management, IPC server
+
+file(GLOB SCRATCHBIRD_IPC_SOURCES
+    ipc/*.cpp
+)
+
+add_library(scratchbird_ipc STATIC
+    ${SCRATCHBIRD_IPC_SOURCES}
+)
+
+target_include_directories(scratchbird_ipc PUBLIC
+    ${PROJECT_SOURCE_DIR}/include
+)
+
+# Thread support for session management
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_ipc PUBLIC Threads::Threads scratchbird_core)
+
+set_target_properties(scratchbird_ipc PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)")
 
 # ==============================================================================
 # Testing Library: scratchbird_testing (Alpha 3 Phase 3.12)

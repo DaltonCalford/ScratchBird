@@ -1,0 +1,983 @@
+/*
+ * ScratchBird
+ * Copyright (c) 2025-2026 Dalton Calford
+ *
+ * Licensed under the Initial Developer's Public License Version 1.0
+ */
+
+#include "scratchbird/ipc/parser_agent.h"
+
+#include <cstring>
+#include <chrono>
+
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <poll.h>
+#endif
+
+namespace scratchbird {
+namespace ipc {
+
+// ============================================================================
+// ParserAgent Base Class Implementation
+// ============================================================================
+
+ParserAgent::ParserAgent(const ParserAgentConfig& config)
+    : config_(config) {
+}
+
+ParserAgent::~ParserAgent() {
+    stop();
+}
+
+core::Status ParserAgent::start(core::ErrorContext* ctx) {
+    if (running_) {
+        return core::Status::OK;
+    }
+    
+    auto status = setupListener(ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    running_ = true;
+    
+    // Start accept thread
+    accept_thread_ = std::thread(&ParserAgent::acceptLoop, this);
+    
+    // Start I/O threads
+    for (uint32_t i = 0; i < config_.io_threads; i++) {
+        io_threads_.emplace_back(&ParserAgent::ioLoop, this);
+    }
+    
+    return core::Status::OK;
+}
+
+core::Status ParserAgent::stop(core::ErrorContext* ctx) {
+    (void)ctx;
+    if (!running_) {
+        return core::Status::OK;
+    }
+    
+    running_ = false;
+    
+    // Close listener
+    if (listen_fd_ >= 0) {
+#if defined(__linux__) || defined(__APPLE__)
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+#endif
+    }
+    
+    // Stop accept thread
+    if (accept_thread_.joinable()) {
+        accept_thread_.join();
+    }
+    
+    // Stop I/O threads
+    for (auto& thread : io_threads_) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+    io_threads_.clear();
+    
+    // Close all connections
+    {
+        std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+        for (auto& [id, conn] : connections_) {
+            if (conn->socket_fd >= 0) {
+#if defined(__linux__) || defined(__APPLE__)
+                ::close(conn->socket_fd);
+#endif
+            }
+        }
+        connections_.clear();
+    }
+    
+    // Close IPC channels
+    {
+        std::lock_guard<std::mutex> lock(ipc_pool_mutex_);
+        ipc_channels_.clear();
+    }
+    
+    return core::Status::OK;
+}
+
+ParserAgent::Stats ParserAgent::getStats() const {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    Stats s = stats_;
+    
+    std::shared_lock<std::shared_mutex> conn_lock(connections_mutex_);
+    s.active_connections = static_cast<uint32_t>(connections_.size());
+    
+    return s;
+}
+
+core::Status ParserAgent::setupListener(core::ErrorContext* ctx) {
+#if defined(__linux__) || defined(__APPLE__)
+    // Determine socket type from endpoint
+    if (config_.listen_endpoint.find('/') == 0) {
+        // Unix domain socket
+        listen_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (listen_fd_ < 0) {
+            if (ctx) {
+                ctx->set(core::Status::IO_ERROR, "Failed to create Unix socket",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::IO_ERROR;
+        }
+        
+        // Remove old socket file
+        unlink(config_.listen_endpoint.c_str());
+        
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        std::strncpy(addr.sun_path, config_.listen_endpoint.c_str(),
+                    sizeof(addr.sun_path) - 1);
+        
+        if (bind(listen_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            if (ctx) {
+                ctx->set(core::Status::IO_ERROR, "Failed to bind Unix socket",
+                        __FILE__, __LINE__, __func__);
+            }
+            ::close(listen_fd_);
+            listen_fd_ = -1;
+            return core::Status::IO_ERROR;
+        }
+    } else {
+        // TCP socket
+        listen_fd_ = socket(AF_INET, SOCK_STREAM, 0);
+        if (listen_fd_ < 0) {
+            if (ctx) {
+                ctx->set(core::Status::IO_ERROR, "Failed to create TCP socket",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::IO_ERROR;
+        }
+        
+        // Parse host:port
+        size_t colon = config_.listen_endpoint.find(':');
+        std::string host = config_.listen_endpoint.substr(0, colon);
+        uint16_t port = 5433;  // Default
+        if (colon != std::string::npos) {
+            port = static_cast<uint16_t>(std::stoi(
+                config_.listen_endpoint.substr(colon + 1)));
+        }
+        
+        int opt = 1;
+        setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        
+        struct sockaddr_in addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
+        
+        if (bind(listen_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            if (ctx) {
+                ctx->set(core::Status::IO_ERROR, "Failed to bind TCP socket",
+                        __FILE__, __LINE__, __func__);
+            }
+            ::close(listen_fd_);
+            listen_fd_ = -1;
+            return core::Status::IO_ERROR;
+        }
+    }
+    
+    if (listen(listen_fd_, 128) < 0) {
+        if (ctx) {
+            ctx->set(core::Status::IO_ERROR, "Failed to listen on socket",
+                    __FILE__, __LINE__, __func__);
+        }
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        return core::Status::IO_ERROR;
+    }
+    
+    // Set non-blocking
+    int flags = fcntl(listen_fd_, F_GETFL, 0);
+    fcntl(listen_fd_, F_SETFL, flags | O_NONBLOCK);
+    
+    return core::Status::OK;
+#else
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+#endif
+}
+
+void ParserAgent::acceptLoop() {
+    while (running_) {
+#if defined(__linux__) || defined(__APPLE__)
+        struct sockaddr_storage client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        
+        int client_fd = accept(listen_fd_, (struct sockaddr*)&client_addr, &client_len);
+        if (client_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No pending connections, sleep briefly
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            if (errno == EINTR) continue;
+            if (!running_) break;
+            continue;
+        }
+        
+        // Check max connections
+        {
+            std::shared_lock<std::shared_mutex> lock(connections_mutex_);
+            if (connections_.size() >= config_.max_connections) {
+                ::close(client_fd);
+                continue;
+            }
+        }
+        
+        // Handle the client
+        core::ErrorContext ctx;
+        auto status = handleClient(client_fd, &ctx);
+        if (status != core::Status::OK) {
+            ::close(client_fd);
+        }
+        
+        updateStats([](Stats& s) { s.connections_accepted++; });
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+#endif
+    }
+}
+
+void ParserAgent::ioLoop() {
+    while (running_) {
+        // Process I/O for active connections
+        // This is handled by individual connection threads in subclasses
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+void ParserAgent::disconnectClient(uint32_t client_id) {
+    std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+    auto it = connections_.find(client_id);
+    if (it != connections_.end()) {
+#if defined(__linux__) || defined(__APPLE__)
+        if (it->second->socket_fd >= 0) {
+            ::close(it->second->socket_fd);
+        }
+#endif
+        connections_.erase(it);
+    }
+    
+    updateStats([](Stats& s) {
+        s.connections_closed++;
+        s.active_connections--;
+    });
+}
+
+core::Status ParserAgent::sendToEngine(uint32_t client_id, const IPCMessage& msg,
+                                      core::ErrorContext* ctx) {
+    (void)client_id;
+    (void)msg;
+    (void)ctx;
+    // Implementation would send via IPC channel
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status ParserAgent::receiveFromEngine(uint32_t client_id, IPCMessage& msg,
+                                           core::ErrorContext* ctx) {
+    (void)client_id;
+    (void)msg;
+    (void)ctx;
+    // Implementation would receive via IPC channel
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+std::unique_ptr<IPCChannel> ParserAgent::acquireIPCChannel() {
+    std::lock_guard<std::mutex> lock(ipc_pool_mutex_);
+    if (!ipc_channels_.empty()) {
+        auto channel = std::move(ipc_channels_.back());
+        ipc_channels_.pop_back();
+        return channel;
+    }
+    return nullptr;
+}
+
+void ParserAgent::releaseIPCChannel(std::unique_ptr<IPCChannel> channel) {
+    if (!channel) return;
+    std::lock_guard<std::mutex> lock(ipc_pool_mutex_);
+    ipc_channels_.push_back(std::move(channel));
+}
+
+uint64_t ParserAgent::getCurrentTimeMs() const {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(
+        steady_clock::now().time_since_epoch()).count();
+}
+
+void ParserAgent::updateStats(const std::function<void(Stats&)>& updater) {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    updater(stats_);
+}
+
+// ============================================================================
+// ParserAgentFactory Implementation
+// ============================================================================
+
+std::unique_ptr<ParserAgent> ParserAgentFactory::create(const ParserAgentConfig& config) {
+    if (config.protocol == "native" || config.protocol == "scratchbird") {
+        return std::make_unique<NativeSBParserAgent>(config);
+    } else if (config.protocol == "postgresql") {
+        return std::make_unique<PostgreSQLParserAgent>(config);
+    } else if (config.protocol == "mysql") {
+        return std::make_unique<MySQLParserAgent>(config);
+    } else if (config.protocol == "firebird") {
+        return std::make_unique<FirebirdParserAgent>(config);
+    }
+    return nullptr;
+}
+
+std::unique_ptr<ParserAgent> ParserAgentFactory::create(const std::string& protocol,
+                                                       const std::string& listen_endpoint,
+                                                       const std::string& ipc_endpoint) {
+    ParserAgentConfig config;
+    config.protocol = protocol;
+    config.listen_endpoint = listen_endpoint;
+    config.ipc_endpoint = ipc_endpoint;
+    return create(config);
+}
+
+// ============================================================================
+// NativeSBParserAgent Implementation
+// ============================================================================
+
+NativeSBParserAgent::NativeSBParserAgent(const ParserAgentConfig& config)
+    : ParserAgent(config) {
+}
+
+NativeSBParserAgent::~NativeSBParserAgent() {
+    stop();
+}
+
+core::Status NativeSBParserAgent::handleClient(int client_fd, core::ErrorContext* ctx) {
+    // Create client connection record
+    uint32_t client_id = next_client_id_++;
+    auto client = std::make_unique<ClientConnection>();
+    client->client_id = client_id;
+    client->socket_fd = client_fd;
+    client->connect_time_ms = getCurrentTimeMs();
+    client->last_activity_ms = client->connect_time_ms;
+    
+    {
+        std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+        connections_[client_id] = std::move(client);
+    }
+    
+    updateStats([](Stats& s) { s.active_connections++; });
+    
+    // Handle SBWP startup
+    auto it = connections_.find(client_id);
+    if (it != connections_.end()) {
+        auto status = handleStartup(*it->second, ctx);
+        if (status != core::Status::OK) {
+            disconnectClient(client_id);
+            return status;
+        }
+    }
+    
+    // Client is now handled by its own thread or async I/O
+    // For now, we keep it simple with blocking reads in a thread
+    std::thread client_thread([this, client_id]() {
+        auto it = connections_.find(client_id);
+        if (it == connections_.end()) return;
+        
+        auto& client = *it->second;
+        while (running_ && client.socket_fd >= 0) {
+            // Read SBWP message header
+            uint8_t header[5];
+            ssize_t n = recv(client.socket_fd, header, 5, MSG_WAITALL);
+            if (n <= 0) break;
+            
+            uint8_t msg_type = header[0];
+            uint32_t msg_len = (header[1] << 24) | (header[2] << 16) |
+                              (header[3] << 8) | header[4];
+            
+            std::vector<uint8_t> payload;
+            if (msg_len > 0) {
+                payload.resize(msg_len);
+                n = recv(client.socket_fd, payload.data(), msg_len, MSG_WAITALL);
+                if (n <= 0) break;
+            }
+            
+            // Process message
+            core::ErrorContext ctx;
+            core::Status status = core::Status::OK;
+            
+            switch (msg_type) {
+                case 0x10: { // SIMPLE_QUERY
+                    std::string sql(reinterpret_cast<char*>(payload.data()));
+                    status = handleQuery(client, sql, &ctx);
+                    break;
+                }
+                case 0x11: { // PARSE
+                    // Parse name\0sql\0 format
+                    const char* data = reinterpret_cast<char*>(payload.data());
+                    std::string stmt_name(data);
+                    std::string sql(data + stmt_name.length() + 1);
+                    status = handleParse(client, stmt_name, sql, &ctx);
+                    break;
+                }
+                case 0x12: { // BIND
+                    status = handleBind(client, "", "", &ctx);
+                    break;
+                }
+                case 0x13: { // EXECUTE
+                    status = handleExecute(client, "", 0, &ctx);
+                    break;
+                }
+                case 0x15: { // CLOSE
+                    status = handleClose(client, 'S', "", &ctx);
+                    break;
+                }
+                case 0x16: { // SYNC
+                    status = handleSync(client, &ctx);
+                    break;
+                }
+                case 0x62: { // TERMINATE
+                    handleTerminate(client, &ctx);
+                    return;
+                }
+                default:
+                    status = sendError(client, "0A000", "Unknown message type");
+                    break;
+            }
+            
+            if (status != core::Status::OK && status != core::Status::NOT_IMPLEMENTED) {
+                break;
+            }
+            
+            client.last_activity_ms = getCurrentTimeMs();
+            updateStats([msg_len](Stats& s) {
+                s.messages_received++;
+                s.bytes_received += msg_len + 5;
+            });
+        }
+        
+        disconnectClient(client_id);
+    });
+    
+    client_thread.detach();
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::handleStartup(ClientConnection& client, core::ErrorContext* ctx) {
+    (void)ctx;
+    // Read startup message
+    uint8_t version[2];
+    ssize_t n = recv(client.socket_fd, version, 2, MSG_WAITALL);
+    if (n != 2) {
+        return core::Status::CONNECTION_FAILURE;
+    }
+    
+    uint16_t proto_ver = (version[0] << 8) | version[1];
+    (void)proto_ver;
+    
+    // Read SSL mode
+    uint8_t ssl_mode;
+    n = recv(client.socket_fd, &ssl_mode, 1, MSG_WAITALL);
+    if (n != 1) {
+        return core::Status::CONNECTION_FAILURE;
+    }
+    
+    // Read parameters until null
+    char param_buf[1024];
+    size_t pos = 0;
+    while (pos < sizeof(param_buf) - 1) {
+        n = recv(client.socket_fd, &param_buf[pos], 1, MSG_WAITALL);
+        if (n != 1) break;
+        if (param_buf[pos] == 0 && pos > 0 && param_buf[pos-1] == 0) {
+            // Two consecutive nulls = end of parameters
+            break;
+        }
+        pos++;
+    }
+    
+    // Parse parameters
+    const char* p = param_buf;
+    while (*p && p < param_buf + pos) {
+        std::string key(p);
+        p += key.length() + 1;
+        std::string value(p);
+        p += value.length() + 1;
+        
+        if (key == "user") client.user = value;
+        else if (key == "database") client.database = value;
+    }
+    
+    // Send READY
+    return sendReady(client, IPC_FEATURE_PREPARED_STATEMENTS | 
+                           IPC_FEATURE_COPY_STREAMING | 
+                           IPC_FEATURE_CANCEL);
+}
+
+core::Status NativeSBParserAgent::sendReady(ClientConnection& client, uint32_t features) {
+    std::vector<uint8_t> response;
+    response.push_back(0x04); // READY
+    
+    uint32_t len = 12; // session_id + features + version
+    response.push_back((len >> 24) & 0xFF);
+    response.push_back((len >> 16) & 0xFF);
+    response.push_back((len >> 8) & 0xFF);
+    response.push_back(len & 0xFF);
+    
+    // Session ID
+    client.session_id = client.client_id;
+    response.push_back((client.session_id >> 24) & 0xFF);
+    response.push_back((client.session_id >> 16) & 0xFF);
+    response.push_back((client.session_id >> 8) & 0xFF);
+    response.push_back(client.session_id & 0xFF);
+    
+    // Features
+    response.push_back((features >> 24) & 0xFF);
+    response.push_back((features >> 16) & 0xFF);
+    response.push_back((features >> 8) & 0xFF);
+    response.push_back(features & 0xFF);
+    
+    // Version string placeholder
+    response.push_back(0);
+    response.push_back(0);
+    response.push_back(0);
+    response.push_back(0);
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    
+    client.authenticated = true;
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::handleQuery(ClientConnection& client, 
+                                             const std::string& sql,
+                                             core::ErrorContext* ctx) {
+    (void)client;
+    (void)sql;
+    (void)ctx;
+    // Forward to engine via IPC
+    return sendCommandComplete(client, "SELECT 0");
+}
+
+core::Status NativeSBParserAgent::handleParse(ClientConnection& client,
+                                             const std::string& stmt_name,
+                                             const std::string& sql,
+                                             core::ErrorContext* ctx) {
+    (void)client;
+    (void)stmt_name;
+    (void)sql;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::handleBind(ClientConnection& client,
+                                            const std::string& portal_name,
+                                            const std::string& stmt_name,
+                                            core::ErrorContext* ctx) {
+    (void)client;
+    (void)portal_name;
+    (void)stmt_name;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::handleExecute(ClientConnection& client,
+                                               const std::string& portal_name,
+                                               uint32_t max_rows,
+                                               core::ErrorContext* ctx) {
+    (void)client;
+    (void)portal_name;
+    (void)max_rows;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::handleClose(ClientConnection& client, char type,
+                                             const std::string& name,
+                                             core::ErrorContext* ctx) {
+    (void)client;
+    (void)type;
+    (void)name;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::handleSync(ClientConnection& client, core::ErrorContext* ctx) {
+    (void)client;
+    (void)ctx;
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::handleTerminate(ClientConnection& client, 
+                                                 core::ErrorContext* ctx) {
+    (void)ctx;
+    disconnectClient(client.client_id);
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::sendCommandComplete(ClientConnection& client,
+                                                     const std::string& tag) {
+    std::vector<uint8_t> response;
+    response.push_back(0x22); // COMMAND_COMPLETE
+    
+    uint32_t len = tag.length() + 1;
+    response.push_back((len >> 24) & 0xFF);
+    response.push_back((len >> 16) & 0xFF);
+    response.push_back((len >> 8) & 0xFF);
+    response.push_back(len & 0xFF);
+    
+    response.insert(response.end(), tag.begin(), tag.end());
+    response.push_back(0);
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::sendError(ClientConnection& client,
+                                           const char* sqlstate,
+                                           const std::string& message) {
+    std::vector<uint8_t> response;
+    response.push_back(0x05); // ERROR
+    
+    uint32_t len = 6 + message.length() + 1;
+    response.push_back((len >> 24) & 0xFF);
+    response.push_back((len >> 16) & 0xFF);
+    response.push_back((len >> 8) & 0xFF);
+    response.push_back(len & 0xFF);
+    
+    // SQLSTATE
+    response.insert(response.end(), sqlstate, sqlstate + 5);
+    response.push_back(0);
+    
+    // Message
+    response.insert(response.end(), message.begin(), message.end());
+    response.push_back(0);
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::sendRowDescription(ClientConnection& client,
+                                                    const std::vector<IPCFieldDesc>& fields) {
+    (void)client;
+    (void)fields;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::sendDataRow(ClientConnection& client,
+                                             const std::vector<std::optional<std::string>>& values) {
+    (void)client;
+    (void)values;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::sendNotice(ClientConnection& client, 
+                                            const std::string& message) {
+    (void)client;
+    (void)message;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::handleSSLRequest(ClientConnection& client, 
+                                                  core::ErrorContext* ctx) {
+    (void)client;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status NativeSBParserAgent::handleAuth(ClientConnection& client, 
+                                            const std::string& method,
+                                            const std::vector<uint8_t>& data,
+                                            core::ErrorContext* ctx) {
+    (void)client;
+    (void)method;
+    (void)data;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+// ============================================================================
+// EmulatedParserAgent Stub Implementation
+// ============================================================================
+
+EmulatedParserAgent::EmulatedParserAgent(const ParserAgentConfig& config,
+                                         const std::string& target_protocol)
+    : ParserAgent(config), target_protocol_(target_protocol) {
+}
+
+EmulatedParserAgent::~EmulatedParserAgent() {
+}
+
+// ============================================================================
+// PostgreSQLParserAgent Stub Implementation
+// ============================================================================
+
+PostgreSQLParserAgent::PostgreSQLParserAgent(const ParserAgentConfig& config)
+    : EmulatedParserAgent(config, "postgresql") {
+}
+
+PostgreSQLParserAgent::~PostgreSQLParserAgent() {
+}
+
+core::Status PostgreSQLParserAgent::handleClient(int client_fd, core::ErrorContext* ctx) {
+    (void)client_fd;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+size_t PostgreSQLParserAgent::readMessageLength(const uint8_t* header, size_t len) {
+    (void)header;
+    (void)len;
+    return 0;
+}
+
+core::Status PostgreSQLParserAgent::readFullMessage(int fd, std::vector<uint8_t>& message,
+                                                   core::ErrorContext* ctx) {
+    (void)fd;
+    (void)message;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status PostgreSQLParserAgent::writeMessage(int fd, const std::vector<uint8_t>& message,
+                                                core::ErrorContext* ctx) {
+    (void)fd;
+    (void)message;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+IPCMessageType PostgreSQLParserAgent::mapClientToIPC(uint8_t msg_type) {
+    switch (msg_type) {
+        case PG_QUERY: return IPCMessageType::SIMPLE_QUERY;
+        case PG_PARSE: return IPCMessageType::PARSE;
+        case PG_BIND: return IPCMessageType::BIND;
+        case PG_EXECUTE: return IPCMessageType::EXECUTE;
+        case PG_CLOSE: return IPCMessageType::CLOSE;
+        case PG_SYNC: return IPCMessageType::SYNC;
+        case PG_TERMINATE: return IPCMessageType::TERMINATE;
+        default: return IPCMessageType::ERROR_RESPONSE;
+    }
+}
+
+uint8_t PostgreSQLParserAgent::mapIPCToClient(IPCMessageType msg_type) {
+    switch (msg_type) {
+        case IPCMessageType::ROW_DESCRIPTION: return 'T';
+        case IPCMessageType::DATA_ROW: return 'D';
+        case IPCMessageType::COMMAND_COMPLETE: return 'C';
+        case IPCMessageType::READY: return 'Z';
+        case IPCMessageType::ERROR_RESPONSE: return 'E';
+        case IPCMessageType::NOTICE: return 'N';
+        case IPCMessageType::PARSE_COMPLETE: return '1';
+        case IPCMessageType::BIND_COMPLETE: return '2';
+        case IPCMessageType::CLOSE_COMPLETE: return '3';
+        default: return 0;
+    }
+}
+
+core::Status PostgreSQLParserAgent::translateStartupToIPC(const std::vector<uint8_t>& startup,
+                                                         IPCMessage& ipc_msg,
+                                                         core::ErrorContext* ctx) {
+    (void)startup;
+    (void)ipc_msg;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status PostgreSQLParserAgent::translateIPCToResponse(const IPCMessage& ipc_msg,
+                                                          std::vector<uint8_t>& response,
+                                                          core::ErrorContext* ctx) {
+    (void)ipc_msg;
+    (void)response;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+std::string PostgreSQLParserAgent::mapSQLStateToProtocol(const char* sqlstate) {
+    return std::string(sqlstate);
+}
+
+void PostgreSQLParserAgent::mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
+                                                      char* sqlstate_out) {
+    (void)error;
+    std::strcpy(sqlstate_out, "XX000");
+}
+
+// ============================================================================
+// MySQLParserAgent Stub Implementation
+// ============================================================================
+
+MySQLParserAgent::MySQLParserAgent(const ParserAgentConfig& config)
+    : EmulatedParserAgent(config, "mysql") {
+}
+
+MySQLParserAgent::~MySQLParserAgent() {
+}
+
+core::Status MySQLParserAgent::handleClient(int client_fd, core::ErrorContext* ctx) {
+    (void)client_fd;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+size_t MySQLParserAgent::readMessageLength(const uint8_t* header, size_t len) {
+    (void)len;
+    if (header[0] < 0xFB) return header[0];
+    if (header[0] == 0xFC) return header[1] | (header[2] << 8);
+    if (header[0] == 0xFD) return header[1] | (header[2] << 8) | (header[3] << 16);
+    return 0;
+}
+
+core::Status MySQLParserAgent::readFullMessage(int fd, std::vector<uint8_t>& message,
+                                              core::ErrorContext* ctx) {
+    (void)fd;
+    (void)message;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status MySQLParserAgent::writeMessage(int fd, const std::vector<uint8_t>& message,
+                                           core::ErrorContext* ctx) {
+    (void)fd;
+    (void)message;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+IPCMessageType MySQLParserAgent::mapClientToIPC(uint8_t msg_type) {
+    (void)msg_type;
+    return IPCMessageType::ERROR_RESPONSE;
+}
+
+uint8_t MySQLParserAgent::mapIPCToClient(IPCMessageType msg_type) {
+    (void)msg_type;
+    return 0;
+}
+
+core::Status MySQLParserAgent::translateStartupToIPC(const std::vector<uint8_t>& startup,
+                                                    IPCMessage& ipc_msg,
+                                                    core::ErrorContext* ctx) {
+    (void)startup;
+    (void)ipc_msg;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status MySQLParserAgent::translateIPCToResponse(const IPCMessage& ipc_msg,
+                                                     std::vector<uint8_t>& response,
+                                                     core::ErrorContext* ctx) {
+    (void)ipc_msg;
+    (void)response;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+std::string MySQLParserAgent::mapSQLStateToProtocol(const char* sqlstate) {
+    return std::string(sqlstate);
+}
+
+void MySQLParserAgent::mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
+                                                 char* sqlstate_out) {
+    (void)error;
+    std::strcpy(sqlstate_out, "HY000");
+}
+
+// ============================================================================
+// FirebirdParserAgent Stub Implementation
+// ============================================================================
+
+FirebirdParserAgent::FirebirdParserAgent(const ParserAgentConfig& config)
+    : EmulatedParserAgent(config, "firebird") {
+}
+
+FirebirdParserAgent::~FirebirdParserAgent() {
+}
+
+core::Status FirebirdParserAgent::handleClient(int client_fd, core::ErrorContext* ctx) {
+    (void)client_fd;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+size_t FirebirdParserAgent::readMessageLength(const uint8_t* header, size_t len) {
+    (void)len;
+    // XDR 4-byte length prefix
+    return (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
+}
+
+core::Status FirebirdParserAgent::readFullMessage(int fd, std::vector<uint8_t>& message,
+                                                 core::ErrorContext* ctx) {
+    (void)fd;
+    (void)message;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status FirebirdParserAgent::writeMessage(int fd, const std::vector<uint8_t>& message,
+                                              core::ErrorContext* ctx) {
+    (void)fd;
+    (void)message;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+IPCMessageType FirebirdParserAgent::mapClientToIPC(uint8_t msg_type) {
+    (void)msg_type;
+    return IPCMessageType::ERROR_RESPONSE;
+}
+
+uint8_t FirebirdParserAgent::mapIPCToClient(IPCMessageType msg_type) {
+    (void)msg_type;
+    return 0;
+}
+
+core::Status FirebirdParserAgent::translateStartupToIPC(const std::vector<uint8_t>& startup,
+                                                       IPCMessage& ipc_msg,
+                                                       core::ErrorContext* ctx) {
+    (void)startup;
+    (void)ipc_msg;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+core::Status FirebirdParserAgent::translateIPCToResponse(const IPCMessage& ipc_msg,
+                                                        std::vector<uint8_t>& response,
+                                                        core::ErrorContext* ctx) {
+    (void)ipc_msg;
+    (void)response;
+    (void)ctx;
+    return core::Status::NOT_IMPLEMENTED;
+}
+
+std::string FirebirdParserAgent::mapSQLStateToProtocol(const char* sqlstate) {
+    return std::string(sqlstate);
+}
+
+void FirebirdParserAgent::mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
+                                                    char* sqlstate_out) {
+    (void)error;
+    std::strcpy(sqlstate_out, "HY000");
+}
+
+} // namespace ipc
+} // namespace scratchbird

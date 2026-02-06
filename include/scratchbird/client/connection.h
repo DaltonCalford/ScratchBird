@@ -491,6 +491,14 @@ public:
      */
     core::Status ping(core::ErrorContext* ctx = nullptr);
 
+    /**
+     * Request query cancellation on the server.
+     *
+     * @param ctx Error context
+     * @return Status::OK if cancel message was sent
+     */
+    core::Status cancelQuery(core::ErrorContext* ctx = nullptr);
+
     void setCopyInputStream(std::istream* in);
     void setCopyOutputStream(std::ostream* out);
 
@@ -523,6 +531,10 @@ public:
      */
     core::Status executeQuery(const std::string& sql,
                               ResultSet* results,
+                              core::ErrorContext* ctx = nullptr);
+    core::Status executeQuery(const std::string& sql,
+                              ResultSet* results,
+                              uint8_t flags,
                               core::ErrorContext* ctx = nullptr);
 
     /**

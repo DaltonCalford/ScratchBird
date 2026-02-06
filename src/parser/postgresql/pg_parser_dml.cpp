@@ -423,15 +423,19 @@ void Parser::parseJoinClause() {
                 emit(sblr::Opcode::JOIN_CONDITION);
                 parseExpression();
             } else if (matchKeyword(TokenType::KW_USING)) {
-                error("JOIN USING is not supported in PostgreSQL emulation");
+                // C2: JOIN USING support
                 consume(TokenType::LEFT_PAREN, "Expected ( after USING");
-                bool prev_emit = emit_enabled_;
-                emit_enabled_ = false;
+                emit(sblr::Opcode::JOIN_USING);
+                std::vector<std::string> using_columns;
                 do {
-                    parseIdentifier();
+                    using_columns.push_back(parseIdentifier());
                 } while (match(TokenType::COMMA));
-                emit_enabled_ = prev_emit;
                 consume(TokenType::RIGHT_PAREN, "Expected ) after USING columns");
+                // Emit using columns
+                emitUVarint(static_cast<uint64_t>(using_columns.size()));
+                for (const auto& col : using_columns) {
+                    emitString(col);
+                }
             }
         }
     }
@@ -898,39 +902,31 @@ void Parser::parseInsertStmt() {
         }
     }
 
-    if (rows.size() > 1 && has_default) {
-        error("DEFAULT values in multi-row INSERT are not supported yet");
-    }
-
+    // C2: DEFAULT values in multi-row INSERT support
     if (!rows.empty()) {
         if (has_default && columns.empty()) {
             error("DEFAULT values require a resolved column list");
         }
 
-        if (has_default) {
-            const auto& row = rows.front();
+        // For multi-row INSERT with DEFAULT, we need to ensure all rows
+        // have the same structure (same columns with non-DEFAULT values)
+        emit_columns = columns;
+        for (const auto& row : rows) {
+            if (!columns.empty() && row.size() != columns.size()) {
+                error("Column count doesn't match value count");
+            }
             std::vector<std::vector<uint8_t>> row_exprs;
-            for (size_t i = 0; i < row.size() && i < columns.size(); ++i) {
+            row_exprs.reserve(row.size());
+            for (size_t i = 0; i < row.size(); ++i) {
                 if (row[i].is_default) {
-                    continue;
+                    // Emit DEFAULT marker - empty bytecode with special flag
+                    // The executor will substitute the actual default value
+                    row_exprs.push_back({});  // Empty vector marks DEFAULT
+                } else {
+                    row_exprs.push_back(row[i].expr);
                 }
-                emit_columns.push_back(columns[i]);
-                row_exprs.push_back(row[i].expr);
             }
             emit_rows.push_back(std::move(row_exprs));
-        } else {
-            emit_columns = columns;
-            for (const auto& row : rows) {
-                if (!columns.empty() && row.size() != columns.size()) {
-                    error("Column count doesn't match value count");
-                }
-                std::vector<std::vector<uint8_t>> row_exprs;
-                row_exprs.reserve(row.size());
-                for (const auto& val : row) {
-                    row_exprs.push_back(val.expr);
-                }
-                emit_rows.push_back(std::move(row_exprs));
-            }
         }
     }
 
@@ -1283,13 +1279,25 @@ void Parser::parseMergeStmt() {
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_SOURCE));
 
     if (match(TokenType::LEFT_PAREN)) {
-        error("MERGE USING subqueries are not supported in PostgreSQL emulation");
+        // C2: MERGE USING subqueries support
+        // Capture the subquery bytecode
         bool prev_emit = emit_enabled_;
-        emit_enabled_ = false;
+        emit_enabled_ = true;
+        std::vector<uint8_t> saved;
+        saved.swap(bytecode_);
+        bytecode_.clear();
         parseSelectStmt();
+        std::vector<uint8_t> subquery_bytecode;
+        subquery_bytecode.swap(bytecode_);
+        bytecode_.swap(saved);
         emit_enabled_ = prev_emit;
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        emitString("");
+        // Emit subquery indicator and bytecode
+        emitString("");  // Empty string indicates subquery
+        emitU32(static_cast<uint32_t>(subquery_bytecode.size()));
+        if (emit_enabled_) {
+            bytecode_.insert(bytecode_.end(), subquery_bytecode.begin(), subquery_bytecode.end());
+        }
     } else {
         // Table reference
         std::string src_schema;

@@ -23,6 +23,7 @@
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
 #include "scratchbird/client/connection.h"
 #include "scratchbird/server/ipc_server.h"
+#include "scratchbird/security/tls_config.h"
 
 #include <atomic>
 #include <chrono>
@@ -276,6 +277,21 @@ public:
         return server_parameters_;
     }
 
+    /**
+     * Configure TLS/SSL for this adapter instance
+     */
+    void setTLSConfig(const security::TLSConfig& config);
+
+    /**
+     * Check if TLS is enabled for this adapter
+     */
+    bool isTLSEnabled() const { return tls_enabled_; }
+
+    /**
+     * Check if TLS has been negotiated
+     */
+    bool isTLSNegotiated() const { return tls_negotiated_; }
+
 protected:
     // ========================================================================
     // ProtocolAdapter Implementation
@@ -305,6 +321,18 @@ protected:
                            uint64_t bytes,
                            bool error,
                            const std::chrono::steady_clock::time_point& start_time);
+
+protected:
+    // ====================================================================
+    // Testing Support (protected for test harness access)
+    // ====================================================================
+
+    // MD5 authentication helpers
+    std::string computeMD5Hash(const std::string& password,
+                               const std::string& username,
+                               const uint8_t salt[4]);
+    bool validateMD5Response(const std::string& response,
+                             const std::string& expected_hash);
 
 private:
     struct CopyOptions {
@@ -469,13 +497,16 @@ private:
     core::Status startCopyIn(network::Connection* conn, CopyContext& ctx);
     core::Status finishCopyIn(network::Connection* conn);
 
-    // MD5 authentication
-    std::string computeMD5Hash(const std::string& password,
-                               const std::string& username,
-                               const uint8_t salt[4]);
+    // TLS/SSL handling
+    core::Status performTLSHandshake(network::Connection* conn);
+    core::Status sendSSLResponse(network::Connection* conn, bool accept);
+    core::Status sendGSSENCResponse(network::Connection* conn, bool accept);
 
     // Ensure per-emulated PostgreSQL catalog schema/views exist
     core::Status ensurePostgresSystemCatalog(core::ErrorContext* ctx);
+
+    // Initialize default server parameters (server_version, etc.)
+    void initializeServerParameters();
 
     // Send message helper
     void sendMessage(network::Connection* conn, char type, const std::vector<uint8_t>& payload);
@@ -519,6 +550,12 @@ private:
     uint8_t md5_salt_[4] = {0};
     uint8_t scram_step_ = 0;
     AuthMethod auth_method_ = AuthMethod::PASSWORD;
+
+    // TLS support for PostgreSQL SSLRequest
+    std::unique_ptr<security::TLSContext> tls_context_;
+    std::unique_ptr<security::TLSConnection> tls_connection_;
+    bool tls_enabled_ = false;
+    bool tls_negotiated_ = false;
 
     // Startup parameters from client
     std::unordered_map<std::string, std::string> client_parameters_;

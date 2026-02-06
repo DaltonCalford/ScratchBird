@@ -117,7 +117,7 @@ std::string DDLTracker::recordEvent(const DDLEvent& event) {
         event_callback_(evt);
     }
 
-    log("INFO", "Recorded DDL event: " + toString(evt.ddl_type) + " " +
+    log("INFO", std::string("Recorded DDL event: ") + toString(evt.ddl_type) + " " +
         evt.schema_name + "." + evt.object_name);
 
     return evt.event_id;

@@ -20,6 +20,7 @@
 #include <regex>
 #include <chrono>
 #include <openssl/sha.h>
+#include <set>
 
 namespace scratchbird {
 namespace git {
@@ -544,7 +545,9 @@ Migration MigrationManager::generateFromDiff(const std::string& description,
     for (const auto& diff : diffs) {
         switch (diff.diff_type) {
             case DiffType::ADDED:
-                up_script << diff.target_definition << "\n\n";
+                if (diff.target_definition) {
+                    up_script << *diff.target_definition << "\n\n";
+                }
                 down_script << "DROP " << toString(diff.type) << " IF EXISTS "
                            << diff.schema_name << "." << diff.object_name << ";\n\n";
                 break;
@@ -552,7 +555,9 @@ Migration MigrationManager::generateFromDiff(const std::string& description,
             case DiffType::REMOVED:
                 up_script << "DROP " << toString(diff.type) << " IF EXISTS "
                          << diff.schema_name << "." << diff.object_name << ";\n\n";
-                down_script << diff.source_definition << "\n\n";
+                if (diff.source_definition) {
+                    down_script << *diff.source_definition << "\n\n";
+                }
                 break;
 
             case DiffType::MODIFIED:
@@ -560,8 +565,12 @@ Migration MigrationManager::generateFromDiff(const std::string& description,
                 // This is simplified - real implementation would analyze differences
                 up_script << "-- Modified: " << diff.schema_name << "."
                          << diff.object_name << "\n";
-                up_script << diff.target_definition << "\n\n";
-                down_script << diff.source_definition << "\n\n";
+                if (diff.target_definition) {
+                    up_script << *diff.target_definition << "\n\n";
+                }
+                if (diff.source_definition) {
+                    down_script << *diff.source_definition << "\n\n";
+                }
                 break;
 
             default:

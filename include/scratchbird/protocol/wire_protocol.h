@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <mutex>
 #include <memory>
 
 #include "scratchbird/core/status.h"
@@ -775,6 +776,7 @@ public:
     static Message buildQuery(const uint8_t session_id[16],
                               const std::string& query,
                               uint8_t flags = 0);
+    static Message buildQueryCancel();
     static Message buildQueryBytecode(const uint8_t session_id[16],
                                       const std::vector<uint8_t>& bytecode,
                                       const std::string& sql,
@@ -1078,6 +1080,7 @@ public:
 
 private:
     scratchbird::server::IPCConnection* connection_;  // Not owned
+    mutable std::mutex send_mutex_;
     uint64_t messages_sent_ = 0;
     uint64_t messages_received_ = 0;
     uint64_t bytes_sent_ = 0;

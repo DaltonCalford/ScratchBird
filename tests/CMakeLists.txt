@@ -1747,6 +1747,53 @@ set_tests_properties(ShadowIndexRebuild PROPERTIES
     TIMEOUT 60
 )
 
+# ============================================================================
+# Git Config Parser Tests (Section A: Git Config Key Normalization)
+# ============================================================================
+
+add_executable(test_git_config_parser
+    git/GitConfigParserTest.cpp
+)
+
+target_include_directories(test_git_config_parser PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_git_config_parser
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_git_config_parser
+    TEST_PREFIX "GitConfig."
+    PROPERTIES LABELS "unit;git;config;parser"
+    PROPERTIES TIMEOUT 60
+)
+
+# ============================================================================
+# SBLR Type Opcode Tests (Section B: SBLR Type Opcode Remediation)
+# ============================================================================
+
+add_executable(test_sblr_type_opcodes
+    unit/test_sblr_type_opcodes.cpp
+)
+
+target_include_directories(test_sblr_type_opcodes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_sblr_type_opcodes
+    PRIVATE
+    scratchbird_core
+    scratchbird_sblr
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_sblr_type_opcodes
+    TEST_PREFIX "SBLR."
+    PROPERTIES LABELS "unit;sblr;type;opcode;bytecode"
+    PROPERTIES TIMEOUT 60
+)
+
 # Aggregate target for building all test executables.
 get_property(SCRATCHBIRD_TEST_TARGETS
     DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

@@ -370,6 +370,20 @@ private:
         sblr::Opcode frame_end = sblr::Opcode::FRAME_CURRENT_ROW;
         std::string output_column;
         std::string function_name;
+        // C4: Named window reference
+        std::string named_window_ref;
+    };
+    
+    // C4: Named window definition for WINDOW clause
+    struct NamedWindowDef {
+        std::string name;
+        std::string ref_name;  // For WINDOW w2 AS (w1 ...) - references another window
+        std::vector<std::string> partition_columns;
+        std::vector<std::string> order_columns;
+        bool has_frame = false;
+        sblr::Opcode frame_mode = sblr::Opcode::FRAME_ROWS;
+        sblr::Opcode frame_start = sblr::Opcode::FRAME_UNBOUNDED_PRECEDING;
+        sblr::Opcode frame_end = sblr::Opcode::FRAME_CURRENT_ROW;
     };
 
     Lexer lexer_;
@@ -387,6 +401,8 @@ private:
     std::vector<WindowFunctionSpec> window_specs_;
     bool last_expr_was_window_ = false;
     size_t last_window_index_ = 0;
+    // C4: Named windows from WINDOW clause
+    std::unordered_map<std::string, NamedWindowDef> named_windows_;
 
     // Token management
     void advance();

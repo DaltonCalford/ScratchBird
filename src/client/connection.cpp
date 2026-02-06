@@ -1502,9 +1502,9 @@ public:
         }
     }
 
-    core::Status doExecuteQuery(const std::string& sql, ResultSet* results,
+    core::Status doExecuteQuery(const std::string& sql, uint8_t flags, ResultSet* results,
                                 core::ErrorContext* ctx) {
-        auto query_msg = protocol::ProtocolCodec::buildQuery(session_id_, sql, 0);
+        auto query_msg = protocol::ProtocolCodec::buildQuery(session_id_, sql, flags);
         return doExecuteQueryMessage(query_msg, results, ctx);
     }
 
@@ -1714,6 +1714,22 @@ core::Status Connection::ping(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
+core::Status Connection::cancelQuery(core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    auto msg = protocol::ProtocolCodec::buildQueryCancel();
+    auto status = impl_->protocol_session_->sendMessage(msg, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to send cancel request";
+        return status;
+    }
+
+    return core::Status::OK;
+}
+
 void Connection::setCopyInputStream(std::istream* in) {
     if (!impl_) {
         return;
@@ -1748,12 +1764,19 @@ core::Status Connection::sendAuthRequest(protocol::AuthMethod method,
 core::Status Connection::executeQuery(const std::string& sql,
                                        ResultSet* results,
                                        core::ErrorContext* ctx) {
+    return executeQuery(sql, results, 0, ctx);
+}
+
+core::Status Connection::executeQuery(const std::string& sql,
+                                       ResultSet* results,
+                                       uint8_t flags,
+                                       core::ErrorContext* ctx) {
     if (!isConnected()) {
         impl_->last_error_ = "Not connected";
         return core::Status::CONNECTION_FAILURE;
     }
 
-    auto status = impl_->doExecuteQuery(sql, results, ctx);
+    auto status = impl_->doExecuteQuery(sql, flags, results, ctx);
     if (!isOk(status) && ctx && ctx->message.empty() && !impl_->last_error_.empty())
     {
         ctx->set(status, impl_->last_error_.c_str(), __FILE__, __LINE__, __func__);

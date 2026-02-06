@@ -586,6 +586,54 @@ core::Status FirebirdAdapter::processMessage(network::Connection* conn) {
         case firebird::Opcode::op_disconnect:
             return handleDisconnect(conn);
 
+        // Service Manager operations (C5.1)
+        case firebird::Opcode::op_service_attach:
+            return handleServiceAttach(conn);
+
+        case firebird::Opcode::op_service_detach:
+            return handleServiceDetach(conn);
+
+        case firebird::Opcode::op_service_info:
+            return handleServiceInfo(conn);
+
+        case firebird::Opcode::op_service_start:
+            return handleServiceStart(conn);
+
+        // Event operations (C5.2)
+        case firebird::Opcode::op_que_events:
+            return handleQueEvents(conn);
+
+        case firebird::Opcode::op_cancel_events:
+            return handleCancelEvents(conn);
+
+        // BLOB operations (C5.3)
+        case firebird::Opcode::op_create_blob:
+            return handleCreateBlob(conn);
+
+        case firebird::Opcode::op_create_blob2:
+            return handleCreateBlob2(conn);
+
+        case firebird::Opcode::op_open_blob:
+            return handleOpenBlob(conn);
+
+        case firebird::Opcode::op_open_blob2:
+            return handleOpenBlob2(conn);
+
+        case firebird::Opcode::op_close_blob:
+            return handleCloseBlob(conn);
+
+        case firebird::Opcode::op_cancel_blob:
+            return handleCancelBlob(conn);
+
+        case firebird::Opcode::op_get_segment:
+            return handleGetSegment(conn);
+
+        case firebird::Opcode::op_put_segment:
+            return handlePutSegment(conn);
+
+        case firebird::Opcode::op_seek_blob:
+            return handleSeekBlob(conn);
+
         default:
             sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable,
                              "Unsupported operation: " + std::to_string(current_opcode_));
@@ -2674,6 +2722,470 @@ std::vector<uint8_t> FirebirdAdapter::buildDefaultTpb() {
     tpb.push_back(firebird::TpbItem::isc_tpb_wait);
 
     return tpb;
+}
+
+// ============================================================================
+// Service Manager Implementation (C5.1)
+// ============================================================================
+
+void FirebirdAdapter::parseSpb(const std::vector<uint8_t>& spb, ServiceState& state) {
+    if (spb.empty()) return;
+
+    size_t offset = 0;
+
+    // Version
+    if (spb[offset] == firebird::SpbItem::isc_spb_version1 ||
+        spb[offset] == firebird::SpbItem::isc_spb_version2) {
+        offset++;
+    }
+
+    while (offset < spb.size()) {
+        uint8_t item = spb[offset++];
+        if (offset >= spb.size()) break;
+
+        uint8_t len = spb[offset++];
+        if (offset + len > spb.size()) break;
+
+        std::string value(reinterpret_cast<const char*>(spb.data() + offset), len);
+        offset += len;
+
+        switch (item) {
+            case firebird::SpbItem::isc_spb_user_name:
+                state.username = value;
+                break;
+            case firebird::SpbItem::isc_spb_password:
+                // Password would be validated here
+                break;
+            default:
+                // Ignore other items
+                break;
+        }
+    }
+}
+
+core::Status FirebirdAdapter::handleServiceAttach(network::Connection* conn) {
+    size_t offset = 4;  // Skip opcode
+
+    // Service name (e.g., "service_mgr")
+    std::string service_name = readString(current_packet_.data(), offset, current_packet_.size());
+
+    // SPB (Service Parameter Block)
+    std::vector<uint8_t> spb = readBuffer(current_packet_.data(), offset, current_packet_.size());
+
+    // Parse SPB for credentials
+    service_state_.handle = next_db_handle_++;
+    service_state_.active = true;
+    parseSpb(spb, service_state_);
+
+    // Send response with service handle
+    std::vector<uint8_t> data;
+    sendResponse(conn, service_state_.handle, 0, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleServiceDetach(network::Connection* conn) {
+    size_t offset = 4;
+
+    uint32_t svc_handle = readUInt32(current_packet_.data() + offset);
+
+    if (svc_handle != service_state_.handle || !service_state_.active) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid service handle");
+        return sendBuffer(conn);
+    }
+
+    service_state_.active = false;
+    service_state_.handle = 0;
+    service_state_.action = 0;
+
+    std::vector<uint8_t> data;
+    sendResponse(conn, 0, 0, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleServiceInfo(network::Connection* conn) {
+    size_t offset = 4;
+
+    uint32_t svc_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    // Skip incarnation
+    offset += 4;
+
+    // Info items
+    std::vector<uint8_t> items = readBuffer(current_packet_.data(), offset, current_packet_.size());
+
+    if (svc_handle != service_state_.handle || !service_state_.active) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid service handle");
+        return sendBuffer(conn);
+    }
+
+    // Build info response
+    std::vector<uint8_t> info_data;
+
+    for (uint8_t item : items) {
+        switch (item) {
+            case firebird::SpbItem::isc_info_svc_version:
+                info_data.push_back(firebird::SpbItem::isc_info_svc_version);
+                writeUInt32(info_data, 5);  // Version 5.0
+                break;
+            case firebird::SpbItem::isc_info_svc_server_version:
+                info_data.push_back(firebird::SpbItem::isc_info_svc_server_version);
+                writeString(info_data, server_version_);
+                break;
+            case firebird::SpbItem::isc_info_svc_implementation:
+                info_data.push_back(firebird::SpbItem::isc_info_svc_implementation);
+                writeString(info_data, "ScratchBird");
+                break;
+            case firebird::SpbItem::isc_info_svc_capabilities:
+                info_data.push_back(firebird::SpbItem::isc_info_svc_capabilities);
+                writeUInt32(info_data, 0xFFFFFFFF);  // All capabilities
+                break;
+            case firebird::SpbItem::isc_info_svc_get_users:
+                // Return empty user list
+                info_data.push_back(firebird::SpbItem::isc_info_svc_get_users);
+                info_data.push_back(firebird::isc_info_end);
+                break;
+            default:
+                // Unknown item
+                break;
+        }
+    }
+
+    info_data.push_back(firebird::isc_info_end);
+
+    sendResponse(conn, svc_handle, 0, info_data);
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleServiceStart(network::Connection* conn) {
+    size_t offset = 4;
+
+    uint32_t svc_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    // Action block (TLV format)
+    std::vector<uint8_t> action_block = readBuffer(current_packet_.data(), offset, current_packet_.size());
+
+    if (svc_handle != service_state_.handle || !service_state_.active) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid service handle");
+        return sendBuffer(conn);
+    }
+
+    // Parse action
+    if (!action_block.empty()) {
+        service_state_.action = action_block[0];
+    }
+
+    // For now, acknowledge the start
+    // In a full implementation, we'd execute the requested service action
+    std::vector<uint8_t> data;
+    sendResponse(conn, svc_handle, 0, data);
+
+    return sendBuffer(conn);
+}
+
+// ============================================================================
+// Event Operations Implementation (C5.2)
+// ============================================================================
+
+core::Status FirebirdAdapter::handleQueEvents(network::Connection* conn) {
+    size_t offset = 4;
+
+    uint32_t db_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    if (db_handle != db_handle_) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid database handle");
+        return sendBuffer(conn);
+    }
+
+    // Event names buffer (count + names)
+    std::vector<uint8_t> events_data = readBuffer(current_packet_.data(), offset, current_packet_.size());
+
+    // AST (asynchronous trap) address - 8 bytes
+    uint64_t ast = readInt64(current_packet_.data() + offset);
+    offset += 8;
+    (void)ast;
+
+    // Argument - 8 bytes
+    uint64_t arg = readInt64(current_packet_.data() + offset);
+    offset += 8;
+    (void)arg;
+
+    // Parse event names
+    event_state_.event_names.clear();
+    if (events_data.size() >= 4) {
+        uint32_t count = (static_cast<uint32_t>(events_data[0]) << 24) |
+                        (static_cast<uint32_t>(events_data[1]) << 16) |
+                        (static_cast<uint32_t>(events_data[2]) << 8) |
+                        static_cast<uint32_t>(events_data[3]);
+        size_t e_offset = 4;
+        for (uint32_t i = 0; i < count && e_offset < events_data.size(); ++i) {
+            // Read length-prefixed string
+            if (e_offset + 1 > events_data.size()) break;
+            uint8_t len = events_data[e_offset++];
+            if (e_offset + len > events_data.size()) break;
+            std::string name(reinterpret_cast<const char*>(events_data.data() + e_offset), len);
+            event_state_.event_names.push_back(name);
+            e_offset += len;
+        }
+    }
+
+    event_state_.event_id = next_event_id_++;
+    event_state_.active = true;
+
+    // Send response with event ID
+    std::vector<uint8_t> data;
+    writeUInt32(data, event_state_.event_id);
+    sendResponse(conn, db_handle, 0, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleCancelEvents(network::Connection* conn) {
+    size_t offset = 4;
+
+    uint32_t db_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    uint32_t event_id = readUInt32(current_packet_.data() + offset);
+
+    if (db_handle != db_handle_) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid database handle");
+        return sendBuffer(conn);
+    }
+
+    if (event_id == event_state_.event_id) {
+        event_state_.active = false;
+        event_state_.event_names.clear();
+    }
+
+    std::vector<uint8_t> data;
+    sendResponse(conn, db_handle, 0, data);
+
+    return sendBuffer(conn);
+}
+
+// ============================================================================
+// BLOB Operations Implementation (C5.3)
+// ============================================================================
+
+core::Status FirebirdAdapter::handleCreateBlob(network::Connection* conn) {
+    size_t offset = 4;
+
+    uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
+        return sendBuffer(conn);
+    }
+
+    // Create new BLOB
+    BlobState blob;
+    blob.blob_id = next_blob_id_++;
+    blob.is_new = true;
+    blob.is_segmented = true;
+
+    uint64_t blob_id = (static_cast<uint64_t>(db_handle_) << 32) | blob.blob_id;
+    blobs_[blob_id] = blob;
+
+    std::vector<uint8_t> data;
+    writeInt64(data, static_cast<int64_t>(blob_id));
+    sendResponse(conn, 0, blob_id, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleCreateBlob2(network::Connection* conn) {
+    // Similar to create_blob but with BPB (BLOB Parameter Block)
+    return handleCreateBlob(conn);
+}
+
+core::Status FirebirdAdapter::handleOpenBlob(network::Connection* conn) {
+    size_t offset = 4;
+
+    uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    int64_t blob_id_raw = readInt64(current_packet_.data() + offset);
+    uint64_t blob_id = static_cast<uint64_t>(blob_id_raw);
+
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
+        return sendBuffer(conn);
+    }
+
+    auto it = blobs_.find(blob_id);
+    if (it == blobs_.end()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid BLOB ID");
+        return sendBuffer(conn);
+    }
+
+    it->second.position = 0;
+
+    std::vector<uint8_t> data;
+    sendResponse(conn, 0, blob_id, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleOpenBlob2(network::Connection* conn) {
+    return handleOpenBlob(conn);
+}
+
+core::Status FirebirdAdapter::handleCloseBlob(network::Connection* conn) {
+    size_t offset = 4;
+
+    int64_t blob_id_raw = readInt64(current_packet_.data() + offset);
+    uint64_t blob_id = static_cast<uint64_t>(blob_id_raw);
+
+    auto it = blobs_.find(blob_id);
+    if (it != blobs_.end()) {
+        // Persist new blobs to storage (in real implementation)
+        blobs_.erase(it);
+    }
+
+    std::vector<uint8_t> data;
+    sendResponse(conn, 0, 0, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleCancelBlob(network::Connection* conn) {
+    size_t offset = 4;
+
+    int64_t blob_id_raw = readInt64(current_packet_.data() + offset);
+    uint64_t blob_id = static_cast<uint64_t>(blob_id_raw);
+
+    auto it = blobs_.find(blob_id);
+    if (it != blobs_.end()) {
+        blobs_.erase(it);
+    }
+
+    std::vector<uint8_t> data;
+    sendResponse(conn, 0, 0, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleGetSegment(network::Connection* conn) {
+    size_t offset = 4;
+
+    int64_t blob_id_raw = readInt64(current_packet_.data() + offset);
+    offset += 8;
+    uint64_t blob_id = static_cast<uint64_t>(blob_id_raw);
+
+    uint32_t seg_length = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    uint32_t seg_flags = readUInt32(current_packet_.data() + offset);
+    (void)seg_flags;
+
+    auto it = blobs_.find(blob_id);
+    if (it == blobs_.end()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid BLOB ID");
+        return sendBuffer(conn);
+    }
+
+    // Read segment
+    std::vector<uint8_t> segment;
+    size_t remaining = it->second.data.size() - it->second.position;
+    size_t to_read = std::min(static_cast<size_t>(seg_length), remaining);
+
+    if (to_read > 0) {
+        segment.insert(segment.end(),
+                      it->second.data.begin() + it->second.position,
+                      it->second.data.begin() + it->second.position + to_read);
+        it->second.position += to_read;
+    }
+
+    bool eof = (it->second.position >= it->second.data.size());
+
+    // Build response
+    std::vector<uint8_t> data;
+    writeUInt32(data, static_cast<uint32_t>(segment.size()));
+    writeBuffer(data, segment.data(), segment.size());
+    writeUInt32(data, eof ? 1u : 0u);  // End of BLOB flag
+
+    sendPacket(conn, firebird::Opcode::op_response, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handlePutSegment(network::Connection* conn) {
+    size_t offset = 4;
+
+    int64_t blob_id_raw = readInt64(current_packet_.data() + offset);
+    offset += 8;
+    uint64_t blob_id = static_cast<uint64_t>(blob_id_raw);
+
+    uint32_t seg_length = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    auto it = blobs_.find(blob_id);
+    if (it == blobs_.end()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid BLOB ID");
+        return sendBuffer(conn);
+    }
+
+    // Read segment data
+    if (offset + seg_length <= current_packet_.size()) {
+        it->second.data.insert(it->second.data.end(),
+                              current_packet_.data() + offset,
+                              current_packet_.data() + offset + seg_length);
+    }
+
+    std::vector<uint8_t> data;
+    sendResponse(conn, 0, 0, data);
+
+    return sendBuffer(conn);
+}
+
+core::Status FirebirdAdapter::handleSeekBlob(network::Connection* conn) {
+    size_t offset = 4;
+
+    int64_t blob_id_raw = readInt64(current_packet_.data() + offset);
+    offset += 8;
+    uint64_t blob_id = static_cast<uint64_t>(blob_id_raw);
+
+    uint32_t mode = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    int32_t position = readInt32(current_packet_.data() + offset);
+
+    auto it = blobs_.find(blob_id);
+    if (it == blobs_.end()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid BLOB ID");
+        return sendBuffer(conn);
+    }
+
+    // Seek mode: 0 = relative, 1 = absolute (from beginning), 2 = absolute (from end)
+    switch (mode) {
+        case 0:  // Relative
+            it->second.position = static_cast<size_t>(
+                std::max<int64_t>(0, static_cast<int64_t>(it->second.position) + position));
+            break;
+        case 1:  // Absolute from beginning
+            it->second.position = static_cast<size_t>(std::max(0, position));
+            break;
+        case 2:  // Absolute from end
+            it->second.position = static_cast<size_t>(
+                std::max<int64_t>(0, static_cast<int64_t>(it->second.data.size()) + position));
+            break;
+    }
+
+    // Clamp to data size
+    if (it->second.position > it->second.data.size()) {
+        it->second.position = it->second.data.size();
+    }
+
+    std::vector<uint8_t> data;
+    sendResponse(conn, 0, static_cast<uint64_t>(it->second.position), data);
+
+    return sendBuffer(conn);
 }
 
 } // namespace protocol

@@ -901,6 +901,12 @@ namespace scratchbird::core
             {
                 status = Status::NOT_FOUND;
                 SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
+                if (ctx)
+                {
+                    ctx->message = "Tuple not visible (xmin=" + std::to_string(hdr->xmin) +
+                                   " xmax=" + std::to_string(hdr->xmax) +
+                                   " cur_xid=" + std::to_string(cur_xid) + ")";
+                }
             }
             else
             {
@@ -910,7 +916,7 @@ namespace scratchbird::core
                     (isZeroId(session_id) || hdr->session_id != session_id))
                 {
                     status = Status::NOT_FOUND;
-                    SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
+                    SET_ERROR_CONTEXT(ctx, status, "Tuple not visible (session mismatch)");
                 }
 
                 // Set tuple data pointer (includes header for now)

@@ -4122,6 +4122,37 @@ Statement* Parser::parseSetStatement() {
         }
     }
 
+    // Firebird-specific: SET TERM (statement terminator)
+    if (matchIdentifierText("TERM")) {
+        stmt->set_type = ast::SetStmt::SetType::TERM;
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::SEMICOLON)) {
+            stmt->value = parseExpression();
+        } else {
+            error("Expected terminator string after SET TERM");
+        }
+        return stmt;
+    }
+
+    // Firebird-specific: SET STATISTICS INDEX
+    if (matchIdentifierText("STATISTICS")) {
+        if (!matchKeyword(TokenType::KW_INDEX)) {
+            error("Expected INDEX after SET STATISTICS");
+            return stmt;
+        }
+        stmt->set_type = ast::SetStmt::SetType::STATISTICS_INDEX;
+        stmt->name = parseIdentifier();  // Index name
+        return stmt;
+    }
+
+    // Firebird-specific: SET GENERATOR
+    if (matchIdentifierText("GENERATOR") || matchIdentifierText("SEQUENCE")) {
+        stmt->set_type = ast::SetStmt::SetType::GENERATOR;
+        stmt->name = parseIdentifier();  // Generator/sequence name
+        consume(TokenType::KW_TO, "Expected TO after SET GENERATOR/SEQUENCE name");
+        stmt->value = parseExpression();  // New value
+        return stmt;
+    }
+
     stmt->name = parseIdentifier();
     if (match(TokenType::EQUAL) || matchKeyword(TokenType::KW_TO)) {
         if (matchKeyword(TokenType::KW_DEFAULT)) {
@@ -4135,171 +4166,17 @@ Statement* Parser::parseSetStatement() {
 }
 
 Statement* Parser::parseShowStatement() {
-    auto* stmt = allocate<ast::ShowStmt>();
-
-    auto matchIdentifierText = [&](const char* keyword) -> bool {
-        if (!check(TokenType::IDENTIFIER)) {
-            return false;
-        }
-        std::string_view text = lexer_.getTokenText(current_token_);
-        size_t len = std::strlen(keyword);
-        if (text.size() != len) {
-            return false;
-        }
-        for (size_t i = 0; i < len; ++i) {
-            char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
-            char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
-            if (a != b) {
-                return false;
-            }
-        }
-        advance();
-        return true;
-    };
-
-    if (matchKeyword(TokenType::KW_TABLE)) {
-        stmt->show_type = ast::ShowStmt::ShowType::TABLE;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_INDEX)) {
-        stmt->show_type = ast::ShowStmt::ShowType::INDEX;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_TRIGGER)) {
-        stmt->show_type = ast::ShowStmt::ShowType::TRIGGER;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_VIEW)) {
-        stmt->show_type = ast::ShowStmt::ShowType::VIEW;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_PROCEDURE)) {
-        stmt->show_type = ast::ShowStmt::ShowType::PROCEDURE;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_FUNCTION)) {
-        stmt->show_type = ast::ShowStmt::ShowType::FUNCTION;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_DOMAIN)) {
-        stmt->show_type = ast::ShowStmt::ShowType::DOMAIN;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_GENERATOR) || matchKeyword(TokenType::KW_SEQUENCE)) {
-        stmt->show_type = ast::ShowStmt::ShowType::GENERATOR;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_SCHEMA)) {
-        stmt->show_type = ast::ShowStmt::ShowType::SCHEMA;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_ROLE)) {
-        stmt->show_type = ast::ShowStmt::ShowType::ROLE;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchIdentifierText("GRANTS")) {
-        stmt->show_type = ast::ShowStmt::ShowType::GRANTS;
-        if (matchKeyword(TokenType::KW_FOR)) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchIdentifierText("CHECKS")) {
-        stmt->show_type = ast::ShowStmt::ShowType::CHECKS;
-        stmt->name = parseIdentifier();
-        return stmt;
-    }
-    if (matchIdentifierText("COLLATIONS")) {
-        stmt->show_type = ast::ShowStmt::ShowType::COLLATIONS;
-        if (matchKeyword(TokenType::KW_LIKE)) {
-            if (check(TokenType::STRING_LITERAL)) {
-                stmt->like_pattern = internFromLexer(current_token_.value.string_id);
-                advance();
-            }
-        }
-        return stmt;
-    }
-    if (matchIdentifierText("COMMENTS") || matchIdentifierText("COMMENT")) {
-        stmt->show_type = ast::ShowStmt::ShowType::COMMENTS;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchIdentifierText("DEPENDENCIES")) {
-        stmt->show_type = ast::ShowStmt::ShowType::DEPENDENCIES;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_PACKAGE)) {
-        stmt->show_type = ast::ShowStmt::ShowType::PACKAGE;
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            stmt->name = parseIdentifier();
-        }
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_SQL)) {
-        if (matchIdentifierText("DIALECT")) {
-            stmt->show_type = ast::ShowStmt::ShowType::SQL_DIALECT;
-            return stmt;
-        }
-    }
-    if (matchIdentifierText("VERSION")) {
-        stmt->show_type = ast::ShowStmt::ShowType::VERSION;
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_DATABASE)) {
-        stmt->show_type = ast::ShowStmt::ShowType::DATABASE;
-        return stmt;
-    }
-    if (matchKeyword(TokenType::KW_SYSTEM)) {
-        stmt->show_type = ast::ShowStmt::ShowType::SYSTEM;
-        return stmt;
-    }
-    if (matchIdentifierText("METRICS")) {
-        stmt->show_type = ast::ShowStmt::ShowType::METRICS;
-        return stmt;
-    }
-
-    stmt->show_type = ast::ShowStmt::ShowType::VARIABLE;
-    if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-        stmt->name = parseIdentifier();
-    } else {
-        error("Expected SHOW option");
-    }
-    return stmt;
+    // Firebird SHOW is client-side only (isql)
+    // Server rejects SHOW statements per Firebird dialect guardrails
+    error("SHOW is a client-side command and is not supported by the server. "
+          "Use direct system catalog queries instead.",
+          "Firebird SHOW commands are processed by isql client only");
+    
+    // Parse and discard the rest to continue error recovery
+    synchronize();
+    
+    // Return a dummy statement (parsing failed)
+    return allocate<ast::ShowStmt>();
 }
 
 // DCL statements

@@ -380,13 +380,16 @@ void Parser::parseCreateTable() {
                 fk.name = constraint_name;
                 pending_fks.push_back(std::move(fk));
             } else if (matchKeyword(TokenType::KW_CHECK)) {
+                // C2: Table-level CHECK constraint
                 consume(TokenType::LEFT_PAREN, "Expected (");
-                bool prev_emit = emit_enabled_;
-                emit_enabled_ = false;
-                parseExpression();
-                emit_enabled_ = prev_emit;
+                std::string check_expr = parseExpressionText();
                 consume(TokenType::RIGHT_PAREN, "Expected )");
-                error("Table-level CHECK constraints are not supported yet");
+                
+                // C2: Table-level CHECK constraint - use standard CHECK_CONSTRAINT opcode
+                emit(sblr::Opcode::CHECK_CONSTRAINT);
+                emitString(constraint_name);
+                emitString(check_expr);
+                emitted_entry = true;
             }
         } else {
             // Column definition
@@ -2380,8 +2383,10 @@ void Parser::parseCreateDomain() {
     matchKeyword(TokenType::KW_AS);
 
     PgDataType base_type = parseDataType();
+    // C2: Expanded CREATE DOMAIN base type support
     bool supported_base_type = true;
     switch (base_type.kind) {
+        // Numeric types
         case PgDataType::Kind::SMALLINT:
         case PgDataType::Kind::INTEGER:
         case PgDataType::Kind::SERIAL:
@@ -2395,19 +2400,44 @@ void Parser::parseCreateDomain() {
         case PgDataType::Kind::DECIMAL:
         case PgDataType::Kind::NUMERIC:
         case PgDataType::Kind::MONEY:
+        // Character types
         case PgDataType::Kind::CHAR:
         case PgDataType::Kind::VARCHAR:
         case PgDataType::Kind::TEXT:
+        // Binary type
         case PgDataType::Kind::BYTEA:
+        // Date/Time types
         case PgDataType::Kind::DATE:
         case PgDataType::Kind::TIME:
         case PgDataType::Kind::TIMETZ:
         case PgDataType::Kind::TIMESTAMP:
         case PgDataType::Kind::TIMESTAMPTZ:
+        case PgDataType::Kind::INTERVAL:
+        // Boolean
         case PgDataType::Kind::BOOLEAN:
+        // UUID
         case PgDataType::Kind::UUID:
+        // JSON types
         case PgDataType::Kind::JSON:
         case PgDataType::Kind::JSONB:
+        case PgDataType::Kind::JSONPATH:
+        // XML
+        case PgDataType::Kind::XML:
+        // Network types
+        case PgDataType::Kind::INET:
+        case PgDataType::Kind::CIDR:
+        case PgDataType::Kind::MACADDR:
+        case PgDataType::Kind::MACADDR8:
+        // Text search types
+        case PgDataType::Kind::TSVECTOR:
+        case PgDataType::Kind::TSQUERY:
+        // Bit string types
+        case PgDataType::Kind::BIT:
+        case PgDataType::Kind::VARBIT:
+            break;
+        // Array types are supported as base types for domains
+        case PgDataType::Kind::ARRAY:
+            // C2: Array domains support
             break;
         default:
             supported_base_type = false;
@@ -3082,26 +3112,17 @@ void Parser::parseAlterStmt() {
             if (matchKeyword(TokenType::KW_ADD)) {
                 matchKeyword(TokenType::KW_COLUMN);
                 ColumnDef col = parseColumnDef();
-                if (col.has_default || col.primary_key || col.unique ||
-                    col.is_identity || col.is_generated || col.not_null) {
-                    error("ALTER TABLE ADD COLUMN does not support constraints yet");
-                    return;
-                }
-                if (col.type.kind == PgDataType::Kind::DOMAIN ||
-                    col.type.kind == PgDataType::Kind::ARRAY) {
-                    error("ALTER TABLE ADD COLUMN does not support domain or array types yet");
-                    return;
-                }
+                // C2: Support constraints and domain/array types in ADD COLUMN
                 emit_alter(0, [&]() {
-                    uint16_t type_code = 0;
-                    uint32_t precision = 0;
-                    uint32_t scale = 0;
-                    emit_type_payload(col.type, type_code, precision, scale);
                     emitString(col.name);
-                    emitU16(type_code);
-                    emitU32(precision);
-                    emitU32(scale);
-                    emitByte(col.not_null ? 0 : 1);
+                    emitTypeDefinition(col.type);
+                    emitByte(col.not_null ? 1 : 0);
+                    emitByte(col.has_default ? 1 : 0);
+                    if (col.has_default) {
+                        emitString(col.default_value);
+                    }
+                    emitByte(col.primary_key ? 1 : 0);
+                    emitByte(col.unique ? 1 : 0);
                 });
             } else if (matchKeyword(TokenType::KW_DROP)) {
                 if (matchKeyword(TokenType::KW_COLUMN)) {
@@ -3123,7 +3144,24 @@ void Parser::parseAlterStmt() {
                         emitByte(cascade ? 1 : 0);
                     });
                 } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
-                    error("ALTER TABLE DROP CONSTRAINT is not supported yet");
+                    // C2: ALTER TABLE DROP CONSTRAINT
+                    bool if_exists = false;
+                    if (matchKeyword(TokenType::KW_IF)) {
+                        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+                        if_exists = true;
+                    }
+                    std::string constraint_name = parseIdentifier();
+                    bool cascade = false;
+                    if (matchKeyword(TokenType::KW_CASCADE)) {
+                        cascade = true;
+                    } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+                        cascade = false;
+                    }
+                    emit_alter(4, [&]() {
+                        emitString(constraint_name);
+                        emitByte(if_exists ? 1 : 0);
+                        emitByte(cascade ? 1 : 0);
+                    });
                     return;
                 } else {
                     error("Expected COLUMN after DROP");
@@ -3139,27 +3177,51 @@ void Parser::parseAlterStmt() {
                     if (matchKeyword(TokenType::KW_DATA)) {
                         consumeKeyword(TokenType::KW_TYPE, "Expected TYPE");
                         alter_type = true;
-                    } else if (matchKeyword(TokenType::KW_DEFAULT) || matchKeyword(TokenType::KW_NOT)) {
-                        error("ALTER TABLE ALTER COLUMN SET DEFAULT/NOT NULL is not supported yet");
+                    } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+                        // C2: ALTER TABLE ALTER COLUMN SET DEFAULT
+                        std::string default_expr = parseExpressionText();
+                        emit_alter(5, [&]() {
+                            emitString(col_name);
+                            emitByte(1);  // has_default = true
+                            emitString(default_expr);
+                        });
+                        return;
+                    } else if (matchKeyword(TokenType::KW_NOT)) {
+                        consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+                        // C2: ALTER TABLE ALTER COLUMN SET NOT NULL
+                        emit_alter(6, [&]() {
+                            emitString(col_name);
+                            emitByte(1);  // not_null = true
+                        });
                         return;
                     }
                 } else if (matchKeyword(TokenType::KW_DROP)) {
-                    if (matchKeyword(TokenType::KW_DEFAULT) || matchKeyword(TokenType::KW_NOT)) {
-                        error("ALTER TABLE ALTER COLUMN DROP DEFAULT/NOT NULL is not supported yet");
+                    if (matchKeyword(TokenType::KW_DEFAULT)) {
+                        // C2: ALTER TABLE ALTER COLUMN DROP DEFAULT
+                        emit_alter(5, [&]() {
+                            emitString(col_name);
+                            emitByte(0);  // has_default = false
+                            emitString("");  // empty default expression
+                        });
+                        return;
+                    } else if (matchKeyword(TokenType::KW_NOT)) {
+                        consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+                        // C2: ALTER TABLE ALTER COLUMN DROP NOT NULL
+                        emit_alter(6, [&]() {
+                            emitString(col_name);
+                            emitByte(0);  // not_null = false
+                        });
                         return;
                     }
                 }
 
                 if (alter_type) {
                     PgDataType type = parseDataType();
-                    if (type.kind == PgDataType::Kind::DOMAIN ||
-                        type.kind == PgDataType::Kind::ARRAY) {
-                        error("ALTER TABLE ALTER COLUMN does not support domain or array types yet");
-                        return;
-                    }
+                    // C2: Support domain and array types in ALTER COLUMN
+                    std::string using_expr;
                     if (matchKeyword(TokenType::KW_USING)) {
-                        error("ALTER TABLE ALTER COLUMN ... USING is not supported yet");
-                        return;
+                        // C2: ALTER TABLE ALTER COLUMN ... USING
+                        using_expr = parseExpressionText();
                     }
                     emit_alter(2, [&]() {
                         uint16_t type_code = 0;
@@ -3170,6 +3232,10 @@ void Parser::parseAlterStmt() {
                         emitU16(type_code);
                         emitU32(precision);
                         emitU32(scale);
+                        emitByte(using_expr.empty() ? 0 : 1);
+                        if (!using_expr.empty()) {
+                            emitString(using_expr);
+                        }
                     });
                 } else if (!alter_type) {
                     error("Expected TYPE, SET, or DROP after ALTER COLUMN");
@@ -3813,33 +3879,30 @@ void Parser::parseTruncateStmt() {
         tables.push_back(std::move(path));
     } while (match(TokenType::COMMA));
 
-    // RESTART IDENTITY / CONTINUE IDENTITY
-    bool has_identity_option = false;
+    // C2: TRUNCATE options - RESTART IDENTITY / CONTINUE IDENTITY
+    bool restart_identity = false;
     if (matchKeyword(TokenType::KW_RESTART)) {
         consumeKeyword(TokenType::KW_IDENTITY, "Expected IDENTITY");
-        has_identity_option = true;
+        restart_identity = true;
     } else if (matchKeyword(TokenType::KW_CONTINUE)) {
         consumeKeyword(TokenType::KW_IDENTITY, "Expected IDENTITY");
-        has_identity_option = true;
+        restart_identity = false;
     }
 
-    // CASCADE/RESTRICT
-    bool has_cascade = false;
+    // C2: CASCADE/RESTRICT
+    bool cascade = false;
     if (matchKeyword(TokenType::KW_CASCADE)) {
-        has_cascade = true;
+        cascade = true;
     } else if (matchKeyword(TokenType::KW_RESTRICT)) {
-        has_cascade = true;
-    }
-
-    if (has_identity_option || has_cascade) {
-        error("TRUNCATE options are not supported in PostgreSQL emulation yet");
-        return;
+        cascade = false;
     }
 
     for (const auto& table_name : tables) {
         emit(sblr::Opcode::TRUNCATE_TABLE);
         emitString(table_name);
         emitByte(0);  // ASYNC mode
+        emitByte(restart_identity ? 1 : 0);  // restart_identity
+        emitByte(cascade ? 1 : 0);  // cascade
     }
 }
 

@@ -460,7 +460,7 @@ TEST_F(CrossPageUpdateTest, LargeTupleUpdate)
     // Verify we can read it back
     Tuple tuple_out;
     status = storage_engine_->getTuple(new_page_id, new_item_id, &tuple_out, &ctx);
-    ASSERT_EQ(status, Status::OK) << "Should be able to read large tuple";
+    ASSERT_EQ(status, Status::OK) << "Should be able to read large tuple: " << ctx.message;
 }
 
 /**

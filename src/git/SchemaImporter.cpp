@@ -17,6 +17,7 @@
 #include <sstream>
 #include <algorithm>
 #include <regex>
+#include <set>
 
 namespace scratchbird {
 namespace git {

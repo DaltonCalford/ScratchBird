@@ -353,6 +353,36 @@ namespace scratchbird::core
 
     auto PageManager::extendFile(uint32_t num_pages, ErrorContext *ctx) -> Status
     {
+        if (num_pages == 0)
+        {
+            return Status::OK;
+        }
+
+        // Overflow protection BEFORE any writes (Issue 1.7 fix)
+        constexpr uint64_t kMaxPages = std::numeric_limits<uint32_t>::max();
+        uint64_t current_pages = static_cast<uint64_t>(total_pages_);
+        uint64_t requested_pages = static_cast<uint64_t>(num_pages);
+        if (requested_pages > (kMaxPages - current_pages))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Database extension would exceed addressable space.");
+            return Status::OOM;
+        }
+
+        uint64_t new_total_pages = current_pages + requested_pages;
+        // Check that bitmap calculation won't overflow 32-bit page count arithmetic
+        if (new_total_pages > (kMaxPages - 7))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Database size exceeds addressable space.");
+            return Status::OOM;
+        }
+
+        uint64_t new_bitmap_bytes_64 = (new_total_pages + 7) / 8;
+        if (new_bitmap_bytes_64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Database bitmap exceeds addressable space.");
+            return Status::OOM;
+        }
+
         // Allocate buffer for new pages
         auto buffer = std::make_unique<uint8_t[]>(page_size_);
         if (!buffer)
@@ -394,26 +424,8 @@ namespace scratchbird::core
 
         // Update bitmap with overflow protection
         size_t old_size = bitmap_.size();
-
-        // Check for overflow BEFORE performing addition (Issue 1.7 fix)
-        // Ensure: total_pages_ + num_pages <= SIZE_MAX
-        if (num_pages > SIZE_MAX - total_pages_)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::OOM, "Database extension would exceed addressable space.");
-            return Status::OOM;
-        }
-
-        size_t new_total = total_pages_ + num_pages;  // Safe: overflow checked above
-
-        // Check that bitmap calculation won't overflow: new_total + 7 <= SIZE_MAX
-        // Equivalently: new_total <= SIZE_MAX - 7
-        if (new_total > (SIZE_MAX - 7))
-        {
-            SET_ERROR_CONTEXT(ctx, Status::OOM, "Database size exceeds addressable space.");
-            return Status::OOM;
-        }
-
-        size_t new_bitmap_bytes = (new_total + 7) / 8;  // Safe: overflow checked above
+        size_t new_total = static_cast<size_t>(new_total_pages);
+        size_t new_bitmap_bytes = static_cast<size_t>(new_bitmap_bytes_64);
 
         // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect bitmap expansion
         if (new_bitmap_bytes > old_size)

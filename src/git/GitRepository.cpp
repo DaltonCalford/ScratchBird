@@ -75,21 +75,21 @@ struct GitRepository::Impl {
 GitRepository::GitRepository(const GitConfig& config)
     : impl_(std::make_unique<Impl>())
     , config_(config) {
-    if (config_.local_path.empty()) {
+    if (config_.repo_path.empty()) {
         // Default local path based on URL
-        if (!config_.url.empty()) {
-            auto pos = config_.url.rfind('/');
+        if (!config_.repo_url.empty()) {
+            auto pos = config_.repo_url.rfind('/');
             if (pos != std::string::npos) {
-                auto name = config_.url.substr(pos + 1);
+                auto name = config_.repo_url.substr(pos + 1);
                 if (name.size() > 4 && name.substr(name.size() - 4) == ".git") {
                     name = name.substr(0, name.size() - 4);
                 }
                 auto base = fs::path("build") / "git";
-                config_.local_path = (base / name).string();
+                config_.repo_path = (base / name).string();
             }
         }
     }
-    impl_->local_path = config_.local_path;
+    impl_->local_path = config_.repo_path;
 }
 
 GitRepository::~GitRepository() {
@@ -124,8 +124,8 @@ bool GitRepository::init() {
     }
 
     // Set default branch if needed
-    if (!config_.branch.empty()) {
-        impl_->execGit("checkout -b " + config_.branch);
+    if (!config_.repo_branch.empty()) {
+        impl_->execGit("checkout -b " + config_.repo_branch);
     }
 
     impl_->is_open = true;
@@ -137,7 +137,7 @@ bool GitRepository::init() {
 bool GitRepository::clone(ProgressCallback progress) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    if (config_.url.empty()) {
+    if (config_.repo_url.empty()) {
         setError("Repository URL not specified");
         return false;
     }
@@ -161,10 +161,10 @@ bool GitRepository::clone(ProgressCallback progress) {
 
     // Build clone command
     std::string cmd = "clone";
-    if (!config_.branch.empty()) {
-        cmd += " -b " + config_.branch;
+    if (!config_.repo_branch.empty()) {
+        cmd += " -b " + config_.repo_branch;
     }
-    cmd += " " + config_.url + " " + impl_->local_path;
+    cmd += " " + config_.repo_url + " " + impl_->local_path;
 
     auto [success, output] = impl_->execGit(cmd, "/tmp");
     if (!success) {
@@ -259,7 +259,7 @@ bool GitRepository::pull(ProgressCallback progress) {
         progress(0, 100, "Pulling from remote...");
     }
 
-    auto [success, output] = impl_->execGit("pull origin " + config_.branch);
+    auto [success, output] = impl_->execGit("pull origin " + config_.repo_branch);
     if (!success) {
         if (output.find("CONFLICT") != std::string::npos) {
             state_ = RepositoryState::CONFLICT;
@@ -290,7 +290,7 @@ bool GitRepository::push(ProgressCallback progress) {
         progress(0, 100, "Pushing to remote...");
     }
 
-    auto [success, output] = impl_->execGit("push origin " + config_.branch);
+    auto [success, output] = impl_->execGit("push origin " + config_.repo_branch);
     if (!success) {
         if (output.find("non-fast-forward") != std::string::npos) {
             setError("Push rejected: remote has changes. Pull first.");
@@ -309,11 +309,11 @@ bool GitRepository::push(ProgressCallback progress) {
 }
 
 bool GitRepository::testConnection() {
-    if (config_.url.empty()) {
+    if (config_.repo_url.empty()) {
         return false;
     }
 
-    auto [success, output] = impl_->execGit("ls-remote " + config_.url, "/tmp");
+    auto [success, output] = impl_->execGit("ls-remote " + config_.repo_url, "/tmp");
     return success;
 }
 
@@ -628,7 +628,7 @@ std::optional<GitCommit> GitRepository::getCommit(const std::string& sha) const 
 GitStatus GitRepository::getStatus() const {
     GitStatus status;
     status.state = state_;
-    status.url = config_.url;
+    status.url = config_.repo_url;
     status.branch = getCurrentBranch();
 
     if (!impl_->is_open) {
@@ -986,7 +986,7 @@ std::string GitRepository::revert(const std::string& commit_sha) {
 void GitRepository::setConfig(const GitConfig& config) {
     std::lock_guard<std::mutex> lock(mutex_);
     config_ = config;
-    impl_->local_path = config_.local_path;
+    impl_->local_path = config_.repo_path;
 }
 
 std::string GitRepository::getLocalPath() const {
@@ -994,7 +994,7 @@ std::string GitRepository::getLocalPath() const {
 }
 
 std::string GitRepository::getRemoteUrl() const {
-    return config_.url;
+    return config_.repo_url;
 }
 
 void GitRepository::setLogCallback(LogCallback callback) {
@@ -1041,7 +1041,7 @@ bool GitRepository::setupCredentials() {
 }
 
 bool GitRepository::validateConfig() {
-    if (config_.url.empty() && config_.local_path.empty()) {
+    if (config_.repo_url.empty() && config_.repo_path.empty()) {
         setError("Either URL or local path must be specified");
         return false;
     }

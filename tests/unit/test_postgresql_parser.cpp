@@ -453,8 +453,10 @@ TEST_F(PostgreSQLParserTest, SelectWithJoin) {
     expectSuccess("SELECT * FROM users NATURAL JOIN orders");
 }
 
-TEST_F(PostgreSQLParserTest, SelectWithJoinUsingIsRejected) {
-    expectError("SELECT * FROM users JOIN orders USING (id)");
+// C2: JOIN USING is now supported
+TEST_F(PostgreSQLParserTest, SelectWithJoinUsingIsSupported) {
+    expectSuccess("SELECT * FROM users JOIN orders USING (id)");
+    expectSuccess("SELECT * FROM users JOIN orders USING (id, name)");
 }
 
 TEST_F(PostgreSQLParserTest, SelectJoinBytecodeShape) {
@@ -838,8 +840,9 @@ TEST_F(PostgreSQLParserTest, MergeInsertRequiresColumnList) {
     );
 }
 
-TEST_F(PostgreSQLParserTest, MergeUsingSubqueryRejected) {
-    expectError(
+// C2: MERGE USING subqueries are now supported
+TEST_F(PostgreSQLParserTest, MergeUsingSubqueryIsSupported) {
+    expectSuccess(
         "MERGE INTO users USING (SELECT id, name FROM staging) s "
         "ON (users.id = s.id) "
         "WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)"
@@ -969,9 +972,16 @@ TEST_F(PostgreSQLParserTest, CreateTypeRangeRejected) {
     expectError("CREATE TYPE numrange AS RANGE (SUBTYPE = int4)");
 }
 
+// C2: Table-level CHECK constraints are now supported
 TEST_F(PostgreSQLParserTest, CreateTableUnsupportedFeatures) {
     expectError("CREATE TABLE users (id INT) INHERITS (base_users)");
-    expectError("CREATE TABLE users (id INT, CHECK (id > 0))");
+    // CHECK constraints now work: expectSuccess("CREATE TABLE users (id INT, CHECK (id > 0))");
+}
+
+TEST_F(PostgreSQLParserTest, CreateTableWithCheckConstraint) {
+    // C2: Table-level CHECK constraints
+    expectSuccess("CREATE TABLE users (id INT, CHECK (id > 0))");
+    expectSuccess("CREATE TABLE users (id INT, CONSTRAINT chk_positive CHECK (id > 0))");
 }
 
 TEST_F(PostgreSQLParserTest, DropTable) {
@@ -995,15 +1005,32 @@ TEST_F(PostgreSQLParserTest, AlterTableBasic) {
     expectSuccess("ALTER TABLE users RENAME TO users_new");
 }
 
-TEST_F(PostgreSQLParserTest, AlterTableUnsupportedFeatures) {
-    expectError("ALTER TABLE users ADD COLUMN age INT NOT NULL");
-    expectError("ALTER TABLE users DROP CONSTRAINT users_pkey");
-    expectError("ALTER TABLE users ALTER COLUMN age SET DEFAULT 0");
+// C2: ALTER TABLE features are now supported
+TEST_F(PostgreSQLParserTest, AlterTableAdvancedFeatures) {
+    // ADD COLUMN with constraints
+    expectSuccess("ALTER TABLE users ADD COLUMN age INT NOT NULL");
+    // DROP CONSTRAINT
+    expectSuccess("ALTER TABLE users DROP CONSTRAINT users_pkey");
+    expectSuccess("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_pkey CASCADE");
+    // ALTER COLUMN SET DEFAULT
+    expectSuccess("ALTER TABLE users ALTER COLUMN age SET DEFAULT 0");
+    // ALTER COLUMN DROP DEFAULT
+    expectSuccess("ALTER TABLE users ALTER COLUMN age DROP DEFAULT");
+    // ALTER COLUMN SET NOT NULL
+    expectSuccess("ALTER TABLE users ALTER COLUMN age SET NOT NULL");
+    // ALTER COLUMN DROP NOT NULL
+    expectSuccess("ALTER TABLE users ALTER COLUMN age DROP NOT NULL");
+    // ALTER COLUMN TYPE with USING
+    expectSuccess("ALTER TABLE users ALTER COLUMN age TYPE BIGINT USING age::bigint");
 }
 
+// C2: TRUNCATE options are now supported
 TEST_F(PostgreSQLParserTest, TruncateStatements) {
     expectSuccess("TRUNCATE users");
-    expectError("TRUNCATE users RESTART IDENTITY");
+    expectSuccess("TRUNCATE users RESTART IDENTITY");
+    expectSuccess("TRUNCATE users CONTINUE IDENTITY");
+    expectSuccess("TRUNCATE users CASCADE");
+    expectSuccess("TRUNCATE users RESTRICT");
 }
 
 // ============================================================================

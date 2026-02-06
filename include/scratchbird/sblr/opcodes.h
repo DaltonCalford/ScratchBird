@@ -218,32 +218,33 @@ namespace scratchbird
             HASH_JOIN = 0xC6,         // Hash join
             JOIN_TYPE = 0xC7,         // Join type marker (INNER, LEFT, RIGHT, FULL)
             JOIN_CONDITION = 0xC8,    // Join condition expression
+            JOIN_USING = 0xC9,        // JOIN USING clause - column list for equi-join
 
             // Aggregation and grouping (Phase 1, Task 4.1)
-            GROUP_BY = 0xC9,          // GROUP BY clause marker
-            HAVING = 0xCA,            // HAVING clause marker
-            AGG_INIT = 0xCB,          // Initialize aggregation state
-            AGG_ACCUMULATE = 0xCC,    // Accumulate aggregate value
-            AGG_FINALIZE = 0xCD,      // Finalize aggregate result
+            GROUP_BY = 0xCA,          // GROUP BY clause marker
+            HAVING = 0xCB,            // HAVING clause marker
+            AGG_INIT = 0xCC,          // Initialize aggregation state
+            AGG_ACCUMULATE = 0xCD,    // Accumulate aggregate value
+            AGG_FINALIZE = 0xCE,      // Finalize aggregate result
 
             // Sorting (Phase 1, Task 5.1)
-            ORDER_BY = 0xCE,          // ORDER BY clause marker
-            SORT_KEY = 0xCF,          // Sort key expression
-            SORT_ASC = 0xD0,          // Sort ascending
-            SORT_DESC = 0xD1,         // Sort descending
-            NULLS_FIRST = 0xD2,       // NULLS FIRST modifier
-            NULLS_LAST = 0xD3,        // NULLS LAST modifier
+            ORDER_BY = 0xCF,          // ORDER BY clause marker
+            SORT_KEY = 0xD0,          // Sort key expression
+            SORT_ASC = 0xD1,          // Sort ascending
+            SORT_DESC = 0xD2,         // Sort descending
+            NULLS_FIRST = 0xD3,       // NULLS FIRST modifier
+            NULLS_LAST = 0xD4,        // NULLS LAST modifier
 
             // Limiting (Phase 1, Task 5.2)
-            LIMIT = 0xD4,             // LIMIT clause
-            OFFSET = 0xD5,            // OFFSET clause
+            LIMIT = 0xD5,             // LIMIT clause
+            OFFSET = 0xD6,            // OFFSET clause
 
             // Window functions (Phase 1, Task 6.3)
-            WINDOW = 0xD6,            // Window function clause marker
-            WINDOW_SPEC = 0xD7,       // Window specification (OVER clause)
-            PARTITION_BY = 0xD8,      // PARTITION BY clause
-            WINDOW_ORDER_BY = 0xD9,   // ORDER BY within window spec
-            FRAME_CLAUSE = 0xDA,      // Frame clause marker
+            WINDOW = 0xD7,            // Window function clause marker
+            WINDOW_SPEC = 0xD8,       // Window specification (OVER clause)
+            PARTITION_BY = 0xD9,      // PARTITION BY clause
+            WINDOW_ORDER_BY = 0xDA,   // ORDER BY within window spec
+            FRAME_CLAUSE = 0xDB,      // Frame clause marker
             FRAME_ROWS = 0xDB,        // ROWS frame mode
             FRAME_RANGE = 0xDC,       // RANGE frame mode
             FRAME_GROUPS = 0x6C,      // P2-9: GROUPS frame mode
@@ -1099,21 +1100,22 @@ namespace scratchbird
             EXT_TYPE_MONEY = 0x0414,  // MONEY data type marker
             EXT_TYPE_INTERVAL = 0x0415,  // INTERVAL data type marker
             EXT_TYPE_JSONB = 0x0416,  // JSONB data type marker
-            EXT_TYPE_XML = 0x0417,  // XML data type marker
-            EXT_TYPE_MULTIPOINT = 0x0418,  // MULTIPOINT data type marker
-            EXT_TYPE_MULTILINESTRING = 0x0419,  // MULTILINESTRING data type marker
-            EXT_TYPE_MULTIPOLYGON = 0x041A,  // MULTIPOLYGON data type marker
-            EXT_TYPE_GEOMETRYCOLLECTION = 0x041B,  // GEOMETRYCOLLECTION data type marker
-            EXT_TYPE_COMPOSITE = 0x041C,  // COMPOSITE data type marker
-            EXT_TYPE_VARIANT = 0x041D,  // VARIANT data type marker
-            EXT_TYPE_INET = 0x041E,  // INET data type marker
-            EXT_TYPE_CIDR = 0x041F,  // CIDR data type marker
-            EXT_TYPE_MACADDR = 0x0420,  // MACADDR data type marker
-            EXT_TYPE_MACADDR8 = 0x0421,  // MACADDR8 data type marker
-            EXT_TYPE_TIME_TZ = 0x0422,  // TIME WITH TIME ZONE marker
-            EXT_TYPE_TIMESTAMP_TZ = 0x0423,  // TIMESTAMP WITH TIME ZONE marker
-            EXT_TYPE_DECFLOAT16 = 0x0424,  // DECFLOAT(16) data type marker
-            EXT_TYPE_DECFLOAT34 = 0x0425,  // DECFLOAT(34) data type marker
+            EXT_TYPE_JSONPATH = 0x0417,  // JSONPATH data type marker
+            EXT_TYPE_XML = 0x0418,  // XML data type marker
+            EXT_TYPE_MULTIPOINT = 0x0419,  // MULTIPOINT data type marker
+            EXT_TYPE_MULTILINESTRING = 0x041A,  // MULTILINESTRING data type marker
+            EXT_TYPE_MULTIPOLYGON = 0x041B,  // MULTIPOLYGON data type marker
+            EXT_TYPE_GEOMETRYCOLLECTION = 0x041C,  // GEOMETRYCOLLECTION data type marker
+            EXT_TYPE_COMPOSITE = 0x041D,  // COMPOSITE data type marker
+            EXT_TYPE_VARIANT = 0x041E,  // VARIANT data type marker
+            EXT_TYPE_INET = 0x041F,  // INET data type marker
+            EXT_TYPE_CIDR = 0x0420,  // CIDR data type marker
+            EXT_TYPE_MACADDR = 0x0421,  // MACADDR data type marker
+            EXT_TYPE_MACADDR8 = 0x0422,  // MACADDR8 data type marker
+            EXT_TYPE_TIME_TZ = 0x0423,  // TIME WITH TIME ZONE marker
+            EXT_TYPE_TIMESTAMP_TZ = 0x0424,  // TIMESTAMP WITH TIME ZONE marker
+            EXT_TYPE_DECFLOAT16 = 0x0425,  // DECFLOAT(16) data type marker
+            EXT_TYPE_DECFLOAT34 = 0x0426,  // DECFLOAT(34) data type marker
             EXT_TO_TSVECTOR = 0xAD,  // TO_TSVECTOR(config, text) - text to tsvector
             EXT_TO_TSQUERY = 0xAE,  // TO_TSQUERY(config, query) - query to tsquery
             EXT_PLAINTO_TSQUERY = 0xAF,  // PLAINTO_TSQUERY(config, text) - plain text to query
@@ -1360,6 +1362,8 @@ namespace scratchbird
             EXT_ALTER_DATABASE = 0x010D,  // ALTER DATABASE (emulated)
             EXT_ALTER_DOMAIN = 0x010E,  // ALTER DOMAIN
             EXT_DROP_DOMAIN = 0x010F,  // DROP DOMAIN
+            EXT_RENAME_COLUMN = 0x011E,  // C4: ALTER TABLE RENAME COLUMN
+            EXT_ALTER_COLUMN_DEFAULT = 0x011F,  // C4: ALTER COLUMN SET/DROP DEFAULT
             EXT_REBIND_DOMAIN = 0x0110,  // Rebind domain dependencies (admin)
             EXT_RESOLVE_DOMAIN_CONFLICT = 0x0111,  // Resolve domain conflicts (admin)
             EXT_ALTER_SYSTEM = 0x0112,  // ALTER SYSTEM SET section.key = value

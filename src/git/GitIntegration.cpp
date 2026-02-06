@@ -54,23 +54,32 @@ bool GitIntegration::initialize(const std::string& url,
         close();
     }
 
-    config_.url = url;
-    config_.branch = branch;
+    config_.setUrl(url);
+    config_.setBranch(branch);
 
     // Parse options
+    bool auto_commit = config_.getAutoCommit();
+    bool auto_push = config_.getAutoPush();
     for (const auto& [key, value] : options) {
         if (key == "ssh_key") config_.ssh_key_path = value;
-        else if (key == "auto_commit") config_.auto_commit = (value == "true");
-        else if (key == "auto_push") config_.auto_push = (value == "true");
-        else if (key == "local_path") config_.local_path = value;
+        else if (key == "auto_commit") auto_commit = (value == "true");
+        else if (key == "auto_push") auto_push = (value == "true");
+        else if (key == "local_path") config_.repo_path = value;
+    }
+    if (auto_push) {
+        config_.setIntegrationMode(GitIntegrationMode::AUTO_PUSH);
+    } else if (auto_commit) {
+        config_.setIntegrationMode(GitIntegrationMode::AUTO_COMMIT);
+    } else {
+        config_.setIntegrationMode(GitIntegrationMode::MANUAL);
     }
 
     initializeComponents();
 
     // Clone or open repository
-    if (!config_.local_path.empty() && repository_->open()) {
+    if (!config_.repo_path.empty() && repository_->open()) {
         // Existing repository
-        log("INFO", "Opened existing repository: " + config_.local_path);
+        log("INFO", "Opened existing repository: " + config_.repo_path);
     } else if (!url.empty()) {
         // Clone from remote
         if (!repository_->clone()) {
@@ -109,7 +118,7 @@ bool GitIntegration::initializeFromConfig(const std::string& config_path) {
     }
 
     config_ = config_parser_->getGitConfig();
-    return initialize(config_.url, config_.branch, {});
+    return initialize(config_.repo_url, config_.repo_branch, {});
 }
 
 bool GitIntegration::isInitialized() const {
@@ -202,7 +211,7 @@ std::string GitIntegration::getCurrentBranch() const {
 }
 
 std::string GitIntegration::getRepositoryUrl() const {
-    return config_.url;
+    return config_.repo_url;
 }
 
 //=============================================================================
@@ -282,7 +291,7 @@ SyncResult GitIntegration::exportSchema(const SchemaOptions& options,
         if (!sha.empty()) {
             result.commit_after = sha;
 
-            if (config_.auto_push) {
+            if (config_.getAutoPush()) {
                 repository_->push();
             }
         }

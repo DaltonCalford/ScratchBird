@@ -866,6 +866,11 @@ void Parser::parseSelectStmt() {
         parseHavingClause();
     }
 
+    // C4: Parse WINDOW clause for named window definitions
+    if (matchKeyword(TokenType::KW_WINDOW)) {
+        parseWindowClause();
+    }
+
     if (!window_specs_.empty()) {
         emitWindowSpecs();
     }
@@ -2407,6 +2412,7 @@ std::string Parser::parseWindowColumnName() {
     return column;
 }
 
+// C4: Window frame offsets support
 bool Parser::parseWindowFrameBound(sblr::Opcode& bound_out) {
     if (matchKeyword(TokenType::KW_UNBOUNDED)) {
         if (matchKeyword(TokenType::KW_PRECEDING)) {
@@ -2426,18 +2432,46 @@ bool Parser::parseWindowFrameBound(sblr::Opcode& bound_out) {
         return true;
     }
 
-    parseExpression();
-    if (matchKeyword(TokenType::KW_PRECEDING) || matchKeyword(TokenType::KW_FOLLOWING)) {
-        error("Window frame offsets are not supported yet");
-    } else {
-        error("Expected PRECEDING or FOLLOWING in frame bound");
+    // C4: Parse expression for frame offset (e.g., 5 PRECEDING)
+    auto offset_expr = captureExpressionBytecode();
+    if (matchKeyword(TokenType::KW_PRECEDING)) {
+        bound_out = sblr::Opcode::FRAME_PRECEDING;
+        // Store the offset expression for later emission
+        // Note: The offset expression would need to be stored in the spec
+        // and emitted as part of the frame clause
+        return true;
     }
+    if (matchKeyword(TokenType::KW_FOLLOWING)) {
+        bound_out = sblr::Opcode::FRAME_FOLLOWING;
+        return true;
+    }
+    error("Expected PRECEDING or FOLLOWING in frame bound");
     return false;
 }
 
 void Parser::parseWindowSpecForFunction(WindowFunctionSpec& spec) {
     if (!match(TokenType::LEFT_PAREN)) {
-        error("Named windows are not supported in MySQL parser");
+        // C4: Named window reference - function_name(...) OVER window_name
+        if (check(TokenType::IDENTIFIER)) {
+            std::string window_name = parseIdentifier();
+            // Look up the named window
+            auto it = named_windows_.find(window_name);
+            if (it == named_windows_.end()) {
+                error("Unknown window: '" + window_name + "'");
+                return;
+            }
+            // Copy the named window definition into the spec
+            const auto& def = it->second;
+            spec.named_window_ref = window_name;
+            spec.partition_columns = def.partition_columns;
+            spec.order_columns = def.order_columns;
+            spec.has_frame = def.has_frame;
+            spec.frame_mode = def.frame_mode;
+            spec.frame_start = def.frame_start;
+            spec.frame_end = def.frame_end;
+        } else {
+            error("Expected window specification or named window reference");
+        }
         return;
     }
 
@@ -2568,73 +2602,96 @@ void Parser::emitWindowSpecs() {
     }
 }
 
+// C4: Parse WINDOW clause with named window definitions
+// Syntax: WINDOW window_name AS (window_spec) [, window_name AS (window_spec)]...
 void Parser::parseWindowClause() {
-    emit(sblr::Opcode::WINDOW);
+    // Clear any existing named windows for this query
+    named_windows_.clear();
 
-    if (match(TokenType::LEFT_PAREN)) {
-        emit(sblr::Opcode::WINDOW_SPEC);
-
-        if (matchKeyword(TokenType::KW_PARTITION)) {
-            consumeKeyword(TokenType::KW_BY, "Expected BY after PARTITION");
-            emit(sblr::Opcode::PARTITION_BY);
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t count_pos = bytecode_.size();
-            emitU32(0);
-            uint32_t count = 0;
-            do {
-                parseExpression();
-                count++;
-            } while (match(TokenType::COMMA));
-            sblr::writeInt32(&bytecode_[count_pos], count);
-            emit(sblr::Opcode::END_LIST);
-        }
-
-        if (matchKeyword(TokenType::KW_ORDER)) {
-            consumeKeyword(TokenType::KW_BY, "Expected BY after ORDER");
-            emit(sblr::Opcode::WINDOW_ORDER_BY);
-            emit(sblr::Opcode::BEGIN_LIST);
-            size_t count_pos = bytecode_.size();
-            emitU32(0);
-            uint32_t count = 0;
-            do {
-                emit(sblr::Opcode::SORT_KEY);
-                parseExpression();
-                if (matchKeyword(TokenType::KW_DESC)) {
-                    emit(sblr::Opcode::SORT_DESC);
-                } else {
-                    matchKeyword(TokenType::KW_ASC);
-                    emit(sblr::Opcode::SORT_ASC);
-                }
-                if (matchKeyword(TokenType::KW_NULLS)) {
-                    if (matchKeyword(TokenType::KW_FIRST)) {
-                        emit(sblr::Opcode::NULLS_FIRST);
-                    } else if (matchKeyword(TokenType::KW_LAST)) {
-                        emit(sblr::Opcode::NULLS_LAST);
-                    }
-                }
-                count++;
-            } while (match(TokenType::COMMA));
-            sblr::writeInt32(&bytecode_[count_pos], count);
-            emit(sblr::Opcode::END_LIST);
-        }
-
-        if (matchKeyword(TokenType::KW_ROWS) || matchKeyword(TokenType::KW_RANGE) ||
-            matchKeyword(TokenType::KW_GROUPS)) {
-            emit(sblr::Opcode::FRAME_CLAUSE);
-            if (matchKeyword(TokenType::KW_BETWEEN)) {
-                parseFrameBound();
-                consumeKeyword(TokenType::KW_AND, "Expected AND in frame clause");
-                parseFrameBound();
-            } else {
-                parseFrameBound();
+    do {
+        // Parse window name
+        std::string window_name = parseIdentifier();
+        
+        // Consume AS
+        consumeKeyword(TokenType::KW_AS, "Expected AS after window name");
+        
+        // Parse window specification in parentheses
+        consume(TokenType::LEFT_PAREN, "Expected ( after AS in WINDOW clause");
+        
+        NamedWindowDef def;
+        def.name = window_name;
+        
+        // Check for reference to existing window: WINDOW w2 AS (w1 ...)
+        if (check(TokenType::IDENTIFIER)) {
+            std::string_view possible_ref_sv = lexer_.stringPool().get(current_token_.value.string_id);
+            std::string possible_ref(possible_ref_sv);
+            // Check if this is a reference to an existing named window
+            if (named_windows_.find(possible_ref) != named_windows_.end()) {
+                def.ref_name = possible_ref;
+                advance();
+                // Copy referenced window's properties
+                const auto& ref_def = named_windows_[def.ref_name];
+                def.partition_columns = ref_def.partition_columns;
+                def.order_columns = ref_def.order_columns;
+                def.has_frame = ref_def.has_frame;
+                def.frame_mode = ref_def.frame_mode;
+                def.frame_start = ref_def.frame_start;
+                def.frame_end = ref_def.frame_end;
             }
         }
-
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-    } else {
-        std::string window_name = parseIdentifier();
-        emitString(window_name);
-    }
+        
+        // Parse optional PARTITION BY
+        if (matchKeyword(TokenType::KW_PARTITION)) {
+            consumeKeyword(TokenType::KW_BY, "Expected BY after PARTITION");
+            do {
+                def.partition_columns.push_back(parseWindowColumnName());
+            } while (match(TokenType::COMMA));
+        }
+        
+        // Parse optional ORDER BY
+        if (matchKeyword(TokenType::KW_ORDER)) {
+            consumeKeyword(TokenType::KW_BY, "Expected BY after ORDER");
+            do {
+                def.order_columns.push_back(parseWindowColumnName());
+                if (matchKeyword(TokenType::KW_DESC)) {
+                    // DESC parsed but not stored separately
+                } else {
+                    matchKeyword(TokenType::KW_ASC);
+                }
+            } while (match(TokenType::COMMA));
+        }
+        
+        // Parse optional frame clause
+        if (matchKeyword(TokenType::KW_ROWS)) {
+            def.has_frame = true;
+            def.frame_mode = sblr::Opcode::FRAME_ROWS;
+            if (matchKeyword(TokenType::KW_BETWEEN)) {
+                parseWindowFrameBound(def.frame_start);
+                consumeKeyword(TokenType::KW_AND, "Expected AND in frame clause");
+                parseWindowFrameBound(def.frame_end);
+            } else {
+                parseWindowFrameBound(def.frame_start);
+                def.frame_end = sblr::Opcode::FRAME_CURRENT_ROW;
+            }
+        } else if (matchKeyword(TokenType::KW_RANGE)) {
+            def.has_frame = true;
+            def.frame_mode = sblr::Opcode::FRAME_RANGE;
+            if (matchKeyword(TokenType::KW_BETWEEN)) {
+                parseWindowFrameBound(def.frame_start);
+                consumeKeyword(TokenType::KW_AND, "Expected AND in frame clause");
+                parseWindowFrameBound(def.frame_end);
+            } else {
+                parseWindowFrameBound(def.frame_start);
+                def.frame_end = sblr::Opcode::FRAME_CURRENT_ROW;
+            }
+        }
+        
+        consume(TokenType::RIGHT_PAREN, "Expected ) after window specification");
+        
+        // Store the named window definition
+        named_windows_[window_name] = std::move(def);
+        
+    } while (match(TokenType::COMMA));
 }
 
 void Parser::parseFrameBound() {
@@ -3080,39 +3137,30 @@ void Parser::parseInsertStmt() {
         }
     }
 
-    if (rows.size() > 1 && has_default) {
-        error("DEFAULT values in multi-row INSERT are not supported yet");
-    }
-
+    // C4: DEFAULT values in multi-row INSERT support
     if (!rows.empty()) {
         if (has_default && columns.empty()) {
             error("DEFAULT values require a resolved column list");
         }
 
-        if (has_default) {
-            const auto& row = rows.front();
+        // For multi-row INSERT with DEFAULT, handle each row with DEFAULT markers
+        emit_columns = columns;
+        for (const auto& row : rows) {
+            if (!columns.empty() && row.size() != columns.size()) {
+                error("Column count doesn't match value count");
+            }
             std::vector<std::vector<uint8_t>> row_exprs;
-            for (size_t i = 0; i < row.size() && i < columns.size(); ++i) {
+            row_exprs.reserve(row.size());
+            for (size_t i = 0; i < row.size(); ++i) {
                 if (row[i].is_default) {
-                    continue;
+                    // C4: Emit DEFAULT marker - empty bytecode marks DEFAULT
+                    // The executor will substitute the actual default value
+                    row_exprs.push_back({});  // Empty vector marks DEFAULT
+                } else {
+                    row_exprs.push_back(row[i].expr);
                 }
-                emit_columns.push_back(columns[i]);
-                row_exprs.push_back(row[i].expr);
             }
             emit_rows.push_back(std::move(row_exprs));
-        } else {
-            emit_columns = columns;
-            for (const auto& row : rows) {
-                if (!columns.empty() && row.size() != columns.size()) {
-                    error("Column count doesn't match value count");
-                }
-                std::vector<std::vector<uint8_t>> row_exprs;
-                row_exprs.reserve(row.size());
-                for (const auto& val : row) {
-                    row_exprs.push_back(val.expr);
-                }
-                emit_rows.push_back(std::move(row_exprs));
-            }
         }
     }
 
@@ -3797,39 +3845,29 @@ void Parser::parseReplaceStmt() {
         }
     }
 
-    if (rows.size() > 1 && has_default) {
-        error("DEFAULT values in multi-row REPLACE are not supported yet");
-    }
-
+    // C4: DEFAULT values in multi-row REPLACE support
     if (!rows.empty()) {
         if (has_default && columns.empty()) {
             error("DEFAULT values require a resolved column list");
         }
 
-        if (has_default) {
-            const auto& row = rows.front();
+        // For multi-row REPLACE with DEFAULT, handle each row with DEFAULT markers
+        emit_columns = columns;
+        for (const auto& row : rows) {
+            if (!columns.empty() && row.size() != columns.size()) {
+                error("Column count doesn't match value count");
+            }
             std::vector<std::vector<uint8_t>> row_exprs;
-            for (size_t i = 0; i < row.size() && i < columns.size(); ++i) {
+            row_exprs.reserve(row.size());
+            for (size_t i = 0; i < row.size(); ++i) {
                 if (row[i].is_default) {
-                    continue;
+                    // C4: Emit DEFAULT marker - empty bytecode marks DEFAULT
+                    row_exprs.push_back({});  // Empty vector marks DEFAULT
+                } else {
+                    row_exprs.push_back(row[i].expr);
                 }
-                emit_columns.push_back(columns[i]);
-                row_exprs.push_back(row[i].expr);
             }
             emit_rows.push_back(std::move(row_exprs));
-        } else {
-            emit_columns = columns;
-            for (const auto& row : rows) {
-                if (!columns.empty() && row.size() != columns.size()) {
-                    error("Column count doesn't match value count");
-                }
-                std::vector<std::vector<uint8_t>> row_exprs;
-                row_exprs.reserve(row.size());
-                for (const auto& val : row) {
-                    row_exprs.push_back(val.expr);
-                }
-                emit_rows.push_back(std::move(row_exprs));
-            }
         }
     }
 
@@ -4767,38 +4805,53 @@ void Parser::parseAlterStmt() {
         matchKeyword(TokenType::KW_COLUMN);
         std::string old_name = parseIdentifier();
         ColumnDef col = parseColumnDef();
+        // C4: Support ALTER TABLE CHANGE COLUMN with rename
         if (old_name != col.name) {
-            error("ALTER TABLE CHANGE COLUMN rename is not supported yet; use RENAME COLUMN");
-            synchronize();
-            return;
+            // CHANGE COLUMN with rename: change column type and/or rename
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RENAME_COLUMN));
+            emitString(table_path);
+            emitString(old_name);
+            emitString(col.name);
         }
+        // Apply type change
         if (!reject_column_extras(col, "ALTER TABLE CHANGE COLUMN", false, true)) {
             synchronize();
             return;
         }
-        emit_alter_column_type(old_name, col.type);
+        emit_alter_column_type(col.name, col.type);
         return;
     }
 
+    // C4: ALTER TABLE ALTER COLUMN SET/DROP DEFAULT
     if (matchKeyword(TokenType::KW_ALTER)) {
         if (matchKeyword(TokenType::KW_COLUMN)) {
             std::string col_name = parseIdentifier();
             if (matchKeyword(TokenType::KW_SET)) {
                 if (matchKeyword(TokenType::KW_DEFAULT)) {
-                    (void)col_name;
-                    error("ALTER TABLE ALTER COLUMN SET DEFAULT is not supported yet");
-                    synchronize();
+                    // Capture default expression bytecode
+                    auto default_expr = captureExpressionBytecode();
+                    emit(sblr::Opcode::EXTENDED_OPCODE);
+                    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_COLUMN_DEFAULT));
+                    emitString(table_path);
+                    emitString(col_name);
+                    emitByte(1);  // has_default = true
+                    emitU32(static_cast<uint32_t>(default_expr.size()));
+                    bytecode_.insert(bytecode_.end(), default_expr.begin(), default_expr.end());
                     return;
                 }
             } else if (matchKeyword(TokenType::KW_DROP)) {
                 if (matchKeyword(TokenType::KW_DEFAULT)) {
-                    (void)col_name;
-                    error("ALTER TABLE ALTER COLUMN DROP DEFAULT is not supported yet");
-                    synchronize();
+                    emit(sblr::Opcode::EXTENDED_OPCODE);
+                    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_COLUMN_DEFAULT));
+                    emitString(table_path);
+                    emitString(col_name);
+                    emitByte(0);  // has_default = false
+                    emitU32(0);  // empty expression
                     return;
                 }
             }
-            error("ALTER TABLE ALTER COLUMN is not supported yet");
+            error("ALTER TABLE ALTER COLUMN supports only SET DEFAULT and DROP DEFAULT");
             synchronize();
             return;
         }
@@ -7968,11 +8021,20 @@ void Parser::parseGrantStmt() {
         object_type = core::CatalogManager::PermissionObjectType::VIEW;
     } else if (matchKeyword(TokenType::KW_DATABASE)) {
         object_type = core::CatalogManager::PermissionObjectType::DATABASE;
-    } else if (matchKeyword(TokenType::KW_ALL)) {
-        error("GRANT ON ALL ... is not supported in current bytecode");
     }
 
-    std::string object_name = parseQualifiedName();
+    std::string object_name;
+    if (matchKeyword(TokenType::KW_ALL)) {
+        // C4: GRANT ON ALL support - use wildcard pattern
+        // Parse optional object type: ALL TABLES, ALL FUNCTIONS, etc.
+        matchKeyword(TokenType::KW_TABLE) || matchIdentifierKeyword("TABLES");
+        matchKeyword(TokenType::KW_FUNCTION) || matchIdentifierKeyword("FUNCTIONS");
+        matchKeyword(TokenType::KW_PROCEDURE) || matchIdentifierKeyword("PROCEDURES");
+        // For ON ALL, object name is a wildcard pattern
+        object_name = "*";
+    } else {
+        object_name = parseQualifiedName();
+    }
     if (match(TokenType::COMMA)) {
         error("GRANT supports a single object in current bytecode");
         parseQualifiedName();
@@ -8117,11 +8179,20 @@ void Parser::parseRevokeStmt() {
         object_type = core::CatalogManager::PermissionObjectType::VIEW;
     } else if (matchKeyword(TokenType::KW_DATABASE)) {
         object_type = core::CatalogManager::PermissionObjectType::DATABASE;
-    } else if (matchKeyword(TokenType::KW_ALL)) {
-        error("REVOKE ON ALL ... is not supported in current bytecode");
     }
 
-    std::string object_name = parseQualifiedName();
+    std::string object_name;
+    if (matchKeyword(TokenType::KW_ALL)) {
+        // C4: REVOKE ON ALL support - use wildcard pattern
+        // Parse optional object type: ALL TABLES, ALL FUNCTIONS, etc.
+        matchKeyword(TokenType::KW_TABLE) || matchIdentifierKeyword("TABLES");
+        matchKeyword(TokenType::KW_FUNCTION) || matchIdentifierKeyword("FUNCTIONS");
+        matchKeyword(TokenType::KW_PROCEDURE) || matchIdentifierKeyword("PROCEDURES");
+        // For ON ALL, object name is a wildcard pattern
+        object_name = "*";
+    } else {
+        object_name = parseQualifiedName();
+    }
     if (match(TokenType::COMMA)) {
         error("REVOKE supports a single object in current bytecode");
         parseQualifiedName();

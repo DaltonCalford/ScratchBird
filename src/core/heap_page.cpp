@@ -12,6 +12,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/buffer_pool_guard.h"
 #include "scratchbird/core/transaction_manager.h"
@@ -24,6 +25,45 @@
 
 namespace scratchbird::core
 {
+    static auto isZeroIdLocal(const ID &id) -> bool
+    {
+        for (uint8_t b : id.bytes)
+        {
+            if (b != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static auto normalizeSessionId(Database *db, const ID &table_id, const ID &proposed) -> ID
+    {
+        if (db == nullptr || isZeroIdLocal(table_id))
+        {
+            return proposed;
+        }
+
+        auto *catalog = db->catalog_manager();
+        if (catalog == nullptr)
+        {
+            return proposed;
+        }
+
+        CatalogManager::TableInfo table_info;
+        ErrorContext ctx;
+        if (catalog->getTable(table_id, table_info, &ctx) != Status::OK)
+        {
+            return proposed;
+        }
+
+        if (table_info.temp_data_scope == CatalogManager::TempDataScope::NONE)
+        {
+            return ID{};
+        }
+
+        return proposed;
+    }
 
     HeapPage::HeapPage(uint8_t *page_data, uint32_t page_size)
         : page_data_(page_data), page_size_(page_size), toast_mgr_(nullptr), db_(nullptr)
@@ -298,6 +338,15 @@ namespace scratchbird::core
         {
             tuple_hdr->infomask = 0; // Initialize if not already set
         }
+        // Default to no null bitmap and no session scope for permanent tables.
+        // This avoids random data in visibility/session checks when callers
+        // provide raw tuple payloads without a prefilled header.
+        if (!tuple_hdr->hasNulls())
+        {
+            tuple_hdr->null_bitmap_offset = 0;
+        }
+        tuple_hdr->padding = 0;
+        tuple_hdr->session_id = normalizeSessionId(db_, table_id_, ID{});
 
         // Update item pointer
         if (item_id == header()->item_count)
@@ -948,11 +997,12 @@ namespace scratchbird::core
         else
         {
             // New tuple is larger - need to allocate new space at end of free area
-            if (final_new_tuple_size > special->pd_upper)
+            uint32_t free_space = special->pd_upper - special->pd_lower;
+            if (final_new_tuple_size > free_space)
             {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                  "New tuple size exceeds available space");
-                return Status::PAGE_CORRUPT;
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                  "Not enough space for updated tuple");
+                return Status::PAGE_FULL;
             }
             uint32_t new_primary_offset = special->pd_upper - final_new_tuple_size;
 
@@ -960,10 +1010,12 @@ namespace scratchbird::core
             new_primary_offset = (new_primary_offset / 8) * 8;
 
             // Validate offset
-            if (new_primary_offset + final_new_tuple_size > page_size_)
+            if (new_primary_offset + final_new_tuple_size > page_size_ ||
+                new_primary_offset < special->pd_lower)
             {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "New tuple offset out of bounds");
-                return Status::PAGE_CORRUPT;
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                  "Not enough aligned space for updated tuple");
+                return Status::PAGE_FULL;
             }
 
             // Copy new tuple to new primary location
@@ -981,6 +1033,9 @@ namespace scratchbird::core
         auto *new_primary_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[old_item_id].offset);
         new_primary_hdr->xmin = new_xmin;
         new_primary_hdr->xmax = 0; // Not deleted
+        // Preserve session scope from the old version (temp tables) or keep zero for permanent.
+        new_primary_hdr->session_id =
+            normalizeSessionId(db_, table_id_, primary_tuple_hdr->session_id);
 
         // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
         // CRITICAL: Set back_version to point BACKWARD to back version
@@ -996,7 +1051,9 @@ namespace scratchbird::core
         // Set primary TID to current page and item ID (stable!)
         GPID primary_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
         new_primary_hdr->setTID(primary_gpid, old_item_id); // Same item ID (stable!)
-        new_primary_hdr->infomask = 0; // Clear flags (new primary version)
+        // Preserve NULL bitmap flag from serialized tuple header.
+        uint16_t preserved_infomask = new_primary_hdr->infomask & TupleHeader::HEAP_HAS_NULLS;
+        new_primary_hdr->infomask = preserved_infomask; // Clear flags, keep NULL bitmap
         // Note: We don't set HEAP_HOT_UPDATED here - that's for index update optimization
         // MGA provides stable TIDs naturally, so indexes don't need updating regardless
 
@@ -1065,6 +1122,7 @@ namespace scratchbird::core
         // Get current tuple location
         uint32_t old_offset = item_ptr->offset;
         uint32_t old_length = item_ptr->length;
+        ID old_session_id = reinterpret_cast<TupleHeader *>(page_data_ + old_offset)->session_id;
 
         // Calculate size needed (TupleHeader + data)
         uint32_t final_new_tuple_size = sizeof(TupleHeader) + new_tuple_size;
@@ -1124,6 +1182,8 @@ namespace scratchbird::core
         // Set transaction IDs
         tuple_hdr->xmin = new_xmin;  // New version created by this XID
         tuple_hdr->xmax = 0;          // Not deleted
+        // Preserve session scope from the old version (temp tables) or keep zero for permanent.
+        tuple_hdr->session_id = normalizeSessionId(db_, table_id_, old_session_id);
 
         // Set back version pointers (CROSS-PAGE!)
         tuple_hdr->back_version_gpid = back_version_gpid;  // Different page!
@@ -1134,8 +1194,9 @@ namespace scratchbird::core
         GPID page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
         tuple_hdr->setTID(page_gpid, item_id);  // Same item_id!
 
-        // Clear flags for new primary version
-        tuple_hdr->infomask = 0;
+        // Clear flags for new primary version but preserve NULL bitmap flag
+        uint16_t preserved_infomask = tuple_hdr->infomask & TupleHeader::HEAP_HAS_NULLS;
+        tuple_hdr->infomask = preserved_infomask;
         tuple_hdr->infomask |= TupleHeader::HEAP_CHAIN;  // Part of version chain
 
         // Update page statistics

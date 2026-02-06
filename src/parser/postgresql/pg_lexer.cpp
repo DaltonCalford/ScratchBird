@@ -322,6 +322,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"while", TokenType::KW_WHILE},
         {"exit", TokenType::KW_EXIT},
         {"continue", TokenType::KW_CONTINUE},
+        {"restart", TokenType::KW_RESTART},
         {"foreach", TokenType::KW_FOREACH},
         {"slice", TokenType::KW_SLICE},
         {"raise", TokenType::KW_RAISE},

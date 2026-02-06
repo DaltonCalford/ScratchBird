@@ -23,6 +23,7 @@
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
 #include "scratchbird/client/connection.h"
 #include "scratchbird/server/ipc_server.h"
+#include "scratchbird/security/tls_config.h"
 
 #include <unordered_map>
 #include <deque>
@@ -266,6 +267,20 @@ public:
     void setServerVersion(const std::string& version) { server_version_ = version; }
     const std::string& getServerVersion() const { return server_version_; }
 
+    // C3: Emulation target version configuration
+    enum class EmulationTarget {
+        MYSQL_5_7,
+        MYSQL_8_0,
+        MARIADB_10_5
+    };
+    void setEmulationTarget(EmulationTarget target) { emulation_target_ = target; }
+    EmulationTarget getEmulationTarget() const { return emulation_target_; }
+
+    // C3: TLS configuration
+    void setTLSConfig(const security::TLSConfig& config);
+    bool isTLSEnabled() const { return tls_enabled_; }
+    bool isTLSNegotiated() const { return tls_negotiated_; }
+
 protected:
     // ========================================================================
     // ProtocolAdapter Implementation
@@ -379,9 +394,22 @@ private:
                                std::string& sqlstate);
     uint16_t mysqlCharsetForType(WireType type) const;
 
-    // Authentication
+protected:
+    // ========================================================================
+    // Testing Support (protected for test harness access)
+    // ========================================================================
+    
+    // C3: Authentication methods
     std::vector<uint8_t> computeNativePasswordAuth(const std::string& password,
                                                     const uint8_t* scramble);
+    std::vector<uint8_t> computeCachingSha2PasswordAuth(const std::string& password,
+                                                         const uint8_t* scramble);
+    bool validateAuthResponse(const std::string& expected_plugin,
+                              const std::string& auth_response,
+                              const uint8_t* scramble,
+                              const std::string& password);
+
+private:
     void updateTransactionStatus(const std::string& sql, bool has_error);
     void bootstrapInformationSchema(core::ErrorContext* ctx);
     // Prepared statement helpers
@@ -400,16 +428,17 @@ private:
     uint8_t sequence_id_ = 0;
     std::vector<uint8_t> current_packet_;
 
-    // Server info
-    std::string server_version_ = "8.0.0-ScratchBird";
+    // C3: Server info with emulation target
+    std::string server_version_ = "8.0.35-ScratchBird";
+    EmulationTarget emulation_target_ = EmulationTarget::MYSQL_8_0;
     uint32_t connection_id_ = 0;
     uint8_t auth_scramble_[20] = {0};  // 20-byte scramble for auth
+    std::string auth_plugin_name_ = "caching_sha2_password";  // C3: Default to caching_sha2_password
 
     // Client info from handshake response
     uint32_t client_capabilities_ = 0;
     uint32_t max_packet_size_ = 16777215;
     uint8_t client_charset_ = mysql::Charset::UTF8MB4_GENERAL_CI;
-    std::string auth_plugin_name_;
     std::string auth_response_;
 
     // Server capabilities
@@ -438,11 +467,21 @@ private:
     std::string last_error_sqlstate_;
     std::chrono::steady_clock::time_point start_time_;
 
+    // C3: TLS support
+    std::unique_ptr<security::TLSContext> tls_context_;
+    std::unique_ptr<security::TLSConnection> tls_connection_;
+    bool tls_enabled_ = false;
+    bool tls_negotiated_ = false;
+
     // IPC client (bridge to engine)
     std::unique_ptr<client::Connection> client_;
     client::ConnectionConfig client_config_;
     bool default_db_set_ = false;
     bool information_schema_bootstrapped_ = false;
+
+    // C3: Database validation
+    bool validateDatabaseExists(const std::string& db_name, core::ErrorContext* ctx = nullptr);
+    void updateServerCapabilities();
 };
 
 } // namespace protocol

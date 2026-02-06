@@ -9,7 +9,7 @@
  */
 /*
  * ScratchBird Database Engine
- * Git Configuration Parser - YAML Configuration Parsing
+ * Git Configuration Parser - YAML/INI Configuration Parsing
  * Copyright (c) 2025 ScratchBird Project
  */
 #pragma once
@@ -22,9 +22,13 @@ namespace scratchbird {
 namespace git {
 
 /**
- * GitConfigParser parses .scratchbird.yml configuration files.
+ * GitConfigParser parses .scratchbird.yml and sb_config.ini configuration files.
  *
  * Supports:
+ * - Canonical keys (repo_*, sign_commits, commit_template, etc.)
+ * - Legacy aliases (url, branch, path, mode, type) with canonical precedence
+ * - INI format with [git.*] sections
+ * - Environment variable substitution
  * - Repository settings
  * - Schema export/import options
  * - Migration configuration
@@ -45,18 +49,25 @@ public:
     //=========================================================================
 
     /**
-     * Parse configuration from file
-     * @param file_path Path to .scratchbird.yml
+     * Parse configuration from file (auto-detects YAML vs INI based on extension)
+     * @param file_path Path to config file
      * @return true on success
      */
     bool parseFile(const std::string& file_path);
 
     /**
-     * Parse configuration from string
+     * Parse configuration from YAML string
      * @param content YAML content
      * @return true on success
      */
     bool parseString(const std::string& content);
+
+    /**
+     * Parse configuration from INI format string
+     * @param content INI content
+     * @return true on success
+     */
+    bool parseINI(const std::string& content);
 
     /**
      * Validate current configuration
@@ -140,11 +151,33 @@ public:
     void setEnvVar(const std::string& name, const std::string& value);
 
     //=========================================================================
+    // Diagnostics
+    //=========================================================================
+
+    /**
+     * Get deprecation warnings for legacy key usage
+     * @return List of warning messages
+     */
+    std::vector<std::string> getDeprecationWarnings() const;
+
+    /**
+     * Check if any canonical keys were used in parsed config
+     * @return true if canonical keys present
+     */
+    bool hasCanonicalKeys() const;
+
+    /**
+     * Check if any legacy keys were used in parsed config
+     * @return true if legacy keys present
+     */
+    bool hasLegacyKeys() const;
+
+    //=========================================================================
     // Serialization
     //=========================================================================
 
     /**
-     * Generate YAML from current configuration
+     * Generate YAML from current configuration (uses canonical keys only)
      * @return YAML string
      */
     std::string toYAML() const;
@@ -162,7 +195,7 @@ public:
 
     /**
      * Get raw string value
-     * @param path Dot-separated path (e.g., "repository.url")
+     * @param path Dot-separated path (e.g., "repository.repo_url")
      * @return Value or nullopt
      */
     std::optional<std::string> getString(const std::string& path) const;
@@ -255,29 +288,39 @@ private:
 
     void setError(const std::string& error);
     void addParseError(const std::string& error);
-    bool parseGitSection(const std::string& yaml);
-    bool parseSchemaSection(const std::string& yaml);
-    bool parseMigrationSection(const std::string& yaml);
-    bool parseEnvironmentsSection(const std::string& yaml);
-    bool parseHooksSection(const std::string& yaml);
+    bool parseYAML(const std::string& content);
+    void parseValue(const std::string& section,
+                    const std::string& subsection,
+                    const std::string& key,
+                    const std::string& value,
+                    bool is_canonical);
+    void parseINISection(const std::string& section,
+                         const std::string& key,
+                         const std::string& value,
+                         bool is_canonical);
+    void applyParsedValues();
 };
 
 /**
- * Default configuration template
+ * Default configuration template (uses canonical keys)
  */
 inline std::string getDefaultConfigTemplate() {
     return R"(# ScratchBird Git Integration Configuration
 # Version: 1
+# Use canonical keys (repo_*) for all new configurations
 
 version: 1
 
 # Repository settings
 repository:
-  type: git
-  url: ""                    # Git repository URL
-  branch: main               # Default branch
-  auto_commit: false         # Auto-commit on export
-  auto_push: false           # Auto-push after commit
+  repo_type: git
+  repo_url: ""               # Git repository URL
+  repo_branch: main          # Default branch
+  repo_path: ""              # Local clone path (optional)
+  repo_mode: manual          # manual, auto_commit, auto_push, full_sync
+  sign_commits: false        # Sign commits with GPG
+  # commit_template: ""      # Template for commit messages
+  # gpg_key_id: ""           # GPG key ID for signing
 
 # Schema export settings
 schema:

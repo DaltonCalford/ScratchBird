@@ -527,6 +527,9 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
 
                 if (range_decodable)
                 {
+                    uint32_t pruned_start = start_block;
+                    uint32_t pruned_end = end_block;
+                    bool pruned = false;
                     const uint64_t span = range_max_val - range_min_val;
                     const uint64_t steps = static_cast<uint64_t>(range->brn_end_block - range->brn_start_block);
 
@@ -536,8 +539,11 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
                         const uint64_t numer = query_min_val - range_min_val;
                         const uint64_t offset = (numer * steps + span - 1) / span; // ceil
                         const uint64_t candidate = static_cast<uint64_t>(range->brn_start_block) + offset;
-                        if (candidate > start_block)
-                            start_block = static_cast<uint32_t>(candidate);
+                        if (candidate > pruned_start)
+                        {
+                            pruned_start = static_cast<uint32_t>(candidate);
+                            pruned = true;
+                        }
                     }
 
                     if (max_value && decode_uint64_be(*max_value, &query_max_val) &&
@@ -546,8 +552,18 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
                         const uint64_t numer = query_max_val - range_min_val;
                         const uint64_t offset = (numer * steps) / span; // floor
                         const uint64_t candidate = static_cast<uint64_t>(range->brn_start_block) + offset;
-                        if (candidate < end_block)
-                            end_block = static_cast<uint32_t>(candidate);
+                        if (candidate < pruned_end)
+                        {
+                            pruned_end = static_cast<uint32_t>(candidate);
+                            pruned = true;
+                        }
+                    }
+
+                    // Only apply pruning if it doesn't eliminate the whole range.
+                    if (pruned && pruned_start <= pruned_end)
+                    {
+                        start_block = pruned_start;
+                        end_block = pruned_end;
                     }
                 }
 

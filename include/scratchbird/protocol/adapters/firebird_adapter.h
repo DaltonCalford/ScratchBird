@@ -96,14 +96,15 @@ namespace Opcode {
     constexpr uint32_t op_info_blob        = 43;
 
     // BLOB operations
-    constexpr uint32_t op_open_blob        = 35;
-    constexpr uint32_t op_open_blob2       = 57;
     constexpr uint32_t op_create_blob      = 34;
-    constexpr uint32_t op_create_blob2     = 58;  // create blob with parameters
-    constexpr uint32_t op_close_blob       = 39;
+    constexpr uint32_t op_open_blob        = 35;
     constexpr uint32_t op_get_segment      = 36;
     constexpr uint32_t op_put_segment      = 37;
-    constexpr uint32_t op_seek_blob        = 60;
+    constexpr uint32_t op_cancel_blob      = 38;
+    constexpr uint32_t op_close_blob       = 39;
+    constexpr uint32_t op_seek_blob        = 61;
+    constexpr uint32_t op_open_blob2       = 56;
+    constexpr uint32_t op_create_blob2     = 57;
 
     // Response operations
     constexpr uint32_t op_response         = 9;
@@ -119,6 +120,17 @@ namespace Opcode {
     constexpr uint32_t op_batch_regblob    = 104;
     constexpr uint32_t op_batch_blob_stream = 105;
     constexpr uint32_t op_batch_set_bpb    = 106;
+
+    // Service Manager operations
+    constexpr uint32_t op_service_attach   = 82;
+    constexpr uint32_t op_service_detach   = 83;
+    constexpr uint32_t op_service_info     = 84;
+    constexpr uint32_t op_service_start    = 85;
+
+    // Event operations
+    constexpr uint32_t op_que_events       = 48;
+    constexpr uint32_t op_cancel_events    = 49;
+    constexpr uint32_t op_event            = 52;
 
     // Authentication (Firebird 3.0+)
     constexpr uint32_t op_cont_auth        = 79;
@@ -189,6 +201,64 @@ namespace DpbItem {
     constexpr uint8_t isc_dpb_session_time_zone = 91;
 }
 
+// Service parameter buffer (SPB) items
+namespace SpbItem {
+    constexpr uint8_t isc_spb_version1        = 1;
+    constexpr uint8_t isc_spb_version2        = 2;
+    constexpr uint8_t isc_spb_user_name       = 28;
+    constexpr uint8_t isc_spb_password        = 29;
+    constexpr uint8_t isc_spb_password_enc    = 30;
+    constexpr uint8_t isc_spb_trusted_auth    = 31;
+    constexpr uint8_t isc_spb_auth_plugin_list = 42;
+    constexpr uint8_t isc_spb_auth_plugin_name = 43;
+    
+    // Service actions
+    constexpr uint8_t isc_action_svc_db_stats = 5;
+    constexpr uint8_t isc_action_svc_backup   = 6;
+    constexpr uint8_t isc_action_svc_restore  = 7;
+    constexpr uint8_t isc_action_svc_repair   = 8;
+    constexpr uint8_t isc_action_svc_add_user = 9;
+    constexpr uint8_t isc_action_svc_delete_user = 10;
+    constexpr uint8_t isc_action_svc_modify_user = 11;
+    constexpr uint8_t isc_action_svc_display_user = 12;
+    constexpr uint8_t isc_action_svc_properties = 13;
+    constexpr uint8_t isc_action_svc_license = 14;
+    constexpr uint8_t isc_action_svc_add_license = 15;
+    constexpr uint8_t isc_action_svc_remove_license = 16;
+    constexpr uint8_t isc_action_svc_db_check = 17;
+    constexpr uint8_t isc_action_svc_get_db_log = 18;
+    constexpr uint8_t isc_action_svc_get_fb_log = 19;
+    constexpr uint8_t isc_action_svc_nbak     = 20;
+    constexpr uint8_t isc_action_svc_nrest    = 21;
+    constexpr uint8_t isc_action_svc_trace_start = 22;
+    constexpr uint8_t isc_action_svc_trace_stop = 23;
+    constexpr uint8_t isc_action_svc_trace_suspend = 24;
+    constexpr uint8_t isc_action_svc_trace_resume = 25;
+    constexpr uint8_t isc_action_svc_trace_list = 26;
+    constexpr uint8_t isc_action_svc_set_mapping = 27;
+    constexpr uint8_t isc_action_svc_drop_mapping = 28;
+    constexpr uint8_t isc_action_svc_display_user_adm = 29;
+    constexpr uint8_t isc_action_svc_validate = 30;
+    
+    // Service info items
+    constexpr uint8_t isc_info_svc_version    = 1;
+    constexpr uint8_t isc_info_svc_server_version = 2;
+    constexpr uint8_t isc_info_svc_implementation = 3;
+    constexpr uint8_t isc_info_svc_capabilities = 4;
+    constexpr uint8_t isc_info_svc_user_dbpath = 5;
+    constexpr uint8_t isc_info_svc_get_env    = 6;
+    constexpr uint8_t isc_info_svc_get_env_lock = 7;
+    constexpr uint8_t isc_info_svc_get_env_msg = 8;
+    constexpr uint8_t isc_info_svc_line       = 9;
+    constexpr uint8_t isc_info_svc_to_eof     = 10;
+    constexpr uint8_t isc_info_svc_timeout    = 11;
+    constexpr uint8_t isc_info_svc_get_licensed_users = 12;
+    constexpr uint8_t isc_info_svc_limbo_trans = 13;
+    constexpr uint8_t isc_info_svc_running    = 14;
+    constexpr uint8_t isc_info_svc_get_users  = 15;
+    constexpr uint8_t isc_info_svc_stdin      = 16;
+}
+
 // Transaction parameter buffer (TPB) items
 namespace TpbItem {
     constexpr uint8_t isc_tpb_version3        = 3;
@@ -243,6 +313,29 @@ namespace ErrorCode {
 constexpr const char* AUTH_PLUGIN_SRP        = "Srp";
 constexpr const char* AUTH_PLUGIN_SRP256     = "Srp256";
 constexpr const char* AUTH_PLUGIN_LEGACY     = "Legacy_Auth";
+
+// Info end marker
+constexpr uint8_t isc_info_end = 1;
+
+// SQL info items
+namespace SqlInfo {
+    constexpr uint8_t isc_info_sql_stmt_type = 21;
+    constexpr uint8_t isc_info_sql_get_plan = 22;
+    constexpr uint8_t isc_info_sql_records = 23;
+    constexpr uint8_t isc_info_sql_batch_fetch = 24;
+    constexpr uint8_t isc_info_sql_sqlda_start = 25;
+    constexpr uint8_t isc_info_sql_sqlda_end = 26;
+}
+
+// SQL statement types
+namespace SqlStmtType {
+    constexpr uint8_t isc_info_sql_stmt_select = 1;
+    constexpr uint8_t isc_info_sql_stmt_insert = 2;
+    constexpr uint8_t isc_info_sql_stmt_update = 3;
+    constexpr uint8_t isc_info_sql_stmt_delete = 4;
+    constexpr uint8_t isc_info_sql_stmt_ddl = 5;
+    constexpr uint8_t isc_info_sql_stmt_exec_procedure = 8;
+}
 
 } // namespace firebird
 
@@ -376,6 +469,27 @@ private:
     core::Status handleInfoTransaction(network::Connection* conn);
     core::Status handleInfoSql(network::Connection* conn);
 
+    // Service Manager operations (C5.1)
+    core::Status handleServiceAttach(network::Connection* conn);
+    core::Status handleServiceDetach(network::Connection* conn);
+    core::Status handleServiceInfo(network::Connection* conn);
+    core::Status handleServiceStart(network::Connection* conn);
+
+    // Event operations (C5.2)
+    core::Status handleQueEvents(network::Connection* conn);
+    core::Status handleCancelEvents(network::Connection* conn);
+
+    // BLOB operations (C5.3)
+    core::Status handleCreateBlob(network::Connection* conn);
+    core::Status handleCreateBlob2(network::Connection* conn);
+    core::Status handleOpenBlob(network::Connection* conn);
+    core::Status handleOpenBlob2(network::Connection* conn);
+    core::Status handleCloseBlob(network::Connection* conn);
+    core::Status handleCancelBlob(network::Connection* conn);
+    core::Status handleGetSegment(network::Connection* conn);
+    core::Status handlePutSegment(network::Connection* conn);
+    core::Status handleSeekBlob(network::Connection* conn);
+
     core::Status handleContAuth(network::Connection* conn);
     core::Status handlePing(network::Connection* conn);
     core::Status handleCancel(network::Connection* conn);
@@ -475,6 +589,39 @@ private:
     // Remote engine client (IPC to native ScratchBird server)
     client::ConnectionConfig client_config_;
     std::unique_ptr<client::Connection> client_;
+
+    // Service Manager state (C5.1)
+    struct ServiceState {
+        uint32_t handle = 0;
+        std::string username;
+        uint8_t action = 0;  // Current service action
+        bool active = false;
+    };
+    ServiceState service_state_;
+    
+    // Event state (C5.2)
+    struct EventState {
+        uint32_t event_id = 0;
+        std::vector<std::string> event_names;
+        bool active = false;
+    };
+    EventState event_state_;
+    uint32_t next_event_id_ = 1;
+    
+    // BLOB state (C5.3)
+    struct BlobState {
+        uint64_t blob_id = 0;
+        std::vector<uint8_t> data;
+        size_t position = 0;
+        bool is_segmented = true;
+        bool is_new = false;
+    };
+    std::unordered_map<uint64_t, BlobState> blobs_;
+    uint64_t next_blob_id_ = 1;
+    
+    // Helper methods
+    void parseSpb(const std::vector<uint8_t>& spb, ServiceState& state);
+    void sendServiceResponse(network::Connection* conn, const std::vector<uint8_t>& data);
 };
 
 } // namespace protocol

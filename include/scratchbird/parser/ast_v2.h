@@ -3439,6 +3439,10 @@ public:
         LOCAL_TIMEOUT,  // SET LOCAL_TIMEOUT n
         SESSION_AUTHORIZATION,  // SET SESSION AUTHORIZATION ...
         ROLE,           // SET ROLE ...
+        // Firebird-specific
+        TERM,           // SET TERM new_terminator
+        STATISTICS_INDEX,  // SET STATISTICS INDEX index_name
+        GENERATOR,      // SET GENERATOR name TO value
     };
     SetType set_type = SetType::VARIABLE;
 

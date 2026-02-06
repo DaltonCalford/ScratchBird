@@ -54,13 +54,7 @@ PostgresqlAdapter::PostgresqlAdapter(const ProtocolAdapterConfig& config)
     : ProtocolAdapter(config) {
 
     // Initialize default server parameters
-    server_parameters_["server_version"] = "15.0.0 ScratchBird";
-    server_parameters_["server_encoding"] = "UTF8";
-    server_parameters_["client_encoding"] = "UTF8";
-    server_parameters_["DateStyle"] = "ISO, MDY";
-    server_parameters_["TimeZone"] = "UTC";
-    server_parameters_["integer_datetimes"] = "on";
-    server_parameters_["standard_conforming_strings"] = "on";
+    initializeServerParameters();
 
     // Generate backend key data
     std::random_device rd;
@@ -283,6 +277,31 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
 
 void PostgresqlAdapter::setServerParameter(const std::string& name, const std::string& value) {
     server_parameters_[name] = value;
+}
+
+void PostgresqlAdapter::setTLSConfig(const security::TLSConfig& config) {
+    auto ctx = security::TLSContext::createServer(config);
+    if (ctx) {
+        tls_context_ = std::move(ctx);
+        tls_enabled_ = true;
+    }
+}
+
+void PostgresqlAdapter::initializeServerParameters() {
+    // C1: server_version alignment - PostgreSQL format: "XX.X (ScratchBird XX.X)"
+    // Report version as PostgreSQL 15.4 for compatibility
+    server_parameters_["server_version"] = "15.4 (ScratchBird 1.0)";
+    server_parameters_["server_encoding"] = "UTF8";
+    server_parameters_["client_encoding"] = "UTF8";
+    server_parameters_["DateStyle"] = "ISO, MDY";
+    server_parameters_["TimeZone"] = "UTC";
+    server_parameters_["integer_datetimes"] = "on";
+    server_parameters_["standard_conforming_strings"] = "on";
+    server_parameters_["application_name"] = "";
+    server_parameters_["default_transaction_read_only"] = "off";
+    server_parameters_["in_hot_standby"] = "off";
+    server_parameters_["is_superuser"] = "on";
+    server_parameters_["session_authorization"] = "";
 }
 
 // ============================================================================
@@ -591,22 +610,90 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
     return sendBuffer(conn);
 }
 
-core::Status PostgresqlAdapter::handleSSLRequest(network::Connection* conn) {
-    // SSL not supported yet - send 'N' (no SSL)
-    uint8_t response = 'N';
-    writeToBuffer(conn, &response, 1);
-    sendBuffer(conn);
+core::Status PostgresqlAdapter::sendSSLResponse(network::Connection* conn, bool accept) {
+    uint8_t response = accept ? 'S' : 'N';
+    size_t written = 0;
+    auto status = conn->getSocket()->write(&response, 1, &written);
+    if (status != core::Status::OK || written != 1) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+}
 
-    // Reset state to wait for another startup message
+core::Status PostgresqlAdapter::sendGSSENCResponse(network::Connection* conn, bool accept) {
+    uint8_t response = accept ? 'G' : 'N';
+    size_t written = 0;
+    auto status = conn->getSocket()->write(&response, 1, &written);
+    if (status != core::Status::OK || written != 1) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+}
+
+core::Status PostgresqlAdapter::performTLSHandshake(network::Connection* conn) {
+    if (!tls_context_) {
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    // Wrap the existing socket in a TLS connection
+    tls_connection_ = std::make_unique<security::TLSConnection>(*tls_context_);
+    
+    auto status = tls_connection_->setFd(conn->getSocket()->getFd());
+    if (status != core::Status::OK) {
+        tls_connection_.reset();
+        return status;
+    }
+
+    status = tls_connection_->accept();
+    if (status != core::Status::OK) {
+        tls_connection_.reset();
+        return status;
+    }
+
+    tls_negotiated_ = true;
+    return core::Status::OK;
+}
+
+core::Status PostgresqlAdapter::handleSSLRequest(network::Connection* conn) {
+    // C1: TLS support for SSLRequest
+    // Check if TLS is configured and enabled
+    if (!tls_enabled_ || !tls_context_) {
+        // TLS not configured - send 'N' (no SSL)
+        // This is a negotiated disable - client can continue with unencrypted connection
+        auto status = sendSSLResponse(conn, false);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        // Reset state to wait for another startup message
+        pg_state_ = PgProtocolState::STARTUP;
+        return core::Status::OK;
+    }
+
+    // TLS is available - send 'S' and perform handshake
+    auto status = sendSSLResponse(conn, true);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    // Perform TLS handshake
+    status = performTLSHandshake(conn);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    // Reset state to wait for startup message over TLS
     pg_state_ = PgProtocolState::STARTUP;
     return core::Status::OK;
 }
 
 core::Status PostgresqlAdapter::handleGSSENCRequest(network::Connection* conn) {
-    // GSSENC not supported yet - send 'N' (no GSS encryption)
-    uint8_t response = 'N';
-    writeToBuffer(conn, &response, 1);
-    sendBuffer(conn);
+    // C1: GSSENC handling - negotiated disable
+    // GSSAPI encryption is not supported; send 'N' to allow client to continue
+    // with alternative encryption (TLS) or unencrypted connection
+    auto status = sendGSSENCResponse(conn, false);
+    if (status != core::Status::OK) {
+        return status;
+    }
 
     // Reset state to wait for another startup message
     pg_state_ = PgProtocolState::STARTUP;
@@ -3508,9 +3595,9 @@ void PostgresqlAdapter::updateTransactionStatus(const std::string& sql, bool has
 std::string PostgresqlAdapter::computeMD5Hash(const std::string& password,
                                                const std::string& username,
                                                const uint8_t salt[4]) {
-    // MD5 auth: md5(md5(password + username) + salt)
-    // For testing, just return a placeholder
-    // TODO: Implement proper MD5 hash computation
+    // C1: MD5 auth validation - Compute PostgreSQL MD5 password hash
+    // PostgreSQL MD5 format: md5(md5(password + username) + salt)
+    // Result is "md5" prefix + 32 hex characters
 
 #ifdef HAVE_OPENSSL
     // First hash: MD5(password + username)
@@ -3539,11 +3626,37 @@ std::string PostgresqlAdapter::computeMD5Hash(const std::string& password,
     return ss2.str();
 #else
     // Fallback: simple hash for testing
+    // In production, OpenSSL should always be available
     (void)password;
     (void)username;
     (void)salt;
     return "md5" + std::string(32, '0');
 #endif
+}
+
+bool PostgresqlAdapter::validateMD5Response(const std::string& response,
+                                             const std::string& expected_hash) {
+    // C1: MD5 auth validation - Validate client response against expected hash
+    // Response should be exactly 35 characters: "md5" + 32 hex digits
+    
+    if (response.length() != 35) {
+        return false;
+    }
+    
+    if (response.substr(0, 3) != "md5") {
+        return false;
+    }
+    
+    // Compare with expected hash (case-insensitive hex comparison)
+    std::string response_lower = response;
+    std::string expected_lower = expected_hash;
+    
+    std::transform(response_lower.begin(), response_lower.end(), 
+                   response_lower.begin(), ::tolower);
+    std::transform(expected_lower.begin(), expected_lower.end(), 
+                   expected_lower.begin(), ::tolower);
+    
+    return response_lower == expected_lower;
 }
 
 } // namespace protocol

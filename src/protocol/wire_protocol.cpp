@@ -578,6 +578,10 @@ Message ProtocolCodec::buildQuery(const uint8_t session_id[16],
     return msg;
 }
 
+Message ProtocolCodec::buildQueryCancel() {
+    return Message(MessageType::QUERY_CANCEL);
+}
+
 core::Status ProtocolCodec::parseQuery(const Message& msg,
                                        uint8_t session_id[16],
                                        std::string& query,
@@ -1707,6 +1711,7 @@ ProtocolSession::ProtocolSession(scratchbird::server::IPCConnection* connection)
 ProtocolSession::~ProtocolSession() = default;
 
 core::Status ProtocolSession::sendMessage(const Message& msg, core::ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(send_mutex_);
     if (!connection_ || !connection_->isOpen()) {
         SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE,
                           "Connection is closed");

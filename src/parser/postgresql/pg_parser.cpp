@@ -651,8 +651,10 @@ sblr::Opcode Parser::typeToOpcode(PgDataType::Kind kind) {
 
 void Parser::emitTypeDefinition(const PgDataType& type) {
     // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md for SBLR type encoding.
+    // C2: JSONPATH support - emit as extended type
     if (type.kind == PgDataType::Kind::JSONPATH) {
-        error("PostgreSQL JSONPATH is not supported yet");
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TYPE_JSONPATH));
         return;
     }
     auto emit_extended = [&](sblr::ExtendedOpcode opcode) {
