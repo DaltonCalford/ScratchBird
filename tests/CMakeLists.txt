@@ -1352,21 +1352,22 @@ set_tests_properties(ForeignKeys PROPERTIES
 # )
 
 # P3-20: Join Ordering Optimization Test
-add_executable(test_join_ordering
-    test_join_ordering.cpp
-)
-target_link_libraries(test_join_ordering
-    scratchbird_core
-    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
-    GTest::gtest
-    GTest::gtest_main
-)
-target_include_directories(test_join_ordering PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME JoinOrdering COMMAND test_join_ordering)
-set_tests_properties(JoinOrdering PROPERTIES
-    LABELS "unit;optimizer;join_ordering;p3"
-    TIMEOUT 30
-)
+# TODO: Create test_join_ordering.cpp file
+# add_executable(test_join_ordering
+#     test_join_ordering.cpp
+# )
+# target_link_libraries(test_join_ordering
+#     scratchbird_core
+#     ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+#     GTest::gtest
+#     GTest::gtest_main
+# )
+# target_include_directories(test_join_ordering PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# add_test(NAME JoinOrdering COMMAND test_join_ordering)
+# set_tests_properties(JoinOrdering PROPERTIES
+#     LABELS "unit;optimizer;join_ordering;p3"
+#     TIMEOUT 30
+# )
 
 # P3-15: Materialized View Rewriting Test
 # TODO: Create test_mv_rewriter.cpp file
