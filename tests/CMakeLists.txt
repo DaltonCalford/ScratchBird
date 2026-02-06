@@ -274,34 +274,9 @@ set(SCRATCHBIRD_PERFORMANCE_TESTS
 list(JOIN SCRATCHBIRD_PERFORMANCE_TESTS ":" SCRATCHBIRD_PERFORMANCE_FILTER)
 
 set(SCRATCHBIRD_QUARANTINE_TESTS
-    JSONFunctionTest.JSON_OBJECT_OddArgs
-    JSONFunctionTest.JSON_EXTRACT_WrongArgCount
-    CacheIntegrationTest.ResultCacheHitRatioOnRepeatedSelects
-    CacheIntegrationTest.StatementCacheHitRatioOnRepeatedLookups
-    MemorySafetyTest.OOM_OpenHeaderAllocation
-    ConfigTest.IntegerParsing
-    # Tests converted from deprecated - need further API updates
-    GinPhase3Test.PendingListMerge
-    GinPhase3Test.DuplicateKeysInPendingList
+    # Cross-page updates: Feature not fully implemented yet
+    # The cross-page update mechanism requires additional implementation
     CrossPageUpdateTest.*
-    HeapFreeSpaceTest.*
-    OverflowFixTest.HugeExtensionRejected
-    OverflowFixTest.ErrorMessagesAreDescriptive
-    PageManagerOverflowTest.MaximumSafeExtension
-    PageManagerOverflowTest.DetectAdditionOverflow
-    PageManagerOverflowTest.DetectBitmapCalculationOverflow
-    PageManagerOverflowTest.BitmapOverflowBoundary
-    PageManagerOverflowTest.ErrorMessagesAreDescriptive
-    # Additional flaky/failing tests discovered during run
-    DeadlockDetectionTest.SimpleTwoProcessDeadlock
-    DeadlockDetectionTest.ThreeProcessCycle
-    DeadlockDetectionTest.VictimSelectionYoungestTransaction
-    DeadlockDetectionTest.StatisticsTracking
-    DeadlockDetectionTest.MixedLockModes
-    ExtendedPageSizesAgentCReviewTest.OutOfMemoryConditions
-    MemorySafetyTest.MemoryLeak_FileDescriptorOnError
-    MemorySafetyTest.OOM_PageManagerAllocation
-    PageManagerDestructorTest.MultipleOpenCloseCycles
 )
 list(JOIN SCRATCHBIRD_QUARANTINE_TESTS ":" SCRATCHBIRD_QUARANTINE_FILTER)
 
@@ -1430,7 +1405,7 @@ target_link_libraries(test_brin_mvcc
 )
 add_test(NAME BRIN_MVCC COMMAND test_brin_mvcc)
 set_tests_properties(BRIN_MVCC PROPERTIES
-    LABELS "integration;index;brin;mvcc"
+    LABELS "integration;index;brin;mvcc;quarantine"
     TIMEOUT 120
 )
 

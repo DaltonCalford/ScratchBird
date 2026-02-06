@@ -456,6 +456,140 @@ std::vector<uint8_t> buildCancelPayload(uint32_t cancel_type, uint32_t target_se
     return payload;
 }
 
+// ============================================================================
+// COPY Message Builders
+// ============================================================================
+
+std::vector<uint8_t> buildCopyDataPayload(const uint8_t* data, size_t len) {
+    std::vector<uint8_t> payload;
+    payload.reserve(8 + len);
+    writeU64(payload, 0, static_cast<uint64_t>(len));
+    if (len > 0 && data != nullptr) {
+        payload.resize(8 + len);
+        std::memcpy(payload.data() + 8, data, len);
+    }
+    return payload;
+}
+
+std::vector<uint8_t> buildCopyDonePayload() {
+    return {};
+}
+
+std::vector<uint8_t> buildCopyFailPayload(const std::string& error_message) {
+    std::vector<uint8_t> msg_bytes(error_message.begin(), error_message.end());
+    std::vector<uint8_t> payload(4 + msg_bytes.size());
+    writeU32(payload, 0, static_cast<uint32_t>(msg_bytes.size()));
+    if (!msg_bytes.empty()) {
+        std::memcpy(payload.data() + 4, msg_bytes.data(), msg_bytes.size());
+    }
+    return payload;
+}
+
+std::vector<uint8_t> buildCopyInResponsePayload(uint8_t format, uint32_t window_bytes) {
+    std::vector<uint8_t> payload(8);
+    payload[0] = format;
+    writeU32(payload, 4, window_bytes);
+    return payload;
+}
+
+std::vector<uint8_t> buildCopyOutResponsePayload(uint8_t format, uint16_t column_count,
+                                                const std::vector<uint32_t>& column_formats) {
+    std::vector<uint8_t> payload(4 + column_count * 4);
+    payload[0] = format;
+    writeU16(payload, 2, column_count);
+    size_t offset = 4;
+    for (uint16_t i = 0; i < column_count && i < column_formats.size(); ++i) {
+        writeU32(payload, offset, column_formats[i]);
+        offset += 4;
+    }
+    return payload;
+}
+
+std::vector<uint8_t> buildCopyBothResponsePayload(uint8_t format, uint32_t window_bytes) {
+    std::vector<uint8_t> payload(8);
+    payload[0] = format;
+    writeU32(payload, 4, window_bytes);
+    return payload;
+}
+
+// ============================================================================
+// COPY Message Parsers
+// ============================================================================
+
+core::Status parseCopyData(const std::vector<uint8_t>& payload,
+                          std::vector<uint8_t>& data,
+                          core::ErrorContext* ctx) {
+    if (payload.size() < 8) {
+        setError(ctx, "Copy data truncated");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    uint64_t len = readU64(payload.data());
+    if (len > kMaxMessageSize) {
+        setError(ctx, "Copy data too large");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (8u + len > payload.size()) {
+        setError(ctx, "Copy data truncated");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    data.assign(payload.begin() + 8, payload.begin() + 8 + static_cast<size_t>(len));
+    return core::Status::OK;
+}
+
+core::Status parseCopyFail(const std::vector<uint8_t>& payload,
+                          std::string& error_message,
+                          core::ErrorContext* ctx) {
+    if (payload.size() < 4) {
+        setError(ctx, "Copy fail truncated");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    uint32_t len = readU32(payload.data());
+    if (4u + len > payload.size()) {
+        setError(ctx, "Copy fail truncated");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    error_message.assign(reinterpret_cast<const char*>(payload.data() + 4), len);
+    return core::Status::OK;
+}
+
+core::Status parseCopyInResponse(const std::vector<uint8_t>& payload,
+                                uint8_t& format,
+                                uint32_t& window_bytes,
+                                core::ErrorContext* ctx) {
+    if (payload.size() < 8) {
+        setError(ctx, "Copy in response truncated");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    format = payload[0];
+    window_bytes = readU32(payload.data() + 4);
+    return core::Status::OK;
+}
+
+core::Status parseCopyOutResponse(const std::vector<uint8_t>& payload,
+                                 uint8_t& format,
+                                 uint16_t& column_count,
+                                 std::vector<uint32_t>& column_formats,
+                                 core::ErrorContext* ctx) {
+    if (payload.size() < 4) {
+        setError(ctx, "Copy out response truncated");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    format = payload[0];
+    column_count = readU16(payload.data() + 2);
+    size_t offset = 4;
+    column_formats.clear();
+    column_formats.reserve(column_count);
+    for (uint16_t i = 0; i < column_count; ++i) {
+        if (offset + 4 > payload.size()) {
+            setError(ctx, "Copy out response truncated");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        column_formats.push_back(readU32(payload.data() + offset));
+        offset += 4;
+    }
+    return core::Status::OK;
+}
+
 core::Status parseAuthRequest(const std::vector<uint8_t>& payload,
                               AuthMethod& method,
                               std::vector<uint8_t>& data,

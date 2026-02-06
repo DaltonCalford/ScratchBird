@@ -836,9 +836,21 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, OutOfMemoryConditions)
 
     // Simulate low memory conditions by allocating many large pages
     const uint32_t page_size = 131072u; // 128KB
-    const std::string db_path = "/tmp/test_agent_c_oom.db";
+    const std::string db_path = "/tmp/test_agent_c_oom_" + std::to_string(getpid()) + ".db";
+    
+    // Clean up any existing file
+    std::filesystem::remove(db_path);
 
-    ASSERT_EQ(Database::create(db_path, page_size, &ctx), Status::OK);
+    Status create_status = Database::create(db_path, page_size, &ctx);
+    ASSERT_TRUE(create_status == Status::OK || create_status == Status::FILE_EXISTS)
+        << "Database create failed: " << ctx.message;
+    
+    if (create_status == Status::FILE_EXISTS) {
+        // If file exists, try to remove and recreate
+        std::filesystem::remove(db_path);
+        ASSERT_EQ(Database::create(db_path, page_size, &ctx), Status::OK)
+            << "Database create failed after cleanup: " << ctx.message;
+    }
 
     Database db;
     ASSERT_EQ(db.open(db_path, &ctx), Status::OK);

@@ -1,8 +1,8 @@
 # ScratchBird Native Wire Protocol Specification
 
 **Version:** 1.1
-**Date:** December 10, 2025
-**Status:** Design Complete - Ready for Implementation
+**Date:** February 5, 2026
+**Status:** Implementation In Progress (F2 COPY/streaming completed 2026-02-05)
 **Port:** 3092 (TCP) - IANA Unassigned
 
 ---

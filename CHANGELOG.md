@@ -5,6 +5,63 @@ All notable changes to the ScratchBird database engine will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-02-05
+
+### Added - COPY/Streaming over SBWP (F2 Complete) ✅
+
+**Full implementation of COPY protocol for ScratchBird Wire Protocol (SBWP) v1.1**
+
+#### COPY Protocol Support
+- **COPY FROM STDIN** (client → server streaming)
+  - `CopyData` message accumulation with buffering
+  - `CopyDone` processing and execution
+  - `CopyFail` error handling with graceful abort
+  - Window-based flow control (1MB default)
+
+- **COPY TO STDOUT** (server → client streaming)
+  - `CopyOutResponse` with format negotiation
+  - Chunked `CopyData` transmission with backpressure
+  - Automatic window management and flushing
+  - Metrics tracking (rows/bytes/duration)
+
+- **COPY BOTH** (bidirectional streaming)
+  - `CopyBothResponse` for simultaneous in/out
+  - Independent window management per direction
+  - Protocol state machine support (`COPY_BOTH` state)
+
+#### Flow Control & Backpressure
+- Window-based flow control prevents memory exhaustion
+- Default window: 1MB (`kDefaultCopyWindow`)
+- Automatic window grants when buffer runs low
+- Blocking/waiting when window exhausted
+- `waitForCopyOutWindow()` and `grantCopyInWindow()` APIs
+
+#### Protocol Implementation
+- New SBWP message parsers in `sbwp_protocol.cpp`:
+  - `parseCopyData()`, `parseCopyFail()`, `parseCopyInResponse()`, `parseCopyOutResponse()`
+- New SBWP message builders:
+  - `buildCopyDataPayload()`, `buildCopyDonePayload()`, `buildCopyFailPayload()`
+  - `buildCopyInResponsePayload()`, `buildCopyOutResponsePayload()`, `buildCopyBothResponsePayload()`
+- Native adapter handlers in `native_adapter.cpp`:
+  - `handleCopyQuery()`, `handleCopyData()`, `handleCopyDone()`, `handleCopyFail()`
+  - `sendCopyInResponse()`, `sendCopyOutResponse()`, `sendCopyBothResponse()`, `sendCopyData()`
+
+#### State Management
+- New `NativeProtocolState::COPY_BOTH` enum value
+- `CopyDirection` enum: `NONE`, `IN`, `OUT`, `BOTH`
+- COPY state tracking: `copy_direction_`, `copy_format_`, `copy_buffer_`
+- Metrics: `copy_rows_processed_`, `copy_bytes_processed_`, `copy_start_time_`
+
+#### Files Modified
+- `include/scratchbird/protocol/sbwp_protocol.h` - COPY message declarations
+- `src/protocol/sbwp_protocol.cpp` - COPY message builders/parsers
+- `include/scratchbird/protocol/adapters/native_adapter.h` - COPY state management
+- `src/protocol/adapters/native_adapter.cpp` - COPY handlers (~600 lines)
+
+#### Documentation Updates
+- Updated `docs/planning/TRACKER_OUTSTANDING_MASTER.md` - F2 marked complete
+- Updated `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md` - status updated
+
 ## [1.8.1] - 2025-11-02
 
 ### Added - Firebird MGA Compliance Achievement ✅

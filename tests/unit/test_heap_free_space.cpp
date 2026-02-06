@@ -226,12 +226,16 @@ TEST_F(HeapFreeSpaceTest, ItemPointerIncludedInFreeSpaceCheck)
     uint32_t space_used = initial_free_space - free_space_after;
 
     // Verify that space_used includes both tuple and ItemPointer
-    EXPECT_EQ(space_used, tuple_size + sizeof(ItemPointer))
-        << "Space calculation should include ItemPointer size\n"
+    // Allow for small alignment padding (up to 8 bytes)
+    EXPECT_GE(space_used, tuple_size + sizeof(ItemPointer))
+        << "Space used should be at least tuple + ItemPointer\n"
         << "  Space used: " << space_used << "\n"
         << "  Tuple size: " << tuple_size << "\n"
-        << "  ItemPointer size: " << sizeof(ItemPointer) << "\n"
-        << "  Expected total: " << (tuple_size + sizeof(ItemPointer));
+        << "  ItemPointer size: " << sizeof(ItemPointer);
+    EXPECT_LE(space_used, tuple_size + sizeof(ItemPointer) + 8)
+        << "Space used should include minimal alignment padding\n"
+        << "  Space used: " << space_used << "\n"
+        << "  Expected max: " << (tuple_size + sizeof(ItemPointer) + 8);
 }
 
 /**

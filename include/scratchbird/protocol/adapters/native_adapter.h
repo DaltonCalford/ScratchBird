@@ -42,6 +42,7 @@ enum class NativeProtocolState {
     QUERY_PROCESSING,   // Processing a query
     COPY_IN,            // COPY FROM STDIN streaming
     COPY_OUT,           // COPY TO STDOUT streaming
+    COPY_BOTH,          // COPY BOTH streaming (bidirectional)
     CLOSING,            // Connection closing
     ERROR               // Protocol error
 };
@@ -122,6 +123,9 @@ private:
 
     core::Status handleCopyQuery(network::Connection* conn, const QueryContext& ctx,
                                  bool from_stdin, bool to_stdout, CopyFormat format);
+    core::Status handleCopyData(network::Connection* conn);
+    core::Status handleCopyDone(network::Connection* conn);
+    core::Status handleCopyFail(network::Connection* conn);
     core::Status ensureRemoteClient(core::ErrorContext* ctx);
     core::Status executeRemoteQuery(const std::string& sql,
                                     const std::vector<uint8_t>* bytecode,
@@ -176,6 +180,11 @@ private:
     void sendTransactionStatus(network::Connection* conn, bool in_transaction);
     void sendPong(network::Connection* conn, uint64_t timestamp, uint32_t sequence);
     void sendStatusResponse(network::Connection* conn);
+    void sendCopyInResponse(network::Connection* conn, uint8_t format, uint32_t window_bytes);
+    void sendCopyOutResponse(network::Connection* conn, uint8_t format, uint16_t column_count,
+                             const std::vector<uint32_t>& column_formats);
+    void sendCopyBothResponse(network::Connection* conn, uint8_t format, uint32_t window_bytes);
+    void sendCopyData(network::Connection* conn, const uint8_t* data, size_t len);
 
     // ========================================================================
     // Helper Methods
@@ -258,6 +267,15 @@ private:
     std::unordered_set<std::string> subscribed_channels_;
 
     // COPY streaming state
+    enum class CopyDirection { NONE, IN, OUT, BOTH };
+    CopyDirection copy_direction_ = CopyDirection::NONE;
+    CopyFormat copy_format_ = CopyFormat::TEXT;
+    std::string copy_table_name_;
+    std::string copy_query_;
+    std::vector<uint8_t> copy_buffer_;
+    uint64_t copy_rows_processed_ = 0;
+    uint64_t copy_bytes_processed_ = 0;
+    std::chrono::steady_clock::time_point copy_start_time_;
     uint64_t next_stream_id_ = 1;
     uint64_t copy_stream_id_ = 0;
     uint64_t copy_total_bytes_ = 0;
@@ -268,6 +286,7 @@ private:
     bool copy_out_paused_ = false;
     uint32_t stream_window_bytes_ = 0;
     bool stream_paused_ = false;
+    static constexpr uint32_t kDefaultCopyWindow = 1024 * 1024; // 1MB default window
 
     client::ConnectionConfig client_config_;
     std::unique_ptr<client::Connection> client_;

@@ -303,6 +303,38 @@ std::vector<uint8_t> buildAttachListPayload();
 std::vector<uint8_t> buildClosePayload(uint8_t close_type, const std::string& name);
 std::vector<uint8_t> buildCancelPayload(uint32_t cancel_type, uint32_t target_seq);
 
+// ============================================================================
+// COPY Message Builders
+// ============================================================================
+
+std::vector<uint8_t> buildCopyDataPayload(const uint8_t* data, size_t len);
+std::vector<uint8_t> buildCopyDonePayload();
+std::vector<uint8_t> buildCopyFailPayload(const std::string& error_message);
+std::vector<uint8_t> buildCopyInResponsePayload(uint8_t format, uint32_t window_bytes);
+std::vector<uint8_t> buildCopyOutResponsePayload(uint8_t format, uint16_t column_count,
+                                                const std::vector<uint32_t>& column_formats);
+std::vector<uint8_t> buildCopyBothResponsePayload(uint8_t format, uint32_t window_bytes);
+
+// ============================================================================
+// COPY Message Parsers
+// ============================================================================
+
+core::Status parseCopyData(const std::vector<uint8_t>& payload,
+                          std::vector<uint8_t>& data,
+                          core::ErrorContext* ctx = nullptr);
+core::Status parseCopyFail(const std::vector<uint8_t>& payload,
+                          std::string& error_message,
+                          core::ErrorContext* ctx = nullptr);
+core::Status parseCopyInResponse(const std::vector<uint8_t>& payload,
+                                uint8_t& format,
+                                uint32_t& window_bytes,
+                                core::ErrorContext* ctx = nullptr);
+core::Status parseCopyOutResponse(const std::vector<uint8_t>& payload,
+                                 uint8_t& format,
+                                 uint16_t& column_count,
+                                 std::vector<uint32_t>& column_formats,
+                                 core::ErrorContext* ctx = nullptr);
+
 core::Status parseAuthRequest(const std::vector<uint8_t>& payload,
                               AuthMethod& method,
                               std::vector<uint8_t>& data,

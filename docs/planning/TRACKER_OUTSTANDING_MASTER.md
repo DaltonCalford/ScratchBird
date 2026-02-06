@@ -1,7 +1,7 @@
 # Outstanding Work Tracker (Master)
 
 Status: In Progress
-Last Updated: 2026-02-02
+Last Updated: 2026-02-05
 
 This tracker is the **single source of truth** for remaining work. All other
 planning docs can be archived after this is in place.
@@ -224,7 +224,13 @@ superseded; no additional gaps beyond the items listed below.
 - [x] SBWP result framing (RowDescription/DataRow/CommandComplete/Ready).
 - [x] SBWP auth responses (AuthRequest/Continue/Ok + ParameterStatus).
 - [x] Basic transaction command handling with TxnStatus + Ready.
-- [ ] COPY/streaming over SBWP
+- [x] COPY/streaming over SBWP (implemented 2026-02-05)
+  - [x] COPY FROM STDIN (client→server streaming)
+  - [x] COPY TO STDOUT (server→client streaming)
+  - [x] COPY BOTH (bidirectional streaming)
+  - [x] Flow control with 1MB window management
+  - [x] CopyData/CopyDone/CopyFail message handling
+  - [x] CopyInResponse/CopyOutResponse/CopyBothResponse messages
 
 ## Exit Criteria
 

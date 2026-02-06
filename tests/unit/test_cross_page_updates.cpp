@@ -21,8 +21,11 @@
  */
 
 #include <gtest/gtest.h>
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/types.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/connection_context.h"
@@ -50,14 +53,32 @@ protected:
         ASSERT_EQ(db_->open(db_file_.path(), &ctx), Status::OK)
             << "Failed to open database: " << ctx.message;
 
+        // Database::open() already initializes the catalog, no need to call initialize() again
+        // Just get the default schema for table creation
+        scratchbird::core::CatalogManager::SchemaInfo schema_info;
+        ASSERT_EQ(db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx), Status::OK)
+            << "Failed to get PUBLIC schema: " << ctx.message;
+        schema_id_ = schema_info.schema_id;
+
+        // Create a test table with columns
+        std::vector<CatalogManager::ColumnInfo> columns;
+        CatalogManager::ColumnInfo col;
+        col.column_id = generateUuidV7();
+        col.column_name = "data";
+        col.ordinal = 0;
+        col.data_type = static_cast<uint16_t>(DataType::BLOB);
+        col.nullable = true;
+        columns.push_back(col);
+
+        ASSERT_EQ(db_->catalog_manager()->createTable(schema_id_, "test_table", columns, 
+                                                       test_table_id_, 0, &ctx),
+                  Status::OK)
+            << "Failed to create table: " << ctx.message;
+
         storage_engine_ = db_->storage_engine();
         txn_mgr_ = db_->transaction_manager();
         ASSERT_NE(storage_engine_, nullptr);
         ASSERT_NE(txn_mgr_, nullptr);
-
-        // Create a test table ID
-        std::memset(test_table_id_.bytes.data(), 0, 16);
-        test_table_id_.bytes[0] = 42; // Arbitrary test table ID
     }
 
     void TearDown() override
@@ -111,6 +132,7 @@ protected:
     std::unique_ptr<Database> db_;
     StorageEngine *storage_engine_;
     TransactionManager *txn_mgr_;
+    ID schema_id_;
     ID test_table_id_;
 };
 
