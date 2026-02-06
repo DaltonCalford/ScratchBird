@@ -228,137 +228,16 @@ protected:
 };
 
 // ============================================================================
-// PostgreSQL Emulated Parser Agent
+// Forward Declarations for Emulated Parser Agents
+// Full declarations are in separate headers:
+//   - scratchbird/ipc/postgresql_parser_agent.h
+//   - scratchbird/ipc/mysql_parser_agent.h
+//   - scratchbird/ipc/firebird_parser_agent.h
 // ============================================================================
 
-class PostgreSQLParserAgent : public EmulatedParserAgent {
-public:
-    explicit PostgreSQLParserAgent(const ParserAgentConfig& config);
-    ~PostgreSQLParserAgent() override;
-
-protected:
-    core::Status handleClient(int client_fd, core::ErrorContext* ctx) override;
-    
-    // PostgreSQL message framing
-    size_t readMessageLength(const uint8_t* header, size_t len) override;
-    core::Status readFullMessage(int fd, std::vector<uint8_t>& message,
-                                core::ErrorContext* ctx) override;
-    core::Status writeMessage(int fd, const std::vector<uint8_t>& message,
-                             core::ErrorContext* ctx) override;
-    
-    // Message type mapping
-    IPCMessageType mapClientToIPC(uint8_t msg_type) override;
-    uint8_t mapIPCToClient(IPCMessageType msg_type) override;
-    
-    // Translation
-    core::Status translateStartupToIPC(const std::vector<uint8_t>& startup,
-                                      IPCMessage& ipc_msg,
-                                      core::ErrorContext* ctx) override;
-    core::Status translateIPCToResponse(const IPCMessage& ipc_msg,
-                                       std::vector<uint8_t>& response,
-                                       core::ErrorContext* ctx) override;
-    
-    // Error mapping
-    std::string mapSQLStateToProtocol(const char* sqlstate) override;
-    void mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
-                                   char* sqlstate_out) override;
-
-private:
-    // PostgreSQL-specific message types
-    static constexpr uint8_t PG_STARTUP_MESSAGE = 0x00;
-    static constexpr uint8_t PG_SSL_REQUEST = 0x00;
-    static constexpr uint8_t PG_PASSWORD_MESSAGE = 'p';
-    static constexpr uint8_t PG_QUERY = 'Q';
-    static constexpr uint8_t PG_PARSE = 'P';
-    static constexpr uint8_t PG_BIND = 'B';
-    static constexpr uint8_t PG_EXECUTE = 'E';
-    static constexpr uint8_t PG_CLOSE = 'C';
-    static constexpr uint8_t PG_SYNC = 'S';
-    static constexpr uint8_t PG_TERMINATE = 'X';
-    static constexpr uint8_t PG_COPY_DATA = 'd';
-    static constexpr uint8_t PG_COPY_DONE = 'c';
-    static constexpr uint8_t PG_COPY_FAIL = 'f';
-};
-
-// ============================================================================
-// MySQL Emulated Parser Agent
-// ============================================================================
-
-class MySQLParserAgent : public EmulatedParserAgent {
-public:
-    explicit MySQLParserAgent(const ParserAgentConfig& config);
-    ~MySQLParserAgent() override;
-
-protected:
-    core::Status handleClient(int client_fd, core::ErrorContext* ctx) override;
-    
-    // MySQL message framing (4-byte length + 1-byte sequence)
-    size_t readMessageLength(const uint8_t* header, size_t len) override;
-    core::Status readFullMessage(int fd, std::vector<uint8_t>& message,
-                                core::ErrorContext* ctx) override;
-    core::Status writeMessage(int fd, const std::vector<uint8_t>& message,
-                             core::ErrorContext* ctx) override;
-    
-    // Message type mapping
-    IPCMessageType mapClientToIPC(uint8_t msg_type) override;
-    uint8_t mapIPCToClient(IPCMessageType msg_type) override;
-    
-    // Translation
-    core::Status translateStartupToIPC(const std::vector<uint8_t>& startup,
-                                      IPCMessage& ipc_msg,
-                                      core::ErrorContext* ctx) override;
-    core::Status translateIPCToResponse(const IPCMessage& ipc_msg,
-                                       std::vector<uint8_t>& response,
-                                       core::ErrorContext* ctx) override;
-    
-    // Error mapping
-    std::string mapSQLStateToProtocol(const char* sqlstate) override;
-    void mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
-                                   char* sqlstate_out) override;
-
-private:
-    uint8_t sequence_ = 0;
-};
-
-// ============================================================================
-// Firebird Emulated Parser Agent
-// ============================================================================
-
-class FirebirdParserAgent : public EmulatedParserAgent {
-public:
-    explicit FirebirdParserAgent(const ParserAgentConfig& config);
-    ~FirebirdParserAgent() override;
-
-protected:
-    core::Status handleClient(int client_fd, core::ErrorContext* ctx) override;
-    
-    // Firebird XDR framing
-    size_t readMessageLength(const uint8_t* header, size_t len) override;
-    core::Status readFullMessage(int fd, std::vector<uint8_t>& message,
-                                core::ErrorContext* ctx) override;
-    core::Status writeMessage(int fd, const std::vector<uint8_t>& message,
-                             core::ErrorContext* ctx) override;
-    
-    // Message type mapping
-    IPCMessageType mapClientToIPC(uint8_t msg_type) override;
-    uint8_t mapIPCToClient(IPCMessageType msg_type) override;
-    
-    // Translation
-    core::Status translateStartupToIPC(const std::vector<uint8_t>& startup,
-                                      IPCMessage& ipc_msg,
-                                      core::ErrorContext* ctx) override;
-    core::Status translateIPCToResponse(const IPCMessage& ipc_msg,
-                                       std::vector<uint8_t>& response,
-                                       core::ErrorContext* ctx) override;
-    
-    // Error mapping
-    std::string mapSQLStateToProtocol(const char* sqlstate) override;
-    void mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
-                                   char* sqlstate_out) override;
-
-private:
-    uint32_t protocol_version_ = 10;
-};
+class PostgreSQLParserAgent;
+class MySQLParserAgent;
+class FirebirdParserAgent;
 
 // ============================================================================
 // Parser Agent Factory
