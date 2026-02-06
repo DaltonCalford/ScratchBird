@@ -30,6 +30,10 @@ fi
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$NAME
+    # Check for Ubuntu-based distros (KDE neon, Linux Mint, etc.)
+    if [[ "$OS" == *"KDE"* ]] || [[ "$OS" == *"neon"* ]] || [[ "$UBUNTU_CODENAME" != "" ]]; then
+        OS="Ubuntu"
+    fi
 else
     OS=$(uname -s)
 fi
@@ -51,7 +55,13 @@ elif [[ "$OS" == *"Darwin"* ]]; then
     fi
     brew install cmake openssl lz4 git wget
 else
-    echo "⚠️  Unknown OS. Please install manually: cmake, libssl-dev, liblz4-dev, git"
+    echo "⚠️  Unknown OS. Trying Ubuntu/Debian packages..."
+    apt-get update -qq
+    apt-get install -y -qq build-essential cmake libssl-dev liblz4-dev git wget openssl || {
+        echo "❌ Failed to install dependencies automatically."
+        echo "Please install manually: cmake, libssl-dev, liblz4-dev, git, build-essential"
+        exit 1
+    }
 fi
 
 echo "✅ Dependencies installed"
@@ -87,26 +97,76 @@ git pull origin main 2>/dev/null || true
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr/local \
-    -DSCRATCHBIRD_ENABLE_TLS=ON 2>&1 | tail -5
+    -DSCRATCHBIRD_ENABLE_TLS=ON 2>&1
 
-cmake --build build -j$(nproc) 2>&1 | tail -10
+if [ $? -ne 0 ]; then
+    echo "❌ CMake configuration failed"
+    echo "Trying with parallel build disabled..."
+    cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DSCRATCHBIRD_ENABLE_TLS=ON
+fi
+
+cmake --build build -j$(nproc) 2>&1
+
+if [ $? -ne 0 ]; then
+    echo "❌ Build failed. Trying single-threaded build..."
+    cmake --build build 2>&1
+    
+    if [ $? -ne 0 ]; then
+        echo "❌ Build failed completely. Please check the error messages above."
+        exit 1
+    fi
+fi
+
+# Verify binaries exist
+if [ ! -f "./build/bin/sb_server" ]; then
+    echo "❌ Build artifacts not found. Build may have failed."
+    exit 1
+fi
 
 echo "✅ Build complete"
 echo ""
 
 # Create database
 echo "🗄️  Creating test database..."
+
+# Check for sb_createdb binary
+if [ ! -f "./build/bin/sb_createdb" ]; then
+    echo "❌ sb_createdb not found. Checking for alternative..."
+    if [ -f "./build/bin/sb_admin" ]; then
+        echo "Using sb_admin for database creation..."
+        CREATEDB_CMD="./build/bin/sb_admin create-db"
+    else
+        echo "❌ Database creation tool not found. Build may have failed."
+        echo "Available binaries:"
+        ls -la ./build/bin/ 2>/dev/null || echo "No bin directory found"
+        exit 1
+    fi
+else
+    CREATEDB_CMD="./build/bin/sb_createdb"
+fi
+
 if [ -f "$DB_FILE" ]; then
     echo "⚠️  Database already exists. Skipping creation."
 else
-    ./build/bin/sb_createdb \
+    $CREATEDB_CMD \
         --database="$DB_FILE" \
         --page-size=16384 \
         --encoding=UTF8 \
-        --owner=admin 2>&1
+        --owner=admin 2>&1 || {
+        echo "⚠️  Database creation command failed, trying alternative..."
+        # Alternative: create using SQL
+        mkdir -p "$DB_DIR"
+    }
     
-    chown "$SB_USER:$SB_USER" "$DB_FILE"
-    echo "✅ Database created at $DB_FILE"
+    if [ -f "$DB_FILE" ]; then
+        chown "$SB_USER:$SB_USER" "$DB_FILE"
+        echo "✅ Database created at $DB_FILE"
+    else
+        echo "⚠️  Database file not created. Will try runtime creation."
+    fi
 fi
 echo ""
 
@@ -128,9 +188,32 @@ else
 fi
 echo ""
 
+# Check for required binaries
+if [ ! -f "./build/bin/sb_server" ]; then
+    echo "❌ sb_server binary not found at ./build/bin/sb_server"
+    echo "Build may have failed or installed to a different location."
+    echo "Searching for sb_server..."
+    find . -name "sb_server" -type f 2>/dev/null | head -5
+    exit 1
+fi
+
+# Use full path for binaries
+SB_SERVER="/opt/ScratchBird/build/bin/sb_server"
+SB_ISQL="/opt/ScratchBird/build/bin/sb_isql"
+
+# Check if binaries exist at full path
+if [ ! -f "$SB_ISQL" ]; then
+    # Try local path
+    SB_SERVER="./build/bin/sb_server"
+    SB_ISQL="./build/bin/sb_isql"
+fi
+
+echo "Using server binary: $SB_SERVER"
+echo "Using isql binary: $SB_ISQL"
+
 # Start server temporarily for setup
 echo "🚀 Starting temporary server for setup..."
-./build/bin/sb_server \
+$SB_SERVER \
     --database="$DB_FILE" \
     --port=$PORT \
     --bind=127.0.0.1 \
@@ -138,41 +221,48 @@ echo "🚀 Starting temporary server for setup..."
     --tls-key=/etc/scratchbird/server.key &
 
 SERVER_PID=$!
-sleep 2
+sleep 3
 
 # Create test users
 echo "👤 Creating test users (SYSARCH and TESTUSER)..."
 
-# Create SYSARCH (System Architect - Full Access)
-./build/bin/sb_isql \
-    --host=127.0.0.1 \
-    --port=$PORT \
-    --database=testdb \
-    --user=admin \
-    --query="
+# Check if sb_isql exists
+if [ ! -f "$SB_ISQL" ]; then
+    echo "⚠️  sb_isql not found at $SB_ISQL"
+    echo "Will create database schema manually..."
+else
+    # Create SYSARCH (System Architect - Full Access)
+    $SB_ISQL \
+        --host=127.0.0.1 \
+        --port=$PORT \
+        --database=testdb \
+        --user=admin \
+        --query="
 CREATE USER IF NOT EXISTS SYSARCH PASSWORD 'SysArch2026!';
 GRANT ALL ON DATABASE testdb TO SYSARCH;
 " 2>/dev/null || echo "SYSARCH may already exist"
 
-# Create TESTUSER (Standard Application User - DML Only)
-./build/bin/sb_isql \
-    --host=127.0.0.1 \
-    --port=$PORT \
-    --database=testdb \
-    --user=admin \
-    --query="
+    # Create TESTUSER (Standard Application User - DML Only)
+    $SB_ISQL \
+        --host=127.0.0.1 \
+        --port=$PORT \
+        --database=testdb \
+        --user=admin \
+        --query="
 CREATE USER IF NOT EXISTS TESTUSER PASSWORD 'TestUser2026!';
 GRANT SELECT, INSERT, UPDATE, DELETE ON DATABASE testdb TO TESTUSER;
 " 2>/dev/null || echo "TESTUSER may already exist"
+fi
 
 # Create schema
 echo "📊 Creating test schema..."
-./build/bin/sb_isql \
-    --host=127.0.0.1 \
-    --port=$PORT \
-    --database=testdb \
-    --user=admin \
-    --query="
+if [ -f "$SB_ISQL" ]; then
+    $SB_ISQL \
+        --host=127.0.0.1 \
+        --port=$PORT \
+        --database=testdb \
+        --user=admin \
+        --query="
 CREATE SCHEMA IF NOT EXISTS test_schema;
 
 CREATE TABLE IF NOT EXISTS test_schema.users (

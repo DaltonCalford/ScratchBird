@@ -1369,23 +1369,24 @@ set_tests_properties(JoinOrdering PROPERTIES
 )
 
 # P3-15: Materialized View Rewriting Test
-add_executable(test_mv_rewriter
-    test_mv_rewriter.cpp
-)
-target_link_libraries(test_mv_rewriter
-    scratchbird_core
-    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
-    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
-    scratchbird_server
-    GTest::gtest
-    GTest::gtest_main
-)
-target_include_directories(test_mv_rewriter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME MVRewriter COMMAND test_mv_rewriter)
-set_tests_properties(MVRewriter PROPERTIES
-    LABELS "unit;optimizer;mv_rewriter;p3"
-    TIMEOUT 30
-)
+# TODO: Create test_mv_rewriter.cpp file
+# add_executable(test_mv_rewriter
+#     test_mv_rewriter.cpp
+# )
+# target_link_libraries(test_mv_rewriter
+#     scratchbird_core
+#     ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+#     ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+#     scratchbird_server
+#     GTest::gtest
+#     GTest::gtest_main
+# )
+# target_include_directories(test_mv_rewriter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# add_test(NAME MVRewriter COMMAND test_mv_rewriter)
+# set_tests_properties(MVRewriter PROPERTIES
+#     LABELS "unit;optimizer;mv_rewriter;p3"
+#     TIMEOUT 30
+# )
 
 # ============================================================================
 # Additional Integration Tests (Previously Excluded - Now Enabled)
