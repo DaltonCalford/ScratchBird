@@ -6,74 +6,126 @@
 
 ---
 
-## Connection Parameters (Ready to Use)
+## Connection Parameters (Local Test Server)
 
-### Primary Test Server
+### Server Configuration
 
 ```
-Host:     scratchbird-test.daltoncalford.dev  (or your server IP)
-Port:     13092                              (Dedicated test port)
+Host:     127.0.0.1    (localhost - bind to loopback only)
+Port:     13092        (Dedicated test port)
 Database: testdb
-Username: testuser
-Password: SbTest2026!Alpha
 TLS:      Required (TLS 1.3)
+```
+
+### Users for Security Testing
+
+| Username | Password | Role | Permissions | Purpose |
+|----------|----------|------|-------------|---------|
+| **SYSARCH** | `SysArch2026!` | System Architect | ALL | Administrative access, DDL operations |
+| **TESTUSER** | `TestUser2026!` | Standard User | SELECT, INSERT, UPDATE, DELETE | Application testing, limited DML |
+
+### Connection Strings
+
+**SYSARCH (Full Access):**
+```
+scratchbird://SYSARCH:SysArch2026!@127.0.0.1:13092/testdb
+```
+
+**TESTUSER (Limited Access):**
+```
+scratchbird://TESTUSER:TestUser2026!@127.0.0.1:13092/testdb
 ```
 
 ### Connection String Formats
 
 **Native C/C++:**
 ```c
-const char* conn_string = 
-    "scratchbird://testuser:SbTest2026!Alpha@scratchbird-test.daltoncalford.dev:13092/testdb?sslmode=require";
+// SYSARCH - Full administrative access
+const char* conn_string_sysarch = 
+    "scratchbird://SYSARCH:SysArch2026!@127.0.0.1:13092/testdb?sslmode=require";
+
+// TESTUSER - Standard application access
+const char* conn_string_testuser = 
+    "scratchbird://TESTUSER:TestUser2026!@127.0.0.1:13092/testdb?sslmode=require";
 ```
 
 **Python:**
 ```python
 import scratchbird
 
-conn = scratchbird.connect(
-    host="scratchbird-test.daltoncalford.dev",
+# SYSARCH - Full access for DDL operations
+conn_sysarch = scratchbird.connect(
+    host="127.0.0.1",
     port=13092,
     database="testdb",
-    user="testuser",
-    password="SbTest2026!Alpha",
-    ssl=True,
-    ssl_mode="require"
+    user="SYSARCH",
+    password="SysArch2026!",
+    ssl=True
+)
+
+# TESTUSER - Limited access for application testing
+conn_testuser = scratchbird.connect(
+    host="127.0.0.1",
+    port=13092,
+    database="testdb",
+    user="TESTUSER",
+    password="TestUser2026!",
+    ssl=True
 )
 ```
 
 **Go:**
 ```go
-conn, err := scratchbird.Connect(
-    "scratchbird://testuser:SbTest2026!Alpha@scratchbird-test.daltoncalford.dev:13092/testdb?ssl=require")
+// SYSARCH connection
+connSysarch, err := scratchbird.Connect(
+    "scratchbird://SYSARCH:SysArch2026!@127.0.0.1:13092/testdb?ssl=require")
+
+// TESTUSER connection
+connTestuser, err := scratchbird.Connect(
+    "scratchbird://TESTUSER:TestUser2026!@127.0.0.1:13092/testdb?ssl=require")
 ```
 
 **JDBC:**
 ```java
-String url = "jdbc:scratchbird://scratchbird-test.daltoncalford.dev:13092/testdb?sslmode=require";
-Connection conn = DriverManager.getConnection(url, "testuser", "SbTest2026!Alpha");
+// SYSARCH
+String url = "jdbc:scratchbird://127.0.0.1:13092/testdb?sslmode=require";
+Connection connSysarch = DriverManager.getConnection(url, "SYSARCH", "SysArch2026!");
+
+// TESTUSER
+Connection connTestuser = DriverManager.getConnection(url, "TESTUSER", "TestUser2026!");
 ```
 
 **ODBC:**
 ```
 Driver={ScratchBird ODBC Driver};
-Server=scratchbird-test.daltoncalford.dev;
+Server=127.0.0.1;
 Port=13092;
 Database=testdb;
-Uid=testuser;
-Pwd=SbTest2026!Alpha;
+Uid=SYSARCH;
+Pwd=SysArch2026!;
 SSLMode=require;
 ```
 
 **Node.js:**
 ```javascript
-const conn = await scratchbird.connect({
-    host: 'scratchbird-test.daltoncalford.dev',
+// SYSARCH
+const connSysarch = await scratchbird.connect({
+    host: '127.0.0.1',
     port: 13092,
     database: 'testdb',
-    user: 'testuser',
-    password: 'SbTest2026!Alpha',
-    ssl: { rejectUnauthorized: true }
+    user: 'SYSARCH',
+    password: 'SysArch2026!',
+    ssl: { rejectUnauthorized: false }  // For self-signed certs
+});
+
+// TESTUSER
+const connTestuser = await scratchbird.connect({
+    host: '127.0.0.1',
+    port: 13092,
+    database: 'testdb',
+    user: 'TESTUSER',
+    password: 'TestUser2026!',
+    ssl: { rejectUnauthorized: false }
 });
 ```
 
@@ -134,34 +186,56 @@ sudo chown -R scratchbird:scratchbird /var/scratchbird
 # --page-size=131072 (128KB - DSS workloads)
 ```
 
-### 3. Create Test User
+### 3. Create Test Users (SYSARCH and TESTUSER)
 
 ```bash
 # Start server temporarily for user creation
 ./build/bin/sb_server \
     --database=/var/scratchbird/testdb/testdb.sdb \
-    --port=13092 &
+    --port=13092 \
+    --bind=127.0.0.1 &
 
-# Create user
+SERVER_PID=$!
+sleep 2
+
+# Create SYSARCH user (System Architect - Full Access)
 ./build/bin/sb_security user-create \
-    --host=localhost \
+    --host=127.0.0.1 \
     --port=13092 \
-    --username=scratchbird \
-    --new-user=testuser \
-    --password=SbTest2026!Alpha \
-    --role=standard
+    --username=admin \
+    --new-user=SYSARCH \
+    --password='SysArch2026!' \
+    --role=sysarch
 
-# Grant permissions
+# Grant SYSARCH full privileges
 ./build/bin/sb_security grant \
-    --host=localhost \
+    --host=127.0.0.1 \
     --port=13092 \
-    --username=scratchbird \
-    --grantee=testuser \
+    --username=admin \
+    --grantee=SYSARCH \
     --database=testdb \
     --privileges=ALL
 
+# Create TESTUSER (Standard Application User - Limited Access)
+./build/bin/sb_security user-create \
+    --host=127.0.0.1 \
+    --port=13092 \
+    --username=admin \
+    --new-user=TESTUSER \
+    --password='TestUser2026!' \
+    --role=standard
+
+# Grant TESTUSER DML privileges only (no DDL)
+./build/bin/sb_security grant \
+    --host=127.0.0.1 \
+    --port=13092 \
+    --username=admin \
+    --grantee=TESTUSER \
+    --database=testdb \
+    --privileges=SELECT,INSERT,UPDATE,DELETE
+
 # Stop temporary server
-kill %1
+kill $SERVER_PID
 ```
 
 ### 4. Create Test Schema
@@ -333,7 +407,7 @@ WorkingDirectory=/var/scratchbird/testdb
 ExecStart=/opt/ScratchBird/build/bin/sb_server \
     --database=/var/scratchbird/testdb/testdb.sdb \
     --port=13092 \
-    --bind=0.0.0.0 \
+    --bind=127.0.0.1 \
     --tls-cert=/etc/scratchbird/server.crt \
     --tls-key=/etc/scratchbird/server.key \
     --log-level=info \
@@ -430,7 +504,7 @@ EXPOSE 13092
 CMD ["/opt/ScratchBird/build/bin/sb_server", \
      "--database=/var/scratchbird/testdb/testdb.sdb", \
      "--port=13092", \
-     "--bind=0.0.0.0", \
+     "--bind=127.0.0.1", \
      "--tls-cert=/var/scratchbird/server.crt", \
      "--tls-key=/var/scratchbird/server.key"]
 ```

@@ -4,7 +4,7 @@
 
 set -e
 
-HOSTNAME=${1:-"scratchbird-test.local"}
+HOSTNAME=${1:-"localhost"}
 PORT=13092
 DB_DIR="/var/scratchbird/testdb"
 DB_FILE="$DB_DIR/testdb.sdb"
@@ -13,7 +13,7 @@ SB_USER="scratchbird"
 SB_VERSION="Alpha-2026-02-06"
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "  ScratchBird Public Test Server Setup"
+echo "  ScratchBird Local Test Server Setup"
 echo "  Version: $SB_VERSION"
 echo "  Hostname: $HOSTNAME"
 echo "  Port: $PORT"
@@ -128,34 +128,47 @@ else
 fi
 echo ""
 
-# Start server temporarily
+# Start server temporarily for setup
 echo "🚀 Starting temporary server for setup..."
 ./build/bin/sb_server \
     --database="$DB_FILE" \
     --port=$PORT \
+    --bind=127.0.0.1 \
     --tls-cert=/etc/scratchbird/server.crt \
     --tls-key=/etc/scratchbird/server.key &
 
 SERVER_PID=$!
 sleep 2
 
-# Create test user
-echo "👤 Creating test user..."
+# Create test users
+echo "👤 Creating test users (SYSARCH and TESTUSER)..."
+
+# Create SYSARCH (System Architect - Full Access)
 ./build/bin/sb_isql \
-    --host=localhost \
+    --host=127.0.0.1 \
     --port=$PORT \
     --database=testdb \
     --user=admin \
     --query="
-CREATE USER IF NOT EXISTS testuser PASSWORD 'SbTest2026!Alpha';
-GRANT ALL ON DATABASE testdb TO testuser;
-GRANT ALL ON SCHEMA test_schema TO testuser;
-" 2>/dev/null || echo "User may already exist"
+CREATE USER IF NOT EXISTS SYSARCH PASSWORD 'SysArch2026!';
+GRANT ALL ON DATABASE testdb TO SYSARCH;
+" 2>/dev/null || echo "SYSARCH may already exist"
+
+# Create TESTUSER (Standard Application User - DML Only)
+./build/bin/sb_isql \
+    --host=127.0.0.1 \
+    --port=$PORT \
+    --database=testdb \
+    --user=admin \
+    --query="
+CREATE USER IF NOT EXISTS TESTUSER PASSWORD 'TestUser2026!';
+GRANT SELECT, INSERT, UPDATE, DELETE ON DATABASE testdb TO TESTUSER;
+" 2>/dev/null || echo "TESTUSER may already exist"
 
 # Create schema
 echo "📊 Creating test schema..."
 ./build/bin/sb_isql \
-    --host=localhost \
+    --host=127.0.0.1 \
     --port=$PORT \
     --database=testdb \
     --user=admin \
@@ -206,7 +219,7 @@ WorkingDirectory=$DB_DIR
 ExecStart=/opt/ScratchBird/build/bin/sb_server \\
     --database=$DB_FILE \\
     --port=$PORT \\
-    --bind=0.0.0.0 \\
+    --bind=127.0.0.1 \\
     --tls-cert=/etc/scratchbird/server.crt \\
     --tls-key=/etc/scratchbird/server.key \\
     --log-level=info \\
@@ -225,21 +238,9 @@ systemctl enable scratchbird-test.service
 echo "✅ Service created and enabled"
 echo ""
 
-# Configure firewall
-echo "🔥 Configuring firewall..."
-if command -v ufw &> /dev/null; then
-    ufw allow $PORT/tcp comment 'ScratchBird Test Server' 2>/dev/null || true
-    echo "✅ UFW rule added"
-elif command -v firewall-cmd &> /dev/null; then
-    firewall-cmd --permanent --add-port=$PORT/tcp 2>/dev/null || true
-    firewall-cmd --reload 2>/dev/null || true
-    echo "✅ firewalld rule added"
-elif command -v iptables &> /dev/null; then
-    iptables -A INPUT -p tcp --dport $PORT -j ACCEPT 2>/dev/null || true
-    echo "✅ iptables rule added"
-else
-    echo "⚠️  No firewall detected. Please manually open port $PORT."
-fi
+# Configure firewall (local only - no external access needed)
+echo "🔥 Firewall configuration (local access only)..."
+echo "   Note: Server binds to 127.0.0.1 - no external firewall rules needed"
 echo ""
 
 # Start service
@@ -257,18 +258,33 @@ else
 fi
 echo ""
 
-# Test connection
-echo "🧪 Testing connection..."
+# Test connections
+echo "🧪 Testing connections..."
+
+# Test SYSARCH
 if /opt/ScratchBird/build/bin/sb_isql \
-    --host=localhost \
+    --host=127.0.0.1 \
     --port=$PORT \
     --database=testdb \
-    --user=testuser \
-    --password='SbTest2026!Alpha' \
-    --query="SELECT 'Connection successful' AS status;" 2>/dev/null | grep -q "successful"; then
-    echo "✅ Connection test passed"
+    --user=SYSARCH \
+    --password='SysArch2026!' \
+    --query="SELECT 'SYSARCH OK' AS status;" 2>/dev/null | grep -q "OK"; then
+    echo "✅ SYSARCH connection test passed"
 else
-    echo "⚠️  Connection test failed. Server may still be starting."
+    echo "⚠️  SYSARCH connection test failed. Server may still be starting."
+fi
+
+# Test TESTUSER
+if /opt/ScratchBird/build/bin/sb_isql \
+    --host=127.0.0.1 \
+    --port=$PORT \
+    --database=testdb \
+    --user=TESTUSER \
+    --password='TestUser2026!' \
+    --query="SELECT 'TESTUSER OK' AS status;" 2>/dev/null | grep -q "OK"; then
+    echo "✅ TESTUSER connection test passed"
+else
+    echo "⚠️  TESTUSER connection test failed. Server may still be starting."
 fi
 echo ""
 
@@ -278,15 +294,18 @@ echo "  ✅ SETUP COMPLETE"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "📋 Connection Parameters:"
-echo "   Host:     $HOSTNAME"
+echo "   Host:     127.0.0.1 (localhost)"
 echo "   Port:     $PORT"
 echo "   Database: testdb"
-echo "   Username: testuser"
-echo "   Password: SbTest2026!Alpha"
 echo "   TLS:      Required (TLS 1.3)"
 echo ""
-echo "🔗 Connection String:"
-echo "   scratchbird://testuser:SbTest2026!Alpha@$HOSTNAME:$PORT/testdb"
+echo "👤 User Accounts:"
+echo "   SYSARCH  / SysArch2026!    [Full DDL/DML Access]"
+echo "   TESTUSER / TestUser2026!   [DML Only: SELECT/INSERT/UPDATE/DELETE]"
+echo ""
+echo "🔗 Connection Strings:"
+echo "   scratchbird://SYSARCH:SysArch2026!@127.0.0.1:$PORT/testdb"
+echo "   scratchbird://TESTUSER:TestUser2026!@127.0.0.1:$PORT/testdb"
 echo ""
 echo "⚙️  Service Commands:"
 echo "   Start:   sudo systemctl start scratchbird-test"
@@ -294,10 +313,23 @@ echo "   Stop:    sudo systemctl stop scratchbird-test"
 echo "   Status:  sudo systemctl status scratchbird-test"
 echo "   Logs:    sudo tail -f $LOG_DIR/testdb.log"
 echo ""
-echo "📝 Quick Test:"
+echo "📝 Quick Tests:"
+echo "   # SYSARCH (Full Access - DDL works)"
 echo "   /opt/ScratchBird/build/bin/sb_isql \\"
-echo "       --host=localhost --port=$PORT \\"
-echo "       --user=testuser --password='SbTest2026!Alpha' \\"
+echo "       --host=127.0.0.1 --port=$PORT \\"
+echo "       --user=SYSARCH --password='SysArch2026!' \\"
+echo "       --query=\"CREATE TABLE test_table (id INT);\""
+echo ""
+echo "   # TESTUSER (Limited Access - DML only)"
+echo "   /opt/ScratchBird/build/bin/sb_isql \\"
+echo "       --host=127.0.0.1 --port=$PORT \\"
+echo "       --user=TESTUSER --password='TestUser2026!' \\"
 echo "       --query=\"SELECT * FROM test_schema.users;\""
+echo ""
+echo "🔒 Security Test (TESTUSER should fail DDL):"
+echo "   /opt/ScratchBird/build/bin/sb_isql \\"
+echo "       --host=127.0.0.1 --port=$PORT \\"
+echo "       --user=TESTUSER --password='TestUser2026!' \\"
+echo "       --query=\"DROP TABLE test_table;\"  # Should fail!"
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

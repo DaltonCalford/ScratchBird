@@ -1009,6 +1009,25 @@ public:
                                   uint64_t& timestamp,
                                   uint32_t& sequence,
                                   core::ErrorContext* ctx = nullptr);
+    // ========================================
+    // Status Messages
+    // ========================================
+
+    struct StatusEntry {
+        std::string key;
+        std::string value;
+    };
+
+    static Message buildStatusRequest(StatusRequestType request_type);
+    static core::Status parseStatusRequest(const Message& msg,
+                                           StatusRequestType& request_type,
+                                           core::ErrorContext* ctx = nullptr);
+    static Message buildStatusResponse(StatusRequestType request_type,
+                                       const std::vector<StatusEntry>& entries);
+    static core::Status parseStatusResponse(const Message& msg,
+                                            StatusRequestType& request_type,
+                                            std::vector<StatusEntry>& entries,
+                                            core::ErrorContext* ctx = nullptr);
 
     static Message buildDisconnect();
     static Message buildShutdown();

@@ -530,6 +530,35 @@ TEST_F(ProtocolCodecTest, Ping) {
     EXPECT_EQ(parsed_sequence, sequence);
 }
 
+TEST_F(ProtocolCodecTest, StatusRequestResponse) {
+    Message req = ProtocolCodec::buildStatusRequest(StatusRequestType::SERVER_INFO);
+    EXPECT_EQ(req.getType(), MessageType::STATUS_REQUEST);
+
+    StatusRequestType parsed_type = StatusRequestType::STATISTICS;
+    ErrorContext ctx;
+    Status status = ProtocolCodec::parseStatusRequest(req, parsed_type, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(parsed_type, StatusRequestType::SERVER_INFO);
+
+    std::vector<ProtocolCodec::StatusEntry> entries = {
+        {"version", "1.0.0"},
+        {"uptime", "123s"}
+    };
+    Message resp = ProtocolCodec::buildStatusResponse(StatusRequestType::SERVER_INFO, entries);
+    EXPECT_EQ(resp.getType(), MessageType::STATUS_RESPONSE);
+
+    StatusRequestType resp_type = StatusRequestType::CONNECTION_INFO;
+    std::vector<ProtocolCodec::StatusEntry> parsed_entries;
+    status = ProtocolCodec::parseStatusResponse(resp, resp_type, parsed_entries, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(resp_type, StatusRequestType::SERVER_INFO);
+    ASSERT_EQ(parsed_entries.size(), entries.size());
+    EXPECT_EQ(parsed_entries[0].key, "version");
+    EXPECT_EQ(parsed_entries[0].value, "1.0.0");
+    EXPECT_EQ(parsed_entries[1].key, "uptime");
+    EXPECT_EQ(parsed_entries[1].value, "123s");
+}
+
 TEST_F(ProtocolCodecTest, Pong) {
     Message msg = ProtocolCodec::buildPong(9876543210ULL, 99);
     EXPECT_EQ(msg.getType(), MessageType::PONG);

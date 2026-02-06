@@ -1,6 +1,6 @@
-# ScratchBird Test Server - Quick Reference
+# ScratchBird Local Test Server - Quick Reference
 
-**One-page reference for the public ScratchBird test server.**
+**One-page reference for the localhost ScratchBird test server.**
 
 ---
 
@@ -8,14 +8,20 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  SCRATCHBIRD TEST SERVER                                    │
+│  SCRATCHBIRD LOCAL TEST SERVER                              │
 ├─────────────────────────────────────────────────────────────┤
-│  Host:     scratchbird-test.daltoncalford.dev              │
+│  Host:     127.0.0.1 (localhost)                           │
 │  Port:     13092                                            │
 │  Database: testdb                                           │
-│  Username: testuser                                         │
-│  Password: SbTest2026!Alpha                                 │
 │  TLS:      Required (TLS 1.3)                               │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  USER ACCOUNTS FOR SECURITY TESTING                         │
+├─────────────────────────────────────────────────────────────┤
+│  SYSARCH  / SysArch2026!   (Full DDL/DML access)           │
+│  TESTUSER / TestUser2026!  (DML only - SELECT/INSERT/      │
+│                             UPDATE/DELETE)                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -25,13 +31,16 @@
 
 ### Native C Client
 ```c
-sb_connection_t* conn = sb_connect(
-    "scratchbird-test.daltoncalford.dev",
-    13092,
-    "testdb",
-    "testuser",
-    "SbTest2026!Alpha",
-    SB_TLS_REQUIRE
+// SYSARCH - Full access
+sb_connection_t* conn_sysarch = sb_connect(
+    "127.0.0.1", 13092, "testdb",
+    "SYSARCH", "SysArch2026!", SB_TLS_REQUIRE
+);
+
+// TESTUSER - Limited access
+sb_connection_t* conn_testuser = sb_connect(
+    "127.0.0.1", 13092, "testdb",
+    "TESTUSER", "TestUser2026!", SB_TLS_REQUIRE
 );
 ```
 
@@ -39,61 +48,79 @@ sb_connection_t* conn = sb_connect(
 ```python
 import scratchbird
 
-conn = scratchbird.connect(
-    host="scratchbird-test.daltoncalford.dev",
-    port=13092,
-    database="testdb",
-    user="testuser",
-    password="SbTest2026!Alpha",
-    ssl=True
+# SYSARCH - Full DDL/DML access
+conn_admin = scratchbird.connect(
+    host="127.0.0.1", port=13092, database="testdb",
+    user="SYSARCH", password="SysArch2026!", ssl=True
 )
 
-cursor = conn.cursor()
-cursor.execute("SELECT * FROM test_schema.users")
-for row in cursor:
-    print(row)
+# TESTUSER - Application testing (DML only)
+conn_app = scratchbird.connect(
+    host="127.0.0.1", port=13092, database="testdb",
+    user="TESTUSER", password="TestUser2026!", ssl=True
+)
+
+# Test security - This should work with SYSARCH
+cursor = conn_admin.cursor()
+cursor.execute("CREATE TABLE test (id INT PRIMARY KEY)")
+
+# This should fail with TESTUSER (no DDL permissions)
+try:
+    cursor = conn_app.cursor()
+    cursor.execute("CREATE TABLE test2 (id INT)")
+except scratchbird.InsufficientPrivilege:
+    print("Security test passed: TESTUSER cannot create tables")
 ```
 
 ### Go
 ```go
-conn, err := scratchbird.Connect(
-    "scratchbird://testuser:SbTest2026!Alpha@" +
-    "scratchbird-test.daltoncalford.dev:13092/testdb?ssl=require")
+// SYSARCH - Full access
+connAdmin, err := scratchbird.Connect(
+    "scratchbird://SYSARCH:SysArch2026!@127.0.0.1:13092/testdb?ssl=require")
+
+// TESTUSER - Limited access  
+connApp, err := scratchbird.Connect(
+    "scratchbird://TESTUSER:TestUser2026!@127.0.0.1:13092/testdb?ssl=require")
 ```
 
 ### Java (JDBC)
 ```java
-String url = "jdbc:scratchbird://scratchbird-test.daltoncalford.dev:13092/testdb" +
-             "?sslmode=require";
-Connection conn = DriverManager.getConnection(url, "testuser", "SbTest2026!Alpha");
+String url = "jdbc:scratchbird://127.0.0.1:13092/testdb?sslmode=require";
+
+// SYSARCH connection
+Connection connAdmin = DriverManager.getConnection(url, "SYSARCH", "SysArch2026!");
+
+// TESTUSER connection
+Connection connApp = DriverManager.getConnection(url, "TESTUSER", "TestUser2026!");
 ```
 
 ### Node.js
 ```javascript
 const { Client } = require('scratchbird');
 
-const client = new Client({
-    host: 'scratchbird-test.daltoncalford.dev',
-    port: 13092,
-    database: 'testdb',
-    user: 'testuser',
-    password: 'SbTest2026!Alpha',
-    ssl: { rejectUnauthorized: true }
+// SYSARCH client
+const clientAdmin = new Client({
+    host: '127.0.0.1', port: 13092, database: 'testdb',
+    user: 'SYSARCH', password: 'SysArch2026!',
+    ssl: { rejectUnauthorized: false }  // For self-signed certs
 });
 
-await client.connect();
-const result = await client.query('SELECT * FROM test_schema.users');
-console.log(result.rows);
+// TESTUSER client
+const clientApp = new Client({
+    host: '127.0.0.1', port: 13092, database: 'testdb',
+    user: 'TESTUSER', password: 'TestUser2026!',
+    ssl: { rejectUnauthorized: false }
+});
 ```
 
 ### ODBC
 ```
 Driver={ScratchBird ODBC Driver};
-Server=scratchbird-test.daltoncalford.dev;
+Server=127.0.0.1;
 Port=13092;
 Database=testdb;
-Uid=testuser;
-Pwd=SbTest2026!Alpha;
+Uid=SYSARCH;
+Pwd=SysArch2026!;
 SSLMode=require;
 ```
 
@@ -101,67 +128,63 @@ SSLMode=require;
 ```ruby
 require 'scratchbird'
 
-conn = ScratchBird::Connection.new(
-  host: 'scratchbird-test.daltoncalford.dev',
-  port: 13092,
-  database: 'testdb',
-  user: 'testuser',
-  password: 'SbTest2026!Alpha',
-  sslmode: 'require'
+# SYSARCH
+conn_admin = ScratchBird::Connection.new(
+  host: '127.0.0.1', port: 13092, database: 'testdb',
+  user: 'SYSARCH', password: 'SysArch2026!', sslmode: 'require'
 )
 
-result = conn.exec('SELECT * FROM test_schema.users')
-result.each do |row|
-  puts row
-end
+# TESTUSER
+conn_app = ScratchBird::Connection.new(
+  host: '127.0.0.1', port: 13092, database: 'testdb',
+  user: 'TESTUSER', password: 'TestUser2026!', sslmode: 'require'
+)
 ```
 
 ### Rust
 ```rust
 use scratchbird::{Client, Config};
 
-let config = Config::new()
-    .host("scratchbird-test.daltoncalford.dev")
-    .port(13092)
-    .database("testdb")
-    .user("testuser")
-    .password("SbTest2026!Alpha")
+// SYSARCH
+let config_admin = Config::new()
+    .host("127.0.0.1").port(13092).database("testdb")
+    .user("SYSARCH").password("SysArch2026!")
     .ssl_mode(SslMode::Require);
 
-let mut client = Client::connect(&config).await?;
-let rows = client.query("SELECT * FROM test_schema.users", &[]).await?;
+// TESTUSER
+let config_app = Config::new()
+    .host("127.0.0.1").port(13092).database("testdb")
+    .user("TESTUSER").password("TestUser2026!")
+    .ssl_mode(SslMode::Require);
 ```
 
 ### PHP
 ```php
-$conn = scratchbird_connect(
-    "host=scratchbird-test.daltoncalford.dev " .
-    "port=13092 dbname=testdb user=testuser " .
-    "password=SbTest2026!Alpha sslmode=require"
+// SYSARCH
+$conn_admin = scratchbird_connect(
+    "host=127.0.0.1 port=13092 dbname=testdb " .
+    "user=SYSARCH password=SysArch2026! sslmode=require"
 );
 
-$result = scratchbird_query($conn, "SELECT * FROM test_schema.users");
-while ($row = scratchbird_fetch_assoc($result)) {
-    print_r($row);
-}
+// TESTUSER
+$conn_app = scratchbird_connect(
+    "host=127.0.0.1 port=13092 dbname=testdb " .
+    "user=TESTUSER password=TestUser2026! sslmode=require"
+);
 ```
 
 ### .NET
 ```csharp
-var connString = "Host=scratchbird-test.daltoncalford.dev;" +
-                 "Port=13092;Database=testdb;Username=testuser;" +
-                 "Password=SbTest2026!Alpha;SSL Mode=Require";
+var connString = "Host=127.0.0.1;Port=13092;Database=testdb;" +
+                 "SSL Mode=Require";
 
-await using var conn = new ScratchBirdConnection(connString);
-await conn.OpenAsync();
+// SYSARCH
+await using var connAdmin = new ScratchBirdConnection(
+    connString + "Username=SYSARCH;Password=SysArch2026!");
 
-await using var cmd = new ScratchBirdCommand(
-    "SELECT * FROM test_schema.users", conn);
-await using var reader = await cmd.ExecuteReaderAsync();
-while (await reader.ReadAsync())
-{
-    Console.WriteLine(reader.GetString(0));
-}
+// TESTUSER
+await using var connApp = new ScratchBirdConnection(
+    connString + "Username=TESTUSER;Password=TestUser2026!");
 ```
 
 ---
@@ -230,11 +253,11 @@ SELECT json_data->>'key' FROM test_schema.data_types;
 
 ---
 
-## Server Setup (if you need your own)
+## Server Setup (Local)
 
 ### One-Line Setup
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DaltonCalford/ScratchBird/main/scripts/setup-test-server.sh | sudo bash -s your-hostname.com
+curl -fsSL https://raw.githubusercontent.com/DaltonCalford/ScratchBird/main/scripts/setup-test-server.sh | sudo bash -s localhost
 ```
 
 ### Manual Setup
@@ -244,14 +267,26 @@ git clone https://github.com/DaltonCalford/ScratchBird.git
 cd ScratchBird
 cmake -S . -B build && cmake --build build
 
-# 2. Run setup script
-sudo ./scripts/setup-test-server.sh scratchbird-test.yourdomain.com
+# 2. Run setup script (binds to 127.0.0.1)
+sudo ./scripts/setup-test-server.sh localhost
 
-# 3. Test connection
+# 3. Test SYSARCH connection (full access)
 ./build/bin/sb_isql \
-    --host=localhost --port=13092 \
-    --user=testuser --password='SbTest2026!Alpha' \
-    --query="SELECT 'Hello World';"
+    --host=127.0.0.1 --port=13092 \
+    --user=SYSARCH --password='SysArch2026!' \
+    --query="CREATE TABLE security_test (id INT);"
+
+# 4. Test TESTUSER connection (DML only)
+./build/bin/sb_isql \
+    --host=127.0.0.1 --port=13092 \
+    --user=TESTUSER --password='TestUser2026!' \
+    --query="INSERT INTO security_test VALUES (1);"
+
+# 5. Verify security - This should fail:
+./build/bin/sb_isql \
+    --host=127.0.0.1 --port=13092 \
+    --user=TESTUSER --password='TestUser2026!' \
+    --query="DROP TABLE security_test;"  # Should fail!
 ```
 
 ---
@@ -289,21 +324,76 @@ sudo systemctl disable scratchbird-test
 
 ---
 
-## Limits & Guidelines
+## Security Testing Guide
 
-| Resource | Limit |
-|----------|-------|
-| Max connections | 100 |
-| Query timeout | None (be considerate) |
-| Database size | Auto-purged after 1GB |
-| Idle timeout | 5 minutes |
-| TLS | Required |
+### User Privilege Matrix
 
-**Please:**
-- Don't run production workloads
-- Don't store sensitive data
-- Clean up large test data
-- Report issues at https://github.com/DaltonCalford/ScratchBird/issues
+| Operation | SYSARCH | TESTUSER |
+|-----------|---------|----------|
+| SELECT | ✅ Yes | ✅ Yes |
+| INSERT | ✅ Yes | ✅ Yes |
+| UPDATE | ✅ Yes | ✅ Yes |
+| DELETE | ✅ Yes | ✅ Yes |
+| CREATE TABLE | ✅ Yes | ❌ No |
+| DROP TABLE | ✅ Yes | ❌ No |
+| CREATE INDEX | ✅ Yes | ❌ No |
+| ALTER TABLE | ✅ Yes | ❌ No |
+| GRANT | ✅ Yes | ❌ No |
+| VACUUM | ✅ Yes | ❌ No |
+
+### Testing Security
+
+```python
+# Test 1: Verify TESTUSER cannot create tables
+import scratchbird
+
+conn = scratchbird.connect(
+    host="127.0.0.1", port=13092,
+    user="TESTUSER", password="TestUser2026!"
+)
+
+try:
+    conn.execute("CREATE TABLE hack_attempt (data TEXT)")
+    print("SECURITY FAIL: TESTUSER should not create tables!")
+except scratchbird.InsufficientPrivilege:
+    print("SECURITY PASS: TESTUSER correctly blocked from DDL")
+
+# Test 2: Verify SYSARCH can perform DDL
+conn_admin = scratchbird.connect(
+    host="127.0.0.1", port=13092,
+    user="SYSARCH", password="SysArch2026!"
+)
+conn_admin.execute("CREATE TABLE legit_table (id INT)")  # Should succeed
+print("SYSARCH can perform DDL as expected")
+```
+
+---
+
+## Quick Reference Card
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║        SCRATCHBIRD LOCAL TEST SERVER - QUICK REF            ║
+╠══════════════════════════════════════════════════════════════╣
+║ Host:     127.0.0.1 (localhost)                            ║
+║ Port:     13092                                             ║
+║ Database: testdb                                            ║
+║ TLS:      Required (TLS 1.3)                                ║
+╠══════════════════════════════════════════════════════════════╣
+║  SYSARCH  / SysArch2026!     [Full DDL/DML Access]         ║
+║  TESTUSER / TestUser2026!    [DML Only: SELECT/INSERT/     ║
+║                                UPDATE/DELETE]               ║
+╠══════════════════════════════════════════════════════════════╣
+║ Connection Strings:                                         ║
+║ scratchbird://SYSARCH:SysArch2026!@127.0.0.1:13092/testdb  ║
+║ scratchbird://TESTUSER:TestUser2026!@127.0.0.1:13092/testdb║
+╠══════════════════════════════════════════════════════════════╣
+║ TLS: Required (TLS 1.3)                                     ║
+║ Page Size: 16KB                                             ║
+║ Encoding: UTF8                                              ║
+║ Bind: 127.0.0.1 (local only)                                ║
+╚══════════════════════════════════════════════════════════════╝
+```
 
 ---
 

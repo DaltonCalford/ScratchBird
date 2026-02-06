@@ -812,6 +812,7 @@ public:
     bool auto_commit_ = true;
     std::istream* copy_input_stream_ = nullptr;
     std::ostream* copy_output_stream_ = nullptr;
+    std::function<void(uint64_t, uint64_t)> progress_callback_;
 
     // ============================
     // Connection helpers
@@ -1475,6 +1476,15 @@ public:
                     stream_window = 0;
                     break;
                 }
+                case protocol::MessageType::QUERY_PROGRESS: {
+                    uint64_t rows = 0;
+                    uint64_t bytes = 0;
+                    protocol::ProtocolCodec::parseQueryProgress(response, rows, bytes, ctx);
+                    if (progress_callback_) {
+                        progress_callback_(rows, bytes);
+                    }
+                    break;
+                }
 
                 case protocol::MessageType::TRANSACTION_STATUS: {
                     // NET-L1: Parse transaction status and update connection state
@@ -1730,6 +1740,67 @@ core::Status Connection::cancelQuery(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
+core::Status Connection::requestStatus(protocol::StatusRequestType request_type,
+                                       StatusResponse* out,
+                                       core::ErrorContext* ctx) {
+    if (!out) {
+        return core::Status::INVALID_ARGUMENT;
+    }
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    auto msg = protocol::ProtocolCodec::buildStatusRequest(request_type);
+    auto status = impl_->protocol_session_->sendMessage(msg, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to send status request";
+        return status;
+    }
+
+    protocol::Message response;
+    status = impl_->protocol_session_->receiveMessage(response, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to receive status response";
+        return status;
+    }
+
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        uint32_t error_code;
+        std::string sqlstate, message, detail, hint;
+        protocol::ProtocolCodec::parseQueryError(
+            response, error_code, sqlstate, message, detail, hint, ctx
+        );
+        impl_->last_error_ = message;
+        return static_cast<core::Status>(error_code);
+    }
+
+    if (response.getType() != protocol::MessageType::STATUS_RESPONSE) {
+        impl_->last_error_ = "Unexpected response to status request";
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    out->entries.clear();
+    protocol::StatusRequestType parsed_type = request_type;
+    std::vector<protocol::ProtocolCodec::StatusEntry> entries;
+    status = protocol::ProtocolCodec::parseStatusResponse(response, parsed_type, entries, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to parse status response";
+        return status;
+    }
+
+    out->request_type = parsed_type;
+    out->entries.reserve(entries.size());
+    for (const auto& entry : entries) {
+        StatusEntry out_entry;
+        out_entry.key = entry.key;
+        out_entry.value = entry.value;
+        out->entries.push_back(std::move(out_entry));
+    }
+
+    return core::Status::OK;
+}
+
 core::Status Connection::subscribe(const std::string& channel,
                                    const std::string& filter,
                                    uint8_t subscribe_type,
@@ -1820,6 +1891,13 @@ core::Status Connection::receiveNotification(Notification* out,
                                                out->payload, out->changeType,
                                                out->rowId, ctx);
     return core::Status::OK;
+}
+
+void Connection::setProgressCallback(std::function<void(uint64_t, uint64_t)> callback) {
+    if (!impl_) {
+        return;
+    }
+    impl_->progress_callback_ = std::move(callback);
 }
 
 void Connection::setCopyInputStream(std::istream* in) {

@@ -1686,6 +1686,73 @@ core::Status ProtocolCodec::parsePing(const Message& msg,
     return core::Status::OK;
 }
 
+// Status Messages
+
+Message ProtocolCodec::buildStatusRequest(StatusRequestType request_type) {
+    Message msg(MessageType::STATUS_REQUEST);
+    msg.writeUInt8(static_cast<uint8_t>(request_type));
+    return msg;
+}
+
+core::Status ProtocolCodec::parseStatusRequest(const Message& msg,
+                                               StatusRequestType& request_type,
+                                               core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint8_t type = 0;
+    if (!m.readUInt8(type)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated STATUS_REQUEST");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    request_type = static_cast<StatusRequestType>(type);
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildStatusResponse(StatusRequestType request_type,
+                                           const std::vector<StatusEntry>& entries) {
+    Message msg(MessageType::STATUS_RESPONSE);
+    msg.writeUInt8(static_cast<uint8_t>(request_type));
+    msg.writeUInt32(static_cast<uint32_t>(entries.size()));
+    for (const auto& entry : entries) {
+        msg.writeLengthPrefixedString(entry.key);
+        msg.writeLengthPrefixedString(entry.value);
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseStatusResponse(const Message& msg,
+                                                StatusRequestType& request_type,
+                                                std::vector<StatusEntry>& entries,
+                                                core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint8_t type = 0;
+    uint32_t count = 0;
+    if (!m.readUInt8(type) || !m.readUInt32(count)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated STATUS_RESPONSE");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    request_type = static_cast<StatusRequestType>(type);
+    entries.clear();
+    entries.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        StatusEntry entry;
+        if (!m.readLengthPrefixedString(entry.key) ||
+            !m.readLengthPrefixedString(entry.value)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated STATUS_RESPONSE entries");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        entries.push_back(std::move(entry));
+    }
+    return core::Status::OK;
+}
+
 Message ProtocolCodec::buildDisconnect() {
     return Message(MessageType::DISCONNECT);
 }

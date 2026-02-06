@@ -499,6 +499,28 @@ public:
      */
     core::Status cancelQuery(core::ErrorContext* ctx = nullptr);
 
+    struct StatusEntry {
+        std::string key;
+        std::string value;
+    };
+
+    struct StatusResponse {
+        protocol::StatusRequestType request_type = protocol::StatusRequestType::SERVER_INFO;
+        std::vector<StatusEntry> entries;
+    };
+
+    /**
+     * Request status info from the server.
+     *
+     * @param request_type Type of status request
+     * @param out Response entries
+     * @param ctx Error context
+     * @return Status::OK on success
+     */
+    core::Status requestStatus(protocol::StatusRequestType request_type,
+                               StatusResponse* out,
+                               core::ErrorContext* ctx = nullptr);
+
     struct Notification {
         uint32_t processId = 0;
         std::string channel;
@@ -526,6 +548,11 @@ public:
      */
     core::Status receiveNotification(Notification* out,
                                      core::ErrorContext* ctx = nullptr);
+
+    /**
+     * Set a callback for QUERY_PROGRESS messages.
+     */
+    void setProgressCallback(std::function<void(uint64_t, uint64_t)> callback);
 
     void setCopyInputStream(std::istream* in);
     void setCopyOutputStream(std::ostream* out);

@@ -59,20 +59,6 @@
 
 ---
 
-### 1.4 Optional Library Stubs 📦
-
-**Status:** Graceful degradation | **Total Effort:** Documentation only
-
-| # | Task | File | Line | Priority | Effort | Status | Notes |
-|---|------|------|------|----------|--------|--------|-------|
-| [ ] | 1.4.1 | Document GEOS requirement for spatial ops | `geos_wrapper.cpp` | 559 | P3 | 1 day | Install libgeos-dev | Optional library |
-| [ ] | 1.4.2 | Document PROJ requirement for transforms | `proj_wrapper.h` | 220 | P3 | 1 day | Install libproj-dev | Optional library |
-| [ ] | 1.4.3 | Document LZ4 compression options | `compression_lz4.cpp` | 187 | P3 | 1 day | Install liblz4-dev | Graceful fallback |
-
-**Rationale for inclusion:** These are documentation tasks, not implementations. Libraries work when installed.
-
----
-
 ### 1.5 Infrastructure Stubs 🔧
 
 **Status:** Connection pool simulation | **Total Effort:** 1-2 weeks
@@ -136,19 +122,141 @@ ScratchBird supports 5 page sizes:
 | [ ] | 2.2.2.7 | TOAST fetch and reconstruction | [ ] | [ ] | [ ] | [ ] | [ ] | Chunk ordering |
 | [ ] | 2.2.2.8 | Inline vs out-of-line decision | [ ] | [ ] | [ ] | [ ] | [ ] | Boundary cases |
 
-#### 2.2.3 Index Structures
+#### 2.2.3 Index Structures (All 14 Index Types)
+
+##### 2.2.3.1 B-Tree Index (Default)
 
 | # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
 |---|---------------|-----|------|------|------|-------|-------|
-| [ ] | 2.2.3.1 | B-Tree index page layout | [ ] | [ ] | [ ] | [ ] | [ ] | Entry capacity |
-| [ ] | 2.2.3.2 | B-Tree page splits | [ ] | [ ] | [ ] | [ ] | [ ] | Fill factor |
-| [ ] | 2.2.3.3 | B-Tree page merges | [ ] | [ ] | [ ] | [ ] | [ ] | Underflow |
-| [ ] | 2.2.3.4 | GIN index posting lists | [ ] | [ ] | [ ] | [ ] | [ ] | Large postings |
-| [ ] | 2.2.3.5 | GiST index page layout | [ ] | [ ] | [ ] | [ ] | [ ] | Tree structure |
-| [ ] | 2.2.3.6 | Hash index bucket sizes | [ ] | [ ] | [ ] | [ ] | [ ] | Bucket chains |
-| [ ] | 2.2.3.7 | BRIN index block ranges | [ ] | [ ] | [ ] | [ ] | [ ] | Range summaries |
-| [ ] | 2.2.3.8 | LSM-Tree block sizes | [ ] | [ ] | [ ] | [ ] | [ ] | SSTable blocks |
-| [ ] | 2.2.3.9 | Columnstore page sizes | [ ] | [ ] | [ ] | [ ] | [ ] | Segment sizes |
+| [ ] | 2.2.3.1.1 | B-Tree index page layout | [ ] | [ ] | [ ] | [ ] | [ ] | Entry capacity |
+| [ ] | 2.2.3.1.2 | B-Tree page splits | [ ] | [ ] | [ ] | [ ] | [ ] | Fill factor |
+| [ ] | 2.2.3.1.3 | B-Tree page merges | [ ] | [ ] | [ ] | [ ] | [ ] | Underflow |
+| [ ] | 2.2.3.1.4 | B-Tree unique constraint enforcement | [ ] | [ ] | [ ] | [ ] | [ ] | Duplicate detection |
+| [ ] | 2.2.3.1.5 | B-Tree multi-column index | [ ] | [ ] | [ ] | [ ] | [ ] | Column ordering |
+| [ ] | 2.2.3.1.6 | B-Tree index scan performance | [ ] | [ ] | [ ] | [ ] | [ ] | Range queries |
+
+##### 2.2.3.2 Hash Index
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.2.1 | Hash index bucket sizes | [ ] | [ ] | [ ] | [ ] | [ ] | Bucket chains |
+| [ ] | 2.2.3.2.2 | Hash collision handling | [ ] | [ ] | [ ] | [ ] | [ ] | Overflow pages |
+| [ ] | 2.2.3.2.3 | Hash index page splits | [ ] | [ ] | [ ] | [ ] | [ ] | Bucket doubling |
+| [ ] | 2.2.3.2.4 | Hash index equality lookups | [ ] | [ ] | [ ] | [ ] | [ ] | Point queries |
+
+##### 2.2.3.3 GIN (Generalized Inverted Index)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.3.1 | GIN index posting lists | [ ] | [ ] | [ ] | [ ] | [ ] | Large postings |
+| [ ] | 2.2.3.3.2 | GIN posting list compression | [ ] | [ ] | [ ] | [ ] | [ ] | VARBYTE encoding |
+| [ ] | 2.2.3.3.3 | GIN pending list | [ ] | [ ] | [ ] | [ ] | [ ] | Fast insert |
+| [ ] | 2.2.3.3.4 | GIN full-text search | [ ] | [ ] | [ ] | [ ] | [ ] | TSVECTOR indexing |
+| [ ] | 2.2.3.3.5 | GIN array indexing | [ ] | [ ] | [ ] | [ ] | [ ] | Array operators |
+| [ ] | 2.2.3.3.6 | GIN jsonb_path_ops | [ ] | [ ] | [ ] | [ ] | [ ] | JSON indexing |
+
+##### 2.2.3.4 GiST (Generalized Search Tree)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.4.1 | GiST index page layout | [ ] | [ ] | [ ] | [ ] | [ ] | Tree structure |
+| [ ] | 2.2.3.4.2 | GiST geometry indexing | [ ] | [ ] | [ ] | [ ] | [ ] | R-Tree ops |
+| [ ] | 2.2.3.4.3 | GiST range indexing | [ ] | [ ] | [ ] | [ ] | [ ] | Range types |
+| [ ] | 2.2.3.4.4 | GiST point cloud data | [ ] | [ ] | [ ] | [ ] | [ ] | Nearest neighbor |
+
+##### 2.2.3.5 SP-GiST (Space-Partitioned GiST)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.5.1 | SP-GiST quadtree partitioning | [ ] | [ ] | [ ] | [ ] | [ ] | 2D spatial |
+| [ ] | 2.2.3.5.2 | SP-GiST k-d tree | [ ] | [ ] | [ ] | [ ] | [ ] | K-dimensional |
+| [ ] | 2.2.3.5.3 | SP-GiST radix tree | [ ] | [ ] | [ ] | [ ] | [ ] | Text indexing |
+| [ ] | 2.2.3.5.4 | SP-GiST page node limits | [ ] | [ ] | [ ] | [ ] | [ ] | Node capacity |
+
+##### 2.2.3.6 BRIN (Block Range Index)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.6.1 | BRIN index block ranges | [ ] | [ ] | [ ] | [ ] | [ ] | Range summaries |
+| [ ] | 2.2.3.6.2 | BRIN pages_per_range | [ ] | [ ] | [ ] | [ ] | [ ] | 1, 2, 4, 8, etc. |
+| [ ] | 2.2.3.6.3 | BRIN minmax opclass | [ ] | [ ] | [ ] | [ ] | [ ] | Min/max values |
+| [ ] | 2.2.3.6.4 | BRIN inclusion opclass | [ ] | [ ] | [ ] | [ ] | [ ] | Value inclusion |
+| [ ] | 2.2.3.6.5 | BRIN bloom opclass | [ ] | [ ] | [ ] | [ ] | [ ] | Bloom filters |
+
+##### 2.2.3.7 R-Tree (Spatial Index)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.7.1 | R-Tree bounding box storage | [ ] | [ ] | [ ] | [ ] | [ ] | MBR format |
+| [ ] | 2.2.3.7.2 | R-Tree node splitting | [ ] | [ ] | [ ] | [ ] | [ ] | Quadratic split |
+| [ ] | 2.2.3.7.3 | R-Tree spatial queries | [ ] | [ ] | [ ] | [ ] | [ ] | Intersection |
+| [ ] | 2.2.3.7.4 | R-Tree nearest neighbor | [ ] | [ ] | [ ] | [ ] | [ ] | Distance search |
+
+##### 2.2.3.8 HNSW (Hierarchical Navigable Small World)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.8.1 | HNSW graph layer storage | [ ] | [ ] | [ ] | [ ] | [ ] | Multi-layer |
+| [ ] | 2.2.3.8.2 | HNSW neighbor connections | [ ] | [ ] | [ ] | [ ] | [ ] | M parameter |
+| [ ] | 2.2.3.8.3 | HNSW ef_construction | [ ] | [ ] | [ ] | [ ] | [ ] | Build quality |
+| [ ] | 2.2.3.8.4 | HNSW ef_search | [ ] | [ ] | [ ] | [ ] | [ ] | Search accuracy |
+| [ ] | 2.2.3.8.5 | HNSW vector similarity | [ ] | [ ] | [ ] | [ ] | [ ] | L2, cosine, IP |
+
+##### 2.2.3.9 IVF (Inverted File Index)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.9.1 | IVF centroid storage | [ ] | [ ] | [ ] | [ ] | [ ] | K-means centers |
+| [ ] | 2.2.3.9.2 | IVF list sizes | [ ] | [ ] | [ ] | [ ] | [ ] | nlist parameter |
+| [ ] | 2.2.3.9.3 | IVF probe count | [ ] | [ ] | [ ] | [ ] | [ ] | nprobe search |
+| [ ] | 2.2.3.9.4 | IVF quantization | [ ] | [ ] | [ ] | [ ] | [ ] | PQ encoding |
+
+##### 2.2.3.10 Bitmap Index
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.10.1 | Bitmap index bitset storage | [ ] | [ ] | [ ] | [ ] | [ ] | ROARING bitmap |
+| [ ] | 2.2.3.10.2 | Bitmap index compression | [ ] | [ ] | [ ] | [ ] | [ ] | Run-length |
+| [ ] | 2.2.3.10.3 | Bitmap AND/OR operations | [ ] | [ ] | [ ] | [ ] | [ ] | Bitmap logic |
+| [ ] | 2.2.3.10.4 | Bitmap low cardinality | [ ] | [ ] | [ ] | [ ] | [ ] | Boolean columns |
+
+##### 2.2.3.11 Columnstore Index
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.11.1 | Columnstore page sizes | [ ] | [ ] | [ ] | [ ] | [ ] | Segment sizes |
+| [ ] | 2.2.3.11.2 | Columnstore row groups | [ ] | [ ] | [ ] | [ ] | [ ] | Row group size |
+| [ ] | 2.2.3.11.3 | Columnstore compression | [ ] | [ ] | [ ] | [ ] | [ ] | RLE/Dict/Bitpack |
+| [ ] | 2.2.3.11.4 | Columnstore zone maps | [ ] | [ ] | [ ] | [ ] | [ ] | Min/max per zone |
+| [ ] | 2.2.3.11.5 | Columnstore batch insert | [ ] | [ ] | [ ] | [ ] | [ ] | Bulk load |
+
+##### 2.2.3.12 LSM-Tree (Log-Structured Merge)
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.12.1 | LSM-Tree block sizes | [ ] | [ ] | [ ] | [ ] | [ ] | SSTable blocks |
+| [ ] | 2.2.3.12.2 | LSM memtable size | [ ] | [ ] | [ ] | [ ] | [ ] | Memory buffer |
+| [ ] | 2.2.3.12.3 | LSM compaction levels | [ ] | [ ] | [ ] | [ ] | [ ] | Tiered leveling |
+| [ ] | 2.2.3.12.4 | LSM bloom filters | [ ] | [ ] | [ ] | [ ] | [ ] | False positive |
+| [ ] | 2.2.3.12.5 | LSM write amplification | [ ] | [ ] | [ ] | [ ] | [ ] | Compaction cost |
+
+##### 2.2.3.13 Full-Text Search Index
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.13.1 | FTS token storage | [ ] | [ ] | [ ] | [ ] | [ ] | TSVector terms |
+| [ ] | 2.2.3.13.2 | FTS position information | [ ] | [ ] | [ ] | [ ] | [ ] | Word positions |
+| [ ] | 2.2.3.13.3 | FTS ranking scores | [ ] | [ ] | [ ] | [ ] | [ ] | TF-IDF |
+| [ ] | 2.2.3.13.4 | FTS phrase search | [ ] | [ ] | [ ] | [ ] | [ ] | Proximity |
+
+##### 2.2.3.14 Zone Map Index
+
+| # | Test Category | 8KB | 16KB | 32KB | 64KB | 128KB | Notes |
+|---|---------------|-----|------|------|------|-------|-------|
+| [ ] | 2.2.3.14.1 | Zone map extent sizes | [ ] | [ ] | [ ] | [ ] | [ ] | Zone granularity |
+| [ ] | 2.2.3.14.2 | Zone map min/max storage | [ ] | [ ] | [ ] | [ ] | [ ] | Value ranges |
+| [ ] | 2.2.3.14.3 | Zone map pruning | [ ] | [ ] | [ ] | [ ] | [ ] | Skip scanning |
+| [ ] | 2.2.3.14.4 | Zone map null counts | [ ] | [ ] | [ ] | [ ] | [ ] | Null statistics |
 
 #### 2.2.4 Heap Storage
 
