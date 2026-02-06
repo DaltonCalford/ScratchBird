@@ -27,7 +27,7 @@ namespace scratchbird {
 namespace ipc {
 
 // ============================================================================
-// Prepared Statement Cache Entry
+// Prepared Statement Cache Entry with LRU
 // ============================================================================
 
 struct PreparedStatement {
@@ -37,8 +37,212 @@ struct PreparedStatement {
     std::vector<IPCFieldDesc> param_fields;
     std::vector<IPCFieldDesc> result_fields;
     std::chrono::steady_clock::time_point created_at;
+    std::chrono::steady_clock::time_point last_used;
     uint64_t execution_count = 0;
+    size_t memory_size = 0;
     bool is_valid = true;
+    
+    // LRU list pointers
+    PreparedStatement* prev = nullptr;
+    PreparedStatement* next = nullptr;
+};
+
+// ============================================================================
+// LRU Cache Manager
+// ============================================================================
+
+class StatementCache {
+public:
+    static constexpr size_t DEFAULT_MAX_STATEMENTS = 100;
+    static constexpr size_t DEFAULT_MAX_MEMORY = 10 * 1024 * 1024;  // 10MB
+    
+    StatementCache(size_t max_stmts = DEFAULT_MAX_STATEMENTS,
+                   size_t max_memory = DEFAULT_MAX_MEMORY)
+        : max_statements_(max_stmts),
+          max_memory_(max_memory),
+          current_memory_(0),
+          head_(nullptr),
+          tail_(nullptr) {
+    }
+    
+    ~StatementCache() {
+        clear();
+    }
+    
+    // Get statement from cache
+    PreparedStatement* get(const std::string& name) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        
+        auto it = map_.find(name);
+        if (it == map_.end()) {
+            return nullptr;
+        }
+        
+        auto* stmt = it->second.get();
+        if (!stmt->is_valid) {
+            return nullptr;
+        }
+        
+        // Move to front (most recently used)
+        removeFromList(stmt);
+        addToFront(stmt);
+        stmt->last_used = std::chrono::steady_clock::now();
+        
+        return stmt;
+    }
+    
+    // Add statement to cache
+    bool put(const std::string& name, std::unique_ptr<PreparedStatement> stmt) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        
+        // Calculate memory size
+        stmt->memory_size = stmt->sql.size() + stmt->bytecode.size() + 
+                           sizeof(PreparedStatement);
+        
+        // Check if we need to evict
+        while ((map_.size() >= max_statements_ || 
+                current_memory_ + stmt->memory_size > max_memory_) && 
+               tail_) {
+            evictLRU();
+        }
+        
+        // Remove existing if present
+        auto it = map_.find(name);
+        if (it != map_.end()) {
+            removeFromList(it->second.get());
+            current_memory_ -= it->second->memory_size;
+            map_.erase(it);
+        }
+        
+        // Add new statement
+        auto* raw_ptr = stmt.get();
+        raw_ptr->last_used = std::chrono::steady_clock::now();
+        
+        addToFront(raw_ptr);
+        current_memory_ += raw_ptr->memory_size;
+        map_[name] = std::move(stmt);
+        
+        return true;
+    }
+    
+    // Remove statement from cache
+    void remove(const std::string& name) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        
+        auto it = map_.find(name);
+        if (it != map_.end()) {
+            removeFromList(it->second.get());
+            current_memory_ -= it->second->memory_size;
+            map_.erase(it);
+        }
+    }
+    
+    // Invalidate all statements
+    void clear() {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        
+        map_.clear();
+        current_memory_ = 0;
+        head_ = nullptr;
+        tail_ = nullptr;
+    }
+    
+    // Get cache statistics
+    struct Stats {
+        size_t num_statements;
+        size_t current_memory;
+        size_t max_memory;
+        size_t max_statements;
+        size_t total_evicted;
+    };
+    
+    Stats getStats() const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        
+        Stats stats;
+        stats.num_statements = map_.size();
+        stats.current_memory = current_memory_;
+        stats.max_memory = max_memory_;
+        stats.max_statements = max_statements_;
+        stats.total_evicted = total_evicted_;
+        return stats;
+    }
+    
+    // Get list of statement names
+    std::vector<std::string> getStatementNames() const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        
+        std::vector<std::string> names;
+        names.reserve(map_.size());
+        
+        for (const auto& pair : map_) {
+            names.push_back(pair.first);
+        }
+        
+        return names;
+    }
+
+private:
+    size_t max_statements_;
+    size_t max_memory_;
+    size_t current_memory_;
+    size_t total_evicted_ = 0;
+    
+    mutable std::shared_mutex mutex_;
+    std::unordered_map<std::string, std::unique_ptr<PreparedStatement>> map_;
+    
+    // LRU list
+    PreparedStatement* head_;
+    PreparedStatement* tail_;
+    
+    void addToFront(PreparedStatement* stmt) {
+        stmt->next = head_;
+        stmt->prev = nullptr;
+        
+        if (head_) {
+            head_->prev = stmt;
+        }
+        head_ = stmt;
+        
+        if (!tail_) {
+            tail_ = stmt;
+        }
+    }
+    
+    void removeFromList(PreparedStatement* stmt) {
+        if (stmt->prev) {
+            stmt->prev->next = stmt->next;
+        } else {
+            head_ = stmt->next;
+        }
+        
+        if (stmt->next) {
+            stmt->next->prev = stmt->prev;
+        } else {
+            tail_ = stmt->prev;
+        }
+        
+        stmt->prev = nullptr;
+        stmt->next = nullptr;
+    }
+    
+    void evictLRU() {
+        if (!tail_) return;
+        
+        auto* to_evict = tail_;
+        std::string name = to_evict->name;
+        
+        removeFromList(to_evict);
+        current_memory_ -= to_evict->memory_size;
+        
+        // Find and remove from map
+        auto it = map_.find(name);
+        if (it != map_.end()) {
+            map_.erase(it);
+        }
+        
+        total_evicted_++;
+    }
 };
 
 // ============================================================================
@@ -68,9 +272,8 @@ struct SessionState {
     bool autocommit = true;
     TransactionIsolation isolation_level = TransactionIsolation::READ_COMMITTED;
     
-    // Prepared statement cache
-    std::unordered_map<std::string, std::unique_ptr<PreparedStatement>> prepared_stmts;
-    std::shared_mutex prepared_stmts_mutex;
+    // Prepared statement cache with LRU eviction
+    std::unique_ptr<StatementCache> stmt_cache;
     
     // Portals (cursors)
     std::unordered_map<std::string, std::unique_ptr<Portal>> portals;
@@ -91,6 +294,8 @@ struct SessionState {
     // Session metadata
     std::chrono::steady_clock::time_point created_at;
     std::chrono::steady_clock::time_point last_activity;
+    
+    SessionState() : stmt_cache(std::make_unique<StatementCache>()) {}
 };
 
 // ============================================================================
@@ -359,10 +564,7 @@ core::Status EngineIPCSessionHandler::onParse(uint32_t session_id,
     // This would require more detailed AST inspection in a full implementation
     
     // Store in cache
-    {
-        std::unique_lock<std::shared_mutex> lock(session->prepared_stmts_mutex);
-        session->prepared_stmts[stmt_name] = std::move(stmt);
-    }
+    session->stmt_cache->put(stmt_name, std::move(stmt));
     
     return sendParseComplete(session_id);
 }
@@ -381,14 +583,9 @@ core::Status EngineIPCSessionHandler::onBind(uint32_t session_id,
     }
     
     // Look up prepared statement
-    PreparedStatement* stmt = nullptr;
-    {
-        std::shared_lock<std::shared_mutex> lock(session->prepared_stmts_mutex);
-        auto it = session->prepared_stmts.find(stmt_name);
-        if (it == session->prepared_stmts.end()) {
-            return sendError(session_id, "26000", "Prepared statement not found: " + stmt_name);
-        }
-        stmt = it->second.get();
+    PreparedStatement* stmt = session->stmt_cache->get(stmt_name);
+    if (!stmt) {
+        return sendError(session_id, "26000", "Prepared statement not found: " + stmt_name);
     }
     
     // Create portal
@@ -437,12 +634,10 @@ core::Status EngineIPCSessionHandler::onExecute(uint32_t session_id,
     // Look up prepared statement if this is a bound portal
     PreparedStatement* stmt = nullptr;
     if (!portal->stmt_name.empty()) {
-        std::shared_lock<std::shared_mutex> lock(session->prepared_stmts_mutex);
-        auto it = session->prepared_stmts.find(portal->stmt_name);
-        if (it == session->prepared_stmts.end()) {
+        stmt = session->stmt_cache->get(portal->stmt_name);
+        if (!stmt) {
             return sendError(session_id, "26000", "Prepared statement not found: " + portal->stmt_name);
         }
-        stmt = it->second.get();
     }
     
     // Execute
@@ -558,8 +753,7 @@ core::Status EngineIPCSessionHandler::onClose(uint32_t session_id,
     
     if (type == 'S') {
         // Close prepared statement
-        std::unique_lock<std::shared_mutex> lock(session->prepared_stmts_mutex);
-        session->prepared_stmts.erase(name);
+        session->stmt_cache->remove(name);
     } else if (type == 'P') {
         // Close portal
         std::unique_lock<std::shared_mutex> lock(session->portals_mutex);
